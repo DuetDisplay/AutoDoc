@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Geist Variable', sans-serif;
+  --font-mono: 'Geist Mono Variable', monospace;
+
+  /* Warm Parchment palette */
+  --color-bg-primary: #fafaf8;
+  --color-bg-sidebar: #f7f7f5;
+  --color-bg-accent: #f0f0ee;
+  --color-bg-card: #ffffff;
+  --color-border: #e8e6e1;
+  --color-border-subtle: #e2e0db;
+  --color-ink: #1a1a1a;
+  --color-ink-secondary: #3d3b37;
+  --color-ink-muted: #6b6966;
+  --color-ink-faint: #9b9894;
+  --color-status-connected: #22c55e;
+  --color-status-recording: #ef4444;
+  --color-status-processing: #f59e0b;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased bg-bg-primary text-ink;
+  }
+}
