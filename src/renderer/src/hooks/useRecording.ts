@@ -60,8 +60,16 @@ export function useRecording() {
 
   const handleStart = useCallback(async (sourceId: string, sourceNameParam: string) => {
     const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
-    await startCapture(sourceId, paths.meetingId)
-  }, [])
+    try {
+      await startCapture(sourceId, paths.meetingId)
+    } catch (err) {
+      // Rollback main process state if capture fails (e.g. permission denied)
+      stopCapture()
+      await window.electronAPI.invoke('recording:stop')
+      reset()
+      throw err
+    }
+  }, [reset])
 
   const handleStop = useCallback(async () => {
     stopCapture()

@@ -38,6 +38,10 @@ export function registerRecordingIpc(recordingService: RecordingService): void {
   ipcMain.handle(
     'recording:save-chunk',
     async (_event, meetingId: string, type: 'video' | 'audio', chunk: ArrayBuffer) => {
+      const currentState = recordingService.getState()
+      if (!currentState.isRecording || currentState.meetingId !== meetingId) {
+        return // Ignore chunks for stale or mismatched recordings
+      }
       const baseDir = recordingService.getRecordingsBaseDir()
       const filename = type === 'video' ? 'screen.webm' : 'audio.webm'
       const filePath = join(baseDir, meetingId, filename)
