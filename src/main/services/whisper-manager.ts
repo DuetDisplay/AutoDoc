@@ -1,7 +1,8 @@
 import { app } from 'electron'
-import { access, mkdir, chmod } from 'fs/promises'
+import { access, mkdir, chmod, symlink, unlink } from 'fs/promises'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
+import { execSync } from 'child_process'
 import { EventEmitter } from 'events'
 import { RECORDING_DIR_NAME, MODELS_SUBDIR } from '../../shared/constants'
 
@@ -44,13 +45,44 @@ export class WhisperManager extends EventEmitter {
     await mkdir(this.getModelsDir(), { recursive: true })
 
     if (!(await this.fileExists(this.getWhisperPath()))) {
-      await this.downloadWithRetry(() => this.downloadWhisper(), 'whisper-cpp')
+      await this.resolveWhisper()
     }
     if (!(await this.fileExists(this.getFfmpegPath()))) {
-      await this.downloadWithRetry(() => this.downloadFfmpeg(), 'ffmpeg')
+      await this.resolveFfmpeg()
     }
     if (!(await this.fileExists(this.getModelPath()))) {
       await this.downloadWithRetry(() => this.downloadModel(), 'model')
+    }
+  }
+
+  private async resolveWhisper(): Promise<void> {
+    // Homebrew installs whisper.cpp as 'whisper-cli'
+    const systemPath = this.findSystemBinary('whisper-cli')
+    if (systemPath) {
+      await symlink(systemPath, this.getWhisperPath()).catch(() => {})
+      return
+    }
+    throw new Error(
+      'whisper-cli not found. Install it with: brew install whisper-cpp'
+    )
+  }
+
+  private async resolveFfmpeg(): Promise<void> {
+    const systemPath = this.findSystemBinary('ffmpeg')
+    if (systemPath) {
+      await symlink(systemPath, this.getFfmpegPath()).catch(() => {})
+      return
+    }
+    throw new Error(
+      'ffmpeg not found. Install it with: brew install ffmpeg'
+    )
+  }
+
+  private findSystemBinary(name: string): string | null {
+    try {
+      return execSync(`which ${name}`, { encoding: 'utf-8' }).trim()
+    } catch {
+      return null
     }
   }
 
@@ -76,46 +108,9 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  private async downloadWhisper(): Promise<void> {
-    // NOTE: The exact URL must be verified against the latest whisper.cpp GitHub Release.
-    // Check https://github.com/ggerganov/whisper.cpp/releases for current asset names.
-    const url = this.getWhisperDownloadUrl()
-    await this.downloadFile(url, this.getWhisperPath(), 'whisper-cpp')
-    await chmod(this.getWhisperPath(), 0o755)
-  }
-
-  private async downloadFfmpeg(): Promise<void> {
-    const url = this.getFfmpegDownloadUrl()
-    const zipPath = this.getFfmpegPath() + '.zip'
-    await this.downloadFile(url, zipPath, 'ffmpeg')
-    const { execSync } = await import('child_process')
-    execSync(`unzip -o -j "${zipPath}" -d "${this.getModelsDir()}"`)
-    await chmod(this.getFfmpegPath(), 0o755)
-    const { unlink } = await import('fs/promises')
-    await unlink(zipPath).catch(() => {})
-  }
-
   private async downloadModel(): Promise<void> {
     const url = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin'
     await this.downloadFile(url, this.getModelPath(), 'ggml-large-v3.bin')
-  }
-
-  private getWhisperDownloadUrl(): string {
-    const platform = process.platform
-    const arch = process.arch
-    if (platform === 'darwin' && arch === 'arm64') {
-      // TODO: Verify exact asset name from latest GitHub Release at implementation time
-      return 'https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-cli-darwin-arm64'
-    }
-    throw new Error(`Unsupported platform: ${platform} ${arch}`)
-  }
-
-  private getFfmpegDownloadUrl(): string {
-    const platform = process.platform
-    if (platform === 'darwin') {
-      return 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
-    }
-    throw new Error(`Unsupported platform: ${platform}`)
   }
 
   private async downloadFile(url: string, destPath: string, label: string): Promise<void> {
