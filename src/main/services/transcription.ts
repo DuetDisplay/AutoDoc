@@ -7,13 +7,12 @@ import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
 
 interface WhisperSegment {
-  t0: number
-  t1: number
+  offsets: { from: number; to: number }
   text: string
 }
 
 interface WhisperOutput {
-  segments: WhisperSegment[]
+  transcription: WhisperSegment[]
 }
 
 export class TranscriptionService {
@@ -188,13 +187,13 @@ export class TranscriptionService {
   }
 
   private mapToTranscripts(meetingId: string, output: WhisperOutput): Transcript[] {
-    return output.segments.map((seg, index) => ({
+    return output.transcription.map((seg, index) => ({
       id: `${meetingId}-${index}`,
       meetingId,
       speaker: 'Speaker',
       text: seg.text.trim(),
-      startMs: seg.t0 * 10,
-      endMs: seg.t1 * 10,
+      startMs: seg.offsets.from,
+      endMs: seg.offsets.to,
       confidence: -1,
     }))
   }
