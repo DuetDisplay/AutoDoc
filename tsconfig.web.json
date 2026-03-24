@@ -18,6 +18,8 @@
     }
   },
   "exclude": [
-    "src/renderer/src/test/**/*"
+    "src/renderer/src/test/**/*",
+    "src/renderer/src/**/*.test.ts",
+    "src/renderer/src/**/*.test.tsx"
   ]
 }
