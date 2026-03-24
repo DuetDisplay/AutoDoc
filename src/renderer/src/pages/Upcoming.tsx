@@ -1,13 +1,21 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
+import { SetupGuide } from '../components/SetupGuide'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecording } from '../hooks/useRecording'
 import { detectMeetingWindow } from '../services/window-detection'
 
 export function Upcoming() {
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    window.electronAPI.invoke('permissions:check').then((perms) => {
+      setSetupComplete(perms.screen && perms.microphone)
+    })
+  }, [])
   const {
     isConnected,
     isConnecting,
@@ -80,20 +88,29 @@ export function Upcoming() {
     day: 'numeric',
   })
 
+  if (setupComplete === false) {
+    return (
+      <div className="flex flex-col h-full">
+        <PageHeader title="Upcoming" subtitle={today} />
+        <SetupGuide onComplete={() => setSetupComplete(true)} />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col h-full">
       <PageHeader
         title="Upcoming"
         subtitle={today}
         action={
-          isConnected ? (
-            <div className="flex items-center gap-2">
-              <RecordingControls
-                isRecording={isRecording}
-                onStartRecording={handleStart}
-                onStopRecording={handleStop}
-                onFetchSources={fetchSources}
-              />
+          <div className="flex items-center gap-2">
+            <RecordingControls
+              isRecording={isRecording}
+              onStartRecording={handleStart}
+              onStopRecording={handleStop}
+              onFetchSources={fetchSources}
+            />
+            {isConnected && (
               <button
                 onClick={handleSync}
                 disabled={isSyncing}
@@ -101,8 +118,8 @@ export function Upcoming() {
               >
                 {isSyncing ? 'Syncing...' : 'Sync'}
               </button>
-            </div>
-          ) : undefined
+            )}
+          </div>
         }
       />
 

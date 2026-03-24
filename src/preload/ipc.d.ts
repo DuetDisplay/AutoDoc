@@ -14,6 +14,8 @@ export interface IpcInvokeEvents {
   'calendar:get-events': []
   'calendar:sync': []
   'calendar:set-auto-record': [eventId: string, autoRecord: boolean]
+  'permissions:check': []
+  'permissions:open-settings': [panel: 'screen' | 'microphone']
   'recording:get-sources': []
   'recording:start': [sourceId: string, sourceName: string]
   'recording:stop': []
@@ -29,6 +31,8 @@ export interface IpcInvokeReturns {
   'calendar:get-events': CalendarEvent[]
   'calendar:sync': CalendarEvent[]
   'calendar:set-auto-record': void
+  'permissions:check': { screen: boolean; microphone: boolean }
+  'permissions:open-settings': void
   'recording:get-sources': RecordingSource[]
   'recording:start': RecordingPaths
   'recording:stop': { meetingId: string; startedAt: number }

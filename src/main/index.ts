@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { CalendarService } from './services/calendar'
@@ -39,6 +39,34 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  ipcMain.handle('permissions:check', async () => {
+    if (process.platform === 'darwin') {
+      const microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
+      // Screen recording: try getting sources — if we get thumbnails with actual content, we have permission
+      let screen = false
+      try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+        // On macOS, sources are returned but thumbnails are empty when permission is denied
+        screen = sources.length > 0 && !sources[0].thumbnail.isEmpty()
+      } catch {
+        screen = false
+      }
+      return { screen, microphone }
+    }
+    // On Windows/Linux, permissions are generally granted by default
+    return { screen: true, microphone: true }
+  })
+
+  ipcMain.handle('permissions:open-settings', (_event, panel: 'screen' | 'microphone') => {
+    if (process.platform === 'darwin') {
+      if (panel === 'screen') {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+      } else {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+      }
+    }
+  })
 
   const calendarService = new CalendarService()
   registerCalendarIpc(calendarService)
