@@ -15,9 +15,14 @@ export default function App() {
 
   return (
     <HashRouter>
-      <div className="flex h-screen bg-bg-primary">
+      <div className="flex h-screen bg-bg-primary relative">
+        {/* Top drag region for moving the window */}
+        <div
+          className="absolute top-0 left-0 right-0 h-[52px] z-10"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        />
         <Sidebar />
-        <main className="flex-1 overflow-hidden flex flex-col">
+        <main className="flex-1 overflow-hidden flex flex-col pt-[52px]">
           <RecordingBanner
             isRecording={isRecording}
             elapsedSeconds={elapsedSeconds}

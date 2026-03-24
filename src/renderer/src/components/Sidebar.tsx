@@ -20,7 +20,10 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-[200px] bg-bg-sidebar border-r border-border flex flex-col p-5 shrink-0">
+    <aside className="w-[200px] bg-bg-sidebar border-r border-border flex flex-col shrink-0">
+      {/* Top padding to clear macOS traffic lights */}
+      <div className="h-[52px] shrink-0" />
+      <div className="flex flex-col flex-1 px-5 pb-5">
       <div className="text-[15px] font-bold text-ink tracking-[-0.03em]">
         AutoDoc
       </div>
@@ -65,6 +68,7 @@ export function Sidebar() {
         >
           Settings
         </NavLink>
+      </div>
       </div>
     </aside>
   )
