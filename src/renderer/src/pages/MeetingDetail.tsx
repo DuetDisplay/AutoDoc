@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
-import type { SegmentCategory } from '../../../shared/types'
+import type { SegmentCategory, Transcript, TranscriptionStatus } from '../../../shared/types'
+import { TranscriptView } from '../components/TranscriptView'
+import { TranscriptionBadge } from '../components/TranscriptionBadge'
 
 type Tab = 'notes' | 'transcript'
 
@@ -16,15 +18,46 @@ const CATEGORY_ORDER: SegmentCategory[] = [
 export function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const [activeTab, setActiveTab] = useState<Tab>('notes')
+  const [transcript, setTranscript] = useState<Transcript[]>([])
+  const [status, setStatus] = useState<TranscriptionStatus>('pending')
+
+  useEffect(() => {
+    if (!id) return
+
+    window.electronAPI.invoke('transcription:get-status', id).then(setStatus)
+    window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+
+    const unsubscribe = window.electronAPI.on(
+      'transcription:status-changed',
+      (payload) => {
+        if (payload.meetingId === id) {
+          setStatus(payload.status)
+          if (payload.status === 'complete') {
+            window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+          }
+        }
+      }
+    )
+    return unsubscribe
+  }, [id])
+
+  const handleRetry = () => {
+    if (id) {
+      window.electronAPI.invoke('transcription:retry', id)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border">
-        <h1 className="text-[16px] font-bold text-ink tracking-[-0.02em]">
-          Meeting
-        </h1>
-        <p className="text-[11px] text-ink-faint mt-0.5">ID: {id}</p>
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+        <div>
+          <h1 className="text-[16px] font-bold text-ink tracking-[-0.02em]">
+            Meeting
+          </h1>
+          <p className="text-[11px] text-ink-faint mt-0.5">ID: {id}</p>
+        </div>
+        <TranscriptionBadge status={status} onRetry={handleRetry} />
       </div>
 
       {/* Tabs */}
@@ -66,9 +99,7 @@ export function MeetingDetail() {
             ))}
           </div>
         ) : (
-          <p className="text-[12px] text-ink-muted">
-            Transcript will appear here after processing.
-          </p>
+          <TranscriptView segments={transcript} status={status} />
         )}
       </div>
     </div>
