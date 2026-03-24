@@ -68,3 +68,24 @@ export interface OAuthTokens {
   token_type?: string
   scope?: string
 }
+
+export interface RecordingSource {
+  id: string
+  name: string
+  thumbnailDataUrl: string
+}
+
+export interface RecordingState {
+  isRecording: boolean
+  meetingId: string | null
+  startedAt: number | null
+  sourceId: string | null
+  sourceName: string | null
+}
+
+export interface RecordingPaths {
+  meetingId: string
+  dir: string
+  video: string
+  audio: string
+}

@@ -29,3 +29,17 @@ export const MEETING_URL_PATTERNS = [
   /meet\.google\.com/i,
   /webex\.com\/meet/i,
 ]
+
+export const RECORDING_DIR_NAME = 'AutoDoc'
+export const RECORDING_SUBDIR = 'recordings'
+
+export const MEETING_APP_PATTERNS = [
+  { name: 'Zoom', pattern: /zoom/i },
+  { name: 'Google Meet', pattern: /meet\.google\.com/i },
+  { name: 'Microsoft Teams', pattern: /microsoft teams/i },
+  { name: 'Webex', pattern: /webex/i },
+  { name: 'Slack Huddle', pattern: /slack.*huddle|slack.*call/i },
+]
+
+export const VIDEO_MIME_TYPE = 'video/webm;codecs=vp9'
+export const AUDIO_MIME_TYPE = 'audio/webm;codecs=opus'
