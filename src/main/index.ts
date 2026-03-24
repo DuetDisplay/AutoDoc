@@ -3,6 +3,8 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { CalendarService } from './services/calendar'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
+import { RecordingService } from './services/recording'
+import { registerRecordingIpc } from './ipc/recording-ipc'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -40,6 +42,9 @@ app.whenReady().then(async () => {
 
   const calendarService = new CalendarService()
   registerCalendarIpc(calendarService)
+
+  const recordingService = new RecordingService()
+  registerRecordingIpc(recordingService)
 
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {

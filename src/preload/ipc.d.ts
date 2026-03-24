@@ -1,4 +1,4 @@
-import type { CalendarEvent } from '../shared/types'
+import type { CalendarEvent, RecordingSource, RecordingState, RecordingPaths } from '../shared/types'
 
 export interface IpcSendEvents {
   'window:minimize': []
@@ -14,6 +14,11 @@ export interface IpcInvokeEvents {
   'calendar:get-events': []
   'calendar:sync': []
   'calendar:set-auto-record': [eventId: string, autoRecord: boolean]
+  'recording:get-sources': []
+  'recording:start': [sourceId: string, sourceName: string]
+  'recording:stop': []
+  'recording:get-state': []
+  'recording:save-chunk': [meetingId: string, type: 'video' | 'audio', chunk: ArrayBuffer]
 }
 
 export interface IpcInvokeReturns {
@@ -24,9 +29,14 @@ export interface IpcInvokeReturns {
   'calendar:get-events': CalendarEvent[]
   'calendar:sync': CalendarEvent[]
   'calendar:set-auto-record': void
+  'recording:get-sources': RecordingSource[]
+  'recording:start': RecordingPaths
+  'recording:stop': { meetingId: string; startedAt: number }
+  'recording:get-state': RecordingState
+  'recording:save-chunk': void
 }
 
 export interface IpcOnEvents {
-  'recording:status-changed': [status: string]
+  'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
 }
