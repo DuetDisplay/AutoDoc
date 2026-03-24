@@ -1,20 +1,47 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
+import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import type { RecordingEntry } from '../../../shared/types'
 
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
 
   useEffect(() => {
-    window.electronAPI.invoke('recording:list').then((entries) => {
-      setRecordings(entries)
-    }).catch((err) => {
-      console.error('Failed to list recordings:', err)
-    }).finally(() => {
-      setLoading(false)
-    })
+    window.electronAPI
+      .invoke('recording:list')
+      .then((entries) => {
+        setRecordings(entries)
+      })
+      .catch((err) => {
+        console.error('Failed to list recordings:', err)
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.on(
+      'transcription:status-changed',
+      (payload) => {
+        setRecordings((prev) =>
+          prev.map((rec) =>
+            rec.meetingId === payload.meetingId
+              ? { ...rec, transcriptionStatus: payload.status }
+              : rec
+          )
+        )
+      }
+    )
+    return unsubscribe
+  }, [])
+
+  const handleRetry = (meetingId: string) => {
+    window.electronAPI.invoke('transcription:retry', meetingId)
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -36,7 +63,8 @@ export function Recordings() {
             {recordings.map((rec) => (
               <div
                 key={rec.meetingId}
-                className="px-4 py-3.5 bg-bg-card border border-border rounded-xl"
+                className="px-4 py-3.5 bg-bg-card border border-border rounded-xl cursor-pointer hover:border-ink-muted transition-colors"
+                onClick={() => navigate(`/recordings/${rec.meetingId}`)}
               >
                 <div className="flex justify-between items-center">
                   <div>
@@ -59,9 +87,10 @@ export function Recordings() {
                       </span>
                     </div>
                   </div>
-                  <span className="text-[10px] font-medium text-ink-faint bg-bg-accent px-2 py-0.5 rounded-full">
-                    Awaiting transcription
-                  </span>
+                  <TranscriptionBadge
+                    status={rec.transcriptionStatus}
+                    onRetry={() => handleRetry(rec.meetingId)}
+                  />
                 </div>
               </div>
             ))}
