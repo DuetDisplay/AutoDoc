@@ -1,22 +1,32 @@
-import { contextBridge } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
+import { contextBridge, ipcRenderer } from 'electron'
+import type { IpcSendEvents, IpcInvokeEvents, IpcInvokeReturns, IpcOnEvents } from './ipc'
 
-// Custom APIs for renderer
-const api = {}
+const api = {
+  send<K extends keyof IpcSendEvents>(
+    channel: K,
+    ...args: IpcSendEvents[K]
+  ): void {
+    ipcRenderer.send(channel, ...args)
+  },
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
+  invoke<K extends keyof IpcInvokeEvents>(
+    channel: K,
+    ...args: IpcInvokeEvents[K]
+  ): Promise<IpcInvokeReturns[K]> {
+    return ipcRenderer.invoke(channel, ...args)
+  },
+
+  on<K extends keyof IpcOnEvents>(
+    channel: K,
+    listener: (...args: IpcOnEvents[K]) => void
+  ): () => void {
+    const wrapped = (_e: Electron.IpcRendererEvent, ...args: IpcOnEvents[K]): void =>
+      listener(...args)
+    ipcRenderer.on(channel, wrapped as never)
+    return () => ipcRenderer.removeListener(channel, wrapped as never)
   }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
 }
+
+contextBridge.exposeInMainWorld('electronAPI', api)
+
+export type ElectronAPI = typeof api

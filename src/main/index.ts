@@ -52,6 +52,10 @@ app.whenReady().then(() => {
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
 
+  ipcMain.handle('app:get-version', () => {
+    return app.getVersion()
+  })
+
   createWindow()
 
   app.on('activate', function () {
