@@ -76,6 +76,7 @@ export interface RecordingEntry {
   duration: number | null
   hasVideo: boolean
   hasAudio: boolean
+  transcriptionStatus: TranscriptionStatus
 }
 
 export interface RecordingSource {
@@ -98,3 +99,11 @@ export interface RecordingPaths {
   video: string
   audio: string
 }
+
+export type TranscriptionStatus =
+  | 'pending'
+  | 'queued'
+  | 'downloading'
+  | 'transcribing'
+  | 'complete'
+  | 'failed'

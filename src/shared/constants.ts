@@ -32,6 +32,7 @@ export const MEETING_URL_PATTERNS = [
 
 export const RECORDING_DIR_NAME = 'AutoDoc'
 export const RECORDING_SUBDIR = 'recordings'
+export const MODELS_SUBDIR = 'models'
 
 export const MEETING_APP_PATTERNS = [
   { name: 'Zoom', pattern: /zoom/i },

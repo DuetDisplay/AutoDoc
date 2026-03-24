@@ -1,4 +1,4 @@
-import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths } from '../shared/types'
+import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus } from '../shared/types'
 
 export interface IpcSendEvents {
   'window:minimize': []
@@ -22,6 +22,9 @@ export interface IpcInvokeEvents {
   'recording:stop': []
   'recording:get-state': []
   'recording:save-chunk': [meetingId: string, type: 'video' | 'audio', chunk: ArrayBuffer]
+  'transcription:get-status': [meetingId: string]
+  'transcription:get-transcript': [meetingId: string]
+  'transcription:retry': [meetingId: string]
 }
 
 export interface IpcInvokeReturns {
@@ -40,9 +43,13 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number }
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'transcription:get-status': TranscriptionStatus
+  'transcription:get-transcript': Transcript[]
+  'transcription:retry': void
 }
 
 export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
+  'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus }]
 }
