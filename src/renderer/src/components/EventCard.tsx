@@ -3,6 +3,7 @@ import type { CalendarEvent } from '../../../shared/types'
 interface EventCardProps {
   event: CalendarEvent
   onToggleAutoRecord: (eventId: string) => void
+  onRecord?: (eventId: string) => void
 }
 
 function formatTime(timestamp: number): string {
@@ -22,7 +23,7 @@ function getPlatform(url: string | null): string | null {
   return null
 }
 
-export function EventCard({ event, onToggleAutoRecord }: EventCardProps) {
+export function EventCard({ event, onToggleAutoRecord, onRecord }: EventCardProps) {
   const platform = getPlatform(event.meetingUrl)
 
   return (
@@ -36,17 +37,27 @@ export function EventCard({ event, onToggleAutoRecord }: EventCardProps) {
           {platform && <span>  ·  {platform}</span>}
         </div>
       </div>
-      <button
-        onClick={() => onToggleAutoRecord(event.id)}
-        aria-label={event.autoRecord ? 'Disable auto-record' : 'Enable auto-record'}
-        className={`text-[10px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
-          event.autoRecord
-            ? 'bg-ink text-white border-ink'
-            : 'bg-bg-accent text-ink border-border-subtle hover:border-ink-muted'
-        }`}
-      >
-        Auto-record
-      </button>
+      <div className="flex items-center gap-2">
+        {onRecord && (
+          <button
+            onClick={() => onRecord(event.id)}
+            className="text-[11px] font-medium text-white bg-ink px-2.5 py-1 rounded-md hover:opacity-90 transition-opacity"
+          >
+            Record
+          </button>
+        )}
+        <button
+          onClick={() => onToggleAutoRecord(event.id)}
+          aria-label={event.autoRecord ? 'Disable auto-record' : 'Enable auto-record'}
+          className={`text-[10px] font-medium px-2.5 py-1 rounded-full border transition-colors ${
+            event.autoRecord
+              ? 'bg-ink text-white border-ink'
+              : 'bg-bg-accent text-ink border-border-subtle hover:border-ink-muted'
+          }`}
+        >
+          Auto-record
+        </button>
+      </div>
     </div>
   )
 }

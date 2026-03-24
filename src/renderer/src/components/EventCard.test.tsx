@@ -42,4 +42,29 @@ describe('EventCard', () => {
     await user.click(screen.getByRole('button', { name: /auto-record/i }))
     expect(onToggle).toHaveBeenCalledWith('evt-1')
   })
+
+  it('renders Record button when onRecord provided', () => {
+    render(
+      <EventCard
+        event={mockEvent}
+        onToggleAutoRecord={vi.fn()}
+        onRecord={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Record')).toBeInTheDocument()
+  })
+
+  it('calls onRecord when Record button clicked', async () => {
+    const onRecord = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <EventCard
+        event={mockEvent}
+        onToggleAutoRecord={vi.fn()}
+        onRecord={onRecord}
+      />
+    )
+    await user.click(screen.getByText('Record'))
+    expect(onRecord).toHaveBeenCalledWith('evt-1')
+  })
 })

@@ -3,6 +3,9 @@ import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
 import { useCalendarStore } from '../stores/calendar'
+import { RecordingControls } from '../components/RecordingControls'
+import { useRecording } from '../hooks/useRecording'
+import { detectMeetingWindow } from '../services/window-detection'
 
 export function Upcoming() {
   const {
@@ -69,6 +72,8 @@ export function Upcoming() {
     }
   }
 
+  const { isRecording, fetchSources, handleStart, handleStop } = useRecording()
+
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
@@ -82,13 +87,21 @@ export function Upcoming() {
         subtitle={today}
         action={
           isConnected ? (
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="text-[11px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-md border border-border-subtle hover:border-ink-muted transition-colors disabled:opacity-50"
-            >
-              {isSyncing ? 'Syncing...' : 'Sync'}
-            </button>
+            <div className="flex items-center gap-2">
+              <RecordingControls
+                isRecording={isRecording}
+                onStartRecording={handleStart}
+                onStopRecording={handleStop}
+                onFetchSources={fetchSources}
+              />
+              <button
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="text-[11px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-md border border-border-subtle hover:border-ink-muted transition-colors disabled:opacity-50"
+              >
+                {isSyncing ? 'Syncing...' : 'Sync'}
+              </button>
+            </div>
           ) : undefined
         }
       />
@@ -107,6 +120,14 @@ export function Upcoming() {
                 key={event.id}
                 event={event}
                 onToggleAutoRecord={handleToggleAutoRecord}
+                onRecord={() => {
+                  fetchSources().then((sources) => {
+                    const detected = detectMeetingWindow(sources)
+                    if (detected) {
+                      handleStart(detected.id, detected.name)
+                    }
+                  })
+                }}
               />
             ))}
           </div>
