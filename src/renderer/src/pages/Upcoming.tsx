@@ -13,7 +13,7 @@ export function Upcoming() {
 
   useEffect(() => {
     window.electronAPI.invoke('permissions:check').then((perms) => {
-      setSetupComplete(perms.screen && perms.microphone)
+      setSetupComplete(perms.microphone)
     })
   }, [])
   const {

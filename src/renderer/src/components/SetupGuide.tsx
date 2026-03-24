@@ -14,7 +14,7 @@ export function SetupGuide({ onComplete }: { onComplete: () => void }) {
     const result = await window.electronAPI.invoke('permissions:check')
     setPermissions(result)
     setChecking(false)
-    if (result.screen && result.microphone) {
+    if (result.microphone) {
       onComplete()
     }
   }, [onComplete])
@@ -38,9 +38,7 @@ export function SetupGuide({ onComplete }: { onComplete: () => void }) {
     )
   }
 
-  const allGranted = permissions.screen && permissions.microphone
-
-  if (allGranted) return null
+  if (permissions.microphone) return null
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
@@ -49,22 +47,16 @@ export function SetupGuide({ onComplete }: { onComplete: () => void }) {
           Welcome to AutoDoc
         </h2>
         <p className="text-[13px] text-ink-muted mt-2 leading-relaxed">
-          AutoDoc needs a couple of permissions to record your meetings. Everything stays on your device.
+          AutoDoc records your meetings and turns them into structured notes. Everything stays on your device.
         </p>
 
         <div className="mt-6 flex flex-col gap-3">
           <PermissionCard
-            title="Screen Recording"
-            description="Required to capture the meeting window"
-            granted={permissions.screen}
-            onGrant={() => window.electronAPI.invoke('permissions:open-settings', 'screen')}
-          />
-          <PermissionCard
             title="Microphone"
             description="Required to capture meeting audio"
             granted={permissions.microphone}
+            required
             onGrant={async () => {
-              // Requesting mic via getUserMedia triggers the macOS permission prompt
               try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
                 stream.getTracks().forEach((t) => t.stop())
@@ -73,6 +65,13 @@ export function SetupGuide({ onComplete }: { onComplete: () => void }) {
                 window.electronAPI.invoke('permissions:open-settings', 'microphone')
               }
             }}
+          />
+          <PermissionCard
+            title="Screen Recording"
+            description="Optional — enables recording the meeting window"
+            granted={permissions.screen}
+            required={false}
+            onGrant={() => window.electronAPI.invoke('permissions:open-settings', 'screen')}
           />
         </div>
 
@@ -91,11 +90,13 @@ function PermissionCard({
   title,
   description,
   granted,
+  required,
   onGrant,
 }: {
   title: string
   description: string
   granted: boolean
+  required: boolean
   onGrant: () => void
 }) {
   return (
@@ -103,11 +104,16 @@ function PermissionCard({
       <div className="flex items-center gap-3">
         <div
           className={`w-2.5 h-2.5 rounded-full ${
-            granted ? 'bg-status-connected' : 'bg-border'
+            granted ? 'bg-status-connected' : required ? 'bg-status-recording' : 'bg-border'
           }`}
         />
         <div>
-          <div className="text-[13px] font-semibold text-ink">{title}</div>
+          <div className="text-[13px] font-semibold text-ink">
+            {title}
+            {!required && (
+              <span className="text-[10px] font-normal text-ink-faint ml-1.5">optional</span>
+            )}
+          </div>
           <div className="text-[11px] text-ink-faint mt-0.5">{description}</div>
         </div>
       </div>
@@ -116,7 +122,11 @@ function PermissionCard({
       ) : (
         <button
           onClick={onGrant}
-          className="text-[11px] font-medium text-white bg-ink px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity"
+          className={`text-[11px] font-medium px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity ${
+            required
+              ? 'text-white bg-ink'
+              : 'text-ink-muted bg-bg-accent border border-border-subtle'
+          }`}
         >
           Grant
         </button>
