@@ -1,0 +1,26 @@
+import { ipcMain } from 'electron'
+import type { TranscriptionService } from '../services/transcription'
+import type { Transcript, TranscriptionStatus } from '../../shared/types'
+
+export function registerTranscriptionIpc(transcriptionService: TranscriptionService): void {
+  ipcMain.handle(
+    'transcription:get-status',
+    async (_event, meetingId: string): Promise<TranscriptionStatus> => {
+      return transcriptionService.getStatus(meetingId)
+    }
+  )
+
+  ipcMain.handle(
+    'transcription:get-transcript',
+    async (_event, meetingId: string): Promise<Transcript[]> => {
+      return transcriptionService.getTranscript(meetingId)
+    }
+  )
+
+  ipcMain.handle(
+    'transcription:retry',
+    async (_event, meetingId: string): Promise<void> => {
+      transcriptionService.retry(meetingId)
+    }
+  )
+}

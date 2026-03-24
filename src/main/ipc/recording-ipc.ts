@@ -3,9 +3,13 @@ import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
 import { appendFile, readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { RecordingService } from '../services/recording'
+import { TranscriptionService } from '../services/transcription'
 import type { RecordingEntry, RecordingSource, RecordingState } from '../../shared/types'
 
-export function registerRecordingIpc(recordingService: RecordingService): void {
+export function registerRecordingIpc(
+  recordingService: RecordingService,
+  transcriptionService: TranscriptionService,
+): void {
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
     let dirs: string[]
@@ -30,13 +34,16 @@ export function registerRecordingIpc(recordingService: RecordingService): void {
 
       const createdAt = audioStat?.birthtime ?? videoStat?.birthtime ?? new Date()
 
+      const transcriptionStatus = await transcriptionService.getStatus(meetingId)
+
       entries.push({
         meetingId,
         title: `Recording ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
         date: createdAt.getTime(),
-        duration: null, // Will be computed by transcription sub-project
+        duration: null,
         hasVideo: videoStat !== null,
         hasAudio: audioStat !== null,
+        transcriptionStatus,
       })
     }
 
@@ -65,6 +72,7 @@ export function registerRecordingIpc(recordingService: RecordingService): void {
   ipcMain.handle('recording:stop', () => {
     const result = recordingService.stopRecording()
     broadcastState(recordingService.getState())
+    transcriptionService.enqueue(result.meetingId)
     return result
   })
 
