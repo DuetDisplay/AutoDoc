@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import { CalendarService } from './services/calendar'
+import { registerCalendarIpc } from './ipc/calendar-ipc'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -33,8 +35,21 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  const calendarService = new CalendarService()
+  registerCalendarIpc(calendarService)
+
+  const wasConnected = await calendarService.initialize()
+  if (wasConnected) {
+    calendarService.startSync((events) => {
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('calendar:events-updated', events)
+      }
+    })
+  }
 
   createWindow()
 

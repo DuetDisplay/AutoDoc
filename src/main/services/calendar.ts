@@ -1,7 +1,7 @@
 import { shell } from 'electron'
 import http from 'http'
 import { google } from 'googleapis'
-import { OAuth2Client } from 'google-auth-library'
+import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
 import crypto from 'crypto'
 import { URL } from 'url'
 import { saveTokens, loadTokens, clearTokens } from './token-store'
@@ -51,7 +51,7 @@ export class CalendarService {
       access_type: 'offline',
       prompt: 'consent',
       scope: GOOGLE_CALENDAR_SCOPES,
-      code_challenge_method: 'S256',
+      code_challenge_method: CodeChallengeMethod.S256,
       code_challenge: codes.codeChallenge,
       state,
     })
@@ -151,7 +151,7 @@ export class CalendarService {
     this.onEventsUpdated = null
   }
 
-  private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] } | null; location?: string | null; description?: string | null }): string | null {
+  private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] } | null; location?: string | null; description?: string | null }): string | null {
     if (event.hangoutLink) {
       return event.hangoutLink
     }
