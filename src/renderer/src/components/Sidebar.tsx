@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useAppStore } from '../stores/app'
+import { useRecordingStore } from '../stores/recording'
 import { ROUTES } from '../../../shared/constants'
 
 const navItems = [
@@ -11,8 +12,8 @@ const navItems = [
 
 export function Sidebar() {
   const ollamaConnected = useAppStore((s) => s.ollamaConnected)
-  const isRecording = useAppStore((s) => s.isRecording)
-  const recordingSeconds = useAppStore((s) => s.recordingSeconds)
+  const isRecording = useRecordingStore((s) => s.isRecording)
+  const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60)
