@@ -16,3 +16,16 @@ export const ROUTES = {
   askAi: '/ask-ai',
   settings: '/settings',
 } as const
+
+export const CALENDAR_SYNC_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+
+export const GOOGLE_CALENDAR_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events.readonly',
+]
+
+export const MEETING_URL_PATTERNS = [
+  /zoom\.us\/j/i,
+  /teams\.microsoft\.com\/l\/meetup-join/i,
+  /meet\.google\.com/i,
+  /webex\.com\/meet/i,
+]
