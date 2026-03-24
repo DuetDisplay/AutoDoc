@@ -1,5 +1,4 @@
 import { NavLink } from 'react-router-dom'
-import { useAppStore } from '../stores/app'
 import { useRecordingStore } from '../stores/recording'
 import { ROUTES } from '../../../shared/constants'
 
@@ -11,7 +10,6 @@ const navItems = [
 ]
 
 export function Sidebar() {
-  const ollamaConnected = useAppStore((s) => s.ollamaConnected)
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
 
@@ -54,17 +52,6 @@ export function Sidebar() {
             </span>
           </div>
         )}
-
-        <div className="flex items-center gap-2 px-2.5 py-2.5 bg-bg-accent rounded-lg">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              ollamaConnected ? 'bg-status-connected' : 'bg-status-recording'
-            }`}
-          />
-          <span className="text-[11px] text-ink-muted">
-            Ollama {ollamaConnected ? 'connected' : 'disconnected'}
-          </span>
-        </div>
 
         <NavLink
           to={ROUTES.settings}

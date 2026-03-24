@@ -1,11 +1,48 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile } from 'fs/promises'
+import { appendFile, readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { RecordingService } from '../services/recording'
-import type { RecordingSource, RecordingState } from '../../shared/types'
+import type { RecordingEntry, RecordingSource, RecordingState } from '../../shared/types'
 
 export function registerRecordingIpc(recordingService: RecordingService): void {
+  ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    let dirs: string[]
+    try {
+      dirs = await readdir(baseDir)
+    } catch {
+      return []
+    }
+
+    const entries: RecordingEntry[] = []
+    for (const meetingId of dirs) {
+      const meetingDir = join(baseDir, meetingId)
+      const dirStat = await stat(meetingDir).catch(() => null)
+      if (!dirStat?.isDirectory()) continue
+
+      const audioPath = join(meetingDir, 'audio.webm')
+      const videoPath = join(meetingDir, 'screen.webm')
+      const audioStat = await stat(audioPath).catch(() => null)
+      const videoStat = await stat(videoPath).catch(() => null)
+
+      if (!audioStat && !videoStat) continue
+
+      const createdAt = audioStat?.birthtime ?? videoStat?.birthtime ?? new Date()
+
+      entries.push({
+        meetingId,
+        title: `Recording ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
+        date: createdAt.getTime(),
+        duration: null, // Will be computed by transcription sub-project
+        hasVideo: videoStat !== null,
+        hasAudio: audioStat !== null,
+      })
+    }
+
+    return entries.sort((a, b) => b.date - a.date)
+  })
+
   ipcMain.handle('recording:get-sources', async (): Promise<RecordingSource[]> => {
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],

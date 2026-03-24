@@ -69,6 +69,15 @@ export interface OAuthTokens {
   scope?: string
 }
 
+export interface RecordingEntry {
+  meetingId: string
+  title: string
+  date: number
+  duration: number | null
+  hasVideo: boolean
+  hasAudio: boolean
+}
+
 export interface RecordingSource {
   id: string
   name: string

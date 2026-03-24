@@ -30,8 +30,8 @@ describe('Sidebar', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
-  it('renders Ollama status indicator', () => {
+  it('does not render Ollama status indicator', () => {
     renderSidebar()
-    expect(screen.getByText(/ollama/i)).toBeInTheDocument()
+    expect(screen.queryByText(/ollama/i)).not.toBeInTheDocument()
   })
 })

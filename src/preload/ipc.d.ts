@@ -1,4 +1,4 @@
-import type { CalendarEvent, RecordingSource, RecordingState, RecordingPaths } from '../shared/types'
+import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths } from '../shared/types'
 
 export interface IpcSendEvents {
   'window:minimize': []
@@ -16,6 +16,7 @@ export interface IpcInvokeEvents {
   'calendar:set-auto-record': [eventId: string, autoRecord: boolean]
   'permissions:check': []
   'permissions:open-settings': [panel: 'screen' | 'microphone']
+  'recording:list': []
   'recording:get-sources': []
   'recording:start': [sourceId: string, sourceName: string]
   'recording:stop': []
@@ -33,6 +34,7 @@ export interface IpcInvokeReturns {
   'calendar:set-auto-record': void
   'permissions:check': { screen: boolean; microphone: boolean }
   'permissions:open-settings': void
+  'recording:list': RecordingEntry[]
   'recording:get-sources': RecordingSource[]
   'recording:start': RecordingPaths
   'recording:stop': { meetingId: string; startedAt: number }
