@@ -147,20 +147,20 @@ Recordings stored in `~/AutoDoc/recordings/{meeting_id}/` with `screen.webm` and
 
 - Polls system for active mic/camera usage (platform-specific: `ioreg` on macOS, WMI on Windows, `/proc` on Linux)
 - When mic/camera activation detected and no recording active, emits event to renderer
-- When mic/camera stops, automatically ends the recording
+- When mic/camera stops, recording ends after a 30-second grace period (handles brief mutes/camera toggles). If mic/camera reactivates within the grace period, recording continues uninterrupted.
 
 ### TranscriptionService
 
 - After recording stops, sends audio to local Whisper (whisper.cpp via Node bindings)
-- Produces timestamped transcript segments with basic speaker diarization
+- Produces timestamped transcript segments. Speaker diarization is v1-simple: all segments labeled "Speaker 1" (single-speaker assumption). Multi-speaker diarization (via pyannote or similar) is a future enhancement.
 - Stores results in `transcripts` table
 
 ### LLMService
 
 - Implements `LLMProvider` interface via Ollama HTTP API
-- `summarize()`: sends full transcript, returns structured JSON matching 5 HOM categories
+- `summarize()`: sends full transcript with a system prompt that requests JSON output conforming to the `MeetingSegments` schema (the 5 HOM categories). Response is validated against the schema; on malformed JSON, retry up to 2 times before marking as failed.
 - `askQuestion()`: retrieves relevant transcript chunks via FTS5, sends as context with the question
-- Default model: `llama3` or `mistral` (configurable in settings)
+- Default model: `llama3` (configurable in settings)
 
 ### CalendarService
 
