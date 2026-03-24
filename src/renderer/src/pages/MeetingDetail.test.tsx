@@ -10,6 +10,8 @@ beforeEach(() => {
     invoke: vi.fn((channel: string) => {
       if (channel === 'transcription:get-status') return Promise.resolve('pending')
       if (channel === 'transcription:get-transcript') return Promise.resolve([])
+      if (channel === 'segmentation:get-status') return Promise.resolve('pending')
+      if (channel === 'segmentation:get-segments') return Promise.resolve(null)
       return Promise.resolve(undefined)
     }),
     on: vi.fn(() => () => {}),

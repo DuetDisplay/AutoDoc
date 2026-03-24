@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useRecordingStore } from '../stores/recording'
 import { ROUTES } from '../../../shared/constants'
@@ -12,6 +13,16 @@ const navItems = [
 export function Sidebar() {
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
+  const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const check = () => {
+      window.electronAPI.invoke('ollama:check-status').then(setOllamaConnected)
+    }
+    check()
+    const interval = setInterval(check, 10_000)
+    return () => clearInterval(interval)
+  }, [])
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60)
@@ -47,6 +58,19 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col gap-2">
+        {ollamaConnected !== null && (
+          <div className="flex items-center gap-2 px-2.5 py-2">
+            <div
+              className={`w-2 h-2 rounded-full ${
+                ollamaConnected ? 'bg-green-500' : 'bg-red-400'
+              }`}
+            />
+            <span className="text-[11px] text-ink-faint">
+              Ollama {ollamaConnected ? 'connected' : 'disconnected'}
+            </span>
+          </div>
+        )}
+
         {isRecording && (
           <div className="flex items-center gap-2 px-2.5 py-2 bg-bg-accent rounded-lg">
             <div className="w-2 h-2 rounded-full bg-status-recording animate-pulse" />

@@ -1,4 +1,4 @@
-import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus } from '../shared/types'
+import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus } from '../shared/types'
 
 export interface IpcSendEvents {
   'window:minimize': []
@@ -25,6 +25,11 @@ export interface IpcInvokeEvents {
   'transcription:get-status': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string]
+  'ollama:check-status': []
+  'ollama:get-model': []
+  'segmentation:get-status': [meetingId: string]
+  'segmentation:get-segments': [meetingId: string]
+  'segmentation:retry': [meetingId: string]
 }
 
 export interface IpcInvokeReturns {
@@ -46,10 +51,16 @@ export interface IpcInvokeReturns {
   'transcription:get-status': TranscriptionStatus
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
+  'ollama:check-status': boolean
+  'ollama:get-model': string
+  'segmentation:get-status': SegmentationStatus
+  'segmentation:get-segments': MeetingSegments | null
+  'segmentation:retry': void
 }
 
 export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus }]
+  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
 }

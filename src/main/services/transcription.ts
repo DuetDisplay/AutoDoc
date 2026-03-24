@@ -20,12 +20,17 @@ export class TranscriptionService {
   private activeJobId: string | null = null
   private activeStatus: TranscriptionStatus | null = null
   private processing = false
+  private onCompleteCallback: ((meetingId: string) => void) | null = null
 
   constructor(
     private whisperManager: WhisperManager,
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
   ) {}
+
+  onComplete(callback: (meetingId: string) => void): void {
+    this.onCompleteCallback = callback
+  }
 
   enqueue(meetingId: string): void {
     if (this.activeJobId === meetingId) return
@@ -152,6 +157,7 @@ export class TranscriptionService {
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
+    this.onCompleteCallback?.(meetingId)
   }
 
   private runWhisper(audioWavPath: string): Promise<void> {

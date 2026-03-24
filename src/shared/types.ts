@@ -107,3 +107,11 @@ export type TranscriptionStatus =
   | 'transcribing'
   | 'complete'
   | 'failed'
+
+export type SegmentationStatus =
+  | 'pending'
+  | 'queued'
+  | 'downloading-model'
+  | 'segmenting'
+  | 'complete'
+  | 'failed'

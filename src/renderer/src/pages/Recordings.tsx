@@ -2,18 +2,30 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
-import type { RecordingEntry } from '../../../shared/types'
+import { SegmentationBadge } from '../components/SegmentationBadge'
+import type { RecordingEntry, SegmentationStatus } from '../../../shared/types'
 
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
+  const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
   useEffect(() => {
     window.electronAPI
       .invoke('recording:list')
-      .then((entries) => {
+      .then(async (entries) => {
         setRecordings(entries)
+        const statuses: Record<string, SegmentationStatus> = {}
+        await Promise.all(
+          entries.map(async (entry) => {
+            statuses[entry.meetingId] = await window.electronAPI.invoke(
+              'segmentation:get-status',
+              entry.meetingId,
+            )
+          }),
+        )
+        setSegmentationStatuses(statuses)
       })
       .catch((err) => {
         console.error('Failed to list recordings:', err)
@@ -24,7 +36,7 @@ export function Recordings() {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.on(
+    const unsubTranscription = window.electronAPI.on(
       'transcription:status-changed',
       (payload) => {
         setRecordings((prev) =>
@@ -36,11 +48,27 @@ export function Recordings() {
         )
       }
     )
-    return unsubscribe
+    const unsubSegmentation = window.electronAPI.on(
+      'segmentation:status-changed',
+      (payload) => {
+        setSegmentationStatuses((prev) => ({
+          ...prev,
+          [payload.meetingId]: payload.status,
+        }))
+      }
+    )
+    return () => {
+      unsubTranscription()
+      unsubSegmentation()
+    }
   }, [])
 
-  const handleRetry = (meetingId: string) => {
+  const handleRetryTranscription = (meetingId: string) => {
     window.electronAPI.invoke('transcription:retry', meetingId)
+  }
+
+  const handleRetrySegmentation = (meetingId: string) => {
+    window.electronAPI.invoke('segmentation:retry', meetingId)
   }
 
   return (
@@ -87,10 +115,18 @@ export function Recordings() {
                       </span>
                     </div>
                   </div>
-                  <TranscriptionBadge
-                    status={rec.transcriptionStatus}
-                    onRetry={() => handleRetry(rec.meetingId)}
-                  />
+                  <div className="flex items-center gap-2">
+                    <TranscriptionBadge
+                      status={rec.transcriptionStatus}
+                      onRetry={() => handleRetryTranscription(rec.meetingId)}
+                    />
+                    {segmentationStatuses[rec.meetingId] && (
+                      <SegmentationBadge
+                        status={segmentationStatuses[rec.meetingId]}
+                        onRetry={() => handleRetrySegmentation(rec.meetingId)}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

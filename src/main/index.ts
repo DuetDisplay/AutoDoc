@@ -9,6 +9,12 @@ import { WhisperManager } from './services/whisper-manager'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
+import { OllamaProvider } from './services/llm'
+import { OllamaManager } from './services/ollama-manager'
+import { SegmentationService } from './services/segmentation'
+import { registerLlmIpc } from './ipc/llm-ipc'
+
+let ollamaManager: OllamaManager | null = null
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -83,8 +89,21 @@ app.whenReady().then(async () => {
     audioConverter,
     recordingService.getRecordingsBaseDir(),
   )
+  ollamaManager = new OllamaManager()
+  const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
+  const segmentationService = new SegmentationService(
+    ollamaProvider,
+    ollamaManager,
+    recordingService.getRecordingsBaseDir(),
+  )
+
+  transcriptionService.onComplete((meetingId) => {
+    segmentationService.enqueue(meetingId)
+  })
+
   registerRecordingIpc(recordingService, transcriptionService)
   registerTranscriptionIpc(transcriptionService)
+  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
 
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {
@@ -97,11 +116,22 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+
+  // Start Ollama + pull model in the background — don't block the window
+  ollamaManager.startAndPull().catch((err) => {
+    console.error('Failed to start Ollama:', err)
+  })
+
   transcriptionService.scanAndEnqueuePending()
+  segmentationService.scanAndEnqueuePending()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  ollamaManager?.stop()
 })
 
 app.on('window-all-closed', () => {
