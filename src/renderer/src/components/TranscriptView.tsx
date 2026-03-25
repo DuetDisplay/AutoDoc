@@ -83,13 +83,14 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
     )
   }
 
-  const speakerIds = speakers ? Object.keys(speakers) : []
+  const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
+  const speakerIds = hasSpeakers ? Object.keys(speakers) : []
 
   return (
     <div className="flex flex-col gap-1">
       {segments.map((seg) => {
-        const color = speakers ? getSpeakerColor(seg.speaker, speakerIds) : null
-        const speakerLabel = speakers?.[seg.speaker]?.label ?? null
+        const color = hasSpeakers ? getSpeakerColor(seg.speaker, speakerIds) : null
+        const speakerLabel = hasSpeakers ? (speakers![seg.speaker]?.label ?? null) : null
 
         return (
           <div
