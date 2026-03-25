@@ -175,13 +175,16 @@ app.whenReady().then(async () => {
     console.error('Failed to start Ollama:', err)
   })
 
-  transcriptionService.scanAndEnqueuePending()
-  segmentationService.scanAndEnqueuePending()
-
+  // Clean up stale temp files, then migrate unencrypted recordings before enqueuing work
   cleanupTempFiles().catch(() => {})
-  migrateRecordings(recordingService.getRecordingsBaseDir()).catch((err) => {
-    console.error('Migration failed:', err)
-  })
+  migrateRecordings(recordingService.getRecordingsBaseDir())
+    .catch((err) => {
+      console.error('Migration failed:', err)
+    })
+    .finally(() => {
+      transcriptionService.scanAndEnqueuePending()
+      segmentationService.scanAndEnqueuePending()
+    })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

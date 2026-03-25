@@ -167,7 +167,7 @@ export class TranscriptionService {
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
       const transcripts = this.mapToTranscripts(meetingId, whisperOutput)
 
-      await encryptJSON(transcriptPath, transcripts)
+      await encryptJSON(transcripts, transcriptPath)
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')

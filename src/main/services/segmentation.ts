@@ -60,7 +60,7 @@ export class SegmentationService {
 
   async saveSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
-    await encryptJSON(segmentsPath, segments)
+    await encryptJSON(segments, segmentsPath)
   }
 
   async scanAndEnqueuePending(): Promise<void> {
@@ -132,7 +132,7 @@ export class SegmentationService {
 
     const segments = await this.llmProvider.summarize(meetingId, fullText)
 
-    await encryptJSON(segmentsPath, segments)
+    await encryptJSON(segments, segmentsPath)
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')

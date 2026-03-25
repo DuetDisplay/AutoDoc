@@ -200,6 +200,30 @@ describe('crypto module', () => {
       expect(decrypted.equals(original)).toBe(true)
     })
 
+    it('detects block reordering', async () => {
+      const { encryptFileInPlace, decryptFileToTemp } = await freshImport()
+      const filePath = path.join(tmpDir, 'reorder.webm')
+      // Need at least 2 blocks (>64KB)
+      const original = crypto.randomBytes(65536 + 1000)
+      await fsp.writeFile(filePath, original)
+
+      await encryptFileInPlace(filePath)
+
+      // Swap block 0 and block 1 in the encrypted file
+      // Header: 4 (magic) + 1 (version) + 12 (nonce) = 17 bytes
+      // Block 0: 16 (tag) + 65536 (ciphertext) = 65552 bytes
+      // Block 1: 16 (tag) + 1000 (ciphertext) = 1016 bytes
+      const buf = await fsp.readFile(filePath)
+      const headerLen = 17
+      const block0Len = 16 + 65536
+      const block0 = buf.subarray(headerLen, headerLen + block0Len)
+      const block1 = buf.subarray(headerLen + block0Len)
+      const swapped = Buffer.concat([buf.subarray(0, headerLen), block1, block0])
+      await fsp.writeFile(filePath, swapped)
+
+      await expect(decryptFileToTemp(filePath)).rejects.toThrow()
+    })
+
     it('detects tampered block', async () => {
       const { encryptFileInPlace, decryptFileToTemp } = await freshImport()
       const filePath = path.join(tmpDir, 'tampered.webm')
