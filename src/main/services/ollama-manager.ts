@@ -24,7 +24,13 @@ export class OllamaManager extends EventEmitter {
   /** Call once at startup. Subsequent calls return the same promise. */
   startAndPull(): Promise<void> {
     if (!this.readyPromise) {
-      this.readyPromise = this.start().then(() => this.pullModel())
+      this.readyPromise = this.start()
+        .then(() => this.pullModel())
+        .catch((err) => {
+          // Reset so the next call retries instead of permanently failing
+          this.readyPromise = null
+          throw err
+        })
     }
     return this.readyPromise
   }

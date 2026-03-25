@@ -1,5 +1,12 @@
 import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus } from '../shared/types'
 
+export interface SearchResult {
+  meetingId: string
+  title: string
+  date: number
+  matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
+}
+
 export interface IpcSendEvents {
   'window:minimize': []
   'window:maximize': []
@@ -31,6 +38,8 @@ export interface IpcInvokeEvents {
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'recording:get-media': [meetingId: string]
+  'search:query': [query: string]
+  'chat:send': [question: string]
   'detection:dismiss': []
 }
 
@@ -59,6 +68,8 @@ export interface IpcInvokeReturns {
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
+  'search:query': SearchResult[]
+  'chat:send': string
   'detection:dismiss': void
 }
 

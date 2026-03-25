@@ -15,6 +15,8 @@ import { OllamaManager } from './services/ollama-manager'
 import { SegmentationService } from './services/segmentation'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
+import { registerSearchIpc } from './ipc/search-ipc'
+import { registerChatIpc } from './ipc/chat-ipc'
 
 let ollamaManager: OllamaManager | null = null
 
@@ -140,6 +142,8 @@ app.whenReady().then(async () => {
   registerRecordingIpc(recordingService, transcriptionService)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
+  registerSearchIpc(recordingService.getRecordingsBaseDir())
+  registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
 
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {

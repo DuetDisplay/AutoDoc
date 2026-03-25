@@ -80,7 +80,7 @@ export class CalendarService {
           return
         }
 
-        let tokens: object
+        let tokens: Record<string, unknown>
         try {
           tokens = JSON.parse(atob(tokenData))
         } catch {
@@ -89,6 +89,11 @@ export class CalendarService {
           server.close()
           reject(new Error('Invalid token data'))
           return
+        }
+
+        // Google returns expires_in (seconds); convert to absolute expiry_date
+        if (tokens.expires_in && !tokens.expiry_date) {
+          tokens.expiry_date = Date.now() + (tokens.expires_in as number) * 1000
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
@@ -168,10 +173,10 @@ export class CalendarService {
 
   private async refreshIfNeeded(): Promise<void> {
     const creds = this.oauth2Client.credentials
-    if (!creds.expiry_date || !creds.refresh_token) return
+    if (!creds.refresh_token) return
 
-    // Refresh if token expires within 5 minutes
-    if (creds.expiry_date > Date.now() + 5 * 60_000) return
+    // Refresh if no expiry_date (unknown state) or token expires within 5 minutes
+    if (creds.expiry_date && creds.expiry_date > Date.now() + 5 * 60_000) return
 
     try {
       const response = await fetch(`${AUTH_WORKER_URL}/auth/refresh`, {
