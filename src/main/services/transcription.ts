@@ -161,7 +161,12 @@ export class TranscriptionService {
         this.whisperManager.getFfmpegPath()
       )
 
-      await this.runWhisper(tempAudioWav, meetingId)
+      const audioDuration = await this.audioConverter.getDuration(
+        tempAudioWav,
+        this.whisperManager.getFfmpegPath()
+      ).catch(() => undefined)
+
+      await this.runWhisper(tempAudioWav, meetingId, audioDuration)
 
       const whisperJson = await readFile(tempWhisperJson, 'utf-8')
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
@@ -182,7 +187,7 @@ export class TranscriptionService {
     }
   }
 
-  private runWhisper(audioWavPath: string, meetingId: string): Promise<void> {
+  private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {
     return new Promise((resolve, reject) => {
       const timeout = 30 * 60 * 1000
       let stderr = ''
@@ -210,6 +215,23 @@ export class TranscriptionService {
           this.broadcastStatus(meetingId, 'transcribing', progress)
         }
       })
+
+      // Also parse stdout timestamps for more granular progress on short recordings
+      // Whisper outputs lines like: [00:01:30.000 --> 00:01:59.980]
+      if (audioDurationSec && audioDurationSec > 0) {
+        proc.stdout.on('data', (data: Buffer) => {
+          const chunk = data.toString()
+          const tsMatch = chunk.match(/\[(\d+):(\d+):(\d+)\.\d+\s*-->/)
+          if (tsMatch) {
+            const h = parseInt(tsMatch[1], 10)
+            const m = parseInt(tsMatch[2], 10)
+            const s = parseInt(tsMatch[3], 10)
+            const currentSec = h * 3600 + m * 60 + s + 30 // +30 since this segment is being completed
+            const progress = Math.min(99, Math.round((currentSec / audioDurationSec) * 100))
+            this.broadcastStatus(meetingId, 'transcribing', progress)
+          }
+        })
+      }
 
       proc.on('close', (code: number | null) => {
         clearTimeout(timer)

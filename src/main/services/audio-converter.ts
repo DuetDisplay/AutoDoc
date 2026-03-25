@@ -27,4 +27,25 @@ export class AudioConverter {
       })
     })
   }
+
+  /** Get duration of audio file in seconds using ffprobe/ffmpeg */
+  getDuration(inputPath: string, ffmpegPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+      const proc = spawn(ffmpegPath, ['-i', inputPath, '-f', 'null', '-'])
+      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('close', () => {
+        // Parse "Duration: HH:MM:SS.ss" from ffmpeg output
+        const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/)
+        if (match) {
+          const hours = parseInt(match[1], 10)
+          const mins = parseInt(match[2], 10)
+          const secs = parseInt(match[3], 10)
+          resolve(hours * 3600 + mins * 60 + secs)
+        } else {
+          reject(new Error('Could not determine audio duration'))
+        }
+      })
+    })
+  }
 }
