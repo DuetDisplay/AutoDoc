@@ -1,8 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
-import { Readable } from 'stream'
-import { isEncrypted, createDecryptStream, migrateRecordings, cleanupTempFiles } from './services/crypto'
+import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
 import { CalendarService } from './services/calendar'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -102,11 +101,8 @@ app.whenReady().then(async () => {
     const filePath = join(recordingService.getRecordingsBaseDir(), meetingId, filename)
 
     if (await isEncrypted(filePath)) {
-      const nodeStream = createDecryptStream(filePath)
-      const webStream = Readable.toWeb(nodeStream) as ReadableStream
-      return new Response(webStream, {
-        headers: { 'Content-Type': 'video/webm' },
-      })
+      const tempPath = await decryptFileToTemp(filePath)
+      return net.fetch(`file://${tempPath}`)
     }
 
     return net.fetch(`file://${filePath}`)
@@ -150,7 +146,7 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
-  registerRecordingIpc(recordingService, transcriptionService)
+  registerRecordingIpc(recordingService, transcriptionService, whisperManager)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
   registerSearchIpc(recordingService.getRecordingsBaseDir())
