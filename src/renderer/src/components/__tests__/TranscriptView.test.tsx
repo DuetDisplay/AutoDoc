@@ -36,4 +36,33 @@ describe('TranscriptView', () => {
     render(<TranscriptView segments={[]} status="complete" />)
     expect(screen.getByText(/no transcript/i)).toBeInTheDocument()
   })
+
+  it('renders speaker names when speakers map is provided', () => {
+    const speakers = {
+      me: { label: 'Me' },
+      speaker_1: { label: 'Alice' },
+    }
+    const segments = [
+      { id: 's1', meetingId: 'm1', speaker: 'me', text: 'Hello', startMs: 0, endMs: 3000, confidence: -1 },
+      { id: 's2', meetingId: 'm1', speaker: 'speaker_1', text: 'Hi there', startMs: 3000, endMs: 6000, confidence: -1 },
+    ]
+    render(<TranscriptView segments={segments} status="complete" speakers={speakers} />)
+    expect(screen.getByText('Me')).toBeInTheDocument()
+    expect(screen.getByText('Alice')).toBeInTheDocument()
+  })
+
+  it('renders diarizing status', () => {
+    render(<TranscriptView segments={[]} status="diarizing" />)
+    expect(screen.getByText('Identifying speakers...')).toBeInTheDocument()
+  })
+
+  it('renders without speaker labels when no speakers map', () => {
+    const segments = [
+      { id: 's1', meetingId: 'm1', speaker: 'Speaker', text: 'Hello', startMs: 0, endMs: 3000, confidence: -1 },
+    ]
+    render(<TranscriptView segments={segments} status="complete" />)
+    expect(screen.getByText('Hello')).toBeInTheDocument()
+    // Should not render a speaker name element
+    expect(screen.queryByText('Speaker')).not.toBeInTheDocument()
+  })
 })
