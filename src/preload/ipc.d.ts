@@ -30,6 +30,7 @@ export interface IpcInvokeEvents {
   'segmentation:get-status': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
+  'detection:dismiss': []
 }
 
 export interface IpcInvokeReturns {
@@ -56,6 +57,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-status': SegmentationStatus
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
+  'detection:dismiss': void
 }
 
 export interface IpcOnEvents {
@@ -63,5 +65,7 @@ export interface IpcOnEvents {
   'calendar:events-updated': [events: CalendarEvent[]]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus }]
   'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
-  'detection:start-recording': [payload: { sourceId: string; sourceName: string }]
+  'detection:meeting-detected': [payload: { title: string; body: string }]
+  'detection:auto-record': [payload: Record<string, never>]
+  'detection:mic-inactive': [payload: Record<string, never>]
 }

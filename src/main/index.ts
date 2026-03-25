@@ -109,6 +109,10 @@ app.whenReady().then(async () => {
     () => cachedEvents,
   )
 
+  ipcMain.handle('detection:dismiss', () => {
+    detectionService.dismissPrompt()
+  })
+
   registerRecordingIpc(recordingService, transcriptionService)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)

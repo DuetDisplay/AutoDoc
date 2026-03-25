@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Upcoming } from './pages/Upcoming'
@@ -8,10 +9,29 @@ import { AskAI } from './pages/AskAI'
 import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
 import { useRecording } from './hooks/useRecording'
+import { detectMeetingWindow } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
+import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 
 export default function App() {
-  const { isRecording, sourceName, elapsedSeconds, handleStop } = useRecording()
+  const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
+
+  // Auto-start recording when user clicks "Start AI Notes" from floating notification
+  useEffect(() => {
+    const unsub = window.electronAPI.on('detection:auto-record', async () => {
+      if (isRecording) return
+      try {
+        const sources = await fetchSources()
+        const detected = detectMeetingWindow(sources)
+        if (detected) {
+          await handleStart(detected.id, detected.name)
+        }
+      } catch (err) {
+        console.error('Auto-record failed:', err)
+      }
+    })
+    return unsub
+  }, [isRecording, fetchSources, handleStart])
 
   return (
     <HashRouter>
@@ -29,6 +49,7 @@ export default function App() {
             sourceName={sourceName}
             onStop={handleStop}
           />
+          <MeetingDetectedBanner />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

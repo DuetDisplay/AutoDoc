@@ -1,17 +1,16 @@
-import { desktopCapturer, Notification, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
-import { MEETING_APP_PATTERNS } from '../../shared/constants'
-import type { CalendarEvent, RecordingSource } from '../../shared/types'
+import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
+import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
 
-const POLL_INTERVAL_MS = 5_000
+const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
 
 export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private micWasActive = false
-  private notificationShown = false
-  private pendingNotification: Notification | null = null
+  private prompted = false
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -24,6 +23,7 @@ export class DetectionService {
   start(): void {
     if (this.pollTimer) return
     this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS)
+    this.poll()
   }
 
   stop(): void {
@@ -33,22 +33,32 @@ export class DetectionService {
     }
   }
 
+  dismissPrompt(): void {
+    this.prompted = true
+    hideNotificationWindow()
+  }
+
   private async poll(): Promise<void> {
-    if (this.recordingService.getState().isRecording) return
+    if (this.recordingService.getState().isRecording) {
+      this.prompted = false
+      this.micWasActive = false
+      hideNotificationWindow()
+      return
+    }
 
     const micActive = await this.isMicInUse()
 
     if (micActive && !this.micWasActive) {
-      // Mic just became active
       this.micWasActive = true
-      if (!this.notificationShown) {
-        this.notificationShown = true
-        await this.promptToRecord()
+      if (!this.prompted) {
+        this.prompted = true
+        this.showPrompt()
       }
     } else if (!micActive && this.micWasActive) {
-      // Mic deactivated — reset for next detection
       this.micWasActive = false
-      this.notificationShown = false
+      this.prompted = false
+      hideNotificationWindow()
+      this.broadcast('detection:mic-inactive', {})
     }
   }
 
@@ -58,7 +68,7 @@ export class DetectionService {
     }
 
     return new Promise((resolve) => {
-      execFile('pmset', ['-g', 'assertions'], { timeout: 3000 }, (err, stdout) => {
+      execFile('pmset', ['-g', 'assertions'], { timeout: 2000 }, (err, stdout) => {
         if (err) {
           resolve(false)
           return
@@ -68,88 +78,32 @@ export class DetectionService {
     })
   }
 
-  private async promptToRecord(): Promise<void> {
-    // Try to find a meeting window for context
-    const sources = await this.getSources()
-    const meetingSource = this.detectMeetingWindow(sources)
+  private showPrompt(): void {
     const matchingEvent = this.findMatchingEvent()
 
-    const autoRecord = matchingEvent?.autoRecord ?? false
+    const title = matchingEvent?.title ?? 'Meeting detected'
+    const body = 'Would you like to start AI notes?'
 
-    if (autoRecord && meetingSource) {
-      this.startRecording(meetingSource.id, matchingEvent!.title)
-      return
-    }
-
-    const title = matchingEvent
-      ? `${matchingEvent.title} is starting`
-      : 'Microphone active'
-    const body = matchingEvent
-      ? 'Start recording this meeting?'
-      : meetingSource
-        ? `${meetingSource.name} — Start recording?`
-        : 'Are you in a meeting? Start recording?'
-
-    const sourceId = meetingSource?.id ?? null
-    const sourceName = matchingEvent?.title ?? meetingSource?.name ?? 'Meeting'
-
-    const notification = new Notification({
+    // Show floating overlay window
+    showNotificationWindow({
       title,
       body,
-      silent: false,
+      onRecord: () => {
+        // Bring main window to front and auto-start recording
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win) {
+          win.show()
+          win.focus()
+        }
+        this.broadcast('detection:auto-record', {})
+      },
+      onDismiss: () => {
+        this.prompted = true
+      },
     })
 
-    notification.on('click', () => {
-      if (sourceId) {
-        this.startRecording(sourceId, sourceName)
-      } else {
-        // No meeting window found — bring app to front so user can pick a source
-        this.focusApp()
-      }
-      this.pendingNotification = null
-    })
-
-    notification.on('close', () => {
-      this.pendingNotification = null
-    })
-
-    notification.show()
-    this.pendingNotification = notification
-  }
-
-  private startRecording(sourceId: string, sourceName: string): void {
-    const windows = BrowserWindow.getAllWindows()
-    for (const win of windows) {
-      win.webContents.send('detection:start-recording', { sourceId, sourceName })
-    }
-  }
-
-  private focusApp(): void {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (win) {
-      win.show()
-      win.focus()
-    }
-  }
-
-  private async getSources(): Promise<RecordingSource[]> {
-    const sources = await desktopCapturer.getSources({
-      types: ['window'],
-      thumbnailSize: { width: 1, height: 1 },
-    })
-    return sources.map((s) => ({
-      id: s.id,
-      name: s.name,
-      thumbnailDataUrl: '',
-    }))
-  }
-
-  private detectMeetingWindow(sources: RecordingSource[]): RecordingSource | null {
-    for (const { pattern } of MEETING_APP_PATTERNS) {
-      const match = sources.find((s) => pattern.test(s.name))
-      if (match) return match
-    }
-    return null
+    // Also send to in-app banner as a fallback
+    this.broadcast('detection:meeting-detected', { title, body })
   }
 
   private findMatchingEvent(): CalendarEvent | null {
@@ -165,5 +119,12 @@ export class DetectionService {
     }
 
     return null
+  }
+
+  private broadcast(channel: string, payload: Record<string, unknown>): void {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send(channel, payload)
+    }
   }
 }
