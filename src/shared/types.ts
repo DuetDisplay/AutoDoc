@@ -115,8 +115,16 @@ export type TranscriptionStatus =
   | 'queued'
   | 'downloading'
   | 'transcribing'
+  | 'diarizing'
   | 'complete'
   | 'failed'
+
+export interface SpeakerInfo {
+  label: string
+  suggestions?: string[]
+}
+
+export type SpeakerMap = Record<string, SpeakerInfo>
 
 export type SegmentationStatus =
   | 'pending'

@@ -32,6 +32,18 @@ export const MEETING_URL_PATTERNS = [
 
 export const RECORDING_SUBDIR = 'recordings'
 export const MODELS_SUBDIR = 'models'
+export const PYTHON_ENV_SUBDIR = 'python-env'
+
+export const SPEAKER_COLORS: { border: string; bg: string }[] = [
+  { border: '#5B8C6A', bg: '#f6faf7' }, // Me — sage green
+  { border: '#C4956A', bg: '#fdf8f4' }, // Speaker 1 — amber
+  { border: '#7A8FB5', bg: '#f4f6fa' }, // Speaker 2 — slate blue
+  { border: '#B57A8F', bg: '#faf4f6' }, // Speaker 3 — dusty rose
+  { border: '#6A9E9E', bg: '#f4fafa' }, // Speaker 4 — teal
+  { border: '#8F7AB5', bg: '#f6f4fa' }, // Speaker 5 — plum
+  { border: '#A89460', bg: '#faf8f4' }, // Speaker 6 — ochre
+  { border: '#7A8A7A', bg: '#f4f6f4' }, // Speaker 7 — slate
+]
 
 export const MEETING_APP_PATTERNS = [
   { name: 'Zoom', pattern: /zoom/i },
