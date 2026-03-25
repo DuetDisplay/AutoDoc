@@ -1,7 +1,7 @@
 import { shell } from 'electron'
 import http from 'http'
 import { google } from 'googleapis'
-import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
+import { OAuth2Client } from 'google-auth-library'
 import crypto from 'crypto'
 import { URL } from 'url'
 import { saveTokens, loadTokens, clearTokens } from './token-store'
@@ -9,11 +9,8 @@ import { GOOGLE_CALENDAR_SCOPES, CALENDAR_SYNC_INTERVAL_MS } from '../../shared/
 import type { CalendarEvent } from '../../shared/types'
 
 const OAUTH_PORT = 42813
-const REDIRECT_URI = `http://127.0.0.1:${OAUTH_PORT}`
-
-// For development, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars.
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? ''
-const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? ''
+const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
+const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
 
 export class CalendarService {
   private oauth2Client: OAuth2Client
@@ -21,9 +18,10 @@ export class CalendarService {
   private onEventsUpdated: ((events: CalendarEvent[]) => void) | null = null
 
   constructor() {
-    this.oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)
+    this.oauth2Client = new google.auth.OAuth2(CLIENT_ID)
 
-    this.oauth2Client.on('tokens', (newTokens) => {
+    this.oauth2Client.on('tokens', async (newTokens) => {
+      // If we get new tokens via the library's auto-refresh, save them
       const existing = loadTokens() ?? {}
       saveTokens({ ...existing, ...newTokens })
     })
@@ -44,26 +42,19 @@ export class CalendarService {
   }
 
   async connect(): Promise<void> {
-    const codes = await this.oauth2Client.generateCodeVerifierAsync()
     const state = crypto.randomBytes(16).toString('hex')
 
-    const authUrl = this.oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      prompt: 'consent',
-      scope: GOOGLE_CALENDAR_SCOPES,
-      code_challenge_method: CodeChallengeMethod.S256,
-      code_challenge: codes.codeChallenge,
-      state,
-    })
-
+    // Open the auth worker URL — it handles the Google OAuth flow
+    const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
     await shell.openExternal(authUrl)
 
-    const code = await new Promise<string>((resolve, reject) => {
+    // Wait for the worker to redirect back to localhost with tokens
+    const result = await new Promise<{ tokens: object }>((resolve, reject) => {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
-        const returnedCode = url.searchParams.get('code')
         const error = url.searchParams.get('error')
+        const tokenData = url.searchParams.get('tokens')
 
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
@@ -81,22 +72,37 @@ export class CalendarService {
           return
         }
 
+        if (!tokenData) {
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          res.end('<html><body><p>Missing token data. Please try again.</p></body></html>')
+          server.close()
+          reject(new Error('Missing token data'))
+          return
+        }
+
+        let tokens: object
+        try {
+          tokens = JSON.parse(atob(tokenData))
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          res.end('<html><body><p>Invalid token data. Please try again.</p></body></html>')
+          server.close()
+          reject(new Error('Invalid token data'))
+          return
+        }
+
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>')
         server.close()
-        resolve(returnedCode!)
+        resolve({ tokens })
       })
 
       server.listen(OAUTH_PORT, '127.0.0.1')
       server.on('error', reject)
     })
 
-    const { tokens } = await this.oauth2Client.getToken({
-      code,
-      codeVerifier: codes.codeVerifier,
-    })
-    this.oauth2Client.setCredentials(tokens)
-    saveTokens(tokens)
+    this.oauth2Client.setCredentials(result.tokens)
+    saveTokens(result.tokens)
   }
 
   async disconnect(): Promise<void> {
@@ -106,6 +112,9 @@ export class CalendarService {
   }
 
   async fetchUpcomingEvents(maxResults = 20): Promise<CalendarEvent[]> {
+    // Refresh token via worker if needed
+    await this.refreshIfNeeded()
+
     const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client })
 
     const response = await calendar.events.list({
@@ -133,6 +142,11 @@ export class CalendarService {
 
   startSync(callback: (events: CalendarEvent[]) => void): void {
     this.onEventsUpdated = callback
+    // Fetch immediately on start
+    this.fetchUpcomingEvents()
+      .then((events) => this.onEventsUpdated?.(events))
+      .catch((err) => console.error('Initial calendar sync failed:', err))
+
     this.syncInterval = setInterval(async () => {
       try {
         const events = await this.fetchUpcomingEvents()
@@ -149,6 +163,39 @@ export class CalendarService {
       this.syncInterval = null
     }
     this.onEventsUpdated = null
+  }
+
+  private async refreshIfNeeded(): Promise<void> {
+    const creds = this.oauth2Client.credentials
+    if (!creds.expiry_date || !creds.refresh_token) return
+
+    // Refresh if token expires within 5 minutes
+    if (creds.expiry_date > Date.now() + 5 * 60_000) return
+
+    try {
+      const response = await fetch(`${AUTH_WORKER_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: creds.refresh_token }),
+      })
+
+      if (!response.ok) {
+        console.error('Token refresh failed:', await response.text())
+        return
+      }
+
+      const newTokens = await response.json() as { access_token: string; expires_in: number }
+      const updated = {
+        ...creds,
+        access_token: newTokens.access_token,
+        expiry_date: Date.now() + newTokens.expires_in * 1000,
+      }
+
+      this.oauth2Client.setCredentials(updated)
+      saveTokens(updated)
+    } catch (err) {
+      console.error('Token refresh error:', err)
+    }
   }
 
   private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] } | null; location?: string | null; description?: string | null }): string | null {
