@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
@@ -6,7 +6,7 @@ import { SetupGuide } from '../components/SetupGuide'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecording } from '../hooks/useRecording'
-import { detectMeetingWindow } from '../services/window-detection'
+import type { CalendarEvent } from '../../../shared/types'
 
 export function Upcoming() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
@@ -88,6 +88,38 @@ export function Upcoming() {
     day: 'numeric',
   })
 
+  const groupedEvents = useMemo(() => {
+    const now = new Date()
+    const todayStr = now.toDateString()
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = tomorrow.toDateString()
+
+    const groups: { label: string; events: CalendarEvent[] }[] = []
+    const buckets = new Map<string, CalendarEvent[]>()
+
+    for (const event of events) {
+      const dateStr = new Date(event.startTime).toDateString()
+      if (!buckets.has(dateStr)) buckets.set(dateStr, [])
+      buckets.get(dateStr)!.push(event)
+    }
+
+    for (const [dateStr, dayEvents] of buckets) {
+      let label: string
+      if (dateStr === todayStr) {
+        label = 'Today'
+      } else if (dateStr === tomorrowStr) {
+        label = 'Tomorrow'
+      } else {
+        const d = new Date(dateStr)
+        label = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+      }
+      groups.push({ label, events: dayEvents })
+    }
+
+    return groups
+  }, [events])
+
   if (setupComplete === false) {
     return (
       <div className="flex flex-col h-full">
@@ -131,21 +163,29 @@ export function Upcoming() {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex flex-col gap-2">
-            {events.map((event) => (
-              <EventCard
-                key={event.id}
-                event={event}
-                onToggleAutoRecord={handleToggleAutoRecord}
-                onRecord={() => {
-                  fetchSources().then((sources) => {
-                    const detected = detectMeetingWindow(sources)
-                    if (detected) {
-                      handleStart(detected.id, detected.name)
-                    }
-                  })
-                }}
-              />
+          <div className="flex flex-col gap-5">
+            {groupedEvents.map((group) => (
+              <div key={group.label}>
+                <div className="flex items-center gap-2 mb-2">
+                  <h2 className={`text-[12px] font-bold tracking-[0.03em] uppercase ${
+                    group.label === 'Today' ? 'text-ink' : 'text-ink-faint'
+                  }`}>
+                    {group.label}
+                  </h2>
+                  <span className="text-[11px] text-ink-faint">
+                    {group.events.length} meeting{group.events.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {group.events.map((event) => (
+                    <EventCard
+                      key={event.id}
+                      event={event}
+                      onToggleAutoRecord={handleToggleAutoRecord}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
