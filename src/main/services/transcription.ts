@@ -1,10 +1,12 @@
 import { BrowserWindow } from 'electron'
 import { access, readFile, writeFile, unlink } from 'fs/promises'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import { spawn } from 'child_process'
 import type { Transcript, TranscriptionStatus } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
+import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted } from './crypto'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -62,6 +64,9 @@ export class TranscriptionService {
   async getTranscript(meetingId: string): Promise<Transcript[]> {
     const transcriptPath = join(this.recordingsBaseDir, meetingId, 'transcript.json')
     try {
+      if (await isEncrypted(transcriptPath)) {
+        return await decryptJSON<Transcript[]>(transcriptPath)
+      }
       const data = await readFile(transcriptPath, 'utf-8')
       return JSON.parse(data)
     } catch {
@@ -121,43 +126,60 @@ export class TranscriptionService {
   private async processJob(meetingId: string): Promise<void> {
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const audioWebm = join(meetingDir, 'audio.webm')
-    const audioWav = join(meetingDir, 'audio.wav')
-    const whisperJsonOutput = join(meetingDir, 'audio.wav.json')
     const transcriptPath = join(meetingDir, 'transcript.json')
 
     if (!(await this.fileExists(audioWebm))) {
       return
     }
 
-    if (!(await this.whisperManager.isReady())) {
-      this.activeStatus = 'downloading'
-      this.broadcastStatus(meetingId, 'downloading')
-      await this.whisperManager.ensureReady()
+    // Determine temp file paths
+    const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
+    const tempAudioWav = `${tempPrefix}.wav`
+    const tempWhisperJson = `${tempPrefix}.wav.json`
+    let tempDecryptedAudio: string | null = null
+
+    try {
+      if (!(await this.whisperManager.isReady())) {
+        this.activeStatus = 'downloading'
+        this.broadcastStatus(meetingId, 'downloading')
+        await this.whisperManager.ensureReady()
+      }
+
+      this.activeStatus = 'transcribing'
+      this.broadcastStatus(meetingId, 'transcribing')
+
+      // If audio is encrypted, decrypt to temp first
+      let audioInput = audioWebm
+      if (await isEncrypted(audioWebm)) {
+        tempDecryptedAudio = await decryptFileToTemp(audioWebm)
+        audioInput = tempDecryptedAudio
+      }
+
+      await this.audioConverter.convert(
+        audioInput,
+        tempAudioWav,
+        this.whisperManager.getFfmpegPath()
+      )
+
+      await this.runWhisper(tempAudioWav)
+
+      const whisperJson = await readFile(tempWhisperJson, 'utf-8')
+      const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
+      const transcripts = this.mapToTranscripts(meetingId, whisperOutput)
+
+      await encryptJSON(transcriptPath, transcripts)
+
+      this.activeStatus = 'complete'
+      this.broadcastStatus(meetingId, 'complete')
+      this.onCompleteCallback?.(meetingId)
+    } finally {
+      // Clean up all temp files
+      await unlink(tempAudioWav).catch(() => {})
+      await unlink(tempWhisperJson).catch(() => {})
+      if (tempDecryptedAudio) {
+        await unlink(tempDecryptedAudio).catch(() => {})
+      }
     }
-
-    this.activeStatus = 'transcribing'
-    this.broadcastStatus(meetingId, 'transcribing')
-
-    await this.audioConverter.convert(
-      audioWebm,
-      audioWav,
-      this.whisperManager.getFfmpegPath()
-    )
-
-    await this.runWhisper(audioWav)
-
-    const whisperJson = await readFile(whisperJsonOutput, 'utf-8')
-    const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
-    const transcripts = this.mapToTranscripts(meetingId, whisperOutput)
-
-    await writeFile(transcriptPath, JSON.stringify(transcripts, null, 2))
-
-    await unlink(audioWav).catch(() => {})
-    await unlink(whisperJsonOutput).catch(() => {})
-
-    this.activeStatus = 'complete'
-    this.broadcastStatus(meetingId, 'complete')
-    this.onCompleteCallback?.(meetingId)
   }
 
   private runWhisper(audioWavPath: string): Promise<void> {

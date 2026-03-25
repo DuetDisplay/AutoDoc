@@ -21,6 +21,13 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(),
 }))
 
+vi.mock('../crypto', () => ({
+  isEncrypted: vi.fn().mockResolvedValue(false),
+  decryptJSON: vi.fn(),
+  decryptFileToTemp: vi.fn(),
+  encryptJSON: vi.fn(),
+}))
+
 const fsMock = vi.mocked(await import('fs/promises'))
 
 function createMockWhisperManager(ready = true): WhisperManager {

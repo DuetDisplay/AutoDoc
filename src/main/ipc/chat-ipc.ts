@@ -4,6 +4,7 @@ import { join } from 'path'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
 import type { Transcript, MeetingSegments } from '../../shared/types'
+import { decryptJSON, isEncrypted } from '../services/crypto'
 
 const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts and notes.
 
@@ -91,8 +92,10 @@ async function gatherMeetingContext(recordingsBaseDir: string): Promise<string> 
 
     // Prefer segments (structured notes) over raw transcript
     try {
-      const data = await readFile(join(meeting.dir, 'segments.json'), 'utf-8')
-      const segments: MeetingSegments = JSON.parse(data)
+      const sPath = join(meeting.dir, 'segments.json')
+      const segments: MeetingSegments = await isEncrypted(sPath)
+        ? await decryptJSON<MeetingSegments>(sPath)
+        : JSON.parse(await readFile(sPath, 'utf-8'))
 
       for (const [category, items] of Object.entries(segments)) {
         if (items.length === 0) continue
@@ -104,8 +107,10 @@ async function gatherMeetingContext(recordingsBaseDir: string): Promise<string> 
     } catch {
       // Fall back to transcript
       try {
-        const data = await readFile(join(meeting.dir, 'transcript.json'), 'utf-8')
-        const transcripts: Transcript[] = JSON.parse(data)
+        const tPath = join(meeting.dir, 'transcript.json')
+        const transcripts: Transcript[] = await isEncrypted(tPath)
+          ? await decryptJSON<Transcript[]>(tPath)
+          : JSON.parse(await readFile(tPath, 'utf-8'))
         const text = transcripts.map((t) => t.text).join(' ')
         // Truncate long transcripts
         meetingContext += text.slice(0, 2000) + (text.length > 2000 ? '...' : '')

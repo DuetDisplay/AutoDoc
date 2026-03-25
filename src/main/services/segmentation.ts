@@ -4,6 +4,7 @@ import { join } from 'path'
 import type { MeetingSegments, Transcript, SegmentationStatus } from '../../shared/types'
 import type { LLMProvider } from './llm'
 import type { OllamaManager } from './ollama-manager'
+import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 
 export class SegmentationService {
   private queue: string[] = []
@@ -47,6 +48,9 @@ export class SegmentationService {
   async getSegments(meetingId: string): Promise<MeetingSegments | null> {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
     try {
+      if (await isEncrypted(segmentsPath)) {
+        return await decryptJSON<MeetingSegments>(segmentsPath)
+      }
       const data = await readFile(segmentsPath, 'utf-8')
       return JSON.parse(data)
     } catch {
@@ -56,7 +60,7 @@ export class SegmentationService {
 
   async saveSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
-    await writeFile(segmentsPath, JSON.stringify(segments, null, 2))
+    await encryptJSON(segmentsPath, segments)
   }
 
   async scanAndEnqueuePending(): Promise<void> {
@@ -120,14 +124,15 @@ export class SegmentationService {
     this.activeStatus = 'segmenting'
     this.broadcastStatus(meetingId, 'segmenting')
 
-    const transcriptData = await readFile(transcriptPath, 'utf-8')
-    const transcripts: Transcript[] = JSON.parse(transcriptData)
+    const transcripts: Transcript[] = await isEncrypted(transcriptPath)
+      ? await decryptJSON<Transcript[]>(transcriptPath)
+      : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     const fullText = transcripts.map((t) => `[${t.speaker}] ${t.text}`).join('\n')
 
     const segments = await this.llmProvider.summarize(meetingId, fullText)
 
-    await writeFile(segmentsPath, JSON.stringify(segments, null, 2))
+    await encryptJSON(segmentsPath, segments)
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')

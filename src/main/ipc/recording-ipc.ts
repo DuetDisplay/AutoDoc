@@ -4,6 +4,7 @@ import { appendFile, readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
+import { encryptFileInPlace } from '../services/crypto'
 import type { RecordingEntry, RecordingSource, RecordingState } from '../../shared/types'
 
 export function registerRecordingIpc(
@@ -72,7 +73,18 @@ export function registerRecordingIpc(
   ipcMain.handle('recording:stop', () => {
     const result = recordingService.stopRecording()
     broadcastState(recordingService.getState())
-    transcriptionService.enqueue(result.meetingId)
+
+    // Fire-and-forget: encrypt then enqueue transcription
+    ;(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const baseDir = recordingService.getRecordingsBaseDir()
+      const audioPath = join(baseDir, result.meetingId, 'audio.webm')
+      const videoPath = join(baseDir, result.meetingId, 'screen.webm')
+      try { await encryptFileInPlace(audioPath) } catch (err) { console.error('Failed to encrypt audio:', err) }
+      try { await encryptFileInPlace(videoPath) } catch (err) { console.error('Failed to encrypt video:', err) }
+      transcriptionService.enqueue(result.meetingId)
+    })()
+
     return result
   })
 

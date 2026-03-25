@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import type { Transcript, MeetingSegments } from '../../shared/types'
+import { decryptJSON, isEncrypted } from '../services/crypto'
 
 export interface SearchResult {
   meetingId: string
@@ -33,8 +34,10 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
 
       // Search transcripts
       try {
-        const data = await readFile(join(meetingDir, 'transcript.json'), 'utf-8')
-        const transcripts: Transcript[] = JSON.parse(data)
+        const tPath = join(meetingDir, 'transcript.json')
+        const transcripts: Transcript[] = await isEncrypted(tPath)
+          ? await decryptJSON<Transcript[]>(tPath)
+          : JSON.parse(await readFile(tPath, 'utf-8'))
         for (const seg of transcripts) {
           const lower = seg.text.toLowerCase()
           if (terms.every((t) => lower.includes(t))) {
@@ -45,8 +48,10 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
 
       // Search segments
       try {
-        const data = await readFile(join(meetingDir, 'segments.json'), 'utf-8')
-        const segments: MeetingSegments = JSON.parse(data)
+        const sPath = join(meetingDir, 'segments.json')
+        const segments: MeetingSegments = await isEncrypted(sPath)
+          ? await decryptJSON<MeetingSegments>(sPath)
+          : JSON.parse(await readFile(sPath, 'utf-8'))
         for (const [category, items] of Object.entries(segments)) {
           for (const item of items) {
             const combined = `${item.title} ${item.content}`.toLowerCase()

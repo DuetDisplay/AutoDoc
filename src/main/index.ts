@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
 import { stat } from 'fs/promises'
+import { Readable } from 'stream'
+import { isEncrypted, createDecryptStream, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
 import { CalendarService } from './services/calendar'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -92,12 +94,21 @@ app.whenReady().then(async () => {
   const recordingService = new RecordingService()
 
   // Serve recording media files via autodoc-media:// protocol
-  protocol.handle('autodoc-media', (request) => {
+  protocol.handle('autodoc-media', async (request) => {
     const url = new URL(request.url)
     // autodoc-media://{meetingId}/{filename}
     const meetingId = url.hostname
     const filename = url.pathname.slice(1) // remove leading /
     const filePath = join(recordingService.getRecordingsBaseDir(), meetingId, filename)
+
+    if (await isEncrypted(filePath)) {
+      const nodeStream = createDecryptStream(filePath)
+      const webStream = Readable.toWeb(nodeStream) as ReadableStream
+      return new Response(webStream, {
+        headers: { 'Content-Type': 'video/webm' },
+      })
+    }
+
     return net.fetch(`file://${filePath}`)
   })
 
@@ -166,6 +177,11 @@ app.whenReady().then(async () => {
 
   transcriptionService.scanAndEnqueuePending()
   segmentationService.scanAndEnqueuePending()
+
+  cleanupTempFiles().catch(() => {})
+  migrateRecordings(recordingService.getRecordingsBaseDir()).catch((err) => {
+    console.error('Migration failed:', err)
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
