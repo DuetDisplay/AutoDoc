@@ -1,13 +1,14 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, readFile, rename, stat, unlink } from 'fs/promises'
+import { appendFile, readdir, rename, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarService } from '../services/calendar'
-import { encryptJSON, decryptJSON, isEncrypted } from '../services/crypto'
+import { encryptJSON } from '../services/crypto'
+import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
 
 /** Merge two audio files into one using amix filter */
@@ -46,38 +47,6 @@ function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: str
       else reject(new Error(`ffmpeg mux exited with code ${code}: ${stderr.slice(-500)}`))
     })
   })
-}
-
-/** Find calendar event that overlaps with the recording start time (±10min buffer) */
-function matchCalendarEvent(events: CalendarEvent[], recordingStartMs: number): CalendarEvent | null {
-  const buffer = 10 * 60 * 1000 // 10 minutes
-  let best: CalendarEvent | null = null
-  let bestOverlap = 0
-  for (const event of events) {
-    const overlapStart = Math.max(event.startTime - buffer, recordingStartMs)
-    const overlapEnd = Math.min(event.endTime + buffer, recordingStartMs + 1)
-    if (overlapStart <= overlapEnd) {
-      // Prefer the event whose start is closest to the recording start
-      const closeness = Math.abs(event.startTime - recordingStartMs)
-      if (!best || closeness < bestOverlap) {
-        best = event
-        bestOverlap = closeness
-      }
-    }
-  }
-  return best
-}
-
-async function readMetadata(meetingDir: string): Promise<MeetingMetadata | null> {
-  const metaPath = join(meetingDir, 'metadata.json')
-  try {
-    if (await isEncrypted(metaPath)) {
-      return await decryptJSON<MeetingMetadata>(metaPath)
-    }
-    return JSON.parse(await readFile(metaPath, 'utf-8'))
-  } catch {
-    return null
-  }
 }
 
 export function registerRecordingIpc(

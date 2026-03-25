@@ -3,10 +3,14 @@ import { access, readFile, writeFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawn } from 'child_process'
-import type { Transcript, TranscriptionStatus } from '../../shared/types'
+import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
-import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted } from './crypto'
+import { DiarizationService } from './diarization'
+import { alignSpeakers } from './speaker-alignment'
+import { matchCalendarEvent, readMetadata } from './calendar-matcher'
+import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
+import type { CalendarService } from './calendar'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -28,6 +32,8 @@ export class TranscriptionService {
     private whisperManager: WhisperManager,
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
+    private diarizationService: DiarizationService,
+    private calendarService: CalendarService,
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -89,10 +95,11 @@ export class TranscriptionService {
       if (!dirStat?.isDirectory()) continue
 
       const audioPath = join(meetingDir, 'audio.webm')
+      const micPath = join(meetingDir, 'mic.webm')
       const transcriptPath = join(meetingDir, 'transcript.json')
       const errorPath = join(meetingDir, 'transcript.error')
 
-      const hasAudio = await this.fileExists(audioPath)
+      const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
       const hasTranscript = await this.fileExists(transcriptPath)
       const hasError = await this.fileExists(errorPath)
 
@@ -125,18 +132,24 @@ export class TranscriptionService {
 
   private async processJob(meetingId: string): Promise<void> {
     const meetingDir = join(this.recordingsBaseDir, meetingId)
-    const audioWebm = join(meetingDir, 'audio.webm')
     const transcriptPath = join(meetingDir, 'transcript.json')
 
-    if (!(await this.fileExists(audioWebm))) {
+    const micWebm = join(meetingDir, 'mic.webm')
+    const systemWebm = join(meetingDir, 'system.webm')
+    const legacyAudio = join(meetingDir, 'audio.webm')
+
+    const hasMic = await this.fileExists(micWebm)
+    const hasSystem = await this.fileExists(systemWebm)
+    const hasLegacy = await this.fileExists(legacyAudio)
+
+    if (!hasMic && !hasLegacy) {
       return
     }
 
-    // Determine temp file paths
     const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
     const tempAudioWav = `${tempPrefix}.wav`
     const tempWhisperJson = `${tempPrefix}.wav.json`
-    let tempDecryptedAudio: string | null = null
+    const tempFiles: string[] = [tempAudioWav, tempWhisperJson]
 
     try {
       if (!(await this.whisperManager.isReady())) {
@@ -148,18 +161,14 @@ export class TranscriptionService {
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
 
-      // If audio is encrypted, decrypt to temp first
-      let audioInput = audioWebm
-      if (await isEncrypted(audioWebm)) {
-        tempDecryptedAudio = await decryptFileToTemp(audioWebm)
-        audioInput = tempDecryptedAudio
-      }
-
-      await this.audioConverter.convert(
-        audioInput,
-        tempAudioWav,
-        this.whisperManager.getFfmpegPath()
+      // Prepare audio input for whisper
+      const audioInput = await this.prepareWhisperInput(
+        micWebm, systemWebm, legacyAudio,
+        hasMic, hasSystem, hasLegacy,
+        tempPrefix, tempFiles,
       )
+
+      await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
 
       const audioDuration = await this.audioConverter.getDuration(
         tempAudioWav,
@@ -170,21 +179,173 @@ export class TranscriptionService {
 
       const whisperJson = await readFile(tempWhisperJson, 'utf-8')
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
-      const transcripts = this.mapToTranscripts(meetingId, whisperOutput)
+      let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
+
+      // Diarization (only for new two-stream recordings)
+      if (hasMic && hasSystem) {
+        try {
+          this.activeStatus = 'diarizing'
+          this.broadcastStatus(meetingId, 'diarizing')
+
+          const tempSystemWav = `${tempPrefix}-system.wav`
+          tempFiles.push(tempSystemWav)
+          const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
+          await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
+
+          const diarization = await this.diarizationService.diarize(tempSystemWav)
+
+          // Detect mic activity for "me" labeling
+          const tempMicWav = `${tempPrefix}-mic.wav`
+          tempFiles.push(tempMicWav)
+          const micInput = await this.decryptIfNeeded(micWebm, tempFiles)
+          await this.audioConverter.convert(micInput, tempMicWav, this.whisperManager.getFfmpegPath())
+          const micSegments = await this.detectAudioActivity(tempMicWav)
+
+          transcripts = alignSpeakers(transcripts, diarization, micSegments)
+          await this.generateSpeakersJson(meetingId, transcripts)
+        } catch (err) {
+          console.error('Diarization failed, using un-diarized transcript:', err)
+        }
+      }
 
       await encryptJSON(transcripts, transcriptPath)
+
+      // Encrypt raw media files
+      for (const filename of ['mic.webm', 'system.webm', 'screen.webm']) {
+        const filePath = join(meetingDir, filename)
+        try {
+          if ((await this.fileExists(filePath)) && !(await isEncrypted(filePath))) {
+            await encryptFileInPlace(filePath)
+          }
+        } catch (err) {
+          console.error(`Failed to encrypt ${filePath}:`, err)
+        }
+      }
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
       this.onCompleteCallback?.(meetingId)
     } finally {
-      // Clean up all temp files
-      await unlink(tempAudioWav).catch(() => {})
-      await unlink(tempWhisperJson).catch(() => {})
-      if (tempDecryptedAudio) {
-        await unlink(tempDecryptedAudio).catch(() => {})
+      for (const f of tempFiles) {
+        await unlink(f).catch(() => {})
       }
     }
+  }
+
+  private async decryptIfNeeded(filePath: string, tempFiles: string[]): Promise<string> {
+    if (await isEncrypted(filePath)) {
+      const temp = await decryptFileToTemp(filePath)
+      tempFiles.push(temp)
+      return temp
+    }
+    return filePath
+  }
+
+  private async prepareWhisperInput(
+    micWebm: string, systemWebm: string, legacyAudio: string,
+    hasMic: boolean, hasSystem: boolean, _hasLegacy: boolean,
+    tempPrefix: string, tempFiles: string[],
+  ): Promise<string> {
+    if (hasMic) {
+      const micInput = await this.decryptIfNeeded(micWebm, tempFiles)
+      if (hasSystem) {
+        const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
+        const mergedPath = `${tempPrefix}-merged.webm`
+        tempFiles.push(mergedPath)
+        await this.audioConverter.mergeAudio(micInput, systemInput, mergedPath, this.whisperManager.getFfmpegPath())
+        return mergedPath
+      }
+      return micInput
+    }
+    // Legacy single-file format
+    return await this.decryptIfNeeded(legacyAudio, tempFiles)
+  }
+
+  private detectAudioActivity(wavPath: string): Promise<{ start: number; end: number }[]> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.whisperManager.getFfmpegPath(), [
+        '-i', wavPath,
+        '-af', 'silencedetect=noise=-30dB:d=0.5',
+        '-f', 'null', '-',
+      ])
+      let stderr = ''
+      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`ffmpeg silencedetect failed: ${stderr.slice(-500)}`))
+          return
+        }
+        const silenceStarts: number[] = []
+        const silenceEnds: number[] = []
+        for (const match of stderr.matchAll(/silence_start:\s*([\d.]+)/g)) {
+          silenceStarts.push(parseFloat(match[1]))
+        }
+        for (const match of stderr.matchAll(/silence_end:\s*([\d.]+)/g)) {
+          silenceEnds.push(parseFloat(match[1]))
+        }
+
+        const durMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/)
+        const totalDuration = durMatch
+          ? parseInt(durMatch[1]) * 3600 + parseInt(durMatch[2]) * 60 + parseInt(durMatch[3]) + parseFloat('0.' + durMatch[4])
+          : 0
+
+        const active: { start: number; end: number }[] = []
+        let pos = 0
+        for (let i = 0; i < silenceStarts.length; i++) {
+          if (silenceStarts[i] > pos) {
+            active.push({ start: pos, end: silenceStarts[i] })
+          }
+          pos = silenceEnds[i] ?? silenceStarts[i]
+        }
+        if (pos < totalDuration) {
+          active.push({ start: pos, end: totalDuration })
+        }
+
+        resolve(active)
+      })
+    })
+  }
+
+  private async generateSpeakersJson(meetingId: string, transcripts: Transcript[]): Promise<void> {
+    const meetingDir = join(this.recordingsBaseDir, meetingId)
+    const speakersPath = join(meetingDir, 'speakers.json')
+
+    const speakerIds = new Set(transcripts.map((t) => t.speaker))
+
+    let suggestions: string[] = []
+    try {
+      if (this.calendarService.isConnected()) {
+        const metadata = await readMetadata(meetingDir)
+        if (metadata?.startedAt) {
+          const events = await this.calendarService.fetchRecentEvents(30)
+          const matched = matchCalendarEvent(events, metadata.startedAt)
+          if (matched) {
+            suggestions = matched.attendees
+          }
+        }
+      }
+    } catch {
+      // Calendar fetch failed
+    }
+
+    const speakerMap: SpeakerMap = {}
+    let speakerNum = 0
+    for (const id of speakerIds) {
+      if (id === 'me') {
+        speakerMap[id] = { label: 'Me' }
+      } else if (id === 'Speaker') {
+        // Legacy un-diarized segment, skip
+        continue
+      } else {
+        speakerNum++
+        speakerMap[id] = {
+          label: `Speaker ${speakerNum}`,
+          ...(suggestions.length > 0 ? { suggestions } : {}),
+        }
+      }
+    }
+
+    await encryptJSON(speakerMap, speakersPath)
   }
 
   private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {

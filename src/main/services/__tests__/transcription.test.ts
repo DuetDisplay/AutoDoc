@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
+import type { DiarizationService } from '../diarization'
+import type { CalendarService } from '../calendar'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -46,22 +48,45 @@ function createMockWhisperManager(ready = true): WhisperManager {
 function createMockAudioConverter(): AudioConverter {
   return {
     convert: vi.fn().mockResolvedValue(undefined),
+    mergeAudio: vi.fn().mockResolvedValue(undefined),
+    getDuration: vi.fn().mockResolvedValue(60),
   } as unknown as AudioConverter
+}
+
+function createMockDiarizationService(): DiarizationService {
+  return {
+    isReady: vi.fn().mockResolvedValue(false),
+    ensureReady: vi.fn().mockResolvedValue(undefined),
+    diarize: vi.fn().mockResolvedValue({ speakers: [] }),
+  } as unknown as DiarizationService
+}
+
+function createMockCalendarService(): CalendarService {
+  return {
+    isConnected: vi.fn().mockReturnValue(false),
+    fetchRecentEvents: vi.fn().mockResolvedValue([]),
+  } as unknown as CalendarService
 }
 
 describe('TranscriptionService', () => {
   let service: TranscriptionService
   let mockWhisper: WhisperManager
   let mockConverter: AudioConverter
+  let mockDiarization: DiarizationService
+  let mockCalendar: CalendarService
 
   beforeEach(() => {
     vi.clearAllMocks()
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
+    mockDiarization = createMockDiarizationService()
+    mockCalendar = createMockCalendarService()
     service = new TranscriptionService(
       mockWhisper,
       mockConverter,
-      '/mock/home/AutoDoc/recordings'
+      '/mock/home/AutoDoc/recordings',
+      mockDiarization,
+      mockCalendar,
     )
   })
 

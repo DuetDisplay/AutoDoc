@@ -10,6 +10,7 @@ import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
+import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
@@ -111,17 +112,22 @@ app.whenReady().then(async () => {
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const videoPath = join(baseDir, meetingId, 'screen.webm')
-    const audioPath = join(baseDir, meetingId, 'audio.webm')
+    const micPath = join(baseDir, meetingId, 'mic.webm')
+    const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
     const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
-    const hasAudio = await stat(audioPath).then(() => true).catch(() => false)
+    const hasAudio = await stat(micPath).then(() => true).catch(() => false)
+      || await stat(legacyAudioPath).then(() => true).catch(() => false)
     return { hasVideo, hasAudio }
   })
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
+  const diarizationService = new DiarizationService()
   const transcriptionService = new TranscriptionService(
     whisperManager,
     audioConverter,
     recordingService.getRecordingsBaseDir(),
+    diarizationService,
+    calendarService,
   )
   ollamaManager = new OllamaManager()
   const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
