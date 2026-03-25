@@ -43,4 +43,11 @@ export function registerLlmIpc(
       segmentationService.retry(meetingId)
     }
   )
+
+  ipcMain.handle(
+    'segmentation:save-segments',
+    async (_event, meetingId: string, segments: MeetingSegments): Promise<void> => {
+      await segmentationService.saveSegments(meetingId, segments)
+    }
+  )
 }

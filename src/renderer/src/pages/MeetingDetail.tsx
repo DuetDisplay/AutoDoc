@@ -24,6 +24,84 @@ const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
   status_update: 'statusUpdates',
 }
 
+function EditableText({
+  value,
+  onSave,
+  className,
+  as: Tag = 'span',
+}: {
+  value: string
+  onSave: (newValue: string) => void
+  className?: string
+  as?: 'span' | 'div'
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    setDraft(value)
+  }, [value])
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.selectionStart = inputRef.current.value.length
+      // Auto-resize
+      inputRef.current.style.height = 'auto'
+      inputRef.current.style.height = inputRef.current.scrollHeight + 'px'
+    }
+  }, [editing])
+
+  const handleBlur = () => {
+    setEditing(false)
+    const trimmed = draft.trim()
+    if (trimmed && trimmed !== value) {
+      onSave(trimmed)
+    } else {
+      setDraft(value)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      inputRef.current?.blur()
+    }
+    if (e.key === 'Escape') {
+      setDraft(value)
+      setEditing(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <textarea
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          e.target.style.height = 'auto'
+          e.target.style.height = e.target.scrollHeight + 'px'
+        }}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className={`${className} bg-transparent border-b border-sage/40 focus:border-sage outline-none resize-none w-full`}
+        rows={1}
+      />
+    )
+  }
+
+  return (
+    <Tag
+      onClick={() => setEditing(true)}
+      className={`${className} cursor-text hover:bg-bg-accent/60 rounded px-0.5 -mx-0.5 transition-colors`}
+    >
+      {value}
+    </Tag>
+  )
+}
+
 export function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const [activeTab, setActiveTab] = useState<Tab>('notes')
@@ -33,6 +111,7 @@ export function MeetingDetail() {
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
 
   const handleSeek = useCallback((ms: number) => {
     if (mediaRef.current) {
@@ -40,6 +119,72 @@ export function MeetingDetail() {
       mediaRef.current.play()
     }
   }, [])
+
+  const saveSegments = useCallback(
+    (updated: MeetingSegments) => {
+      setSegments(updated)
+      // Debounce save to disk
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = setTimeout(() => {
+        if (id) {
+          window.electronAPI.invoke('segmentation:save-segments', id, updated)
+        }
+      }, 500)
+    },
+    [id],
+  )
+
+  const updateSegmentField = useCallback(
+    (category: SegmentCategory, index: number, field: 'title' | 'content', value: string) => {
+      if (!segments) return
+      const key = CATEGORY_TO_KEY[category]
+      const updated = {
+        ...segments,
+        [key]: segments[key].map((item, i) =>
+          i === index ? { ...item, [field]: value } : item,
+        ),
+      }
+      saveSegments(updated)
+    },
+    [segments, saveSegments],
+  )
+
+  const deleteSegment = useCallback(
+    (category: SegmentCategory, index: number) => {
+      if (!segments) return
+      const key = CATEGORY_TO_KEY[category]
+      const updated = {
+        ...segments,
+        [key]: segments[key].filter((_, i) => i !== index),
+      }
+      saveSegments(updated)
+    },
+    [segments, saveSegments],
+  )
+
+  const addSegment = useCallback(
+    (category: SegmentCategory) => {
+      if (!segments || !id) return
+      const key = CATEGORY_TO_KEY[category]
+      const newItem: Segment = {
+        id: `${id}-${key}-${Date.now()}`,
+        meetingId: id,
+        category,
+        title: 'New item',
+        content: 'Add details here...',
+        assignee: null,
+        deadline: null,
+        sourceStartMs: 0,
+        sourceEndMs: 0,
+      }
+      const updated = {
+        ...segments,
+        [key]: [...segments[key], newItem],
+      }
+      saveSegments(updated)
+    },
+    [segments, id, saveSegments],
+  )
 
   useEffect(() => {
     if (!id) return
@@ -77,6 +222,7 @@ export function MeetingDetail() {
     return () => {
       unsubTranscription()
       unsubSegmentation()
+      clearTimeout(saveTimeoutRef.current)
     }
   }, [id])
 
@@ -137,15 +283,25 @@ export function MeetingDetail() {
                   key={category}
                   className="bg-bg-card border border-border rounded-xl p-4"
                 >
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-ink" />
-                    <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
-                      {SEGMENT_LABELS[category]}
-                    </span>
-                    {items.length > 0 && (
-                      <span className="text-[10px] text-ink-faint ml-1">
-                        ({items.length})
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-ink" />
+                      <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
+                        {SEGMENT_LABELS[category]}
                       </span>
+                      {items.length > 0 && (
+                        <span className="text-[10px] text-ink-faint ml-1">
+                          ({items.length})
+                        </span>
+                      )}
+                    </div>
+                    {segmentationStatus === 'complete' && (
+                      <button
+                        onClick={() => addSegment(category)}
+                        className="text-[11px] text-ink-faint hover:text-sage transition-colors"
+                      >
+                        + Add
+                      </button>
                     )}
                   </div>
                   {items.length === 0 ? (
@@ -158,14 +314,28 @@ export function MeetingDetail() {
                     </p>
                   ) : (
                     <div className="flex flex-col gap-2.5">
-                      {items.map((item) => (
-                        <div key={item.id} className="flex flex-col gap-0.5">
-                          <span className="text-[12.5px] font-semibold text-ink">
-                            {item.title}
-                          </span>
-                          <span className="text-[12px] text-ink-muted leading-relaxed">
-                            {item.content}
-                          </span>
+                      {items.map((item, index) => (
+                        <div key={item.id} className="group flex flex-col gap-0.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <EditableText
+                              value={item.title}
+                              onSave={(v) => updateSegmentField(category, index, 'title', v)}
+                              className="text-[12.5px] font-semibold text-ink flex-1"
+                            />
+                            <button
+                              onClick={() => deleteSegment(category, index)}
+                              className="shrink-0 opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                              title="Delete"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                          <EditableText
+                            value={item.content}
+                            onSave={(v) => updateSegmentField(category, index, 'content', v)}
+                            className="text-[12px] text-ink-muted leading-relaxed"
+                            as="div"
+                          />
                           {(item.assignee || item.deadline) && (
                             <div className="flex gap-3 mt-0.5">
                               {item.assignee && (

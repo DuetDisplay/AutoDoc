@@ -37,6 +37,7 @@ export interface IpcInvokeEvents {
   'segmentation:get-status': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
+  'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
   'recording:get-media': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
@@ -67,6 +68,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-status': SegmentationStatus
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
+  'segmentation:save-segments': void
   'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
   'search:query': SearchResult[]
   'chat:send': string

@@ -54,6 +54,11 @@ export class SegmentationService {
     }
   }
 
+  async saveSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
+    const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
+    await writeFile(segmentsPath, JSON.stringify(segments, null, 2))
+  }
+
   async scanAndEnqueuePending(): Promise<void> {
     const { readdir, stat } = await import('fs/promises')
     let dirs: string[]
