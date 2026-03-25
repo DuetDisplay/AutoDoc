@@ -28,6 +28,11 @@ describe('TranscriptionBadge', () => {
     expect(screen.getByText('Transcribing 42%')).toBeInTheDocument()
   })
 
+  it('shows "Identifying speakers..." for diarizing status', () => {
+    render(<TranscriptionBadge status="diarizing" />)
+    expect(screen.getByText('Identifying speakers...')).toBeInTheDocument()
+  })
+
   it('shows "Transcribed" for complete status', () => {
     render(<TranscriptionBadge status="complete" />)
     expect(screen.getByText('Transcribed')).toBeInTheDocument()
