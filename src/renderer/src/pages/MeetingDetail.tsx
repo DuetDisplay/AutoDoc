@@ -117,6 +117,7 @@ export function MeetingDetail() {
   const [activeTab, setActiveTab] = useState<Tab>('notes')
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
+  const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
@@ -212,6 +213,7 @@ export function MeetingDetail() {
       (payload) => {
         if (payload.meetingId === id) {
           setTranscriptionStatus(payload.status)
+          setTranscriptionProgress(payload.progress)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
           }
@@ -287,7 +289,7 @@ export function MeetingDetail() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <TranscriptionBadge status={transcriptionStatus} onRetry={handleRetryTranscription} />
+          <TranscriptionBadge status={transcriptionStatus} progress={transcriptionProgress} onRetry={handleRetryTranscription} />
           <SegmentationBadge status={segmentationStatus} onRetry={handleRetrySegmentation} />
         </div>
       </div>

@@ -161,7 +161,7 @@ export class TranscriptionService {
         this.whisperManager.getFfmpegPath()
       )
 
-      await this.runWhisper(tempAudioWav)
+      await this.runWhisper(tempAudioWav, meetingId)
 
       const whisperJson = await readFile(tempWhisperJson, 'utf-8')
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
@@ -182,7 +182,7 @@ export class TranscriptionService {
     }
   }
 
-  private runWhisper(audioWavPath: string): Promise<void> {
+  private runWhisper(audioWavPath: string, meetingId: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const timeout = 30 * 60 * 1000
       let stderr = ''
@@ -192,6 +192,7 @@ export class TranscriptionService {
         '-f', audioWavPath,
         '-oj',
         '-l', 'en',
+        '-pp',
       ])
 
       const timer = setTimeout(() => {
@@ -200,7 +201,14 @@ export class TranscriptionService {
       }, timeout)
 
       proc.stderr.on('data', (data: Buffer) => {
-        stderr += data.toString()
+        const chunk = data.toString()
+        stderr += chunk
+        // Parse whisper.cpp progress: "whisper_print_progress_callback: progress = 42%"
+        const match = chunk.match(/progress\s*=\s*(\d+)%/)
+        if (match) {
+          const progress = parseInt(match[1], 10)
+          this.broadcastStatus(meetingId, 'transcribing', progress)
+        }
       })
 
       proc.on('close', (code: number | null) => {
@@ -232,10 +240,10 @@ export class TranscriptionService {
     this.broadcastStatus(meetingId, 'failed')
   }
 
-  private broadcastStatus(meetingId: string, status: TranscriptionStatus): void {
+  private broadcastStatus(meetingId: string, status: TranscriptionStatus, progress?: number): void {
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
-      win.webContents.send('transcription:status-changed', { meetingId, status })
+      win.webContents.send('transcription:status-changed', { meetingId, status, progress })
     }
   }
 

@@ -15,7 +15,7 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: str
   },
   transcribing: {
     label: 'Transcribing...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse',
+    className: 'text-ink-muted bg-bg-accent',
   },
   complete: {
     label: 'Transcribed',
@@ -29,18 +29,28 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: str
 
 interface TranscriptionBadgeProps {
   status: TranscriptionStatus
+  progress?: number
   onRetry?: () => void
 }
 
-export function TranscriptionBadge({ status, onRetry }: TranscriptionBadgeProps) {
+export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
+  const showProgress = status === 'transcribing' && progress != null
 
   return (
     <span
-      className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${config.className}`}
+      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className}`}
       onClick={status === 'failed' ? onRetry : undefined}
     >
-      {config.label}
+      {showProgress && (
+        <span
+          className="absolute inset-0 bg-sage/20 transition-[width] duration-500 ease-linear"
+          style={{ width: `${progress}%` }}
+        />
+      )}
+      <span className="relative">
+        {showProgress ? `Transcribing ${progress}%` : config.label}
+      </span>
     </span>
   )
 }

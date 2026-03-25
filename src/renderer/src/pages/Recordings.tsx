@@ -17,6 +17,7 @@ function formatDuration(seconds: number): string {
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
+  const [transcriptionProgress, setTranscriptionProgress] = useState<Record<string, number | undefined>>({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
@@ -55,6 +56,10 @@ export function Recordings() {
               : rec
           )
         )
+        setTranscriptionProgress((prev) => ({
+          ...prev,
+          [payload.meetingId]: payload.progress,
+        }))
       }
     )
     const unsubSegmentation = window.electronAPI.on(
@@ -133,6 +138,7 @@ export function Recordings() {
                   <div className="flex items-center gap-2">
                     <TranscriptionBadge
                       status={rec.transcriptionStatus}
+                      progress={transcriptionProgress[rec.meetingId]}
                       onRetry={() => handleRetryTranscription(rec.meetingId)}
                     />
                     {segmentationStatuses[rec.meetingId] && (

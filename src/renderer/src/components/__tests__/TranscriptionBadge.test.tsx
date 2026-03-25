@@ -18,9 +18,14 @@ describe('TranscriptionBadge', () => {
     expect(screen.getByText('Downloading model...')).toBeInTheDocument()
   })
 
-  it('shows "Transcribing..." for transcribing status', () => {
+  it('shows "Transcribing..." for transcribing status without progress', () => {
     render(<TranscriptionBadge status="transcribing" />)
     expect(screen.getByText('Transcribing...')).toBeInTheDocument()
+  })
+
+  it('shows percentage when transcribing with progress', () => {
+    render(<TranscriptionBadge status="transcribing" progress={42} />)
+    expect(screen.getByText('Transcribing 42%')).toBeInTheDocument()
   })
 
   it('shows "Transcribed" for complete status', () => {
