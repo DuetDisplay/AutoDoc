@@ -4,7 +4,7 @@ import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { spawn, execFile, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
-import { RECORDING_DIR_NAME, MODELS_SUBDIR } from '../../shared/constants'
+import { MODELS_SUBDIR } from '../../shared/constants'
 
 const DEFAULT_MODEL = 'llama3'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
@@ -53,7 +53,7 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getModelsDir(): string {
-    return join(app.getPath('home'), RECORDING_DIR_NAME, MODELS_SUBDIR)
+    return join(app.getPath('userData'), MODELS_SUBDIR)
   }
 
   private getBinaryPath(): string {
@@ -61,7 +61,7 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getOllamaDataDir(): string {
-    return join(app.getPath('home'), RECORDING_DIR_NAME, 'ollama-data')
+    return join(app.getPath('userData'), 'ollama-data')
   }
 
   async isReady(): Promise<boolean> {

@@ -8,6 +8,15 @@ import { SegmentationBadge } from '../components/SegmentationBadge'
 
 type Tab = 'notes' | 'transcript'
 
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
 const CATEGORY_ORDER: SegmentCategory[] = [
   'decision',
   'action_item',
@@ -110,6 +119,7 @@ export function MeetingDetail() {
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
+  const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
@@ -190,6 +200,7 @@ export function MeetingDetail() {
   useEffect(() => {
     if (!id) return
 
+    window.electronAPI.invoke('recording:get-detail', id).then(setDetail)
     window.electronAPI.invoke('transcription:get-status', id).then(setTranscriptionStatus)
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
@@ -253,9 +264,27 @@ export function MeetingDetail() {
               AI Notes
             </button>
             <span className="text-ink-faint">/</span>
-            <span className="text-ink font-semibold">Meeting</span>
+            <span className="text-ink font-semibold">{detail?.title ?? 'Meeting'}</span>
           </div>
-          <p className="text-[11px] text-ink-faint mt-0.5">ID: {id}</p>
+          {detail && (
+            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
+              <span>
+                {new Date(detail.date).toLocaleDateString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </span>
+              {detail.durationSeconds != null && (
+                <>
+                  <span className="text-border">|</span>
+                  <span>{formatDuration(detail.durationSeconds)}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <TranscriptionBadge status={transcriptionStatus} onRetry={handleRetryTranscription} />

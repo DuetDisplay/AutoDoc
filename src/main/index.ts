@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
-import { stat } from 'fs/promises'
+import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { Readable } from 'stream'
 import { isEncrypted, createDecryptStream, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
@@ -175,12 +175,12 @@ app.whenReady().then(async () => {
     console.error('Failed to start Ollama:', err)
   })
 
-  // Clean up stale temp files, then migrate unencrypted recordings before enqueuing work
+  // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
   cleanupTempFiles().catch(() => {})
-  migrateRecordings(recordingService.getRecordingsBaseDir())
-    .catch((err) => {
-      console.error('Migration failed:', err)
-    })
+  migrateDataDir()
+    .catch((err) => console.error('Data dir migration failed:', err))
+    .then(() => migrateRecordings(recordingService.getRecordingsBaseDir()))
+    .catch((err) => console.error('Encryption migration failed:', err))
     .finally(() => {
       transcriptionService.scanAndEnqueuePending()
       segmentationService.scanAndEnqueuePending()
@@ -198,3 +198,61 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+/**
+ * One-time migration: move data from legacy ~/AutoDoc/ to app.getPath('userData').
+ * Moves recordings/, models/, and ollama-data/ subdirectories.
+ */
+async function migrateDataDir(): Promise<void> {
+  const legacyBase = join(app.getPath('home'), 'AutoDoc')
+  try {
+    await access(legacyBase)
+  } catch {
+    return // No legacy dir, nothing to migrate
+  }
+
+  const newBase = app.getPath('userData')
+  const subdirs = ['recordings', 'models', 'ollama-data']
+
+  for (const subdir of subdirs) {
+    const src = join(legacyBase, subdir)
+    const dest = join(newBase, subdir)
+    try {
+      await access(src)
+    } catch {
+      continue // Subdir doesn't exist in legacy location
+    }
+    try {
+      await access(dest)
+      // Dest already exists — merge by moving individual entries
+      const entries = await readdir(src)
+      for (const entry of entries) {
+        const entrySrc = join(src, entry)
+        const entryDest = join(dest, entry)
+        try {
+          await access(entryDest)
+          // Already exists at dest, skip
+        } catch {
+          await rename(entrySrc, entryDest)
+        }
+      }
+      // Remove legacy subdir if now empty
+      const remaining = await readdir(src)
+      if (remaining.length === 0) await rmdir(src)
+    } catch {
+      // Dest doesn't exist — simple rename
+      await mkdir(newBase, { recursive: true })
+      await rename(src, dest)
+    }
+  }
+
+  // Remove legacy base dir if now empty
+  try {
+    const remaining = await readdir(legacyBase)
+    if (remaining.length === 0) await rmdir(legacyBase)
+  } catch {
+    // Ignore
+  }
+
+  console.log('Migrated data from ~/AutoDoc/ to', newBase)
+}

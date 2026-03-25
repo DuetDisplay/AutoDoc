@@ -39,6 +39,7 @@ export interface IpcInvokeEvents {
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
   'recording:get-media': [meetingId: string]
+  'recording:get-detail': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
   'detection:dismiss': []
@@ -57,7 +58,7 @@ export interface IpcInvokeReturns {
   'recording:list': RecordingEntry[]
   'recording:get-sources': RecordingSource[]
   'recording:start': RecordingPaths
-  'recording:stop': { meetingId: string; startedAt: number }
+  'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:get-state': RecordingState
   'recording:save-chunk': void
   'transcription:get-status': TranscriptionStatus
@@ -70,6 +71,7 @@ export interface IpcInvokeReturns {
   'segmentation:retry': void
   'segmentation:save-segments': void
   'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
+  'recording:get-detail': { title: string; sourceName: string | null; date: number; durationSeconds: number | null }
   'search:query': SearchResult[]
   'chat:send': string
   'detection:dismiss': void

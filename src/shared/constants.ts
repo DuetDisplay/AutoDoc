@@ -30,7 +30,6 @@ export const MEETING_URL_PATTERNS = [
   /webex\.com\/meet/i,
 ]
 
-export const RECORDING_DIR_NAME = 'AutoDoc'
 export const RECORDING_SUBDIR = 'recordings'
 export const MODELS_SUBDIR = 'models'
 

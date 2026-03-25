@@ -82,6 +82,13 @@ export interface RecordingEntry {
   transcriptionStatus: TranscriptionStatus
 }
 
+export interface MeetingMetadata {
+  sourceName: string | null
+  startedAt: number
+  stoppedAt: number
+  durationSeconds: number
+}
+
 export interface RecordingSource {
   id: string
   name: string

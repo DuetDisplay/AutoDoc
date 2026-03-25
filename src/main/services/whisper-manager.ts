@@ -4,7 +4,7 @@ import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { execSync } from 'child_process'
 import { EventEmitter } from 'events'
-import { RECORDING_DIR_NAME, MODELS_SUBDIR } from '../../shared/constants'
+import { MODELS_SUBDIR } from '../../shared/constants'
 
 export interface DownloadProgress {
   file: string
@@ -15,7 +15,7 @@ export interface DownloadProgress {
 
 export class WhisperManager extends EventEmitter {
   getModelsDir(): string {
-    return join(app.getPath('home'), RECORDING_DIR_NAME, MODELS_SUBDIR)
+    return join(app.getPath('userData'), MODELS_SUBDIR)
   }
 
   getWhisperPath(): string {

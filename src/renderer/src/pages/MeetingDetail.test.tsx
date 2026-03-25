@@ -12,6 +12,7 @@ beforeEach(() => {
       if (channel === 'transcription:get-transcript') return Promise.resolve([])
       if (channel === 'segmentation:get-status') return Promise.resolve('pending')
       if (channel === 'segmentation:get-segments') return Promise.resolve(null)
+      if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
       if (channel === 'recording:get-media') return Promise.resolve({ hasVideo: false, hasAudio: false })
       return Promise.resolve(undefined)
     }),

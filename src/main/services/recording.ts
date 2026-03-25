@@ -3,7 +3,7 @@ import { mkdir } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { RecordingState, RecordingPaths } from '../../shared/types'
-import { RECORDING_DIR_NAME, RECORDING_SUBDIR } from '../../shared/constants'
+import { RECORDING_SUBDIR } from '../../shared/constants'
 
 export class RecordingService {
   private state: RecordingState = {
@@ -43,12 +43,12 @@ export class RecordingService {
     }
   }
 
-  stopRecording(): { meetingId: string; startedAt: number } {
+  stopRecording(): { meetingId: string; startedAt: number; sourceName: string | null } {
     if (!this.state.isRecording || !this.state.meetingId || !this.state.startedAt) {
       throw new Error('Not recording')
     }
 
-    const { meetingId, startedAt } = this.state
+    const { meetingId, startedAt, sourceName } = this.state
 
     this.state = {
       isRecording: false,
@@ -58,11 +58,11 @@ export class RecordingService {
       sourceName: null,
     }
 
-    return { meetingId, startedAt }
+    return { meetingId, startedAt, sourceName }
   }
 
   getRecordingsBaseDir(): string {
-    return join(app.getPath('home'), RECORDING_DIR_NAME, RECORDING_SUBDIR)
+    return join(app.getPath('userData'), RECORDING_SUBDIR)
   }
 
   private getMeetingDir(meetingId: string): string {
