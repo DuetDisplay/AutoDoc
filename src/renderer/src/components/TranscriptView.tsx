@@ -10,9 +10,10 @@ function formatTimestamp(ms: number): string {
 interface TranscriptViewProps {
   segments: Transcript[]
   status: TranscriptionStatus
+  onSeek?: (ms: number) => void
 }
 
-export function TranscriptView({ segments, status }: TranscriptViewProps) {
+export function TranscriptView({ segments, status, onSeek }: TranscriptViewProps) {
   if (status === 'pending' || status === 'queued') {
     return (
       <p className="text-[12px] text-ink-muted">
@@ -63,9 +64,18 @@ export function TranscriptView({ segments, status }: TranscriptViewProps) {
     <div className="flex flex-col gap-3">
       {segments.map((seg) => (
         <div key={seg.id} className="flex gap-3">
-          <span className="text-[11px] text-ink-faint font-mono w-10 shrink-0 pt-0.5">
-            {formatTimestamp(seg.startMs)}
-          </span>
+          {onSeek ? (
+            <button
+              onClick={() => onSeek(seg.startMs)}
+              className="text-[11px] text-ink-faint font-mono w-10 shrink-0 pt-0.5 text-left hover:text-ink hover:underline transition-colors cursor-pointer"
+            >
+              {formatTimestamp(seg.startMs)}
+            </button>
+          ) : (
+            <span className="text-[11px] text-ink-faint font-mono w-10 shrink-0 pt-0.5">
+              {formatTimestamp(seg.startMs)}
+            </span>
+          )}
           <p className="text-[12.5px] text-ink leading-relaxed">
             {seg.text}
           </p>

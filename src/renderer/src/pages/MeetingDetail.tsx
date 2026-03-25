@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
 import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus } from '../../../shared/types'
@@ -32,6 +32,14 @@ export function MeetingDetail() {
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+
+  const handleSeek = useCallback((ms: number) => {
+    if (mediaRef.current) {
+      mediaRef.current.currentTime = ms / 1000
+      mediaRef.current.play()
+    }
+  }, [])
 
   useEffect(() => {
     if (!id) return
@@ -185,6 +193,7 @@ export function MeetingDetail() {
             {media?.hasVideo && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
                 <video
+                  ref={mediaRef as React.RefObject<HTMLVideoElement>}
                   controls
                   className="w-full"
                   src={`autodoc-media://${id}/screen.webm`}
@@ -194,13 +203,18 @@ export function MeetingDetail() {
             {media?.hasAudio && !media?.hasVideo && (
               <div className="bg-bg-card border border-border rounded-xl p-4">
                 <audio
+                  ref={mediaRef as React.RefObject<HTMLAudioElement>}
                   controls
                   className="w-full"
                   src={`autodoc-media://${id}/audio.webm`}
                 />
               </div>
             )}
-            <TranscriptView segments={transcript} status={transcriptionStatus} />
+            <TranscriptView
+              segments={transcript}
+              status={transcriptionStatus}
+              onSeek={(media?.hasVideo || media?.hasAudio) ? handleSeek : undefined}
+            />
           </div>
         )}
       </div>
