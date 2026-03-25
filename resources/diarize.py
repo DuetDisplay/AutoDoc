@@ -27,11 +27,17 @@ def main():
 
     # Use pretrained pipeline — downloads model on first use
     # Model is cached in ~/.cache/torch/pyannote/ by default
-    hf_token = os.environ.get("HF_TOKEN", "")
+    hf_token = os.environ.get("HF_TOKEN", "") or None
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
-        use_auth_token=hf_token if hf_token else None,
+        token=hf_token,
     )
+
+    if pipeline is None:
+        print("Failed to load pipeline. The pyannote/speaker-diarization-3.1 model is gated.", file=sys.stderr)
+        print("1. Accept conditions at https://hf.co/pyannote/speaker-diarization-3.1", file=sys.stderr)
+        print("2. Set HF_TOKEN environment variable with your HuggingFace token", file=sys.stderr)
+        sys.exit(1)
 
     # Run diarization
     diarization = pipeline(wav_path)
