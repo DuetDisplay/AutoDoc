@@ -19,6 +19,7 @@ import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
+import { registerSpeakersIpc } from './ipc/speakers-ipc'
 
 let ollamaManager: OllamaManager | null = null
 
@@ -157,6 +158,7 @@ app.whenReady().then(async () => {
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
+  registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {

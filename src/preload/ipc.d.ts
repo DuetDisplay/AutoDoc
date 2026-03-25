@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus } from '../shared/types'
+import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap } from '../shared/types'
 
 export interface SearchResult {
   meetingId: string
@@ -43,6 +43,8 @@ export interface IpcInvokeEvents {
   'search:query': [query: string]
   'chat:send': [question: string]
   'detection:dismiss': []
+  'speakers:get': [meetingId: string]
+  'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
 }
 
 export interface IpcInvokeReturns {
@@ -75,6 +77,8 @@ export interface IpcInvokeReturns {
   'search:query': SearchResult[]
   'chat:send': string
   'detection:dismiss': void
+  'speakers:get': SpeakerMap
+  'speakers:rename': void
 }
 
 export interface IpcOnEvents {
