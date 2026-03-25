@@ -29,10 +29,11 @@ describe('EventCard', () => {
     expect(screen.getByText(/Google Meet/i)).toBeInTheDocument()
   })
 
-  it('shows active auto-record badge when enabled', () => {
+  it('shows active auto-record indicator when enabled', () => {
     const autoRecordEvent = { ...mockEvent, autoRecord: 'once' as const }
     render(<EventCard event={autoRecordEvent} onSetAutoRecord={vi.fn()} />)
-    expect(screen.getByText('Auto-record')).toBeInTheDocument()
+    expect(screen.getByText('Auto-recording')).toBeInTheDocument()
+    expect(screen.getByText('On')).toBeInTheDocument()
   })
 
   it('toggles auto-record on for non-recurring event', async () => {
