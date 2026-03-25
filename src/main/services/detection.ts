@@ -102,8 +102,6 @@ export class DetectionService {
       },
     })
 
-    // Also send to in-app banner as a fallback
-    this.broadcast('detection:meeting-detected', { title, body })
   }
 
   private findMatchingEvent(): CalendarEvent | null {

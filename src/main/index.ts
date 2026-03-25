@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
+import { stat } from 'fs/promises'
 import { is } from '@electron-toolkit/utils'
 import { CalendarService } from './services/calendar'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -16,6 +17,10 @@ import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 
 let ollamaManager: OllamaManager | null = null
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
+])
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -83,6 +88,25 @@ app.whenReady().then(async () => {
   registerCalendarIpc(calendarService)
 
   const recordingService = new RecordingService()
+
+  // Serve recording media files via autodoc-media:// protocol
+  protocol.handle('autodoc-media', (request) => {
+    const url = new URL(request.url)
+    // autodoc-media://{meetingId}/{filename}
+    const meetingId = url.hostname
+    const filename = url.pathname.slice(1) // remove leading /
+    const filePath = join(recordingService.getRecordingsBaseDir(), meetingId, filename)
+    return net.fetch(`file://${filePath}`)
+  })
+
+  ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const videoPath = join(baseDir, meetingId, 'screen.webm')
+    const audioPath = join(baseDir, meetingId, 'audio.webm')
+    const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
+    const hasAudio = await stat(audioPath).then(() => true).catch(() => false)
+    return { hasVideo, hasAudio }
+  })
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
   const transcriptionService = new TranscriptionService(

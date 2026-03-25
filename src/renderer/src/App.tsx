@@ -22,7 +22,10 @@ export default function App() {
       if (isRecording) return
       try {
         const sources = await fetchSources()
+        // Try meeting window first, fall back to first screen capture
         const detected = detectMeetingWindow(sources)
+          ?? sources.find((s) => s.id.startsWith('screen:'))
+          ?? sources[0]
         if (detected) {
           await handleStart(detected.id, detected.name)
         }

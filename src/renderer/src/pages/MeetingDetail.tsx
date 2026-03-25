@@ -31,6 +31,7 @@ export function MeetingDetail() {
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
+  const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -39,6 +40,7 @@ export function MeetingDetail() {
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
     window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+    window.electronAPI.invoke('recording:get-media', id).then(setMedia)
 
     const unsubTranscription = window.electronAPI.on(
       'transcription:status-changed',
@@ -179,7 +181,27 @@ export function MeetingDetail() {
             })}
           </div>
         ) : (
-          <TranscriptView segments={transcript} status={transcriptionStatus} />
+          <div className="flex flex-col gap-4">
+            {media?.hasVideo && (
+              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
+                <video
+                  controls
+                  className="w-full"
+                  src={`autodoc-media://${id}/screen.webm`}
+                />
+              </div>
+            )}
+            {media?.hasAudio && !media?.hasVideo && (
+              <div className="bg-bg-card border border-border rounded-xl p-4">
+                <audio
+                  controls
+                  className="w-full"
+                  src={`autodoc-media://${id}/audio.webm`}
+                />
+              </div>
+            )}
+            <TranscriptView segments={transcript} status={transcriptionStatus} />
+          </div>
         )}
       </div>
     </div>

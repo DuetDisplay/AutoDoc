@@ -30,6 +30,7 @@ export interface IpcInvokeEvents {
   'segmentation:get-status': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
+  'recording:get-media': [meetingId: string]
   'detection:dismiss': []
 }
 
@@ -57,6 +58,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-status': SegmentationStatus
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
+  'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
   'detection:dismiss': void
 }
 
