@@ -181,30 +181,23 @@ export class TranscriptionService {
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
       let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
 
-      // Diarization (only for new two-stream recordings)
+      // Speaker labeling (two-stream: mic = "me", system = remote)
       if (hasMic && hasSystem) {
         try {
           this.activeStatus = 'diarizing'
           this.broadcastStatus(meetingId, 'diarizing')
 
-          const tempSystemWav = `${tempPrefix}-system.wav`
-          tempFiles.push(tempSystemWav)
-          const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
-          await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
-
-          const diarization = await this.diarizationService.diarize(tempSystemWav)
-
-          // Detect mic activity for "me" labeling
+          // Detect mic activity to label "me" vs remote speakers
           const tempMicWav = `${tempPrefix}-mic.wav`
           tempFiles.push(tempMicWav)
           const micInput = await this.decryptIfNeeded(micWebm, tempFiles)
           await this.audioConverter.convert(micInput, tempMicWav, this.whisperManager.getFfmpegPath())
           const micSegments = await this.detectAudioActivity(tempMicWav)
 
-          transcripts = alignSpeakers(transcripts, diarization, micSegments)
+          transcripts = alignSpeakers(transcripts, null, micSegments)
           await this.generateSpeakersJson(meetingId, transcripts)
         } catch (err) {
-          console.error('Diarization failed, using un-diarized transcript:', err)
+          console.error('Speaker labeling failed:', err)
         }
       }
 

@@ -19,6 +19,17 @@ export function alignSpeakers(
   diarization: DiarizationResult | null,
   micSegments: TimeSegment[] | null,
 ): Transcript[] {
+  // Two-stream only (no ML diarization): label by mic activity
+  if ((!diarization || diarization.speakers.length === 0) && micSegments) {
+    return transcripts.map((t) => {
+      let micOverlap = 0
+      for (const mic of micSegments) {
+        micOverlap += overlap(t.startMs, t.endMs, mic.start, mic.end)
+      }
+      return { ...t, speaker: micOverlap > 0 ? 'me' : 'speaker_1' }
+    })
+  }
+
   if (!diarization || diarization.speakers.length === 0) {
     return transcripts
   }

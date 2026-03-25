@@ -54,7 +54,7 @@ describe('alignSpeakers', () => {
     expect(result[1].speaker).toBe('speaker_1')
   })
 
-  it('returns transcripts unchanged when diarization is null', () => {
+  it('returns transcripts unchanged when diarization is null and no mic segments', () => {
     const transcripts: Transcript[] = [
       makeTranscript({ id: 't1', startMs: 0, endMs: 5000 }),
     ]
@@ -62,6 +62,20 @@ describe('alignSpeakers', () => {
     const result = alignSpeakers(transcripts, null, null)
 
     expect(result[0].speaker).toBe('Speaker')
+  })
+
+  it('does binary split with mic segments when no diarization', () => {
+    const transcripts: Transcript[] = [
+      makeTranscript({ id: 't1', startMs: 0, endMs: 3000 }),
+      makeTranscript({ id: 't2', startMs: 3000, endMs: 6000 }),
+    ]
+
+    const micSegments = [{ start: 0, end: 3.0 }]
+
+    const result = alignSpeakers(transcripts, null, micSegments)
+
+    expect(result[0].speaker).toBe('me')
+    expect(result[1].speaker).toBe('speaker_1')
   })
 
   it('handles empty diarization speakers', () => {
