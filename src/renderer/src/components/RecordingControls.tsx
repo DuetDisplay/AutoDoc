@@ -57,7 +57,7 @@ export function RecordingControls({
       <button
         onClick={handleRecordClick}
         disabled={loading}
-        className="text-[11px] font-medium text-white bg-ink px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+        className="text-[11px] font-medium text-white bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
       >
         {loading ? 'Loading...' : 'Record'}
       </button>

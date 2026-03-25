@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - 'resources/**'
 win:
-  executableName: murmur
+  executableName: autodoc
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
