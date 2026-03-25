@@ -3,6 +3,7 @@ import { execFile } from 'child_process'
 import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
 import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
+import { isAutoRecordEnabled } from './auto-record-store'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
@@ -52,7 +53,13 @@ export class DetectionService {
       this.micWasActive = true
       if (!this.prompted) {
         this.prompted = true
-        this.showPrompt()
+        const matchingEvent = this.findMatchingEvent()
+        if (matchingEvent && isAutoRecordEnabled(matchingEvent.googleEventId, matchingEvent.recurringEventId)) {
+          // Auto-record: skip prompt, start recording directly
+          this.broadcast('detection:auto-record', {})
+        } else {
+          this.showPrompt()
+        }
       }
     } else if (!micActive && this.micWasActive) {
       this.micWasActive = false

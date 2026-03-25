@@ -1,4 +1,4 @@
-import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus } from '../shared/types'
+import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus } from '../shared/types'
 
 export interface IpcSendEvents {
   'window:minimize': []
@@ -13,7 +13,7 @@ export interface IpcInvokeEvents {
   'calendar:is-connected': []
   'calendar:get-events': []
   'calendar:sync': []
-  'calendar:set-auto-record': [eventId: string, autoRecord: boolean]
+  'calendar:set-auto-record': [eventId: string, recurringEventId: string | null, mode: AutoRecordMode]
   'permissions:check': []
   'permissions:open-settings': [panel: 'screen' | 'microphone']
   'recording:list': []

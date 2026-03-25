@@ -41,15 +41,18 @@ export interface Segment {
   sourceEndMs: number
 }
 
+export type AutoRecordMode = 'off' | 'once' | 'series'
+
 export interface CalendarEvent {
   id: string
   googleEventId: string
+  recurringEventId: string | null
   title: string
   startTime: number
   endTime: number
   attendees: string[]
   meetingUrl: string | null
-  autoRecord: boolean
+  autoRecord: AutoRecordMode
   syncedAt: number
 }
 

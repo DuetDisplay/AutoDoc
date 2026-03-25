@@ -7,64 +7,60 @@ import type { CalendarEvent } from '../../../shared/types'
 const mockEvent: CalendarEvent = {
   id: 'evt-1',
   googleEventId: 'google-1',
+  recurringEventId: null,
   title: 'Sprint Planning',
   startTime: new Date('2026-03-24T10:00:00').getTime(),
   endTime: new Date('2026-03-24T10:30:00').getTime(),
   attendees: ['alice@example.com', 'bob@example.com'],
   meetingUrl: 'https://meet.google.com/abc-defg-hij',
-  autoRecord: false,
+  autoRecord: 'off',
   syncedAt: Date.now(),
 }
 
 describe('EventCard', () => {
   it('renders event title and time', () => {
-    render(<EventCard event={mockEvent} onToggleAutoRecord={vi.fn()} />)
+    render(<EventCard event={mockEvent} onSetAutoRecord={vi.fn()} />)
     expect(screen.getByText('Sprint Planning')).toBeInTheDocument()
     expect(screen.getByText(/10:00/)).toBeInTheDocument()
   })
 
   it('renders meeting platform when URL is present', () => {
-    render(<EventCard event={mockEvent} onToggleAutoRecord={vi.fn()} />)
+    render(<EventCard event={mockEvent} onSetAutoRecord={vi.fn()} />)
     expect(screen.getByText(/Google Meet/i)).toBeInTheDocument()
   })
 
-  it('shows auto-record badge when enabled', () => {
-    const autoRecordEvent = { ...mockEvent, autoRecord: true }
-    render(<EventCard event={autoRecordEvent} onToggleAutoRecord={vi.fn()} />)
+  it('shows active auto-record badge when enabled', () => {
+    const autoRecordEvent = { ...mockEvent, autoRecord: 'once' as const }
+    render(<EventCard event={autoRecordEvent} onSetAutoRecord={vi.fn()} />)
     expect(screen.getByText('Auto-record')).toBeInTheDocument()
   })
 
-  it('calls onToggleAutoRecord when toggle is clicked', async () => {
-    const onToggle = vi.fn()
+  it('toggles auto-record on for non-recurring event', async () => {
+    const onSet = vi.fn()
     const user = userEvent.setup()
-    render(<EventCard event={mockEvent} onToggleAutoRecord={onToggle} />)
+    render(<EventCard event={mockEvent} onSetAutoRecord={onSet} />)
 
     await user.click(screen.getByRole('button', { name: /auto-record/i }))
-    expect(onToggle).toHaveBeenCalledWith('evt-1')
+    expect(onSet).toHaveBeenCalledWith('evt-1', null, 'once')
   })
 
-  it('renders Record button when onRecord provided', () => {
-    render(
-      <EventCard
-        event={mockEvent}
-        onToggleAutoRecord={vi.fn()}
-        onRecord={vi.fn()}
-      />
-    )
-    expect(screen.getByText('Record')).toBeInTheDocument()
-  })
-
-  it('calls onRecord when Record button clicked', async () => {
-    const onRecord = vi.fn()
+  it('toggles auto-record off when already enabled', async () => {
+    const onSet = vi.fn()
     const user = userEvent.setup()
-    render(
-      <EventCard
-        event={mockEvent}
-        onToggleAutoRecord={vi.fn()}
-        onRecord={onRecord}
-      />
-    )
-    await user.click(screen.getByText('Record'))
-    expect(onRecord).toHaveBeenCalledWith('evt-1')
+    const enabledEvent = { ...mockEvent, autoRecord: 'once' as const }
+    render(<EventCard event={enabledEvent} onSetAutoRecord={onSet} />)
+
+    await user.click(screen.getByRole('button', { name: /auto-record/i }))
+    expect(onSet).toHaveBeenCalledWith('evt-1', null, 'off')
+  })
+
+  it('shows menu for recurring events', async () => {
+    const user = userEvent.setup()
+    const recurringEvent = { ...mockEvent, recurringEventId: 'series-1' }
+    render(<EventCard event={recurringEvent} onSetAutoRecord={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /auto-record/i }))
+    expect(screen.getByText('This meeting')).toBeInTheDocument()
+    expect(screen.getByText('All in series')).toBeInTheDocument()
   })
 })

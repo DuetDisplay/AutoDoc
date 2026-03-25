@@ -130,12 +130,13 @@ export class CalendarService {
     return items.map((event) => ({
       id: event.id ?? crypto.randomUUID(),
       googleEventId: event.id ?? '',
+      recurringEventId: event.recurringEventId ?? null,
       title: event.summary ?? 'Untitled',
       startTime: new Date(event.start?.dateTime ?? event.start?.date ?? '').getTime(),
       endTime: new Date(event.end?.dateTime ?? event.end?.date ?? '').getTime(),
       attendees: (event.attendees ?? []).map((a) => a.email ?? '').filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
-      autoRecord: false,
+      autoRecord: 'off' as const,
       syncedAt: Date.now(),
     }))
   }

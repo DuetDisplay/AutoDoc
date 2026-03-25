@@ -25,7 +25,7 @@ export function Upcoming() {
     setConnecting,
     setEvents,
     setSyncing,
-    toggleAutoRecord,
+    setAutoRecord,
   } = useCalendarStore()
 
   useEffect(() => {
@@ -72,12 +72,9 @@ export function Upcoming() {
     }
   }
 
-  const handleToggleAutoRecord = (eventId: string) => {
-    toggleAutoRecord(eventId)
-    const event = events.find((e) => e.id === eventId)
-    if (event) {
-      window.electronAPI.invoke('calendar:set-auto-record', eventId, !event.autoRecord)
-    }
+  const handleSetAutoRecord = (eventId: string, recurringEventId: string | null, mode: import('../../../shared/types').AutoRecordMode) => {
+    setAutoRecord(eventId, mode)
+    window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
   }
 
   const { isRecording, fetchSources, handleStart, handleStop } = useRecording()
@@ -181,7 +178,7 @@ export function Upcoming() {
                     <EventCard
                       key={event.id}
                       event={event}
-                      onToggleAutoRecord={handleToggleAutoRecord}
+                      onSetAutoRecord={handleSetAutoRecord}
                     />
                   ))}
                 </div>

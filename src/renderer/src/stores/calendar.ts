@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CalendarEvent } from '../../../shared/types'
+import type { AutoRecordMode, CalendarEvent } from '../../../shared/types'
 
 interface CalendarState {
   isConnected: boolean
@@ -11,7 +11,7 @@ interface CalendarState {
   setConnecting: (connecting: boolean) => void
   setEvents: (events: CalendarEvent[]) => void
   setSyncing: (syncing: boolean) => void
-  toggleAutoRecord: (eventId: string) => void
+  setAutoRecord: (eventId: string, mode: AutoRecordMode) => void
 }
 
 export const useCalendarStore = create<CalendarState>((set) => ({
@@ -24,10 +24,10 @@ export const useCalendarStore = create<CalendarState>((set) => ({
   setConnecting: (connecting) => set({ isConnecting: connecting }),
   setEvents: (events) => set({ events }),
   setSyncing: (syncing) => set({ isSyncing: syncing }),
-  toggleAutoRecord: (eventId) =>
+  setAutoRecord: (eventId, mode) =>
     set((state) => ({
       events: state.events.map((e) =>
-        e.id === eventId ? { ...e, autoRecord: !e.autoRecord } : e
+        e.id === eventId ? { ...e, autoRecord: mode } : e
       ),
     })),
 }))
