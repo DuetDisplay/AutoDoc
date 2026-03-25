@@ -35,7 +35,7 @@ describe('Sidebar', () => {
   it('renders all navigation links', async () => {
     await renderSidebar()
     expect(screen.getByText('Upcoming')).toBeInTheDocument()
-    expect(screen.getByText('Recordings')).toBeInTheDocument()
+    expect(screen.getByText('AI Notes')).toBeInTheDocument()
     expect(screen.getByText('Search')).toBeInTheDocument()
     expect(screen.getByText('Ask AI')).toBeInTheDocument()
   })

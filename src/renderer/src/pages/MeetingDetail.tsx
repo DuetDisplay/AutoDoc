@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
 import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus } from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
@@ -104,6 +104,7 @@ function EditableText({
 
 export function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('notes')
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
@@ -244,9 +245,16 @@ export function MeetingDetail() {
       {/* Header */}
       <div className="px-6 py-4 border-b border-border flex items-center justify-between">
         <div>
-          <h1 className="text-[16px] font-bold text-ink tracking-[-0.02em]">
-            Meeting
-          </h1>
+          <div className="flex items-center gap-1.5 text-[12px]">
+            <button
+              onClick={() => navigate('/recordings')}
+              className="text-ink-faint hover:text-ink transition-colors"
+            >
+              AI Notes
+            </button>
+            <span className="text-ink-faint">/</span>
+            <span className="text-ink font-semibold">Meeting</span>
+          </div>
           <p className="text-[11px] text-ink-faint mt-0.5">ID: {id}</p>
         </div>
         <div className="flex items-center gap-2">

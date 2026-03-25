@@ -5,6 +5,15 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import type { RecordingEntry, SegmentationStatus } from '../../../shared/types'
 
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
@@ -73,7 +82,7 @@ export function Recordings() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Recordings" />
+      <PageHeader title="AI Notes" />
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center p-6">
@@ -82,7 +91,7 @@ export function Recordings() {
       ) : recordings.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <p className="text-ink-muted text-[13px]">
-            No recordings yet. Start a meeting to begin.
+            No notes yet. Start a meeting to begin.
           </p>
         </div>
       ) : (
@@ -108,6 +117,12 @@ export function Recordings() {
                         })}
                       </span>
                       <span className="text-border">|</span>
+                      {rec.duration != null && (
+                        <>
+                          <span>{formatDuration(rec.duration)}</span>
+                          <span className="text-border">|</span>
+                        </>
+                      )}
                       <span className="flex items-center gap-1">
                         {rec.hasAudio && <span>Audio</span>}
                         {rec.hasAudio && rec.hasVideo && <span>+</span>}

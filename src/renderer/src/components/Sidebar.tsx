@@ -5,7 +5,7 @@ import { ROUTES } from '../../../shared/constants'
 
 const navItems = [
   { to: ROUTES.upcoming, label: 'Upcoming' },
-  { to: ROUTES.recordings, label: 'Recordings' },
+  { to: ROUTES.recordings, label: 'AI Notes' },
   { to: ROUTES.search, label: 'Search' },
   { to: ROUTES.askAi, label: 'Ask AI' },
 ]
