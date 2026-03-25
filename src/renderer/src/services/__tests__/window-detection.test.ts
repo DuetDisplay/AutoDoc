@@ -48,4 +48,25 @@ describe('detectMeetingWindow', () => {
     const result = detectMeetingWindow(screenOnly)
     expect(result).toBeNull()
   })
+
+  it('detects Google Meet via "Meet - " title pattern', () => {
+    const safari: RecordingSource[] = [
+      { id: 'w:10', name: 'Meet - abc-defg-hij', thumbnailDataUrl: '' },
+      { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' },
+    ]
+    const result = detectMeetingWindow(safari)
+    expect(result).not.toBeNull()
+    expect(result!.id).toBe('w:10')
+  })
+
+  it('falls back to browser window when no meeting pattern matches', () => {
+    const browserOnly: RecordingSource[] = [
+      { id: 'w:20', name: 'Safari', thumbnailDataUrl: '' },
+      { id: 'w:21', name: 'Visual Studio Code', thumbnailDataUrl: '' },
+      { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' },
+    ]
+    const result = detectMeetingWindow(browserOnly)
+    expect(result).not.toBeNull()
+    expect(result!.id).toBe('w:20')
+  })
 })
