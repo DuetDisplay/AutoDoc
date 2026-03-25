@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
-import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus } from '../../../shared/types'
+import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus, SpeakerMap } from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
+import { SpeakerLegend } from '../components/SpeakerLegend'
 
 type Tab = 'notes' | 'transcript'
 
@@ -123,6 +124,7 @@ export function MeetingDetail() {
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
+  const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
 
@@ -132,6 +134,15 @@ export function MeetingDetail() {
       mediaRef.current.play()
     }
   }, [])
+
+  const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
+    if (!id) return
+    await window.electronAPI.invoke('speakers:rename', id, speakerId, newLabel)
+    setSpeakers((prev) => ({
+      ...prev,
+      [speakerId]: { ...prev[speakerId], label: newLabel },
+    }))
+  }, [id])
 
   const saveSegments = useCallback(
     (updated: MeetingSegments) => {
@@ -208,6 +219,7 @@ export function MeetingDetail() {
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
     window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
     window.electronAPI.invoke('recording:get-media', id).then(setMedia)
+    window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
     const unsubTranscription = window.electronAPI.on(
       'transcription:status-changed',
@@ -217,6 +229,7 @@ export function MeetingDetail() {
           setTranscriptionProgress(payload.progress)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+            window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
           }
         }
       }
@@ -420,9 +433,17 @@ export function MeetingDetail() {
                 />
               </div>
             )}
+            {Object.keys(speakers).length > 0 && (
+              <SpeakerLegend
+                speakers={speakers}
+                speakerIds={[...new Set(transcript.map((t) => t.speaker))]}
+                onRename={handleRenameSpeaker}
+              />
+            )}
             <TranscriptView
               segments={transcript}
               status={transcriptionStatus}
+              speakers={speakers}
               onSeek={(media?.hasVideo || media?.hasAudio) ? handleSeek : undefined}
             />
           </div>

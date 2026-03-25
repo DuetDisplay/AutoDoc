@@ -17,6 +17,10 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: str
     label: 'Transcribing...',
     className: 'text-ink-muted bg-bg-accent',
   },
+  diarizing: {
+    label: 'Identifying speakers...',
+    className: 'text-ink-muted bg-bg-accent animate-pulse',
+  },
   complete: {
     label: 'Transcribed',
     className: 'text-green-700 bg-green-50',
