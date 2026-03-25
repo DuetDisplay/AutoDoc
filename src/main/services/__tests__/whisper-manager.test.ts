@@ -24,19 +24,19 @@ describe('WhisperManager', () => {
   })
 
   it('returns correct models directory path', () => {
-    expect(manager.getModelsDir()).toBe('/mock/home/AutoDoc/models')
+    expect(manager.getModelsDir()).toBe('/mock/home/models')
   })
 
   it('returns correct whisper binary path', () => {
-    expect(manager.getWhisperPath()).toBe('/mock/home/AutoDoc/models/whisper-cpp')
+    expect(manager.getWhisperPath()).toBe('/mock/home/models/whisper-cpp')
   })
 
   it('returns correct ffmpeg binary path', () => {
-    expect(manager.getFfmpegPath()).toBe('/mock/home/AutoDoc/models/ffmpeg')
+    expect(manager.getFfmpegPath()).toBe('/mock/home/models/ffmpeg')
   })
 
   it('returns correct model path', () => {
-    expect(manager.getModelPath()).toBe('/mock/home/AutoDoc/models/ggml-large-v3.bin')
+    expect(manager.getModelPath()).toBe('/mock/home/models/ggml-large-v3.bin')
   })
 
   it('reports ready when all files exist', async () => {

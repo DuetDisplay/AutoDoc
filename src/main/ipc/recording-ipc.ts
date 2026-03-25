@@ -6,8 +6,9 @@ import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
+import type { CalendarService } from '../services/calendar'
 import { encryptFileInPlace, encryptJSON, decryptJSON, isEncrypted } from '../services/crypto'
-import type { RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
+import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
 
 /** Mux audio track into video file so playback has both video and audio */
 function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: string, outputPath: string): Promise<void> {
@@ -28,6 +29,26 @@ function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: str
   })
 }
 
+/** Find calendar event that overlaps with the recording start time (±10min buffer) */
+function matchCalendarEvent(events: CalendarEvent[], recordingStartMs: number): CalendarEvent | null {
+  const buffer = 10 * 60 * 1000 // 10 minutes
+  let best: CalendarEvent | null = null
+  let bestOverlap = 0
+  for (const event of events) {
+    const overlapStart = Math.max(event.startTime - buffer, recordingStartMs)
+    const overlapEnd = Math.min(event.endTime + buffer, recordingStartMs + 1)
+    if (overlapStart <= overlapEnd) {
+      // Prefer the event whose start is closest to the recording start
+      const closeness = Math.abs(event.startTime - recordingStartMs)
+      if (!best || closeness < bestOverlap) {
+        best = event
+        bestOverlap = closeness
+      }
+    }
+  }
+  return best
+}
+
 async function readMetadata(meetingDir: string): Promise<MeetingMetadata | null> {
   const metaPath = join(meetingDir, 'metadata.json')
   try {
@@ -44,6 +65,7 @@ export function registerRecordingIpc(
   recordingService: RecordingService,
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
+  calendarService: CalendarService,
 ): void {
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
@@ -52,6 +74,16 @@ export function registerRecordingIpc(
       dirs = await readdir(baseDir)
     } catch {
       return []
+    }
+
+    // Fetch recent calendar events for matching recordings to event names
+    let recentEvents: CalendarEvent[] = []
+    try {
+      if (calendarService.isConnected()) {
+        recentEvents = await calendarService.fetchRecentEvents(30)
+      }
+    } catch {
+      // Calendar fetch failed — fall back to generic names
     }
 
     const entries: RecordingEntry[] = []
@@ -72,9 +104,14 @@ export function registerRecordingIpc(
         ? new Date(metadata.startedAt)
         : dirStat.birthtime
 
-      const title = metadata?.sourceName
-        ? `${metadata.sourceName} — ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-        : `Recording ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+      const calendarEvent = matchCalendarEvent(recentEvents, createdAt.getTime())
+      const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+
+      const title = calendarEvent
+        ? `${calendarEvent.title} — ${dateSuffix}`
+        : metadata?.sourceName
+          ? `${metadata.sourceName} — ${dateSuffix}`
+          : `Recording ${dateSuffix}`
 
       const transcriptionStatus = await transcriptionService.getStatus(meetingId)
 
@@ -183,11 +220,28 @@ export function registerRecordingIpc(
       if (estimated > 0) durationSeconds = estimated
     }
 
+    // Try to match a calendar event for a better title
+    let calendarEvent: CalendarEvent | null = null
+    try {
+      if (calendarService.isConnected()) {
+        const events = await calendarService.fetchRecentEvents(30)
+        calendarEvent = matchCalendarEvent(events, startedAt)
+      }
+    } catch {
+      // Calendar fetch failed
+    }
+
+    const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+
+    const title = calendarEvent
+      ? `${calendarEvent.title} — ${dateSuffix}`
+      : metadata?.sourceName
+        ? `${metadata.sourceName} — ${dateSuffix}`
+        : `Recording ${dateSuffix}`
+
     return {
-      title: metadata?.sourceName
-        ? `${metadata.sourceName} — ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-        : `Recording ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
-      sourceName: metadata?.sourceName ?? null,
+      title,
+      sourceName: calendarEvent?.title ?? metadata?.sourceName ?? null,
       date: startedAt,
       durationSeconds,
     }

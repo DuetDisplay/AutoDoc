@@ -117,15 +117,25 @@ export class CalendarService {
   }
 
   async fetchUpcomingEvents(maxResults = 20): Promise<CalendarEvent[]> {
-    // Refresh token via worker if needed
+    return this.fetchEvents({ timeMin: new Date().toISOString(), maxResults })
+  }
+
+  async fetchRecentEvents(daysBack = 7, maxResults = 50): Promise<CalendarEvent[]> {
+    const since = new Date()
+    since.setDate(since.getDate() - daysBack)
+    return this.fetchEvents({ timeMin: since.toISOString(), timeMax: new Date().toISOString(), maxResults })
+  }
+
+  private async fetchEvents(opts: { timeMin: string; timeMax?: string; maxResults: number }): Promise<CalendarEvent[]> {
     await this.refreshIfNeeded()
 
     const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client })
 
     const response = await calendar.events.list({
       calendarId: 'primary',
-      timeMin: new Date().toISOString(),
-      maxResults,
+      timeMin: opts.timeMin,
+      ...(opts.timeMax ? { timeMax: opts.timeMax } : {}),
+      maxResults: opts.maxResults,
       singleEvents: true,
       orderBy: 'startTime',
     })

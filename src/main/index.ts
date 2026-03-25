@@ -146,7 +146,7 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
-  registerRecordingIpc(recordingService, transcriptionService, whisperManager)
+  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
   registerSearchIpc(recordingService.getRecordingsBaseDir())
