@@ -29,7 +29,7 @@ async function renderSidebar() {
 describe('Sidebar', () => {
   it('renders the app name', async () => {
     await renderSidebar()
-    expect(screen.getByText('AutoDoc')).toBeInTheDocument()
+    expect(screen.getByText('murmur')).toBeInTheDocument()
   })
 
   it('renders all navigation links', async () => {

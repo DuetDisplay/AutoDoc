@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: autodoc
+appId: com.autodoc.app
+productName: AutoDoc
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - 'resources/**'
 win:
-  executableName: autodoc
+  executableName: murmur
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

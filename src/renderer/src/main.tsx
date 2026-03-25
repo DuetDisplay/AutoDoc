@@ -1,5 +1,6 @@
-import '@fontsource-variable/geist/wght.css'
-import '@fontsource-variable/geist-mono/wght.css'
+import '@fontsource-variable/dm-sans/wght.css'
+import '@fontsource/instrument-serif'
+import '@fontsource-variable/jetbrains-mono/wght.css'
 import './assets/main.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'

@@ -1,27 +1,46 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Geist Variable', sans-serif;
-  --font-mono: 'Geist Mono Variable', monospace;
+  --font-sans: 'DM Sans Variable', system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono Variable', monospace;
 
-  /* Warm Parchment palette */
-  --color-bg-primary: #fafaf8;
-  --color-bg-sidebar: #f7f7f5;
-  --color-bg-accent: #f0f0ee;
-  --color-bg-card: #ffffff;
-  --color-border: #e8e6e1;
-  --color-border-subtle: #e2e0db;
-  --color-ink: #1a1a1a;
+  /* Murmur palette */
+  --color-bg-primary: #FAFAF7;
+  --color-bg-sidebar: #F5F5F0;
+  --color-bg-accent: #F0EFE9;
+  --color-bg-card: #FFFFFF;
+  --color-bg-deep: #F0EFE9;
+  --color-border: rgba(26, 26, 23, 0.10);
+  --color-border-subtle: rgba(26, 26, 23, 0.06);
+  --color-border-strong: rgba(26, 26, 23, 0.18);
+  --color-ink: #1A1A17;
   --color-ink-secondary: #3d3b37;
-  --color-ink-muted: #6b6966;
-  --color-ink-faint: #9b9894;
-  --color-status-connected: #22c55e;
-  --color-status-recording: #ef4444;
-  --color-status-processing: #f59e0b;
+  --color-ink-muted: #6B6A63;
+  --color-ink-faint: #9C9B94;
+
+  /* Brand colors */
+  --color-sage: #7A9E7E;
+  --color-sage-light: #E8F0E8;
+  --color-sage-dark: #4A6B4E;
+  --color-clay: #C2886E;
+  --color-clay-light: #F5E8E0;
+  --color-clay-dark: #8B5E48;
+  --color-dusk: #8B7EAA;
+  --color-dusk-light: #EDE9F5;
+  --color-dusk-dark: #5A4F73;
+  --color-mist: #A3B4C0;
+  --color-mist-light: #E8EEF2;
+
+  /* Status — sage-based for connected, clay for recording */
+  --color-status-connected: #7A9E7E;
+  --color-status-recording: #C2886E;
+  --color-status-processing: #8B7EAA;
 }
 
 @layer base {
   body {
     @apply font-sans antialiased bg-bg-primary text-ink;
+    -webkit-font-smoothing: antialiased;
   }
 }

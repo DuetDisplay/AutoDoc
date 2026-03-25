@@ -10,6 +10,17 @@ const navItems = [
   { to: ROUTES.askAi, label: 'Ask AI' },
 ]
 
+function WaveformIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 40 40" fill="none" className={className}>
+      <rect x="6" y="14" width="4" height="12" rx="2" fill="#7A9E7E" />
+      <rect x="14" y="8" width="4" height="24" rx="2" fill="#7A9E7E" />
+      <rect x="22" y="11" width="4" height="18" rx="2" fill="#7A9E7E" />
+      <rect x="30" y="16" width="4" height="8" rx="2" fill="#7A9E7E" />
+    </svg>
+  )
+}
+
 export function Sidebar() {
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
@@ -35,8 +46,11 @@ export function Sidebar() {
       {/* Top padding to clear macOS traffic lights */}
       <div className="h-[52px] shrink-0" />
       <div className="flex flex-col flex-1 px-5 pb-5">
-      <div className="text-[15px] font-bold text-ink tracking-[-0.03em]">
-        AutoDoc
+      <div className="flex items-center gap-2">
+        <WaveformIcon className="w-6 h-6" />
+        <span className="font-serif text-[20px] text-ink tracking-[-0.02em]">
+          AutoDoc
+        </span>
       </div>
 
       <nav className="mt-6 flex flex-col gap-0.5">
@@ -47,7 +61,7 @@ export function Sidebar() {
             className={({ isActive }) =>
               `px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors ${
                 isActive
-                  ? 'bg-ink text-white'
+                  ? 'bg-sage text-white'
                   : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
               }`
             }
@@ -62,7 +76,7 @@ export function Sidebar() {
           <div className="flex items-center gap-2 px-2.5 py-2">
             <div
               className={`w-2 h-2 rounded-full ${
-                ollamaConnected ? 'bg-green-500' : 'bg-red-400'
+                ollamaConnected ? 'bg-sage' : 'bg-clay'
               }`}
             />
             <span className="text-[11px] text-ink-faint">
@@ -72,8 +86,8 @@ export function Sidebar() {
         )}
 
         {isRecording && (
-          <div className="flex items-center gap-2 px-2.5 py-2 bg-bg-accent rounded-lg">
-            <div className="w-2 h-2 rounded-full bg-status-recording animate-pulse" />
+          <div className="flex items-center gap-2 px-2.5 py-2 bg-clay-light rounded-lg">
+            <div className="w-2 h-2 rounded-full bg-clay animate-pulse" />
             <span className="text-[11px] text-ink-muted">
               Recording · {formatTime(recordingSeconds)}
             </span>
@@ -85,7 +99,7 @@ export function Sidebar() {
           className={({ isActive }) =>
             `px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors ${
               isActive
-                ? 'bg-ink text-white'
+                ? 'bg-sage text-white'
                 : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
             }`
           }

@@ -97,7 +97,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
       0 4px 12px rgba(0, 0, 0, 0.04),
       0 0 0 0.5px rgba(0, 0, 0, 0.03);
     animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+    font-family: 'DM Sans', system-ui, sans-serif;
   }
 
   @keyframes slideDown {
@@ -118,7 +118,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #ef4444;
+    background: #7A9E7E;
     flex-shrink: 0;
     animation: pulse 2s ease-in-out infinite;
   }
@@ -132,7 +132,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   .title {
     font-size: 13px;
     font-weight: 600;
-    color: #1a1a1a;
+    color: #1A1A17;
     letter-spacing: -0.02em;
     line-height: 1.3;
     white-space: nowrap;
@@ -158,7 +158,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     padding: 7px 16px;
     border-radius: 10px;
     border: none;
-    background: #1a1a1a;
+    background: #1A1A17;
     color: white;
     font-family: inherit;
     font-size: 12.5px;
@@ -168,7 +168,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     transition: all 0.15s ease;
     white-space: nowrap;
   }
-  .btn-record:hover { background: #333; }
+  .btn-record:hover { background: #3d3b37; }
   .btn-record:active { transform: scale(0.97); }
 
   .btn-x {
