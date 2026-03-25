@@ -44,11 +44,11 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
   const handleRecord = () => {
     options.onRecord()
-    hideNotificationWindow()
+    animateOut()
   }
   const handleDismiss = () => {
     options.onDismiss()
-    hideNotificationWindow()
+    animateOut()
   }
 
   ipcMain.once('notification:record', handleRecord)
@@ -96,13 +96,22 @@ export function showNotificationWindow(options: NotificationOptions): void {
       0 12px 40px rgba(0, 0, 0, 0.10),
       0 4px 12px rgba(0, 0, 0, 0.04),
       0 0 0 0.5px rgba(0, 0, 0, 0.03);
-    animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
   }
 
   @keyframes slideDown {
-    from { transform: translateY(-16px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from { transform: translateY(-100%) scale(0.96); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(0) scale(1); opacity: 1; }
+    to { transform: translateY(-100%) scale(0.96); opacity: 0; }
+  }
+
+  .toast.dismissing {
+    animation: slideUp 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
   }
 
   .dot {
@@ -198,8 +207,13 @@ export function showNotificationWindow(options: NotificationOptions): void {
   </div>
   <script>
     const { ipcRenderer } = require('electron');
-    document.getElementById('record').onclick = () => ipcRenderer.send('notification:record');
-    document.getElementById('dismiss').onclick = () => ipcRenderer.send('notification:dismiss');
+    function dismiss(channel) {
+      const toast = document.querySelector('.toast');
+      toast.classList.add('dismissing');
+      toast.addEventListener('animationend', () => ipcRenderer.send(channel), { once: true });
+    }
+    document.getElementById('record').onclick = () => dismiss('notification:record');
+    document.getElementById('dismiss').onclick = () => dismiss('notification:dismiss');
   </script>
 </body>
 </html>`
@@ -214,14 +228,30 @@ export function showNotificationWindow(options: NotificationOptions): void {
   setTimeout(() => {
     if (notificationWindow) {
       options.onDismiss()
-      hideNotificationWindow()
+      animateOut()
     }
   }, 30_000)
 }
 
+function animateOut(): void {
+  if (!notificationWindow) return
+  const win = notificationWindow
+  win.webContents.executeJavaScript(`
+    new Promise(resolve => {
+      const toast = document.querySelector('.toast');
+      if (!toast || toast.classList.contains('dismissing')) { resolve(); return; }
+      toast.classList.add('dismissing');
+      toast.addEventListener('animationend', resolve, { once: true });
+    })
+  `).then(() => {
+    if (!win.isDestroyed()) win.close()
+  }).catch(() => {
+    if (!win.isDestroyed()) win.close()
+  })
+}
+
 export function hideNotificationWindow(): void {
   if (notificationWindow) {
-    notificationWindow.close()
-    notificationWindow = null
+    animateOut()
   }
 }
