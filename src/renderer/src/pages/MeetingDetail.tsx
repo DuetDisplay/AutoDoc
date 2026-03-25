@@ -9,12 +9,13 @@ import { SegmentationBadge } from '../components/SegmentationBadge'
 type Tab = 'notes' | 'transcript'
 
 function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}h ${m}m`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
+  const mins = Math.ceil(seconds / 60)
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
+    return m > 0 ? `${h}h ${m}m` : `${h}h`
+  }
+  return `${mins}m`
 }
 
 const CATEGORY_ORDER: SegmentCategory[] = [
