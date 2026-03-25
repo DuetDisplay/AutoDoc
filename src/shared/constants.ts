@@ -36,7 +36,7 @@ export const MODELS_SUBDIR = 'models'
 
 export const MEETING_APP_PATTERNS = [
   { name: 'Zoom', pattern: /zoom/i },
-  { name: 'Google Meet', pattern: /meet\.google\.com/i },
+  { name: 'Google Meet', pattern: /google meet|meet\.google\.com/i },
   { name: 'Microsoft Teams', pattern: /microsoft teams/i },
   { name: 'Webex', pattern: /webex/i },
   { name: 'Slack Huddle', pattern: /slack.*huddle|slack.*call/i },

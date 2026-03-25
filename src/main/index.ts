@@ -13,6 +13,7 @@ import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
 import { SegmentationService } from './services/segmentation'
 import { registerLlmIpc } from './ipc/llm-ipc'
+import { DetectionService } from './services/detection'
 
 let ollamaManager: OllamaManager | null = null
 
@@ -101,6 +102,13 @@ app.whenReady().then(async () => {
     segmentationService.enqueue(meetingId)
   })
 
+  let cachedEvents: import('../../shared/types').CalendarEvent[] = []
+
+  const detectionService = new DetectionService(
+    recordingService,
+    () => cachedEvents,
+  )
+
   registerRecordingIpc(recordingService, transcriptionService)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
@@ -108,6 +116,7 @@ app.whenReady().then(async () => {
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {
     calendarService.startSync((events) => {
+      cachedEvents = events
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
         win.webContents.send('calendar:events-updated', events)
@@ -116,6 +125,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  detectionService.start()
 
   // Start Ollama + pull model in the background — don't block the window
   ollamaManager.startAndPull().catch((err) => {

@@ -63,4 +63,5 @@ export interface IpcOnEvents {
   'calendar:events-updated': [events: CalendarEvent[]]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus }]
   'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
+  'detection:start-recording': [payload: { sourceId: string; sourceName: string }]
 }

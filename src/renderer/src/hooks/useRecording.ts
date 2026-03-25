@@ -32,6 +32,19 @@ export function useRecording() {
     return unsubscribe
   }, [setRecordingState])
 
+  // Listen for auto-detection prompts to start recording
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.on('detection:start-recording', (payload) => {
+      if (!isRecording) {
+        handleStart(payload.sourceId, payload.sourceName).catch((err) => {
+          console.error('Auto-start recording failed:', err)
+        })
+      }
+    })
+    return unsubscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording])
+
   // Timer management — single source of truth for elapsed time
   useEffect(() => {
     if (isRecording) {
