@@ -5,7 +5,7 @@ import { ConnectCalendar } from '../components/ConnectCalendar'
 import { SetupGuide } from '../components/SetupGuide'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
-import { useRecording } from '../hooks/useRecording'
+import { useRecordingActions } from '../hooks/useRecording'
 import type { CalendarEvent } from '../../../shared/types'
 
 export function Upcoming() {
@@ -77,7 +77,7 @@ export function Upcoming() {
     window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
   }
 
-  const { isRecording, fetchSources, handleStart, handleStop } = useRecording()
+  const { isRecording, fetchSources, handleStart, handleStop } = useRecordingActions()
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',

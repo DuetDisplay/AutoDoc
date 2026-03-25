@@ -3,6 +3,10 @@ import { useRecordingStore } from '../stores/recording'
 import { startCapture, stopCapture } from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
 
+/**
+ * Full recording hook — sets up IPC listener, timer, and actions.
+ * Mount this ONCE at the App level to avoid duplicate timers.
+ */
 export function useRecording() {
   const {
     isRecording,
@@ -84,6 +88,54 @@ export function useRecording() {
     elapsedSeconds,
     sources,
     isLoadingSources,
+    fetchSources,
+    handleStart,
+    handleStop,
+    detectMeetingWindow,
+  }
+}
+
+/**
+ * Lightweight hook for pages that need recording actions/state
+ * but should NOT set up their own timer or IPC listener.
+ */
+export function useRecordingActions() {
+  const isRecording = useRecordingStore((s) => s.isRecording)
+  const reset = useRecordingStore((s) => s.reset)
+  const setSources = useRecordingStore((s) => s.setSources)
+  const setLoadingSources = useRecordingStore((s) => s.setLoadingSources)
+
+  const fetchSources = useCallback(async () => {
+    setLoadingSources(true)
+    try {
+      const fetchedSources = await window.electronAPI.invoke('recording:get-sources')
+      setSources(fetchedSources)
+      return fetchedSources
+    } finally {
+      setLoadingSources(false)
+    }
+  }, [setSources, setLoadingSources])
+
+  const handleStart = useCallback(async (sourceId: string, sourceNameParam: string) => {
+    const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
+    try {
+      await startCapture(sourceId, paths.meetingId)
+    } catch (err) {
+      stopCapture()
+      await window.electronAPI.invoke('recording:stop')
+      reset()
+      throw err
+    }
+  }, [reset])
+
+  const handleStop = useCallback(async () => {
+    stopCapture()
+    await window.electronAPI.invoke('recording:stop')
+    reset()
+  }, [reset])
+
+  return {
+    isRecording,
     fetchSources,
     handleStart,
     handleStop,
