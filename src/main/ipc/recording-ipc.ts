@@ -1,14 +1,33 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import { appendFile, readdir, readFile, rename, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarService } from '../services/calendar'
-import { encryptFileInPlace, encryptJSON, decryptJSON, isEncrypted } from '../services/crypto'
+import { encryptJSON, decryptJSON, isEncrypted } from '../services/crypto'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
+
+/** Merge two audio files into one using amix filter */
+function mergeAudioFiles(ffmpegPath: string, input1: string, input2: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-i', input1,
+      '-i', input2,
+      '-filter_complex', 'amix=inputs=2:duration=longest',
+      '-y',
+      outputPath,
+    ])
+    let stderr = ''
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
 
 /** Mux audio track into video file so playback has both video and audio */
 function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: string, outputPath: string): Promise<void> {
@@ -92,12 +111,15 @@ export function registerRecordingIpc(
       const dirStat = await stat(meetingDir).catch(() => null)
       if (!dirStat?.isDirectory()) continue
 
-      const audioPath = join(meetingDir, 'audio.webm')
+      const micPath = join(meetingDir, 'mic.webm')
+      const legacyAudioPath = join(meetingDir, 'audio.webm')
       const videoPath = join(meetingDir, 'screen.webm')
-      const audioStat = await stat(audioPath).catch(() => null)
+      const micStat = await stat(micPath).catch(() => null)
+      const legacyAudioStat = await stat(legacyAudioPath).catch(() => null)
       const videoStat = await stat(videoPath).catch(() => null)
 
-      if (!audioStat && !videoStat) continue
+      const hasAudio = micStat !== null || legacyAudioStat !== null
+      if (!hasAudio && !videoStat) continue
 
       const metadata = await readMetadata(meetingDir)
       const createdAt = metadata
@@ -118,7 +140,8 @@ export function registerRecordingIpc(
       // Fallback duration: estimate from directory birthtime to last file mtime
       let duration = metadata?.durationSeconds ?? null
       if (duration == null) {
-        const lastMtime = Math.max(audioStat?.mtimeMs ?? 0, videoStat?.mtimeMs ?? 0)
+        const primaryAudioStat = micStat ?? legacyAudioStat
+        const lastMtime = Math.max(primaryAudioStat?.mtimeMs ?? 0, videoStat?.mtimeMs ?? 0)
         if (lastMtime > 0) {
           const estimated = Math.round((lastMtime - dirStat.birthtime.getTime()) / 1000)
           if (estimated > 0) duration = estimated
@@ -131,7 +154,7 @@ export function registerRecordingIpc(
         date: createdAt.getTime(),
         duration,
         hasVideo: videoStat !== null,
-        hasAudio: audioStat !== null,
+        hasAudio,
         transcriptionStatus,
       })
     }
@@ -170,22 +193,34 @@ export function registerRecordingIpc(
       durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000),
     }
 
-    // Fire-and-forget: mux audio into video, save metadata, encrypt, then enqueue transcription
+    // Fire-and-forget: mux audio into video, save metadata, then enqueue transcription
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
       await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
       await new Promise((resolve) => setTimeout(resolve, 100))
-      const audioPath = join(meetingDir, 'audio.webm')
+      const micPath = join(meetingDir, 'mic.webm')
+      const systemPath = join(meetingDir, 'system.webm')
       const videoPath = join(meetingDir, 'screen.webm')
 
       // Mux audio into video so the video player has both tracks
       try {
-        const audioStat = await stat(audioPath).catch(() => null)
+        const micStat = await stat(micPath).catch(() => null)
+        const systemStat = await stat(systemPath).catch(() => null)
         const videoStat = await stat(videoPath).catch(() => null)
-        if (audioStat && videoStat) {
+        if (videoStat && (micStat || systemStat)) {
           const muxedPath = join(meetingDir, 'screen-muxed.webm')
-          await muxAudioIntoVideo(whisperManager.getFfmpegPath(), videoPath, audioPath, muxedPath)
+          const audioInputs: string[] = []
+          if (micStat) audioInputs.push(micPath)
+          if (systemStat) audioInputs.push(systemPath)
+          if (audioInputs.length === 2) {
+            const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
+            await mergeAudioFiles(whisperManager.getFfmpegPath(), micPath, systemPath, mergedAudioPath)
+            await muxAudioIntoVideo(whisperManager.getFfmpegPath(), videoPath, mergedAudioPath, muxedPath)
+            await unlink(mergedAudioPath)
+          } else {
+            await muxAudioIntoVideo(whisperManager.getFfmpegPath(), videoPath, audioInputs[0], muxedPath)
+          }
           await unlink(videoPath)
           await rename(muxedPath, videoPath)
         }
@@ -193,8 +228,6 @@ export function registerRecordingIpc(
         console.error('Failed to mux audio into video:', err)
       }
 
-      try { await encryptFileInPlace(audioPath) } catch (err) { console.error('Failed to encrypt audio:', err) }
-      try { await encryptFileInPlace(videoPath) } catch (err) { console.error('Failed to encrypt video:', err) }
       transcriptionService.enqueue(result.meetingId)
     })()
 
@@ -249,13 +282,13 @@ export function registerRecordingIpc(
 
   ipcMain.handle(
     'recording:save-chunk',
-    async (_event, meetingId: string, type: 'video' | 'audio', chunk: ArrayBuffer) => {
+    async (_event, meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer) => {
       const currentState = recordingService.getState()
       if (!currentState.isRecording || currentState.meetingId !== meetingId) {
         return // Ignore chunks for stale or mismatched recordings
       }
       const baseDir = recordingService.getRecordingsBaseDir()
-      const filename = type === 'video' ? 'screen.webm' : 'audio.webm'
+      const filename = type === 'video' ? 'screen.webm' : type === 'mic' ? 'mic.webm' : 'system.webm'
       const filePath = join(baseDir, meetingId, filename)
       await appendFile(filePath, Buffer.from(chunk))
     }

@@ -28,7 +28,7 @@ export interface IpcInvokeEvents {
   'recording:start': [sourceId: string, sourceName: string]
   'recording:stop': []
   'recording:get-state': []
-  'recording:save-chunk': [meetingId: string, type: 'video' | 'audio', chunk: ArrayBuffer]
+  'recording:save-chunk': [meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer]
   'transcription:get-status': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string]
