@@ -22,6 +22,7 @@ import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { createTray, updateTrayMenu } from './services/tray'
 import type { OllamaSetupStatus } from '../shared/types'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
@@ -33,6 +34,7 @@ if (process.platform === 'darwin' && app.dock) {
 }
 
 let ollamaManager: OllamaManager | null = null
+let isQuitting = false
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
@@ -56,6 +58,14 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // Hide to tray instead of closing (unless user is quitting)
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault()
+      mainWindow.hide()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -105,7 +115,10 @@ app.whenReady().then(async () => {
   })
 
   const calendarService = new CalendarService()
-  registerCalendarIpc(calendarService)
+  registerCalendarIpc(calendarService, (events) => {
+    cachedEvents = events
+    updateTrayMenu()
+  })
 
   const recordingService = new RecordingService()
 
@@ -226,6 +239,7 @@ app.whenReady().then(async () => {
   if (wasConnected) {
     calendarService.startSync((events) => {
       cachedEvents = events
+      updateTrayMenu()
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
         win.webContents.send('calendar:events-updated', events)
@@ -234,6 +248,19 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+
+  // System tray — show upcoming meetings, open app, quit
+  const showWindow = () => {
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length > 0) {
+      wins[0].show()
+      wins[0].focus()
+    } else {
+      createWindow()
+    }
+  }
+  createTray(() => cachedEvents, showWindow)
+
   detectionService.start()
 
   // Start Ollama + pull model in the background — don't block the window
@@ -256,16 +283,23 @@ app.whenReady().then(async () => {
     })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length === 0) {
+      createWindow()
+    } else {
+      wins[0].show()
+      wins[0].focus()
+    }
   })
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   ollamaManager?.stop()
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Don't quit — the tray keeps the app alive
 })
 
 /**
