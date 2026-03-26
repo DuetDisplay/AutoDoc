@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
@@ -11,6 +11,7 @@ import type { CalendarEvent } from '../../../shared/types'
 let calendarToastShown = false
 
 export function Upcoming() {
+  const [calendarChecked, setCalendarChecked] = useState(false)
   const {
     isConnected,
     isConnecting,
@@ -25,7 +26,10 @@ export function Upcoming() {
 
   useEffect(() => {
     // Check connection status on mount
-    window.electronAPI.invoke('calendar:is-connected').then(setConnected)
+    window.electronAPI.invoke('calendar:is-connected').then((connected) => {
+      setConnected(connected)
+      setCalendarChecked(true)
+    })
 
     // Listen for event updates from main process
     const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
@@ -44,6 +48,9 @@ export function Upcoming() {
   }, [setConnected, setEvents])
 
   useEffect(() => {
+    // Only show calendar toast after we've confirmed the connection status.
+    // Don't fire on the initial render where isConnected defaults to false.
+    if (!calendarChecked) return
     if (!isConnected && !calendarToastShown) {
       calendarToastShown = true
       useToastStore.getState().showToast({
@@ -51,7 +58,7 @@ export function Upcoming() {
         message: 'Connect Google Calendar to see upcoming meetings and auto-name recordings.',
       })
     }
-  }, [isConnected])
+  }, [isConnected, calendarChecked])
 
   const handleConnect = async () => {
     setConnecting(true)
