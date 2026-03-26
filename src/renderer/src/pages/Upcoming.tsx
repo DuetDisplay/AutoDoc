@@ -1,21 +1,17 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
-import { SetupGuide } from '../components/SetupGuide'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
+import { useToastStore } from '../stores/toast'
 import type { CalendarEvent } from '../../../shared/types'
 
-export function Upcoming() {
-  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+let calendarToastShown = false
 
-  useEffect(() => {
-    window.electronAPI.invoke('permissions:check').then((perms) => {
-      setSetupComplete(perms.microphone)
-    })
-  }, [])
+export function Upcoming() {
+  const [calendarChecked, setCalendarChecked] = useState(false)
   const {
     isConnected,
     isConnecting,
@@ -30,7 +26,10 @@ export function Upcoming() {
 
   useEffect(() => {
     // Check connection status on mount
-    window.electronAPI.invoke('calendar:is-connected').then(setConnected)
+    window.electronAPI.invoke('calendar:is-connected').then((connected) => {
+      setConnected(connected)
+      setCalendarChecked(true)
+    })
 
     // Listen for event updates from main process
     const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
@@ -47,6 +46,19 @@ export function Upcoming() {
 
     return unsubscribe
   }, [setConnected, setEvents])
+
+  useEffect(() => {
+    // Only show calendar toast after we've confirmed the connection status.
+    // Don't fire on the initial render where isConnected defaults to false.
+    if (!calendarChecked) return
+    if (!isConnected && !calendarToastShown) {
+      calendarToastShown = true
+      useToastStore.getState().showToast({
+        type: 'calendar',
+        message: 'Connect Google Calendar to see upcoming meetings and auto-name recordings.',
+      })
+    }
+  }, [isConnected, calendarChecked])
 
   const handleConnect = async () => {
     setConnecting(true)
@@ -116,15 +128,6 @@ export function Upcoming() {
 
     return groups
   }, [events])
-
-  if (setupComplete === false) {
-    return (
-      <div className="flex flex-col h-full">
-        <PageHeader title="Upcoming" subtitle={today} />
-        <SetupGuide onComplete={() => setSetupComplete(true)} />
-      </div>
-    )
-  }
 
   return (
     <div className="flex flex-col h-full">

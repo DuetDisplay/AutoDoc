@@ -3,15 +3,22 @@ import { CalendarService } from '../services/calendar'
 import { setAutoRecord, getAutoRecordMode } from '../services/auto-record-store'
 import type { AutoRecordMode, CalendarEvent } from '../../shared/types'
 
-export function registerCalendarIpc(calendarService: CalendarService): void {
+export function registerCalendarIpc(
+  calendarService: CalendarService,
+  onEventsUpdated?: (events: CalendarEvent[]) => void,
+): void {
   ipcMain.handle('calendar:connect', async () => {
     await calendarService.connect()
 
     const events = await calendarService.fetchUpcomingEvents()
-    pushEventsToRenderer(applyAutoRecordState(events))
+    const enriched = applyAutoRecordState(events)
+    pushEventsToRenderer(enriched)
+    onEventsUpdated?.(enriched)
 
     calendarService.startSync((updatedEvents) => {
-      pushEventsToRenderer(applyAutoRecordState(updatedEvents))
+      const enrichedUpdated = applyAutoRecordState(updatedEvents)
+      pushEventsToRenderer(enrichedUpdated)
+      onEventsUpdated?.(enrichedUpdated)
     })
   })
 

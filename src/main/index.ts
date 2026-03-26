@@ -21,8 +21,21 @@ import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
+import { PrefsStore } from './services/prefs-store'
+import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { createTray, updateTrayMenu } from './services/tray'
+import type { OllamaSetupStatus } from '../shared/types'
+
+// Ensure consistent app name for safeStorage keychain service across dev and production
+app.setName('AutoDoc')
+
+// Set dock icon in dev (production uses the bundled .icns)
+if (process.platform === 'darwin' && app.dock) {
+  app.dock.setIcon(join(__dirname, '../../build/icon.png'))
+}
 
 let ollamaManager: OllamaManager | null = null
+let isQuitting = false
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
@@ -37,6 +50,7 @@ function createWindow(): void {
     show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -45,6 +59,14 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // Hide to tray instead of closing (unless user is quitting)
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault()
+      mainWindow.hide()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -61,6 +83,9 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  const prefsStore = new PrefsStore()
+  registerPrefsIpc(prefsStore)
 
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
@@ -91,7 +116,10 @@ app.whenReady().then(async () => {
   })
 
   const calendarService = new CalendarService()
-  registerCalendarIpc(calendarService)
+  registerCalendarIpc(calendarService, (events) => {
+    cachedEvents = events
+    updateTrayMenu()
+  })
 
   const recordingService = new RecordingService()
 
@@ -132,6 +160,53 @@ app.whenReady().then(async () => {
     calendarService,
   )
   ollamaManager = new OllamaManager()
+
+  // Mutable state tracking Ollama setup progress
+  const ollamaSetupState: OllamaSetupStatus = { phase: 'downloading', percent: 0 }
+
+  function broadcastOllamaStatus(): void {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('ollama:setup-progress', { ...ollamaSetupState })
+    }
+  }
+
+  ollamaManager.on('download-start', () => {
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('download-progress', (data: { percent: number }) => {
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = data.percent
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('download-complete', () => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-start', () => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-progress', (data: { percent: number }) => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = data.percent
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-complete', () => {
+    ollamaSetupState.phase = 'ready'
+    ollamaSetupState.percent = 100
+    broadcastOllamaStatus()
+  })
+
   const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
   const segmentationService = new SegmentationService(
     ollamaProvider,
@@ -156,7 +231,7 @@ app.whenReady().then(async () => {
 
   registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
   registerTranscriptionIpc(transcriptionService)
-  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
+  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
@@ -165,6 +240,7 @@ app.whenReady().then(async () => {
   if (wasConnected) {
     calendarService.startSync((events) => {
       cachedEvents = events
+      updateTrayMenu()
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
         win.webContents.send('calendar:events-updated', events)
@@ -173,10 +249,26 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+
+  // System tray — show upcoming meetings, open app, quit
+  const showWindow = () => {
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length > 0) {
+      wins[0].show()
+      wins[0].focus()
+    } else {
+      createWindow()
+    }
+  }
+  createTray(() => cachedEvents, showWindow)
+
   detectionService.start()
 
   // Start Ollama + pull model in the background — don't block the window
   ollamaManager.startAndPull().catch((err) => {
+    ollamaSetupState.phase = 'error'
+    ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+    broadcastOllamaStatus()
     console.error('Failed to start Ollama:', err)
   })
 
@@ -192,16 +284,23 @@ app.whenReady().then(async () => {
     })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length === 0) {
+      createWindow()
+    } else {
+      wins[0].show()
+      wins[0].focus()
+    }
   })
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   ollamaManager?.stop()
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Don't quit — the tray keeps the app alive
 })
 
 /**

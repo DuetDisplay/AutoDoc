@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap } from '../shared/types'
+import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus } from '../shared/types'
 
 export interface SearchResult {
   meetingId: string
@@ -45,6 +45,12 @@ export interface IpcInvokeEvents {
   'detection:dismiss': []
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
+  'prefs:get-onboarding-complete': []
+  'prefs:set-onboarding-complete': []
+  'prefs:get-launch-at-login': []
+  'prefs:set-launch-at-login': [enabled: boolean]
+  'ollama:get-setup-status': []
+  'ollama:retry-setup': []
 }
 
 export interface IpcInvokeReturns {
@@ -72,13 +78,19 @@ export interface IpcInvokeReturns {
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
-  'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
+  'recording:get-media': { hasVideo: boolean; hasAudio: boolean; audioFile?: string }
   'recording:get-detail': { title: string; sourceName: string | null; date: number; durationSeconds: number | null }
   'search:query': SearchResult[]
   'chat:send': string
   'detection:dismiss': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
+  'prefs:get-onboarding-complete': boolean
+  'prefs:set-onboarding-complete': void
+  'prefs:get-launch-at-login': boolean
+  'prefs:set-launch-at-login': void
+  'ollama:get-setup-status': OllamaSetupStatus
+  'ollama:retry-setup': void
 }
 
 export interface IpcOnEvents {
@@ -89,4 +101,5 @@ export interface IpcOnEvents {
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
+  'ollama:setup-progress': [status: OllamaSetupStatus]
 }
