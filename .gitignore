@@ -5,3 +5,5 @@ out
 .eslintcache
 *.log*
 .superpowers/
+.env
+.env.local
