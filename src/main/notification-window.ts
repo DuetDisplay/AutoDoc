@@ -11,7 +11,9 @@ interface NotificationOptions {
 }
 
 export function showNotificationWindow(options: NotificationOptions): void {
+  console.log('[notification] show requested', { title: options.title, body: options.body })
   if (notificationWindow) {
+    console.log('[notification] replacing existing window')
     notificationWindow.close()
   }
 
@@ -60,6 +62,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   }
 
   notificationWindow.on('closed', () => {
+    console.log('[notification] window closed')
     cleanupListeners?.()
     cleanupListeners = null
     notificationWindow = null
@@ -221,12 +224,14 @@ export function showNotificationWindow(options: NotificationOptions): void {
   notificationWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 
   notificationWindow.once('ready-to-show', () => {
+    console.log('[notification] ready-to-show')
     notificationWindow?.showInactive()
   })
 
   // Auto-dismiss after 30 seconds
   setTimeout(() => {
     if (notificationWindow) {
+      console.log('[notification] auto-dismiss timeout')
       options.onDismiss()
       animateOut()
     }
@@ -235,6 +240,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
 function animateOut(): void {
   if (!notificationWindow) return
+  console.log('[notification] animateOut')
   const win = notificationWindow
   win.webContents.executeJavaScript(`
     new Promise(resolve => {
@@ -252,6 +258,7 @@ function animateOut(): void {
 
 export function hideNotificationWindow(): void {
   if (notificationWindow) {
+    console.log('[notification] hide requested')
     animateOut()
   }
 }
