@@ -27,6 +27,11 @@ import type { OllamaSetupStatus } from '../shared/types'
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 
+// Set dock icon in dev (production uses the bundled .icns)
+if (process.platform === 'darwin' && app.dock) {
+  app.dock.setIcon(join(__dirname, '../../build/icon.png'))
+}
+
 let ollamaManager: OllamaManager | null = null
 
 protocol.registerSchemesAsPrivileged([
@@ -42,6 +47,7 @@ function createWindow(): void {
     show: false,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#FAFAF7',
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

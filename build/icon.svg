@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FEFDFB"/>
+      <stop offset="100%" stop-color="#F5F4EF"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7A9E7E"/>
+      <stop offset="100%" stop-color="#5E8762"/>
+    </linearGradient>
+    <clipPath id="rounded">
+      <rect width="1024" height="1024" rx="228" ry="228"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <g clip-path="url(#rounded)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Subtle border -->
+    <rect width="1024" height="1024" rx="228" ry="228" fill="none" stroke="rgba(26,26,23,0.08)" stroke-width="4"/>
+
+    <!-- Waveform bars - 7 bars centered -->
+    <g transform="translate(512, 512)">
+      <!-- Bar 1 -->
+      <rect x="-198" y="-80" width="28" height="160" rx="14" fill="url(#bar)" opacity="0.85"/>
+      <!-- Bar 2 -->
+      <rect x="-132" y="-160" width="28" height="320" rx="14" fill="url(#bar)" opacity="0.9"/>
+      <!-- Bar 3 -->
+      <rect x="-66" y="-240" width="28" height="480" rx="14" fill="url(#bar)"/>
+      <!-- Bar 4 (center, tallest) -->
+      <rect x="-14" y="-140" width="28" height="280" rx="14" fill="url(#bar)" opacity="0.92"/>
+      <!-- Bar 5 -->
+      <rect x="52" y="-210" width="28" height="420" rx="14" fill="url(#bar)" opacity="0.95"/>
+      <!-- Bar 6 -->
+      <rect x="118" y="-110" width="28" height="220" rx="14" fill="url(#bar)" opacity="0.85"/>
+      <!-- Bar 7 -->
+      <rect x="184" y="-185" width="28" height="370" rx="14" fill="url(#bar)" opacity="0.9"/>
+    </g>
+  </g>
+</svg>
