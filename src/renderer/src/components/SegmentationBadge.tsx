@@ -1,4 +1,5 @@
-import type { SegmentationStatus } from '../../../shared/types'
+import { useState, useEffect } from 'react'
+import type { SegmentationStatus, OllamaSetupStatus } from '../../../shared/types'
 
 const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: string }> = {
   pending: {
@@ -34,13 +35,34 @@ interface SegmentationBadgeProps {
 
 export function SegmentationBadge({ status, onRetry }: SegmentationBadgeProps) {
   const config = STATUS_CONFIG[status]
+  const [ollamaProgress, setOllamaProgress] = useState<OllamaSetupStatus | null>(null)
+
+  useEffect(() => {
+    if (status !== 'downloading-model') {
+      setOllamaProgress(null)
+      return
+    }
+    window.electronAPI.invoke('ollama:get-setup-status').then(setOllamaProgress)
+    const unsub = window.electronAPI.on('ollama:setup-progress', setOllamaProgress)
+    return unsub
+  }, [status])
+
+  let label = config.label
+  if (status === 'downloading-model' && ollamaProgress) {
+    const pct = ollamaProgress.percent ?? 0
+    if (ollamaProgress.phase === 'downloading') {
+      label = `Downloading Ollama... ${pct}%`
+    } else if (ollamaProgress.phase === 'pulling') {
+      label = `Downloading AI model... ${pct}%`
+    }
+  }
 
   return (
     <span
       className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${config.className}`}
       onClick={status === 'failed' ? onRetry : undefined}
     >
-      {config.label}
+      {label}
     </span>
   )
 }
