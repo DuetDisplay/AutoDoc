@@ -123,7 +123,7 @@ export function MeetingDetail() {
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
-  const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean } | null>(null)
+  const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean; audioFile?: string } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
@@ -431,7 +431,7 @@ export function MeetingDetail() {
                   ref={mediaRef as React.RefObject<HTMLAudioElement>}
                   controls
                   className="w-full"
-                  src={`autodoc-media://${id}/audio.webm`}
+                  src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
                 />
               </div>
             )}

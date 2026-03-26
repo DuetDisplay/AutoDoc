@@ -113,12 +113,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const videoPath = join(baseDir, meetingId, 'screen.webm')
-    const micPath = join(baseDir, meetingId, 'mic.webm')
+    const systemPath = join(baseDir, meetingId, 'system.webm')
     const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
     const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
-    const hasAudio = await stat(micPath).then(() => true).catch(() => false)
-      || await stat(legacyAudioPath).then(() => true).catch(() => false)
-    return { hasVideo, hasAudio }
+    const hasSystemAudio = await stat(systemPath).then(() => true).catch(() => false)
+    const hasLegacyAudio = await stat(legacyAudioPath).then(() => true).catch(() => false)
+    return { hasVideo, hasAudio: hasSystemAudio || hasLegacyAudio, audioFile: hasSystemAudio ? 'system.webm' : 'audio.webm' }
   })
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()

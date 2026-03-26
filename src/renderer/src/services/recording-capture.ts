@@ -24,7 +24,7 @@ export async function startCapture(
       mandatory: {
         chromeMediaSource: 'desktop',
         chromeMediaSourceId: sourceId,
-        maxFrameRate: 15,
+        maxFrameRate: 30,
       },
     } as MediaTrackConstraints,
   })
@@ -63,9 +63,13 @@ export async function startCapture(
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
   const hasMic = micStream !== null && micStream.getAudioTracks().length > 0
 
-  // 4. Set up video recorder
-  const videoRecorder = new MediaRecorder(videoStream, {
-    mimeType: 'video/webm;codecs=vp9',
+  // 4. Set up video recorder (mux system audio into video for clean playback)
+  const videoWithAudio = new MediaStream([
+    ...videoStream.getVideoTracks(),
+    ...(hasSystemAudio ? audioStream.getAudioTracks() : []),
+  ])
+  const videoRecorder = new MediaRecorder(videoWithAudio, {
+    mimeType: hasSystemAudio ? 'video/webm;codecs=vp9,opus' : 'video/webm;codecs=vp9',
     videoBitsPerSecond: 1_500_000,
   })
 
