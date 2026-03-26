@@ -47,6 +47,8 @@ export interface IpcInvokeEvents {
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
   'prefs:set-onboarding-complete': []
+  'prefs:get-launch-at-login': []
+  'prefs:set-launch-at-login': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
 }
@@ -85,6 +87,8 @@ export interface IpcInvokeReturns {
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean
   'prefs:set-onboarding-complete': void
+  'prefs:get-launch-at-login': boolean
+  'prefs:set-launch-at-login': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
 }

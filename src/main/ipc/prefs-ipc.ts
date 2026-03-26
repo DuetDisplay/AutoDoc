@@ -9,4 +9,12 @@ export function registerPrefsIpc(prefsStore: PrefsStore): void {
   ipcMain.handle('prefs:set-onboarding-complete', (): void => {
     prefsStore.setOnboardingComplete()
   })
+
+  ipcMain.handle('prefs:get-launch-at-login', (): boolean => {
+    return prefsStore.getLaunchAtLogin()
+  })
+
+  ipcMain.handle('prefs:set-launch-at-login', (_event, enabled: boolean): void => {
+    prefsStore.setLaunchAtLogin(enabled)
+  })
 }
