@@ -45,6 +45,8 @@ export interface IpcInvokeEvents {
   'detection:dismiss': []
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
+  'prefs:get-onboarding-complete': []
+  'prefs:set-onboarding-complete': []
 }
 
 export interface IpcInvokeReturns {
@@ -79,6 +81,8 @@ export interface IpcInvokeReturns {
   'detection:dismiss': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
+  'prefs:get-onboarding-complete': boolean
+  'prefs:set-onboarding-complete': void
 }
 
 export interface IpcOnEvents {

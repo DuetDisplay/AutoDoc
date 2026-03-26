@@ -20,6 +20,8 @@ import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
+import { PrefsStore } from './services/prefs-store'
+import { registerPrefsIpc } from './ipc/prefs-ipc'
 
 let ollamaManager: OllamaManager | null = null
 
@@ -60,6 +62,9 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  const prefsStore = new PrefsStore()
+  registerPrefsIpc(prefsStore)
 
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
