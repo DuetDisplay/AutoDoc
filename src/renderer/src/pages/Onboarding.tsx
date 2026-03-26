@@ -6,16 +6,30 @@ import { MicPermissionStep } from '../components/onboarding/MicPermissionStep'
 import { ScreenPermissionStep } from '../components/onboarding/ScreenPermissionStep'
 import { CalendarStep } from '../components/onboarding/CalendarStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
+import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
+import { setAnalyticsConsent, trackEvent } from '../services/analytics'
 
-const TOTAL_DOTS = 8
+const TOTAL_DOTS = 9
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(0)
 
-  const next = useCallback(() => setStep((s) => s + 1), [])
+  const next = useCallback(() => {
+    setStep((s) => {
+      trackEvent('onboarding_step_completed', { step: s })
+      return s + 1
+    })
+  }, [])
+
+  const handleAnalyticsChoice = async (consented: boolean) => {
+    await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
+    setAnalyticsConsent(consented)
+    setStep((s) => s + 1)
+  }
 
   const handleFinish = async () => {
+    trackEvent('onboarding_completed')
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
     onComplete()
   }
@@ -73,6 +87,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       case 7:
         return <OllamaStep onNext={next} />
       case 8:
+        return <AnalyticsStep onNext={handleAnalyticsChoice} />
+      case 9:
         return <AllSetStep onFinish={handleFinish} />
       default:
         return null

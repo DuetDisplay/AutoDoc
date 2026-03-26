@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
+import { trackEvent } from '../services/analytics'
 import type { SearchResult } from '../../../preload/ipc.d'
 
 export function Search() {
@@ -22,6 +23,7 @@ export function Search() {
       const res = await window.electronAPI.invoke('search:query', q)
       setResults(res)
       setSearched(true)
+      trackEvent('search_performed', { result_count: res.length })
     } catch (err) {
       console.error('Search failed:', err)
     } finally {

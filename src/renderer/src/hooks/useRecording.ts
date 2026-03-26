@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useRecordingStore } from '../stores/recording'
 import { startCapture, stopCapture } from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
+import { trackEvent } from '../services/analytics'
 
 /**
  * Full recording hook — sets up IPC listener, timer, and actions.
@@ -66,6 +67,7 @@ export function useRecording() {
     const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
     try {
       await startCapture(sourceId, paths.meetingId)
+      trackEvent('recording_started')
     } catch (err) {
       // Rollback main process state if capture fails (e.g. permission denied)
       stopCapture()
@@ -76,6 +78,7 @@ export function useRecording() {
   }, [reset])
 
   const handleStop = useCallback(async () => {
+    trackEvent('recording_stopped', { duration_seconds: useRecordingStore.getState().elapsedSeconds })
     stopCapture()
     await window.electronAPI.invoke('recording:stop')
     reset()

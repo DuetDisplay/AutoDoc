@@ -49,6 +49,8 @@ export interface IpcInvokeEvents {
   'prefs:set-onboarding-complete': []
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
+  'prefs:get-analytics-consent': []
+  'prefs:set-analytics-consent': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
 }
@@ -89,6 +91,8 @@ export interface IpcInvokeReturns {
   'prefs:set-onboarding-complete': void
   'prefs:get-launch-at-login': boolean
   'prefs:set-launch-at-login': void
+  'prefs:get-analytics-consent': boolean | null
+  'prefs:set-analytics-consent': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
 }

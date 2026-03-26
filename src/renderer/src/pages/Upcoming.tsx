@@ -6,6 +6,7 @@ import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import { useToastStore } from '../stores/toast'
+import { trackEvent } from '../services/analytics'
 import type { CalendarEvent } from '../../../shared/types'
 
 let calendarToastShown = false
@@ -65,6 +66,7 @@ export function Upcoming() {
     try {
       await window.electronAPI.invoke('calendar:connect')
       setConnected(true)
+      trackEvent('calendar_connected')
       const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
       setEvents(fetchedEvents)
     } catch (err) {

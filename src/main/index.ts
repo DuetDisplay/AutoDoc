@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/electron/main'
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
@@ -27,6 +28,23 @@ import type { OllamaSetupStatus } from '../shared/types'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
+
+// Initialize Sentry for crash reporting (env-var-gated — no DSN = no tracking)
+const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: is.dev ? 'development' : 'production',
+    release: `autodoc@${app.getVersion()}`,
+    // Don't send in dev unless explicitly enabled
+    enabled: !is.dev || !!process.env.AUTODOC_SENTRY_DEV,
+    beforeSend(event) {
+      // Strip machine name for privacy
+      delete event.server_name
+      return event
+    },
+  })
+}
 
 // Set dock icon in dev (production uses the bundled .icns)
 if (process.platform === 'darwin' && app.dock) {
