@@ -17,16 +17,17 @@ function overlap(aStartMs: number, aEndMs: number, bStartSec: number, bEndSec: n
 export function alignSpeakers(
   transcripts: Transcript[],
   diarization: DiarizationResult | null,
-  micSegments: TimeSegment[] | null,
+  systemSegments: TimeSegment[] | null,
 ): Transcript[] {
-  // Two-stream only (no ML diarization): label by mic activity
-  if ((!diarization || diarization.speakers.length === 0) && micSegments) {
+  // Two-stream only (no ML diarization): label by system audio activity
+  // System active = remote speaker, system silent = "me"
+  if ((!diarization || diarization.speakers.length === 0) && systemSegments) {
     return transcripts.map((t) => {
-      let micOverlap = 0
-      for (const mic of micSegments) {
-        micOverlap += overlap(t.startMs, t.endMs, mic.start, mic.end)
+      let systemOverlap = 0
+      for (const seg of systemSegments) {
+        systemOverlap += overlap(t.startMs, t.endMs, seg.start, seg.end)
       }
-      return { ...t, speaker: micOverlap > 0 ? 'me' : 'speaker_1' }
+      return { ...t, speaker: systemOverlap > 0 ? 'speaker_1' : 'me' }
     })
   }
 
@@ -45,16 +46,16 @@ export function alignSpeakers(
   let nextSpeakerNum = 1
 
   return transcripts.map((t) => {
-    if (micSegments) {
-      let micOverlap = 0
-      for (const mic of micSegments) {
-        micOverlap += overlap(t.startMs, t.endMs, mic.start, mic.end)
+    if (systemSegments) {
+      let systemActivityOverlap = 0
+      for (const seg of systemSegments) {
+        systemActivityOverlap += overlap(t.startMs, t.endMs, seg.start, seg.end)
       }
-      let systemOverlap = 0
+      let diarOverlap = 0
       for (const seg of diarSegments) {
-        systemOverlap += overlap(t.startMs, t.endMs, seg.start, seg.end)
+        diarOverlap += overlap(t.startMs, t.endMs, seg.start, seg.end)
       }
-      if (micOverlap >= systemOverlap && micOverlap > 0) {
+      if (systemActivityOverlap === 0 && diarOverlap === 0) {
         return { ...t, speaker: 'me' }
       }
     }

@@ -181,20 +181,20 @@ export class TranscriptionService {
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
       let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
 
-      // Speaker labeling (two-stream: mic = "me", system = remote)
+      // Speaker labeling (two-stream: system active = remote, system silent = "me")
       if (hasMic && hasSystem) {
         try {
           this.activeStatus = 'diarizing'
           this.broadcastStatus(meetingId, 'diarizing')
 
-          // Detect mic activity to label "me" vs remote speakers
-          const tempMicWav = `${tempPrefix}-mic.wav`
-          tempFiles.push(tempMicWav)
-          const micInput = await this.decryptIfNeeded(micWebm, tempFiles)
-          await this.audioConverter.convert(micInput, tempMicWav, this.whisperManager.getFfmpegPath())
-          const micSegments = await this.detectAudioActivity(tempMicWav)
+          // Detect system audio activity — clean digital signal, no mic bleed
+          const tempSystemWav = `${tempPrefix}-system.wav`
+          tempFiles.push(tempSystemWav)
+          const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
+          await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
+          const systemSegments = await this.detectAudioActivity(tempSystemWav)
 
-          transcripts = alignSpeakers(transcripts, null, micSegments)
+          transcripts = alignSpeakers(transcripts, null, systemSegments)
           await this.generateSpeakersJson(meetingId, transcripts)
         } catch (err) {
           console.error('Speaker labeling failed:', err)
