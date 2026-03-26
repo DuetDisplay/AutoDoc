@@ -83,6 +83,12 @@ export class SegmentationService {
 
       if (hasTranscript && !hasSegments && !hasError) {
         this.enqueue(meetingId)
+      } else if (hasTranscript && !hasSegments && hasError) {
+        const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
+        if (errorData && errorData.retries < 3) {
+          console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+          this.retry(meetingId)
+        }
       }
     }
   }
@@ -151,8 +157,23 @@ export class SegmentationService {
 
   private async markFailed(meetingId: string, error: string): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
-    await writeFile(errorPath, error)
+    const existing = await this.readErrorFile(errorPath)
+    const retries = (existing?.retries ?? 0) + 1
+    await writeFile(errorPath, JSON.stringify({ error, retries }))
     this.broadcastStatus(meetingId, 'failed')
+  }
+
+  private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
+    try {
+      const raw = await readFile(errorPath, 'utf-8')
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return { error: raw, retries: 0 }
+      }
+    } catch {
+      return null
+    }
   }
 
   private broadcastStatus(meetingId: string, status: SegmentationStatus): void {

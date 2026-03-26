@@ -105,6 +105,13 @@ export class TranscriptionService {
 
       if (hasAudio && !hasTranscript && !hasError) {
         this.enqueue(meetingId)
+      } else if (hasAudio && !hasTranscript && hasError) {
+        // Auto-retry failed transcriptions up to 3 times on startup
+        const errorData = await this.readErrorFile(errorPath)
+        if (errorData && errorData.retries < 3) {
+          console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+          this.retry(meetingId)
+        }
       }
     }
   }
@@ -417,8 +424,24 @@ export class TranscriptionService {
 
   private async markFailed(meetingId: string, error: string): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
-    await writeFile(errorPath, error)
+    const existing = await this.readErrorFile(errorPath)
+    const retries = (existing?.retries ?? 0) + 1
+    await writeFile(errorPath, JSON.stringify({ error, retries }))
     this.broadcastStatus(meetingId, 'failed')
+  }
+
+  private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
+    try {
+      const raw = await readFile(errorPath, 'utf-8')
+      // Handle legacy plain-text error files
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return { error: raw, retries: 0 }
+      }
+    } catch {
+      return null
+    }
   }
 
   private broadcastStatus(meetingId: string, status: TranscriptionStatus, progress?: number): void {
