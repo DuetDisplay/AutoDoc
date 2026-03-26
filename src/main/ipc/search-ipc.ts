@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
-import type { Transcript, MeetingSegments } from '../../shared/types'
+import type { Transcript, MeetingSegments, MeetingMetadata } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
+import { readMetadata } from '../services/calendar-matcher'
 
 export interface SearchResult {
   meetingId: string
@@ -63,12 +64,22 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
       } catch { /* no segments */ }
 
       if (matches.length > 0) {
-        const audioStat = await stat(join(meetingDir, 'audio.webm')).catch(() => null)
-        const createdAt = audioStat?.birthtime ?? new Date()
+        const metadata = await readMetadata(meetingDir)
+        const micStat = await stat(join(meetingDir, 'mic.webm')).catch(() => null)
+        const legacyStat = await stat(join(meetingDir, 'audio.webm')).catch(() => null)
+
+        const createdAt = metadata
+          ? new Date(metadata.startedAt)
+          : micStat?.birthtime ?? legacyStat?.birthtime ?? dirStat.birthtime
+
+        const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+        const title = metadata?.sourceName
+          ? `${metadata.sourceName} — ${dateSuffix}`
+          : `Recording ${dateSuffix}`
 
         results.push({
           meetingId,
-          title: `Recording ${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
+          title,
           date: createdAt.getTime(),
           matches: matches.slice(0, 5), // Cap at 5 matches per meeting
         })
