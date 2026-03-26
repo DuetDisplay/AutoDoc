@@ -5,7 +5,10 @@ import { ConnectCalendar } from '../components/ConnectCalendar'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
+import { useToastStore } from '../stores/toast'
 import type { CalendarEvent } from '../../../shared/types'
+
+let calendarToastShown = false
 
 export function Upcoming() {
   const {
@@ -39,6 +42,16 @@ export function Upcoming() {
 
     return unsubscribe
   }, [setConnected, setEvents])
+
+  useEffect(() => {
+    if (!isConnected && !calendarToastShown) {
+      calendarToastShown = true
+      useToastStore.getState().showToast({
+        type: 'calendar',
+        message: 'Connect Google Calendar to see upcoming meetings and auto-name recordings.',
+      })
+    }
+  }, [isConnected])
 
   const handleConnect = async () => {
     setConnecting(true)

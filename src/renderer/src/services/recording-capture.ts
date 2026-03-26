@@ -1,3 +1,5 @@
+import { useToastStore } from '../stores/toast'
+
 interface CaptureHandles {
   videoRecorder: MediaRecorder
   micRecorder: MediaRecorder | null
@@ -29,6 +31,15 @@ export async function startCapture(
     } as MediaTrackConstraints,
   })
 
+  // Check screen recording permission
+  const perms = await window.electronAPI.invoke('permissions:check')
+  if (!perms.screen) {
+    useToastStore.getState().showToast({
+      type: 'screen',
+      message: 'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
+    })
+  }
+
   // 2. Capture system audio (entire desktop audio)
   let audioStream: MediaStream
   try {
@@ -58,6 +69,13 @@ export async function startCapture(
     })
   } catch {
     // Mic may not be available
+  }
+
+  if (!micStream || micStream.getAudioTracks().length === 0) {
+    useToastStore.getState().showToast({
+      type: 'microphone',
+      message: 'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
+    })
   }
 
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
