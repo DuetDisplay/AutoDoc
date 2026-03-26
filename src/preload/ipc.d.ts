@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus } from '../shared/types'
+import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
 export interface SearchResult {
   meetingId: string
@@ -51,6 +51,8 @@ export interface IpcInvokeEvents {
   'prefs:set-launch-at-login': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
+  'whisper:get-setup-status': []
+  'whisper:retry-setup': []
 }
 
 export interface IpcInvokeReturns {
@@ -91,6 +93,8 @@ export interface IpcInvokeReturns {
   'prefs:set-launch-at-login': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
+  'whisper:get-setup-status': WhisperSetupStatus
+  'whisper:retry-setup': void
 }
 
 export interface IpcOnEvents {
@@ -102,4 +106,5 @@ export interface IpcOnEvents {
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
   'ollama:setup-progress': [status: OllamaSetupStatus]
+  'whisper:setup-progress': [status: WhisperSetupStatus]
 }

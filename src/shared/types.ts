@@ -139,3 +139,9 @@ export interface OllamaSetupStatus {
   percent: number
   error?: string
 }
+
+export interface WhisperSetupStatus {
+  phase: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
+  percent: number
+  error?: string
+}

@@ -27,6 +27,8 @@ export function Sidebar() {
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null)
   const [setupPhase, setSetupPhase] = useState<string | null>(null)
   const [setupPercent, setSetupPercent] = useState(0)
+  const [whisperPhase, setWhisperPhase] = useState<string | null>(null)
+  const [whisperPercent, setWhisperPercent] = useState(0)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
@@ -39,6 +41,20 @@ export function Sidebar() {
       setSetupPhase(status.phase)
       setSetupPercent(status.percent)
       if (status.phase === 'ready') setOllamaConnected(true)
+    })
+
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.invoke('whisper:get-setup-status').then((status) => {
+      setWhisperPhase(status.phase)
+      setWhisperPercent(status.percent)
+    })
+
+    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
+      setWhisperPhase(status.phase)
+      setWhisperPercent(status.percent)
     })
 
     return unsub
@@ -90,12 +106,32 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col gap-2">
+        {whisperPhase === 'downloading-whisper' ||
+         whisperPhase === 'downloading-ffmpeg' ||
+         whisperPhase === 'downloading-model' ? (
+          <div className="px-2.5 py-2 flex flex-col gap-1.5">
+            <span className="text-[11px] text-ink-faint">
+              {whisperPhase === 'downloading-whisper'
+                ? `Downloading transcription engine… ${whisperPercent}%`
+                : whisperPhase === 'downloading-ffmpeg'
+                  ? `Downloading audio tools… ${whisperPercent}%`
+                  : `Downloading speech model… ${whisperPercent}%`}
+            </span>
+            <div className="w-full h-1 bg-border rounded-full overflow-hidden">
+              <div
+                className="h-full bg-sage rounded-full transition-all duration-300"
+                style={{ width: `${whisperPercent}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
         {(setupPhase === 'downloading' || setupPhase === 'pulling') && setupPhase !== null ? (
           <div className="px-2.5 py-2 flex flex-col gap-1.5">
             <span className="text-[11px] text-ink-faint">
               {setupPhase === 'downloading'
-                ? `Downloading model... ${setupPercent}%`
-                : `Installing model... ${setupPercent}%`}
+                ? `Downloading AI model… ${setupPercent}%`
+                : `Installing AI model… ${setupPercent}%`}
             </span>
             <div className="w-full h-1 bg-border rounded-full overflow-hidden">
               <div

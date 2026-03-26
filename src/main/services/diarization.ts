@@ -73,7 +73,8 @@ export class DiarizationService {
       const cmd = IS_WIN ? 'where.exe python' : 'which python3'
       python3 = execSync(cmd, { encoding: 'utf-8' }).trim().split(/\r?\n/)[0]
     } catch {
-      throw new Error('python3 not found. Install Python 3 to enable speaker diarization.')
+      console.warn('Python 3 not found — speaker diarization will be unavailable.')
+      return
     }
 
     await this.runCommand(python3, ['-m', 'venv', envDir])
@@ -93,6 +94,10 @@ export class DiarizationService {
 
   async diarize(wavPath: string): Promise<DiarizationResult> {
     await this.ensureReady()
+
+    if (!this.ready) {
+      return { speakers: [] }
+    }
 
     return new Promise((resolve, reject) => {
       const proc = spawn(this.getPythonPath(), [this.getScriptPath(), wavPath], {

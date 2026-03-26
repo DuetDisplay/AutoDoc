@@ -11,7 +11,6 @@ import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
-import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
@@ -23,8 +22,9 @@ import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import type { OllamaSetupStatus } from '../shared/types'
+import type { OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -151,12 +151,10 @@ app.whenReady().then(async () => {
   })
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
-  const diarizationService = new DiarizationService()
   const transcriptionService = new TranscriptionService(
     whisperManager,
     audioConverter,
     recordingService.getRecordingsBaseDir(),
-    diarizationService,
     calendarService,
   )
   ollamaManager = new OllamaManager()
@@ -218,7 +216,7 @@ app.whenReady().then(async () => {
     segmentationService.enqueue(meetingId)
   })
 
-  let cachedEvents: import('../../shared/types').CalendarEvent[] = []
+  let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
   const detectionService = new DetectionService(
     recordingService,
@@ -229,9 +227,23 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
+  // Mutable state tracking Whisper setup progress
+  const whisperSetupState: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
+
+  whisperManager.on('setup-status', (status: WhisperSetupStatus) => {
+    whisperSetupState.phase = status.phase
+    whisperSetupState.percent = status.percent
+    whisperSetupState.error = status.error
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+    }
+  })
+
   registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
+  registerWhisperIpc(whisperManager, () => ({ ...whisperSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
@@ -263,6 +275,26 @@ app.whenReady().then(async () => {
   createTray(() => cachedEvents, showWindow)
 
   detectionService.start()
+
+  // Start whisper tools + model download in the background — don't block the window
+  whisperManager.startSetup()
+    .then(() => {
+      whisperSetupState.phase = 'ready'
+      whisperSetupState.percent = 100
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+      }
+    })
+    .catch((err) => {
+      whisperSetupState.phase = 'error'
+      whisperSetupState.error = err instanceof Error ? err.message : String(err)
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+      }
+      console.error('Failed to set up whisper tools:', err)
+    })
 
   // Start Ollama + pull model in the background — don't block the window
   ollamaManager.startAndPull()

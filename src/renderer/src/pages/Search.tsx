@@ -9,7 +9,7 @@ export function Search() {
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
   const navigate = useNavigate()
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
