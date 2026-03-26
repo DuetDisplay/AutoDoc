@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
 import { FeatureStep } from '../components/onboarding/FeatureStep'
@@ -13,7 +13,7 @@ const TOTAL_DOTS = 8
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(0)
 
-  const next = () => setStep((s) => s + 1)
+  const next = useCallback(() => setStep((s) => s + 1), [])
 
   const handleFinish = async () => {
     await window.electronAPI.invoke('prefs:set-onboarding-complete')

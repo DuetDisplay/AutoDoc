@@ -62,7 +62,11 @@ export function registerLlmIpc(
   ipcMain.handle(
     'ollama:retry-setup',
     async (): Promise<void> => {
-      await ollamaManager.startAndPull()
+      try {
+        await ollamaManager.startAndPull()
+      } catch (err) {
+        console.error('Ollama retry failed:', err)
+      }
     }
   )
 }

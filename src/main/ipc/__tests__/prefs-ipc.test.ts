@@ -6,14 +6,14 @@ vi.mock('electron', () => ({
 
 vi.mock('electron-store', () => {
   return {
-    default: vi.fn().mockImplementation(() => {
-      const data: Record<string, unknown> = {}
+    default: vi.fn().mockImplementation((opts?: { defaults?: Record<string, unknown> }) => {
+      const data: Record<string, unknown> = { ...(opts?.defaults ?? {}) }
       return {
-        get: vi.fn((_key: string, defaultValue?: unknown) => {
-          return _key in data ? data[_key] : defaultValue
+        get: vi.fn((key: string, defaultValue?: unknown) => {
+          return key in data ? data[key] : defaultValue
         }),
-        set: vi.fn((_key: string, value: unknown) => {
-          data[_key] = value
+        set: vi.fn((key: string, value: unknown) => {
+          data[key] = value
         }),
       }
     }),
