@@ -25,26 +25,38 @@ export function Upcoming() {
   } = useCalendarStore()
 
   useEffect(() => {
-    // Check connection status on mount
-    window.electronAPI.invoke('calendar:is-connected').then((connected) => {
+    // Check connection status and fetch events on mount
+    window.electronAPI.invoke('calendar:is-connected').then(async (connected) => {
       setConnected(connected)
       setCalendarChecked(true)
-    })
-
-    // Listen for event updates from main process
-    const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
-      setEvents(updatedEvents)
-    })
-
-    // If already connected, fetch events
-    window.electronAPI.invoke('calendar:is-connected').then(async (connected) => {
       if (connected) {
-        const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
-        setEvents(fetchedEvents)
+        try {
+          const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
+          setEvents(fetchedEvents)
+        } catch (err) {
+          console.error('Failed to fetch calendar events:', err)
+          // Session is stale — main process auto-disconnects, but update UI too
+          setConnected(false)
+          setEvents([])
+        }
       }
     })
 
-    return unsubscribe
+    // Listen for event updates from main process
+    const unsubEvents = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
+      setEvents(updatedEvents)
+    })
+
+    // Listen for connection status changes (e.g. auto-disconnect on auth failure)
+    const unsubConnection = window.electronAPI.on('calendar:connection-changed', (connected) => {
+      setConnected(connected)
+      if (!connected) setEvents([])
+    })
+
+    return () => {
+      unsubEvents()
+      unsubConnection()
+    }
   }, [setConnected, setEvents])
 
   useEffect(() => {
@@ -79,6 +91,9 @@ export function Upcoming() {
     try {
       const syncedEvents = await window.electronAPI.invoke('calendar:sync')
       setEvents(syncedEvents)
+    } catch (err) {
+      console.error('Calendar sync failed:', err)
+      // Auth failure auto-disconnects via the connection-changed listener
     } finally {
       setSyncing(false)
     }

@@ -24,7 +24,8 @@ import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import type { OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import { getAutoRecordMode } from './services/auto-record-store'
+import type { CalendarEvent, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -36,6 +37,13 @@ if (process.platform === 'darwin' && app.dock) {
 
 let ollamaManager: OllamaManager | null = null
 let isQuitting = false
+
+function applyAutoRecordStateFromIpc(events: CalendarEvent[]): CalendarEvent[] {
+  return events.map((e) => ({
+    ...e,
+    autoRecord: getAutoRecordMode(e.googleEventId, e.recurringEventId),
+  }))
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
@@ -248,19 +256,32 @@ app.whenReady().then(async () => {
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
+  createWindow()
+
   const wasConnected = await calendarService.initialize()
   if (wasConnected) {
-    calendarService.startSync((events) => {
-      cachedEvents = events
-      updateTrayMenu()
-      const windows = BrowserWindow.getAllWindows()
-      for (const win of windows) {
-        win.webContents.send('calendar:events-updated', events)
-      }
-    })
+    calendarService.startSync(
+      (events) => {
+        const enriched = applyAutoRecordStateFromIpc(events)
+        cachedEvents = enriched
+        updateTrayMenu()
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('calendar:events-updated', enriched)
+        }
+      },
+      async () => {
+        // Auth failed — disconnect and notify renderer
+        await calendarService.disconnect()
+        cachedEvents = []
+        updateTrayMenu()
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('calendar:connection-changed', false)
+        }
+      },
+    )
   }
-
-  createWindow()
 
   // System tray — show upcoming meetings, open app, quit
   const showWindow = () => {

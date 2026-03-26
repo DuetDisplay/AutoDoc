@@ -100,6 +100,7 @@ export interface IpcInvokeReturns {
 export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
+  'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus; progress?: number }]
   'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
   'detection:meeting-detected': [payload: { title: string; body: string }]

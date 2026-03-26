@@ -16,6 +16,7 @@ export class CalendarService {
   private oauth2Client: OAuth2Client
   private syncInterval: ReturnType<typeof setInterval> | null = null
   private onEventsUpdated: ((events: CalendarEvent[]) => void) | null = null
+  private callbackServer: http.Server | null = null
 
   constructor() {
     this.oauth2Client = new google.auth.OAuth2(CLIENT_ID)
@@ -42,14 +43,23 @@ export class CalendarService {
   }
 
   async connect(): Promise<void> {
-    const state = crypto.randomBytes(16).toString('hex')
+    // Clean up any leftover server from a previous connect attempt
+    if (this.callbackServer) {
+      this.callbackServer.close()
+      this.callbackServer = null
+    }
 
-    // Open the auth worker URL — it handles the Google OAuth flow
-    const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
-    await shell.openExternal(authUrl)
+    const state = crypto.randomBytes(16).toString('hex')
 
     // Wait for the worker to redirect back to localhost with tokens
     const result = await new Promise<{ tokens: object }>((resolve, reject) => {
+      let settled = false
+      const settle = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        fn()
+      }
+
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
@@ -60,7 +70,8 @@ export class CalendarService {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Authorization failed. You may close this tab.</p></body></html>')
           server.close()
-          reject(new Error(error))
+          this.callbackServer = null
+          settle(() => reject(new Error(error)))
           return
         }
 
@@ -68,7 +79,8 @@ export class CalendarService {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>State mismatch. Please try again.</p></body></html>')
           server.close()
-          reject(new Error('State mismatch'))
+          this.callbackServer = null
+          settle(() => reject(new Error('State mismatch')))
           return
         }
 
@@ -76,7 +88,8 @@ export class CalendarService {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Missing token data. Please try again.</p></body></html>')
           server.close()
-          reject(new Error('Missing token data'))
+          this.callbackServer = null
+          settle(() => reject(new Error('Missing token data')))
           return
         }
 
@@ -87,7 +100,8 @@ export class CalendarService {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Invalid token data. Please try again.</p></body></html>')
           server.close()
-          reject(new Error('Invalid token data'))
+          this.callbackServer = null
+          settle(() => reject(new Error('Invalid token data')))
           return
         }
 
@@ -99,11 +113,20 @@ export class CalendarService {
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>')
         server.close()
-        resolve({ tokens })
+        this.callbackServer = null
+        settle(() => resolve({ tokens }))
       })
 
-      server.listen(OAUTH_PORT, '127.0.0.1')
-      server.on('error', reject)
+      this.callbackServer = server
+      server.listen(OAUTH_PORT, '127.0.0.1', async () => {
+        // Only open the browser after the server is listening
+        const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
+        await shell.openExternal(authUrl)
+      })
+      server.on('error', (err) => {
+        this.callbackServer = null
+        settle(() => reject(err))
+      })
     })
 
     this.oauth2Client.setCredentials(result.tokens)
@@ -156,12 +179,18 @@ export class CalendarService {
     }))
   }
 
-  startSync(callback: (events: CalendarEvent[]) => void): void {
+  startSync(
+    callback: (events: CalendarEvent[]) => void,
+    onError?: (err: unknown) => void,
+  ): void {
     this.onEventsUpdated = callback
     // Fetch immediately on start
     this.fetchUpcomingEvents()
       .then((events) => this.onEventsUpdated?.(events))
-      .catch((err) => console.error('Initial calendar sync failed:', err))
+      .catch((err) => {
+        console.error('Initial calendar sync failed:', err)
+        onError?.(err)
+      })
 
     this.syncInterval = setInterval(async () => {
       try {
@@ -169,6 +198,7 @@ export class CalendarService {
         this.onEventsUpdated?.(events)
       } catch (err) {
         console.error('Calendar sync failed:', err)
+        onError?.(err)
       }
     }, CALENDAR_SYNC_INTERVAL_MS)
   }
@@ -188,30 +218,26 @@ export class CalendarService {
     // Refresh if no expiry_date (unknown state) or token expires within 5 minutes
     if (creds.expiry_date && creds.expiry_date > Date.now() + 5 * 60_000) return
 
-    try {
-      const response = await fetch(`${AUTH_WORKER_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: creds.refresh_token }),
-      })
+    const response = await fetch(`${AUTH_WORKER_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: creds.refresh_token }),
+    })
 
-      if (!response.ok) {
-        console.error('Token refresh failed:', await response.text())
-        return
-      }
-
-      const newTokens = await response.json() as { access_token: string; expires_in: number }
-      const updated = {
-        ...creds,
-        access_token: newTokens.access_token,
-        expiry_date: Date.now() + newTokens.expires_in * 1000,
-      }
-
-      this.oauth2Client.setCredentials(updated)
-      saveTokens(updated)
-    } catch (err) {
-      console.error('Token refresh error:', err)
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      throw new Error(`Token refresh failed (${response.status}): ${body}`)
     }
+
+    const newTokens = await response.json() as { access_token: string; expires_in: number }
+    const updated = {
+      ...creds,
+      access_token: newTokens.access_token,
+      expiry_date: Date.now() + newTokens.expires_in * 1000,
+    }
+
+    this.oauth2Client.setCredentials(updated)
+    saveTokens(updated)
   }
 
   private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] } | null; location?: string | null; description?: string | null }): string | null {

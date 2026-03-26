@@ -10,20 +10,23 @@ export function registerCalendarIpc(
   ipcMain.handle('calendar:connect', async () => {
     await calendarService.connect()
 
-    const events = await calendarService.fetchUpcomingEvents()
-    const enriched = applyAutoRecordState(events)
-    pushEventsToRenderer(enriched)
-    onEventsUpdated?.(enriched)
-
-    calendarService.startSync((updatedEvents) => {
-      const enrichedUpdated = applyAutoRecordState(updatedEvents)
-      pushEventsToRenderer(enrichedUpdated)
-      onEventsUpdated?.(enrichedUpdated)
-    })
+    // Start sync — don't let an initial fetch failure undo the connection
+    calendarService.startSync(
+      (updatedEvents) => {
+        const enrichedUpdated = applyAutoRecordState(updatedEvents)
+        pushEventsToRenderer(enrichedUpdated)
+        onEventsUpdated?.(enrichedUpdated)
+      },
+      async () => {
+        await calendarService.disconnect()
+        pushConnectionStatus(false)
+      },
+    )
   })
 
   ipcMain.handle('calendar:disconnect', async () => {
     await calendarService.disconnect()
+    pushConnectionStatus(false)
   })
 
   ipcMain.handle('calendar:is-connected', () => {
@@ -31,14 +34,30 @@ export function registerCalendarIpc(
   })
 
   ipcMain.handle('calendar:get-events', async () => {
-    const events = await calendarService.fetchUpcomingEvents()
-    return applyAutoRecordState(events)
+    try {
+      const events = await calendarService.fetchUpcomingEvents()
+      return applyAutoRecordState(events)
+    } catch (err) {
+      console.error('Failed to fetch calendar events:', err)
+      // If the token refresh or API call failed, the session is stale
+      await calendarService.disconnect()
+      pushConnectionStatus(false)
+      throw err
+    }
   })
 
   ipcMain.handle('calendar:sync', async () => {
-    const events = await calendarService.fetchUpcomingEvents()
-    pushEventsToRenderer(applyAutoRecordState(events))
-    return applyAutoRecordState(events)
+    try {
+      const events = await calendarService.fetchUpcomingEvents()
+      const enriched = applyAutoRecordState(events)
+      pushEventsToRenderer(enriched)
+      return enriched
+    } catch (err) {
+      console.error('Calendar sync failed:', err)
+      await calendarService.disconnect()
+      pushConnectionStatus(false)
+      throw err
+    }
   })
 
   ipcMain.handle('calendar:set-auto-record', (_event, eventId: string, recurringEventId: string | null, mode: AutoRecordMode) => {
@@ -57,5 +76,12 @@ function pushEventsToRenderer(events: CalendarEvent[]): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
     win.webContents.send('calendar:events-updated', events)
+  }
+}
+
+function pushConnectionStatus(connected: boolean): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('calendar:connection-changed', connected)
   }
 }
