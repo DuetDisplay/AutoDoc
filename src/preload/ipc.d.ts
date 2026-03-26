@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap } from '../shared/types'
+import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus } from '../shared/types'
 
 export interface SearchResult {
   meetingId: string
@@ -47,6 +47,8 @@ export interface IpcInvokeEvents {
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
   'prefs:set-onboarding-complete': []
+  'ollama:get-setup-status': []
+  'ollama:retry-setup': []
 }
 
 export interface IpcInvokeReturns {
@@ -83,6 +85,8 @@ export interface IpcInvokeReturns {
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean
   'prefs:set-onboarding-complete': void
+  'ollama:get-setup-status': OllamaSetupStatus
+  'ollama:retry-setup': void
 }
 
 export interface IpcOnEvents {
@@ -93,4 +97,5 @@ export interface IpcOnEvents {
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
+  'ollama:setup-progress': [status: OllamaSetupStatus]
 }

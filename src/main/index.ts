@@ -22,6 +22,7 @@ import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import type { OllamaSetupStatus } from '../shared/types'
 
 let ollamaManager: OllamaManager | null = null
 
@@ -136,6 +137,53 @@ app.whenReady().then(async () => {
     calendarService,
   )
   ollamaManager = new OllamaManager()
+
+  // Mutable state tracking Ollama setup progress
+  const ollamaSetupState: OllamaSetupStatus = { phase: 'downloading', percent: 0 }
+
+  function broadcastOllamaStatus(): void {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('ollama:setup-progress', { ...ollamaSetupState })
+    }
+  }
+
+  ollamaManager.on('download-start', () => {
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('download-progress', (data: { percent: number }) => {
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = data.percent
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('download-complete', () => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-start', () => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = 0
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-progress', (data: { percent: number }) => {
+    ollamaSetupState.phase = 'pulling'
+    ollamaSetupState.percent = data.percent
+    broadcastOllamaStatus()
+  })
+
+  ollamaManager.on('pull-complete', () => {
+    ollamaSetupState.phase = 'ready'
+    ollamaSetupState.percent = 100
+    broadcastOllamaStatus()
+  })
+
   const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
   const segmentationService = new SegmentationService(
     ollamaProvider,
@@ -160,7 +208,7 @@ app.whenReady().then(async () => {
 
   registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
   registerTranscriptionIpc(transcriptionService)
-  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider)
+  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
@@ -181,6 +229,9 @@ app.whenReady().then(async () => {
 
   // Start Ollama + pull model in the background — don't block the window
   ollamaManager.startAndPull().catch((err) => {
+    ollamaSetupState.phase = 'error'
+    ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+    broadcastOllamaStatus()
     console.error('Failed to start Ollama:', err)
   })
 

@@ -2,12 +2,13 @@ import { ipcMain } from 'electron'
 import type { SegmentationService } from '../services/segmentation'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
-import type { MeetingSegments, SegmentationStatus } from '../../shared/types'
+import type { MeetingSegments, SegmentationStatus, OllamaSetupStatus } from '../../shared/types'
 
 export function registerLlmIpc(
   segmentationService: SegmentationService,
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
+  getOllamaSetupStatus: () => OllamaSetupStatus,
 ): void {
   ipcMain.handle(
     'ollama:check-status',
@@ -48,6 +49,20 @@ export function registerLlmIpc(
     'segmentation:save-segments',
     async (_event, meetingId: string, segments: MeetingSegments): Promise<void> => {
       await segmentationService.saveSegments(meetingId, segments)
+    }
+  )
+
+  ipcMain.handle(
+    'ollama:get-setup-status',
+    (): OllamaSetupStatus => {
+      return getOllamaSetupStatus()
+    }
+  )
+
+  ipcMain.handle(
+    'ollama:retry-setup',
+    async (): Promise<void> => {
+      await ollamaManager.startAndPull()
     }
   )
 }
