@@ -86,28 +86,39 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
   const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
   const speakerIds = hasSpeakers ? Object.keys(speakers) : []
 
+  // Merge consecutive segments from the same speaker
+  const merged: { speaker: string; startMs: number; texts: string[] }[] = []
+  for (const seg of segments) {
+    const last = merged[merged.length - 1]
+    if (last && last.speaker === seg.speaker) {
+      last.texts.push(seg.text)
+    } else {
+      merged.push({ speaker: seg.speaker, startMs: seg.startMs, texts: [seg.text] })
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-1">
-      {segments.map((seg) => {
-        const color = hasSpeakers ? getSpeakerColor(seg.speaker, speakerIds) : null
-        const speakerLabel = hasSpeakers ? (speakers![seg.speaker]?.label ?? null) : null
+    <div className="flex flex-col gap-2">
+      {merged.map((group, i) => {
+        const color = hasSpeakers ? getSpeakerColor(group.speaker, speakerIds) : null
+        const speakerLabel = hasSpeakers ? (speakers![group.speaker]?.label ?? null) : null
 
         return (
           <div
-            key={seg.id}
-            className="flex gap-3"
-            style={color ? { borderLeft: `3px solid ${color.border}`, backgroundColor: color.bg, paddingLeft: '8px', paddingTop: '4px', paddingBottom: '4px' } : undefined}
+            key={i}
+            className="flex gap-3 rounded-lg"
+            style={color ? { borderLeft: `3px solid ${color.border}`, backgroundColor: color.bg, paddingLeft: '8px', paddingTop: '6px', paddingBottom: '6px' } : undefined}
           >
             {onSeek ? (
               <button
-                onClick={() => onSeek(seg.startMs)}
+                onClick={() => onSeek(group.startMs)}
                 className="text-[11px] text-ink-faint font-mono w-10 shrink-0 pt-0.5 text-left hover:text-ink hover:underline transition-colors cursor-pointer"
               >
-                {formatTimestamp(seg.startMs)}
+                {formatTimestamp(group.startMs)}
               </button>
             ) : (
               <span className="text-[11px] text-ink-faint font-mono w-10 shrink-0 pt-0.5">
-                {formatTimestamp(seg.startMs)}
+                {formatTimestamp(group.startMs)}
               </span>
             )}
             <div className="flex flex-col">
@@ -120,7 +131,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
                 </span>
               )}
               <p className="text-[12.5px] text-ink leading-relaxed">
-                {seg.text}
+                {group.texts.join(' ')}
               </p>
             </div>
           </div>

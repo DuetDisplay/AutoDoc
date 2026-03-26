@@ -9,12 +9,11 @@ const sampleTranscripts: Transcript[] = [
 ]
 
 describe('TranscriptView', () => {
-  it('renders transcript segments with timestamps', () => {
+  it('renders transcript segments with timestamps, merging consecutive same-speaker', () => {
     render(<TranscriptView segments={sampleTranscripts} status="complete" />)
-    expect(screen.getByText('Hello everyone')).toBeInTheDocument()
-    expect(screen.getByText('Let us begin the meeting')).toBeInTheDocument()
+    // Same speaker segments are merged into one block
+    expect(screen.getByText('Hello everyone Let us begin the meeting')).toBeInTheDocument()
     expect(screen.getByText('0:00')).toBeInTheDocument()
-    expect(screen.getByText('0:03')).toBeInTheDocument()
   })
 
   it('shows transcribing message when status is transcribing', () => {

@@ -129,10 +129,12 @@ export function MeetingDetail() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
 
   const handleSeek = useCallback((ms: number) => {
-    if (mediaRef.current) {
-      mediaRef.current.currentTime = ms / 1000
-      mediaRef.current.play()
-    }
+    const el = mediaRef.current
+    if (!el) return
+    el.pause()
+    el.currentTime = ms / 1000
+    // webm from MediaRecorder may lack cue points — wait for seek to complete
+    el.addEventListener('seeked', () => el.play(), { once: true })
   }, [])
 
   const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
