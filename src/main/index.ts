@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
@@ -34,7 +35,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -104,10 +105,10 @@ app.whenReady().then(async () => {
 
     if (await isEncrypted(filePath)) {
       const tempPath = await decryptFileToTemp(filePath)
-      return net.fetch(`file://${tempPath}`)
+      return net.fetch(pathToFileURL(tempPath).href)
     }
 
-    return net.fetch(`file://${filePath}`)
+    return net.fetch(pathToFileURL(filePath).href)
   })
 
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {

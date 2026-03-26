@@ -5,9 +5,18 @@ import * as path from 'path'
 import * as os from 'os'
 import { Readable } from 'stream'
 import { safeStorage } from 'electron'
-import Store from 'electron-store'
+import ElectronStoreModule from 'electron-store'
 
-const store = new Store({ name: 'autodoc-encryption' })
+const Store =
+  (ElectronStoreModule as unknown as { default?: typeof ElectronStoreModule }).default ??
+  ElectronStoreModule
+
+let _store: InstanceType<typeof Store> | null = null
+function getStore(): InstanceType<typeof Store> {
+  if (!_store) _store = new Store({ name: 'autodoc-encryption' })
+  return _store
+}
+
 const STORE_KEY = 'encryption_key'
 const STORE_VERSION_KEY = 'encryption_key_version'
 
@@ -23,7 +32,7 @@ export function getKey(): Buffer {
   if (cachedKey) return cachedKey
 
   // Try loading from store
-  const stored = store.get(STORE_KEY) as string | undefined
+  const stored = getStore().get(STORE_KEY) as string | undefined
   if (stored) {
     let b64: string
     if (safeStorage.isEncryptionAvailable()) {
@@ -41,12 +50,12 @@ export function getKey(): Buffer {
 
   if (safeStorage.isEncryptionAvailable()) {
     const encrypted = safeStorage.encryptString(b64)
-    store.set(STORE_KEY, encrypted.toString('latin1'))
+    getStore().set(STORE_KEY, encrypted.toString('latin1'))
   } else {
     console.warn('safeStorage not available — storing encryption key as plaintext')
-    store.set(STORE_KEY, b64)
+    getStore().set(STORE_KEY, b64)
   }
-  store.set(STORE_VERSION_KEY, 1)
+  getStore().set(STORE_VERSION_KEY, 1)
 
   cachedKey = key
   return cachedKey

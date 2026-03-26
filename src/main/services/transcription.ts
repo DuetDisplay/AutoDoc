@@ -262,6 +262,7 @@ export class TranscriptionService {
         '-f', 'null', '-',
       ])
       let stderr = ''
+      proc.on('error', (err) => reject(new Error(`ffmpeg silencedetect spawn failed: ${err.message}`)))
       proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
       proc.on('close', (code) => {
         if (code !== 0) {
@@ -358,6 +359,11 @@ export class TranscriptionService {
         '-l', 'en',
         '-pp',
       ])
+
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(new Error(`whisper spawn failed: ${err.message}`))
+      })
 
       const timer = setTimeout(() => {
         proc.kill()

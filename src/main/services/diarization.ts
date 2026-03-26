@@ -4,6 +4,8 @@ import { join } from 'path'
 import { spawn, execSync } from 'child_process'
 import { PYTHON_ENV_SUBDIR } from '../../shared/constants'
 
+const IS_WIN = process.platform === 'win32'
+
 export interface DiarizationSegment {
   start: number
   end: number
@@ -27,7 +29,9 @@ export class DiarizationService {
   }
 
   private getPythonPath(): string {
-    return join(this.getEnvDir(), 'bin', 'python3')
+    return IS_WIN
+      ? join(this.getEnvDir(), 'Scripts', 'python.exe')
+      : join(this.getEnvDir(), 'bin', 'python3')
   }
 
   private getScriptPath(): string {
@@ -66,14 +70,15 @@ export class DiarizationService {
 
     let python3: string
     try {
-      python3 = execSync('which python3', { encoding: 'utf-8' }).trim()
+      const cmd = IS_WIN ? 'where.exe python' : 'which python3'
+      python3 = execSync(cmd, { encoding: 'utf-8' }).trim().split(/\r?\n/)[0]
     } catch {
       throw new Error('python3 not found. Install Python 3 to enable speaker diarization.')
     }
 
     await this.runCommand(python3, ['-m', 'venv', envDir])
 
-    const pip = join(envDir, 'bin', 'pip')
+    const pip = IS_WIN ? join(envDir, 'Scripts', 'pip.exe') : join(envDir, 'bin', 'pip')
     await this.runCommand(pip, ['install', '--upgrade', 'pip'])
     await this.runCommand(pip, [
       'install',

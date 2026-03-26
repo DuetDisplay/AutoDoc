@@ -1,10 +1,12 @@
 import { app } from 'electron'
-import { access, mkdir, chmod, rm } from 'fs/promises'
+import { access, mkdir, chmod, rm, copyFile } from 'fs/promises'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
-import { spawn, execFile, type ChildProcess } from 'child_process'
+import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
+
+const IS_WIN = process.platform === 'win32'
 
 const DEFAULT_MODEL = 'llama3'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
@@ -57,7 +59,7 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getBinaryPath(): string {
-    return join(this.getModelsDir(), 'ollama')
+    return join(this.getModelsDir(), IS_WIN ? 'ollama.exe' : 'ollama')
   }
 
   private getOllamaDataDir(): string {
@@ -102,7 +104,22 @@ export class OllamaManager extends EventEmitter {
     await mkdir(this.getOllamaDataDir(), { recursive: true })
 
     if (!(await this.isReady())) {
-      await this.downloadBinary()
+      const systemBinary = this.findSystemOllama()
+      if (systemBinary) {
+        await copyFile(systemBinary, this.getBinaryPath())
+      } else {
+        await this.downloadBinary()
+      }
+    }
+  }
+
+  private findSystemOllama(): string | null {
+    try {
+      const cmd = IS_WIN ? 'where.exe ollama.exe' : 'which ollama'
+      const result = execSync(cmd, { encoding: 'utf-8' }).trim()
+      return result.split(/\r?\n/)[0] || null
+    } catch {
+      return null
     }
   }
 
@@ -163,7 +180,11 @@ export class OllamaManager extends EventEmitter {
 
   stop(): void {
     if (this.process) {
-      this.process.kill('SIGTERM')
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(this.process.pid), '/f', '/t']).on('error', () => {})
+      } else {
+        this.process.kill('SIGTERM')
+      }
       this.process = null
     }
   }
@@ -218,14 +239,58 @@ export class OllamaManager extends EventEmitter {
   }
 
   private async downloadBinary(): Promise<void> {
+    this.emit('download-start', 'ollama')
+    const modelsDir = this.getModelsDir()
+
+    if (IS_WIN) {
+      await this.downloadBinaryWindows(modelsDir)
+    } else {
+      await this.downloadBinaryUnix(modelsDir)
+    }
+
+    this.emit('download-complete', 'ollama')
+  }
+
+  private async downloadBinaryWindows(modelsDir: string): Promise<void> {
+    const url = 'https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip'
+    const zipPath = join(modelsDir, 'ollama.zip')
+
+    await this.downloadToFile(url, zipPath)
+
+    // Extract using PowerShell's Expand-Archive
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'powershell',
+        ['-NoProfile', '-Command', `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${modelsDir}'`],
+        (err) => {
+          if (err) reject(new Error(`Failed to extract Ollama: ${err.message}`))
+          else resolve()
+        },
+      )
+    })
+
+    await rm(zipPath, { force: true })
+  }
+
+  private async downloadBinaryUnix(modelsDir: string): Promise<void> {
     const platform = process.platform === 'darwin' ? 'darwin' : 'linux'
     const url = `https://github.com/ollama/ollama/releases/latest/download/ollama-${platform}.tgz`
-
-    this.emit('download-start', 'ollama')
-
-    const modelsDir = this.getModelsDir()
     const tgzPath = join(modelsDir, 'ollama.tgz')
 
+    await this.downloadToFile(url, tgzPath)
+
+    await new Promise<void>((resolve, reject) => {
+      execFile('tar', ['xzf', tgzPath, '-C', modelsDir, 'ollama'], (err) => {
+        if (err) reject(new Error(`Failed to extract Ollama: ${err.message}`))
+        else resolve()
+      })
+    })
+
+    await chmod(this.getBinaryPath(), 0o755)
+    await rm(tgzPath, { force: true })
+  }
+
+  private async downloadToFile(url: string, destPath: string): Promise<void> {
     const response = await fetch(url, { redirect: 'follow' })
     if (!response.ok) {
       throw new Error(`Failed to download Ollama: ${response.status} ${response.statusText}`)
@@ -234,7 +299,7 @@ export class OllamaManager extends EventEmitter {
     const totalBytes = Number(response.headers.get('content-length') ?? 0)
     let downloadedBytes = 0
 
-    const fileStream = createWriteStream(tgzPath)
+    const fileStream = createWriteStream(destPath)
     const reader = response.body?.getReader()
     if (!reader) throw new Error('No response body for Ollama download')
 
@@ -258,17 +323,5 @@ export class OllamaManager extends EventEmitter {
         fileStream.on('error', reject)
       })
     }
-
-    // Extract the ollama binary from the tgz (binary is at archive root)
-    await new Promise<void>((resolve, reject) => {
-      execFile('tar', ['xzf', tgzPath, '-C', modelsDir, 'ollama'], (err) => {
-        if (err) reject(new Error(`Failed to extract Ollama: ${err.message}`))
-        else resolve()
-      })
-    })
-
-    await chmod(this.getBinaryPath(), 0o755)
-    await rm(tgzPath, { force: true })
-    this.emit('download-complete', 'ollama')
   }
 }

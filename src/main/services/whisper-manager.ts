@@ -1,10 +1,12 @@
 import { app } from 'electron'
-import { access, mkdir, chmod, symlink, unlink } from 'fs/promises'
+import { access, mkdir, chmod, symlink, unlink, copyFile } from 'fs/promises'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { execSync } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
+
+const IS_WIN = process.platform === 'win32'
 
 export interface DownloadProgress {
   file: string
@@ -19,11 +21,11 @@ export class WhisperManager extends EventEmitter {
   }
 
   getWhisperPath(): string {
-    return join(this.getModelsDir(), 'whisper-cpp')
+    return join(this.getModelsDir(), IS_WIN ? 'whisper-cli.exe' : 'whisper-cpp')
   }
 
   getFfmpegPath(): string {
-    return join(this.getModelsDir(), 'ffmpeg')
+    return join(this.getModelsDir(), IS_WIN ? 'ffmpeg.exe' : 'ffmpeg')
   }
 
   getModelPath(): string {
@@ -56,33 +58,48 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async resolveWhisper(): Promise<void> {
-    // Homebrew installs whisper.cpp as 'whisper-cli'
-    const systemPath = this.findSystemBinary('whisper-cli')
+    const binaryName = IS_WIN ? 'whisper-cli.exe' : 'whisper-cli'
+    const systemPath = this.findSystemBinary(binaryName)
     if (systemPath) {
-      await symlink(systemPath, this.getWhisperPath()).catch(() => {})
+      await this.linkOrCopy(systemPath, this.getWhisperPath())
       return
     }
     throw new Error(
-      'whisper-cli not found. Install it with: brew install whisper-cpp'
+      IS_WIN
+        ? 'whisper-cli not found. Download whisper.cpp for Windows and ensure whisper-cli.exe is on your PATH.'
+        : 'whisper-cli not found. Install it with: brew install whisper-cpp',
     )
   }
 
   private async resolveFfmpeg(): Promise<void> {
-    const systemPath = this.findSystemBinary('ffmpeg')
+    const binaryName = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg'
+    const systemPath = this.findSystemBinary(binaryName)
     if (systemPath) {
-      await symlink(systemPath, this.getFfmpegPath()).catch(() => {})
+      await this.linkOrCopy(systemPath, this.getFfmpegPath())
       return
     }
     throw new Error(
-      'ffmpeg not found. Install it with: brew install ffmpeg'
+      IS_WIN
+        ? 'ffmpeg not found. Download ffmpeg for Windows and ensure ffmpeg.exe is on your PATH.'
+        : 'ffmpeg not found. Install it with: brew install ffmpeg',
     )
   }
 
   private findSystemBinary(name: string): string | null {
     try {
-      return execSync(`which ${name}`, { encoding: 'utf-8' }).trim()
+      const cmd = IS_WIN ? `where.exe ${name}` : `which ${name}`
+      const result = execSync(cmd, { encoding: 'utf-8' }).trim()
+      return result.split(/\r?\n/)[0] || null
     } catch {
       return null
+    }
+  }
+
+  private async linkOrCopy(source: string, dest: string): Promise<void> {
+    if (IS_WIN) {
+      await copyFile(source, dest).catch(() => {})
+    } else {
+      await symlink(source, dest).catch(() => {})
     }
   }
 

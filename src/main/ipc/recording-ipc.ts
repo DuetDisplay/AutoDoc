@@ -22,6 +22,7 @@ function mergeAudioFiles(ffmpegPath: string, input1: string, input2: string, out
       outputPath,
     ])
     let stderr = ''
+    proc.on('error', (err) => reject(new Error(`ffmpeg merge spawn failed: ${err.message}`)))
     proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
     proc.on('close', (code) => {
       if (code === 0) resolve()
@@ -41,6 +42,7 @@ function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: str
       outputPath,
     ])
     let stderr = ''
+    proc.on('error', (err) => reject(new Error(`ffmpeg mux spawn failed: ${err.message}`)))
     proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
     proc.on('close', (code) => {
       if (code === 0) resolve()
@@ -171,6 +173,13 @@ export function registerRecordingIpc(
       const micPath = join(meetingDir, 'mic.webm')
       const systemPath = join(meetingDir, 'system.webm')
       const videoPath = join(meetingDir, 'screen.webm')
+
+      // Ensure ffmpeg is available before attempting mux
+      try {
+        await whisperManager.ensureReady()
+      } catch (err) {
+        console.error('whisperManager.ensureReady() failed — skipping mux:', err)
+      }
 
       // Mux audio into video so the video player has both tracks
       try {
