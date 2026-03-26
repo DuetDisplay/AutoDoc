@@ -326,6 +326,11 @@ export class TranscriptionService {
     for (const id of speakerIds) {
       if (id === 'me') {
         speakerMap[id] = { label: 'Me' }
+      } else if (id === 'them') {
+        speakerMap[id] = {
+          label: 'Them',
+          ...(suggestions.length > 0 ? { suggestions } : {}),
+        }
       } else if (id === 'Speaker') {
         // Legacy un-diarized segment, skip
         continue

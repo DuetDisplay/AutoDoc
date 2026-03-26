@@ -27,7 +27,7 @@ export function alignSpeakers(
       for (const seg of systemSegments) {
         systemOverlap += overlap(t.startMs, t.endMs, seg.start, seg.end)
       }
-      return { ...t, speaker: systemOverlap > 0 ? 'speaker_1' : 'me' }
+      return { ...t, speaker: systemOverlap > 0 ? 'them' : 'me' }
     })
   }
 

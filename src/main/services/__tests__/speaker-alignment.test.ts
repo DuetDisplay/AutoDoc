@@ -76,7 +76,7 @@ describe('alignSpeakers', () => {
 
     const result = alignSpeakers(transcripts, null, systemSegments)
 
-    expect(result[0].speaker).toBe('speaker_1')
+    expect(result[0].speaker).toBe('them')
     expect(result[1].speaker).toBe('me')
   })
 
