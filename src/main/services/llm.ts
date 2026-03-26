@@ -6,6 +6,8 @@ export interface LLMProvider {
 }
 
 const MAX_RETRIES = 2
+const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
+const MAX_TRANSCRIPT_CHARS = 80000 // ~20K tokens — truncate beyond this to leave room for prompt + output
 
 const SYSTEM_PROMPT = `You are a meeting notes assistant. Given a meeting transcript, extract and categorize information into these 5 categories based on Andy Grove's High Output Management framework:
 
@@ -77,9 +79,20 @@ export class OllamaProvider implements LLMProvider {
   async summarize(meetingId: string, transcript: string): Promise<MeetingSegments> {
     let lastError: Error | null = null
 
+    // Truncate very long transcripts to fit within context window
+    let trimmedTranscript = transcript
+    if (transcript.length > MAX_TRANSCRIPT_CHARS) {
+      // Keep beginning and end — middle of meetings is least likely to have decisions/action items
+      const halfLimit = Math.floor(MAX_TRANSCRIPT_CHARS / 2)
+      const head = transcript.slice(0, halfLimit)
+      const tail = transcript.slice(-halfLimit)
+      trimmedTranscript = `${head}\n\n[... middle portion of transcript omitted for length ...]\n\n${tail}`
+      console.log(`Transcript truncated from ${transcript.length} to ${trimmedTranscript.length} chars for LLM context`)
+    }
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const raw = await this.callOllama(transcript)
+        const raw = await this.callOllama(trimmedTranscript)
         return this.parseResponse(meetingId, raw)
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
@@ -102,6 +115,9 @@ export class OllamaProvider implements LLMProvider {
         ],
         stream: false,
         format: 'json',
+        options: {
+          num_ctx: TARGET_CONTEXT_TOKENS,
+        },
       }),
     })
 

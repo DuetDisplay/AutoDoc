@@ -132,6 +132,17 @@ export class SegmentationService {
 
     const segments = await this.llmProvider.summarize(meetingId, fullText)
 
+    // Verify the LLM actually produced content — empty results mean it failed silently
+    const totalItems = segments.decisions.length +
+      segments.actionItems.length +
+      segments.information.length +
+      segments.discussion.length +
+      segments.statusUpdates.length
+
+    if (totalItems === 0 && fullText.length > 100) {
+      throw new Error('LLM returned empty segments for non-trivial transcript — likely context overflow or model issue')
+    }
+
     await encryptJSON(segments, segmentsPath)
 
     this.activeStatus = 'complete'
