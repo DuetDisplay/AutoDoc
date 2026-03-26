@@ -55,6 +55,17 @@ export default function App() {
     return unsub
   }, [isRecording, fetchSources, handleStart])
 
+  // Auto-stop recording when meeting ends (mic goes silent for 30s)
+  useEffect(() => {
+    const unsub = window.electronAPI.on('detection:auto-stop', async () => {
+      if (!isRecording) return
+      console.log('Auto-stopping recording — meeting ended')
+      trackEvent('recording_auto_stopped')
+      await handleStop()
+    })
+    return unsub
+  }, [isRecording, handleStop])
+
   if (onboardingDone === null) return null
 
   if (!onboardingDone) {

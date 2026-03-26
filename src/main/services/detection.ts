@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, desktopCapturer } from 'electron'
 import { execFile } from 'child_process'
 import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
@@ -7,11 +7,13 @@ import { isAutoRecordEnabled } from './auto-record-store'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
+const AUTO_STOP_GRACE_MS = 30_000 // Wait 30s after mic goes silent before auto-stopping
 
 export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private micWasActive = false
   private prompted = false
+  private autoStopTimer: ReturnType<typeof setTimeout> | null = null
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -32,6 +34,7 @@ export class DetectionService {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
+    this.clearAutoStop()
   }
 
   dismissPrompt(): void {
@@ -40,14 +43,52 @@ export class DetectionService {
   }
 
   private async poll(): Promise<void> {
-    if (this.recordingService.getState().isRecording) {
+    const isRecording = this.recordingService.getState().isRecording
+    const micActive = await this.isMicInUse()
+
+    // When recording: watch for meeting end
+    if (isRecording) {
+      // Check if the recorded window was closed
+      const windowClosed = await this.isRecordedWindowClosed()
+      if (windowClosed) {
+        console.log('Auto-stopping recording — recorded window was closed')
+        this.clearAutoStop()
+        this.broadcast('detection:auto-stop', {})
+        return
+      }
+
+      // Mic-based detection as fallback (e.g., recording full screen)
+      if (micActive) {
+        // Mic still active — cancel any pending auto-stop
+        this.clearAutoStop()
+      } else if (!this.autoStopTimer) {
+        // Mic went silent — check if any meeting app is still open
+        const meetingWindowOpen = await this.isMeetingWindowOpen()
+        if (!meetingWindowOpen) {
+          // No meeting window + mic silent = meeting ended, stop immediately
+          console.log('Auto-stopping recording — mic inactive and no meeting window found')
+          this.broadcast('detection:auto-stop', {})
+          return
+        }
+        // Meeting window still open but mic silent (probably muted) — start grace period
+        console.log('Meeting mic inactive but window still open — auto-stop in 30s unless mic resumes')
+        this.autoStopTimer = setTimeout(() => {
+          this.autoStopTimer = null
+          if (this.recordingService.getState().isRecording) {
+            console.log('Auto-stopping recording — meeting appears to have ended')
+            this.broadcast('detection:auto-stop', {})
+          }
+        }, AUTO_STOP_GRACE_MS)
+      }
+      // Reset detection state while recording
       this.prompted = false
       this.micWasActive = false
       hideNotificationWindow()
       return
     }
 
-    const micActive = await this.isMicInUse()
+    // Not recording: watch for meeting start (mic becomes active)
+    this.clearAutoStop()
 
     if (micActive && !this.micWasActive) {
       this.micWasActive = true
@@ -66,6 +107,48 @@ export class DetectionService {
       this.prompted = false
       hideNotificationWindow()
       this.broadcast('detection:mic-inactive', {})
+    }
+  }
+
+  private clearAutoStop(): void {
+    if (this.autoStopTimer) {
+      clearTimeout(this.autoStopTimer)
+      this.autoStopTimer = null
+    }
+  }
+
+  /**
+   * Check if any known meeting app window is currently open.
+   * Used to distinguish "muted" from "meeting ended" when mic goes silent.
+   */
+  private async isMeetingWindowOpen(): Promise<boolean> {
+    try {
+      const { MEETING_APP_PATTERNS } = await import('../../shared/constants')
+      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
+      return sources.some((s) =>
+        MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))
+      )
+    } catch {
+      return true // Assume open if we can't check (safer — avoids false stops)
+    }
+  }
+
+  /**
+   * Check if the window being recorded has been closed.
+   * Only applies when recording a specific window (not full screen).
+   */
+  private async isRecordedWindowClosed(): Promise<boolean> {
+    const state = this.recordingService.getState()
+    if (!state.sourceId || state.sourceId.startsWith('screen:')) {
+      // Recording full screen — can't detect window closure
+      return false
+    }
+
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
+      return !sources.some((s) => s.id === state.sourceId)
+    } catch {
+      return false
     }
   }
 

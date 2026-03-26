@@ -105,5 +105,6 @@ export interface IpcOnEvents {
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
+  'detection:auto-stop': [payload: Record<string, never>]
   'ollama:setup-progress': [status: OllamaSetupStatus]
 }
