@@ -24,6 +24,9 @@ import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import type { OllamaSetupStatus } from '../shared/types'
 
+// Ensure consistent app name for safeStorage keychain service across dev and production
+app.setName('AutoDoc')
+
 let ollamaManager: OllamaManager | null = null
 
 protocol.registerSchemesAsPrivileged([
