@@ -190,7 +190,10 @@ export class OllamaManager extends EventEmitter {
   }
 
   async pullModel(): Promise<void> {
-    if (await this.hasModel()) return
+    if (await this.hasModel()) {
+      this.emit('pull-complete', this.model)
+      return
+    }
 
     this.emit('pull-start', this.model)
 

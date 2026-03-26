@@ -265,12 +265,18 @@ app.whenReady().then(async () => {
   detectionService.start()
 
   // Start Ollama + pull model in the background — don't block the window
-  ollamaManager.startAndPull().catch((err) => {
-    ollamaSetupState.phase = 'error'
-    ollamaSetupState.error = err instanceof Error ? err.message : String(err)
-    broadcastOllamaStatus()
-    console.error('Failed to start Ollama:', err)
-  })
+  ollamaManager.startAndPull()
+    .then(() => {
+      ollamaSetupState.phase = 'ready'
+      ollamaSetupState.percent = 100
+      broadcastOllamaStatus()
+    })
+    .catch((err) => {
+      ollamaSetupState.phase = 'error'
+      ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+      broadcastOllamaStatus()
+      console.error('Failed to start Ollama:', err)
+    })
 
   // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
   cleanupTempFiles().catch(() => {})

@@ -25,6 +25,24 @@ export function Sidebar() {
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingSeconds = useRecordingStore((s) => s.elapsedSeconds)
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null)
+  const [setupPhase, setSetupPhase] = useState<string | null>(null)
+  const [setupPercent, setSetupPercent] = useState(0)
+
+  useEffect(() => {
+    window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
+      setSetupPhase(status.phase)
+      setSetupPercent(status.percent)
+      if (status.phase === 'ready') setOllamaConnected(true)
+    })
+
+    const unsub = window.electronAPI.on('ollama:setup-progress', (status) => {
+      setSetupPhase(status.phase)
+      setSetupPercent(status.percent)
+      if (status.phase === 'ready') setOllamaConnected(true)
+    })
+
+    return unsub
+  }, [])
 
   useEffect(() => {
     const check = () => {
@@ -72,7 +90,21 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col gap-2">
-        {ollamaConnected !== null && (
+        {(setupPhase === 'downloading' || setupPhase === 'pulling') && setupPhase !== null ? (
+          <div className="px-2.5 py-2 flex flex-col gap-1.5">
+            <span className="text-[11px] text-ink-faint">
+              {setupPhase === 'downloading'
+                ? `Downloading model... ${setupPercent}%`
+                : `Installing model... ${setupPercent}%`}
+            </span>
+            <div className="w-full h-1 bg-border rounded-full overflow-hidden">
+              <div
+                className="h-full bg-sage rounded-full transition-all duration-300"
+                style={{ width: `${setupPercent}%` }}
+              />
+            </div>
+          </div>
+        ) : ollamaConnected !== null ? (
           <div className="flex items-center gap-2 px-2.5 py-2">
             <div
               className={`w-2 h-2 rounded-full ${
@@ -83,7 +115,7 @@ export function Sidebar() {
               Ollama {ollamaConnected ? 'connected' : 'disconnected'}
             </span>
           </div>
-        )}
+        ) : null}
 
         {isRecording && (
           <div className="flex items-center gap-2 px-2.5 py-2 bg-clay-light rounded-lg">

@@ -1,29 +1,39 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 export function OllamaStep({ onNext }: { onNext: () => void }) {
   const [phase, setPhase] = useState<string>('downloading')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
+  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const markReady = () => {
+    setPhase('ready')
+    setPercent(100)
+    if (!advanceTimer.current) {
+      advanceTimer.current = setTimeout(onNext, 1500)
+    }
+  }
 
   useEffect(() => {
-    // Check initial status
     window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
       setPhase(status.phase)
       setPercent(status.percent)
-      if (status.phase === 'ready') onNext()
+      if (status.phase === 'ready') markReady()
       if (status.phase === 'error') setError(status.error ?? 'Unknown error')
     })
 
-    // Listen for progress updates
     const unsub = window.electronAPI.on('ollama:setup-progress', (status) => {
       setPhase(status.phase)
       setPercent(status.percent)
-      if (status.phase === 'ready') onNext()
+      if (status.phase === 'ready') markReady()
       if (status.phase === 'error') setError(status.error ?? 'Unknown error')
     })
 
-    return unsub
+    return () => {
+      unsub()
+      if (advanceTimer.current) clearTimeout(advanceTimer.current)
+    }
   }, [onNext])
 
   useEffect(() => {
@@ -31,13 +41,35 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     return () => clearTimeout(timer)
   }, [])
 
+  if (phase === 'ready') {
+    return (
+      <div className="text-center">
+        <div className="w-16 h-16 rounded-full bg-sage-light flex items-center justify-center mx-auto mb-5">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4A6B4E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">AI Model Ready</h2>
+        <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
+          Your local AI model is set up and ready to go.
+        </p>
+        <button
+          onClick={onNext}
+          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+        >
+          Continue
+        </button>
+      </div>
+    )
+  }
+
   const statusLabel = phase === 'downloading'
     ? `Downloading AI model... ${percent}%`
     : phase === 'pulling'
       ? `Installing model... ${percent}%`
       : error
         ? `Setup failed: ${error}`
-        : 'Ready'
+        : 'Preparing...'
 
   return (
     <div className="text-center">
@@ -49,7 +81,6 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
         AutoDoc uses a local AI model to analyze your transcripts and generate smart notes. This downloads once and runs entirely on your machine.
       </p>
 
-      {/* Progress bar */}
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
         <div
           className="h-full bg-sage rounded-full transition-all duration-300"
