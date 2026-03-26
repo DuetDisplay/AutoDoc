@@ -3,13 +3,19 @@ import { useState, useEffect, useCallback } from 'react'
 export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
 
-  const checkPermission = useCallback(async () => {
+  const checkPermission = useCallback(async (autoAdvance = false) => {
     const perms = await window.electronAPI.invoke('permissions:check')
-    if (perms.screen) setGranted(true)
-  }, [])
+    if (perms.screen) {
+      if (autoAdvance) {
+        onNext()
+      } else {
+        setGranted(true)
+      }
+    }
+  }, [onNext])
 
   useEffect(() => {
-    checkPermission()
+    checkPermission(true)
     const handleFocus = () => checkPermission()
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)

@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export function CalendarStep({ onNext }: { onNext: () => void }) {
   const [connecting, setConnecting] = useState(false)
   const [connected, setConnected] = useState(false)
+
+  useEffect(() => {
+    window.electronAPI.invoke('calendar:is-connected').then((isConnected) => {
+      if (isConnected) onNext()
+    })
+  }, [onNext])
 
   const handleConnect = async () => {
     setConnecting(true)
