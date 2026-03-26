@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Upcoming } from './pages/Upcoming'
@@ -12,9 +12,16 @@ import { useRecording } from './hooks/useRecording'
 import { detectMeetingWindow } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
+import { PermissionToast } from './components/PermissionToast'
+import { Onboarding } from './pages/Onboarding'
 
 export default function App() {
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
+
+  useEffect(() => {
+    window.electronAPI.invoke('prefs:get-onboarding-complete').then(setOnboardingDone)
+  }, [])
 
   // Auto-start recording when user clicks "Start AI Notes" from floating notification
   useEffect(() => {
@@ -36,6 +43,12 @@ export default function App() {
     return unsub
   }, [isRecording, fetchSources, handleStart])
 
+  if (onboardingDone === null) return null
+
+  if (!onboardingDone) {
+    return <Onboarding onComplete={() => setOnboardingDone(true)} />
+  }
+
   return (
     <HashRouter>
       <div className="flex h-screen bg-bg-primary relative">
@@ -53,6 +66,7 @@ export default function App() {
             onStop={handleStop}
           />
           <MeetingDetectedBanner />
+          <PermissionToast />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

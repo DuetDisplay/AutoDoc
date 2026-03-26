@@ -1,21 +1,13 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
-import { SetupGuide } from '../components/SetupGuide'
 import { useCalendarStore } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import type { CalendarEvent } from '../../../shared/types'
 
 export function Upcoming() {
-  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    window.electronAPI.invoke('permissions:check').then((perms) => {
-      setSetupComplete(perms.microphone)
-    })
-  }, [])
   const {
     isConnected,
     isConnecting,
@@ -116,15 +108,6 @@ export function Upcoming() {
 
     return groups
   }, [events])
-
-  if (setupComplete === false) {
-    return (
-      <div className="flex flex-col h-full">
-        <PageHeader title="Upcoming" subtitle={today} />
-        <SetupGuide onComplete={() => setSetupComplete(true)} />
-      </div>
-    )
-  }
 
   return (
     <div className="flex flex-col h-full">
