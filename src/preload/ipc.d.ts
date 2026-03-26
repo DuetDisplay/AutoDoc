@@ -76,7 +76,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
-  'recording:get-media': { hasVideo: boolean; hasAudio: boolean }
+  'recording:get-media': { hasVideo: boolean; hasAudio: boolean; audioFile?: string }
   'recording:get-detail': { title: string; sourceName: string | null; date: number; durationSeconds: number | null }
   'search:query': SearchResult[]
   'chat:send': string
