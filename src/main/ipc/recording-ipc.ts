@@ -166,7 +166,11 @@ export function registerRecordingIpc(
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
-      await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+      try {
+        await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+      } catch (err) {
+        console.error('Failed to save metadata (continuing with transcription):', err)
+      }
       await new Promise((resolve) => setTimeout(resolve, 100))
       const micPath = join(meetingDir, 'mic.webm')
       const systemPath = join(meetingDir, 'system.webm')
