@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
-import type { DiarizationService } from '../diarization'
 import type { CalendarService } from '../calendar'
 
 vi.mock('electron', () => ({
@@ -53,13 +52,6 @@ function createMockAudioConverter(): AudioConverter {
   } as unknown as AudioConverter
 }
 
-function createMockDiarizationService(): DiarizationService {
-  return {
-    isReady: vi.fn().mockResolvedValue(false),
-    ensureReady: vi.fn().mockResolvedValue(undefined),
-    diarize: vi.fn().mockResolvedValue({ speakers: [] }),
-  } as unknown as DiarizationService
-}
 
 function createMockCalendarService(): CalendarService {
   return {
@@ -72,20 +64,17 @@ describe('TranscriptionService', () => {
   let service: TranscriptionService
   let mockWhisper: WhisperManager
   let mockConverter: AudioConverter
-  let mockDiarization: DiarizationService
   let mockCalendar: CalendarService
 
   beforeEach(() => {
     vi.clearAllMocks()
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
-    mockDiarization = createMockDiarizationService()
     mockCalendar = createMockCalendarService()
     service = new TranscriptionService(
       mockWhisper,
       mockConverter,
       '/mock/home/AutoDoc/recordings',
-      mockDiarization,
       mockCalendar,
     )
   })

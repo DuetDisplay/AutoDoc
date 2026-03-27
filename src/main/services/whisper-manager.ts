@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { access, mkdir, chmod, symlink, unlink } from 'fs/promises'
+import { access, mkdir, symlink } from 'fs/promises'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { execSync } from 'child_process'
@@ -86,7 +86,7 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  private async downloadWithRetry(fn: () => Promise<void>, label: string, attempts = 3): Promise<void> {
+  private async downloadWithRetry(fn: () => Promise<void>, _label: string, attempts = 3): Promise<void> {
     for (let i = 0; i < attempts; i++) {
       try {
         await fn()

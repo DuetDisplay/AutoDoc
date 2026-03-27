@@ -11,7 +11,6 @@ import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
-import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
@@ -175,12 +174,10 @@ app.whenReady().then(async () => {
   })
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
-  const diarizationService = new DiarizationService()
   const transcriptionService = new TranscriptionService(
     whisperManager,
     audioConverter,
     recordingService.getRecordingsBaseDir(),
-    diarizationService,
     calendarService,
   )
   ollamaManager = new OllamaManager()
@@ -242,7 +239,7 @@ app.whenReady().then(async () => {
     segmentationService.enqueue(meetingId)
   })
 
-  let cachedEvents: import('../../shared/types').CalendarEvent[] = []
+  let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
   const detectionService = new DetectionService(
     recordingService,

@@ -6,7 +6,6 @@ import { spawn } from 'child_process'
 import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
-import { DiarizationService } from './diarization'
 import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
@@ -32,7 +31,6 @@ export class TranscriptionService {
     private whisperManager: WhisperManager,
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
-    private diarizationService: DiarizationService,
     private calendarService: CalendarService,
   ) {}
 

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
-import type { Transcript, MeetingSegments, MeetingMetadata } from '../../shared/types'
+import type { Transcript, MeetingSegments } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
 import { readMetadata } from '../services/calendar-matcher'
 

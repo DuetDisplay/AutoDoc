@@ -1,4 +1,4 @@
-import type { Segment, MeetingSegments, SegmentCategory } from '../../shared/types'
+import type { MeetingSegments, SegmentCategory } from '../../shared/types'
 
 export interface LLMProvider {
   summarize(meetingId: string, transcript: string): Promise<MeetingSegments>

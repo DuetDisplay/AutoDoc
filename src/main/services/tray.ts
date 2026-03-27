@@ -1,4 +1,4 @@
-import { Tray, Menu, nativeImage, BrowserWindow, app } from 'electron'
+import { Tray, Menu, nativeImage, app } from 'electron'
 import { join } from 'path'
 import type { CalendarEvent } from '../../shared/types'
 

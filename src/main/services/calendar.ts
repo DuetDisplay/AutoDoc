@@ -5,7 +5,7 @@ import { OAuth2Client } from 'google-auth-library'
 import crypto from 'crypto'
 import { URL } from 'url'
 import { saveTokens, loadTokens, clearTokens } from './token-store'
-import { GOOGLE_CALENDAR_SCOPES, CALENDAR_SYNC_INTERVAL_MS } from '../../shared/constants'
+import { CALENDAR_SYNC_INTERVAL_MS } from '../../shared/constants'
 import type { CalendarEvent } from '../../shared/types'
 
 const OAUTH_PORT = 42813
