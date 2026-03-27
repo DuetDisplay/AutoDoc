@@ -30,16 +30,18 @@ Guidelines:
 - When in doubt about a detail, use the EXACT phrasing from the transcript rather than rewording it.
 - Always use proper sentence capitalization for titles and content. The first letter of each title and content field must be uppercase.
 
+IMPORTANT: Group related items under a shared "topic" string. The topic is a short label (2-5 words) for the subject area, e.g. "Cybersecurity Strategy", "Q2 Hiring", "Product Launch". Items about the same subject MUST share the exact same topic string. This groups notes visually so they're easy to scan.
+
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
-  "decisions": [{ "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null }],
-  "action_items": [{ "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null" }],
-  "information": [{ "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null }],
-  "discussion": [{ "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null }],
-  "status_updates": [{ "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null }]
+  "decisions": [{ "topic": "subject area", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null }],
+  "action_items": [{ "topic": "subject area", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null" }],
+  "information": [{ "topic": "subject area", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null }],
+  "discussion": [{ "topic": "subject area", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null }],
+  "status_updates": [{ "topic": "subject area", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null }]
 }
 
-If a category has no items, use an empty array. Every item MUST have title and content fields.`
+If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
 
 interface OllamaResponse {
   message?: { content?: string }
@@ -47,6 +49,7 @@ interface OllamaResponse {
 }
 
 interface RawSegment {
+  topic?: string
   title?: string
   content?: string
   assignee?: string | null
@@ -242,6 +245,7 @@ export class OllamaProvider implements LLMProvider {
           id: `${meetingId}-${rawKey}-${index}`,
           meetingId,
           category,
+          topic: item.topic ? capitalize(String(item.topic)) : null,
           title: capitalize(String(item.title)),
           content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,

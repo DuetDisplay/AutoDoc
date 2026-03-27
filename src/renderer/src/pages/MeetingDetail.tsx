@@ -199,6 +199,7 @@ export function MeetingDetail() {
         id: `${id}-${key}-${Date.now()}`,
         meetingId: id,
         category,
+        topic: null,
         title: 'New item',
         content: 'Add details here...',
         assignee: null,
@@ -316,6 +317,34 @@ export function MeetingDetail() {
     return segments[CATEGORY_TO_KEY[category]] ?? []
   }
 
+  const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
+    const groups: { topic: string | null; items: Segment[] }[] = []
+    const topicMap = new Map<string, Segment[]>()
+    const ungrouped: Segment[] = []
+
+    for (const item of items) {
+      if (item.topic) {
+        const existing = topicMap.get(item.topic)
+        if (existing) {
+          existing.push(item)
+        } else {
+          const group = [item]
+          topicMap.set(item.topic, group)
+          groups.push({ topic: item.topic, items: group })
+        }
+      } else {
+        ungrouped.push(item)
+      }
+    }
+
+    // Put ungrouped items at the end
+    if (ungrouped.length > 0) {
+      groups.push({ topic: null, items: ungrouped })
+    }
+
+    return groups
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -415,43 +444,60 @@ export function MeetingDetail() {
                           : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
                     </p>
                   ) : (
-                    <div className="flex flex-col gap-2.5">
-                      {items.map((item, index) => (
-                        <div key={item.id} className="group flex flex-col gap-0.5" data-searchable>
-                          <div className="flex items-start justify-between gap-2">
-                            <EditableText
-                              value={item.title}
-                              onSave={(v) => updateSegmentField(category, index, 'title', v)}
-                              className="text-[12.5px] font-semibold text-ink flex-1"
-                            />
-                            <button
-                              onClick={() => deleteSegment(category, index)}
-                              className="shrink-0 opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                              title="Delete"
-                            >
-                              &times;
-                            </button>
-                          </div>
-                          <EditableText
-                            value={item.content}
-                            onSave={(v) => updateSegmentField(category, index, 'content', v)}
-                            className="text-[12px] text-ink-muted leading-relaxed"
-                            as="div"
-                          />
-                          {(item.assignee || item.deadline) && (
-                            <div className="flex gap-3 mt-0.5">
-                              {item.assignee && (
-                                <span className="text-[11px] text-ink-faint">
-                                  Owner: {item.assignee}
-                                </span>
-                              )}
-                              {item.deadline && (
-                                <span className="text-[11px] text-ink-faint">
-                                  Due: {item.deadline}
-                                </span>
-                              )}
+                    <div className="flex flex-col gap-3">
+                      {groupByTopic(items).map((group, groupIdx) => (
+                        <div key={group.topic ?? `ungrouped-${groupIdx}`}>
+                          {group.topic && (
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <h4 className="text-[11.5px] font-semibold text-sage tracking-wide">
+                                {group.topic}
+                              </h4>
+                              <div className="flex-1 h-px bg-border-subtle" />
                             </div>
                           )}
+                          <div className="flex flex-col gap-2 pl-2 border-l-2 border-border-subtle">
+                            {group.items.map((item) => {
+                              const globalIndex = items.indexOf(item)
+                              return (
+                                <div key={item.id} className="group flex flex-col gap-0.5 pl-2" data-searchable>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <EditableText
+                                      value={item.title}
+                                      onSave={(v) => updateSegmentField(category, globalIndex, 'title', v)}
+                                      className="text-[12.5px] font-semibold text-ink flex-1"
+                                    />
+                                    <button
+                                      onClick={() => deleteSegment(category, globalIndex)}
+                                      className="shrink-0 opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                      title="Delete"
+                                    >
+                                      &times;
+                                    </button>
+                                  </div>
+                                  <EditableText
+                                    value={item.content}
+                                    onSave={(v) => updateSegmentField(category, globalIndex, 'content', v)}
+                                    className="text-[12px] text-ink-muted leading-relaxed"
+                                    as="div"
+                                  />
+                                  {(item.assignee || item.deadline) && (
+                                    <div className="flex gap-3 mt-0.5">
+                                      {item.assignee && (
+                                        <span className="text-[11px] text-ink-faint">
+                                          Owner: {item.assignee}
+                                        </span>
+                                      )}
+                                      {item.deadline && (
+                                        <span className="text-[11px] text-ink-faint">
+                                          Due: {item.deadline}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       ))}
                     </div>

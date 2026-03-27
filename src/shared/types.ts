@@ -33,6 +33,7 @@ export interface Segment {
   id: string
   meetingId: string
   category: SegmentCategory
+  topic: string | null
   title: string
   content: string
   assignee: string | null
