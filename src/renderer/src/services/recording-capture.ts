@@ -31,9 +31,10 @@ export async function startCapture(
     } as MediaTrackConstraints,
   })
 
-  // Check screen recording permission
-  const perms = await window.electronAPI.invoke('permissions:check')
-  if (!perms.screen) {
+  // Check screen recording permission — use the actual video track state
+  // rather than the thumbnail heuristic which can false-positive
+  const videoTrack = videoStream.getVideoTracks()[0]
+  if (!videoTrack || videoTrack.readyState !== 'live') {
     useToastStore.getState().showToast({
       type: 'screen',
       message: 'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
