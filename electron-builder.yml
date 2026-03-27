@@ -1,4 +1,4 @@
-appId: com.autodoc.app
+appId: com.kairos.autodoc
 productName: AutoDoc
 directories:
   buildResources: build
