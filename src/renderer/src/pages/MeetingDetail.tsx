@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
 import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus, SpeakerMap } from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
@@ -116,7 +116,10 @@ function EditableText({
 export function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<Tab>('notes')
+  const [searchParams] = useSearchParams()
+  const initialTab = (searchParams.get('tab') as Tab) || 'notes'
+  const highlightText = searchParams.get('highlight') || ''
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
@@ -256,6 +259,26 @@ export function MeetingDetail() {
     }
   }, [id])
 
+  // Scroll to highlighted search result after content loads
+  useEffect(() => {
+    if (!highlightText) return
+    const timer = setTimeout(() => {
+      const container = document.querySelector('[data-content-scroll]')
+      if (!container) return
+      const elements = container.querySelectorAll('[data-searchable]')
+      for (const el of elements) {
+        const text = el.textContent ?? ''
+        if (text.includes(highlightText)) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.classList.add('ring-2', 'ring-sage/50', 'rounded-lg')
+          setTimeout(() => el.classList.remove('ring-2', 'ring-sage/50', 'rounded-lg'), 3000)
+          break
+        }
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [highlightText, transcript, segments])
+
   const handleRetryTranscription = () => {
     if (id) window.electronAPI.invoke('transcription:retry', id)
   }
@@ -352,7 +375,7 @@ export function MeetingDetail() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6" data-content-scroll>
         {activeTab === 'notes' ? (
           <div className="flex flex-col gap-4">
             {CATEGORY_ORDER.map((category) => {
@@ -394,7 +417,7 @@ export function MeetingDetail() {
                   ) : (
                     <div className="flex flex-col gap-2.5">
                       {items.map((item, index) => (
-                        <div key={item.id} className="group flex flex-col gap-0.5">
+                        <div key={item.id} className="group flex flex-col gap-0.5" data-searchable>
                           <div className="flex items-start justify-between gap-2">
                             <EditableText
                               value={item.title}

@@ -132,10 +132,12 @@ export function Search() {
             {results.map((result) => (
               <div
                 key={result.meetingId}
-                className="bg-bg-card border border-border rounded-xl overflow-hidden cursor-pointer hover:border-ink-muted transition-colors"
-                onClick={() => navigate(`/recordings/${result.meetingId}`)}
+                className="bg-bg-card border border-border rounded-xl overflow-hidden"
               >
-                <div className="px-4 py-3 border-b border-border/50">
+                <div
+                  className="px-4 py-3 border-b border-border/50 cursor-pointer hover:bg-bg-accent/40 transition-colors"
+                  onClick={() => navigate(`/recordings/${result.meetingId}`)}
+                >
                   <div className="text-[13px] font-semibold text-ink">
                     {result.title}
                   </div>
@@ -150,25 +152,33 @@ export function Search() {
                     {result.matches.length === 1 ? 'match' : 'matches'}
                   </div>
                 </div>
-                <div className="px-4 py-2 flex flex-col gap-1.5">
-                  {result.matches.map((match, i) => (
-                    <div key={i} className="flex items-start gap-2 py-1">
-                      <span
-                        className={`shrink-0 mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                          match.type === 'segment'
-                            ? 'bg-dusk/10 text-dusk'
-                            : 'bg-sage/10 text-sage'
-                        }`}
+                <div className="px-4 py-2 flex flex-col">
+                  {result.matches.map((match, i) => {
+                    const tab = match.type === 'segment' ? 'notes' : 'transcript'
+                    const highlight = encodeURIComponent(match.text.slice(0, 80))
+                    return (
+                      <div
+                        key={i}
+                        className="flex items-start gap-2 py-1.5 px-1 -mx-1 rounded-md cursor-pointer hover:bg-bg-accent/60 transition-colors"
+                        onClick={() => navigate(`/recordings/${result.meetingId}?tab=${tab}&highlight=${highlight}`)}
                       >
-                        {match.type === 'segment'
-                          ? match.category?.replace(/_/g, ' ') ?? 'note'
-                          : 'transcript'}
-                      </span>
-                      <span className="text-[12px] text-ink-muted leading-relaxed">
-                        {highlightMatch(match.text)}
-                      </span>
-                    </div>
-                  ))}
+                        <span
+                          className={`shrink-0 mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                            match.type === 'segment'
+                              ? 'bg-dusk/10 text-dusk'
+                              : 'bg-sage/10 text-sage'
+                          }`}
+                        >
+                          {match.type === 'segment'
+                            ? match.category?.replace(/_/g, ' ') ?? 'note'
+                            : 'transcript'}
+                        </span>
+                        <span className="text-[12px] text-ink-muted leading-relaxed">
+                          {highlightMatch(match.text)}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             ))}
