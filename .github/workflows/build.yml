@@ -28,6 +28,28 @@ jobs:
       - name: Run bootstrap tests
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
+      - name: Debug macOS signing secrets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.DD_KEYCHAIN_PASSWORD }}
+          API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
+        run: |
+          echo "DD_BUILD_CERTIFICATE_BASE64 set: $( [ -n \"$BUILD_CERTIFICATE_BASE64\" ] && echo 'yes' || echo 'no' )"
+          echo "DD_P12_PASSWORD set: $( [ -n \"$P12_PASSWORD\" ] && echo 'yes' || echo 'no' )"
+          echo "DD_KEYCHAIN_PASSWORD set: $( [ -n \"$KEYCHAIN_PASSWORD\" ] && echo 'yes' || echo 'no' )"
+          echo "APP_STORE_CONNECT_API_KEY_CONTENT set: $( [ -n \"$API_KEY_CONTENT\" ] && echo 'yes' || echo 'no' )"
+          echo "APP_STORE_CONNECT_API_KEY_ID set: $( [ -n \"$API_KEY_ID\" ] && echo 'yes' || echo 'no' )"
+          echo "APP_STORE_CONNECT_API_KEY_ISSUER_ID set: $( [ -n \"$API_KEY_ISSUER_ID\" ] && echo 'yes' || echo 'no' )"
+          echo "DD_BUILD_CERTIFICATE_BASE64 length: ${#BUILD_CERTIFICATE_BASE64}"
+          echo "DD_P12_PASSWORD length: ${#P12_PASSWORD}"
+          echo "DD_KEYCHAIN_PASSWORD length: ${#KEYCHAIN_PASSWORD}"
+          echo "APP_STORE_CONNECT_API_KEY_CONTENT length: ${#API_KEY_CONTENT}"
+          echo "APP_STORE_CONNECT_API_KEY_ID length: ${#API_KEY_ID}"
+          echo "APP_STORE_CONNECT_API_KEY_ISSUER_ID length: ${#API_KEY_ISSUER_ID}"
+
       - name: Install Apple certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
