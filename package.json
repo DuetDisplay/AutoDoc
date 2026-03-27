@@ -34,6 +34,7 @@
     "@fontsource/instrument-serif": "^5.2.8",
     "@sentry/electron": "^7.10.0",
     "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.3",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
     "posthog-js": "^1.363.6"

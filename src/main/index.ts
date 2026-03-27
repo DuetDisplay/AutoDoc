@@ -25,6 +25,7 @@ import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import type { OllamaSetupStatus } from '../shared/types'
+import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -100,6 +101,12 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  // Auto-updater
+  initAutoUpdater()
+  ipcMain.handle('updater:get-status', () => getUpdateStatus())
+  ipcMain.handle('updater:check', () => checkForUpdates())
+  ipcMain.handle('updater:install', () => installUpdate())
 
   const prefsStore = new PrefsStore()
   registerPrefsIpc(prefsStore)

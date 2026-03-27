@@ -1,5 +1,12 @@
 import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus } from '../shared/types'
 
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  version?: string
+  percent?: number
+  error?: string
+}
+
 export interface SearchResult {
   meetingId: string
   title: string
@@ -54,6 +61,9 @@ export interface IpcInvokeEvents {
   'prefs:set-analytics-consent': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
+  'updater:get-status': []
+  'updater:check': []
+  'updater:install': []
 }
 
 export interface IpcInvokeReturns {
@@ -97,6 +107,9 @@ export interface IpcInvokeReturns {
   'prefs:set-analytics-consent': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
+  'updater:get-status': UpdateStatus
+  'updater:check': void
+  'updater:install': void
 }
 
 export interface IpcOnEvents {
@@ -109,4 +122,5 @@ export interface IpcOnEvents {
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: Record<string, never>]
   'ollama:setup-progress': [status: OllamaSetupStatus]
+  'updater:status': [status: UpdateStatus]
 }
