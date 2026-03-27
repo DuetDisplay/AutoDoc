@@ -4,6 +4,7 @@ import { app } from 'electron'
 interface PrefsSchema {
   onboardingComplete: boolean
   launchAtLogin: boolean
+  analyticsConsent: boolean | null // null = not yet asked
 }
 
 export class PrefsStore {
@@ -12,7 +13,7 @@ export class PrefsStore {
   constructor() {
     this.store = new Store<PrefsSchema>({
       name: 'autodoc-prefs',
-      defaults: { onboardingComplete: false, launchAtLogin: true },
+      defaults: { onboardingComplete: false, launchAtLogin: true, analyticsConsent: null },
     })
 
     // Sync the current preference to the OS on startup
@@ -36,6 +37,14 @@ export class PrefsStore {
   setLaunchAtLogin(enabled: boolean): void {
     this.store.set('launchAtLogin', enabled)
     this.applyLaunchAtLogin()
+  }
+
+  getAnalyticsConsent(): boolean | null {
+    return this.store.get('analyticsConsent')
+  }
+
+  setAnalyticsConsent(enabled: boolean): void {
+    this.store.set('analyticsConsent', enabled)
   }
 
   private applyLaunchAtLogin(): void {

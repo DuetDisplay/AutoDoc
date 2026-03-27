@@ -8,7 +8,7 @@ import { MODELS_SUBDIR } from '../../shared/constants'
 
 const IS_WIN = process.platform === 'win32'
 
-const DEFAULT_MODEL = 'llama3'
+const DEFAULT_MODEL = 'llama3.1'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`

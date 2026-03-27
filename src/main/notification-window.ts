@@ -16,11 +16,11 @@ export function showNotificationWindow(options: NotificationOptions): void {
   }
 
   const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenWidth } = primaryDisplay.workAreaSize
+  const workArea = primaryDisplay.workArea
   const winWidth = 400
   const winHeight = 100 // Extra space for transparent padding + shadow
-  const x = Math.round((screenWidth - winWidth) / 2)
-  const y = 0
+  const x = Math.round(workArea.x + (workArea.width - winWidth) / 2)
+  const y = workArea.y + 8
 
   notificationWindow = new BrowserWindow({
     width: winWidth,

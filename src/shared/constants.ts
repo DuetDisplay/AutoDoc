@@ -50,7 +50,7 @@ export const MEETING_APP_PATTERNS = [
   { name: 'Google Meet', pattern: /google meet|meet\.google\.com|^meet\s*[-–—]/i },
   { name: 'Microsoft Teams', pattern: /microsoft teams|teams\.microsoft/i },
   { name: 'Webex', pattern: /webex/i },
-  { name: 'Slack Huddle', pattern: /slack.*huddle|slack.*call/i },
+  { name: 'Slack', pattern: /slack/i },
 ]
 
 // Browser window names used as fallback when no meeting pattern matches

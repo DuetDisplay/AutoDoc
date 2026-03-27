@@ -14,13 +14,25 @@ import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { Onboarding } from './pages/Onboarding'
+import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
 
   useEffect(() => {
+    // Initialize analytics early (stays opted-out until consent is restored/given)
+    initAnalytics()
+
     window.electronAPI.invoke('prefs:get-onboarding-complete').then(setOnboardingDone)
+
+    // Restore analytics consent for returning users
+    window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
+      if (consent === true) {
+        restoreAnalyticsConsent(true)
+        trackEvent('app_opened')
+      }
+    })
   }, [])
 
   // Auto-start recording when user clicks "Start AI Notes" from floating notification
@@ -42,6 +54,17 @@ export default function App() {
     })
     return unsub
   }, [isRecording, fetchSources, handleStart])
+
+  // Auto-stop recording when meeting ends (mic goes silent for 30s)
+  useEffect(() => {
+    const unsub = window.electronAPI.on('detection:auto-stop', async () => {
+      if (!isRecording) return
+      console.log('Auto-stopping recording — meeting ended')
+      trackEvent('recording_auto_stopped')
+      await handleStop()
+    })
+    return unsub
+  }, [isRecording, handleStop])
 
   if (onboardingDone === null) return null
 

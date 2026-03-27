@@ -27,11 +27,33 @@ import { createTray, updateTrayMenu } from './services/tray'
 import { getAutoRecordMode } from './services/auto-record-store'
 import { logAutodocFailure } from './services/autodoc-log'
 import type { CalendarEvent, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
+}
+
+// Initialize Sentry for crash reporting (env-var-gated — no DSN = no tracking)
+// Dynamic import: @sentry/electron accesses app.getAppPath() at module scope,
+// which crashes if loaded before Electron fully initializes the app object.
+const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
+if (SENTRY_DSN) {
+  import('@sentry/electron/main').then((Sentry) => {
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      environment: is.dev ? 'development' : 'production',
+      release: `autodoc@${app.getVersion()}`,
+      enabled: !is.dev || !!process.env.AUTODOC_SENTRY_DEV,
+      beforeSend(event) {
+        delete event.server_name
+        return event
+      },
+    })
+  }).catch((err) => {
+    console.warn('Failed to initialize Sentry:', err)
+  })
 }
 
 // Set dock icon in dev (production uses the bundled .icns)
@@ -100,6 +122,12 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  // Auto-updater
+  initAutoUpdater()
+  ipcMain.handle('updater:get-status', () => getUpdateStatus())
+  ipcMain.handle('updater:check', () => checkForUpdates())
+  ipcMain.handle('updater:install', () => installUpdate())
 
   const prefsStore = new PrefsStore()
   registerPrefsIpc(prefsStore)

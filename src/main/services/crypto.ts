@@ -4,6 +4,7 @@ import * as fsp from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { Readable } from 'stream'
+import { execFileSync } from 'child_process'
 import { safeStorage } from 'electron'
 import ElectronStoreModule from 'electron-store'
 
@@ -34,14 +35,29 @@ export function getKey(): Buffer {
   // Try loading from store
   const stored = getStore().get(STORE_KEY) as string | undefined
   if (stored) {
-    let b64: string
-    if (safeStorage.isEncryptionAvailable()) {
-      b64 = safeStorage.decryptString(Buffer.from(stored, 'latin1'))
-    } else {
-      b64 = stored
+    try {
+      let b64: string
+      if (safeStorage.isEncryptionAvailable()) {
+        b64 = safeStorage.decryptString(Buffer.from(stored, 'latin1'))
+      } else {
+        b64 = stored
+      }
+      cachedKey = Buffer.from(b64, 'base64')
+      return cachedKey
+    } catch (err) {
+      // safeStorage key changed (e.g., app name changed) — try legacy keychain
+      console.warn('Failed to decrypt stored encryption key — trying legacy keychain:', err)
+      const recovered = tryRecoverFromLegacyKeychain(stored)
+      if (recovered) {
+        cachedKey = recovered
+        // Re-encrypt under the current safeStorage service name
+        reEncryptKey(recovered)
+        return cachedKey
+      }
+      // Unrecoverable — generate a fresh key
+      console.warn('Could not recover legacy key — generating new key')
+      store.delete(STORE_KEY)
     }
-    cachedKey = Buffer.from(b64, 'base64')
-    return cachedKey
   }
 
   // Generate new key
@@ -59,6 +75,57 @@ export function getKey(): Buffer {
 
   cachedKey = key
   return cachedKey
+}
+
+/**
+ * Try to decrypt the stored key using the legacy "autodoc Safe Storage" keychain entry.
+ * This handles the migration from app.setName('autodoc') → app.setName('AutoDoc').
+ */
+function tryRecoverFromLegacyKeychain(storedEncrypted: string): Buffer | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    // Read the password from the legacy keychain entry
+    const legacyPassword = execFileSync('security', [
+      'find-generic-password',
+      '-s', 'autodoc Safe Storage',
+      '-w',
+    ], { timeout: 5000 }).toString().trim()
+
+    // The stored value was encrypted by Chromium's os_crypt using the legacy password.
+    // Chromium/Electron uses AES-128-CBC with a PBKDF2-derived key from the keychain password.
+    // Prefix: "v10" (3 bytes) + IV (16 bytes) + ciphertext
+    const buf = Buffer.from(storedEncrypted, 'latin1')
+    if (buf.length < 19 || buf.toString('ascii', 0, 3) !== 'v10') {
+      return null
+    }
+    const iv = buf.subarray(3, 19)
+    const ciphertext = buf.subarray(19)
+
+    // Derive key: PBKDF2(password, 'saltysalt', 1003, 16, 'sha1')
+    const derivedKey = crypto.pbkdf2Sync(legacyPassword, 'saltysalt', 1003, 16, 'sha1')
+    const decipher = crypto.createDecipheriv('aes-128-cbc', derivedKey, iv)
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    const b64 = decrypted.toString('utf-8')
+
+    const key = Buffer.from(b64, 'base64')
+    if (key.length === 32) {
+      console.log('Successfully recovered encryption key from legacy keychain')
+      return key
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function reEncryptKey(key: Buffer): void {
+  const b64 = key.toString('base64')
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(b64)
+    store.set(STORE_KEY, encrypted.toString('latin1'))
+  } else {
+    store.set(STORE_KEY, b64)
+  }
 }
 
 // ─── JSON Encrypt/Decrypt ───

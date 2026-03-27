@@ -52,6 +52,7 @@ function createMockAudioConverter(): AudioConverter {
   } as unknown as AudioConverter
 }
 
+
 function createMockCalendarService(): CalendarService {
   return {
     isConnected: vi.fn().mockReturnValue(false),

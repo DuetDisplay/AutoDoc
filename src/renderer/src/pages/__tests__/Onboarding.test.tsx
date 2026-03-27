@@ -32,6 +32,6 @@ describe('Onboarding', () => {
   it('renders step dots', () => {
     render(<Onboarding onComplete={vi.fn()} />)
     const dots = document.querySelectorAll('[data-testid="step-dot"]')
-    expect(dots.length).toBe(9)
+    expect(dots.length).toBe(10)
   })
 })

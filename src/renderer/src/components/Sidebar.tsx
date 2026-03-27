@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useRecordingStore } from '../stores/recording'
 import { ROUTES } from '../../../shared/constants'
+import { trackEvent } from '../services/analytics'
 
 const navItems = [
   { to: ROUTES.upcoming, label: 'Upcoming' },
@@ -165,6 +166,7 @@ export function Sidebar() {
 
           <NavLink
             to={ROUTES.settings}
+            onClick={() => trackEvent('navigation_clicked', { page: 'settings' })}
             className={({ isActive }) =>
               `px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors ${
                 isActive

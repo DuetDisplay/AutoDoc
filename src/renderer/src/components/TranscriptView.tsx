@@ -106,7 +106,8 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
         return (
           <div
             key={i}
-            className="flex gap-3 rounded-lg"
+            className="flex gap-3 rounded-lg transition-shadow"
+            data-searchable
             style={color ? { borderLeft: `3px solid ${color.border}`, backgroundColor: color.bg, paddingLeft: '8px', paddingTop: '6px', paddingBottom: '6px' } : undefined}
           >
             {onSeek ? (

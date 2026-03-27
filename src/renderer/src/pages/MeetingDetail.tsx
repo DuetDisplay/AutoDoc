@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
 import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus, SpeakerMap } from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
@@ -7,7 +7,7 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 
-type Tab = 'notes' | 'transcript'
+type Tab = 'notes' | 'transcript' | 'settings'
 
 function formatDuration(seconds: number): string {
   const mins = Math.ceil(seconds / 60)
@@ -116,7 +116,10 @@ function EditableText({
 export function MeetingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<Tab>('notes')
+  const [searchParams] = useSearchParams()
+  const initialTab = (searchParams.get('tab') as Tab) || 'notes'
+  const highlightText = searchParams.get('highlight') || ''
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
@@ -126,7 +129,7 @@ export function MeetingDetail() {
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean; audioFile?: string } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const handleSeek = useCallback((ms: number) => {
     const el = mediaRef.current
@@ -256,12 +259,56 @@ export function MeetingDetail() {
     }
   }, [id])
 
+  // Scroll to highlighted search result after content loads
+  useEffect(() => {
+    if (!highlightText) return
+    const timer = setTimeout(() => {
+      const container = document.querySelector('[data-content-scroll]')
+      if (!container) return
+      const elements = container.querySelectorAll('[data-searchable]')
+      for (const el of elements) {
+        const text = el.textContent ?? ''
+        if (text.includes(highlightText)) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.classList.add('ring-2', 'ring-sage/50', 'rounded-lg')
+          setTimeout(() => el.classList.remove('ring-2', 'ring-sage/50', 'rounded-lg'), 3000)
+          break
+        }
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [highlightText, transcript, segments])
+
   const handleRetryTranscription = () => {
     if (id) window.electronAPI.invoke('transcription:retry', id)
   }
 
   const handleRetrySegmentation = () => {
     if (id) window.electronAPI.invoke('segmentation:retry', id)
+  }
+
+  const handleReprocessTranscript = () => {
+    if (!id) return
+    setTranscriptionStatus('queued')
+    setTranscript([])
+    setSegments(null)
+    setSegmentationStatus('pending')
+    window.electronAPI.invoke('transcription:retry', id)
+  }
+
+  const handleReprocessNotes = () => {
+    if (!id) return
+    setSegmentationStatus('queued')
+    setSegments(null)
+    window.electronAPI.invoke('segmentation:retry', id)
+  }
+
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const handleDelete = async () => {
+    if (!id) return
+    await window.electronAPI.invoke('recording:delete', id)
+    navigate('/recordings')
   }
 
   const getSegmentsForCategory = (category: SegmentCategory): Segment[] => {
@@ -312,7 +359,7 @@ export function MeetingDetail() {
 
       {/* Tabs */}
       <div className="flex border-b border-border px-6">
-        {(['notes', 'transcript'] as Tab[]).map((tab) => (
+        {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -322,13 +369,13 @@ export function MeetingDetail() {
                 : 'text-ink-faint hover:text-ink-muted'
             }`}
           >
-            {tab === 'notes' ? 'Notes' : 'Transcript'}
+            {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6" data-content-scroll>
         {activeTab === 'notes' ? (
           <div className="flex flex-col gap-4">
             {CATEGORY_ORDER.map((category) => {
@@ -370,7 +417,7 @@ export function MeetingDetail() {
                   ) : (
                     <div className="flex flex-col gap-2.5">
                       {items.map((item, index) => (
-                        <div key={item.id} className="group flex flex-col gap-0.5">
+                        <div key={item.id} className="group flex flex-col gap-0.5" data-searchable>
                           <div className="flex items-start justify-between gap-2">
                             <EditableText
                               value={item.title}
@@ -413,7 +460,7 @@ export function MeetingDetail() {
               )
             })}
           </div>
-        ) : (
+        ) : activeTab === 'transcript' ? (
           <div className="flex flex-col gap-4">
             {media?.hasVideo && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
@@ -448,6 +495,105 @@ export function MeetingDetail() {
               speakers={speakers}
               onSeek={(media?.hasVideo || media?.hasAudio) ? handleSeek : undefined}
             />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5 max-w-lg">
+            {/* Reprocess section */}
+            <div className="bg-bg-card border border-border rounded-xl p-5">
+              <h3 className="text-[12px] font-bold text-ink tracking-[0.03em] uppercase mb-1">
+                Reprocess
+              </h3>
+              <p className="text-[11.5px] text-ink-muted mb-4">
+                Re-run transcription or note generation from the original audio.
+              </p>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[12.5px] font-semibold text-ink">Transcript</div>
+                    <div className="text-[11px] text-ink-faint">
+                      Re-transcribe audio with whisper — also regenerates notes
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleReprocessTranscript}
+                    disabled={transcriptionStatus === 'transcribing' || transcriptionStatus === 'queued' || transcriptionStatus === 'downloading' || transcriptionStatus === 'diarizing'}
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
+                      ? 'Processing...'
+                      : transcriptionStatus === 'queued' || transcriptionStatus === 'downloading'
+                        ? 'Queued...'
+                        : 'Reprocess'}
+                  </button>
+                </div>
+                <div className="border-t border-border" />
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[12.5px] font-semibold text-ink">Notes</div>
+                    <div className="text-[11px] text-ink-faint">
+                      Regenerate AI notes from the existing transcript
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleReprocessNotes}
+                    disabled={
+                      transcriptionStatus !== 'complete' ||
+                      segmentationStatus === 'segmenting' ||
+                      segmentationStatus === 'queued' ||
+                      segmentationStatus === 'downloading-model'
+                    }
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {segmentationStatus === 'segmenting'
+                      ? 'Processing...'
+                      : segmentationStatus === 'queued' || segmentationStatus === 'downloading-model'
+                        ? 'Queued...'
+                        : 'Reprocess'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Danger zone */}
+            <div className="bg-bg-card border border-clay/20 rounded-xl p-5">
+              <h3 className="text-[12px] font-bold text-clay tracking-[0.03em] uppercase mb-1">
+                Danger Zone
+              </h3>
+              <p className="text-[11.5px] text-ink-muted mb-4">
+                This action cannot be undone.
+              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[12.5px] font-semibold text-ink">Delete recording</div>
+                  <div className="text-[11px] text-ink-faint">
+                    Permanently remove all audio, video, transcript, and notes
+                  </div>
+                </div>
+                {!showDeleteConfirm ? (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay hover:bg-clay/20 transition-colors"
+                  >
+                    Delete
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg text-ink-faint hover:text-ink transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleDelete}
+                      className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-white hover:bg-clay/90 transition-colors"
+                    >
+                      Confirm Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

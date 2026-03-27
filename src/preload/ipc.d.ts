@@ -1,5 +1,12 @@
 import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  version?: string
+  percent?: number
+  error?: string
+}
+
 export interface SearchResult {
   meetingId: string
   title: string
@@ -29,6 +36,7 @@ export interface IpcInvokeEvents {
   'recording:stop': []
   'recording:get-state': []
   'recording:save-chunk': [meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer]
+  'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string]
@@ -49,10 +57,15 @@ export interface IpcInvokeEvents {
   'prefs:set-onboarding-complete': []
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
+  'prefs:get-analytics-consent': []
+  'prefs:set-analytics-consent': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
   'whisper:retry-setup': []
+  'updater:get-status': []
+  'updater:check': []
+  'updater:install': []
 }
 
 export interface IpcInvokeReturns {
@@ -71,6 +84,7 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'recording:delete': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
@@ -91,10 +105,15 @@ export interface IpcInvokeReturns {
   'prefs:set-onboarding-complete': void
   'prefs:get-launch-at-login': boolean
   'prefs:set-launch-at-login': void
+  'prefs:get-analytics-consent': boolean | null
+  'prefs:set-analytics-consent': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
   'whisper:retry-setup': void
+  'updater:get-status': UpdateStatus
+  'updater:check': void
+  'updater:install': void
 }
 
 export interface IpcOnEvents {
@@ -106,6 +125,8 @@ export interface IpcOnEvents {
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
+  'detection:auto-stop': [payload: Record<string, never>]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
+  'updater:status': [status: UpdateStatus]
 }

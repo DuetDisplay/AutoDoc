@@ -33,7 +33,7 @@ describe('EventCard', () => {
     const autoRecordEvent = { ...mockEvent, autoRecord: 'once' as const }
     render(<EventCard event={autoRecordEvent} onSetAutoRecord={vi.fn()} />)
     expect(screen.getByText('Auto-recording')).toBeInTheDocument()
-    expect(screen.getByText('On')).toBeInTheDocument()
+    expect(screen.getByText(/Auto-record: On/)).toBeInTheDocument()
   })
 
   it('toggles auto-record on for non-recurring event', async () => {

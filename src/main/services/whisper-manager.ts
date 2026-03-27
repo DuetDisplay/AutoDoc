@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { access, mkdir, copyFile, rm, readdir } from 'fs/promises'
+import { access, mkdir, copyFile, rm, readdir, symlink } from 'fs/promises'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { execFile, execSync } from 'child_process'
@@ -239,10 +239,10 @@ export class WhisperManager extends EventEmitter {
     if (IS_WIN) {
       await copyFile(source, dest).catch(() => {})
     } else {
-      const { symlink } = await import('fs/promises')
       await symlink(source, dest).catch(() => {})
     }
   }
+
 
   private async downloadWithRetry(fn: () => Promise<void>, _label: string, attempts = 3): Promise<void> {
     for (let i = 0; i < attempts; i++) {

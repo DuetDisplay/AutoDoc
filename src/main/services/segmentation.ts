@@ -84,6 +84,12 @@ export class SegmentationService {
 
       if (hasTranscript && !hasSegments && !hasError) {
         this.enqueue(meetingId)
+      } else if (hasTranscript && !hasSegments && hasError) {
+        const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
+        if (errorData && errorData.retries < 3) {
+          console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+          this.retry(meetingId)
+        }
       }
     }
   }
@@ -133,6 +139,17 @@ export class SegmentationService {
 
     const segments = await this.llmProvider.summarize(meetingId, fullText)
 
+    // Verify the LLM actually produced content — empty results mean it failed silently
+    const totalItems = segments.decisions.length +
+      segments.actionItems.length +
+      segments.information.length +
+      segments.discussion.length +
+      segments.statusUpdates.length
+
+    if (totalItems === 0 && fullText.length > 100) {
+      throw new Error('LLM returned empty segments for non-trivial transcript — likely context overflow or model issue')
+    }
+
     await encryptJSON(segments, segmentsPath)
 
     this.activeStatus = 'complete'
@@ -141,7 +158,9 @@ export class SegmentationService {
 
   private async markFailed(meetingId: string, error: string): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
-    await writeFile(errorPath, error)
+    const existing = await this.readErrorFile(errorPath)
+    const retries = (existing?.retries ?? 0) + 1
+    await writeFile(errorPath, JSON.stringify({ error, retries }))
     logAutodocFailure({
       area: 'segmentation',
       message: 'Meeting notes generation failed',
@@ -149,6 +168,19 @@ export class SegmentationService {
       meetingId,
     })
     this.broadcastStatus(meetingId, 'failed')
+  }
+
+  private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
+    try {
+      const raw = await readFile(errorPath, 'utf-8')
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return { error: raw, retries: 0 }
+      }
+    } catch {
+      return null
+    }
   }
 
   private broadcastStatus(meetingId: string, status: SegmentationStatus): void {

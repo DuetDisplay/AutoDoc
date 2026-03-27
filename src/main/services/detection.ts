@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, desktopCapturer } from 'electron'
 import { execFile } from 'child_process'
 import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
@@ -8,6 +8,7 @@ import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
+const AUTO_STOP_GRACE_MS = 30_000 // Wait 30s after mic goes silent before auto-stopping
 
 interface MeetingProvider {
   id: string
@@ -52,6 +53,7 @@ export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastProviderSignalKey = ''
   private promptedCalendarEventId: string | null = null
+  private autoStopTimer: ReturnType<typeof setTimeout> | null = null
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -72,6 +74,7 @@ export class DetectionService {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
+    this.clearAutoStop()
   }
 
   dismissPrompt(): void {
@@ -80,10 +83,45 @@ export class DetectionService {
 
   private async poll(): Promise<void> {
     if (this.recordingService.getState().isRecording) {
+      // Auto-stop: check if recorded window was closed
+      const windowClosed = await this.isRecordedWindowClosed()
+      if (windowClosed) {
+        console.log('Auto-stopping recording — recorded window was closed')
+        this.clearAutoStop()
+        this.broadcast('detection:auto-stop', {})
+        return
+      }
+
+      // Mac: mic-based auto-stop as fallback (e.g., recording full screen)
+      if (process.platform === 'darwin') {
+        const micActive = await this.isMicInUseMac()
+        if (micActive) {
+          this.clearAutoStop()
+        } else if (!this.autoStopTimer) {
+          const meetingWindowOpen = await this.isMeetingWindowOpen()
+          if (!meetingWindowOpen) {
+            console.log('Auto-stopping recording — mic inactive and no meeting window found')
+            this.broadcast('detection:auto-stop', {})
+            return
+          }
+          console.log('Meeting mic inactive but window still open — auto-stop in 30s unless mic resumes')
+          this.autoStopTimer = setTimeout(() => {
+            this.autoStopTimer = null
+            if (this.recordingService.getState().isRecording) {
+              console.log('Auto-stopping recording — meeting appears to have ended')
+              this.broadcast('detection:auto-stop', {})
+            }
+          }, AUTO_STOP_GRACE_MS)
+        }
+      }
+
       this.resetProviderState()
       hideNotificationWindow()
       return
     }
+
+    // Not recording: detect meetings
+    this.clearAutoStop()
 
     const matchingEvent = this.findMatchingEvent()
     const provider = await this.getActiveProvider()
@@ -95,6 +133,39 @@ export class DetectionService {
 
     this.promptedCalendarEventId = null
     await this.handleAdHocDetection(provider, providerSignalKey)
+  }
+
+  private clearAutoStop(): void {
+    if (this.autoStopTimer) {
+      clearTimeout(this.autoStopTimer)
+      this.autoStopTimer = null
+    }
+  }
+
+  private async isMeetingWindowOpen(): Promise<boolean> {
+    try {
+      const { MEETING_APP_PATTERNS } = await import('../../shared/constants')
+      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
+      return sources.some((s) =>
+        MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))
+      )
+    } catch {
+      return true
+    }
+  }
+
+  private async isRecordedWindowClosed(): Promise<boolean> {
+    const state = this.recordingService.getState()
+    if (!state.sourceId || state.sourceId.startsWith('screen:')) {
+      return false
+    }
+
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
+      return !sources.some((s) => s.id === state.sourceId)
+    } catch {
+      return false
+    }
   }
 
   private async handleCalendarEvent(event: CalendarEvent, providerSignalKey: string): Promise<void> {

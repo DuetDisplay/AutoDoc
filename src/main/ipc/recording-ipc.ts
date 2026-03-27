@@ -1,6 +1,6 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, rename, stat, unlink } from 'fs/promises'
+import { appendFile, readdir, rename, rm, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
@@ -189,7 +189,11 @@ export function registerRecordingIpc(
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
-      await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+      try {
+        await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+      } catch (err) {
+        console.error('Failed to save metadata (continuing with transcription):', err)
+      }
       await new Promise((resolve) => setTimeout(resolve, 100))
       const micPath = join(meetingDir, 'mic.webm')
       const systemPath = join(meetingDir, 'system.webm')
@@ -317,6 +321,14 @@ export function registerRecordingIpc(
       }
     }
   )
+
+  ipcMain.handle('recording:delete', async (_event, meetingId: string) => {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const dirStat = await stat(meetingDir).catch(() => null)
+    if (!dirStat?.isDirectory()) return
+    await rm(meetingDir, { recursive: true, force: true })
+  })
 }
 
 function broadcastState(state: RecordingState): void {

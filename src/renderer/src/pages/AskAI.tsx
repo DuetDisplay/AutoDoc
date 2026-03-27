@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
+import { trackEvent } from '../services/analytics'
 
 export function AskAI() {
   const { messages, addMessage } = useChatStore()
@@ -25,6 +26,7 @@ export function AskAI() {
     setInput('')
     addMessage({ role: 'user', content: question })
     setLoading(true)
+    trackEvent('chat_message_sent')
 
     try {
       const response = await window.electronAPI.invoke('chat:send', question)

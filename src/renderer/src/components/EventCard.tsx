@@ -82,7 +82,9 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
           }`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-status-connected' : 'bg-ink-faint'}`} />
-          {isActive ? 'On' : 'Auto-record'}
+          {isActive
+            ? event.autoRecord === 'series' ? 'Auto-record: Series' : 'Auto-record: On'
+            : 'Auto-record: Off'}
         </button>
         {showMenu && (
           <div className="absolute right-0 top-full mt-1.5 z-50 w-52 bg-bg-card border border-border rounded-xl shadow-lg py-1.5 overflow-hidden">
