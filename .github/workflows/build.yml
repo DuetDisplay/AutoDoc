@@ -52,12 +52,12 @@ jobs:
           API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
         run: |
-          mkdir -p ~/private_keys
-          echo "$API_KEY_CONTENT" > ~/private_keys/AuthKey_${API_KEY_ID}.p8
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+          printf '%s\n' "$API_KEY_CONTENT" > "$API_KEY_PATH"
+          echo "APPLE_API_KEY=$API_KEY_PATH" >> $GITHUB_ENV
 
       - name: Build macOS release
         env:
-          APPLE_API_KEY: ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8
           APPLE_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
           GH_TOKEN: ${{ github.token }}
