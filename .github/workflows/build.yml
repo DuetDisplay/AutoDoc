@@ -28,22 +28,37 @@ jobs:
       - name: Run bootstrap tests
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
-      - name: Verify notarization credentials
+      - name: Install Apple certificate
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          APPLE_ID: ${{ secrets.DD_APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.DD_KEYCHAIN_PASSWORD }}
         run: |
-          echo "APPLE_ID is set: $( [ -n \"$APPLE_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_APP_SPECIFIC_PASSWORD is set: $( [ -n \"$APPLE_APP_SPECIFIC_PASSWORD\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_TEAM_ID is set: $( [ -n \"$APPLE_TEAM_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_TEAM_ID length: ${#APPLE_TEAM_ID}"
-          echo "APPLE_ID first 3 chars: ${APPLE_ID:0:3}***"
-          xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" 2>&1 | head -5 || true
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build macOS release
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          APPLE_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          APPLE_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release:mac
+
+      - name: Build macOS artifacts
+        if: github.ref_type == 'branch'
         env:
           CSC_LINK: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
@@ -52,10 +67,6 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
           GH_TOKEN: ${{ github.token }}
         run: npm run release:mac
-
-      - name: Build macOS artifacts
-        if: github.ref_type == 'branch'
-        run: npm run build:mac
 
       - name: Upload macOS artifacts
         if: always()

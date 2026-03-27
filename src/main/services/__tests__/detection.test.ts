@@ -136,4 +136,20 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow.mock.calls[0][0].title).toBe('Event evt-1')
     expect(mocks.showNotificationWindow.mock.calls[1][0].title).toBe('Event evt-1')
   })
+
+  it('auto-stops on Windows after the meeting provider disappears during recording', async () => {
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: true, sourceId: null }) } as never,
+      () => [],
+    )
+
+    await (service as any).poll()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', {})
+  })
 })

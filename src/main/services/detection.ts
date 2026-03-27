@@ -83,16 +83,13 @@ export class DetectionService {
 
   private async poll(): Promise<void> {
     if (this.recordingService.getState().isRecording) {
-      // Auto-stop: check if recorded window was closed
       const windowClosed = await this.isRecordedWindowClosed()
       if (windowClosed) {
-        console.log('Auto-stopping recording — recorded window was closed')
         this.clearAutoStop()
         this.broadcast('detection:auto-stop', {})
         return
       }
 
-      // Mac: mic-based auto-stop as fallback (e.g., recording full screen)
       if (process.platform === 'darwin') {
         const micActive = await this.isMicInUseMac()
         if (micActive) {
@@ -100,15 +97,24 @@ export class DetectionService {
         } else if (!this.autoStopTimer) {
           const meetingWindowOpen = await this.isMeetingWindowOpen()
           if (!meetingWindowOpen) {
-            console.log('Auto-stopping recording — mic inactive and no meeting window found')
             this.broadcast('detection:auto-stop', {})
             return
           }
-          console.log('Meeting mic inactive but window still open — auto-stop in 30s unless mic resumes')
           this.autoStopTimer = setTimeout(() => {
             this.autoStopTimer = null
             if (this.recordingService.getState().isRecording) {
-              console.log('Auto-stopping recording — meeting appears to have ended')
+              this.broadcast('detection:auto-stop', {})
+            }
+          }, AUTO_STOP_GRACE_MS)
+        }
+      } else if (process.platform === 'win32') {
+        const provider = await this.getActiveProvider()
+        if (provider) {
+          this.clearAutoStop()
+        } else if (!this.autoStopTimer) {
+          this.autoStopTimer = setTimeout(() => {
+            this.autoStopTimer = null
+            if (this.recordingService.getState().isRecording) {
               this.broadcast('detection:auto-stop', {})
             }
           }, AUTO_STOP_GRACE_MS)
@@ -120,7 +126,6 @@ export class DetectionService {
       return
     }
 
-    // Not recording: detect meetings
     this.clearAutoStop()
 
     const matchingEvent = this.findMatchingEvent()
