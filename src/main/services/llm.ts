@@ -9,7 +9,14 @@ const MAX_RETRIES = 2
 const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 const CHUNK_CHARS = 6000 // ~1.5K tokens per chunk — small enough for thorough extraction
 
-const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture EVERYTHING of value from the transcript — err on the side of including too much rather than too little. People rely on these notes to remember what happened.
+const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture everything of value from the transcript. People rely on these notes to remember what happened.
+
+FILTERING — Skip content that is NOT part of the actual meeting:
+- Background audio, music, videos playing before/after the meeting
+- Casual greetings, small talk, "can you hear me?", technical setup chatter
+- Filler conversation while waiting for people to join
+- Content clearly from a different source (e.g. a YouTube video, podcast, or news broadcast playing in the background)
+Only extract notes from the actual substantive meeting discussion.
 
 Extract and categorize into these 5 categories:
 
@@ -20,7 +27,7 @@ Extract and categorize into these 5 categories:
 5. **status_updates** — Progress reports, blockers, what's done, what's in progress, what's next.
 
 Guidelines:
-- Extract EVERY distinct point — aim for roughly 1 item per minute of meeting across all categories.
+- Extract every distinct point — aim for roughly 1 item per minute of meeting across all categories.
 - Each item should capture the full context so someone who wasn't in the meeting understands it.
 - ACCURACY IS CRITICAL: Use the exact words, numbers, and timeframes from the transcript. Do NOT paraphrase numbers, dates, or quantities — quote them directly. If someone says "per year", write "per year", not "per month".
 - Include specific names, numbers, dates, and technical details — don't generalize or round.
@@ -28,17 +35,27 @@ Guidelines:
 - If someone shares a metric or fact, that's information — capture the exact number as stated.
 - When in doubt about which category, include it in the most relevant one.
 - When in doubt about a detail, use the EXACT phrasing from the transcript rather than rewording it.
-- Always use proper sentence capitalization for titles and content. The first letter of each title and content field must be uppercase.
+- Always use proper sentence capitalization for titles and content.
 
-IMPORTANT: Group related items under a shared "topic" string. The topic is a short label (2-5 words) for the subject area, e.g. "Cybersecurity Strategy", "Q2 Hiring", "Product Launch". Items about the same subject MUST share the exact same topic string. This groups notes visually so they're easy to scan.
+GROUPING — Every item MUST have a "topic" field. The topic is a BROAD theme (2-4 words) that groups MULTIPLE related items together. Think of topics like chapter headings — there should be only 3-8 topics for an entire meeting, not one per item. Many items should share the same topic.
+
+Examples of GOOD topic usage (broad, reused):
+- "Cybersecurity Strategy" grouping: vendor selection, policy decisions, implementation timeline, customer rollout
+- "Revenue & Pricing" grouping: rate changes, renewal strategy, upsell approach, pricing tiers
+- "Team Changes" grouping: hiring, role changes, departures, onboarding
+
+Examples of BAD topic usage (too specific, one per item):
+- "Vendor Selection", "Policy Update", "Implementation Plan", "Customer Rollout" — these should ALL be under one topic like "Cybersecurity Strategy"
+
+Items about the same broad subject MUST share the EXACT same topic string.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
-  "decisions": [{ "topic": "subject area", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null }],
-  "action_items": [{ "topic": "subject area", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null" }],
-  "information": [{ "topic": "subject area", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null }],
-  "discussion": [{ "topic": "subject area", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null }],
-  "status_updates": [{ "topic": "subject area", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null }]
+  "decisions": [{ "topic": "broad theme", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null }],
+  "action_items": [{ "topic": "broad theme", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null" }],
+  "information": [{ "topic": "broad theme", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null }],
+  "discussion": [{ "topic": "broad theme", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null }],
+  "status_updates": [{ "topic": "broad theme", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null }]
 }
 
 If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
@@ -185,6 +202,7 @@ export class OllamaProvider implements LLMProvider {
         options: {
           num_ctx: TARGET_CONTEXT_TOKENS,
           temperature: 0,
+          repeat_penalty: 1.3,
         },
       }),
     })
@@ -237,10 +255,19 @@ export class OllamaProvider implements LLMProvider {
 
       const category = CATEGORY_MAP[rawKey]
       const existingCount = existing ? existing[resultKey].length : 0
+      const existingTitles = new Set(
+        existing ? existing[resultKey].map((s) => s.title.toLowerCase()) : []
+      )
+      const seenTitles = new Set<string>()
       let index = existingCount
 
       for (const item of items) {
         if (!item.title || !item.content) continue
+        const titleKey = String(item.title).toLowerCase().trim()
+        // Skip duplicates (same title within this chunk or across chunks)
+        if (seenTitles.has(titleKey) || existingTitles.has(titleKey)) continue
+        seenTitles.add(titleKey)
+
         result[resultKey].push({
           id: `${meetingId}-${rawKey}-${index}`,
           meetingId,

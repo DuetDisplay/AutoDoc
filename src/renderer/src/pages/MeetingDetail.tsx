@@ -20,9 +20,9 @@ function formatDuration(seconds: number): string {
 }
 
 const CATEGORY_ORDER: SegmentCategory[] = [
+  'information',
   'decision',
   'action_item',
-  'information',
   'discussion',
   'status_update',
 ]
