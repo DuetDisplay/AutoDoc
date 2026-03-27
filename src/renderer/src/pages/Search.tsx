@@ -2,45 +2,40 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { trackEvent } from '../services/analytics'
-import type { SearchResult } from '../../../preload/ipc.d'
+import { useSearchStore } from '../stores/search'
 
 export function Search() {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SearchResult[]>([])
+  const { query, results, searched, setQuery, setResults } = useSearchStore()
   const [searching, setSearching] = useState(false)
-  const [searched, setSearched] = useState(false)
   const navigate = useNavigate()
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
-      setResults([])
-      setSearched(false)
+      setResults([], false)
       return
     }
     setSearching(true)
     try {
       const res = await window.electronAPI.invoke('search:query', q)
-      setResults(res)
-      setSearched(true)
+      setResults(res, true)
       trackEvent('search_performed', { result_count: res.length })
     } catch (err) {
       console.error('Search failed:', err)
     } finally {
       setSearching(false)
     }
-  }, [])
+  }, [setResults])
 
   useEffect(() => {
     clearTimeout(debounceRef.current)
     if (!query.trim()) {
-      setResults([])
-      setSearched(false)
+      setResults([], false)
       return
     }
     debounceRef.current = setTimeout(() => doSearch(query), 300)
     return () => clearTimeout(debounceRef.current)
-  }, [query, doSearch])
+  }, [query, doSearch, setResults])
 
   const highlightMatch = (text: string) => {
     if (!query.trim()) return text
