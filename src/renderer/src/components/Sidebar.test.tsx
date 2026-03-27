@@ -24,7 +24,7 @@ async function renderSidebar() {
     result = render(
       <MemoryRouter>
         <Sidebar />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
   })
   return result!
@@ -70,20 +70,37 @@ describe('Sidebar', () => {
     expect(screen.getByText('Ollama disconnected')).toBeInTheDocument()
   })
 
-  it('shows whisper download progress when downloading speech model', async () => {
+  it('shows Ollama startup progress while reconnecting', async () => {
     window.electronAPI = {
       send: vi.fn(),
       invoke: vi.fn((channel: string) => {
-        if (channel === 'ollama:check-status') return Promise.resolve(true)
-        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
-        if (channel === 'whisper:get-setup-status')
-          return Promise.resolve({ phase: 'downloading-model', percent: 42 })
+        if (channel === 'ollama:check-status') return Promise.resolve(false)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve({ phase: 'starting', percent: 0 })
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
       on: vi.fn(() => () => {}),
     } as any
 
     await renderSidebar()
-    expect(screen.getByText('Downloading speech model… 42%')).toBeInTheDocument()
+    expect(screen.getByText('Starting local AI engine...')).toBeInTheDocument()
+  })
+
+  it('shows whisper download progress when downloading speech model', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') {
+          return Promise.resolve({ phase: 'downloading-model', percent: 42 })
+        }
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {}),
+    } as any
+
+    await renderSidebar()
+    expect(screen.getByText('Downloading speech model... 42%')).toBeInTheDocument()
   })
 })

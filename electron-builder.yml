@@ -14,6 +14,7 @@ asarUnpack:
   - 'native/**'
 win:
   executableName: autodoc
+  icon: build/icon.ico
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

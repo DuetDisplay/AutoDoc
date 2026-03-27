@@ -31,7 +31,6 @@ export async function getActiveCaptureProcessIdsWindows(): Promise<string[]> {
         const parsed = JSON.parse(stdout) as unknown
         if (Array.isArray(parsed)) {
           const ids = parsed.filter((value): value is string => typeof value === 'string')
-          console.log('[meeting-detector] active capture ids:', ids)
           resolve(ids)
           return
         }

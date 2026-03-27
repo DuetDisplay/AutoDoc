@@ -88,13 +88,6 @@ export class DetectionService {
     const matchingEvent = this.findMatchingEvent()
     const provider = await this.getActiveProvider()
     const providerSignalKey = provider ? `${provider.id}:mic` : ''
-    console.log('[detection] poll', {
-      matchingEventId: matchingEvent?.googleEventId ?? null,
-      matchingEventTitle: matchingEvent?.title ?? null,
-      promptedCalendarEventId: this.promptedCalendarEventId,
-      providerSignalKey,
-      lastProviderSignalKey: this.lastProviderSignalKey,
-    })
     if (matchingEvent) {
       await this.handleCalendarEvent(matchingEvent, providerSignalKey)
       return
@@ -110,10 +103,6 @@ export class DetectionService {
       this.lastProviderSignalKey = providerSignalKey
 
       if (providerJustActivated && this.promptedCalendarEventId === event.googleEventId) {
-        console.log('[detection] provider activated during scheduled event', {
-          eventId: event.googleEventId,
-          providerSignalKey,
-        })
         this.promptForCalendarEvent(event)
         return
       }
@@ -125,17 +114,11 @@ export class DetectionService {
     if (this.promptedCalendarEventId === event.googleEventId) return
 
     this.promptedCalendarEventId = event.googleEventId
-    console.log('[detection] calendar event entered window', {
-      eventId: event.googleEventId,
-      title: event.title,
-      recurringEventId: event.recurringEventId,
-    })
     this.promptForCalendarEvent(event)
   }
 
   private async handleAdHocDetection(provider: MeetingProvider | null, providerSignalKey: string): Promise<void> {
     if (!provider) {
-      console.log('[detection] no active ad-hoc provider')
       this.resetProviderState()
       hideNotificationWindow()
       return
@@ -144,11 +127,6 @@ export class DetectionService {
     if (providerSignalKey === this.lastProviderSignalKey) return
 
     this.lastProviderSignalKey = providerSignalKey
-    console.log('[detection] active ad-hoc provider', {
-      providerId: provider.id,
-      providerName: provider.name,
-      signalKey: providerSignalKey,
-    })
     this.showPrompt(provider.name)
   }
 
@@ -199,12 +177,10 @@ export class DetectionService {
 
   private promptForCalendarEvent(event: CalendarEvent): void {
     if (isAutoRecordEnabled(event.googleEventId, event.recurringEventId)) {
-      console.log('[detection] auto-recording scheduled event', event.googleEventId)
       this.broadcast('detection:auto-record', {})
       return
     }
 
-    console.log('[detection] prompting for scheduled event', event.googleEventId)
     this.showPrompt(event.title)
   }
 

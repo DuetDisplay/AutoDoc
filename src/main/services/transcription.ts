@@ -9,6 +9,7 @@ import type { AudioConverter } from './audio-converter'
 import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
+import { logAutodocFailure } from './autodoc-log'
 import type { CalendarService } from './calendar'
 
 interface WhisperSegment {
@@ -195,6 +196,12 @@ export class TranscriptionService {
           transcripts = alignSpeakers(transcripts, null, systemSegments)
           await this.generateSpeakersJson(meetingId, transcripts)
         } catch (err) {
+          logAutodocFailure({
+            area: 'transcription',
+            message: 'Speaker labeling failed during transcription',
+            error: err,
+            meetingId,
+          })
           console.error('Speaker labeling failed:', err)
         }
       }
@@ -209,6 +216,12 @@ export class TranscriptionService {
             await encryptFileInPlace(filePath)
           }
         } catch (err) {
+          logAutodocFailure({
+            area: 'transcription',
+            message: `Failed to encrypt ${filename} after transcription`,
+            error: err,
+            meetingId,
+          })
           console.error(`Failed to encrypt ${filePath}:`, err)
         }
       }
@@ -422,6 +435,12 @@ export class TranscriptionService {
   private async markFailed(meetingId: string, error: string): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     await writeFile(errorPath, error)
+    logAutodocFailure({
+      area: 'transcription',
+      message: 'Transcription failed',
+      error,
+      meetingId,
+    })
     this.broadcastStatus(meetingId, 'failed')
   }
 

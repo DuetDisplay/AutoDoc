@@ -135,7 +135,7 @@ export type SegmentationStatus =
   | 'failed'
 
 export interface OllamaSetupStatus {
-  phase: 'downloading' | 'pulling' | 'ready' | 'error'
+  phase: 'starting' | 'downloading' | 'pulling' | 'ready' | 'error'
   percent: number
   error?: string
 }

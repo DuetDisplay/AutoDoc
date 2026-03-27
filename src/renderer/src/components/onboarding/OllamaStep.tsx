@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 
 export function OllamaStep({ onNext }: { onNext: () => void }) {
-  const [phase, setPhase] = useState<string>('downloading')
+  const [phase, setPhase] = useState<string>('starting')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
@@ -63,18 +63,20 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     )
   }
 
-  const statusLabel = phase === 'downloading'
-    ? `Downloading AI model... ${percent}%`
-    : phase === 'pulling'
-      ? `Installing model... ${percent}%`
-      : error
-        ? `Setup failed: ${error}`
-        : 'Preparing...'
+  const statusLabel = phase === 'starting'
+    ? 'Starting local AI engine...'
+    : phase === 'downloading'
+      ? `Downloading AI model... ${percent}%`
+      : phase === 'pulling'
+        ? `Installing model... ${percent}%`
+        : error
+          ? `Setup failed: ${error}`
+          : 'Preparing...'
 
   return (
     <div className="text-center">
       <div className="w-16 h-16 rounded-2xl bg-dusk-light flex items-center justify-center text-[28px] mx-auto mb-5">
-        🤖
+        AI
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
@@ -84,7 +86,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
         <div
           className="h-full bg-sage rounded-full transition-all duration-300"
-          style={{ width: `${percent}%` }}
+          style={{ width: `${phase === 'starting' ? 20 : percent}%` }}
         />
       </div>
       <div className="text-[12px] text-ink-faint mb-5">{statusLabel}</div>
@@ -93,7 +95,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
         <button
           onClick={async () => {
             setError(null)
-            setPhase('downloading')
+            setPhase('starting')
             setPercent(0)
             await window.electronAPI.invoke('ollama:retry-setup')
           }}
@@ -108,7 +110,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
         >
-          Continue — this will finish in the background
+          Continue - this will finish in the background
         </button>
       )}
     </div>

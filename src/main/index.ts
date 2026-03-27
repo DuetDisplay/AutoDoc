@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
@@ -25,10 +25,14 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { getAutoRecordMode } from './services/auto-record-store'
+import { logAutodocFailure } from './services/autodoc-log'
 import type { CalendarEvent, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.autodoc.app')
+}
 
 // Set dock icon in dev (production uses the bundled .icns)
 if (process.platform === 'darwin' && app.dock) {
@@ -50,15 +54,20 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 function createWindow(): void {
+  const windowIcon = process.platform === 'win32'
+    ? join(__dirname, '../../build/icon.ico')
+    : join(__dirname, '../../build/icon.png')
+
   const mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
     minWidth: 800,
     minHeight: 600,
     show: false,
+    title: 'AutoDoc',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
-    icon: join(__dirname, '../../build/icon.png'),
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -166,9 +175,10 @@ app.whenReady().then(async () => {
     calendarService,
   )
   ollamaManager = new OllamaManager()
+  const managedOllamaManager = ollamaManager
 
   // Mutable state tracking Ollama setup progress
-  const ollamaSetupState: OllamaSetupStatus = { phase: 'downloading', percent: 0 }
+  const ollamaSetupState: OllamaSetupStatus = { phase: 'starting', percent: 0 }
 
   function broadcastOllamaStatus(): void {
     const windows = BrowserWindow.getAllWindows()
@@ -177,43 +187,83 @@ app.whenReady().then(async () => {
     }
   }
 
-  ollamaManager.on('download-start', () => {
+  managedOllamaManager.on('download-start', () => {
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('download-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('download-progress', (data: { percent: number }) => {
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = data.percent
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('download-complete', () => {
+  managedOllamaManager.on('download-complete', () => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-start', () => {
+  managedOllamaManager.on('pull-start', () => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('pull-progress', (data: { percent: number }) => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = data.percent
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-complete', () => {
+  managedOllamaManager.on('pull-complete', () => {
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
+  let ollamaRecoveryPromise: Promise<void> | null = null
+
+  const ensureOllamaRunning = (): void => {
+    if (ollamaRecoveryPromise) return
+
+    ollamaSetupState.phase = 'starting'
+    ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
+    broadcastOllamaStatus()
+
+    ollamaRecoveryPromise = managedOllamaManager.startAndPull()
+      .then(() => {
+        ollamaSetupState.phase = 'ready'
+        ollamaSetupState.percent = 100
+        delete ollamaSetupState.error
+        broadcastOllamaStatus()
+      })
+      .catch((err) => {
+        ollamaSetupState.phase = 'error'
+        ollamaSetupState.percent = 0
+        ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+        broadcastOllamaStatus()
+        logAutodocFailure({
+          area: 'ollama',
+          message: 'Failed to start managed Ollama server',
+          error: err,
+        })
+        console.error('Failed to start Ollama:', err)
+      })
+      .finally(() => {
+        ollamaRecoveryPromise = null
+      })
+  }
+
+  const ollamaProvider = new OllamaProvider(managedOllamaManager.getBaseUrl(), managedOllamaManager.getModel())
   const segmentationService = new SegmentationService(
     ollamaProvider,
     ollamaManager,
@@ -250,10 +300,16 @@ app.whenReady().then(async () => {
 
   registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
   registerTranscriptionIpc(transcriptionService)
-  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
+  registerLlmIpc(
+    segmentationService,
+    managedOllamaManager,
+    ollamaProvider,
+    () => ({ ...ollamaSetupState }),
+    ensureOllamaRunning,
+  )
   registerWhisperIpc(whisperManager, () => ({ ...whisperSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
+  registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   createWindow()
@@ -314,29 +370,45 @@ app.whenReady().then(async () => {
       for (const win of windows) {
         win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
       }
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Failed to set up whisper tools',
+        error: err,
+      })
       console.error('Failed to set up whisper tools:', err)
     })
 
   // Start Ollama + pull model in the background — don't block the window
-  ollamaManager.startAndPull()
-    .then(() => {
-      ollamaSetupState.phase = 'ready'
-      ollamaSetupState.percent = 100
-      broadcastOllamaStatus()
-    })
-    .catch((err) => {
-      ollamaSetupState.phase = 'error'
-      ollamaSetupState.error = err instanceof Error ? err.message : String(err)
-      broadcastOllamaStatus()
-      console.error('Failed to start Ollama:', err)
-    })
+  ensureOllamaRunning()
+
+  powerMonitor.on('resume', () => {
+    ensureOllamaRunning()
+  })
+
+  powerMonitor.on('unlock-screen', () => {
+    ensureOllamaRunning()
+  })
 
   // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
   cleanupTempFiles().catch(() => {})
   migrateDataDir()
-    .catch((err) => console.error('Data dir migration failed:', err))
+    .catch((err) => {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Data dir migration failed',
+        error: err,
+      })
+      console.error('Data dir migration failed:', err)
+    })
     .then(() => migrateRecordings(recordingService.getRecordingsBaseDir()))
-    .catch((err) => console.error('Encryption migration failed:', err))
+    .catch((err) => {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Encryption migration failed',
+        error: err,
+      })
+      console.error('Encryption migration failed:', err)
+    })
     .finally(() => {
       transcriptionService.scanAndEnqueuePending()
       segmentationService.scanAndEnqueuePending()
@@ -360,6 +432,24 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   // Don't quit — the tray keeps the app alive
+})
+
+process.on('uncaughtException', (error) => {
+  logAutodocFailure({
+    area: 'app',
+    message: 'Uncaught exception in main process',
+    error,
+  })
+  console.error('Uncaught exception in main process:', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logAutodocFailure({
+    area: 'app',
+    message: 'Unhandled rejection in main process',
+    error: reason,
+  })
+  console.error('Unhandled rejection in main process:', reason)
 })
 
 /**

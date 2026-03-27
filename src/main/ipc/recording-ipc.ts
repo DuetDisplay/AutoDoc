@@ -9,6 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarService } from '../services/calendar'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
+import { logAutodocFailure } from '../services/autodoc-log'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
 
 /** Merge two audio files into one using amix filter */
@@ -147,13 +148,33 @@ export function registerRecordingIpc(
   })
 
   ipcMain.handle('recording:start', async (_event, sourceId: string, sourceName: string) => {
-    const paths = await recordingService.startRecording(sourceId, sourceName)
-    broadcastState(recordingService.getState())
-    return paths
+    try {
+      const paths = await recordingService.startRecording(sourceId, sourceName)
+      broadcastState(recordingService.getState())
+      return paths
+    } catch (err) {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to start recording',
+        error: err,
+        context: { sourceId, sourceName },
+      })
+      throw err
+    }
   })
 
   ipcMain.handle('recording:stop', () => {
-    const result = recordingService.stopRecording()
+    let result: ReturnType<RecordingService['stopRecording']>
+    try {
+      result = recordingService.stopRecording()
+    } catch (err) {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to stop recording',
+        error: err,
+      })
+      throw err
+    }
     broadcastState(recordingService.getState())
 
     const stoppedAt = Date.now()
@@ -203,11 +224,25 @@ export function registerRecordingIpc(
           await rename(muxedPath, videoPath)
         }
       } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to mux audio into recorded video',
+          error: err,
+          meetingId: result.meetingId,
+        })
         console.error('Failed to mux audio into video:', err)
       }
 
       transcriptionService.enqueue(result.meetingId)
-    })()
+    })().catch((err) => {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Recording post-processing failed',
+        error: err,
+        meetingId: result.meetingId,
+      })
+      console.error('Recording post-processing failed:', err)
+    })
 
     return result
   })
@@ -268,7 +303,18 @@ export function registerRecordingIpc(
       const baseDir = recordingService.getRecordingsBaseDir()
       const filename = type === 'video' ? 'screen.webm' : type === 'mic' ? 'mic.webm' : 'system.webm'
       const filePath = join(baseDir, meetingId, filename)
-      await appendFile(filePath, Buffer.from(chunk))
+      try {
+        await appendFile(filePath, Buffer.from(chunk))
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to write recording chunk',
+          error: err,
+          meetingId,
+          context: { type, filePath },
+        })
+        throw err
+      }
     }
   )
 }

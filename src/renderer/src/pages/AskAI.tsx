@@ -75,7 +75,7 @@ export function AskAI() {
             </p>
             {ollamaReady === false && (
               <p className="text-clay text-[11px] mt-1">
-                Ollama is not connected. Start Ollama to use this feature.
+                Local AI is reconnecting in the background. Try again in a few seconds.
               </p>
             )}
           </div>

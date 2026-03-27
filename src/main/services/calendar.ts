@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import { URL } from 'url'
 import { saveTokens, loadTokens, clearTokens } from './token-store'
 import { CALENDAR_SYNC_INTERVAL_MS } from '../../shared/constants'
+import { logAutodocFailure } from './autodoc-log'
 import type { CalendarEvent } from '../../shared/types'
 
 const OAUTH_PORT = 42813
@@ -188,6 +189,11 @@ export class CalendarService {
     this.fetchUpcomingEvents()
       .then((events) => this.onEventsUpdated?.(events))
       .catch((err) => {
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Initial calendar sync failed',
+          error: err,
+        })
         console.error('Initial calendar sync failed:', err)
         onError?.(err)
       })
@@ -197,6 +203,11 @@ export class CalendarService {
         const events = await this.fetchUpcomingEvents()
         this.onEventsUpdated?.(events)
       } catch (err) {
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Calendar sync failed',
+          error: err,
+        })
         console.error('Calendar sync failed:', err)
         onError?.(err)
       }

@@ -5,6 +5,7 @@ import type { MeetingSegments, Transcript, SegmentationStatus } from '../../shar
 import type { LLMProvider } from './llm'
 import type { OllamaManager } from './ollama-manager'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
+import { logAutodocFailure } from './autodoc-log'
 
 export class SegmentationService {
   private queue: string[] = []
@@ -141,6 +142,12 @@ export class SegmentationService {
   private async markFailed(meetingId: string, error: string): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     await writeFile(errorPath, error)
+    logAutodocFailure({
+      area: 'segmentation',
+      message: 'Meeting notes generation failed',
+      error,
+      meetingId,
+    })
     this.broadcastStatus(meetingId, 'failed')
   }
 

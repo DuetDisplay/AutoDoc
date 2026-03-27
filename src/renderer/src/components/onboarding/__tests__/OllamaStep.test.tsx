@@ -1,29 +1,57 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import { OllamaStep } from '../OllamaStep'
 
 describe('OllamaStep', () => {
-  it('renders AI setup heading', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('renders AI setup heading', async () => {
     vi.mocked(window.electronAPI.invoke).mockResolvedValue({ phase: 'downloading', percent: 42 })
-    render(<OllamaStep onNext={vi.fn()} />)
+
+    await act(async () => {
+      render(<OllamaStep onNext={vi.fn()} />)
+      await Promise.resolve()
+    })
+
     expect(screen.getByText('Setting Up AI')).toBeInTheDocument()
   })
 
   it('auto-advances when already ready', async () => {
     const onNext = vi.fn()
     vi.mocked(window.electronAPI.invoke).mockResolvedValue({ phase: 'ready', percent: 100 })
-    render(<OllamaStep onNext={onNext} />)
-    await act(() => Promise.resolve())
+
+    await act(async () => {
+      render(<OllamaStep onNext={onNext} />)
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+
     expect(onNext).toHaveBeenCalled()
   })
 
-  it('shows skip link after 5 seconds', () => {
-    vi.useFakeTimers()
+  it('shows skip link after 5 seconds', async () => {
     vi.mocked(window.electronAPI.invoke).mockResolvedValue({ phase: 'downloading', percent: 10 })
-    render(<OllamaStep onNext={vi.fn()} />)
+
+    await act(async () => {
+      render(<OllamaStep onNext={vi.fn()} />)
+      await Promise.resolve()
+    })
+
     expect(screen.queryByText(/continue/i)).not.toBeInTheDocument()
-    act(() => { vi.advanceTimersByTime(5000) })
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000)
+    })
+
     expect(screen.getByText(/continue/i)).toBeInTheDocument()
-    vi.useRealTimers()
   })
 })

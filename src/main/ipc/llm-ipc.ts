@@ -9,11 +9,14 @@ export function registerLlmIpc(
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
   getOllamaSetupStatus: () => OllamaSetupStatus,
+  ensureOllamaRunning: () => void,
 ): void {
   ipcMain.handle(
     'ollama:check-status',
     async (): Promise<boolean> => {
-      return ollamaManager.isServerRunning()
+      const running = await ollamaManager.isServerRunning()
+      if (!running) ensureOllamaRunning()
+      return running
     }
   )
 
@@ -62,11 +65,7 @@ export function registerLlmIpc(
   ipcMain.handle(
     'ollama:retry-setup',
     async (): Promise<void> => {
-      try {
-        await ollamaManager.startAndPull()
-      } catch (err) {
-        console.error('Ollama retry failed:', err)
-      }
+      ensureOllamaRunning()
     }
   )
 }
