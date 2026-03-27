@@ -20,7 +20,7 @@ Extract and categorize into these 5 categories:
 5. **status_updates** — Progress reports, blockers, what's done, what's in progress, what's next.
 
 Guidelines:
-- Extract EVERY distinct point — a 20 minute meeting should have 10-25 items total.
+- Extract EVERY distinct point — aim for roughly 1 item per minute of meeting across all categories.
 - Each item should capture the full context so someone who wasn't in the meeting understands it.
 - ACCURACY IS CRITICAL: Use the exact words, numbers, and timeframes from the transcript. Do NOT paraphrase numbers, dates, or quantities — quote them directly. If someone says "per year", write "per year", not "per month".
 - Include specific names, numbers, dates, and technical details — don't generalize or round.
@@ -28,6 +28,7 @@ Guidelines:
 - If someone shares a metric or fact, that's information — capture the exact number as stated.
 - When in doubt about which category, include it in the most relevant one.
 - When in doubt about a detail, use the EXACT phrasing from the transcript rather than rewording it.
+- Always use proper sentence capitalization for titles and content. The first letter of each title and content field must be uppercase.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
@@ -50,6 +51,10 @@ interface RawSegment {
   content?: string
   assignee?: string | null
   deadline?: string | null
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 const CATEGORY_MAP: Record<string, SegmentCategory> = {
@@ -88,9 +93,19 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
+  private estimateItemCount(transcriptLength: number): string {
+    // ~150 chars per spoken line, ~5 lines per minute → ~750 chars/min
+    const estMinutes = Math.max(5, Math.round(transcriptLength / 750))
+    // Scale: ~1 item per minute, min 5, no max
+    const minItems = Math.max(5, Math.round(estMinutes * 0.8))
+    const maxItems = Math.round(estMinutes * 1.5)
+    return `This appears to be roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
+  }
+
   async summarize(meetingId: string, transcript: string): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
-    console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total)`)
+    const itemGuidance = this.estimateItemCount(transcript.length)
+    console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
 
     const merged: MeetingSegments = {
       decisions: [],
@@ -102,8 +117,8 @@ export class OllamaProvider implements LLMProvider {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkLabel = chunks.length > 1
-        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract ALL noteworthy items from this section.`
-        : ''
+        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract ALL noteworthy items from this section. ${itemGuidance}`
+        : `\n\n${itemGuidance}`
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -227,8 +242,8 @@ export class OllamaProvider implements LLMProvider {
           id: `${meetingId}-${rawKey}-${index}`,
           meetingId,
           category,
-          title: String(item.title),
-          content: String(item.content),
+          title: capitalize(String(item.title)),
+          content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
           sourceStartMs: 0,
