@@ -56,7 +56,7 @@ export function getKey(): Buffer {
       }
       // Unrecoverable — generate a fresh key
       console.warn('Could not recover legacy key — generating new key')
-      store.delete(STORE_KEY)
+      getStore().delete(STORE_KEY)
     }
   }
 
@@ -122,9 +122,9 @@ function reEncryptKey(key: Buffer): void {
   const b64 = key.toString('base64')
   if (safeStorage.isEncryptionAvailable()) {
     const encrypted = safeStorage.encryptString(b64)
-    store.set(STORE_KEY, encrypted.toString('latin1'))
+    getStore().set(STORE_KEY, encrypted.toString('latin1'))
   } else {
-    store.set(STORE_KEY, b64)
+    getStore().set(STORE_KEY, b64)
   }
 }
 

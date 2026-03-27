@@ -1,0 +1,44 @@
+declare module '@sentry/electron/main' {
+  export interface SentryEvent {
+    server_name?: string
+    [key: string]: unknown
+  }
+
+  export interface SentryInitOptions {
+    dsn?: string
+    environment?: string
+    release?: string
+    enabled?: boolean
+    beforeSend?: (event: SentryEvent) => SentryEvent | null
+  }
+
+  export function init(options: SentryInitOptions): void
+}
+
+declare module '@sentry/electron/renderer' {
+  export function init(): void
+}
+
+declare module 'electron-updater' {
+  export const autoUpdater: {
+    autoDownload: boolean
+    autoInstallOnAppQuit: boolean
+    on(event: string, listener: (...args: any[]) => void): void
+    checkForUpdates(): void
+    quitAndInstall(): void
+  }
+}
+
+declare module 'posthog-js' {
+  export interface PostHogInstance {
+    init(apiKey: string, options?: Record<string, unknown>): void
+    capture(event: string, properties?: Record<string, unknown>): void
+    identify(distinctId: string): void
+    opt_in_capturing(): void
+    opt_out_capturing(): void
+    reset(): void
+  }
+
+  const posthog: PostHogInstance
+  export default posthog
+}

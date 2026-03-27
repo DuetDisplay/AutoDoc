@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { access, mkdir, copyFile, rm, readdir, symlink } from 'fs/promises'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { createWriteStream } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter } from 'events'
@@ -13,6 +13,7 @@ const IS_WIN = process.platform === 'win32'
 const WHISPER_VERSION = 'v1.8.4'
 const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_VERSION}/whisper-bin-x64.zip`
 const FFMPEG_WIN_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
+const WHISPER_PROBE_TIMEOUT_MS = 10_000
 
 export interface DownloadProgress {
   file: string
@@ -47,10 +48,9 @@ export class WhisperManager extends EventEmitter {
 
   async isReady(): Promise<boolean> {
     try {
-      await access(this.getWhisperPath())
       await access(this.getModelPath())
       await access(this.getFfmpegPath())
-      return true
+      return await this.isWhisperUsable()
     } catch {
       return false
     }
@@ -86,10 +86,15 @@ export class WhisperManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     await mkdir(this.getModelsDir(), { recursive: true })
 
-    if (!(await this.fileExists(this.getWhisperPath()))) {
+    if (!(await this.isWhisperUsable())) {
       this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
       this.emit('setup-status', this.getSetupStatus())
       await this.resolveWhisper()
+      if (!(await this.isWhisperUsable())) {
+        throw new Error(
+          'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.',
+        )
+      }
     }
     if (!(await this.fileExists(this.getFfmpegPath()))) {
       this.setupStatus = { phase: 'downloading-ffmpeg', percent: 0 }
@@ -107,7 +112,11 @@ export class WhisperManager extends EventEmitter {
     const binaryName = IS_WIN ? 'whisper-cli.exe' : 'whisper-cli'
     const systemPath = this.findSystemBinary(binaryName)
     if (systemPath) {
-      await this.linkOrCopy(systemPath, this.getWhisperPath())
+      if (IS_WIN) {
+        await this.copyWhisperBundle(systemPath, this.getWhisperPath())
+      } else {
+        await this.linkOrCopy(systemPath, this.getWhisperPath())
+      }
       return
     }
     if (IS_WIN) {
@@ -159,19 +168,15 @@ export class WhisperManager extends EventEmitter {
     })
 
     // Find whisper-cli.exe in the extracted directory (may be nested)
-    const whisperExe = await this.findFileRecursive(extractDir, 'whisper-cli.exe')
+    const whisperExe =
+      (await this.findFileRecursive(extractDir, 'whisper-cli.exe')) ??
+      (await this.findFileRecursive(extractDir, 'main.exe'))
+
     if (!whisperExe) {
-      // Fallback: look for main.exe (older whisper.cpp naming)
-      const mainExe = await this.findFileRecursive(extractDir, 'main.exe')
-      if (mainExe) {
-        await copyFile(mainExe, this.getWhisperPath())
-      } else {
-        throw new Error('whisper-cli.exe not found in downloaded archive')
-      }
-    } else {
-      await copyFile(whisperExe, this.getWhisperPath())
+      throw new Error('whisper-cli.exe not found in downloaded archive')
     }
 
+    await this.copyWhisperBundle(whisperExe, this.getWhisperPath())
     await rm(zipPath, { force: true })
     await rm(extractDir, { recursive: true, force: true })
   }
@@ -241,6 +246,42 @@ export class WhisperManager extends EventEmitter {
     } else {
       await symlink(source, dest).catch(() => {})
     }
+  }
+
+  private async copyWhisperBundle(sourceBinary: string, destBinary: string): Promise<void> {
+    await copyFile(sourceBinary, destBinary)
+
+    if (!IS_WIN) {
+      return
+    }
+
+    const sourceDir = dirname(sourceBinary)
+    const entries = await readdir(sourceDir, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) {
+        continue
+      }
+
+      const sourcePath = join(sourceDir, entry.name)
+      const destPath = join(this.getModelsDir(), entry.name)
+      await copyFile(sourcePath, destPath)
+    }
+  }
+
+  private async isWhisperUsable(): Promise<boolean> {
+    if (!(await this.fileExists(this.getWhisperPath()))) {
+      return false
+    }
+
+    return await new Promise<boolean>((resolve) => {
+      execFile(
+        this.getWhisperPath(),
+        ['--help'],
+        { windowsHide: true, timeout: WHISPER_PROBE_TIMEOUT_MS },
+        (err) => resolve(!err),
+      )
+    })
   }
 
 
