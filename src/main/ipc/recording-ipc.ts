@@ -49,6 +49,26 @@ function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: str
   })
 }
 
+/** Remux a WebM file to add cue points (seek index) for proper seeking.
+ *  MediaRecorder streams WebM without Cues; ffmpeg file output writes them. */
+function remuxForSeeking(ffmpegPath: string, inputPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-i', inputPath,
+      '-c', 'copy',
+      '-fflags', '+genpts',
+      '-y',
+      outputPath,
+    ])
+    let stderr = ''
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg remux exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
 export function registerRecordingIpc(
   recordingService: RecordingService,
   transcriptionService: TranscriptionService,
@@ -176,7 +196,7 @@ export function registerRecordingIpc(
       const systemPath = join(meetingDir, 'system.webm')
       const videoPath = join(meetingDir, 'screen.webm')
 
-      // Mux audio into video so the video player has both tracks
+      // Mux audio into video so the video player has both tracks, then remux for seeking
       try {
         const micStat = await stat(micPath).catch(() => null)
         const systemStat = await stat(systemPath).catch(() => null)
@@ -199,6 +219,19 @@ export function registerRecordingIpc(
         }
       } catch (err) {
         console.error('Failed to mux audio into video:', err)
+      }
+
+      // Remux video to add cue points for seeking
+      try {
+        const videoExists = await stat(videoPath).catch(() => null)
+        if (videoExists) {
+          const seekablePath = join(meetingDir, 'screen-seekable.webm')
+          await remuxForSeeking(whisperManager.getFfmpegPath(), videoPath, seekablePath)
+          await unlink(videoPath)
+          await rename(seekablePath, videoPath)
+        }
+      } catch (err) {
+        console.error('Failed to remux for seeking (video will still play but may not seek):', err)
       }
 
       transcriptionService.enqueue(result.meetingId)

@@ -130,15 +130,26 @@ export function MeetingDetail() {
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const [playbackRate, setPlaybackRate] = useState(1)
+
+  const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
   const handleSeek = useCallback((ms: number) => {
     const el = mediaRef.current
     if (!el) return
-    el.pause()
     el.currentTime = ms / 1000
-    // webm from MediaRecorder may lack cue points — wait for seek to complete
-    el.addEventListener('seeked', () => el.play(), { once: true })
+    el.play()
   }, [])
+
+  const cyclePlaybackRate = useCallback(() => {
+    const el = mediaRef.current
+    if (!el) return
+    const currentIdx = PLAYBACK_RATES.indexOf(playbackRate)
+    const nextIdx = (currentIdx + 1) % PLAYBACK_RATES.length
+    const newRate = PLAYBACK_RATES[nextIdx]
+    el.playbackRate = newRate
+    setPlaybackRate(newRate)
+  }, [playbackRate])
 
   const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
     if (!id) return
@@ -516,16 +527,32 @@ export function MeetingDetail() {
                   className="w-full"
                   src={`autodoc-media://${id}/screen.webm`}
                 />
+                <div className="flex justify-end px-3 py-1.5 border-t border-border">
+                  <button
+                    onClick={cyclePlaybackRate}
+                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors"
+                  >
+                    {playbackRate}x
+                  </button>
+                </div>
               </div>
             )}
             {media?.hasAudio && !media?.hasVideo && (
               <div className="bg-bg-card border border-border rounded-xl p-4">
-                <audio
-                  ref={mediaRef as React.RefObject<HTMLAudioElement>}
-                  controls
-                  className="w-full"
-                  src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
-                />
+                <div className="flex items-center gap-3">
+                  <audio
+                    ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                    controls
+                    className="flex-1"
+                    src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
+                  />
+                  <button
+                    onClick={cyclePlaybackRate}
+                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors shrink-0"
+                  >
+                    {playbackRate}x
+                  </button>
+                </div>
               </div>
             )}
             {Object.keys(speakers).length > 0 && (
