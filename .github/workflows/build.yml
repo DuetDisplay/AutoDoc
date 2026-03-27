@@ -22,6 +22,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify notarization credentials
+        env:
+          APPLE_ID: ${{ secrets.DD_APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
+        run: |
+          echo "APPLE_ID is set: $( [ -n \"$APPLE_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
+          echo "APPLE_APP_SPECIFIC_PASSWORD is set: $( [ -n \"$APPLE_APP_SPECIFIC_PASSWORD\" ] && echo 'yes' || echo 'NO - MISSING' )"
+          echo "APPLE_TEAM_ID is set: $( [ -n \"$APPLE_TEAM_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
+          echo "APPLE_TEAM_ID length: ${#APPLE_TEAM_ID}"
+          echo "APPLE_ID first 3 chars: ${APPLE_ID:0:3}***"
+          xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" 2>&1 | head -5 || true
+
       - name: Build Electron app
         env:
           CSC_LINK: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
