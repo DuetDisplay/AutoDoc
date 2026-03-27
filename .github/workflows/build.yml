@@ -48,6 +48,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release:mac
 
+      - name: Upload macOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autodoc-macos-${{ github.ref_name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
+
   build-win:
     runs-on: windows-latest
     permissions:
@@ -71,3 +84,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release:win
+
+      - name: Upload Windows artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autodoc-windows-${{ github.ref_name }}
+          path: |
+            dist/*-setup.exe
+            dist/*.blockmap
+            dist/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
