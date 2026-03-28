@@ -125,6 +125,7 @@ export function MeetingDetail() {
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
+  const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean; audioFile?: string } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
@@ -269,6 +270,7 @@ export function MeetingDetail() {
       (payload) => {
         if (payload.meetingId === id) {
           setSegmentationStatus(payload.status)
+          setSegmentationProgress(payload.progress)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
           }
@@ -414,7 +416,7 @@ export function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2">
           <TranscriptionBadge status={transcriptionStatus} progress={transcriptionProgress} onRetry={handleRetryTranscription} />
-          <SegmentationBadge status={segmentationStatus} onRetry={handleRetrySegmentation} />
+          <SegmentationBadge status={segmentationStatus} progress={segmentationProgress} onRetry={handleRetrySegmentation} />
         </div>
       </div>
 

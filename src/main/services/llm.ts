@@ -1,7 +1,7 @@
 import type { MeetingSegments, SegmentCategory } from '../../shared/types'
 
 export interface LLMProvider {
-  summarize(meetingId: string, transcript: string): Promise<MeetingSegments>
+  summarize(meetingId: string, transcript: string, onProgress?: (chunk: number, totalChunks: number) => void): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
 }
 
@@ -126,7 +126,7 @@ export class OllamaProvider implements LLMProvider {
     return `This appears to be roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
   }
 
-  async summarize(meetingId: string, transcript: string): Promise<MeetingSegments> {
+  async summarize(meetingId: string, transcript: string, onProgress?: (chunk: number, totalChunks: number) => void): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
     const itemGuidance = this.estimateItemCount(transcript.length)
     console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
@@ -167,6 +167,8 @@ export class OllamaProvider implements LLMProvider {
       merged.information.push(...chunkResult.information)
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
+
+      onProgress?.(i + 1, chunks.length)
     }
 
     return merged

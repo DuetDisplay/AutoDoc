@@ -116,7 +116,7 @@ export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus; progress?: number }]
-  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
+  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus; progress?: number }]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]

@@ -147,7 +147,10 @@ export class SegmentationService {
       })
       .join('\n')
 
-    const segments = await this.llmProvider.summarize(meetingId, fullText)
+    const segments = await this.llmProvider.summarize(meetingId, fullText, (chunk, total) => {
+      const progress = Math.round((chunk / total) * 100)
+      this.broadcastStatus(meetingId, 'segmenting', progress)
+    })
 
     // Verify the LLM actually produced content — empty results mean it failed silently
     const totalItems = segments.decisions.length +
@@ -187,10 +190,10 @@ export class SegmentationService {
     }
   }
 
-  private broadcastStatus(meetingId: string, status: SegmentationStatus): void {
+  private broadcastStatus(meetingId: string, status: SegmentationStatus, progress?: number): void {
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
-      win.webContents.send('segmentation:status-changed', { meetingId, status })
+      win.webContents.send('segmentation:status-changed', { meetingId, status, progress })
     }
   }
 
