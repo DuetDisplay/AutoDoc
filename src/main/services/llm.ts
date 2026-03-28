@@ -157,6 +157,9 @@ export class OllamaProvider implements LLMProvider {
           const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
             tokensGenerated++
             const percent = Math.min(99, Math.round((tokensGenerated / estimatedTotalTokens) * 100))
+            if (tokensGenerated % 50 === 0) {
+              console.log(`[segmentation] tokens=${tokensGenerated}/${estimatedTotalTokens} progress=${percent}%`)
+            }
             onProgress?.(percent)
           })
           chunkResult = this.parseResponse(meetingId, raw, merged)

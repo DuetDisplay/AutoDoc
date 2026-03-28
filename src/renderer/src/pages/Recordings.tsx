@@ -29,15 +29,21 @@ export function Recordings() {
       .then(async (entries) => {
         setRecordings(entries)
         const statuses: Record<string, SegmentationStatus> = {}
+        const progress: Record<string, number | undefined> = {}
         await Promise.all(
           entries.map(async (entry) => {
             statuses[entry.meetingId] = await window.electronAPI.invoke(
               'segmentation:get-status',
               entry.meetingId,
             )
+            progress[entry.meetingId] = await window.electronAPI.invoke(
+              'segmentation:get-progress',
+              entry.meetingId,
+            )
           }),
         )
         setSegmentationStatuses(statuses)
+        setSegmentationProgress(progress)
       })
       .catch((err) => {
         console.error('Failed to list recordings:', err)

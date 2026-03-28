@@ -43,6 +43,7 @@ export interface IpcInvokeEvents {
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
+  'segmentation:get-progress': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
@@ -89,6 +90,7 @@ export interface IpcInvokeReturns {
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus
+  'segmentation:get-progress': number | undefined
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void

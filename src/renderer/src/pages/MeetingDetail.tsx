@@ -247,6 +247,7 @@ export function MeetingDetail() {
     window.electronAPI.invoke('transcription:get-status', id).then(setTranscriptionStatus)
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
+    window.electronAPI.invoke('segmentation:get-progress', id).then(setSegmentationProgress)
     window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
     window.electronAPI.invoke('recording:get-media', id).then(setMedia)
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))

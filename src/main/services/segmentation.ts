@@ -10,6 +10,7 @@ export class SegmentationService {
   private queue: string[] = []
   private activeJobId: string | null = null
   private activeStatus: SegmentationStatus | null = null
+  private activeProgress: number | undefined = undefined
   private processing = false
 
   constructor(
@@ -30,6 +31,11 @@ export class SegmentationService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     unlink(errorPath).catch(() => {})
     this.enqueue(meetingId)
+  }
+
+  getProgress(meetingId: string): number | undefined {
+    if (this.activeJobId === meetingId) return this.activeProgress
+    return undefined
   }
 
   async getStatus(meetingId: string): Promise<SegmentationStatus> {
@@ -128,7 +134,7 @@ export class SegmentationService {
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
-    this.broadcastStatus(meetingId, 'segmenting')
+    this.broadcastStatus(meetingId, 'segmenting', 0)
 
     const transcripts: Transcript[] = await isEncrypted(transcriptPath)
       ? await decryptJSON<Transcript[]>(transcriptPath)
@@ -194,6 +200,7 @@ export class SegmentationService {
   }
 
   private broadcastStatus(meetingId: string, status: SegmentationStatus, progress?: number): void {
+    this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
       win.webContents.send('segmentation:status-changed', { meetingId, status, progress })
