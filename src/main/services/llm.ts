@@ -59,7 +59,7 @@ BAD topics (too specific, essentially restating the item title):
 - "Image Pricing", "Image Creation", "Image Updates", "Chrome Browser" — these should ALL be under ONE topic like "Device Imaging"
 - "Q1 Revenue", "Q2 Forecast", "Budget Cuts" — these should ALL be under "Financial Planning"
 
-TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at the start of each line. For each item, set "sourceStartMs" and "sourceEndMs" to the approximate start and end timestamps in milliseconds. Convert the timestamp format to milliseconds (e.g., [02:30] = 150000ms, [01:05:30] = 3930000ms). If unsure, use 0.
+TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at the start of each line. For EVERY item, you MUST set "sourceStartMs" and "sourceEndMs" to the timestamps in milliseconds from the transcript lines the item is based on. Convert: [02:30] = 150000, [01:05:30] = 3930000. Use the timestamp of the first relevant line for sourceStartMs and the last relevant line for sourceEndMs. Every item must have non-zero timestamps.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
