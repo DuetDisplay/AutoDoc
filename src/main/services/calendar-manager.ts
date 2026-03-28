@@ -12,6 +12,7 @@ export class CalendarManager {
   private accounts: CalendarAccount[] = []
   private syncInterval: ReturnType<typeof setInterval> | null = null
   private connecting = false
+  private syncing = false
 
   constructor() {
     this.providers = new Map<string, CalendarProvider>([
@@ -154,11 +155,15 @@ export class CalendarManager {
 
     // Then every 5 minutes
     this.syncInterval = setInterval(async () => {
+      if (this.syncing) return
+      this.syncing = true
       try {
         const events = await this.fetchAllUpcomingEvents()
         callback(events)
       } catch (err) {
         console.error('Calendar sync failed:', err)
+      } finally {
+        this.syncing = false
       }
     }, 5 * 60 * 1000)
   }
