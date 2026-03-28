@@ -144,7 +144,9 @@ export class CalendarService {
 
     return items.map((event) => ({
       id: event.id ?? crypto.randomUUID(),
-      googleEventId: event.id ?? '',
+      externalId: event.id ?? '',
+      accountId: '', // TODO(task-3): populate from actual account ID
+      provider: 'google' as const,
       recurringEventId: event.recurringEventId ?? null,
       title: event.summary ?? 'Untitled',
       startTime: new Date(event.start?.dateTime ?? event.start?.date ?? '').getTime(),

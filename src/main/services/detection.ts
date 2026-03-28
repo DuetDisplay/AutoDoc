@@ -95,7 +95,7 @@ export class DetectionService {
       if (!this.prompted) {
         this.prompted = true
         const matchingEvent = this.findMatchingEvent()
-        if (matchingEvent && isAutoRecordEnabled(matchingEvent.googleEventId, matchingEvent.recurringEventId)) {
+        if (matchingEvent && isAutoRecordEnabled(matchingEvent.id, matchingEvent.recurringEventId)) {
           // Auto-record: skip prompt, start recording directly
           this.broadcast('detection:auto-record', {})
         } else {

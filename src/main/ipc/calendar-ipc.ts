@@ -49,7 +49,7 @@ export function registerCalendarIpc(
 function applyAutoRecordState(events: CalendarEvent[]): CalendarEvent[] {
   return events.map((e) => ({
     ...e,
-    autoRecord: getAutoRecordMode(e.googleEventId, e.recurringEventId),
+    autoRecord: getAutoRecordMode(e.id, e.recurringEventId),
   }))
 }
 
