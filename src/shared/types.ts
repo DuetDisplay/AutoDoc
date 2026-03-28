@@ -97,6 +97,7 @@ export interface MeetingMetadata {
   startedAt: number
   stoppedAt: number
   durationSeconds: number
+  customTitle?: string
 }
 
 export interface RecordingSource {

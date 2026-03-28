@@ -36,6 +36,7 @@ export interface IpcInvokeEvents {
   'recording:stop': []
   'recording:get-state': []
   'recording:save-chunk': [meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer]
+  'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
@@ -83,6 +84,7 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'recording:update-title': void
   'recording:delete': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-transcript': Transcript[]

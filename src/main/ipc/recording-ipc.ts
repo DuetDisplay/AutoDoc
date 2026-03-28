@@ -118,11 +118,13 @@ export function registerRecordingIpc(
       const calendarEvent = matchCalendarEvent(recentEvents, createdAt.getTime())
       const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 
-      const title = calendarEvent
-        ? `${calendarEvent.title} — ${dateSuffix}`
-        : metadata?.sourceName
-          ? `${metadata.sourceName} — ${dateSuffix}`
-          : `Recording ${dateSuffix}`
+      const title = metadata?.customTitle
+        ? metadata.customTitle
+        : calendarEvent
+          ? `${calendarEvent.title} — ${dateSuffix}`
+          : metadata?.sourceName
+            ? `${metadata.sourceName} — ${dateSuffix}`
+            : `Recording ${dateSuffix}`
 
       const transcriptionStatus = await transcriptionService.getStatus(meetingId)
 
@@ -272,11 +274,13 @@ export function registerRecordingIpc(
 
     const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 
-    const title = calendarEvent
-      ? `${calendarEvent.title} — ${dateSuffix}`
-      : metadata?.sourceName
-        ? `${metadata.sourceName} — ${dateSuffix}`
-        : `Recording ${dateSuffix}`
+    const title = metadata?.customTitle
+      ? metadata.customTitle
+      : calendarEvent
+        ? `${calendarEvent.title} — ${dateSuffix}`
+        : metadata?.sourceName
+          ? `${metadata.sourceName} — ${dateSuffix}`
+          : `Recording ${dateSuffix}`
 
     return {
       title,
@@ -299,6 +303,20 @@ export function registerRecordingIpc(
       await appendFile(filePath, Buffer.from(chunk))
     }
   )
+
+  ipcMain.handle('recording:update-title', async (_event, meetingId: string, customTitle: string) => {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const metadata = await readMetadata(meetingDir)
+    const updated: MeetingMetadata = {
+      sourceName: metadata?.sourceName ?? null,
+      startedAt: metadata?.startedAt ?? Date.now(),
+      stoppedAt: metadata?.stoppedAt ?? Date.now(),
+      durationSeconds: metadata?.durationSeconds ?? 0,
+      customTitle: customTitle.trim() || undefined,
+    }
+    await encryptJSON(updated, join(meetingDir, 'metadata.json'))
+  })
 
   ipcMain.handle('recording:delete', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()

@@ -383,17 +383,26 @@ export function MeetingDetail() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5 text-[12px]">
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-1.5 text-[12px]">
             <button
               onClick={() => navigate('/recordings')}
-              className="text-ink-faint hover:text-ink transition-colors"
+              className="text-ink-faint hover:text-ink transition-colors shrink-0"
             >
               AI Notes
             </button>
-            <span className="text-ink-faint">/</span>
-            <span className="text-ink font-semibold">{detail?.title ?? 'Meeting'}</span>
+            <span className="text-ink-faint shrink-0">/</span>
+            <EditableText
+              value={detail?.title ?? 'Meeting'}
+              onSave={(newTitle) => {
+                if (!id) return
+                window.electronAPI.invoke('recording:update-title', id, newTitle).then(() => {
+                  setDetail((prev) => prev ? { ...prev, title: newTitle } : prev)
+                })
+              }}
+              className="text-ink font-semibold flex-1 min-w-0"
+            />
           </div>
           {detail && (
             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
