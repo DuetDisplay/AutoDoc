@@ -1,11 +1,13 @@
 interface Env {
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
+  MICROSOFT_CLIENT_ID: string
+  MICROSOFT_CLIENT_SECRET: string
 }
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly'
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly email'
 const LOCAL_REDIRECT = 'http://127.0.0.1:42813'
 
 export default {
@@ -22,6 +24,14 @@ export default {
 
     if (url.pathname === '/auth/refresh' && request.method === 'POST') {
       return handleRefresh(request, env)
+    }
+
+    if (url.pathname === '/microsoft/auth' && request.method === 'POST') {
+      return handleMicrosoftAuth(request, env)
+    }
+
+    if (url.pathname === '/microsoft/refresh' && request.method === 'POST') {
+      return handleMicrosoftRefresh(request, env)
     }
 
     return new Response('Not found', { status: 404 })
@@ -100,6 +110,61 @@ async function handleRefresh(request: Request, env: Env): Promise<Response> {
       refresh_token: refreshToken,
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+    }),
+  })
+
+  const tokens = await tokenResponse.json() as Record<string, unknown>
+
+  return Response.json(tokens, {
+    status: tokenResponse.ok ? 200 : 400,
+    headers: { 'Access-Control-Allow-Origin': '*' },
+  })
+}
+
+const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+
+async function handleMicrosoftAuth(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as { code?: string; redirect_uri?: string }
+
+  if (!body.code || !body.redirect_uri) {
+    return Response.json({ error: 'Missing code or redirect_uri' }, { status: 400 })
+  }
+
+  const tokenResponse = await fetch(MICROSOFT_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code: body.code,
+      client_id: env.MICROSOFT_CLIENT_ID,
+      client_secret: env.MICROSOFT_CLIENT_SECRET,
+      redirect_uri: body.redirect_uri,
+      grant_type: 'authorization_code',
+    }),
+  })
+
+  const tokens = await tokenResponse.json() as Record<string, unknown>
+
+  return Response.json(tokens, {
+    status: tokenResponse.ok ? 200 : 400,
+    headers: { 'Access-Control-Allow-Origin': '*' },
+  })
+}
+
+async function handleMicrosoftRefresh(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as { refresh_token?: string }
+
+  if (!body.refresh_token) {
+    return Response.json({ error: 'Missing refresh_token' }, { status: 400 })
+  }
+
+  const tokenResponse = await fetch(MICROSOFT_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      refresh_token: body.refresh_token,
+      client_id: env.MICROSOFT_CLIENT_ID,
+      client_secret: env.MICROSOFT_CLIENT_SECRET,
       grant_type: 'refresh_token',
     }),
   })
