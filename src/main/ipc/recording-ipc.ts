@@ -6,7 +6,7 @@ import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
-import type { CalendarService } from '../services/calendar'
+import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
@@ -73,7 +73,7 @@ export function registerRecordingIpc(
   recordingService: RecordingService,
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
-  calendarService: CalendarService,
+  calendarManager: CalendarManager,
 ): void {
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
@@ -87,8 +87,8 @@ export function registerRecordingIpc(
     // Fetch recent calendar events for matching recordings to event names
     let recentEvents: CalendarEvent[] = []
     try {
-      if (calendarService.isConnected()) {
-        recentEvents = await calendarService.fetchRecentEvents(30)
+      if (calendarManager.isConnected()) {
+        recentEvents = await calendarManager.fetchAllRecentEvents(30)
       }
     } catch {
       // Calendar fetch failed — fall back to generic names
@@ -262,8 +262,8 @@ export function registerRecordingIpc(
     // Try to match a calendar event for a better title
     let calendarEvent: CalendarEvent | null = null
     try {
-      if (calendarService.isConnected()) {
-        const events = await calendarService.fetchRecentEvents(30)
+      if (calendarManager.isConnected()) {
+        const events = await calendarManager.fetchAllRecentEvents(30)
         calendarEvent = matchCalendarEvent(events, startedAt)
       }
     } catch {

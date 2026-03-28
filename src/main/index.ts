@@ -4,7 +4,7 @@ import { join } from 'path'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
-import { CalendarService } from './services/calendar'
+import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { registerRecordingIpc } from './ipc/recording-ipc'
@@ -138,8 +138,8 @@ app.whenReady().then(async () => {
     }
   })
 
-  const calendarService = new CalendarService()
-  registerCalendarIpc(calendarService, (events) => {
+  const calendarManager = new CalendarManager()
+  registerCalendarIpc(calendarManager, (events) => {
     cachedEvents = events
     updateTrayMenu()
   })
@@ -178,7 +178,7 @@ app.whenReady().then(async () => {
     whisperManager,
     audioConverter,
     recordingService.getRecordingsBaseDir(),
-    calendarService,
+    calendarManager,
   )
   ollamaManager = new OllamaManager()
 
@@ -250,16 +250,16 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
-  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
+  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
-  const wasConnected = await calendarService.initialize()
-  if (wasConnected) {
-    calendarService.startSync((events) => {
+  const restoredAccounts = await calendarManager.initialize()
+  if (restoredAccounts.length > 0) {
+    calendarManager.startSync((events) => {
       cachedEvents = events
       updateTrayMenu()
       const windows = BrowserWindow.getAllWindows()

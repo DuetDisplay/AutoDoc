@@ -1,13 +1,15 @@
 import { create } from 'zustand'
-import type { AutoRecordMode, CalendarEvent } from '../../../shared/types'
+import type { AutoRecordMode, CalendarEvent, CalendarAccount } from '../../../shared/types'
 
 interface CalendarState {
-  isConnected: boolean
+  accounts: CalendarAccount[]
   isConnecting: boolean
   events: CalendarEvent[]
   isSyncing: boolean
 
-  setConnected: (connected: boolean) => void
+  setAccounts: (accounts: CalendarAccount[]) => void
+  addAccount: (account: CalendarAccount) => void
+  removeAccount: (accountId: string) => void
   setConnecting: (connecting: boolean) => void
   setEvents: (events: CalendarEvent[]) => void
   setSyncing: (syncing: boolean) => void
@@ -15,12 +17,16 @@ interface CalendarState {
 }
 
 export const useCalendarStore = create<CalendarState>((set) => ({
-  isConnected: false,
+  accounts: [],
   isConnecting: false,
   events: [],
   isSyncing: false,
 
-  setConnected: (connected) => set({ isConnected: connected }),
+  setAccounts: (accounts) => set({ accounts }),
+  addAccount: (account) => set((state) => ({ accounts: [...state.accounts, account] })),
+  removeAccount: (accountId) => set((state) => ({
+    accounts: state.accounts.filter((a) => a.id !== accountId),
+  })),
   setConnecting: (connecting) => set({ isConnecting: connecting }),
   setEvents: (events) => set({ events }),
   setSyncing: (syncing) => set({ isSyncing: syncing }),
@@ -31,3 +37,6 @@ export const useCalendarStore = create<CalendarState>((set) => ({
       ),
     })),
 }))
+
+// Derived selector — use in components: const isConnected = useCalendarStore(selectIsConnected)
+export const selectIsConnected = (state: CalendarState) => state.accounts.length > 0

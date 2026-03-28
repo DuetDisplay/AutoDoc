@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { useCalendarStore } from '../stores/calendar'
+import { useCalendarStore, selectIsConnected } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 
 export function Settings() {
-  const { isConnected, isConnecting, setConnected, setConnecting, setEvents } = useCalendarStore()
+  const { accounts, isConnecting, setAccounts, addAccount, removeAccount, setConnecting, setEvents } = useCalendarStore()
+  const isConnected = useCalendarStore(selectIsConnected)
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
 
@@ -15,11 +16,15 @@ export function Settings() {
     return unsub
   }, [])
 
-  const handleConnect = async () => {
+  useEffect(() => {
+    window.electronAPI.invoke('calendar:get-accounts').then(setAccounts)
+  }, [setAccounts])
+
+  const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
     try {
-      await window.electronAPI.invoke('calendar:connect')
-      setConnected(true)
+      const account = await window.electronAPI.invoke('calendar:connect', provider)
+      addAccount(account)
       const events = await window.electronAPI.invoke('calendar:get-events')
       setEvents(events)
     } catch (err) {
@@ -29,10 +34,11 @@ export function Settings() {
     }
   }
 
-  const handleDisconnect = async () => {
-    await window.electronAPI.invoke('calendar:disconnect')
-    setConnected(false)
-    setEvents([])
+  const handleDisconnect = async (accountId: string) => {
+    await window.electronAPI.invoke('calendar:disconnect', accountId)
+    removeAccount(accountId)
+    const events = await window.electronAPI.invoke('calendar:get-events')
+    setEvents(events)
   }
 
   return (
@@ -40,29 +46,46 @@ export function Settings() {
       <PageHeader title="Settings" />
       <div className="p-6 flex flex-col gap-6">
         <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Google Calendar</h3>
-          {isConnected ? (
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-status-connected" />
-                <span className="text-[12px] text-ink-muted">Connected</span>
-              </div>
-              <button
-                onClick={handleDisconnect}
-                className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
-              >
-                Disconnect
-              </button>
+          <h3 className="text-[13px] font-semibold text-ink mb-2">Calendars</h3>
+
+          {accounts.length > 0 && (
+            <div className="flex flex-col gap-2 mb-3">
+              {accounts.map((account) => (
+                <div key={account.id} className="flex items-center gap-3">
+                  <span className="text-[12px] font-medium text-ink-muted">
+                    {account.provider === 'google' ? 'G' : 'M'}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-status-connected" />
+                    <span className="text-[12px] text-ink-muted">{account.email}</span>
+                  </div>
+                  <button
+                    onClick={() => handleDisconnect(account.id)}
+                    className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ))}
             </div>
-          ) : (
+          )}
+
+          <div className="flex gap-2">
             <button
-              onClick={handleConnect}
+              onClick={() => handleConnect('google')}
               disabled={isConnecting}
               className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
             >
-              {isConnecting ? 'Connecting...' : 'Connect'}
+              {isConnecting ? 'Connecting...' : 'Add Google Calendar'}
             </button>
-          )}
+            <button
+              onClick={() => handleConnect('microsoft')}
+              disabled={isConnecting}
+              className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+            >
+              {isConnecting ? 'Connecting...' : 'Add Microsoft Outlook'}
+            </button>
+          </div>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>

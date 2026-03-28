@@ -6,7 +6,9 @@ import type { CalendarEvent } from '../../../shared/types'
 
 const mockEvent: CalendarEvent = {
   id: 'evt-1',
-  googleEventId: 'google-1',
+  externalId: 'google-1',
+  accountId: 'account-1',
+  provider: 'google' as const,
   recurringEventId: null,
   title: 'Sprint Planning',
   startTime: new Date('2026-03-24T10:00:00').getTime(),

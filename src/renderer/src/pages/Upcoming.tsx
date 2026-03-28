@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
-import { useCalendarStore } from '../stores/calendar'
+import { useCalendarStore, selectIsConnected } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import { useToastStore } from '../stores/toast'
@@ -14,39 +14,37 @@ let calendarToastShown = false
 export function Upcoming() {
   const [calendarChecked, setCalendarChecked] = useState(false)
   const {
-    isConnected,
     isConnecting,
     events,
     isSyncing,
-    setConnected,
+    setAccounts,
+    addAccount,
     setConnecting,
     setEvents,
     setSyncing,
     setAutoRecord,
   } = useCalendarStore()
+  const isConnected = useCalendarStore(selectIsConnected)
 
   useEffect(() => {
-    // Check connection status on mount
-    window.electronAPI.invoke('calendar:is-connected').then((connected) => {
-      setConnected(connected)
+    window.electronAPI.invoke('calendar:get-accounts').then((accts) => {
+      setAccounts(accts)
       setCalendarChecked(true)
     })
 
-    // Listen for event updates from main process
     const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
       setEvents(updatedEvents)
     })
 
-    // If already connected, fetch events
-    window.electronAPI.invoke('calendar:is-connected').then(async (connected) => {
-      if (connected) {
+    window.electronAPI.invoke('calendar:get-accounts').then(async (accts) => {
+      if (accts.length > 0) {
         const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
         setEvents(fetchedEvents)
       }
     })
 
     return unsubscribe
-  }, [setConnected, setEvents])
+  }, [setAccounts, setEvents])
 
   useEffect(() => {
     // Only show calendar toast after we've confirmed the connection status.
@@ -56,17 +54,17 @@ export function Upcoming() {
       calendarToastShown = true
       useToastStore.getState().showToast({
         type: 'calendar',
-        message: 'Connect Google Calendar to see upcoming meetings and auto-name recordings.',
+        message: 'Connect a calendar to see upcoming meetings and auto-name recordings.',
       })
     }
   }, [isConnected, calendarChecked])
 
-  const handleConnect = async () => {
+  const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
     try {
-      await window.electronAPI.invoke('calendar:connect')
-      setConnected(true)
-      trackEvent('calendar_connected')
+      const account = await window.electronAPI.invoke('calendar:connect', provider)
+      addAccount(account)
+      trackEvent('calendar_connected', { provider })
       const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
       setEvents(fetchedEvents)
     } catch (err) {

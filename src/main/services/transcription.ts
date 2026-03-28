@@ -9,7 +9,7 @@ import type { AudioConverter } from './audio-converter'
 import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
-import type { CalendarService } from './calendar'
+import type { CalendarManager } from './calendar-manager'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -31,7 +31,7 @@ export class TranscriptionService {
     private whisperManager: WhisperManager,
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
-    private calendarService: CalendarService,
+    private calendarManager: CalendarManager,
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -312,10 +312,10 @@ export class TranscriptionService {
 
     let suggestions: string[] = []
     try {
-      if (this.calendarService.isConnected()) {
+      if (this.calendarManager.isConnected()) {
         const metadata = await readMetadata(meetingDir)
         if (metadata?.startedAt) {
-          const events = await this.calendarService.fetchRecentEvents(30)
+          const events = await this.calendarManager.fetchAllRecentEvents(30)
           const matched = matchCalendarEvent(events, metadata.startedAt)
           if (matched) {
             suggestions = matched.attendees

@@ -4,71 +4,85 @@ import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import crypto from 'crypto'
 import { URL } from 'url'
-import { saveTokens, loadTokens, clearTokens } from './token-store'
-import { CALENDAR_SYNC_INTERVAL_MS } from '../../shared/constants'
-import type { CalendarEvent } from '../../shared/types'
+import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasTokensForAccount } from './token-store'
+import type { CalendarEvent, CalendarAccount } from '../../shared/types'
+import type { CalendarProvider } from './calendar-types'
 
 const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
 const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
 
-export class CalendarService {
-  private oauth2Client: OAuth2Client
-  private syncInterval: ReturnType<typeof setInterval> | null = null
-  private onEventsUpdated: ((events: CalendarEvent[]) => void) | null = null
+export class GoogleCalendarProvider implements CalendarProvider {
+  readonly providerType = 'google' as const
 
-  constructor() {
-    this.oauth2Client = new google.auth.OAuth2(CLIENT_ID)
+  // Per-account OAuth clients — created on demand
+  private clients = new Map<string, OAuth2Client>()
 
-    this.oauth2Client.on('tokens', async (newTokens) => {
-      // If we get new tokens via the library's auto-refresh, save them
-      const existing = loadTokens() ?? {}
-      saveTokens({ ...existing, ...newTokens })
-    })
-  }
-
-  isConnected(): boolean {
-    return this.oauth2Client.credentials?.access_token != null
-      || this.oauth2Client.credentials?.refresh_token != null
-  }
-
-  async initialize(): Promise<boolean> {
-    const tokens = loadTokens()
-    if (tokens) {
-      this.oauth2Client.setCredentials(tokens)
-      return true
+  private getClient(accountId: string): OAuth2Client {
+    let client = this.clients.get(accountId)
+    if (!client) {
+      client = new google.auth.OAuth2(CLIENT_ID)
+      client.on('tokens', (newTokens) => {
+        const existing = loadTokensForAccount(accountId) ?? {}
+        saveTokensForAccount(accountId, { ...existing, ...newTokens })
+      })
+      // Load existing tokens if available
+      const tokens = loadTokensForAccount(accountId)
+      if (tokens) client.setCredentials(tokens)
+      this.clients.set(accountId, client)
     }
-    return false
+    return client
   }
 
-  async connect(): Promise<void> {
+  isConnected(accountId: string): boolean {
+    return hasTokensForAccount(accountId)
+  }
+
+  async connect(): Promise<CalendarAccount> {
     const state = crypto.randomBytes(16).toString('hex')
 
-    // Open the auth worker URL — it handles the Google OAuth flow
     const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
     await shell.openExternal(authUrl)
 
-    // Wait for the worker to redirect back to localhost with tokens
-    const result = await new Promise<{ tokens: object }>((resolve, reject) => {
+    const result = await this.waitForCallback(state)
+
+    const accountId = crypto.randomUUID()
+    const client = new google.auth.OAuth2(CLIENT_ID)
+    client.on('tokens', (newTokens) => {
+      const existing = loadTokensForAccount(accountId) ?? {}
+      saveTokensForAccount(accountId, { ...existing, ...newTokens })
+    })
+    client.setCredentials(result.tokens)
+    this.clients.set(accountId, client)
+    saveTokensForAccount(accountId, result.tokens)
+
+    // Fetch user email
+    const email = await this.fetchUserEmail(accountId)
+
+    return {
+      id: accountId,
+      provider: 'google',
+      email,
+      connectedAt: Date.now(),
+    }
+  }
+
+  private waitForCallback(expectedState: string): Promise<{ tokens: object }> {
+    return new Promise((resolve, reject) => {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
         const error = url.searchParams.get('error')
         const tokenData = url.searchParams.get('tokens')
 
+        // If state doesn't match, ignore — might be for another provider
+        if (returnedState !== expectedState) return
+
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Authorization failed. You may close this tab.</p></body></html>')
           server.close()
           reject(new Error(error))
-          return
-        }
-
-        if (returnedState !== state) {
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end('<html><body><p>State mismatch. Please try again.</p></body></html>')
-          server.close()
-          reject(new Error('State mismatch'))
           return
         }
 
@@ -91,7 +105,6 @@ export class CalendarService {
           return
         }
 
-        // Google returns expires_in (seconds); convert to absolute expiry_date
         if (tokens.expires_in && !tokens.expiry_date) {
           tokens.expiry_date = Date.now() + (tokens.expires_in as number) * 1000
         }
@@ -105,31 +118,32 @@ export class CalendarService {
       server.listen(OAUTH_PORT, '127.0.0.1')
       server.on('error', reject)
     })
-
-    this.oauth2Client.setCredentials(result.tokens)
-    saveTokens(result.tokens)
   }
 
-  async disconnect(): Promise<void> {
-    this.stopSync()
-    this.oauth2Client.setCredentials({})
-    clearTokens()
+  async disconnect(accountId: string): Promise<void> {
+    clearTokensForAccount(accountId)
+    this.clients.delete(accountId)
   }
 
-  async fetchUpcomingEvents(maxResults = 20): Promise<CalendarEvent[]> {
-    return this.fetchEvents({ timeMin: new Date().toISOString(), maxResults })
+  async fetchUpcomingEvents(accountId: string): Promise<CalendarEvent[]> {
+    return this.fetchEvents(accountId, { timeMin: new Date().toISOString(), maxResults: 20 })
   }
 
-  async fetchRecentEvents(daysBack = 7, maxResults = 50): Promise<CalendarEvent[]> {
+  async fetchRecentEvents(accountId: string, daysBack = 7): Promise<CalendarEvent[]> {
     const since = new Date()
     since.setDate(since.getDate() - daysBack)
-    return this.fetchEvents({ timeMin: since.toISOString(), timeMax: new Date().toISOString(), maxResults })
+    return this.fetchEvents(accountId, { timeMin: since.toISOString(), timeMax: new Date().toISOString(), maxResults: 50 })
   }
 
-  private async fetchEvents(opts: { timeMin: string; timeMax?: string; maxResults: number }): Promise<CalendarEvent[]> {
-    await this.refreshIfNeeded()
+  async refreshTokens(accountId: string): Promise<void> {
+    await this.refreshIfNeeded(accountId)
+  }
 
-    const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client })
+  private async fetchEvents(accountId: string, opts: { timeMin: string; timeMax?: string; maxResults: number }): Promise<CalendarEvent[]> {
+    await this.refreshIfNeeded(accountId)
+
+    const client = this.getClient(accountId)
+    const calendar = google.calendar({ version: 'v3', auth: client })
 
     const response = await calendar.events.list({
       calendarId: 'primary',
@@ -143,8 +157,10 @@ export class CalendarService {
     const items = response.data.items ?? []
 
     return items.map((event) => ({
-      id: event.id ?? crypto.randomUUID(),
-      googleEventId: event.id ?? '',
+      id: `google_${event.id ?? crypto.randomUUID()}`,
+      externalId: event.id ?? '',
+      accountId,
+      provider: 'google' as const,
       recurringEventId: event.recurringEventId ?? null,
       title: event.summary ?? 'Untitled',
       startTime: new Date(event.start?.dateTime ?? event.start?.date ?? '').getTime(),
@@ -156,36 +172,28 @@ export class CalendarService {
     }))
   }
 
-  startSync(callback: (events: CalendarEvent[]) => void): void {
-    this.onEventsUpdated = callback
-    // Fetch immediately on start
-    this.fetchUpcomingEvents()
-      .then((events) => this.onEventsUpdated?.(events))
-      .catch((err) => console.error('Initial calendar sync failed:', err))
-
-    this.syncInterval = setInterval(async () => {
-      try {
-        const events = await this.fetchUpcomingEvents()
-        this.onEventsUpdated?.(events)
-      } catch (err) {
-        console.error('Calendar sync failed:', err)
+  async fetchUserEmail(accountId: string): Promise<string> {
+    await this.refreshIfNeeded(accountId)
+    const client = this.getClient(accountId)
+    const tokens = client.credentials
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      })
+      if (res.ok) {
+        const data = await res.json() as { email?: string }
+        if (data.email) return data.email
       }
-    }, CALENDAR_SYNC_INTERVAL_MS)
-  }
-
-  stopSync(): void {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval)
-      this.syncInterval = null
+    } catch {
+      // Fall through to unknown
     }
-    this.onEventsUpdated = null
+    return 'unknown@gmail.com'
   }
 
-  private async refreshIfNeeded(): Promise<void> {
-    const creds = this.oauth2Client.credentials
+  private async refreshIfNeeded(accountId: string): Promise<void> {
+    const client = this.getClient(accountId)
+    const creds = client.credentials
     if (!creds.refresh_token) return
-
-    // Refresh if no expiry_date (unknown state) or token expires within 5 minutes
     if (creds.expiry_date && creds.expiry_date > Date.now() + 5 * 60_000) return
 
     try {
@@ -196,7 +204,7 @@ export class CalendarService {
       })
 
       if (!response.ok) {
-        console.error('Token refresh failed:', await response.text())
+        console.error('Google token refresh failed:', await response.text())
         return
       }
 
@@ -207,39 +215,31 @@ export class CalendarService {
         expiry_date: Date.now() + newTokens.expires_in * 1000,
       }
 
-      this.oauth2Client.setCredentials(updated)
-      saveTokens(updated)
+      client.setCredentials(updated)
+      saveTokensForAccount(accountId, updated)
     } catch (err) {
-      console.error('Token refresh error:', err)
+      console.error('Google token refresh error:', err)
     }
   }
 
   private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] } | null; location?: string | null; description?: string | null }): string | null {
-    if (event.hangoutLink) {
-      return event.hangoutLink
-    }
+    if (event.hangoutLink) return event.hangoutLink
 
     const entryPoints = event.conferenceData?.entryPoints ?? []
     const videoEntry = entryPoints.find((ep) => ep.entryPointType === 'video')
-    if (videoEntry?.uri) {
-      return videoEntry.uri
-    }
+    if (videoEntry?.uri) return videoEntry.uri
 
     const location = event.location ?? ''
     const locationMatch = location.match(
       /https?:\/\/[^\s,]*(zoom\.us\/j|teams\.microsoft\.com\/l\/meetup-join|meet\.google\.com|webex\.com\/meet)[^\s,]*/i
     )
-    if (locationMatch) {
-      return locationMatch[0]
-    }
+    if (locationMatch) return locationMatch[0]
 
     const description = event.description ?? ''
     const descMatch = description.match(
       /https?:\/\/[^\s<"']*(zoom\.us\/j|teams\.microsoft\.com\/l\/meetup-join|meet\.google\.com|webex\.com\/meet)[^\s<"']*/i
     )
-    if (descMatch) {
-      return descMatch[0]
-    }
+    if (descMatch) return descMatch[0]
 
     return null
   }

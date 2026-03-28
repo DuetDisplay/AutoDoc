@@ -44,9 +44,18 @@ export interface Segment {
 
 export type AutoRecordMode = 'off' | 'once' | 'series'
 
-export interface CalendarEvent {
+export interface CalendarAccount {
   id: string
-  googleEventId: string
+  provider: 'google' | 'microsoft'
+  email: string
+  connectedAt: number
+}
+
+export interface CalendarEvent {
+  id: string                          // `{provider}_{externalId}` — unique across providers
+  externalId: string                  // provider's native event ID
+  accountId: string                   // which connected account owns this event
+  provider: 'google' | 'microsoft'   // source provider
   recurringEventId: string | null
   title: string
   startTime: number
