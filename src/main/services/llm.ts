@@ -49,13 +49,15 @@ Examples of BAD topic usage (too specific, one per item):
 
 Items about the same broad subject MUST share the EXACT same topic string.
 
+TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at the start of each line. For each item, set "sourceStartMs" and "sourceEndMs" to the approximate start and end timestamps in milliseconds. Convert the timestamp format to milliseconds (e.g., [02:30] = 150000ms, [01:05:30] = 3930000ms). If unsure, use 0.
+
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
-  "decisions": [{ "topic": "broad theme", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null }],
-  "action_items": [{ "topic": "broad theme", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null" }],
-  "information": [{ "topic": "broad theme", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null }],
-  "discussion": [{ "topic": "broad theme", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null }],
-  "status_updates": [{ "topic": "broad theme", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null }]
+  "decisions": [{ "topic": "broad theme", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "action_items": [{ "topic": "broad theme", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null", "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "information": [{ "topic": "broad theme", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "discussion": [{ "topic": "broad theme", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "status_updates": [{ "topic": "broad theme", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }]
 }
 
 If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
@@ -71,6 +73,8 @@ interface RawSegment {
   content?: string
   assignee?: string | null
   deadline?: string | null
+  sourceStartMs?: number
+  sourceEndMs?: number
 }
 
 function capitalize(s: string): string {
@@ -277,8 +281,8 @@ export class OllamaProvider implements LLMProvider {
           content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
-          sourceStartMs: 0,
-          sourceEndMs: 0,
+          sourceStartMs: typeof item.sourceStartMs === 'number' ? item.sourceStartMs : 0,
+          sourceEndMs: typeof item.sourceEndMs === 'number' ? item.sourceEndMs : 0,
         })
         index++
       }

@@ -141,6 +141,18 @@ export function MeetingDetail() {
     el.play()
   }, [])
 
+  const seekToSegment = useCallback((ms: number) => {
+    setActiveTab('transcript')
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = mediaRef.current
+        if (!el) return
+        el.currentTime = ms / 1000
+        el.play()
+      })
+    })
+  }, [])
+
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
     if (!el) return
@@ -356,6 +368,15 @@ export function MeetingDetail() {
     return groups
   }
 
+  const formatTimestamp = (ms: number): string => {
+    const totalSec = Math.floor(ms / 1000)
+    const h = Math.floor(totalSec / 3600)
+    const m = Math.floor((totalSec % 3600) / 60)
+    const s = totalSec % 60
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -477,13 +498,24 @@ export function MeetingDetail() {
                                       onSave={(v) => updateSegmentField(category, globalIndex, 'title', v)}
                                       className="text-[12.5px] font-semibold text-ink flex-1"
                                     />
-                                    <button
-                                      onClick={() => deleteSegment(category, globalIndex)}
-                                      className="shrink-0 opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                                      title="Delete"
-                                    >
-                                      &times;
-                                    </button>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {(media?.hasVideo || media?.hasAudio) && item.sourceStartMs > 0 && (
+                                        <button
+                                          onClick={() => seekToSegment(item.sourceStartMs)}
+                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                          title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                        >
+                                          ▶ {formatTimestamp(item.sourceStartMs)}
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => deleteSegment(category, globalIndex)}
+                                        className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                        title="Delete"
+                                      >
+                                        &times;
+                                      </button>
+                                    </div>
                                   </div>
                                   <EditableText
                                     value={item.content}

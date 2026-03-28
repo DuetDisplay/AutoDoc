@@ -134,7 +134,18 @@ export class SegmentationService {
       ? await decryptJSON<Transcript[]>(transcriptPath)
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
-    const fullText = transcripts.map((t) => `[${t.speaker}] ${t.text}`).join('\n')
+    const fullText = transcripts
+      .map((t) => {
+        const totalSec = Math.floor(t.startMs / 1000)
+        const h = Math.floor(totalSec / 3600)
+        const m = Math.floor((totalSec % 3600) / 60)
+        const s = totalSec % 60
+        const ts = h > 0
+          ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+          : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        return `[${ts}] [${t.speaker}] ${t.text}`
+      })
+      .join('\n')
 
     const segments = await this.llmProvider.summarize(meetingId, fullText)
 
