@@ -7,10 +7,10 @@ export interface LLMProvider {
 
 const MAX_RETRIES = 2
 const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
-const CHUNK_CHARS = 6000 // ~1.5K tokens per chunk — small enough for thorough extraction
+const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keep small so output fits within token cap
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
-const MAX_OUTPUT_TOKENS = 8192 // Cap generation length to prevent infinite loops
+const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
 
 const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture everything of value from the transcript. People rely on these notes to remember what happened.
 
@@ -31,13 +31,13 @@ Extract and categorize into these 5 categories:
 
 Guidelines:
 - Extract every distinct point — aim for roughly 1 item per minute of meeting across all categories.
+- Write CONCISE, CLEAR SUMMARIES — never paste raw quotes from the transcript. Synthesize what was said into polished notes that someone can scan quickly.
+- Keep each "content" field to 1-2 sentences. Be brief and direct — capture the key point, not every detail.
+- The "content" field should read like a well-written meeting note, not a transcript excerpt. Remove filler words (um, like, you know), false starts, and conversational artifacts.
+- ACCURACY: Preserve exact numbers, dates, dollar amounts, percentages, and proper nouns. Do NOT paraphrase quantities — if someone says "$50 per year", write "$50 per year", not "$50 per month".
 - Each item should capture the full context so someone who wasn't in the meeting understands it.
-- ACCURACY IS CRITICAL: Use the exact words, numbers, and timeframes from the transcript. Do NOT paraphrase numbers, dates, or quantities — quote them directly. If someone says "per year", write "per year", not "per month".
-- Include specific names, numbers, dates, and technical details — don't generalize or round.
 - If someone says "I'll do X by Friday", that's an action item with an assignee and deadline.
-- If someone shares a metric or fact, that's information — capture the exact number as stated.
 - When in doubt about which category, include it in the most relevant one.
-- When in doubt about a detail, use the EXACT phrasing from the transcript rather than rewording it.
 - Always use proper sentence capitalization for titles and content.
 
 GROUPING — This is critical. Every item MUST have a "topic" field that acts as a CHAPTER HEADING for the meeting. Topics must be VERY broad — think of them as the 3-5 major subjects the meeting covered, like an agenda or table of contents.
@@ -63,11 +63,11 @@ TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at 
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
-  "decisions": [{ "topic": "broad theme", "title": "clear summary", "content": "full context with names and reasoning", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
-  "action_items": [{ "topic": "broad theme", "title": "specific task", "content": "full detail of what needs to happen", "assignee": "person or null", "deadline": "deadline or null", "sourceStartMs": 12000, "sourceEndMs": 45000 }],
-  "information": [{ "topic": "broad theme", "title": "what was shared", "content": "exact details, numbers, and context", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
-  "discussion": [{ "topic": "broad theme", "title": "topic debated", "content": "positions taken, arguments made, outcome if any", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
-  "status_updates": [{ "topic": "broad theme", "title": "what was reported", "content": "current state, blockers, next steps", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }]
+  "decisions": [{ "topic": "broad theme", "title": "clear summary", "content": "concise explanation of what was decided and why", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "action_items": [{ "topic": "broad theme", "title": "specific task", "content": "what needs to happen, who owns it, and by when", "assignee": "person or null", "deadline": "deadline or null", "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "information": [{ "topic": "broad theme", "title": "what was shared", "content": "synthesized summary with key details and numbers", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "discussion": [{ "topic": "broad theme", "title": "topic debated", "content": "summary of positions, arguments, and outcome if any", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }],
+  "status_updates": [{ "topic": "broad theme", "title": "what was reported", "content": "current state, blockers, and next steps", "assignee": null, "deadline": null, "sourceStartMs": 12000, "sourceEndMs": 45000 }]
 }
 
 If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
@@ -154,7 +154,7 @@ export class OllamaProvider implements LLMProvider {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkLabel = chunks.length > 1
-        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract ALL noteworthy items from this section. ${itemGuidance}`
+        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect 2-5 items from this part). Be concise. ${itemGuidance}`
         : `\n\n${itemGuidance}`
 
       let lastError: Error | null = null
@@ -168,7 +168,9 @@ export class OllamaProvider implements LLMProvider {
           else console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)...`)
           const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
             chunkTokens++
-            const chunkFraction = Math.min(chunkTokens / avgTokensPerChunk, 0.95)
+            // Asymptotic progress: approaches 0.99 but never reaches it, so it never appears stuck
+            const ratio = chunkTokens / avgTokensPerChunk
+            const chunkFraction = ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
             const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
             onProgress?.(percent)
           })
@@ -270,10 +272,17 @@ export class OllamaProvider implements LLMProvider {
 
     try {
       while (true) {
-        const streamTimeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)), STREAM_TIMEOUT_MS)
-        )
-        const { done, value } = await Promise.race([reader.read(), streamTimeout])
+        let streamTimer: ReturnType<typeof setTimeout> | undefined
+        const streamTimeout = new Promise<never>((_, reject) => {
+          streamTimer = setTimeout(() => reject(new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)), STREAM_TIMEOUT_MS)
+        })
+        let readResult: ReadableStreamReadResult<Uint8Array>
+        try {
+          readResult = await Promise.race([reader.read(), streamTimeout])
+        } finally {
+          clearTimeout(streamTimer)
+        }
+        const { done, value } = readResult
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
@@ -322,12 +331,80 @@ export class OllamaProvider implements LLMProvider {
     return content
   }
 
+  /**
+   * Repair truncated JSON from num_predict cap.
+   * Tries multiple strategies from least to most aggressive.
+   */
+  private repairTruncatedJSON(raw: string): Record<string, RawSegment[]> | null {
+    const strategies = [
+      // Strategy 1: cut at last complete array item "},"
+      () => {
+        const idx = raw.lastIndexOf('},')
+        if (idx === -1) return null
+        return this.closeJSON(raw.slice(0, idx + 1))
+      },
+      // Strategy 2: cut at last complete array "]"
+      () => {
+        const idx = raw.lastIndexOf(']')
+        if (idx === -1) return null
+        return this.closeJSON(raw.slice(0, idx + 1))
+      },
+      // Strategy 3: cut at last complete key-value with empty array
+      () => {
+        const idx = raw.lastIndexOf('[]')
+        if (idx === -1) return null
+        return this.closeJSON(raw.slice(0, idx + 2))
+      },
+    ]
+
+    for (const strategy of strategies) {
+      const cut = strategy()
+      if (!cut) continue
+      try {
+        return JSON.parse(cut)
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+
+  /** Count unclosed brackets/braces and append closers */
+  private closeJSON(partial: string): string {
+    let openBraces = 0
+    let openBrackets = 0
+    let inString = false
+    let escape = false
+    for (const ch of partial) {
+      if (escape) { escape = false; continue }
+      if (ch === '\\' && inString) { escape = true; continue }
+      if (ch === '"') { inString = !inString; continue }
+      if (inString) continue
+      if (ch === '{') openBraces++
+      else if (ch === '}') openBraces--
+      else if (ch === '[') openBrackets++
+      else if (ch === ']') openBrackets--
+    }
+    let result = partial
+    for (let i = 0; i < openBrackets; i++) result += ']'
+    for (let i = 0; i < openBraces; i++) result += '}'
+    return result
+  }
+
   private parseResponse(meetingId: string, raw: string, existing?: MeetingSegments): MeetingSegments {
     let parsed: Record<string, RawSegment[]>
     try {
       parsed = JSON.parse(raw)
     } catch {
-      throw new Error(`Invalid JSON from Ollama: ${raw.slice(0, 200)}`)
+      // Attempt to repair truncated JSON (from num_predict cap)
+      const repaired = this.repairTruncatedJSON(raw)
+      if (repaired) {
+        parsed = repaired
+        console.warn('Repaired truncated JSON from Ollama (some items may have been dropped)')
+      } else {
+        throw new Error(`Invalid JSON from Ollama: ${raw.slice(0, 200)}`)
+      }
     }
 
     const result: MeetingSegments = {
