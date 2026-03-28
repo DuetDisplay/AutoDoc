@@ -139,10 +139,9 @@ export class OllamaProvider implements LLMProvider {
       statusUpdates: [],
     }
 
-    // Estimate total tokens across all chunks (~1 token per 4 chars of input, output ~same size)
-    const estimatedTokensPerChunk = Math.ceil(CHUNK_CHARS / 4)
-    const estimatedTotalTokens = chunks.length * estimatedTokensPerChunk
-    let tokensGenerated = 0
+    // Track tokens per chunk to estimate progress within each chunk
+    let avgTokensPerChunk = 2000 // initial estimate, updated after each chunk
+    let totalTokensSoFar = 0
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkLabel = chunks.length > 1
@@ -151,15 +150,16 @@ export class OllamaProvider implements LLMProvider {
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
+      let chunkTokens = 0
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        chunkTokens = 0
         try {
           const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
-            tokensGenerated++
-            const percent = Math.min(99, Math.round((tokensGenerated / estimatedTotalTokens) * 100))
-            if (tokensGenerated % 50 === 0) {
-              console.log(`[segmentation] tokens=${tokensGenerated}/${estimatedTotalTokens} progress=${percent}%`)
-            }
+            chunkTokens++
+            // Progress = completed chunks + fraction of current chunk
+            const chunkFraction = Math.min(chunkTokens / avgTokensPerChunk, 0.95)
+            const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
             onProgress?.(percent)
           })
           chunkResult = this.parseResponse(meetingId, raw, merged)
@@ -174,11 +174,19 @@ export class OllamaProvider implements LLMProvider {
         throw lastError ?? new Error(`LLM summarization failed on chunk ${i + 1}/${chunks.length}`)
       }
 
+      // Update average with actual token count from this chunk
+      totalTokensSoFar += chunkTokens
+      avgTokensPerChunk = Math.round(totalTokensSoFar / (i + 1))
+
       merged.decisions.push(...chunkResult.decisions)
       merged.actionItems.push(...chunkResult.actionItems)
       merged.information.push(...chunkResult.information)
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
+
+      // Report chunk completion
+      const percent = Math.min(99, Math.round(((i + 1) / chunks.length) * 100))
+      onProgress?.(percent)
     }
 
     return merged
