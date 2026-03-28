@@ -1,13 +1,16 @@
 import type { MeetingSegments, SegmentCategory } from '../../shared/types'
 
 export interface LLMProvider {
-  summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void): Promise<MeetingSegments>
+  summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
 }
 
 const MAX_RETRIES = 2
 const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 const CHUNK_CHARS = 6000 // ~1.5K tokens per chunk — small enough for thorough extraction
+const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
+const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
+const MAX_OUTPUT_TOKENS = 8192 // Cap generation length to prevent infinite loops
 
 const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture everything of value from the transcript. People rely on these notes to remember what happened.
 
@@ -37,17 +40,24 @@ Guidelines:
 - When in doubt about a detail, use the EXACT phrasing from the transcript rather than rewording it.
 - Always use proper sentence capitalization for titles and content.
 
-GROUPING — Every item MUST have a "topic" field. The topic is a BROAD theme (2-4 words) that groups MULTIPLE related items together. Think of topics like chapter headings — there should be only 3-8 topics for an entire meeting, not one per item. Many items should share the same topic.
+GROUPING — This is critical. Every item MUST have a "topic" field that acts as a CHAPTER HEADING for the meeting. Topics must be VERY broad — think of them as the 3-5 major subjects the meeting covered, like an agenda or table of contents.
 
-Examples of GOOD topic usage (broad, reused):
-- "Cybersecurity Strategy" grouping: vendor selection, policy decisions, implementation timeline, customer rollout
-- "Revenue & Pricing" grouping: rate changes, renewal strategy, upsell approach, pricing tiers
-- "Team Changes" grouping: hiring, role changes, departures, onboarding
+STRICT RULES:
+- A meeting should have AT MOST 3-6 unique topics total across ALL categories.
+- Each topic should group 3-10+ items under it.
+- If a topic only has 1-2 items, it is TOO SPECIFIC — merge it into a broader topic.
+- Items about the same general area MUST share the EXACT same topic string.
 
-Examples of BAD topic usage (too specific, one per item):
-- "Vendor Selection", "Policy Update", "Implementation Plan", "Customer Rollout" — these should ALL be under one topic like "Cybersecurity Strategy"
+HOW TO PICK TOPICS: Before writing items, identify the 3-5 major subjects discussed in this meeting. Use those as your only topic values. Every item must map to one of them.
 
-Items about the same broad subject MUST share the EXACT same topic string.
+GOOD topics (broad, each grouping many items):
+- "Pricing & Costs" — groups: setup fees, per-device costs, update charges, discount tiers, billing terms
+- "Technical Architecture" — groups: infrastructure, deployment, security, integrations, performance
+- "Project Timeline" — groups: milestones, deadlines, dependencies, launch date, phases
+
+BAD topics (too specific, essentially restating the item title):
+- "Image Pricing", "Image Creation", "Image Updates", "Chrome Browser" — these should ALL be under ONE topic like "Device Imaging"
+- "Q1 Revenue", "Q2 Forecast", "Budget Cuts" — these should ALL be under "Financial Planning"
 
 TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at the start of each line. For each item, set "sourceStartMs" and "sourceEndMs" to the approximate start and end timestamps in milliseconds. Convert the timestamp format to milliseconds (e.g., [02:30] = 150000ms, [01:05:30] = 3930000ms). If unsure, use 0.
 
@@ -117,18 +127,18 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
-  private estimateItemCount(transcriptLength: number): string {
-    // ~150 chars per spoken line, ~5 lines per minute → ~750 chars/min
-    const estMinutes = Math.max(5, Math.round(transcriptLength / 750))
+  private estimateItemCount(durationMinutes: number): string {
+    const estMinutes = Math.max(5, Math.round(durationMinutes))
     // Scale: ~1 item per minute, min 5, no max
     const minItems = Math.max(5, Math.round(estMinutes * 0.8))
     const maxItems = Math.round(estMinutes * 1.5)
-    return `This appears to be roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
+    return `This is roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
   }
 
-  async summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void): Promise<MeetingSegments> {
+  async summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
-    const itemGuidance = this.estimateItemCount(transcript.length)
+    const estMinutes = durationMinutes ?? Math.max(5, Math.round(transcript.length / 750))
+    const itemGuidance = this.estimateItemCount(estMinutes)
     console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
 
     const merged: MeetingSegments = {
@@ -139,8 +149,7 @@ export class OllamaProvider implements LLMProvider {
       statusUpdates: [],
     }
 
-    // Track tokens per chunk to estimate progress within each chunk
-    let avgTokensPerChunk = 2000 // initial estimate, updated after each chunk
+    let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
 
     for (let i = 0; i < chunks.length; i++) {
@@ -155,17 +164,20 @@ export class OllamaProvider implements LLMProvider {
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         chunkTokens = 0
         try {
+          if (attempt > 0) console.log(`Chunk ${i + 1}/${chunks.length} retry ${attempt}/${MAX_RETRIES}`)
+          else console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)...`)
           const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
             chunkTokens++
-            // Progress = completed chunks + fraction of current chunk
             const chunkFraction = Math.min(chunkTokens / avgTokensPerChunk, 0.95)
             const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
             onProgress?.(percent)
           })
+          console.log(`Chunk ${i + 1}/${chunks.length} complete (${chunkTokens} tokens)`)
           chunkResult = this.parseResponse(meetingId, raw, merged)
           break
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
+          console.error(`Chunk ${i + 1}/${chunks.length} failed:`, lastError.message)
           if (attempt < MAX_RETRIES) continue
         }
       }
@@ -174,7 +186,6 @@ export class OllamaProvider implements LLMProvider {
         throw lastError ?? new Error(`LLM summarization failed on chunk ${i + 1}/${chunks.length}`)
       }
 
-      // Update average with actual token count from this chunk
       totalTokensSoFar += chunkTokens
       avgTokensPerChunk = Math.round(totalTokensSoFar / (i + 1))
 
@@ -184,7 +195,6 @@ export class OllamaProvider implements LLMProvider {
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
 
-      // Report chunk completion
       const percent = Math.min(99, Math.round(((i + 1) / chunks.length) * 100))
       onProgress?.(percent)
     }
@@ -212,57 +222,97 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private async callOllama(transcript: string, onToken?: () => void): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
-        ],
-        stream: true,
-        format: 'json',
-        options: {
-          num_ctx: TARGET_CONTEXT_TOKENS,
-          temperature: 0,
-          repeat_penalty: 1.3,
-        },
-      }),
-    })
+    const controller = new AbortController()
+    const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
+          ],
+          stream: true,
+          format: 'json',
+          options: {
+            num_ctx: TARGET_CONTEXT_TOKENS,
+            num_predict: MAX_OUTPUT_TOKENS,
+            temperature: 0,
+            repeat_penalty: 1.3,
+          },
+        }),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      clearTimeout(requestTimer)
+      throw err
+    }
 
     if (!res.ok) {
+      clearTimeout(requestTimer)
       const text = await res.text().catch(() => '')
       throw new Error(`Ollama returned ${res.status}: ${text.slice(0, 200)}`)
     }
 
     if (!res.body) {
+      clearTimeout(requestTimer)
       throw new Error('Ollama returned no response body')
     }
 
     let content = ''
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
+    let buffer = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const streamTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)), STREAM_TIMEOUT_MS)
+        )
+        const { done, value } = await Promise.race([reader.read(), streamTimeout])
+        if (done) break
 
-      const lines = decoder.decode(value, { stream: true }).split('\n')
-      for (const line of lines) {
-        if (!line.trim()) continue
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const data = JSON.parse(line) as { message?: { content?: string }; error?: string; done?: boolean }
+            if (data.error) throw new Error(`Ollama error: ${data.error}`)
+            if (data.message?.content) {
+              content += data.message.content
+              onToken?.()
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) {
+              console.warn('Ollama: unparseable line (skipped):', line.slice(0, 100))
+              continue
+            }
+            throw e
+          }
+        }
+      }
+
+      // Flush remaining buffer
+      if (buffer.trim()) {
         try {
-          const data = JSON.parse(line) as { message?: { content?: string }; error?: string; done?: boolean }
+          const data = JSON.parse(buffer) as { message?: { content?: string }; error?: string }
           if (data.error) throw new Error(`Ollama error: ${data.error}`)
           if (data.message?.content) {
             content += data.message.content
-            onToken?.()
           }
         } catch (e) {
-          if (e instanceof SyntaxError) continue // partial JSON line
-          throw e
+          if (!(e instanceof SyntaxError)) throw e
         }
       }
+    } finally {
+      clearTimeout(requestTimer)
     }
 
     if (!content) {

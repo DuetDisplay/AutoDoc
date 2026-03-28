@@ -153,13 +153,17 @@ export class SegmentationService {
       })
       .join('\n')
 
+    // Compute actual duration from transcript timestamps
+    const lastEntry = transcripts[transcripts.length - 1]
+    const durationMinutes = lastEntry ? Math.round((lastEntry.endMs || lastEntry.startMs) / 60000) : undefined
+
     let lastBroadcastedPercent = -1
     const segments = await this.llmProvider.summarize(meetingId, fullText, (percent) => {
       if (percent !== lastBroadcastedPercent) {
         lastBroadcastedPercent = percent
         this.broadcastStatus(meetingId, 'segmenting', percent)
       }
-    })
+    }, durationMinutes)
 
     // Verify the LLM actually produced content — empty results mean it failed silently
     const totalItems = segments.decisions.length +
