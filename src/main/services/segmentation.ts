@@ -147,9 +147,12 @@ export class SegmentationService {
       })
       .join('\n')
 
-    const segments = await this.llmProvider.summarize(meetingId, fullText, (chunk, total) => {
-      const progress = Math.round((chunk / total) * 100)
-      this.broadcastStatus(meetingId, 'segmenting', progress)
+    let lastBroadcastedPercent = -1
+    const segments = await this.llmProvider.summarize(meetingId, fullText, (percent) => {
+      if (percent !== lastBroadcastedPercent) {
+        lastBroadcastedPercent = percent
+        this.broadcastStatus(meetingId, 'segmenting', percent)
+      }
     })
 
     // Verify the LLM actually produced content — empty results mean it failed silently

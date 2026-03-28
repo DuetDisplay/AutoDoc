@@ -1,7 +1,7 @@
 import type { MeetingSegments, SegmentCategory } from '../../shared/types'
 
 export interface LLMProvider {
-  summarize(meetingId: string, transcript: string, onProgress?: (chunk: number, totalChunks: number) => void): Promise<MeetingSegments>
+  summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
 }
 
@@ -126,7 +126,7 @@ export class OllamaProvider implements LLMProvider {
     return `This appears to be roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
   }
 
-  async summarize(meetingId: string, transcript: string, onProgress?: (chunk: number, totalChunks: number) => void): Promise<MeetingSegments> {
+  async summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
     const itemGuidance = this.estimateItemCount(transcript.length)
     console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
@@ -139,6 +139,11 @@ export class OllamaProvider implements LLMProvider {
       statusUpdates: [],
     }
 
+    // Estimate total tokens across all chunks (~1 token per 4 chars of input, output ~same size)
+    const estimatedTokensPerChunk = Math.ceil(CHUNK_CHARS / 4)
+    const estimatedTotalTokens = chunks.length * estimatedTokensPerChunk
+    let tokensGenerated = 0
+
     for (let i = 0; i < chunks.length; i++) {
       const chunkLabel = chunks.length > 1
         ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract ALL noteworthy items from this section. ${itemGuidance}`
@@ -149,7 +154,11 @@ export class OllamaProvider implements LLMProvider {
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          const raw = await this.callOllama(chunks[i] + chunkLabel)
+          const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
+            tokensGenerated++
+            const percent = Math.min(99, Math.round((tokensGenerated / estimatedTotalTokens) * 100))
+            onProgress?.(percent)
+          })
           chunkResult = this.parseResponse(meetingId, raw, merged)
           break
         } catch (err) {
@@ -167,8 +176,6 @@ export class OllamaProvider implements LLMProvider {
       merged.information.push(...chunkResult.information)
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
-
-      onProgress?.(i + 1, chunks.length)
     }
 
     return merged
@@ -193,7 +200,7 @@ export class OllamaProvider implements LLMProvider {
     return chunks
   }
 
-  private async callOllama(transcript: string): Promise<string> {
+  private async callOllama(transcript: string, onToken?: () => void): Promise<string> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -203,7 +210,7 @@ export class OllamaProvider implements LLMProvider {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
         ],
-        stream: false,
+        stream: true,
         format: 'json',
         options: {
           num_ctx: TARGET_CONTEXT_TOKENS,
@@ -218,12 +225,35 @@ export class OllamaProvider implements LLMProvider {
       throw new Error(`Ollama returned ${res.status}: ${text.slice(0, 200)}`)
     }
 
-    const data = (await res.json()) as OllamaResponse
-    if (data.error) {
-      throw new Error(`Ollama error: ${data.error}`)
+    if (!res.body) {
+      throw new Error('Ollama returned no response body')
     }
 
-    const content = data.message?.content
+    let content = ''
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const lines = decoder.decode(value, { stream: true }).split('\n')
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const data = JSON.parse(line) as { message?: { content?: string }; error?: string; done?: boolean }
+          if (data.error) throw new Error(`Ollama error: ${data.error}`)
+          if (data.message?.content) {
+            content += data.message.content
+            onToken?.()
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError) continue // partial JSON line
+          throw e
+        }
+      }
+    }
+
     if (!content) {
       throw new Error('Ollama returned empty response')
     }
