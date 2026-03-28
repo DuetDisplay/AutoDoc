@@ -51,6 +51,10 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   }
 
   async connect(): Promise<CalendarAccount> {
+    if (MICROSOFT_CLIENT_ID === 'YOUR_MICROSOFT_CLIENT_ID') {
+      throw new Error('Microsoft OAuth client ID is not configured. Register an Azure AD app and set MICROSOFT_CLIENT_ID.')
+    }
+
     const state = crypto.randomBytes(16).toString('hex')
     const statePayload = JSON.stringify({ provider: 'microsoft', nonce: state })
     const encodedState = Buffer.from(statePayload).toString('base64url')
@@ -145,8 +149,9 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
 
   async fetchUpcomingEvents(accountId: string): Promise<CalendarEvent[]> {
     const now = new Date()
-    const end = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-    return this.fetchEvents(accountId, now.toISOString(), end.toISOString())
+    // Use 7-day window — Microsoft calendarView requires endDateTime unlike Google's open-ended query
+    const end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    return this.fetchEvents(accountId, now.toISOString(), end.toISOString(), 20)
   }
 
   async fetchRecentEvents(accountId: string, daysBack = 7): Promise<CalendarEvent[]> {
@@ -159,18 +164,23 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     await this.refreshIfNeeded(accountId)
   }
 
-  private async fetchEvents(accountId: string, startDateTime: string, endDateTime: string): Promise<CalendarEvent[]> {
+  private async fetchEvents(accountId: string, startDateTime: string, endDateTime: string, maxResults?: number): Promise<CalendarEvent[]> {
     await this.refreshIfNeeded(accountId)
 
     const tokens = this.getTokens(accountId)
     if (!tokens?.access_token) throw new Error('No access token for Microsoft account')
 
     const allEvents: GraphEvent[] = []
-    let url: string | null = `${GRAPH_BASE}/me/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=100&$orderby=start/dateTime`
+    const top = maxResults ?? 100
+    let url: string | null = `${GRAPH_BASE}/me/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=${top}&$orderby=start/dateTime`
+    const MAX_PAGES = 20
 
-    while (url) {
+    for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          Prefer: 'outlook.timezone="UTC"',
+        },
       })
 
       if (!res.ok) {
@@ -191,7 +201,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       id: `microsoft_${event.id}`,
       externalId: event.id,
       accountId,
-      provider: 'microsoft',
+      provider: 'microsoft' as const,
       recurringEventId: event.seriesMasterId ?? null,
       title: event.subject ?? 'Untitled',
       startTime: event.start?.dateTime ? new Date(event.start.dateTime + 'Z').getTime() : 0,
@@ -200,7 +210,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         .map((a) => a.emailAddress?.address ?? '')
         .filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
-      autoRecord: 'off',
+      autoRecord: 'off' as const,
       syncedAt: Date.now(),
     }
   }
