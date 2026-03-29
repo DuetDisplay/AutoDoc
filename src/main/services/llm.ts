@@ -138,6 +138,8 @@ export class OllamaProvider implements LLMProvider {
   async summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
     const estMinutes = durationMinutes ?? Math.max(5, Math.round(transcript.length / 750))
+    const durationMs = estMinutes * 60 * 1000
+    const transcriptTimestamps = this.extractTimestampsMs(transcript)
     const itemGuidance = this.estimateItemCount(estMinutes)
     console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
 
@@ -177,7 +179,7 @@ export class OllamaProvider implements LLMProvider {
             onProgress?.(percent)
           })
           console.log(`Chunk ${i + 1}/${chunks.length} complete (${chunkTokens} tokens)`)
-          chunkResult = this.parseResponse(meetingId, raw, merged)
+          chunkResult = this.parseResponse(meetingId, raw, merged, durationMs, transcriptTimestamps)
           break
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -394,7 +396,7 @@ export class OllamaProvider implements LLMProvider {
     return result
   }
 
-  private parseResponse(meetingId: string, raw: string, existing?: MeetingSegments): MeetingSegments {
+  private parseResponse(meetingId: string, raw: string, existing?: MeetingSegments, durationMs?: number, transcriptTimestamps?: number[]): MeetingSegments {
     let parsed: Record<string, RawSegment[]>
     try {
       parsed = JSON.parse(raw)
@@ -453,13 +455,55 @@ export class OllamaProvider implements LLMProvider {
           content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
-          sourceStartMs: typeof item.sourceStartMs === 'number' ? item.sourceStartMs : 0,
-          sourceEndMs: typeof item.sourceEndMs === 'number' ? item.sourceEndMs : 0,
+          sourceStartMs: this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps),
+          sourceEndMs: this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps),
         })
         index++
       }
     }
 
     return result
+  }
+
+  /** Extract all timestamp positions (in ms) from transcript lines like [02:30] or [01:05:30] */
+  private extractTimestampsMs(transcript: string): number[] {
+    const timestamps: number[] = []
+    const regex = /\[(\d+):(\d+)(?::(\d+))?\]/g
+    let match
+    while ((match = regex.exec(transcript)) !== null) {
+      if (match[3] !== undefined) {
+        // HH:MM:SS
+        timestamps.push(
+          (parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3])) * 1000
+        )
+      } else {
+        // MM:SS
+        timestamps.push(
+          (parseInt(match[1]) * 60 + parseInt(match[2])) * 1000
+        )
+      }
+    }
+    return timestamps
+  }
+
+  /** Snap an LLM-generated timestamp to the nearest real transcript timestamp */
+  private snapTimestamp(value: unknown, maxMs?: number, transcriptTimestamps?: number[]): number {
+    let ms = typeof value === 'number' ? value : 0
+    if (ms < 0) ms = 0
+    if (maxMs && ms > maxMs) ms = maxMs
+
+    if (!transcriptTimestamps || transcriptTimestamps.length === 0) return ms
+
+    // Find the closest real timestamp
+    let closest = transcriptTimestamps[0]
+    let minDiff = Math.abs(ms - closest)
+    for (let i = 1; i < transcriptTimestamps.length; i++) {
+      const diff = Math.abs(ms - transcriptTimestamps[i])
+      if (diff < minDiff) {
+        minDiff = diff
+        closest = transcriptTimestamps[i]
+      }
+    }
+    return closest
   }
 }
