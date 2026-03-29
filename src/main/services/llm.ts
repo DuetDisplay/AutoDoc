@@ -153,8 +153,10 @@ export class OllamaProvider implements LLMProvider {
     let totalTokensSoFar = 0
 
     for (let i = 0; i < chunks.length; i++) {
+      const chunkItemMin = Math.max(2, Math.round(estMinutes * 0.8 / chunks.length))
+      const chunkItemMax = Math.max(5, Math.round(estMinutes * 1.5 / chunks.length))
       const chunkLabel = chunks.length > 1
-        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect 2-5 items from this part). Be concise. ${itemGuidance}`
+        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}`
         : `\n\n${itemGuidance}`
 
       let lastError: Error | null = null
