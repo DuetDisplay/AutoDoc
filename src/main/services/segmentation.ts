@@ -136,6 +136,8 @@ export class SegmentationService {
     this.activeStatus = 'segmenting'
     this.broadcastStatus(meetingId, 'segmenting', 0)
 
+    const t0 = Date.now()
+
     const transcripts: Transcript[] = await isEncrypted(transcriptPath)
       ? await decryptJSON<Transcript[]>(transcriptPath)
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
@@ -152,6 +154,8 @@ export class SegmentationService {
         return `[${ts}] [${t.speaker}] ${t.text}`
       })
       .join('\n')
+
+    console.log(`[perf] Segmentation input: ${fullText.length} chars (${meetingId})`)
 
     // Compute actual duration from transcript timestamps
     const lastEntry = transcripts[transcripts.length - 1]
@@ -177,6 +181,8 @@ export class SegmentationService {
     }
 
     await encryptJSON(segments, segmentsPath)
+
+    console.log(`[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
