@@ -7,7 +7,7 @@ export interface LLMProvider {
 
 const MAX_RETRIES = 2
 const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
-const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keep small so output fits within token cap
+const CHUNK_CHARS = 12000 // ~3K tokens per chunk — fewer LLM round trips, fits well within 32K context
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
