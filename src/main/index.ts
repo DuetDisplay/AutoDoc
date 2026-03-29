@@ -254,7 +254,7 @@ app.whenReady().then(async () => {
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider)
+  registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider, calendarManager)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()

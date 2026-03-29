@@ -3,10 +3,11 @@ import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
-import type { Transcript, MeetingSegments } from '../../shared/types'
+import type { Transcript, MeetingSegments, CalendarEvent } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
+import type { CalendarManager } from '../services/calendar-manager'
 
-const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts and notes.
+const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts, notes, and their calendar.
 
 Rules:
 - Answer concisely and directly based on the meeting data provided
@@ -18,6 +19,7 @@ export function registerChatIpc(
   recordingsBaseDir: string,
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
+  calendarManager: CalendarManager,
 ): void {
   ipcMain.handle('chat:send', async (_event, question: string): Promise<string> => {
     // Try waiting for managed Ollama; fall back if server is already running externally
@@ -28,8 +30,13 @@ export function registerChatIpc(
       if (!running) throw new Error('Ollama is not running. Please start Ollama and try again.')
     }
 
-    // Gather context from recent meetings
-    const context = await gatherMeetingContext(recordingsBaseDir)
+    // Gather context from recent meetings and calendar
+    const [meetingContext, calendarContext] = await Promise.all([
+      gatherMeetingContext(recordingsBaseDir),
+      gatherCalendarContext(calendarManager),
+    ])
+
+    const context = [calendarContext, meetingContext].filter(Boolean).join('\n\n---\n\n')
 
     const res = await fetch(`${ollamaManager.getBaseUrl()}/api/chat`, {
       method: 'POST',
@@ -40,7 +47,7 @@ export function registerChatIpc(
           { role: 'system', content: CHAT_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Here is context from recent meetings:\n\n${context}\n\n---\n\nUser question: ${question}`,
+            content: `Here is context from the user's calendar and recent meetings:\n\n${context}\n\n---\n\nUser question: ${question}`,
           },
         ],
         stream: false,
@@ -123,4 +130,31 @@ async function gatherMeetingContext(recordingsBaseDir: string): Promise<string> 
   }
 
   return contextParts.length > 0 ? contextParts.join('\n\n---\n\n') : 'No meeting data available.'
+}
+
+async function gatherCalendarContext(calendarManager: CalendarManager): Promise<string> {
+  let events: CalendarEvent[]
+  try {
+    events = await calendarManager.fetchAllUpcomingEvents()
+  } catch {
+    return ''
+  }
+
+  if (events.length === 0) return ''
+
+  const now = new Date()
+  const lines = events.map((e) => {
+    const start = new Date(e.startTime)
+    const end = new Date(e.endTime)
+    const dateStr = start.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })
+    const timeStr = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+    const attendeeStr = e.attendees.length > 0 ? ` (with ${e.attendees.join(', ')})` : ''
+    return `- ${dateStr}, ${timeStr}: ${e.title}${attendeeStr}`
+  })
+
+  return `## Upcoming Calendar Events (as of ${now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })})\n${lines.join('\n')}`
 }
