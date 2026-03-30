@@ -193,19 +193,32 @@ export class TranscriptionService {
       let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
 
       // Speaker labeling (two-stream: system active = remote, system silent = "me")
-      if (hasMic && hasSystem) {
+      // Use system.webm if available; fall back to extracting audio from screen.webm
+      const screenWebm = join(meetingDir, 'screen.webm')
+      const hasScreen = await this.fileExists(screenWebm)
+      const canDiarize = hasMic && (hasSystem || hasScreen)
+
+      if (canDiarize) {
         try {
           t0 = Date.now()
           this.activeStatus = 'diarizing'
           this.broadcastStatus(meetingId, 'diarizing')
 
-          // Detect system audio activity — clean digital signal, no mic bleed
           const tempSystemWav = `${tempPrefix}-system.wav`
           tempFiles.push(tempSystemWav)
-          const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
-          await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
-          const systemSegments = await this.detectAudioActivity(tempSystemWav)
 
+          if (hasSystem) {
+            // Preferred: use the dedicated system audio stream
+            const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
+            await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
+          } else {
+            // Fallback: extract audio from screen.webm (system audio is muxed in)
+            console.log(`[diarize] system.webm missing, extracting audio from screen.webm (${meetingId})`)
+            const screenInput = await this.decryptIfNeeded(screenWebm, tempFiles)
+            await this.audioConverter.convert(screenInput, tempSystemWav, this.whisperManager.getFfmpegPath())
+          }
+
+          const systemSegments = await this.detectAudioActivity(tempSystemWav)
           transcripts = alignSpeakers(transcripts, null, systemSegments)
           await this.generateSpeakersJson(meetingId, transcripts)
           console.log(`[perf] Speaker labeling: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)

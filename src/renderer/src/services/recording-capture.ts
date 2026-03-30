@@ -58,8 +58,13 @@ export async function startCapture(
       } as MediaTrackConstraints,
     })
     audioStream.getVideoTracks().forEach((t) => t.stop())
-  } catch {
+  } catch (err) {
+    console.error('System audio capture failed:', err)
     audioStream = new MediaStream()
+    useToastStore.getState().showToast({
+      type: 'microphone',
+      message: 'System audio capture failed. Speaker diarization will be unavailable for this recording.',
+    })
   }
 
   // 3. Capture microphone
