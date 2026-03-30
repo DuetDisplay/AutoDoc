@@ -262,6 +262,8 @@ app.whenReady().then(async () => {
   const ensureOllamaRunning = (): void => {
     if (ollamaRecoveryPromise) return
 
+    managedOllamaManager.resetReady()
+
     ollamaSetupState.phase = 'starting'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error

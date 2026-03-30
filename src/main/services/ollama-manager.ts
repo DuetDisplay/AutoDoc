@@ -128,6 +128,10 @@ export class OllamaManager extends EventEmitter {
 
     if (await this.isServerRunning()) return
 
+    // Kill any orphaned process holding our port from a previous app session
+    this.killProcessOnPort()
+    await new Promise((r) => setTimeout(r, 1000))
+
     await new Promise<void>((resolve, reject) => {
       const binary = this.getBinaryPath()
       const proc = spawn(binary, ['serve'], {
@@ -180,12 +184,64 @@ export class OllamaManager extends EventEmitter {
 
   stop(): void {
     if (this.process) {
-      if (process.platform === 'win32') {
+      if (IS_WIN) {
         spawn('taskkill', ['/pid', String(this.process.pid), '/f', '/t']).on('error', () => {})
       } else {
         this.process.kill('SIGTERM')
       }
       this.process = null
+    }
+    // Also kill any process on our port that we didn't spawn (adopted from a previous session)
+    this.killProcessOnPort()
+    this.readyPromise = null
+  }
+
+  /** Clear cached ready state so the next startAndPull() actually restarts. */
+  resetReady(): void {
+    this.readyPromise = null
+  }
+
+  /**
+   * Find and kill any process listening on our port.
+   * Handles orphaned Ollama processes left behind by a previous app session
+   * where start() found an existing server and never tracked its PID.
+   */
+  private killProcessOnPort(): void {
+    try {
+      if (IS_WIN) {
+        const output = execSync(
+          `netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`,
+          { encoding: 'utf-8', timeout: 5000 },
+        ).trim()
+        const pids = new Set<string>()
+        for (const line of output.split(/\r?\n/)) {
+          const pid = line.trim().split(/\s+/).pop()
+          if (pid && pid !== '0') pids.add(pid)
+        }
+        for (const pid of pids) {
+          try {
+            execSync(`taskkill /pid ${pid} /f /t`, { timeout: 5000 })
+          } catch {
+            // already dead
+          }
+        }
+      } else {
+        const pids = execSync(`lsof -ti :${OLLAMA_PORT}`, {
+          encoding: 'utf-8',
+          timeout: 5000,
+        }).trim()
+        for (const pid of pids.split(/\n/)) {
+          if (pid) {
+            try {
+              process.kill(Number(pid), 'SIGKILL')
+            } catch {
+              // already dead
+            }
+          }
+        }
+      }
+    } catch {
+      // No process found on the port — nothing to clean up
     }
   }
 
