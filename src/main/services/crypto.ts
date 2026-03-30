@@ -222,7 +222,8 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
 
 export async function decryptFileToTemp(encPath: string): Promise<string> {
   const key = getKey()
-  const tmpFilePath = path.join(os.tmpdir(), `autodoc-${crypto.randomBytes(8).toString('hex')}.tmp`)
+  const ext = path.extname(encPath) || '.tmp'
+  const tmpFilePath = path.join(os.tmpdir(), `autodoc-${crypto.randomBytes(8).toString('hex')}${ext}`)
 
   const srcFd = await fsp.open(encPath, 'r')
   const dstFd = await fsp.open(tmpFilePath, 'w')
@@ -401,7 +402,7 @@ export async function cleanupTempFiles(): Promise<void> {
   const entries = await fsp.readdir(tmpdir)
 
   for (const entry of entries) {
-    if (/^autodoc-.*\.tmp$/.test(entry)) {
+    if (/^autodoc-[0-9a-f]{16}\./.test(entry)) {
       await fsp.unlink(path.join(tmpdir, entry)).catch(() => {})
     }
   }

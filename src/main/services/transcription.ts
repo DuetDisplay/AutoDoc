@@ -419,7 +419,7 @@ export class TranscriptionService {
   }
 
   private mapToTranscripts(meetingId: string, output: WhisperOutput): Transcript[] {
-    return output.transcription.map((seg, index) => ({
+    const raw = output.transcription.map((seg, index) => ({
       id: `${meetingId}-${index}`,
       meetingId,
       speaker: 'Speaker',
@@ -428,6 +428,18 @@ export class TranscriptionService {
       endMs: seg.offsets.to,
       confidence: -1,
     }))
+
+    // Remove consecutive duplicate segments (Whisper hallucination loops)
+    const deduped: Transcript[] = []
+    for (const seg of raw) {
+      if (seg.text === '') continue
+      const prev = deduped[deduped.length - 1]
+      if (prev && prev.text === seg.text) continue
+      deduped.push(seg)
+    }
+
+    // Re-index IDs after dedup
+    return deduped.map((seg, i) => ({ ...seg, id: `${meetingId}-${i}` }))
   }
 
   private async markFailed(meetingId: string, error: string): Promise<void> {

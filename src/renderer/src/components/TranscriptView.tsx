@@ -86,14 +86,16 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
   const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
   const speakerIds = hasSpeakers ? Object.keys(speakers) : []
 
-  // Merge consecutive segments from the same speaker
-  const merged: { speaker: string; startMs: number; texts: string[] }[] = []
+  // Merge consecutive segments from the same speaker, but break on time gaps
+  const TIME_GAP_MS = 15_000 // start a new block if >15s gap between segments
+  const merged: { speaker: string; startMs: number; endMs: number; texts: string[] }[] = []
   for (const seg of segments) {
     const last = merged[merged.length - 1]
-    if (last && last.speaker === seg.speaker) {
+    if (last && last.speaker === seg.speaker && seg.startMs - last.endMs < TIME_GAP_MS) {
       last.texts.push(seg.text)
+      last.endMs = seg.endMs
     } else {
-      merged.push({ speaker: seg.speaker, startMs: seg.startMs, texts: [seg.text] })
+      merged.push({ speaker: seg.speaker, startMs: seg.startMs, endMs: seg.endMs, texts: [seg.text] })
     }
   }
 
