@@ -20,9 +20,9 @@ function formatDuration(seconds: number): string {
 }
 
 const CATEGORY_ORDER: SegmentCategory[] = [
+  'information',
   'decision',
   'action_item',
-  'information',
   'discussion',
   'status_update',
 ]
@@ -125,20 +125,44 @@ export function MeetingDetail() {
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
+  const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
   const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean; audioFile?: string } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const [playbackRate, setPlaybackRate] = useState(1)
+
+  const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
   const handleSeek = useCallback((ms: number) => {
     const el = mediaRef.current
     if (!el) return
-    el.pause()
     el.currentTime = ms / 1000
-    // webm from MediaRecorder may lack cue points — wait for seek to complete
-    el.addEventListener('seeked', () => el.play(), { once: true })
+    el.play()
   }, [])
+
+  const seekToSegment = useCallback((ms: number) => {
+    setActiveTab('transcript')
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = mediaRef.current
+        if (!el) return
+        el.currentTime = ms / 1000
+        el.play()
+      })
+    })
+  }, [])
+
+  const cyclePlaybackRate = useCallback(() => {
+    const el = mediaRef.current
+    if (!el) return
+    const currentIdx = PLAYBACK_RATES.indexOf(playbackRate)
+    const nextIdx = (currentIdx + 1) % PLAYBACK_RATES.length
+    const newRate = PLAYBACK_RATES[nextIdx]
+    el.playbackRate = newRate
+    setPlaybackRate(newRate)
+  }, [playbackRate])
 
   const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
     if (!id) return
@@ -199,6 +223,7 @@ export function MeetingDetail() {
         id: `${id}-${key}-${Date.now()}`,
         meetingId: id,
         category,
+        topic: null,
         title: 'New item',
         content: 'Add details here...',
         assignee: null,
@@ -222,6 +247,7 @@ export function MeetingDetail() {
     window.electronAPI.invoke('transcription:get-status', id).then(setTranscriptionStatus)
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
+    window.electronAPI.invoke('segmentation:get-progress', id).then(setSegmentationProgress)
     window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
     window.electronAPI.invoke('recording:get-media', id).then(setMedia)
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -245,6 +271,7 @@ export function MeetingDetail() {
       (payload) => {
         if (payload.meetingId === id) {
           setSegmentationStatus(payload.status)
+          setSegmentationProgress(payload.progress)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
           }
@@ -316,20 +343,66 @@ export function MeetingDetail() {
     return segments[CATEGORY_TO_KEY[category]] ?? []
   }
 
+  const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
+    const groups: { topic: string | null; items: Segment[] }[] = []
+    const topicMap = new Map<string, Segment[]>()
+    const ungrouped: Segment[] = []
+
+    for (const item of items) {
+      if (item.topic) {
+        const existing = topicMap.get(item.topic)
+        if (existing) {
+          existing.push(item)
+        } else {
+          const group = [item]
+          topicMap.set(item.topic, group)
+          groups.push({ topic: item.topic, items: group })
+        }
+      } else {
+        ungrouped.push(item)
+      }
+    }
+
+    // Put ungrouped items at the end
+    if (ungrouped.length > 0) {
+      groups.push({ topic: null, items: ungrouped })
+    }
+
+    return groups
+  }
+
+  const formatTimestamp = (ms: number): string => {
+    const totalSec = Math.floor(ms / 1000)
+    const h = Math.floor(totalSec / 3600)
+    const m = Math.floor((totalSec % 3600) / 60)
+    const s = totalSec % 60
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5 text-[12px]">
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-1.5 text-[12px]">
             <button
               onClick={() => navigate('/recordings')}
-              className="text-ink-faint hover:text-ink transition-colors"
+              className="text-ink-faint hover:text-ink transition-colors shrink-0"
             >
               AI Notes
             </button>
-            <span className="text-ink-faint">/</span>
-            <span className="text-ink font-semibold">{detail?.title ?? 'Meeting'}</span>
+            <span className="text-ink-faint shrink-0">/</span>
+            <EditableText
+              value={detail?.title ?? 'Meeting'}
+              onSave={(newTitle) => {
+                if (!id) return
+                window.electronAPI.invoke('recording:update-title', id, newTitle).then(() => {
+                  setDetail((prev) => prev ? { ...prev, title: newTitle } : prev)
+                })
+              }}
+              className="text-ink font-semibold flex-1 min-w-0"
+            />
           </div>
           {detail && (
             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
@@ -353,7 +426,7 @@ export function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2">
           <TranscriptionBadge status={transcriptionStatus} progress={transcriptionProgress} onRetry={handleRetryTranscription} />
-          <SegmentationBadge status={segmentationStatus} onRetry={handleRetrySegmentation} />
+          <SegmentationBadge status={segmentationStatus} progress={segmentationProgress} onRetry={handleRetrySegmentation} />
         </div>
       </div>
 
@@ -415,43 +488,71 @@ export function MeetingDetail() {
                           : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
                     </p>
                   ) : (
-                    <div className="flex flex-col gap-2.5">
-                      {items.map((item, index) => (
-                        <div key={item.id} className="group flex flex-col gap-0.5" data-searchable>
-                          <div className="flex items-start justify-between gap-2">
-                            <EditableText
-                              value={item.title}
-                              onSave={(v) => updateSegmentField(category, index, 'title', v)}
-                              className="text-[12.5px] font-semibold text-ink flex-1"
-                            />
-                            <button
-                              onClick={() => deleteSegment(category, index)}
-                              className="shrink-0 opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                              title="Delete"
-                            >
-                              &times;
-                            </button>
-                          </div>
-                          <EditableText
-                            value={item.content}
-                            onSave={(v) => updateSegmentField(category, index, 'content', v)}
-                            className="text-[12px] text-ink-muted leading-relaxed"
-                            as="div"
-                          />
-                          {(item.assignee || item.deadline) && (
-                            <div className="flex gap-3 mt-0.5">
-                              {item.assignee && (
-                                <span className="text-[11px] text-ink-faint">
-                                  Owner: {item.assignee}
-                                </span>
-                              )}
-                              {item.deadline && (
-                                <span className="text-[11px] text-ink-faint">
-                                  Due: {item.deadline}
-                                </span>
-                              )}
+                    <div className="flex flex-col gap-3">
+                      {groupByTopic(items).map((group, groupIdx) => (
+                        <div key={group.topic ?? `ungrouped-${groupIdx}`}>
+                          {group.topic && (
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <h4 className="text-[11.5px] font-semibold text-sage tracking-wide">
+                                {group.topic}
+                              </h4>
+                              <div className="flex-1 h-px bg-border-subtle" />
                             </div>
                           )}
+                          <div className="flex flex-col gap-2 pl-2 border-l-2 border-border-subtle">
+                            {group.items.map((item) => {
+                              const globalIndex = items.indexOf(item)
+                              return (
+                                <div key={item.id} className="group flex flex-col gap-0.5 pl-2" data-searchable>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <EditableText
+                                      value={item.title}
+                                      onSave={(v) => updateSegmentField(category, globalIndex, 'title', v)}
+                                      className="text-[12.5px] font-semibold text-ink flex-1"
+                                    />
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {(media?.hasVideo || media?.hasAudio) && item.sourceStartMs > 0 && (
+                                        <button
+                                          onClick={() => seekToSegment(item.sourceStartMs)}
+                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                          title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                        >
+                                          ▶ {formatTimestamp(item.sourceStartMs)}
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => deleteSegment(category, globalIndex)}
+                                        className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                        title="Delete"
+                                      >
+                                        &times;
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <EditableText
+                                    value={item.content}
+                                    onSave={(v) => updateSegmentField(category, globalIndex, 'content', v)}
+                                    className="text-[12px] text-ink-muted leading-relaxed"
+                                    as="div"
+                                  />
+                                  {(item.assignee || item.deadline) && (
+                                    <div className="flex gap-3 mt-0.5">
+                                      {item.assignee && (
+                                        <span className="text-[11px] text-ink-faint">
+                                          Owner: {item.assignee}
+                                        </span>
+                                      )}
+                                      {item.deadline && (
+                                        <span className="text-[11px] text-ink-faint">
+                                          Due: {item.deadline}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -470,16 +571,32 @@ export function MeetingDetail() {
                   className="w-full"
                   src={`autodoc-media://${id}/screen.webm`}
                 />
+                <div className="flex justify-end px-3 py-1.5 border-t border-border">
+                  <button
+                    onClick={cyclePlaybackRate}
+                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors"
+                  >
+                    {playbackRate}x
+                  </button>
+                </div>
               </div>
             )}
             {media?.hasAudio && !media?.hasVideo && (
               <div className="bg-bg-card border border-border rounded-xl p-4">
-                <audio
-                  ref={mediaRef as React.RefObject<HTMLAudioElement>}
-                  controls
-                  className="w-full"
-                  src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
-                />
+                <div className="flex items-center gap-3">
+                  <audio
+                    ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                    controls
+                    className="flex-1"
+                    src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
+                  />
+                  <button
+                    onClick={cyclePlaybackRate}
+                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors shrink-0"
+                  >
+                    {playbackRate}x
+                  </button>
+                </div>
               </div>
             )}
             {Object.keys(speakers).length > 0 && (

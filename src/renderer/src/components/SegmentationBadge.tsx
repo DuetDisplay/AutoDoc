@@ -16,7 +16,7 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: stri
   },
   segmenting: {
     label: 'Generating notes...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse',
+    className: 'text-ink-muted bg-bg-accent',
   },
   complete: {
     label: 'Notes ready',
@@ -30,10 +30,11 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: stri
 
 interface SegmentationBadgeProps {
   status: SegmentationStatus
+  progress?: number
   onRetry?: () => void
 }
 
-export function SegmentationBadge({ status, onRetry }: SegmentationBadgeProps) {
+export function SegmentationBadge({ status, progress, onRetry }: SegmentationBadgeProps) {
   const config = STATUS_CONFIG[status]
   const [ollamaProgress, setOllamaProgress] = useState<OllamaSetupStatus | null>(null)
 
@@ -48,6 +49,9 @@ export function SegmentationBadge({ status, onRetry }: SegmentationBadgeProps) {
   }, [status])
 
   let label = config.label
+  if (status === 'segmenting' && progress != null) {
+    label = `Generating notes... ${progress}%`
+  }
   if (status === 'downloading-model' && ollamaProgress) {
     const pct = ollamaProgress.percent ?? 0
     if (ollamaProgress.phase === 'downloading') {
@@ -57,12 +61,22 @@ export function SegmentationBadge({ status, onRetry }: SegmentationBadgeProps) {
     }
   }
 
+  const showProgress = status === 'segmenting' && progress != null
+
   return (
     <span
-      className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${config.className}`}
+      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${status === 'segmenting' && !showProgress ? 'animate-pulse' : ''}`}
       onClick={status === 'failed' ? onRetry : undefined}
     >
-      {label}
+      {showProgress && (
+        <span
+          className="absolute inset-0 bg-sage/20 transition-[width] duration-500 ease-linear"
+          style={{ width: `${progress}%` }}
+        />
+      )}
+      <span className="relative">
+        {label}
+      </span>
     </span>
   )
 }

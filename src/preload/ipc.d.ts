@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -22,9 +22,9 @@ export interface IpcSendEvents {
 
 export interface IpcInvokeEvents {
   'app:get-version': []
-  'calendar:connect': []
-  'calendar:disconnect': []
-  'calendar:is-connected': []
+  'calendar:connect': [providerType: 'google' | 'microsoft']
+  'calendar:disconnect': [accountId: string]
+  'calendar:get-accounts': []
   'calendar:get-events': []
   'calendar:sync': []
   'calendar:set-auto-record': [eventId: string, recurringEventId: string | null, mode: AutoRecordMode]
@@ -36,6 +36,7 @@ export interface IpcInvokeEvents {
   'recording:stop': []
   'recording:get-state': []
   'recording:save-chunk': [meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer]
+  'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
@@ -43,6 +44,7 @@ export interface IpcInvokeEvents {
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
+  'segmentation:get-progress': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
@@ -70,9 +72,9 @@ export interface IpcInvokeEvents {
 
 export interface IpcInvokeReturns {
   'app:get-version': string
-  'calendar:connect': void
+  'calendar:connect': CalendarAccount
   'calendar:disconnect': void
-  'calendar:is-connected': boolean
+  'calendar:get-accounts': CalendarAccount[]
   'calendar:get-events': CalendarEvent[]
   'calendar:sync': CalendarEvent[]
   'calendar:set-auto-record': void
@@ -84,6 +86,7 @@ export interface IpcInvokeReturns {
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'recording:update-title': void
   'recording:delete': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-transcript': Transcript[]
@@ -91,6 +94,7 @@ export interface IpcInvokeReturns {
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus
+  'segmentation:get-progress': number | undefined
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
@@ -121,7 +125,7 @@ export interface IpcOnEvents {
   'calendar:events-updated': [events: CalendarEvent[]]
   'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus; progress?: number }]
-  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus }]
+  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus; progress?: number }]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]

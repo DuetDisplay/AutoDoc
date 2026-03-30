@@ -4,7 +4,7 @@ import { pathToFileURL } from 'url'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
-import { CalendarService } from './services/calendar'
+import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { registerRecordingIpc } from './ipc/recording-ipc'
@@ -160,8 +160,8 @@ app.whenReady().then(async () => {
     }
   })
 
-  const calendarService = new CalendarService()
-  registerCalendarIpc(calendarService, (events) => {
+  const calendarManager = new CalendarManager()
+  registerCalendarIpc(calendarManager, (events) => {
     cachedEvents = events
     updateTrayMenu()
   })
@@ -200,7 +200,7 @@ app.whenReady().then(async () => {
     whisperManager,
     audioConverter,
     recordingService.getRecordingsBaseDir(),
-    calendarService,
+    calendarManager,
   )
   ollamaManager = new OllamaManager()
   const managedOllamaManager = ollamaManager
@@ -326,7 +326,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarService)
+  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(
     segmentationService,
@@ -337,35 +337,22 @@ app.whenReady().then(async () => {
   )
   registerWhisperIpc(whisperManager, () => ({ ...whisperSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider)
+  registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider, calendarManager)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
-  createWindow()
-
-  const wasConnected = await calendarService.initialize()
-  if (wasConnected) {
-    calendarService.startSync(
-      (events) => {
-        const enriched = applyAutoRecordStateFromIpc(events)
-        cachedEvents = enriched
-        updateTrayMenu()
-        const windows = BrowserWindow.getAllWindows()
-        for (const win of windows) {
-          win.webContents.send('calendar:events-updated', enriched)
-        }
-      },
-      async () => {
-        // Auth failed — disconnect and notify renderer
-        await calendarService.disconnect()
-        cachedEvents = []
-        updateTrayMenu()
-        const windows = BrowserWindow.getAllWindows()
-        for (const win of windows) {
-          win.webContents.send('calendar:connection-changed', false)
-        }
-      },
-    )
+  const restoredAccounts = await calendarManager.initialize()
+  if (restoredAccounts.length > 0) {
+    calendarManager.startSync((events) => {
+      cachedEvents = events
+      updateTrayMenu()
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('calendar:events-updated', events)
+      }
+    })
   }
+
+  createWindow()
 
   // System tray — show upcoming meetings, open app, quit
   const showWindow = () => {

@@ -1,36 +1,36 @@
 import { safeStorage } from 'electron'
-import ElectronStoreModule from 'electron-store'
+import Store from 'electron-store'
+import crypto from 'crypto'
 
-const Store =
-  (ElectronStoreModule as unknown as { default?: typeof ElectronStoreModule }).default ??
-  ElectronStoreModule
+const store = new Store({ name: 'autodoc-tokens' })
 
-let _store: InstanceType<typeof Store> | null = null
-function getStore(): InstanceType<typeof Store> {
-  if (!_store) _store = new Store({ name: 'autodoc-tokens' })
-  return _store
+const LEGACY_TOKEN_KEY = 'gcal_tokens'
+
+function tokenKey(accountId: string): string {
+  return `cal_tokens_${accountId}`
 }
 
-const TOKEN_KEY = 'gcal_tokens'
+function encryptedFlagKey(key: string): string {
+  return `${key}_encrypted`
+}
 
-export function saveTokens(tokens: object): void {
-  const json = JSON.stringify(tokens)
+function saveRaw(key: string, data: object): void {
+  const json = JSON.stringify(data)
   if (safeStorage.isEncryptionAvailable()) {
     const encrypted = safeStorage.encryptString(json)
-    getStore().set(TOKEN_KEY, encrypted.toString('latin1'))
-    getStore().set(`${TOKEN_KEY}_encrypted`, true)
+    store.set(key, encrypted.toString('latin1'))
+    store.set(encryptedFlagKey(key), true)
   } else {
-    getStore().set(TOKEN_KEY, json)
-    getStore().set(`${TOKEN_KEY}_encrypted`, false)
+    store.set(key, json)
+    store.set(encryptedFlagKey(key), false)
   }
 }
 
-export function loadTokens(): object | null {
-  const raw = getStore().get(TOKEN_KEY) as string | undefined
+function loadRaw(key: string): object | null {
+  const raw = store.get(key) as string | undefined
   if (!raw) return null
-
   try {
-    const isEncrypted = getStore().get(`${TOKEN_KEY}_encrypted`) as boolean
+    const isEncrypted = store.get(encryptedFlagKey(key)) as boolean
     if (isEncrypted && safeStorage.isEncryptionAvailable()) {
       const decrypted = safeStorage.decryptString(Buffer.from(raw, 'latin1'))
       return JSON.parse(decrypted)
@@ -41,7 +41,52 @@ export function loadTokens(): object | null {
   }
 }
 
+function clearRaw(key: string): void {
+  store.delete(key)
+  store.delete(encryptedFlagKey(key))
+}
+
+// --- Account-scoped API ---
+
+export function saveTokensForAccount(accountId: string, tokens: object): void {
+  saveRaw(tokenKey(accountId), tokens)
+}
+
+export function loadTokensForAccount(accountId: string): object | null {
+  return loadRaw(tokenKey(accountId))
+}
+
+export function clearTokensForAccount(accountId: string): void {
+  clearRaw(tokenKey(accountId))
+}
+
+export function hasTokensForAccount(accountId: string): boolean {
+  return store.has(tokenKey(accountId))
+}
+
+// --- Legacy migration ---
+
+export function migrateLegacyTokens(): string | null {
+  const legacyTokens = loadRaw(LEGACY_TOKEN_KEY)
+  if (!legacyTokens) return null
+
+  const accountId = crypto.randomUUID()
+  saveRaw(tokenKey(accountId), legacyTokens)
+  clearRaw(LEGACY_TOKEN_KEY)
+
+  return accountId
+}
+
+// --- Backward-compatible API (used during refactor transition) ---
+
+export function saveTokens(tokens: object): void {
+  saveRaw(LEGACY_TOKEN_KEY, tokens)
+}
+
+export function loadTokens(): object | null {
+  return loadRaw(LEGACY_TOKEN_KEY)
+}
+
 export function clearTokens(): void {
-  getStore().delete(TOKEN_KEY)
-  getStore().delete(`${TOKEN_KEY}_encrypted`)
+  clearRaw(LEGACY_TOKEN_KEY)
 }

@@ -10,7 +10,7 @@ import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
-import type { CalendarService } from './calendar'
+import type { CalendarManager } from './calendar-manager'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -32,7 +32,7 @@ export class TranscriptionService {
     private whisperManager: WhisperManager,
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
-    private calendarService: CalendarService,
+    private calendarManager: CalendarManager,
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -158,6 +158,8 @@ export class TranscriptionService {
     const tempFiles: string[] = [tempAudioWav, tempWhisperJson]
 
     try {
+      const benchmarkStart = Date.now()
+
       if (!(await this.whisperManager.isReady())) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
@@ -168,6 +170,7 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'transcribing')
 
       // Prepare audio input for whisper
+      let t0 = Date.now()
       const audioInput = await this.prepareWhisperInput(
         micWebm, systemWebm, legacyAudio,
         hasMic, hasSystem, hasLegacy,
@@ -180,8 +183,11 @@ export class TranscriptionService {
         tempAudioWav,
         this.whisperManager.getFfmpegPath()
       ).catch(() => undefined)
+      console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
+      t0 = Date.now()
       await this.runWhisper(tempAudioWav, meetingId, audioDuration)
+      console.log(`[perf] Transcription (whisper): ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
       const whisperJson = await readFile(tempWhisperJson, 'utf-8')
       const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
@@ -190,6 +196,7 @@ export class TranscriptionService {
       // Speaker labeling (two-stream: system active = remote, system silent = "me")
       if (hasMic && hasSystem) {
         try {
+          t0 = Date.now()
           this.activeStatus = 'diarizing'
           this.broadcastStatus(meetingId, 'diarizing')
 
@@ -202,6 +209,7 @@ export class TranscriptionService {
 
           transcripts = alignSpeakers(transcripts, null, systemSegments)
           await this.generateSpeakersJson(meetingId, transcripts)
+          console.log(`[perf] Speaker labeling: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
         } catch (err) {
           logAutodocFailure({
             area: 'transcription',
@@ -232,6 +240,8 @@ export class TranscriptionService {
           console.error(`Failed to encrypt ${filePath}:`, err)
         }
       }
+
+      console.log(`[perf] Transcription total: ${((Date.now() - benchmarkStart) / 1000).toFixed(1)}s (${meetingId})`)
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -326,10 +336,10 @@ export class TranscriptionService {
 
     let suggestions: string[] = []
     try {
-      if (this.calendarService.isConnected()) {
+      if (this.calendarManager.isConnected()) {
         const metadata = await readMetadata(meetingDir)
         if (metadata?.startedAt) {
-          const events = await this.calendarService.fetchRecentEvents(30)
+          const events = await this.calendarManager.fetchAllRecentEvents(30)
           const matched = matchCalendarEvent(events, metadata.startedAt)
           if (matched) {
             suggestions = matched.attendees

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
-import { useCalendarStore } from '../stores/calendar'
+import { useCalendarStore, selectIsConnected } from '../stores/calendar'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import { useToastStore } from '../stores/toast'
@@ -14,51 +14,37 @@ let calendarToastShown = false
 export function Upcoming() {
   const [calendarChecked, setCalendarChecked] = useState(false)
   const {
-    isConnected,
     isConnecting,
     events,
     isSyncing,
-    setConnected,
+    setAccounts,
+    addAccount,
     setConnecting,
     setEvents,
     setSyncing,
     setAutoRecord,
   } = useCalendarStore()
+  const isConnected = useCalendarStore(selectIsConnected)
 
   useEffect(() => {
-    // Check connection status and fetch events on mount
-    window.electronAPI.invoke('calendar:is-connected').then(async (connected) => {
-      setConnected(connected)
+    window.electronAPI.invoke('calendar:get-accounts').then((accts) => {
+      setAccounts(accts)
       setCalendarChecked(true)
-      if (connected) {
-        try {
-          const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
-          setEvents(fetchedEvents)
-        } catch (err) {
-          console.error('Failed to fetch calendar events:', err)
-          // Session is stale — main process auto-disconnects, but update UI too
-          setConnected(false)
-          setEvents([])
-        }
-      }
     })
 
-    // Listen for event updates from main process
-    const unsubEvents = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
+    const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
       setEvents(updatedEvents)
     })
 
-    // Listen for connection status changes (e.g. auto-disconnect on auth failure)
-    const unsubConnection = window.electronAPI.on('calendar:connection-changed', (connected) => {
-      setConnected(connected)
-      if (!connected) setEvents([])
+    window.electronAPI.invoke('calendar:get-accounts').then(async (accts) => {
+      if (accts.length > 0) {
+        const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
+        setEvents(fetchedEvents)
+      }
     })
 
-    return () => {
-      unsubEvents()
-      unsubConnection()
-    }
-  }, [setConnected, setEvents])
+    return unsubscribe
+  }, [setAccounts, setEvents])
 
   useEffect(() => {
     // Only show calendar toast after we've confirmed the connection status.
@@ -68,17 +54,17 @@ export function Upcoming() {
       calendarToastShown = true
       useToastStore.getState().showToast({
         type: 'calendar',
-        message: 'Connect Google Calendar to see upcoming meetings and auto-name recordings.',
+        message: 'Connect a calendar to see upcoming meetings and auto-name recordings.',
       })
     }
   }, [isConnected, calendarChecked])
 
-  const handleConnect = async () => {
+  const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
     try {
-      await window.electronAPI.invoke('calendar:connect')
-      setConnected(true)
-      trackEvent('calendar_connected')
+      const account = await window.electronAPI.invoke('calendar:connect', provider)
+      addAccount(account)
+      trackEvent('calendar_connected', { provider })
       const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
       setEvents(fetchedEvents)
     } catch (err) {

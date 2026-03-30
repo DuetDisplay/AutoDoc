@@ -18,6 +18,7 @@ function formatDuration(seconds: number): string {
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
+  const [segmentationProgress, setSegmentationProgress] = useState<Record<string, number | undefined>>({})
   const [transcriptionProgress, setTranscriptionProgress] = useState<Record<string, number | undefined>>({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -28,15 +29,21 @@ export function Recordings() {
       .then(async (entries) => {
         setRecordings(entries)
         const statuses: Record<string, SegmentationStatus> = {}
+        const progress: Record<string, number | undefined> = {}
         await Promise.all(
           entries.map(async (entry) => {
             statuses[entry.meetingId] = await window.electronAPI.invoke(
               'segmentation:get-status',
               entry.meetingId,
             )
+            progress[entry.meetingId] = await window.electronAPI.invoke(
+              'segmentation:get-progress',
+              entry.meetingId,
+            )
           }),
         )
         setSegmentationStatuses(statuses)
+        setSegmentationProgress(progress)
       })
       .catch((err) => {
         console.error('Failed to list recordings:', err)
@@ -69,6 +76,10 @@ export function Recordings() {
         setSegmentationStatuses((prev) => ({
           ...prev,
           [payload.meetingId]: payload.status,
+        }))
+        setSegmentationProgress((prev) => ({
+          ...prev,
+          [payload.meetingId]: payload.progress,
         }))
       }
     )
@@ -145,6 +156,7 @@ export function Recordings() {
                     {segmentationStatuses[rec.meetingId] && (
                       <SegmentationBadge
                         status={segmentationStatuses[rec.meetingId]}
+                        progress={segmentationProgress[rec.meetingId]}
                         onRetry={() => handleRetrySegmentation(rec.meetingId)}
                       />
                     )}

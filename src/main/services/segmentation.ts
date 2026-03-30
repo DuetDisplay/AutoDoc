@@ -11,6 +11,7 @@ export class SegmentationService {
   private queue: string[] = []
   private activeJobId: string | null = null
   private activeStatus: SegmentationStatus | null = null
+  private activeProgress: number | undefined = undefined
   private processing = false
 
   constructor(
@@ -31,6 +32,11 @@ export class SegmentationService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     unlink(errorPath).catch(() => {})
     this.enqueue(meetingId)
+  }
+
+  getProgress(meetingId: string): number | undefined {
+    if (this.activeJobId === meetingId) return this.activeProgress
+    return undefined
   }
 
   async getStatus(meetingId: string): Promise<SegmentationStatus> {
@@ -129,15 +135,40 @@ export class SegmentationService {
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
-    this.broadcastStatus(meetingId, 'segmenting')
+    this.broadcastStatus(meetingId, 'segmenting', 0)
+
+    const t0 = Date.now()
 
     const transcripts: Transcript[] = await isEncrypted(transcriptPath)
       ? await decryptJSON<Transcript[]>(transcriptPath)
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
-    const fullText = transcripts.map((t) => `[${t.speaker}] ${t.text}`).join('\n')
+    const fullText = transcripts
+      .map((t) => {
+        const totalSec = Math.floor(t.startMs / 1000)
+        const h = Math.floor(totalSec / 3600)
+        const m = Math.floor((totalSec % 3600) / 60)
+        const s = totalSec % 60
+        const ts = h > 0
+          ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+          : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        return `[${ts}] [${t.speaker}] ${t.text}`
+      })
+      .join('\n')
 
-    const segments = await this.llmProvider.summarize(meetingId, fullText)
+    console.log(`[perf] Segmentation input: ${fullText.length} chars (${meetingId})`)
+
+    // Compute actual duration from transcript timestamps
+    const lastEntry = transcripts[transcripts.length - 1]
+    const durationMinutes = lastEntry ? Math.round((lastEntry.endMs || lastEntry.startMs) / 60000) : undefined
+
+    let lastBroadcastedPercent = -1
+    const segments = await this.llmProvider.summarize(meetingId, fullText, (percent) => {
+      if (percent !== lastBroadcastedPercent) {
+        lastBroadcastedPercent = percent
+        this.broadcastStatus(meetingId, 'segmenting', percent)
+      }
+    }, durationMinutes)
 
     // Verify the LLM actually produced content — empty results mean it failed silently
     const totalItems = segments.decisions.length +
@@ -151,6 +182,8 @@ export class SegmentationService {
     }
 
     await encryptJSON(segments, segmentsPath)
+
+    console.log(`[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
@@ -183,10 +216,11 @@ export class SegmentationService {
     }
   }
 
-  private broadcastStatus(meetingId: string, status: SegmentationStatus): void {
+  private broadcastStatus(meetingId: string, status: SegmentationStatus, progress?: number): void {
+    this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
-      win.webContents.send('segmentation:status-changed', { meetingId, status })
+      win.webContents.send('segmentation:status-changed', { meetingId, status, progress })
     }
   }
 

@@ -6,7 +6,7 @@ import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
-import type { CalendarService } from '../services/calendar'
+import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocFailure } from '../services/autodoc-log'
@@ -52,11 +52,31 @@ function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: str
   })
 }
 
+/** Remux a WebM file to add cue points (seek index) for proper seeking.
+ *  MediaRecorder streams WebM without Cues; ffmpeg file output writes them. */
+function remuxForSeeking(ffmpegPath: string, inputPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-i', inputPath,
+      '-c', 'copy',
+      '-fflags', '+genpts',
+      '-y',
+      outputPath,
+    ])
+    let stderr = ''
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg remux exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
 export function registerRecordingIpc(
   recordingService: RecordingService,
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
-  calendarService: CalendarService,
+  calendarManager: CalendarManager,
 ): void {
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
@@ -70,8 +90,8 @@ export function registerRecordingIpc(
     // Fetch recent calendar events for matching recordings to event names
     let recentEvents: CalendarEvent[] = []
     try {
-      if (calendarService.isConnected()) {
-        recentEvents = await calendarService.fetchRecentEvents(30)
+      if (calendarManager.isConnected()) {
+        recentEvents = await calendarManager.fetchAllRecentEvents(30)
       }
     } catch {
       // Calendar fetch failed — fall back to generic names
@@ -101,11 +121,13 @@ export function registerRecordingIpc(
       const calendarEvent = matchCalendarEvent(recentEvents, createdAt.getTime())
       const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 
-      const title = calendarEvent
-        ? `${calendarEvent.title} — ${dateSuffix}`
-        : metadata?.sourceName
-          ? `${metadata.sourceName} — ${dateSuffix}`
-          : `Recording ${dateSuffix}`
+      const title = metadata?.customTitle
+        ? metadata.customTitle
+        : calendarEvent
+          ? `${calendarEvent.title} — ${dateSuffix}`
+          : metadata?.sourceName
+            ? `${metadata.sourceName} — ${dateSuffix}`
+            : `Recording ${dateSuffix}`
 
       const transcriptionStatus = await transcriptionService.getStatus(meetingId)
 
@@ -206,7 +228,7 @@ export function registerRecordingIpc(
         console.error('whisperManager.ensureReady() failed — skipping mux:', err)
       }
 
-      // Mux audio into video so the video player has both tracks
+      // Mux audio into video so the video player has both tracks, then remux for seeking
       try {
         const micStat = await stat(micPath).catch(() => null)
         const systemStat = await stat(systemPath).catch(() => null)
@@ -235,6 +257,19 @@ export function registerRecordingIpc(
           meetingId: result.meetingId,
         })
         console.error('Failed to mux audio into video:', err)
+      }
+
+      // Remux video to add cue points for seeking
+      try {
+        const videoExists = await stat(videoPath).catch(() => null)
+        if (videoExists) {
+          const seekablePath = join(meetingDir, 'screen-seekable.webm')
+          await remuxForSeeking(whisperManager.getFfmpegPath(), videoPath, seekablePath)
+          await unlink(videoPath)
+          await rename(seekablePath, videoPath)
+        }
+      } catch (err) {
+        console.error('Failed to remux for seeking (video will still play but may not seek):', err)
       }
 
       transcriptionService.enqueue(result.meetingId)
@@ -273,8 +308,8 @@ export function registerRecordingIpc(
     // Try to match a calendar event for a better title
     let calendarEvent: CalendarEvent | null = null
     try {
-      if (calendarService.isConnected()) {
-        const events = await calendarService.fetchRecentEvents(30)
+      if (calendarManager.isConnected()) {
+        const events = await calendarManager.fetchAllRecentEvents(30)
         calendarEvent = matchCalendarEvent(events, startedAt)
       }
     } catch {
@@ -283,11 +318,13 @@ export function registerRecordingIpc(
 
     const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 
-    const title = calendarEvent
-      ? `${calendarEvent.title} — ${dateSuffix}`
-      : metadata?.sourceName
-        ? `${metadata.sourceName} — ${dateSuffix}`
-        : `Recording ${dateSuffix}`
+    const title = metadata?.customTitle
+      ? metadata.customTitle
+      : calendarEvent
+        ? `${calendarEvent.title} — ${dateSuffix}`
+        : metadata?.sourceName
+          ? `${metadata.sourceName} — ${dateSuffix}`
+          : `Recording ${dateSuffix}`
 
     return {
       title,
@@ -321,6 +358,20 @@ export function registerRecordingIpc(
       }
     }
   )
+
+  ipcMain.handle('recording:update-title', async (_event, meetingId: string, customTitle: string) => {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const metadata = await readMetadata(meetingDir)
+    const updated: MeetingMetadata = {
+      sourceName: metadata?.sourceName ?? null,
+      startedAt: metadata?.startedAt ?? Date.now(),
+      stoppedAt: metadata?.stoppedAt ?? Date.now(),
+      durationSeconds: metadata?.durationSeconds ?? 0,
+      customTitle: customTitle.trim() || undefined,
+    }
+    await encryptJSON(updated, join(meetingDir, 'metadata.json'))
+  })
 
   ipcMain.handle('recording:delete', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
