@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo } from '../shared/types'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -22,6 +22,7 @@ export interface IpcSendEvents {
 
 export interface IpcInvokeEvents {
   'app:get-version': []
+  'app:get-runtime-info': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:disconnect': [accountId: string]
   'calendar:get-accounts': []
@@ -73,6 +74,7 @@ export interface IpcInvokeEvents {
 
 export interface IpcInvokeReturns {
   'app:get-version': string
+  'app:get-runtime-info': AppRuntimeInfo
   'calendar:connect': CalendarAccount
   'calendar:disconnect': void
   'calendar:get-accounts': CalendarAccount[]

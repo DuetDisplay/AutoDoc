@@ -64,6 +64,10 @@ export class WhisperManager extends EventEmitter {
     return DEFAULT_MODEL
   }
 
+  getModelName(): string {
+    return this.getModelInfo().filename.replace(/^ggml-/, '').replace(/\.bin$/i, '')
+  }
+
   getSetupStatus(): WhisperSetupStatus {
     return { ...this.setupStatus }
   }

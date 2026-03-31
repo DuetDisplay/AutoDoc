@@ -25,7 +25,7 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
-import type { OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
@@ -311,6 +311,12 @@ app.whenReady().then(async () => {
     ollamaManager,
     recordingService.getRecordingsBaseDir(),
   )
+  ipcMain.handle('app:get-runtime-info', (): AppRuntimeInfo => ({
+    platform: process.platform,
+    storagePath: app.getPath('userData'),
+    whisperModel: whisperManager.getModelName(),
+    ollamaModel: managedOllamaManager.getModel(),
+  }))
   let pendingRecoveryPromise: Promise<unknown> | null = null
 
   const recoverPendingWork = (): void => {

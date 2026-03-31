@@ -5,9 +5,14 @@ const UNKNOWN_ACCOUNT_EMAILS = new Set([
   'unknown@outlook.com',
 ])
 
+export function isPlaceholderCalendarEmail(email: string): boolean {
+  const normalized = email.trim().toLowerCase()
+  return !normalized || UNKNOWN_ACCOUNT_EMAILS.has(normalized)
+}
+
 function normalizeAccountEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase()
-  if (!normalized || UNKNOWN_ACCOUNT_EMAILS.has(normalized)) {
+  if (isPlaceholderCalendarEmail(normalized)) {
     return null
   }
   return normalized

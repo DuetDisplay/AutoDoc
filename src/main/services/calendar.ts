@@ -12,6 +12,22 @@ const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
 const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
 
+function extractEmailFromIdToken(idToken: string | undefined): string | null {
+  if (!idToken) return null
+
+  try {
+    const [, payload] = idToken.split('.')
+    if (!payload) return null
+
+    const normalizedPayload = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=')
+    const parsed = JSON.parse(Buffer.from(paddedPayload, 'base64').toString('utf-8')) as { email?: string }
+    return parsed.email?.trim() || null
+  } catch {
+    return null
+  }
+}
+
 export class GoogleCalendarProvider implements CalendarProvider {
   readonly providerType = 'google' as const
 
@@ -56,13 +72,12 @@ export class GoogleCalendarProvider implements CalendarProvider {
     this.clients.set(accountId, client)
     saveTokensForAccount(accountId, result.tokens)
 
-    // Fetch user email
-    const email = await this.fetchUserEmail(accountId)
+    const email = await this.fetchAccountEmail(accountId)
 
     return {
       id: accountId,
       provider: 'google',
-      email,
+      email: email ?? '',
       connectedAt: Date.now(),
     }
   }
@@ -172,10 +187,22 @@ export class GoogleCalendarProvider implements CalendarProvider {
     }))
   }
 
-  async fetchUserEmail(accountId: string): Promise<string> {
+  async fetchAccountEmail(accountId: string): Promise<string | null> {
     await this.refreshIfNeeded(accountId)
     const client = this.getClient(accountId)
-    const tokens = client.credentials
+
+    try {
+      const calendar = google.calendar({ version: 'v3', auth: client })
+      const primaryCalendar = await calendar.calendarList.get({ calendarId: 'primary' })
+      const calendarId = primaryCalendar.data.id?.trim()
+      if (calendarId?.includes('@')) {
+        return calendarId
+      }
+    } catch {
+      // Fall through to user info and token claims.
+    }
+
+    const tokens = client.credentials as typeof client.credentials & { id_token?: string }
     try {
       const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -185,9 +212,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
         if (data.email) return data.email
       }
     } catch {
-      // Fall through to unknown
+      // Fall through to token claims.
     }
-    return 'unknown@gmail.com'
+
+    return extractEmailFromIdToken(tokens.id_token)
   }
 
   private async refreshIfNeeded(accountId: string): Promise<void> {

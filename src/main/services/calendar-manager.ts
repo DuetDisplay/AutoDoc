@@ -3,7 +3,7 @@ import { migrateLegacyTokens, hasTokensForAccount, loadTokensForAccount } from '
 import { GoogleCalendarProvider } from './calendar'
 import { MicrosoftCalendarProvider } from './microsoft-calendar'
 import type { CalendarProvider } from './calendar-types'
-import { dedupeCalendarEvents, getCalendarAccountIdentity, isSameCalendarAccount } from './calendar-dedupe'
+import { dedupeCalendarEvents, getCalendarAccountIdentity, isPlaceholderCalendarEmail, isSameCalendarAccount } from './calendar-dedupe'
 import type { CalendarAccount, CalendarEvent, OAuthTokens } from '../../shared/types'
 
 const accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
@@ -40,9 +40,9 @@ export class CalendarManager {
       const googleProvider = this.providers.get('google') as GoogleCalendarProvider
 
       // Fetch email for the migrated account (best effort)
-      let email = 'unknown@gmail.com'
+      let email = ''
       try {
-        email = await googleProvider.fetchUserEmail(migratedAccountId)
+        email = (await googleProvider.fetchAccountEmail(migratedAccountId)) ?? ''
       } catch {
         // Token might be expired — email will show as unknown, user can reconnect
       }
@@ -60,9 +60,10 @@ export class CalendarManager {
 
     // Step 3: Validate each has tokens, remove orphans, and collapse duplicate accounts.
     const validAccounts = saved.filter((account) => hasTokensForAccount(account.id))
-    this.accounts = await this.removeDuplicateAccounts(validAccounts)
+    const hydratedAccounts = await this.refreshUnknownAccountEmails(validAccounts)
+    this.accounts = await this.removeDuplicateAccounts(hydratedAccounts)
 
-    if (this.accounts.length !== saved.length || migratedAccountId) {
+    if (migratedAccountId || JSON.stringify(saved) !== JSON.stringify(this.accounts)) {
       this.saveAccounts()
     }
 
@@ -195,6 +196,28 @@ export class CalendarManager {
 
   private getAccountTokens(accountId: string): Partial<OAuthTokens> | null {
     return loadTokensForAccount(accountId) as Partial<OAuthTokens> | null
+  }
+
+  private async refreshUnknownAccountEmails(accounts: CalendarAccount[]): Promise<CalendarAccount[]> {
+    return await Promise.all(
+      accounts.map(async (account) => {
+        if (!isPlaceholderCalendarEmail(account.email)) {
+          return account
+        }
+
+        const provider = this.providers.get(account.provider)
+        if (!provider) {
+          return account
+        }
+
+        try {
+          const email = (await provider.fetchAccountEmail(account.id)) ?? ''
+          return email === account.email ? account : { ...account, email }
+        } catch {
+          return account.email ? { ...account, email: '' } : account
+        }
+      }),
+    )
   }
 
   private async removeDuplicateAccounts(accounts: CalendarAccount[]): Promise<CalendarAccount[]> {

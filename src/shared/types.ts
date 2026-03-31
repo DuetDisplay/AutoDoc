@@ -156,3 +156,10 @@ export interface WhisperSetupStatus {
   percent: number
   error?: string
 }
+
+export interface AppRuntimeInfo {
+  platform: NodeJS.Platform
+  storagePath: string
+  whisperModel: string
+  ollamaModel: string
+}

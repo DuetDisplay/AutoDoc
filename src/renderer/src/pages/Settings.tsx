@@ -2,15 +2,27 @@ import { useState, useEffect } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
+import type { AppRuntimeInfo, CalendarAccount } from '../../../shared/types'
+
+function getCalendarAccountLabel(account: CalendarAccount): string {
+  const email = account.email.trim()
+  if (email) {
+    return email
+  }
+
+  return account.provider === 'google' ? 'Google account' : 'Microsoft account'
+}
 
 export function Settings() {
   const { accounts, isConnecting, setAccounts, addAccount, removeAccount, setConnecting, setEvents } = useCalendarStore()
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
+  const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
 
   useEffect(() => {
     window.electronAPI.invoke('app:get-version').then(setAppVersion)
     window.electronAPI.invoke('updater:get-status').then(setUpdateStatus)
+    window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     return unsub
   }, [])
@@ -66,7 +78,7 @@ export function Settings() {
                       <rect x="12" y="12" width="10" height="10" fill="#FFB900"/>
                     </svg>
                   )}
-                  <span className="text-[12px] text-ink-muted">{account.email}</span>
+                  <span className="text-[12px] text-ink-muted">{getCalendarAccountLabel(account)}</span>
                   <button
                     onClick={() => handleDisconnect(account.id)}
                     className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
@@ -113,15 +125,15 @@ export function Settings() {
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
-          <p className="text-[12px] text-ink-muted">Windows defaults to distil-large-v3. macOS uses large-v3.</p>
+          <p className="text-[12px] text-ink-muted">{runtimeInfo?.whisperModel ?? 'Loading...'}</p>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Ollama Model</h3>
-          <p className="text-[12px] text-ink-muted">llama3 (default)</p>
+          <p className="text-[12px] text-ink-muted">{runtimeInfo?.ollamaModel ?? 'Loading...'}</p>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Storage Path</h3>
-          <p className="text-[12px] text-ink-muted font-mono">~/AutoDoc/</p>
+          <p className="text-[12px] text-ink-muted font-mono">{runtimeInfo?.storagePath ?? 'Loading...'}</p>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
