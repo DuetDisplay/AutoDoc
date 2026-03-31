@@ -104,9 +104,7 @@ jobs:
 
       - name: Setup DigiCert signing tools
         if: startsWith(github.ref, 'refs/tags/')
-        uses: digicert/code-signing-software-trust-action@v1
-        with:
-          simple-signing-mode: true
+        uses: digicert/ssm-code-signing@v1.0.0
         env:
           SM_HOST: ${{ vars.SM_HOST }}
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -117,11 +115,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
+          SM_KEYPAIR_ALIAS: ${{ vars.SM_KEYPAIR_ALIAS || 'REDACTED_KEYPAIR_ALIAS' }}
           SM_HOST: ${{ vars.SM_HOST }}
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE: ${{ runner.temp }}\sm_client_cert.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-        run: smctl healthcheck
+        run: |
+          smctl healthcheck
+          smctl windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
         if: startsWith(github.ref, 'refs/tags/')
