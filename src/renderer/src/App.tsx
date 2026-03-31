@@ -15,10 +15,12 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
+import { useCalendarStore } from './stores/calendar'
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
+  const { setAccounts, setEvents } = useCalendarStore()
 
   useEffect(() => {
     // Initialize analytics early (stays opted-out until consent is restored/given)
@@ -34,6 +36,44 @@ export default function App() {
       }
     })
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const syncCalendarState = async () => {
+      try {
+        const accounts = await window.electronAPI.invoke('calendar:get-accounts')
+        if (cancelled) return
+        setAccounts(accounts)
+
+        if (accounts.length === 0) {
+          setEvents([])
+          return
+        }
+
+        const events = await window.electronAPI.invoke('calendar:get-events')
+        if (cancelled) return
+        setEvents(events)
+      } catch (err) {
+        console.error('Failed to sync calendar state:', err)
+      }
+    }
+
+    void syncCalendarState()
+
+    const unsubscribeEvents = window.electronAPI.on('calendar:events-updated', (events) => {
+      setEvents(events)
+    })
+    const unsubscribeConnection = window.electronAPI.on('calendar:connection-changed', () => {
+      void syncCalendarState()
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribeEvents()
+      unsubscribeConnection()
+    }
+  }, [setAccounts, setEvents])
 
   // Auto-start recording when user clicks "Start AI Notes" from floating notification
   useEffect(() => {

@@ -24,6 +24,7 @@ export function registerCalendarIpc(
       })
     }
 
+    pushConnectionStatus(true)
     return account
   })
 
@@ -39,6 +40,7 @@ export function registerCalendarIpc(
     const enriched = applyAutoRecordState(events)
     pushEventsToRenderer(enriched)
     onEventsUpdated?.(enriched)
+    pushConnectionStatus(calendarManager.getAccounts().length > 0)
   })
 
   ipcMain.handle('calendar:get-accounts', () => {

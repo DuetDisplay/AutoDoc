@@ -1,7 +1,7 @@
 import { app } from 'electron'
-import { access, mkdir, chmod, rm, copyFile } from 'fs/promises'
-import { join } from 'path'
-import { createWriteStream } from 'fs'
+import { access, mkdir, chmod, rm, copyFile, cp } from 'fs/promises'
+import { delimiter, dirname, join } from 'path'
+import { createWriteStream, readdirSync } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
@@ -12,6 +12,10 @@ const DEFAULT_MODEL = 'llama3.1'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
+
+function toPowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
 
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
@@ -66,6 +70,63 @@ export class OllamaManager extends EventEmitter {
     return join(app.getPath('userData'), 'ollama-data')
   }
 
+  private getBundledLibraryDirs(): string[] {
+    const root = join(this.getModelsDir(), 'lib', 'ollama')
+    const dirs = [root]
+
+    try {
+      for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          dirs.push(join(root, entry.name))
+        }
+      }
+    } catch {
+      // Ignore missing lib directories; Ollama will rely on its defaults.
+    }
+
+    return dirs
+  }
+
+  private isBundledLibraryDir(pathEntry: string, bundledDirs: string[]): boolean {
+    const normalizedEntry = pathEntry.toLowerCase()
+    return bundledDirs.some((dir) => {
+      const normalizedDir = dir.toLowerCase()
+      return normalizedEntry === normalizedDir || normalizedEntry.startsWith(`${normalizedDir}\\`)
+    })
+  }
+
+  private hasConflictingGgmlLibrary(pathEntry: string, bundledDirs: string[]): boolean {
+    if (!IS_WIN) return false
+    if (this.isBundledLibraryDir(pathEntry, bundledDirs)) return false
+
+    try {
+      return readdirSync(pathEntry).some((name) => /^ggml.*\.dll$/i.test(name))
+    } catch {
+      return false
+    }
+  }
+
+  private buildSanitizedPath(): string {
+    const bundledDirs = this.getBundledLibraryDirs()
+    const inherited = (process.env.PATH ?? '')
+      .split(delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .filter((entry) => !this.hasConflictingGgmlLibrary(entry, bundledDirs))
+
+    const deduped: string[] = []
+    const seen = new Set<string>()
+
+    for (const entry of [...bundledDirs, ...inherited]) {
+      const normalized = entry.toLowerCase()
+      if (seen.has(normalized)) continue
+      seen.add(normalized)
+      deduped.push(entry)
+    }
+
+    return deduped.join(delimiter)
+  }
+
   async isReady(): Promise<boolean> {
     try {
       await access(this.getBinaryPath())
@@ -106,7 +167,7 @@ export class OllamaManager extends EventEmitter {
     if (!(await this.isReady())) {
       const systemBinary = this.findSystemOllama()
       if (systemBinary) {
-        await copyFile(systemBinary, this.getBinaryPath())
+        await this.copySystemRuntime(systemBinary)
       } else {
         await this.downloadBinary()
       }
@@ -125,6 +186,7 @@ export class OllamaManager extends EventEmitter {
 
   async start(): Promise<void> {
     await this.ensureReady()
+    this.killOwnedRunnerProcesses()
 
     if (await this.isServerRunning()) return
 
@@ -137,6 +199,7 @@ export class OllamaManager extends EventEmitter {
       const proc = spawn(binary, ['serve'], {
         env: {
           ...process.env,
+          PATH: this.buildSanitizedPath(),
           OLLAMA_HOST: OLLAMA_HOST,
           OLLAMA_MODELS: this.getOllamaDataDir(),
         },
@@ -191,6 +254,8 @@ export class OllamaManager extends EventEmitter {
       }
       this.process = null
     }
+    // Also reap runner children that can outlive the server after crashes or duplicate launches.
+    this.killOwnedRunnerProcesses()
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
     this.killProcessOnPort()
     this.readyPromise = null
@@ -242,6 +307,78 @@ export class OllamaManager extends EventEmitter {
       }
     } catch {
       // No process found on the port — nothing to clean up
+    }
+  }
+
+  private async copySystemRuntime(systemBinary: string): Promise<void> {
+    await copyFile(systemBinary, this.getBinaryPath())
+
+    if (!IS_WIN) return
+
+    const systemLibDir = join(dirname(systemBinary), 'lib')
+    const targetLibDir = join(this.getModelsDir(), 'lib')
+
+    try {
+      await rm(targetLibDir, { recursive: true, force: true })
+      await cp(systemLibDir, targetLibDir, { recursive: true, force: true })
+    } catch {
+      // Some system installs may not ship a colocated lib directory.
+      // In that case, keep the copied exe and let Ollama fall back to its own defaults.
+    }
+  }
+
+  /**
+   * Kill stale Ollama runner processes owned by this AutoDoc install.
+   * These can survive crashes or duplicate app launches and continue holding RAM.
+   */
+  private killOwnedRunnerProcesses(): void {
+    try {
+      if (IS_WIN) {
+        const binaryPath = toPowerShellLiteral(this.getBinaryPath().toLowerCase())
+        const dataDir = toPowerShellLiteral(this.getOllamaDataDir().toLowerCase())
+        const command = [
+          '$binaryPath = ' + binaryPath,
+          '$dataDir = ' + dataDir,
+          `Get-CimInstance Win32_Process -Filter "Name = 'ollama.exe'" |`,
+          '  Where-Object {',
+          "    $cmd = if ($_.CommandLine) { $_.CommandLine.ToLowerInvariant() } else { '' }",
+          "    $cmd.Contains($binaryPath) -and $cmd.Contains(' runner ') -and $cmd.Contains($dataDir)",
+          '  } |',
+          '  ForEach-Object {',
+          '    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}',
+          '  }',
+        ].join('; ')
+        execSync(`powershell -NoProfile -NonInteractive -Command "${command}"`, {
+          timeout: 5000,
+          stdio: 'ignore',
+        })
+        return
+      }
+
+      const output = execSync('ps -axo pid=,args=', {
+        encoding: 'utf-8',
+        timeout: 5000,
+      })
+      const binaryPath = this.getBinaryPath()
+      const dataDir = this.getOllamaDataDir()
+
+      for (const line of output.split(/\r?\n/)) {
+        const match = line.trim().match(/^(\d+)\s+(.+)$/)
+        if (!match) continue
+
+        const [, pid, args] = match
+        const isOwned = args.includes(binaryPath) && args.includes(dataDir)
+        const isRunner = args.includes(' runner ')
+        if (!isOwned || !isRunner) continue
+
+        try {
+          process.kill(Number(pid), 'SIGKILL')
+        } catch {
+          // already dead
+        }
+      }
+    } catch {
+      // No owned runners found â€” nothing to clean up
     }
   }
 

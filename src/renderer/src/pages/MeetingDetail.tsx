@@ -628,7 +628,7 @@ export function MeetingDetail() {
                   <div>
                     <div className="text-[12.5px] font-semibold text-ink">Transcript</div>
                     <div className="text-[11px] text-ink-faint">
-                      Re-transcribe audio with whisper — also regenerates notes
+                      Re-transcribe audio and regenerate notes from the new transcript
                     </div>
                   </div>
                   <button

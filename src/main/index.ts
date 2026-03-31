@@ -63,6 +63,24 @@ if (process.platform === 'darwin' && app.dock) {
 
 let ollamaManager: OllamaManager | null = null
 let isQuitting = false
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
+
+function focusMainWindow(): void {
+  const [existingWindow] = BrowserWindow.getAllWindows()
+  if (!existingWindow) return
+  if (existingWindow.isMinimized()) existingWindow.restore()
+  existingWindow.show()
+  existingWindow.focus()
+}
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    focusMainWindow()
+  })
+}
 
 function applyAutoRecordStateFromIpc(events: CalendarEvent[]): CalendarEvent[] {
   return events.map((e) => ({
@@ -121,6 +139,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return
+
   ipcMain.handle('app:get-version', () => app.getVersion())
 
   // Auto-updater
@@ -299,6 +319,27 @@ app.whenReady().then(async () => {
     ollamaManager,
     recordingService.getRecordingsBaseDir(),
   )
+  let pendingRecoveryPromise: Promise<unknown> | null = null
+
+  const recoverPendingWork = (): void => {
+    if (pendingRecoveryPromise) return
+
+    pendingRecoveryPromise = Promise.all([
+      transcriptionService.scanAndEnqueuePending(),
+      segmentationService.scanAndEnqueuePending(),
+    ])
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'app',
+          message: 'Pending meeting recovery failed',
+          error: err,
+        })
+        console.error('Pending meeting recovery failed:', err)
+      })
+      .finally(() => {
+        pendingRecoveryPromise = null
+      })
+  }
 
   transcriptionService.onComplete((meetingId) => {
     segmentationService.enqueue(meetingId)
@@ -369,6 +410,7 @@ app.whenReady().then(async () => {
   createTray(() => cachedEvents, showWindow)
 
   detectionService.start()
+  recoverPendingWork()
 
   // Start whisper tools + model download in the background — don't block the window
   whisperManager.startSetup()
@@ -400,10 +442,12 @@ app.whenReady().then(async () => {
 
   powerMonitor.on('resume', () => {
     ensureOllamaRunning()
+    recoverPendingWork()
   })
 
   powerMonitor.on('unlock-screen', () => {
     ensureOllamaRunning()
+    recoverPendingWork()
   })
 
   // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
@@ -427,17 +471,20 @@ app.whenReady().then(async () => {
       console.error('Encryption migration failed:', err)
     })
     .finally(() => {
-      transcriptionService.scanAndEnqueuePending()
-      segmentationService.scanAndEnqueuePending()
+      recoverPendingWork()
     })
 
+  setInterval(() => {
+    recoverPendingWork()
+  }, PENDING_RECOVERY_INTERVAL_MS)
+
   app.on('activate', () => {
+    recoverPendingWork()
     const wins = BrowserWindow.getAllWindows()
     if (wins.length === 0) {
       createWindow()
     } else {
-      wins[0].show()
-      wins[0].focus()
+      focusMainWindow()
     }
   })
 })

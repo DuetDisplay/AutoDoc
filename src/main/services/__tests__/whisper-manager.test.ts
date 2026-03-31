@@ -64,7 +64,11 @@ describe('WhisperManager', () => {
   })
 
   it('returns correct model path', () => {
-    expect(manager.getModelPath()).toBe(join('/mock/home', 'models', 'ggml-large-v3.bin'))
+    expect(manager.getModelPath()).toBe(
+      process.platform === 'win32'
+        ? join('/mock/home', 'models', 'ggml-distil-large-v3.bin')
+        : join('/mock/home', 'models', 'ggml-large-v3.bin'),
+    )
   })
 
   it('reports ready when all files exist', async () => {
@@ -119,6 +123,17 @@ describe('WhisperManager', () => {
     await manager.ensureReady()
 
     expect(resolveWhisperSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows setup to run again after a successful startSetup call', async () => {
+    const ensureReadySpy = vi
+      .spyOn(manager, 'ensureReady')
+      .mockResolvedValue(undefined)
+
+    await manager.startSetup()
+    await manager.startSetup()
+
+    expect(ensureReadySpy).toHaveBeenCalledTimes(2)
   })
 
   it('copies whisper companion DLLs on Windows', async () => {

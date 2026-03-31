@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { useCalendarStore, selectIsConnected } from '../stores/calendar'
+import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 
 export function Settings() {
   const { accounts, isConnecting, setAccounts, addAccount, removeAccount, setConnecting, setEvents } = useCalendarStore()
-  const isConnected = useCalendarStore(selectIsConnected)
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
 
@@ -111,6 +110,10 @@ export function Settings() {
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
           <p className="text-[12px] text-ink-muted">Default: off</p>
+        </div>
+        <div>
+          <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
+          <p className="text-[12px] text-ink-muted">Windows defaults to distil-large-v3. macOS uses large-v3.</p>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Ollama Model</h3>

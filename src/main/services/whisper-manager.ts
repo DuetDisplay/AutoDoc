@@ -15,6 +15,21 @@ const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/downlo
 const FFMPEG_WIN_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 10_000
 
+const DEFAULT_MODEL = IS_WIN
+  ? {
+      filename: 'ggml-distil-large-v3.bin',
+      downloadUrl: 'https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin',
+    }
+  : {
+      filename: 'ggml-large-v3.bin',
+      downloadUrl: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin',
+    }
+
+export interface WhisperModelInfo {
+  filename: string
+  downloadUrl: string
+}
+
 export interface DownloadProgress {
   file: string
   percent: number
@@ -25,6 +40,9 @@ export interface DownloadProgress {
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
+  constructor() {
+    super()
+  }
 
   getModelsDir(): string {
     return join(app.getPath('userData'), MODELS_SUBDIR)
@@ -39,7 +57,11 @@ export class WhisperManager extends EventEmitter {
   }
 
   getModelPath(): string {
-    return join(this.getModelsDir(), 'ggml-large-v3.bin')
+    return join(this.getModelsDir(), this.getModelInfo().filename)
+  }
+
+  getModelInfo(): WhisperModelInfo {
+    return DEFAULT_MODEL
   }
 
   getSetupStatus(): WhisperSetupStatus {
@@ -59,9 +81,8 @@ export class WhisperManager extends EventEmitter {
   /** Call once at startup. Subsequent calls return the same promise. */
   startSetup(): Promise<void> {
     if (!this.setupPromise) {
-      this.setupPromise = this.runSetup().catch((err) => {
+      this.setupPromise = this.runSetup().finally(() => {
         this.setupPromise = null
-        throw err
       })
     }
     return this.setupPromise
@@ -308,8 +329,8 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async downloadModel(): Promise<void> {
-    const url = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin'
-    await this.downloadFile(url, this.getModelPath(), 'ggml-large-v3.bin', (p) => {
+    const model = this.getModelInfo()
+    await this.downloadFile(model.downloadUrl, this.getModelPath(), model.filename, (p) => {
       this.setupStatus = { phase: 'downloading-model', percent: p }
       this.emit('setup-status', this.getSetupStatus())
     })

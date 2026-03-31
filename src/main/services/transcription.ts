@@ -89,28 +89,32 @@ export class TranscriptionService {
     }
 
     for (const meetingId of dirs) {
-      const meetingDir = join(this.recordingsBaseDir, meetingId)
-      const dirStat = await stat(meetingDir).catch(() => null)
-      if (!dirStat?.isDirectory()) continue
+      try {
+        const meetingDir = join(this.recordingsBaseDir, meetingId)
+        const dirStat = await stat(meetingDir).catch(() => null)
+        if (!dirStat?.isDirectory()) continue
 
-      const audioPath = join(meetingDir, 'audio.webm')
-      const micPath = join(meetingDir, 'mic.webm')
-      const transcriptPath = join(meetingDir, 'transcript.json')
-      const errorPath = join(meetingDir, 'transcript.error')
+        const audioPath = join(meetingDir, 'audio.webm')
+        const micPath = join(meetingDir, 'mic.webm')
+        const transcriptPath = join(meetingDir, 'transcript.json')
+        const errorPath = join(meetingDir, 'transcript.error')
 
-      const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
-      const hasTranscript = await this.fileExists(transcriptPath)
-      const hasError = await this.fileExists(errorPath)
+        const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
+        const hasTranscript = await this.fileExists(transcriptPath)
+        const hasError = await this.fileExists(errorPath)
 
-      if (hasAudio && !hasTranscript && !hasError) {
-        this.enqueue(meetingId)
-      } else if (hasAudio && !hasTranscript && hasError) {
-        // Auto-retry failed transcriptions up to 3 times on startup
-        const errorData = await this.readErrorFile(errorPath)
-        if (errorData && errorData.retries < 3) {
-          console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
-          this.retry(meetingId)
+        if (hasAudio && !hasTranscript && !hasError) {
+          this.enqueue(meetingId)
+        } else if (hasAudio && !hasTranscript && hasError) {
+          // Auto-retry failed transcriptions up to 3 times on startup
+          const errorData = await this.readErrorFile(errorPath)
+          if (errorData && errorData.retries < 3) {
+            console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+            this.retry(meetingId)
+          }
         }
+      } catch (err) {
+        console.warn(`Failed to inspect transcription state for ${meetingId}:`, err)
       }
     }
   }
@@ -377,7 +381,6 @@ export class TranscriptionService {
 
   private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = 30 * 60 * 1000
       let stderr = ''
 
       const proc = spawn(this.whisperManager.getWhisperPath(), [
@@ -389,14 +392,8 @@ export class TranscriptionService {
       ])
 
       proc.on('error', (err) => {
-        clearTimeout(timer)
         reject(new Error(`whisper spawn failed: ${err.message}`))
       })
-
-      const timer = setTimeout(() => {
-        proc.kill()
-        reject(new Error('whisper.cpp timed out after 30 minutes'))
-      }, timeout)
 
       proc.stderr.on('data', (data: Buffer) => {
         const chunk = data.toString()
@@ -427,7 +424,6 @@ export class TranscriptionService {
       }
 
       proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
         if (code === 0) {
           resolve()
         } else {

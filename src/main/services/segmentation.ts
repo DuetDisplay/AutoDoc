@@ -80,22 +80,26 @@ export class SegmentationService {
     }
 
     for (const meetingId of dirs) {
-      const meetingDir = join(this.recordingsBaseDir, meetingId)
-      const dirStat = await stat(meetingDir).catch(() => null)
-      if (!dirStat?.isDirectory()) continue
+      try {
+        const meetingDir = join(this.recordingsBaseDir, meetingId)
+        const dirStat = await stat(meetingDir).catch(() => null)
+        if (!dirStat?.isDirectory()) continue
 
-      const hasTranscript = await this.fileExists(join(meetingDir, 'transcript.json'))
-      const hasSegments = await this.fileExists(join(meetingDir, 'segments.json'))
-      const hasError = await this.fileExists(join(meetingDir, 'segments.error'))
+        const hasTranscript = await this.fileExists(join(meetingDir, 'transcript.json'))
+        const hasSegments = await this.fileExists(join(meetingDir, 'segments.json'))
+        const hasError = await this.fileExists(join(meetingDir, 'segments.error'))
 
-      if (hasTranscript && !hasSegments && !hasError) {
-        this.enqueue(meetingId)
-      } else if (hasTranscript && !hasSegments && hasError) {
-        const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
-        if (errorData && errorData.retries < 3) {
-          console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
-          this.retry(meetingId)
+        if (hasTranscript && !hasSegments && !hasError) {
+          this.enqueue(meetingId)
+        } else if (hasTranscript && !hasSegments && hasError) {
+          const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
+          if (errorData && errorData.retries < 3) {
+            console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+            this.retry(meetingId)
+          }
         }
+      } catch (err) {
+        console.warn(`Failed to inspect segmentation state for ${meetingId}:`, err)
       }
     }
   }
