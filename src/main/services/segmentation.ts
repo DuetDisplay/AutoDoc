@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink } from 'fs/promises'
+import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 import type { MeetingSegments, Transcript, SegmentationStatus } from '../../shared/types'
 import type { LLMProvider } from './llm'
@@ -29,8 +29,6 @@ export class SegmentationService {
   }
 
   retry(meetingId: string): void {
-    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
-    unlink(errorPath).catch(() => {})
     this.enqueue(meetingId)
   }
 
@@ -47,8 +45,23 @@ export class SegmentationService {
       return 'queued'
     }
     const meetingDir = join(this.recordingsBaseDir, meetingId)
-    if (await this.fileExists(join(meetingDir, 'segments.json'))) return 'complete'
-    if (await this.fileExists(join(meetingDir, 'segments.error'))) return 'failed'
+    const segmentsPath = join(meetingDir, 'segments.json')
+    const errorPath = join(meetingDir, 'segments.error')
+    const hasSegments = await this.fileExists(segmentsPath)
+    const hasError = await this.fileExists(errorPath)
+
+    if (hasSegments && hasError) {
+      const [segmentsStat, errorStat] = await Promise.all([
+        stat(segmentsPath).catch(() => null),
+        stat(errorPath).catch(() => null),
+      ])
+      if (segmentsStat && errorStat && errorStat.mtimeMs > segmentsStat.mtimeMs) {
+        return 'failed'
+      }
+    }
+
+    if (hasSegments) return 'complete'
+    if (hasError) return 'failed'
     return 'pending'
   }
 
@@ -186,6 +199,7 @@ export class SegmentationService {
     }
 
     await encryptJSON(segments, segmentsPath)
+    await unlink(join(meetingDir, 'segments.error')).catch(() => {})
 
     console.log(`[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
@@ -197,7 +211,12 @@ export class SegmentationService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
-    await writeFile(errorPath, JSON.stringify({ error, retries }))
+    try {
+      await writeFile(errorPath, JSON.stringify({ error, retries }))
+    } catch (err) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      if (code !== 'ENOENT') throw err
+    }
     logAutodocFailure({
       area: 'segmentation',
       message: 'Meeting notes generation failed',

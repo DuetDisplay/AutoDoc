@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
-import type { RecordingEntry, SegmentationStatus } from '../../../shared/types'
+import type { RecordingEntry, SegmentationStatus, TranscriptionStatus } from '../../../shared/types'
+
+const ACTIVE_TRANSCRIPTION_STATUSES: TranscriptionStatus[] = ['queued', 'downloading', 'transcribing', 'diarizing']
+const ACTIVE_SEGMENTATION_STATUSES: SegmentationStatus[] = ['queued', 'downloading-model', 'segmenting']
 
 function formatDuration(seconds: number): string {
   const mins = Math.ceil(seconds / 60)
@@ -13,6 +16,15 @@ function formatDuration(seconds: number): string {
     return m > 0 ? `${h}h ${m}m` : `${h}h`
   }
   return `${mins}m`
+}
+
+function mergeRecordIfChanged<T>(
+  prev: Record<string, T>,
+  updates: Record<string, T>,
+): Record<string, T> {
+  const changed = Object.entries(updates).some(([key, value]) => prev[key] !== value)
+  if (!changed) return prev
+  return { ...prev, ...updates }
 }
 
 export function Recordings() {
@@ -88,6 +100,90 @@ export function Recordings() {
       unsubSegmentation()
     }
   }, [])
+
+  useEffect(() => {
+    const activeMeetingIds = recordings
+      .filter((rec) => {
+        const segmentationStatus = segmentationStatuses[rec.meetingId]
+        return ACTIVE_TRANSCRIPTION_STATUSES.includes(rec.transcriptionStatus) ||
+          (segmentationStatus != null && ACTIVE_SEGMENTATION_STATUSES.includes(segmentationStatus))
+      })
+      .map((rec) => rec.meetingId)
+
+    if (activeMeetingIds.length === 0) return
+
+    let cancelled = false
+
+    const refreshProcessingState = async () => {
+      try {
+        const updates = await Promise.all(
+          activeMeetingIds.map(async (meetingId) => ({
+            meetingId,
+            transcriptionStatus: await window.electronAPI.invoke('transcription:get-status', meetingId),
+            transcriptionProgress: await window.electronAPI.invoke('transcription:get-progress', meetingId),
+            segmentationStatus: await window.electronAPI.invoke('segmentation:get-status', meetingId),
+            segmentationProgress: await window.electronAPI.invoke('segmentation:get-progress', meetingId),
+          })),
+        )
+
+        if (cancelled) return
+
+        const updatesByMeetingId = new Map(updates.map((update) => [update.meetingId, update]))
+
+        setRecordings((prev) =>
+          {
+            let changed = false
+            const next = prev.map((rec) => {
+              const update = updatesByMeetingId.get(rec.meetingId)
+              if (!update || rec.transcriptionStatus === update.transcriptionStatus) {
+                return rec
+              }
+              changed = true
+              return {
+                ...rec,
+                transcriptionStatus: update.transcriptionStatus,
+              }
+            })
+            return changed ? next : prev
+          }
+        )
+
+        const transcriptionProgressByMeetingId = Object.fromEntries(
+          updates.map((update) => [update.meetingId, update.transcriptionProgress]),
+        )
+        const segmentationStatusesByMeetingId = Object.fromEntries(
+          updates.map((update) => [update.meetingId, update.segmentationStatus]),
+        )
+        const segmentationProgressByMeetingId = Object.fromEntries(
+          updates.map((update) => [update.meetingId, update.segmentationProgress]),
+        )
+
+        setTranscriptionProgress((prev) =>
+          mergeRecordIfChanged(prev, transcriptionProgressByMeetingId),
+        )
+
+        setSegmentationStatuses((prev) =>
+          mergeRecordIfChanged(prev, segmentationStatusesByMeetingId),
+        )
+
+        setSegmentationProgress((prev) =>
+          mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
+        )
+      } catch (err) {
+        console.error('Failed to refresh recording processing state:', err)
+      }
+    }
+
+    void refreshProcessingState()
+    const interval = setInterval(() => {
+      void refreshProcessingState()
+    }, 5000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [recordings, segmentationStatuses])
 
   const handleRetryTranscription = (meetingId: string) => {
     window.electronAPI.invoke('transcription:retry', meetingId)

@@ -332,6 +332,67 @@ export function MeetingDetail() {
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
+  useEffect(() => {
+    if (!id) return
+
+    const isTranscriptionActive =
+      transcriptionStatus === 'queued' ||
+      transcriptionStatus === 'downloading' ||
+      transcriptionStatus === 'transcribing' ||
+      transcriptionStatus === 'diarizing'
+    const isSegmentationActive =
+      segmentationStatus === 'queued' ||
+      segmentationStatus === 'downloading-model' ||
+      segmentationStatus === 'segmenting'
+
+    if (!isTranscriptionActive && !isSegmentationActive) return
+
+    let cancelled = false
+
+    const refreshProcessingState = async () => {
+      try {
+        const [latestTranscriptionStatus, latestSegmentationStatus, latestSegmentationProgress] = await Promise.all([
+          window.electronAPI.invoke('transcription:get-status', id),
+          window.electronAPI.invoke('segmentation:get-status', id),
+          window.electronAPI.invoke('segmentation:get-progress', id),
+        ])
+
+        if (cancelled) return
+
+        setTranscriptionStatus(latestTranscriptionStatus)
+        setSegmentationStatus(latestSegmentationStatus)
+        setSegmentationProgress(latestSegmentationProgress)
+
+        if (latestTranscriptionStatus === 'complete') {
+          window.electronAPI.invoke('transcription:get-transcript', id).then((nextTranscript) => {
+            if (!cancelled) setTranscript(nextTranscript)
+          })
+          window.electronAPI.invoke('speakers:get', id).then((nextSpeakers) => {
+            if (!cancelled && nextSpeakers) setSpeakers(nextSpeakers)
+          })
+        }
+
+        if (latestSegmentationStatus === 'complete') {
+          window.electronAPI.invoke('segmentation:get-segments', id).then((nextSegments) => {
+            if (!cancelled) setSegments(nextSegments)
+          })
+        }
+      } catch (err) {
+        console.error('Failed to refresh processing state:', err)
+      }
+    }
+
+    void refreshProcessingState()
+    const interval = setInterval(() => {
+      void refreshProcessingState()
+    }, 5000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [id, transcriptionStatus, segmentationStatus])
+
   const handleDelete = async () => {
     if (!id) return
     await window.electronAPI.invoke('recording:delete', id)

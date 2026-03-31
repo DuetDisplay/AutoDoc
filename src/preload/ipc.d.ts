@@ -39,6 +39,7 @@ export interface IpcInvokeEvents {
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
+  'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string]
   'ollama:check-status': []
@@ -89,6 +90,7 @@ export interface IpcInvokeReturns {
   'recording:update-title': void
   'recording:delete': void
   'transcription:get-status': TranscriptionStatus
+  'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
   'ollama:check-status': boolean

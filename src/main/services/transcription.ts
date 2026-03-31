@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink } from 'fs/promises'
+import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawn } from 'child_process'
@@ -25,6 +25,7 @@ export class TranscriptionService {
   private queue: string[] = []
   private activeJobId: string | null = null
   private activeStatus: TranscriptionStatus | null = null
+  private activeProgress: number | undefined = undefined
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
 
@@ -48,9 +49,12 @@ export class TranscriptionService {
   }
 
   retry(meetingId: string): void {
-    const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
-    unlink(errorPath).catch(() => {})
     this.enqueue(meetingId)
+  }
+
+  getProgress(meetingId: string): number | undefined {
+    if (this.activeJobId === meetingId) return this.activeProgress
+    return undefined
   }
 
   async getStatus(meetingId: string): Promise<TranscriptionStatus> {
@@ -61,8 +65,23 @@ export class TranscriptionService {
       return 'queued'
     }
     const meetingDir = join(this.recordingsBaseDir, meetingId)
-    if (await this.fileExists(join(meetingDir, 'transcript.json'))) return 'complete'
-    if (await this.fileExists(join(meetingDir, 'transcript.error'))) return 'failed'
+    const transcriptPath = join(meetingDir, 'transcript.json')
+    const errorPath = join(meetingDir, 'transcript.error')
+    const hasTranscript = await this.fileExists(transcriptPath)
+    const hasError = await this.fileExists(errorPath)
+
+    if (hasTranscript && hasError) {
+      const [transcriptStat, errorStat] = await Promise.all([
+        stat(transcriptPath).catch(() => null),
+        stat(errorPath).catch(() => null),
+      ])
+      if (transcriptStat && errorStat && errorStat.mtimeMs > transcriptStat.mtimeMs) {
+        return 'failed'
+      }
+    }
+
+    if (hasTranscript) return 'complete'
+    if (hasError) return 'failed'
     return 'pending'
   }
 
@@ -106,7 +125,6 @@ export class TranscriptionService {
         if (hasAudio && !hasTranscript && !hasError) {
           this.enqueue(meetingId)
         } else if (hasAudio && !hasTranscript && hasError) {
-          // Auto-retry failed transcriptions up to 3 times on startup
           const errorData = await this.readErrorFile(errorPath)
           if (errorData && errorData.retries < 3) {
             console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
@@ -135,6 +153,7 @@ export class TranscriptionService {
     } finally {
       this.activeJobId = null
       this.activeStatus = null
+      this.activeProgress = undefined
       this.processing = false
       this.processNext()
     }
@@ -226,6 +245,7 @@ export class TranscriptionService {
       }
 
       await encryptJSON(transcripts, transcriptPath)
+      await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
       for (const filename of ['mic.webm', 'system.webm', 'screen.webm']) {
@@ -449,7 +469,12 @@ export class TranscriptionService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
-    await writeFile(errorPath, JSON.stringify({ error, retries }))
+    try {
+      await writeFile(errorPath, JSON.stringify({ error, retries }))
+    } catch (err) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      if (code !== 'ENOENT') throw err
+    }
     logAutodocFailure({
       area: 'transcription',
       message: 'Transcription failed',
@@ -474,6 +499,7 @@ export class TranscriptionService {
   }
 
   private broadcastStatus(meetingId: string, status: TranscriptionStatus, progress?: number): void {
+    this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', { meetingId, status, progress })

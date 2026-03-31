@@ -11,6 +11,13 @@ export function registerTranscriptionIpc(transcriptionService: TranscriptionServ
   )
 
   ipcMain.handle(
+    'transcription:get-progress',
+    (_event, meetingId: string): number | undefined => {
+      return transcriptionService.getProgress(meetingId)
+    }
+  )
+
+  ipcMain.handle(
     'transcription:get-transcript',
     async (_event, meetingId: string): Promise<Transcript[]> => {
       return transcriptionService.getTranscript(meetingId)
