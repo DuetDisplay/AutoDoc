@@ -95,6 +95,7 @@ jobs:
 
       - name: Setup DigiCert signing tools
         if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
         uses: digicert/ssm-code-signing@v1.0.0
         env:
           SM_HOST: https://clientauth.one.digicert.com
