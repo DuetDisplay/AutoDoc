@@ -178,7 +178,7 @@ export class DetectionService {
       const providerJustActivated = providerSignalKey !== this.lastProviderSignalKey
       this.lastProviderSignalKey = providerSignalKey
 
-      if (providerJustActivated && this.promptedCalendarEventId === event.googleEventId) {
+      if (providerJustActivated && this.promptedCalendarEventId === event.id) {
         this.promptForCalendarEvent(event)
         return
       }
@@ -187,9 +187,9 @@ export class DetectionService {
       this.lastProviderSignalKey = ''
     }
 
-    if (this.promptedCalendarEventId === event.googleEventId) return
+    if (this.promptedCalendarEventId === event.id) return
 
-    this.promptedCalendarEventId = event.googleEventId
+    this.promptedCalendarEventId = event.id
     this.promptForCalendarEvent(event)
   }
 
@@ -252,7 +252,7 @@ export class DetectionService {
   }
 
   private promptForCalendarEvent(event: CalendarEvent): void {
-    if (isAutoRecordEnabled(event.googleEventId, event.recurringEventId)) {
+    if (isAutoRecordEnabled(event.id, event.recurringEventId)) {
       this.broadcast('detection:auto-record', {})
       return
     }

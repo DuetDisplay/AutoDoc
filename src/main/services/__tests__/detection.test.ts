@@ -31,7 +31,9 @@ function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
   const startTime = Date.now() + startOffsetMs
   return {
     id,
-    googleEventId: id,
+    externalId: id,
+    accountId: 'acct-1',
+    provider: 'google',
     recurringEventId: null,
     title: `Event ${id}`,
     startTime,

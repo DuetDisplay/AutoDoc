@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import type { CalendarManager } from '../services/calendar-manager'
 import { setAutoRecord, getAutoRecordMode } from '../services/auto-record-store'
-import type { AutoRecordMode, CalendarEvent, CalendarAccount } from '../../shared/types'
+import type { AutoRecordMode, CalendarEvent } from '../../shared/types'
 
 export function registerCalendarIpc(
   calendarManager: CalendarManager,

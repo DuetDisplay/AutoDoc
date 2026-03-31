@@ -24,9 +24,8 @@ import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import { getAutoRecordMode } from './services/auto-record-store'
 import { logAutodocFailure } from './services/autodoc-log'
-import type { CalendarEvent, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import type { OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
@@ -80,13 +79,6 @@ if (!gotSingleInstanceLock) {
   app.on('second-instance', () => {
     focusMainWindow()
   })
-}
-
-function applyAutoRecordStateFromIpc(events: CalendarEvent[]): CalendarEvent[] {
-  return events.map((e) => ({
-    ...e,
-    autoRecord: getAutoRecordMode(e.googleEventId, e.recurringEventId),
-  }))
 }
 
 protocol.registerSchemesAsPrivileged([
