@@ -205,9 +205,12 @@ export function Settings() {
               </button>
             )}
             {updateStatus.state === 'error' && (
-              <span className="max-w-[360px] text-[11px] text-clay" title={updateStatus.error}>
-                {updateStatus.error ?? 'Update check failed'}
-              </span>
+              <button
+                onClick={() => window.electronAPI.invoke('updater:check')}
+                className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
+              >
+                Update Failed. Retry
+              </button>
             )}
           </div>
         </div>
