@@ -15,8 +15,9 @@ asarUnpack:
 win:
   executableName: autodoc
   icon: build/icon.ico
+  forceCodeSigning: true
   signtoolOptions:
-    sign: scripts/windows-sign.js
+    sign: ./scripts/windows-sign.js
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

@@ -24,9 +24,11 @@ exports.default = async function sign(configuration) {
     return
   }
 
+  console.log(`[windows-sign] Signing ${targetPath} with keypair alias ${keypairAlias}`)
+
   execFileSync(
     'smctl',
-    ['sign', '--keypair-alias', keypairAlias, '--input', String(targetPath)],
+    ['sign', '--verbose', '--keypair-alias', keypairAlias, '--input', String(targetPath)],
     { stdio: 'inherit' }
   )
 }
