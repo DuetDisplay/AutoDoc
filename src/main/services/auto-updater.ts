@@ -11,6 +11,23 @@ export interface UpdateStatus {
 
 let currentStatus: UpdateStatus = { state: 'idle' }
 
+function formatUpdaterError(err: Error): string {
+  const message = err.message || 'Unknown update error'
+  const normalized = message.toLowerCase()
+
+  if (
+    normalized.includes('404') ||
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('not found') ||
+    normalized.includes('unable to find latest version')
+  ) {
+    return 'Auto-update feed is not accessible. GitHub-based updates only work if the published release feed is reachable by the installed app.'
+  }
+
+  return message
+}
+
 function broadcast(status: UpdateStatus): void {
   currentStatus = status
   const windows = BrowserWindow.getAllWindows()
@@ -54,7 +71,7 @@ export function initAutoUpdater(): void {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-updater error:', err)
-    broadcast({ state: 'error', error: err.message })
+    broadcast({ state: 'error', error: formatUpdaterError(err) })
     // Reset to idle after 30s so it doesn't stay stuck on error
     setTimeout(() => broadcast({ state: 'idle' }), 30_000)
   })

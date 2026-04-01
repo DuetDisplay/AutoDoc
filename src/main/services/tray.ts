@@ -6,6 +6,18 @@ let tray: Tray | null = null
 let cachedEventsRef: () => CalendarEvent[] = () => []
 let showWindowFn: () => void = () => {}
 
+function getTrayIconPath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.png')
+  }
+
+  if (process.platform === 'darwin') {
+    return join(process.cwd(), 'build', 'trayTemplate.png')
+  }
+
+  return join(process.cwd(), 'resources', 'icon.png')
+}
+
 function formatTime(ms: number): string {
   const d = new Date(ms)
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -33,9 +45,7 @@ function buildMenu(): Menu {
     for (const event of events) {
       const now = Date.now()
       const isNow = event.startTime <= now && event.endTime > now
-      const timeLabel = isNow
-        ? 'Now'
-        : formatTime(event.startTime)
+      const timeLabel = isNow ? 'Now' : formatTime(event.startTime)
 
       template.push({
         label: `${timeLabel}  ${event.title}`,
@@ -45,7 +55,7 @@ function buildMenu(): Menu {
             const { shell } = require('electron')
             shell.openExternal(event.meetingUrl)
           }
-        },
+        }
       })
     }
   } else {
@@ -55,29 +65,35 @@ function buildMenu(): Menu {
   template.push({ type: 'separator' })
   template.push({
     label: 'Open AutoDoc',
-    click: showWindowFn,
+    click: showWindowFn
   })
   template.push({ type: 'separator' })
   template.push({
     label: 'Quit AutoDoc',
     click: () => {
       app.quit()
-    },
+    }
   })
 
   return Menu.buildFromTemplate(template)
 }
 
-export function createTray(
-  getEvents: () => CalendarEvent[],
-  showWindow: () => void,
-): Tray {
+export function createTray(getEvents: () => CalendarEvent[], showWindow: () => void): Tray {
   cachedEventsRef = getEvents
   showWindowFn = showWindow
 
-  const iconPath = join(__dirname, '../../build/trayTemplate.png')
-  const icon = nativeImage.createFromPath(iconPath)
-  icon.setTemplateImage(true)
+  const iconPath = getTrayIconPath()
+  let icon = nativeImage.createFromPath(iconPath)
+
+  if (icon.isEmpty()) {
+    console.warn(`Tray icon failed to load from ${iconPath}`)
+  }
+
+  if (process.platform === 'darwin') {
+    icon.setTemplateImage(true)
+  } else {
+    icon = icon.resize({ width: 16, height: 16 })
+  }
 
   tray = new Tray(icon)
   tray.setToolTip('AutoDoc')
