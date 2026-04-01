@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
 import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
@@ -20,6 +20,10 @@ interface WhisperSegment {
 interface WhisperOutput {
   transcription: WhisperSegment[]
 }
+
+const MIN_WHISPER_THREADS = 4
+const MAX_WHISPER_THREADS = 10
+const RESERVED_LOGICAL_CPUS = 6
 
 export class TranscriptionService {
   private queue: string[] = []
@@ -402,14 +406,25 @@ export class TranscriptionService {
   private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {
     return new Promise((resolve, reject) => {
       let stderr = ''
-
-      const proc = spawn(this.whisperManager.getWhisperPath(), [
+      const threadCount = this.getWhisperThreadCount()
+      const args = [
         '-m', this.whisperManager.getModelPath(),
         '-f', audioWavPath,
         '-oj',
         '-l', 'en',
         '-pp',
-      ])
+      ]
+
+      if (threadCount !== null) {
+        args.splice(4, 0, '-t', String(threadCount))
+      }
+
+      const proc = spawn(this.whisperManager.getWhisperPath(), args)
+
+      if (threadCount !== null) {
+        console.log(`[perf] Whisper threads: ${threadCount} (${meetingId})`)
+      }
+      this.lowerWhisperPriority(proc.pid, meetingId)
 
       proc.on('error', (err) => {
         reject(new Error(`whisper spawn failed: ${err.message}`))
@@ -451,6 +466,47 @@ export class TranscriptionService {
         }
       })
     })
+  }
+
+  private getWhisperThreadCount(): number | null {
+    if (process.platform !== 'win32') {
+      return null
+    }
+
+    const logicalProcessors = this.getLogicalProcessorCount()
+    return Math.max(
+      MIN_WHISPER_THREADS,
+      Math.min(MAX_WHISPER_THREADS, logicalProcessors - RESERVED_LOGICAL_CPUS),
+    )
+  }
+
+  private getLogicalProcessorCount(): number {
+    try {
+      if (typeof availableParallelism === 'function') {
+        return Math.max(1, availableParallelism())
+      }
+    } catch {
+      // Fall back to cpu count below.
+    }
+
+    try {
+      return Math.max(1, cpus().length)
+    } catch {
+      return MIN_WHISPER_THREADS
+    }
+  }
+
+  private lowerWhisperPriority(pid: number | undefined, meetingId: string): void {
+    if (process.platform !== 'win32' || !pid) {
+      return
+    }
+
+    try {
+      setPriority(pid, osConstants.priority.PRIORITY_BELOW_NORMAL)
+      console.log(`[perf] Whisper priority: BelowNormal (${meetingId})`)
+    } catch (err) {
+      console.warn(`Failed to lower whisper priority for ${meetingId}:`, err)
+    }
   }
 
   private mapToTranscripts(meetingId: string, output: WhisperOutput): Transcript[] {
