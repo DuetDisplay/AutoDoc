@@ -61,6 +61,10 @@ jobs:
         if: github.ref_type == 'branch'
         run: npm run build:mac
 
+      - name: Ad-hoc sign macOS app for testing
+        if: github.ref_type == 'branch'
+        run: codesign --force --deep --sign - dist/mac-arm64/AutoDoc.app
+
       - name: Upload macOS artifacts
         if: always()
         uses: actions/upload-artifact@v4
