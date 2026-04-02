@@ -8,3 +8,11 @@ out
 .worktrees/
 .env
 .env.local
+
+# Generated icons (built from SVGs via scripts/generate-icons.js)
+build/icon.png
+build/trayTemplate.png
+build/trayTemplate@2x.png
+resources/icon.png
+resources/trayTemplate.png
+resources/trayTemplate@2x.png

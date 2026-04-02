@@ -7,14 +7,16 @@ let cachedEventsRef: () => CalendarEvent[] = () => []
 let showWindowFn: () => void = () => {}
 
 function getTrayIconPath(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.png')
-  }
-
   if (process.platform === 'darwin') {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'trayTemplate.png')
+    }
     return join(process.cwd(), 'build', 'trayTemplate.png')
   }
 
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.png')
+  }
   return join(process.cwd(), 'resources', 'icon.png')
 }
 
