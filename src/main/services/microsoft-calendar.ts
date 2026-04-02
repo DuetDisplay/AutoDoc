@@ -15,6 +15,26 @@ const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0
 const MICROSOFT_SCOPES = 'Calendars.Read User.Read offline_access'
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 
+function extractEmailFromIdToken(idToken: string | undefined): string | null {
+  if (!idToken) return null
+
+  try {
+    const [, payload] = idToken.split('.')
+    if (!payload) return null
+
+    const normalizedPayload = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=')
+    const parsed = JSON.parse(Buffer.from(paddedPayload, 'base64').toString('utf-8')) as {
+      email?: string
+      preferred_username?: string
+      upn?: string
+    }
+    return parsed.email?.trim() || parsed.preferred_username?.trim() || parsed.upn?.trim() || null
+  } catch {
+    return null
+  }
+}
+
 interface GraphEvent {
   id: string
   subject?: string
@@ -95,12 +115,12 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     saveTokensForAccount(accountId, tokens)
     this.tokenCache.set(accountId, tokens)
 
-    const email = await this.fetchUserEmail(accountId)
+    const email = await this.fetchAccountEmail(accountId)
 
     return {
       id: accountId,
       provider: 'microsoft',
-      email,
+      email: email ?? '',
       connectedAt: Date.now(),
     }
   }
@@ -231,9 +251,11 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     return null
   }
 
-  private async fetchUserEmail(accountId: string): Promise<string> {
+  async fetchAccountEmail(accountId: string): Promise<string | null> {
     const tokens = this.getTokens(accountId)
-    if (!tokens?.access_token) return 'unknown@outlook.com'
+    if (!tokens?.access_token) {
+      return extractEmailFromIdToken((tokens as (OAuthTokens & { id_token?: string }) | null)?.id_token)
+    }
 
     try {
       const res = await fetch(`${GRAPH_BASE}/me`, {
@@ -241,12 +263,16 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       })
       if (res.ok) {
         const data = await res.json() as { mail?: string; userPrincipalName?: string }
-        return data.mail || data.userPrincipalName || 'unknown@outlook.com'
+        return (
+          data.mail ||
+          data.userPrincipalName ||
+          extractEmailFromIdToken((tokens as OAuthTokens & { id_token?: string }).id_token)
+        )
       }
     } catch {
-      // Fall through
+      // Fall through to token claims.
     }
-    return 'unknown@outlook.com'
+    return extractEmailFromIdToken((tokens as OAuthTokens & { id_token?: string }).id_token)
   }
 
   private async refreshIfNeeded(accountId: string): Promise<void> {

@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink } from 'fs/promises'
+import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
 import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
@@ -9,6 +9,7 @@ import type { AudioConverter } from './audio-converter'
 import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
+import { logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 
 interface WhisperSegment {
@@ -20,10 +21,15 @@ interface WhisperOutput {
   transcription: WhisperSegment[]
 }
 
+const MIN_WHISPER_THREADS = 4
+const MAX_WHISPER_THREADS = 10
+const RESERVED_LOGICAL_CPUS = 6
+
 export class TranscriptionService {
   private queue: string[] = []
   private activeJobId: string | null = null
   private activeStatus: TranscriptionStatus | null = null
+  private activeProgress: number | undefined = undefined
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
 
@@ -47,9 +53,12 @@ export class TranscriptionService {
   }
 
   retry(meetingId: string): void {
-    const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
-    unlink(errorPath).catch(() => {})
     this.enqueue(meetingId)
+  }
+
+  getProgress(meetingId: string): number | undefined {
+    if (this.activeJobId === meetingId) return this.activeProgress
+    return undefined
   }
 
   async getStatus(meetingId: string): Promise<TranscriptionStatus> {
@@ -60,8 +69,23 @@ export class TranscriptionService {
       return 'queued'
     }
     const meetingDir = join(this.recordingsBaseDir, meetingId)
-    if (await this.fileExists(join(meetingDir, 'transcript.json'))) return 'complete'
-    if (await this.fileExists(join(meetingDir, 'transcript.error'))) return 'failed'
+    const transcriptPath = join(meetingDir, 'transcript.json')
+    const errorPath = join(meetingDir, 'transcript.error')
+    const hasTranscript = await this.fileExists(transcriptPath)
+    const hasError = await this.fileExists(errorPath)
+
+    if (hasTranscript && hasError) {
+      const [transcriptStat, errorStat] = await Promise.all([
+        stat(transcriptPath).catch(() => null),
+        stat(errorPath).catch(() => null),
+      ])
+      if (transcriptStat && errorStat && errorStat.mtimeMs > transcriptStat.mtimeMs) {
+        return 'failed'
+      }
+    }
+
+    if (hasTranscript) return 'complete'
+    if (hasError) return 'failed'
     return 'pending'
   }
 
@@ -88,28 +112,31 @@ export class TranscriptionService {
     }
 
     for (const meetingId of dirs) {
-      const meetingDir = join(this.recordingsBaseDir, meetingId)
-      const dirStat = await stat(meetingDir).catch(() => null)
-      if (!dirStat?.isDirectory()) continue
+      try {
+        const meetingDir = join(this.recordingsBaseDir, meetingId)
+        const dirStat = await stat(meetingDir).catch(() => null)
+        if (!dirStat?.isDirectory()) continue
 
-      const audioPath = join(meetingDir, 'audio.webm')
-      const micPath = join(meetingDir, 'mic.webm')
-      const transcriptPath = join(meetingDir, 'transcript.json')
-      const errorPath = join(meetingDir, 'transcript.error')
+        const audioPath = join(meetingDir, 'audio.webm')
+        const micPath = join(meetingDir, 'mic.webm')
+        const transcriptPath = join(meetingDir, 'transcript.json')
+        const errorPath = join(meetingDir, 'transcript.error')
 
-      const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
-      const hasTranscript = await this.fileExists(transcriptPath)
-      const hasError = await this.fileExists(errorPath)
+        const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
+        const hasTranscript = await this.fileExists(transcriptPath)
+        const hasError = await this.fileExists(errorPath)
 
-      if (hasAudio && !hasTranscript && !hasError) {
-        this.enqueue(meetingId)
-      } else if (hasAudio && !hasTranscript && hasError) {
-        // Auto-retry failed transcriptions up to 3 times on startup
-        const errorData = await this.readErrorFile(errorPath)
-        if (errorData && errorData.retries < 3) {
-          console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
-          this.retry(meetingId)
+        if (hasAudio && !hasTranscript && !hasError) {
+          this.enqueue(meetingId)
+        } else if (hasAudio && !hasTranscript && hasError) {
+          const errorData = await this.readErrorFile(errorPath)
+          if (errorData && errorData.retries < 3) {
+            console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+            this.retry(meetingId)
+          }
         }
+      } catch (err) {
+        console.warn(`Failed to inspect transcription state for ${meetingId}:`, err)
       }
     }
   }
@@ -130,6 +157,7 @@ export class TranscriptionService {
     } finally {
       this.activeJobId = null
       this.activeStatus = null
+      this.activeProgress = undefined
       this.processing = false
       this.processNext()
     }
@@ -223,11 +251,18 @@ export class TranscriptionService {
           await this.generateSpeakersJson(meetingId, transcripts)
           console.log(`[perf] Speaker labeling: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
         } catch (err) {
+          logAutodocFailure({
+            area: 'transcription',
+            message: 'Speaker labeling failed during transcription',
+            error: err,
+            meetingId,
+          })
           console.error('Speaker labeling failed:', err)
         }
       }
 
       await encryptJSON(transcripts, transcriptPath)
+      await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
       for (const filename of ['mic.webm', 'system.webm', 'screen.webm']) {
@@ -237,6 +272,12 @@ export class TranscriptionService {
             await encryptFileInPlace(filePath)
           }
         } catch (err) {
+          logAutodocFailure({
+            area: 'transcription',
+            message: `Failed to encrypt ${filename} after transcription`,
+            error: err,
+            meetingId,
+          })
           console.error(`Failed to encrypt ${filePath}:`, err)
         }
       }
@@ -290,6 +331,7 @@ export class TranscriptionService {
         '-f', 'null', '-',
       ])
       let stderr = ''
+      proc.on('error', (err) => reject(new Error(`ffmpeg silencedetect spawn failed: ${err.message}`)))
       proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
       proc.on('close', (code) => {
         if (code !== 0) {
@@ -376,21 +418,30 @@ export class TranscriptionService {
 
   private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = 30 * 60 * 1000
       let stderr = ''
-
-      const proc = spawn(this.whisperManager.getWhisperPath(), [
+      const threadCount = this.getWhisperThreadCount()
+      const args = [
         '-m', this.whisperManager.getModelPath(),
         '-f', audioWavPath,
         '-oj',
         '-l', 'en',
         '-pp',
-      ])
+      ]
 
-      const timer = setTimeout(() => {
-        proc.kill()
-        reject(new Error('whisper.cpp timed out after 30 minutes'))
-      }, timeout)
+      if (threadCount !== null) {
+        args.splice(4, 0, '-t', String(threadCount))
+      }
+
+      const proc = spawn(this.whisperManager.getWhisperPath(), args)
+
+      if (threadCount !== null) {
+        console.log(`[perf] Whisper threads: ${threadCount} (${meetingId})`)
+      }
+      this.lowerWhisperPriority(proc.pid, meetingId)
+
+      proc.on('error', (err) => {
+        reject(new Error(`whisper spawn failed: ${err.message}`))
+      })
 
       proc.stderr.on('data', (data: Buffer) => {
         const chunk = data.toString()
@@ -421,7 +472,6 @@ export class TranscriptionService {
       }
 
       proc.on('close', (code: number | null) => {
-        clearTimeout(timer)
         if (code === 0) {
           resolve()
         } else {
@@ -429,6 +479,47 @@ export class TranscriptionService {
         }
       })
     })
+  }
+
+  private getWhisperThreadCount(): number | null {
+    if (process.platform !== 'win32') {
+      return null
+    }
+
+    const logicalProcessors = this.getLogicalProcessorCount()
+    return Math.max(
+      MIN_WHISPER_THREADS,
+      Math.min(MAX_WHISPER_THREADS, logicalProcessors - RESERVED_LOGICAL_CPUS),
+    )
+  }
+
+  private getLogicalProcessorCount(): number {
+    try {
+      if (typeof availableParallelism === 'function') {
+        return Math.max(1, availableParallelism())
+      }
+    } catch {
+      // Fall back to cpu count below.
+    }
+
+    try {
+      return Math.max(1, cpus().length)
+    } catch {
+      return MIN_WHISPER_THREADS
+    }
+  }
+
+  private lowerWhisperPriority(pid: number | undefined, meetingId: string): void {
+    if (process.platform !== 'win32' || !pid) {
+      return
+    }
+
+    try {
+      setPriority(pid, osConstants.priority.PRIORITY_BELOW_NORMAL)
+      console.log(`[perf] Whisper priority: BelowNormal (${meetingId})`)
+    } catch (err) {
+      console.warn(`Failed to lower whisper priority for ${meetingId}:`, err)
+    }
   }
 
   private mapToTranscripts(meetingId: string, output: WhisperOutput): Transcript[] {
@@ -459,7 +550,18 @@ export class TranscriptionService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
-    await writeFile(errorPath, JSON.stringify({ error, retries }))
+    try {
+      await writeFile(errorPath, JSON.stringify({ error, retries }))
+    } catch (err) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      if (code !== 'ENOENT') throw err
+    }
+    logAutodocFailure({
+      area: 'transcription',
+      message: 'Transcription failed',
+      error,
+      meetingId,
+    })
     this.broadcastStatus(meetingId, 'failed')
   }
 
@@ -478,6 +580,7 @@ export class TranscriptionService {
   }
 
   private broadcastStatus(meetingId: string, status: TranscriptionStatus, progress?: number): void {
+    this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', { meetingId, status, progress })

@@ -72,11 +72,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 
 If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
 
-interface OllamaResponse {
-  message?: { content?: string }
-  error?: string
-}
-
 interface RawSegment {
   topic?: string
   title?: string

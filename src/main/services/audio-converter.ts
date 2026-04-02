@@ -14,6 +14,7 @@ export class AudioConverter {
         outputPath,
       ])
 
+      proc.on('error', (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)))
       proc.stderr.on('data', (data: Buffer) => {
         stderr += data.toString()
       })
@@ -39,6 +40,7 @@ export class AudioConverter {
         outputPath,
       ])
       let stderr = ''
+      proc.on('error', (err) => reject(new Error(`ffmpeg merge spawn failed: ${err.message}`)))
       proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
       proc.on('close', (code) => {
         if (code === 0) resolve()
@@ -52,6 +54,7 @@ export class AudioConverter {
     return new Promise((resolve, reject) => {
       let stderr = ''
       const proc = spawn(ffmpegPath, ['-i', inputPath, '-f', 'null', '-'])
+      proc.on('error', (err) => reject(new Error(`ffmpeg duration spawn failed: ${err.message}`)))
       proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
       proc.on('close', () => {
         // Parse "Duration: HH:MM:SS.ss" from ffmpeg output

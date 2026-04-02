@@ -6,6 +6,7 @@ export interface CalendarProvider {
   connect(): Promise<CalendarAccount>
   disconnect(accountId: string): Promise<void>
   isConnected(accountId: string): boolean
+  fetchAccountEmail(accountId: string): Promise<string | null>
 
   fetchUpcomingEvents(accountId: string): Promise<CalendarEvent[]>
   fetchRecentEvents(accountId: string, daysBack: number): Promise<CalendarEvent[]>

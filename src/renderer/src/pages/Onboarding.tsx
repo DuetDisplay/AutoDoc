@@ -5,12 +5,13 @@ import { FeatureStep } from '../components/onboarding/FeatureStep'
 import { MicPermissionStep } from '../components/onboarding/MicPermissionStep'
 import { ScreenPermissionStep } from '../components/onboarding/ScreenPermissionStep'
 import { CalendarStep } from '../components/onboarding/CalendarStep'
+import { TranscriptionStep } from '../components/onboarding/TranscriptionStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
 import { setAnalyticsConsent, trackEvent } from '../services/analytics'
 
-const TOTAL_DOTS = 9
+const TOTAL_DOTS = 10
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(0)
@@ -85,10 +86,12 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       case 6:
         return <CalendarStep onNext={next} />
       case 7:
-        return <OllamaStep onNext={next} />
+        return <TranscriptionStep onNext={next} />
       case 8:
-        return <AnalyticsStep onNext={handleAnalyticsChoice} />
+        return <OllamaStep onNext={next} />
       case 9:
+        return <AnalyticsStep onNext={handleAnalyticsChoice} />
+      case 10:
         return <AllSetStep onFinish={handleFinish} />
       default:
         return null

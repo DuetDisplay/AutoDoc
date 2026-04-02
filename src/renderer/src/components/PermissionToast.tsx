@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useToastStore } from '../stores/toast'
+import { ROUTES } from '../../../shared/constants'
 
 const ICONS: Record<string, string> = {
   screen: '🖥️',
@@ -20,7 +21,7 @@ export function PermissionToast() {
 
   const handleEnable = () => {
     if (activeToast.type === 'calendar') {
-      window.electronAPI.invoke('calendar:connect')
+      window.location.hash = `#${ROUTES.settings}`
     } else {
       window.electronAPI.invoke('permissions:open-settings', activeToast.type as 'screen' | 'microphone')
     }

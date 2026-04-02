@@ -11,8 +11,13 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - 'resources/**'
+  - 'native/**'
 win:
   executableName: autodoc
+  icon: build/icon.ico
+  forceCodeSigning: true
+  signtoolOptions:
+    sign: ./scripts/windows-sign.js
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -42,3 +47,4 @@ publish:
   provider: github
   owner: DuetDisplay
   repo: AutoDoc-Local
+  releaseType: release

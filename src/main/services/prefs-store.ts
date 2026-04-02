@@ -13,7 +13,11 @@ export class PrefsStore {
   constructor() {
     this.store = new Store<PrefsSchema>({
       name: 'autodoc-prefs',
-      defaults: { onboardingComplete: false, launchAtLogin: true, analyticsConsent: null },
+      defaults: {
+        onboardingComplete: false,
+        launchAtLogin: true,
+        analyticsConsent: null,
+      },
     })
 
     // Sync the current preference to the OS on startup

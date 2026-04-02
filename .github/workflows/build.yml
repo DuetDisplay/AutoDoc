@@ -2,6 +2,8 @@ name: Build & Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -22,25 +24,156 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify notarization credentials
-        env:
-          APPLE_ID: ${{ secrets.DD_APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
-        run: |
-          echo "APPLE_ID is set: $( [ -n \"$APPLE_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_APP_SPECIFIC_PASSWORD is set: $( [ -n \"$APPLE_APP_SPECIFIC_PASSWORD\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_TEAM_ID is set: $( [ -n \"$APPLE_TEAM_ID\" ] && echo 'yes' || echo 'NO - MISSING' )"
-          echo "APPLE_TEAM_ID length: ${#APPLE_TEAM_ID}"
-          echo "APPLE_ID first 3 chars: ${APPLE_ID:0:3}***"
-          xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" 2>&1 | head -5 || true
+      - name: Run bootstrap tests
+        run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
-      - name: Build Electron app
+      - name: Install Apple certificate
+        if: startsWith(github.ref, 'refs/tags/')
         env:
-          CSC_LINK: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.DD_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Build macOS release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build && npx electron-builder --mac --publish always
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release:mac
+
+      - name: Build macOS artifacts
+        if: github.ref_type == 'branch'
+        run: npm run build:mac
+
+      - name: Upload macOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autodoc-macos-${{ github.ref_name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
+
+  build-win:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run bootstrap tests
+        run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
+
+      - name: Setup DigiCert signing tools
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: digicert/ssm-code-signing@v1.0.0
+        env:
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ***REMOVED***
+          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
+
+      - name: Check DigiCert signing health
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ***REMOVED***
+          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
+        run: |
+          smctl healthcheck
+          smctl windows certsync --keypair-alias=REDACTED_KEYPAIR_ALIAS --store=system
+
+      - name: Build Windows release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_WINDOWS_SIGNING: 'true'
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ***REMOVED***
+          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
+          SM_KEYPAIR_ALIAS: REDACTED_KEYPAIR_ALIAS
+        run: npm run release:win
+
+      - name: Verify Windows signatures
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $files = @(
+            'dist\win-unpacked\autodoc.exe'
+            'dist\win-unpacked\resources\app.asar.unpacked\native\win-meeting-detector\bin\win-meeting-detector.exe'
+            'dist\autodoc-*.exe'
+          )
+
+          $resolvedFiles = @()
+          foreach ($pattern in $files) {
+            $resolvedFiles += Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
+          }
+
+          if (-not $resolvedFiles) {
+            throw 'No Windows artifacts were found to verify.'
+          }
+
+          $failed = $false
+          foreach ($file in ($resolvedFiles | Sort-Object FullName -Unique)) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            [pscustomobject]@{
+              Path = $file.FullName
+              Status = $signature.Status
+              Signer = $signature.SignerCertificate.Subject
+            } | Format-List
+
+            if ($signature.Status -ne 'Valid') {
+              $failed = $true
+            }
+          }
+
+          if ($failed) {
+            throw 'One or more Windows artifacts are not Authenticode-signed.'
+          }
+
+      - name: Build Windows artifacts
+        if: github.ref_type == 'branch'
+        run: npm run build:win
+
+      - name: Upload Windows artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autodoc-windows-${{ github.ref_name }}
+          path: |
+            dist/*-setup.exe
+            dist/*.blockmap
+            dist/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14

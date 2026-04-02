@@ -146,7 +146,20 @@ export type SegmentationStatus =
   | 'failed'
 
 export interface OllamaSetupStatus {
-  phase: 'downloading' | 'pulling' | 'ready' | 'error'
+  phase: 'starting' | 'downloading' | 'pulling' | 'ready' | 'error'
   percent: number
   error?: string
+}
+
+export interface WhisperSetupStatus {
+  phase: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
+  percent: number
+  error?: string
+}
+
+export interface AppRuntimeInfo {
+  platform: NodeJS.Platform
+  storagePath: string
+  whisperModel: string
+  ollamaModel: string
 }

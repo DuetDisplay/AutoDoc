@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 
-export function OllamaStep({ onNext }: { onNext: () => void }) {
-  const [phase, setPhase] = useState<string>('starting')
+const phaseLabels: Record<string, (percent: number) => string> = {
+  'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
+  'downloading-ffmpeg': (p) => `Downloading audio tools... ${p}%`,
+  'downloading-model': (p) => `Downloading speech model... ${p}%`,
+}
+
+export function TranscriptionStep({ onNext }: { onNext: () => void }) {
+  const [phase, setPhase] = useState<string>('downloading-whisper')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
@@ -16,14 +22,14 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
   }
 
   useEffect(() => {
-    window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
+    window.electronAPI.invoke('whisper:get-setup-status').then((status) => {
       setPhase(status.phase)
       setPercent(status.percent)
       if (status.phase === 'ready') markReady()
       if (status.phase === 'error') setError(status.error ?? 'Unknown error')
     })
 
-    const unsub = window.electronAPI.on('ollama:setup-progress', (status) => {
+    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
       setPhase(status.phase)
       setPercent(status.percent)
       if (status.phase === 'ready') markReady()
@@ -49,9 +55,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </div>
-        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">AI Model Ready</h2>
+        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Transcription Ready</h2>
         <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-          Your local AI model is set up and ready to go.
+          Speech-to-text is set up and ready to go.
         </p>
         <button
           onClick={onNext}
@@ -63,30 +69,23 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     )
   }
 
-  const statusLabel = phase === 'starting'
-    ? 'Starting local AI engine...'
-    : phase === 'downloading'
-      ? `Downloading AI model... ${percent}%`
-      : phase === 'pulling'
-        ? `Installing model... ${percent}%`
-        : error
-          ? `Setup failed: ${error}`
-          : 'Preparing...'
+  const statusLabel = phaseLabels[phase]?.(percent)
+    ?? (error ? `Setup failed: ${error}` : 'Preparing...')
 
   return (
     <div className="text-center">
-      <div className="w-16 h-16 rounded-2xl bg-dusk-light flex items-center justify-center text-[28px] mx-auto mb-5">
-        AI
+      <div className="w-16 h-16 rounded-2xl bg-mist-light flex items-center justify-center text-[28px] mx-auto mb-5">
+        📝
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up Transcription</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc uses a local AI model to analyze your transcripts and generate smart notes. This downloads once and runs entirely on your machine.
+        AutoDoc uses a local speech engine to transcribe your meetings on-device. This downloads once and runs entirely on your machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
         <div
           className="h-full bg-sage rounded-full transition-all duration-300"
-          style={{ width: `${phase === 'starting' ? 20 : percent}%` }}
+          style={{ width: `${percent}%` }}
         />
       </div>
       <div className="text-[12px] text-ink-faint mb-5">{statusLabel}</div>
@@ -95,9 +94,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
         <button
           onClick={async () => {
             setError(null)
-            setPhase('starting')
+            setPhase('downloading-whisper')
             setPercent(0)
-            await window.electronAPI.invoke('ollama:retry-setup')
+            await window.electronAPI.invoke('whisper:retry-setup')
           }}
           className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
         >
@@ -110,7 +109,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
         >
-          Continue - this will finish in the background
+          Continue — this will finish in the background
         </button>
       )}
     </div>

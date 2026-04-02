@@ -1,6 +1,6 @@
-import * as Sentry from '@sentry/electron/main'
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
@@ -22,27 +22,36 @@ import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import { PrefsStore } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import type { OllamaSetupStatus } from '../shared/types'
+import { logAutodocFailure } from './services/autodoc-log'
+import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.autodoc.app')
+}
 
 // Initialize Sentry for crash reporting (env-var-gated — no DSN = no tracking)
+// Dynamic import: @sentry/electron accesses app.getAppPath() at module scope,
+// which crashes if loaded before Electron fully initializes the app object.
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
 if (SENTRY_DSN) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    environment: is.dev ? 'development' : 'production',
-    release: `autodoc@${app.getVersion()}`,
-    // Don't send in dev unless explicitly enabled
-    enabled: !is.dev || !!process.env.AUTODOC_SENTRY_DEV,
-    beforeSend(event) {
-      // Strip machine name for privacy
-      delete event.server_name
-      return event
-    },
+  import('@sentry/electron/main').then((Sentry) => {
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      environment: is.dev ? 'development' : 'production',
+      release: `autodoc@${app.getVersion()}`,
+      enabled: !is.dev || !!process.env.AUTODOC_SENTRY_DEV,
+      beforeSend(event) {
+        delete event.server_name
+        return event
+      },
+    })
+  }).catch((err) => {
+    console.warn('Failed to initialize Sentry:', err)
   })
 }
 
@@ -53,21 +62,44 @@ if (process.platform === 'darwin' && app.dock) {
 
 let ollamaManager: OllamaManager | null = null
 let isQuitting = false
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
+
+function focusMainWindow(): void {
+  const [existingWindow] = BrowserWindow.getAllWindows()
+  if (!existingWindow) return
+  if (existingWindow.isMinimized()) existingWindow.restore()
+  existingWindow.show()
+  existingWindow.focus()
+}
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    focusMainWindow()
+  })
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
 ])
 
 function createWindow(): void {
+  const windowIcon = process.platform === 'win32'
+    ? join(__dirname, '../../build/icon.ico')
+    : join(__dirname, '../../build/icon.png')
+
   const mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
     minWidth: 800,
     minHeight: 600,
     show: false,
-    titleBarStyle: 'hiddenInset',
+    title: 'AutoDoc',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
-    icon: join(__dirname, '../../build/icon.png'),
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -99,6 +131,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return
+
   ipcMain.handle('app:get-version', () => app.getVersion())
 
   // Auto-updater
@@ -156,10 +190,10 @@ app.whenReady().then(async () => {
 
     if (await isEncrypted(filePath)) {
       const tempPath = await decryptFileToTemp(filePath)
-      return net.fetch(`file://${tempPath}`)
+      return net.fetch(pathToFileURL(tempPath).href)
     }
 
-    return net.fetch(`file://${filePath}`)
+    return net.fetch(pathToFileURL(filePath).href)
   })
 
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
@@ -181,9 +215,10 @@ app.whenReady().then(async () => {
     calendarManager,
   )
   ollamaManager = new OllamaManager()
+  const managedOllamaManager = ollamaManager
 
   // Mutable state tracking Ollama setup progress
-  const ollamaSetupState: OllamaSetupStatus = { phase: 'downloading', percent: 0 }
+  const ollamaSetupState: OllamaSetupStatus = { phase: 'starting', percent: 0 }
 
   function broadcastOllamaStatus(): void {
     const windows = BrowserWindow.getAllWindows()
@@ -192,48 +227,117 @@ app.whenReady().then(async () => {
     }
   }
 
-  ollamaManager.on('download-start', () => {
+  managedOllamaManager.on('download-start', () => {
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('download-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('download-progress', (data: { percent: number }) => {
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = data.percent
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('download-complete', () => {
+  managedOllamaManager.on('download-complete', () => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-start', () => {
+  managedOllamaManager.on('pull-start', () => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('pull-progress', (data: { percent: number }) => {
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = data.percent
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  ollamaManager.on('pull-complete', () => {
+  managedOllamaManager.on('pull-complete', () => {
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
+    delete ollamaSetupState.error
     broadcastOllamaStatus()
   })
 
-  const ollamaProvider = new OllamaProvider(ollamaManager.getBaseUrl(), ollamaManager.getModel())
+  let ollamaRecoveryPromise: Promise<void> | null = null
+
+  const ensureOllamaRunning = (): void => {
+    if (ollamaRecoveryPromise) return
+
+    managedOllamaManager.resetReady()
+
+    ollamaSetupState.phase = 'starting'
+    ollamaSetupState.percent = 0
+    delete ollamaSetupState.error
+    broadcastOllamaStatus()
+
+    ollamaRecoveryPromise = managedOllamaManager.startAndPull()
+      .then(() => {
+        ollamaSetupState.phase = 'ready'
+        ollamaSetupState.percent = 100
+        delete ollamaSetupState.error
+        broadcastOllamaStatus()
+      })
+      .catch((err) => {
+        ollamaSetupState.phase = 'error'
+        ollamaSetupState.percent = 0
+        ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+        broadcastOllamaStatus()
+        logAutodocFailure({
+          area: 'ollama',
+          message: 'Failed to start managed Ollama server',
+          error: err,
+        })
+        console.error('Failed to start Ollama:', err)
+      })
+      .finally(() => {
+        ollamaRecoveryPromise = null
+      })
+  }
+
+  const ollamaProvider = new OllamaProvider(managedOllamaManager.getBaseUrl(), managedOllamaManager.getModel())
   const segmentationService = new SegmentationService(
     ollamaProvider,
     ollamaManager,
     recordingService.getRecordingsBaseDir(),
   )
+  ipcMain.handle('app:get-runtime-info', (): AppRuntimeInfo => ({
+    platform: process.platform,
+    storagePath: app.getPath('userData'),
+    whisperModel: whisperManager.getModelName(),
+    ollamaModel: managedOllamaManager.getModel(),
+  }))
+  let pendingRecoveryPromise: Promise<unknown> | null = null
+
+  const recoverPendingWork = (): void => {
+    if (pendingRecoveryPromise) return
+
+    pendingRecoveryPromise = Promise.all([
+      transcriptionService.scanAndEnqueuePending(),
+      segmentationService.scanAndEnqueuePending(),
+    ])
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'app',
+          message: 'Pending meeting recovery failed',
+          error: err,
+        })
+        console.error('Pending meeting recovery failed:', err)
+      })
+      .finally(() => {
+        pendingRecoveryPromise = null
+      })
+  }
 
   transcriptionService.onComplete((meetingId) => {
     segmentationService.enqueue(meetingId)
@@ -250,11 +354,31 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
+  // Mutable state tracking Whisper setup progress
+  const whisperSetupState: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
+
+  whisperManager.on('setup-status', (status: WhisperSetupStatus) => {
+    whisperSetupState.phase = status.phase
+    whisperSetupState.percent = status.percent
+    whisperSetupState.error = status.error
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+    }
+  })
+
   registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   registerTranscriptionIpc(transcriptionService)
-  registerLlmIpc(segmentationService, ollamaManager, ollamaProvider, () => ({ ...ollamaSetupState }))
+  registerLlmIpc(
+    segmentationService,
+    managedOllamaManager,
+    ollamaProvider,
+    () => ({ ...ollamaSetupState }),
+    ensureOllamaRunning,
+  )
+  registerWhisperIpc(whisperManager, () => ({ ...whisperSetupState }))
   registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(recordingService.getRecordingsBaseDir(), ollamaManager, ollamaProvider, calendarManager)
+  registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider, calendarManager)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()
@@ -284,33 +408,81 @@ app.whenReady().then(async () => {
   createTray(() => cachedEvents, showWindow)
 
   detectionService.start()
+  recoverPendingWork()
+
+  // Start whisper tools + model download in the background — don't block the window
+  whisperManager.startSetup()
+    .then(() => {
+      whisperSetupState.phase = 'ready'
+      whisperSetupState.percent = 100
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+      }
+    })
+    .catch((err) => {
+      whisperSetupState.phase = 'error'
+      whisperSetupState.error = err instanceof Error ? err.message : String(err)
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+      }
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Failed to set up whisper tools',
+        error: err,
+      })
+      console.error('Failed to set up whisper tools:', err)
+    })
 
   // Start Ollama + pull model in the background — don't block the window
-  ollamaManager.startAndPull().catch((err) => {
-    ollamaSetupState.phase = 'error'
-    ollamaSetupState.error = err instanceof Error ? err.message : String(err)
-    broadcastOllamaStatus()
-    console.error('Failed to start Ollama:', err)
+  ensureOllamaRunning()
+
+  powerMonitor.on('resume', () => {
+    ensureOllamaRunning()
+    recoverPendingWork()
+  })
+
+  powerMonitor.on('unlock-screen', () => {
+    ensureOllamaRunning()
+    recoverPendingWork()
   })
 
   // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
   cleanupTempFiles().catch(() => {})
   migrateDataDir()
-    .catch((err) => console.error('Data dir migration failed:', err))
+    .catch((err) => {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Data dir migration failed',
+        error: err,
+      })
+      console.error('Data dir migration failed:', err)
+    })
     .then(() => migrateRecordings(recordingService.getRecordingsBaseDir()))
-    .catch((err) => console.error('Encryption migration failed:', err))
+    .catch((err) => {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Encryption migration failed',
+        error: err,
+      })
+      console.error('Encryption migration failed:', err)
+    })
     .finally(() => {
-      transcriptionService.scanAndEnqueuePending()
-      segmentationService.scanAndEnqueuePending()
+      recoverPendingWork()
     })
 
+  setInterval(() => {
+    recoverPendingWork()
+  }, PENDING_RECOVERY_INTERVAL_MS)
+
   app.on('activate', () => {
+    recoverPendingWork()
     const wins = BrowserWindow.getAllWindows()
     if (wins.length === 0) {
       createWindow()
     } else {
-      wins[0].show()
-      wins[0].focus()
+      focusMainWindow()
     }
   })
 })
@@ -322,6 +494,24 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   // Don't quit — the tray keeps the app alive
+})
+
+process.on('uncaughtException', (error) => {
+  logAutodocFailure({
+    area: 'app',
+    message: 'Uncaught exception in main process',
+    error,
+  })
+  console.error('Uncaught exception in main process:', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logAutodocFailure({
+    area: 'app',
+    message: 'Unhandled rejection in main process',
+    error: reason,
+  })
+  console.error('Unhandled rejection in main process:', reason)
 })
 
 /**

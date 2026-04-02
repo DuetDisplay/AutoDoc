@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import type { CalendarManager } from '../services/calendar-manager'
 import { setAutoRecord, getAutoRecordMode } from '../services/auto-record-store'
-import type { AutoRecordMode, CalendarEvent, CalendarAccount } from '../../shared/types'
+import type { AutoRecordMode, CalendarEvent } from '../../shared/types'
 
 export function registerCalendarIpc(
   calendarManager: CalendarManager,
@@ -24,6 +24,7 @@ export function registerCalendarIpc(
       })
     }
 
+    pushConnectionStatus(true)
     return account
   })
 
@@ -39,6 +40,7 @@ export function registerCalendarIpc(
     const enriched = applyAutoRecordState(events)
     pushEventsToRenderer(enriched)
     onEventsUpdated?.(enriched)
+    pushConnectionStatus(calendarManager.getAccounts().length > 0)
   })
 
   ipcMain.handle('calendar:get-accounts', () => {
@@ -74,5 +76,12 @@ function pushEventsToRenderer(events: CalendarEvent[]): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
     win.webContents.send('calendar:events-updated', events)
+  }
+}
+
+function pushConnectionStatus(connected: boolean): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('calendar:connection-changed', connected)
   }
 }

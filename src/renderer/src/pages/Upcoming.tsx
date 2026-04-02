@@ -79,6 +79,9 @@ export function Upcoming() {
     try {
       const syncedEvents = await window.electronAPI.invoke('calendar:sync')
       setEvents(syncedEvents)
+    } catch (err) {
+      console.error('Calendar sync failed:', err)
+      // Auth failure auto-disconnects via the connection-changed listener
     } finally {
       setSyncing(false)
     }
