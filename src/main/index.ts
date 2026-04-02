@@ -56,7 +56,7 @@ if (SENTRY_DSN) {
 }
 
 // Set dock icon in dev (production uses the bundled .icns)
-if (process.platform === 'darwin' && app.dock) {
+if (is.dev && process.platform === 'darwin' && app.dock) {
   app.dock.setIcon(join(__dirname, '../../build/icon.png'))
 }
 
@@ -86,9 +86,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 function createWindow(): void {
-  const windowIcon = process.platform === 'win32'
-    ? join(__dirname, '../../build/icon.ico')
-    : join(__dirname, '../../build/icon.png')
+  const windowIcon = is.dev
+    ? join(__dirname, process.platform === 'win32' ? '../../build/icon.ico' : '../../build/icon.png')
+    : undefined
 
   const mainWindow = new BrowserWindow({
     width: 1100,
