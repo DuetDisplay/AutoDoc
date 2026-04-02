@@ -5,6 +5,7 @@ import type { RecordingService } from './recording'
 import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
 import { isAutoRecordEnabled } from './auto-record-store'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
+import { logAutodocFailure } from './autodoc-log'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
@@ -82,62 +83,64 @@ export class DetectionService {
   }
 
   private async poll(): Promise<void> {
-    if (this.recordingService.getState().isRecording) {
-      const windowClosed = await this.isRecordedWindowClosed()
-      if (windowClosed) {
-        this.clearAutoStop()
-        this.broadcast('detection:auto-stop', {})
+    try {
+      if (this.recordingService.getState().isRecording) {
+        const windowClosed = await this.isRecordedWindowClosed()
+        if (windowClosed) {
+          this.clearAutoStop()
+          this.broadcast('detection:auto-stop', { reason: 'window_closed' })
+          return
+        }
+
+        if (process.platform === 'darwin') {
+          const micActive = await this.isMicInUseMac()
+          if (micActive) {
+            this.clearAutoStop()
+          } else if (!this.autoStopTimer) {
+            const meetingWindowOpen = await this.isMeetingWindowOpen()
+            if (!meetingWindowOpen) {
+              this.broadcast('detection:auto-stop', { reason: 'provider_gone' })
+              return
+            }
+            this.scheduleAutoStop('mic_idle')
+          }
+        } else if (process.platform === 'win32') {
+          const provider = await this.getActiveProvider()
+          if (provider) {
+            this.clearAutoStop()
+          } else if (!this.autoStopTimer) {
+            this.scheduleAutoStop('provider_gone')
+          }
+        }
+
+        this.resetProviderState()
+        hideNotificationWindow()
         return
       }
 
-      if (process.platform === 'darwin') {
-        const micActive = await this.isMicInUseMac()
-        if (micActive) {
-          this.clearAutoStop()
-        } else if (!this.autoStopTimer) {
-          const meetingWindowOpen = await this.isMeetingWindowOpen()
-          if (!meetingWindowOpen) {
-            this.broadcast('detection:auto-stop', {})
-            return
-          }
-          this.autoStopTimer = setTimeout(() => {
-            this.autoStopTimer = null
-            if (this.recordingService.getState().isRecording) {
-              this.broadcast('detection:auto-stop', {})
-            }
-          }, AUTO_STOP_GRACE_MS)
-        }
-      } else if (process.platform === 'win32') {
-        const provider = await this.getActiveProvider()
-        if (provider) {
-          this.clearAutoStop()
-        } else if (!this.autoStopTimer) {
-          this.autoStopTimer = setTimeout(() => {
-            this.autoStopTimer = null
-            if (this.recordingService.getState().isRecording) {
-              this.broadcast('detection:auto-stop', {})
-            }
-          }, AUTO_STOP_GRACE_MS)
-        }
+      this.clearAutoStop()
+
+      const matchingEvent = this.findMatchingEvent()
+      const provider = await this.getActiveProvider()
+      const providerSignalKey = provider ? `${provider.id}:mic` : ''
+      if (matchingEvent) {
+        await this.handleCalendarEvent(matchingEvent, providerSignalKey)
+        return
       }
 
-      this.resetProviderState()
-      hideNotificationWindow()
-      return
+      this.promptedCalendarEventId = null
+      await this.handleAdHocDetection(provider, providerSignalKey)
+    } catch (err) {
+      logAutodocFailure({
+        area: 'detection',
+        message: 'Meeting detection poll failed',
+        error: err,
+        context: {
+          isRecording: this.recordingService.getState().isRecording,
+          providerSignalKey: this.lastProviderSignalKey || null,
+        },
+      })
     }
-
-    this.clearAutoStop()
-
-    const matchingEvent = this.findMatchingEvent()
-    const provider = await this.getActiveProvider()
-    const providerSignalKey = provider ? `${provider.id}:mic` : ''
-    if (matchingEvent) {
-      await this.handleCalendarEvent(matchingEvent, providerSignalKey)
-      return
-    }
-
-    this.promptedCalendarEventId = null
-    await this.handleAdHocDetection(provider, providerSignalKey)
   }
 
   private clearAutoStop(): void {
@@ -145,6 +148,15 @@ export class DetectionService {
       clearTimeout(this.autoStopTimer)
       this.autoStopTimer = null
     }
+  }
+
+  private scheduleAutoStop(reason: 'mic_idle' | 'provider_gone'): void {
+    this.autoStopTimer = setTimeout(() => {
+      this.autoStopTimer = null
+      if (this.recordingService.getState().isRecording) {
+        this.broadcast('detection:auto-stop', { reason })
+      }
+    }, AUTO_STOP_GRACE_MS)
   }
 
   private async isMeetingWindowOpen(): Promise<boolean> {

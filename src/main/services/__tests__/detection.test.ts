@@ -217,6 +217,6 @@ describe('DetectionService', () => {
     await (service as any).poll()
     await vi.advanceTimersByTimeAsync(30_000)
 
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', {})
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', { reason: 'provider_gone' })
   })
 })

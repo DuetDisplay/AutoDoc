@@ -4,15 +4,26 @@ declare module '@sentry/electron/main' {
     [key: string]: unknown
   }
 
+  export interface SentryScope {
+    setTag(key: string, value: string): void
+    setExtras(extras: Record<string, unknown>): void
+  }
+
   export interface SentryInitOptions {
     dsn?: string
     environment?: string
     release?: string
     enabled?: boolean
+    sendDefaultPii?: boolean
     beforeSend?: (event: SentryEvent) => SentryEvent | null
   }
 
   export function init(options: SentryInitOptions): void
+  export function withScope(callback: (scope: SentryScope) => void): void
+  export function captureException(error: unknown): void
+  export function setContext(key: string, context: Record<string, unknown>): void
+  export function setTag(key: string, value: string): void
+  export function close(timeout?: number): Promise<boolean>
 }
 
 declare module '@sentry/electron/renderer' {

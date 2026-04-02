@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Upcoming } from './pages/Upcoming'
@@ -21,6 +21,10 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
   const { setAccounts, setEvents } = useCalendarStore()
+  const transcriptionFailures = useRef<Record<string, string>>({})
+  const segmentationFailures = useRef<Record<string, string>>({})
+  const whisperFailureKey = useRef<string | null>(null)
+  const ollamaFailureKey = useRef<string | null>(null)
 
   useEffect(() => {
     // Initialize analytics early (stays opted-out until consent is restored/given)
@@ -30,11 +34,17 @@ export default function App() {
 
     // Restore analytics consent for returning users
     window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
+      restoreAnalyticsConsent(consent === true)
       if (consent === true) {
-        restoreAnalyticsConsent(true)
         trackEvent('app_opened')
       }
     })
+
+    const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', (enabled) => {
+      restoreAnalyticsConsent(enabled)
+    })
+
+    return unsubConsent
   }, [])
 
   useEffect(() => {
@@ -75,36 +85,103 @@ export default function App() {
     }
   }, [setAccounts, setEvents])
 
+  useEffect(() => {
+    const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
+      if (payload.status !== 'failed') {
+        delete transcriptionFailures.current[payload.meetingId]
+        return
+      }
+
+      const errorCode = payload.errorCode ?? 'unknown'
+      if (transcriptionFailures.current[payload.meetingId] === errorCode) return
+      transcriptionFailures.current[payload.meetingId] = errorCode
+      trackEvent('transcription_failed', { meetingId: payload.meetingId, errorCode })
+    })
+
+    const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
+      if (payload.status !== 'failed') {
+        delete segmentationFailures.current[payload.meetingId]
+        return
+      }
+
+      const errorCode = payload.errorCode ?? 'unknown'
+      if (segmentationFailures.current[payload.meetingId] === errorCode) return
+      segmentationFailures.current[payload.meetingId] = errorCode
+      trackEvent('segmentation_failed', { meetingId: payload.meetingId, errorCode })
+    })
+
+    const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
+      if (status.phase !== 'error') {
+        whisperFailureKey.current = null
+        return
+      }
+
+      const failedStep = status.failedStep ?? 'unknown'
+      const errorKey = `${failedStep}:${status.error ?? ''}`
+      if (whisperFailureKey.current === errorKey) return
+      whisperFailureKey.current = errorKey
+      trackEvent('whisper_setup_failed', { failed_step: failedStep })
+    })
+
+    const unsubOllama = window.electronAPI.on('ollama:setup-progress', (status) => {
+      if (status.phase !== 'error') {
+        ollamaFailureKey.current = null
+        return
+      }
+
+      const failedStep = status.failedStep ?? 'unknown'
+      const errorKey = `${failedStep}:${status.error ?? ''}`
+      if (ollamaFailureKey.current === errorKey) return
+      ollamaFailureKey.current = errorKey
+      trackEvent('ollama_setup_failed', { failed_step: failedStep })
+    })
+
+    return () => {
+      unsubTranscription()
+      unsubSegmentation()
+      unsubWhisper()
+      unsubOllama()
+    }
+  }, [])
+
   // Auto-start recording when user clicks "Start AI Notes" from floating notification
   useEffect(() => {
-    const unsub = window.electronAPI.on('detection:auto-record', async () => {
-      if (isRecording) return
-      try {
-        const sources = await fetchSources()
-        // Try meeting window first, fall back to first screen capture
-        const detected = detectMeetingWindow(sources)
-          ?? sources.find((s) => s.id.startsWith('screen:'))
-          ?? sources[0]
-        if (detected) {
-          await handleStart(detected.id, detected.name)
+    const unsub = window.electronAPI.on('detection:auto-record', () => {
+      void (async () => {
+        if (isRecording) return
+        try {
+          const sources = await fetchSources()
+          // Try meeting window first, fall back to first screen capture
+          const detected = detectMeetingWindow(sources)
+            ?? sources.find((s) => s.id.startsWith('screen:'))
+            ?? sources[0]
+          if (detected) {
+            await handleStart(detected.id, detected.name)
+          }
+        } catch (err) {
+          console.error('Auto-record failed:', err)
         }
-      } catch (err) {
-        console.error('Auto-record failed:', err)
-      }
+      })()
     })
     return unsub
   }, [isRecording, fetchSources, handleStart])
 
   // Auto-stop recording when meeting ends (mic goes silent for 30s)
   useEffect(() => {
-    const unsub = window.electronAPI.on('detection:auto-stop', async () => {
-      if (!isRecording) return
-      console.log('Auto-stopping recording — meeting ended')
-      trackEvent('recording_auto_stopped')
-      await handleStop()
+    const unsub = window.electronAPI.on('detection:auto-stop', ({ reason }) => {
+      void (async () => {
+        if (!isRecording) return
+        console.log('Auto-stopping recording — meeting ended')
+        trackEvent('recording_auto_stopped', { reason, duration_seconds: elapsedSeconds })
+        try {
+          await handleStop()
+        } catch (err) {
+          console.error('Auto-stop failed:', err)
+        }
+      })()
     })
     return unsub
-  }, [isRecording, handleStop])
+  }, [elapsedSeconds, handleStop, isRecording])
 
   if (onboardingDone === null) return null
 

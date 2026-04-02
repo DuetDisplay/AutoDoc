@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoStopPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -128,13 +128,14 @@ export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
   'calendar:events-updated': [events: CalendarEvent[]]
   'calendar:connection-changed': [connected: boolean]
-  'transcription:status-changed': [payload: { meetingId: string; status: TranscriptionStatus; progress?: number }]
-  'segmentation:status-changed': [payload: { meetingId: string; status: SegmentationStatus; progress?: number }]
+  'transcription:status-changed': [payload: TranscriptionStatusPayload]
+  'segmentation:status-changed': [payload: SegmentationStatusPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: Record<string, never>]
   'detection:mic-inactive': [payload: Record<string, never>]
-  'detection:auto-stop': [payload: Record<string, never>]
+  'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]
+  'prefs:analytics-consent-changed': [enabled: boolean]
 }

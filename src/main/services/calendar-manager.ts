@@ -5,6 +5,7 @@ import { MicrosoftCalendarProvider } from './microsoft-calendar'
 import type { CalendarProvider } from './calendar-types'
 import { dedupeCalendarEvents, getCalendarAccountIdentity, isPlaceholderCalendarEmail, isSameCalendarAccount } from './calendar-dedupe'
 import type { CalendarAccount, CalendarEvent, OAuthTokens } from '../../shared/types'
+import { logAutodocFailure } from './autodoc-log'
 
 const accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
 
@@ -131,7 +132,17 @@ export class CalendarManager {
       if (result.status === 'fulfilled') {
         events.push(...result.value)
       } else {
-        console.error(`Failed to fetch events for account ${this.accounts[i].email}:`, result.reason)
+        const account = this.accounts[i]
+        console.error(`Failed to fetch events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Failed to fetch upcoming calendar events for account',
+          error: result.reason,
+          context: {
+            provider: account?.provider ?? 'unknown',
+            accountIndex: i,
+          },
+        })
       }
     }
 
@@ -155,7 +166,17 @@ export class CalendarManager {
       if (result.status === 'fulfilled') {
         events.push(...result.value)
       } else {
-        console.error(`Failed to fetch recent events for account ${this.accounts[i].email}:`, result.reason)
+        const account = this.accounts[i]
+        console.error(`Failed to fetch recent events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Failed to fetch recent calendar events for account',
+          error: result.reason,
+          context: {
+            provider: account?.provider ?? 'unknown',
+            accountIndex: i,
+          },
+        })
       }
     }
 
@@ -166,7 +187,15 @@ export class CalendarManager {
     // Fetch immediately
     this.fetchAllUpcomingEvents()
       .then(callback)
-      .catch((err) => console.error('Initial calendar sync failed:', err))
+      .catch((err) => {
+        console.error('Initial calendar sync failed:', err)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Initial calendar sync failed',
+          error: err,
+          context: { accountCount: this.accounts.length },
+        })
+      })
 
     // Then every 5 minutes
     this.syncInterval = setInterval(async () => {
@@ -177,6 +206,12 @@ export class CalendarManager {
         callback(events)
       } catch (err) {
         console.error('Calendar sync failed:', err)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Scheduled calendar sync failed',
+          error: err,
+          context: { accountCount: this.accounts.length },
+        })
       } finally {
         this.syncing = false
       }

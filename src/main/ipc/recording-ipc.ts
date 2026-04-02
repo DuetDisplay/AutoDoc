@@ -214,6 +214,12 @@ export function registerRecordingIpc(
       try {
         await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
       } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to save recording metadata',
+          error: err,
+          meetingId: result.meetingId,
+        })
         console.error('Failed to save metadata (continuing with transcription):', err)
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -225,6 +231,12 @@ export function registerRecordingIpc(
       try {
         await whisperManager.ensureReady()
       } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to ensure whisper tools are ready during recording post-processing',
+          error: err,
+          meetingId: result.meetingId,
+        })
         console.error('whisperManager.ensureReady() failed — skipping mux:', err)
       }
 
@@ -269,6 +281,12 @@ export function registerRecordingIpc(
           await rename(seekablePath, videoPath)
         }
       } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to remux recorded video for seeking',
+          error: err,
+          meetingId: result.meetingId,
+        })
         console.error('Failed to remux for seeking (video will still play but may not seek):', err)
       }
 

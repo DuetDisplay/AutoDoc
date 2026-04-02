@@ -7,11 +7,17 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 
-// Renderer-side Sentry — pairs with main process init, shares the same DSN
-Sentry.init()
+async function bootstrap(): Promise<void> {
+  const consent = await window.electronAPI.invoke('prefs:get-analytics-consent').catch(() => null)
+  if (consent === true) {
+    Sentry.init()
+  }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
+}
+
+void bootstrap()

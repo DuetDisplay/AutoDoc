@@ -7,6 +7,7 @@ import { URL } from 'url'
 import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasTokensForAccount } from './token-store'
 import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
+import { logAutodocFailure } from './autodoc-log'
 
 const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
@@ -232,7 +233,17 @@ export class GoogleCalendarProvider implements CalendarProvider {
       })
 
       if (!response.ok) {
-        console.error('Google token refresh failed:', await response.text())
+        const responseText = await response.text()
+        console.error('Google token refresh failed:', responseText)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Google token refresh failed',
+          error: responseText,
+          context: {
+            provider: 'google',
+            status: response.status,
+          },
+        })
         return
       }
 
@@ -247,6 +258,14 @@ export class GoogleCalendarProvider implements CalendarProvider {
       saveTokensForAccount(accountId, updated)
     } catch (err) {
       console.error('Google token refresh error:', err)
+      logAutodocFailure({
+        area: 'calendar',
+        message: 'Google token refresh errored',
+        error: err,
+        context: {
+          provider: 'google',
+        },
+      })
     }
   }
 

@@ -64,24 +64,31 @@ export function useRecording() {
   }, [setSources, setLoadingSources])
 
   const handleStart = useCallback(async (sourceId: string, sourceNameParam: string) => {
-    const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
     try {
+      const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
       await startCapture(sourceId, paths.meetingId)
       trackEvent('recording_started')
+      return paths
     } catch (err) {
       // Rollback main process state if capture fails (e.g. permission denied)
       stopCapture()
-      await window.electronAPI.invoke('recording:stop')
+      await window.electronAPI.invoke('recording:stop').catch(() => {})
       reset()
+      trackEvent('recording_start_failed')
       throw err
     }
   }, [reset])
 
   const handleStop = useCallback(async () => {
-    trackEvent('recording_stopped', { duration_seconds: useRecordingStore.getState().elapsedSeconds })
-    stopCapture()
-    await window.electronAPI.invoke('recording:stop')
-    reset()
+    try {
+      stopCapture()
+      await window.electronAPI.invoke('recording:stop')
+      trackEvent('recording_stopped', { duration_seconds: useRecordingStore.getState().elapsedSeconds })
+      reset()
+    } catch (err) {
+      trackEvent('recording_stop_failed')
+      throw err
+    }
   }, [reset])
 
   return {

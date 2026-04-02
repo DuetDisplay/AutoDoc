@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { homedir } from 'os'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
@@ -27,6 +28,7 @@ import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
 import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
+import { disableSentryReporter, initSentryReporter, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -34,25 +36,23 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
 }
 
-// Initialize Sentry for crash reporting (env-var-gated — no DSN = no tracking)
-// Dynamic import: @sentry/electron accesses app.getAppPath() at module scope,
-// which crashes if loaded before Electron fully initializes the app object.
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
-if (SENTRY_DSN) {
-  import('@sentry/electron/main').then((Sentry) => {
-    Sentry.init({
-      dsn: SENTRY_DSN,
-      environment: is.dev ? 'development' : 'production',
-      release: `autodoc@${app.getVersion()}`,
-      enabled: !is.dev || !!process.env.AUTODOC_SENTRY_DEV,
-      beforeSend(event) {
-        delete event.server_name
-        return event
-      },
-    })
-  }).catch((err) => {
-    console.warn('Failed to initialize Sentry:', err)
-  })
+
+function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
+  if (typeof value === 'string') {
+    return scrubString(value) as T
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => deepScrub(item, scrubString)) as T
+  }
+  if (value && typeof value === 'object') {
+    const scrubbed: Record<string, unknown> = {}
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      scrubbed[key] = deepScrub(nestedValue, scrubString)
+    }
+    return scrubbed as T
+  }
+  return value
 }
 
 // Set dock icon in dev (production uses the bundled .icns)
@@ -135,14 +135,102 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:get-version', () => app.getVersion())
 
+  const prefsStore = new PrefsStore()
+  const runtimeContext = {
+    platform: process.platform,
+    arch: process.arch,
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+  }
+  let whisperContext: Record<string, unknown> = { ready: false, modelFilename: null }
+  let ollamaContext: Record<string, unknown> = { ready: false, modelName: null }
+  let calendarContext: Record<string, unknown> = { connected: false, providerCount: 0, accountCount: 0 }
+  const homeDir = homedir()
+  const shouldAllowSentryInEnv = !is.dev || !!process.env.AUTODOC_SENTRY_DEV
+  let mainSentry: typeof import('@sentry/electron/main') | null = null
+  let mainSentryEnabled = false
+
+  const applyCurrentSentryContext = (): void => {
+    setGlobalTag('platform', process.platform)
+    setGlobalTag('arch', process.arch)
+    setGlobalTag('app_version', app.getVersion())
+    setGlobalTag('electron_version', process.versions.electron)
+    setGlobalContext('runtime', runtimeContext)
+    setGlobalContext('whisper', whisperContext)
+    setGlobalContext('ollama', ollamaContext)
+    setGlobalContext('calendar', calendarContext)
+  }
+
+  const initializeMainSentry = async (): Promise<void> => {
+    if (!SENTRY_DSN || !shouldAllowSentryInEnv || mainSentryEnabled) return
+
+    if (!mainSentry) {
+      try {
+        // Dynamic import: @sentry/electron accesses app.getAppPath() at module scope.
+        mainSentry = await import('@sentry/electron/main')
+      } catch (err) {
+        console.warn('Failed to initialize Sentry:', err)
+        return
+      }
+    }
+
+    const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
+
+    mainSentry.init({
+      dsn: SENTRY_DSN,
+      environment: is.dev ? 'development' : 'production',
+      release: `autodoc@${app.getVersion()}`,
+      enabled: true,
+      sendDefaultPii: false,
+      beforeSend(event) {
+        delete event.server_name
+        return deepScrub(event, scrubString)
+      },
+    })
+    initSentryReporter(mainSentry)
+    applyCurrentSentryContext()
+    mainSentryEnabled = true
+  }
+
+  const disableMainSentry = async (): Promise<void> => {
+    disableSentryReporter()
+    if (!mainSentryEnabled || !mainSentry) return
+    mainSentryEnabled = false
+    try {
+      await mainSentry.close(2000)
+    } catch {
+      // Ignore shutdown failures — the reporter is already disabled.
+    }
+  }
+
+  const updateWhisperSentryContext = (context: Record<string, unknown>): void => {
+    whisperContext = context
+    applyCurrentSentryContext()
+  }
+
+  const updateOllamaSentryContext = (context: Record<string, unknown>): void => {
+    ollamaContext = context
+    applyCurrentSentryContext()
+  }
+
+  const updateCalendarSentryContext = (context: Record<string, unknown>): void => {
+    calendarContext = context
+    applyCurrentSentryContext()
+  }
+
+  registerPrefsIpc(prefsStore, (enabled) => {
+    void (enabled ? initializeMainSentry() : disableMainSentry())
+  })
+  if (prefsStore.getAnalyticsConsent() === true) {
+    await initializeMainSentry()
+  }
+
   // Auto-updater
   initAutoUpdater()
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => checkForUpdates())
   ipcMain.handle('updater:install', () => installUpdate())
-
-  const prefsStore = new PrefsStore()
-  registerPrefsIpc(prefsStore)
 
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
@@ -176,6 +264,12 @@ app.whenReady().then(async () => {
   registerCalendarIpc(calendarManager, (events) => {
     cachedEvents = events
     updateTrayMenu()
+  }, (connected) => {
+    updateCalendarSentryContext({
+      connected,
+      providerCount: connected ? new Set(calendarManager.getAccounts().map((account) => account.provider)).size : 0,
+      accountCount: calendarManager.getAccounts().length,
+    })
   })
 
   const recordingService = new RecordingService()
@@ -219,8 +313,15 @@ app.whenReady().then(async () => {
 
   // Mutable state tracking Ollama setup progress
   const ollamaSetupState: OllamaSetupStatus = { phase: 'starting', percent: 0 }
+  let lastSuccessfulOllamaPhase: OllamaSetupStatus['phase'] = 'starting'
 
   function broadcastOllamaStatus(): void {
+    updateOllamaSentryContext({
+      ready: ollamaSetupState.phase === 'ready',
+      modelName: managedOllamaManager.getModel(),
+      phase: ollamaSetupState.phase,
+      failedStep: ollamaSetupState.failedStep ?? null,
+    })
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
       win.webContents.send('ollama:setup-progress', { ...ollamaSetupState })
@@ -228,44 +329,56 @@ app.whenReady().then(async () => {
   }
 
   managedOllamaManager.on('download-start', () => {
+    lastSuccessfulOllamaPhase = 'downloading'
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
   managedOllamaManager.on('download-progress', (data: { percent: number }) => {
+    lastSuccessfulOllamaPhase = 'downloading'
     ollamaSetupState.phase = 'downloading'
     ollamaSetupState.percent = data.percent
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
   managedOllamaManager.on('download-complete', () => {
+    lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
   managedOllamaManager.on('pull-start', () => {
+    lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
   managedOllamaManager.on('pull-progress', (data: { percent: number }) => {
+    lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = data.percent
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
   managedOllamaManager.on('pull-complete', () => {
+    lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
@@ -276,22 +389,27 @@ app.whenReady().then(async () => {
 
     managedOllamaManager.resetReady()
 
+    lastSuccessfulOllamaPhase = 'starting'
     ollamaSetupState.phase = 'starting'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error
+    delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
 
     ollamaRecoveryPromise = managedOllamaManager.startAndPull()
       .then(() => {
+        lastSuccessfulOllamaPhase = 'ready'
         ollamaSetupState.phase = 'ready'
         ollamaSetupState.percent = 100
         delete ollamaSetupState.error
+        delete ollamaSetupState.failedStep
         broadcastOllamaStatus()
       })
       .catch((err) => {
         ollamaSetupState.phase = 'error'
         ollamaSetupState.percent = 0
         ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+        ollamaSetupState.failedStep = lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
         broadcastOllamaStatus()
         logAutodocFailure({
           area: 'ollama',
@@ -356,11 +474,25 @@ app.whenReady().then(async () => {
 
   // Mutable state tracking Whisper setup progress
   const whisperSetupState: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
+  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'downloading-whisper'
 
   whisperManager.on('setup-status', (status: WhisperSetupStatus) => {
+    if (status.phase !== 'error') {
+      lastSuccessfulWhisperPhase = status.phase
+    }
     whisperSetupState.phase = status.phase
     whisperSetupState.percent = status.percent
     whisperSetupState.error = status.error
+    whisperSetupState.failedStep = status.phase === 'error'
+      ? (lastSuccessfulWhisperPhase === 'error' ? 'downloading-whisper' : lastSuccessfulWhisperPhase)
+      : undefined
+    updateWhisperSentryContext({
+      ready: status.phase === 'ready',
+      modelFilename: whisperManager.getModelInfo().filename,
+      whisperVersion: 'v1.8.4',
+      phase: status.phase,
+      failedStep: whisperSetupState.failedStep ?? null,
+    })
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
       win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
@@ -382,6 +514,11 @@ app.whenReady().then(async () => {
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()
+  updateCalendarSentryContext({
+    connected: restoredAccounts.length > 0,
+    providerCount: new Set(restoredAccounts.map((account) => account.provider)).size,
+    accountCount: restoredAccounts.length,
+  })
   if (restoredAccounts.length > 0) {
     calendarManager.startSync((events) => {
       cachedEvents = events
@@ -413,8 +550,18 @@ app.whenReady().then(async () => {
   // Start whisper tools + model download in the background — don't block the window
   whisperManager.startSetup()
     .then(() => {
+      lastSuccessfulWhisperPhase = 'ready'
       whisperSetupState.phase = 'ready'
       whisperSetupState.percent = 100
+      delete whisperSetupState.error
+      delete whisperSetupState.failedStep
+      updateWhisperSentryContext({
+        ready: true,
+        modelFilename: whisperManager.getModelInfo().filename,
+        whisperVersion: 'v1.8.4',
+        phase: 'ready',
+        failedStep: null,
+      })
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
         win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
@@ -423,6 +570,14 @@ app.whenReady().then(async () => {
     .catch((err) => {
       whisperSetupState.phase = 'error'
       whisperSetupState.error = err instanceof Error ? err.message : String(err)
+      whisperSetupState.failedStep = lastSuccessfulWhisperPhase === 'error' ? 'downloading-whisper' : lastSuccessfulWhisperPhase
+      updateWhisperSentryContext({
+        ready: false,
+        modelFilename: whisperManager.getModelInfo().filename,
+        whisperVersion: 'v1.8.4',
+        phase: 'error',
+        failedStep: whisperSetupState.failedStep ?? null,
+      })
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
         win.webContents.send('whisper:setup-progress', { ...whisperSetupState })

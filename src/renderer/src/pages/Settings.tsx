@@ -3,6 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, CalendarAccount } from '../../../shared/types'
+import { setAnalyticsConsent } from '../services/analytics'
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
   const email = account.email.trim()
@@ -26,13 +27,19 @@ export function Settings() {
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
+  const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
 
   useEffect(() => {
     window.electronAPI.invoke('app:get-version').then(setAppVersion)
     window.electronAPI.invoke('updater:get-status').then(setUpdateStatus)
     window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
+    window.electronAPI.invoke('prefs:get-analytics-consent').then(setAnalyticsConsentState)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
-    return unsub
+    const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', setAnalyticsConsentState)
+    return () => {
+      unsub()
+      unsubConsent()
+    }
   }, [])
 
   useEffect(() => {
@@ -60,10 +67,18 @@ export function Settings() {
     setEvents(events)
   }
 
+  const handleToggleAnalytics = async () => {
+    const nextValue = !(analyticsConsent === true)
+    await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
+    setAnalyticsConsent(nextValue)
+    setAnalyticsConsentState(nextValue)
+  }
+
   return (
     <div className="flex flex-col h-full">
       <PageHeader title="Settings" />
-      <div className="p-6 flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex flex-col gap-6 min-h-full">
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Calendars</h3>
 
@@ -154,6 +169,27 @@ export function Settings() {
           </div>
         </div>
         <div>
+          <h3 className="text-[13px] font-semibold text-ink mb-2">Analytics & Crash Reports</h3>
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+            <div>
+              <p className="text-[12px] text-ink-muted">
+                Share anonymous usage data and crash reports to help improve AutoDoc. No meeting content or personal data is ever sent.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleToggleAnalytics()}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
+              aria-pressed={analyticsConsent === true}
+              aria-label="Toggle analytics and crash reports"
+            >
+              <span
+                className={`block h-5 w-5 rounded-full bg-white transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
+              />
+            </button>
+          </div>
+        </div>
+        <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
           <p className="text-[12px] text-ink-muted">Default: off</p>
         </div>
@@ -213,6 +249,7 @@ export function Settings() {
               </button>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

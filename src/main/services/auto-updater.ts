@@ -1,6 +1,7 @@
 import { autoUpdater } from 'electron-updater'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
+import { logAutodocFailure } from './autodoc-log'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -71,6 +72,15 @@ export function initAutoUpdater(): void {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-updater error:', err)
+    logAutodocFailure({
+      area: 'app',
+      message: 'Auto-updater failed',
+      error: err,
+      context: {
+        channel: 'stable',
+        currentVersion: app.getVersion(),
+      },
+    })
     broadcast({ state: 'error', error: formatUpdaterError(err) })
     // Reset to idle after 30s so it doesn't stay stuck on error
     setTimeout(() => broadcast({ state: 'idle' }), 30_000)

@@ -6,6 +6,7 @@ import type { AutoRecordMode, CalendarEvent } from '../../shared/types'
 export function registerCalendarIpc(
   calendarManager: CalendarManager,
   onEventsUpdated?: (events: CalendarEvent[]) => void,
+  onConnectionChanged?: (connected: boolean) => void,
 ): void {
   ipcMain.handle('calendar:connect', async (_event, providerType: 'google' | 'microsoft') => {
     const account = await calendarManager.connect(providerType)
@@ -25,6 +26,7 @@ export function registerCalendarIpc(
     }
 
     pushConnectionStatus(true)
+    onConnectionChanged?.(true)
     return account
   })
 
@@ -40,7 +42,9 @@ export function registerCalendarIpc(
     const enriched = applyAutoRecordState(events)
     pushEventsToRenderer(enriched)
     onEventsUpdated?.(enriched)
-    pushConnectionStatus(calendarManager.getAccounts().length > 0)
+    const connected = calendarManager.getAccounts().length > 0
+    pushConnectionStatus(connected)
+    onConnectionChanged?.(connected)
   })
 
   ipcMain.handle('calendar:get-accounts', () => {

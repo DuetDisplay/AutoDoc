@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { appendFile, mkdir, rename, rm, stat } from 'fs/promises'
 import { join } from 'path'
+import { captureError } from './sentry-reporter'
 
 const LOG_DIR_NAME = 'logs'
 const LOG_BASENAME = 'autodocLog'
@@ -39,15 +40,26 @@ export function getAutodocLogPath(): string {
 }
 
 export function logAutodocFailure(entry: LogEntryInput): void {
+  const serializedError = serializeError(entry.error)
   const line = `${JSON.stringify({
     timestamp: new Date().toISOString(),
     level: 'error',
     area: entry.area,
     message: entry.message,
     meetingId: entry.meetingId ?? null,
-    error: serializeError(entry.error),
+    error: serializedError,
     context: entry.context ?? null,
   })}\n`
+
+  captureError(entry.error ?? entry.message, {
+    area: entry.area,
+    meetingId: entry.meetingId,
+    extra: {
+      message: entry.message,
+      error: serializedError,
+      context: entry.context ?? null,
+    },
+  })
 
   writeQueue = writeQueue
     .then(() => appendLogLine(line))

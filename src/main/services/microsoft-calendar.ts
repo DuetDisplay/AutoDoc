@@ -5,6 +5,7 @@ import { URL } from 'url'
 import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasTokensForAccount } from './token-store'
 import type { CalendarEvent, CalendarAccount, OAuthTokens } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
+import { logAutodocFailure } from './autodoc-log'
 
 const OAUTH_PORT = 42813
 const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
@@ -288,7 +289,17 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       })
 
       if (!response.ok) {
-        console.error('Microsoft token refresh failed:', await response.text())
+        const responseText = await response.text()
+        console.error('Microsoft token refresh failed:', responseText)
+        logAutodocFailure({
+          area: 'calendar',
+          message: 'Microsoft token refresh failed',
+          error: responseText,
+          context: {
+            provider: 'microsoft',
+            status: response.status,
+          },
+        })
         return
       }
 
@@ -303,6 +314,14 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       this.tokenCache.set(accountId, updated)
     } catch (err) {
       console.error('Microsoft token refresh error:', err)
+      logAutodocFailure({
+        area: 'calendar',
+        message: 'Microsoft token refresh errored',
+        error: err,
+        context: {
+          provider: 'microsoft',
+        },
+      })
     }
   }
 }

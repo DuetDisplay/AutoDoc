@@ -3,7 +3,7 @@ import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
-import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../shared/types'
+import type { Transcript, TranscriptionStatus, SpeakerMap, TranscriptionStatusPayload } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
 import { alignSpeakers } from './speaker-alignment'
@@ -11,6 +11,7 @@ import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
+import { classifyError } from './error-classification'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -24,6 +25,25 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
+type EnqueueSource = 'direct' | 'recovery-scan'
+
+interface TranscriptionDirSnapshot extends Record<string, unknown> {
+  source: EnqueueSource | 'unknown'
+  files: {
+    micExists: boolean
+    micEncrypted: boolean
+    systemExists: boolean
+    systemEncrypted: boolean
+    legacyExists: boolean
+    legacyEncrypted: boolean
+    screenExists: boolean
+    transcriptExists: boolean
+    segmentsExists: boolean
+    errorExists: boolean
+    metadataExists: boolean
+  }
+  retryCount: number
+}
 
 export class TranscriptionService {
   private queue: string[] = []
@@ -32,6 +52,7 @@ export class TranscriptionService {
   private activeProgress: number | undefined = undefined
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
+  private enqueueSource = new Map<string, EnqueueSource>()
 
   constructor(
     private whisperManager: WhisperManager,
@@ -44,16 +65,17 @@ export class TranscriptionService {
     this.onCompleteCallback = callback
   }
 
-  enqueue(meetingId: string): void {
+  enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
     if (this.queue.includes(meetingId)) return
+    this.enqueueSource.set(meetingId, source)
     this.queue.push(meetingId)
     this.broadcastStatus(meetingId, 'queued')
     this.processNext()
   }
 
-  retry(meetingId: string): void {
-    this.enqueue(meetingId)
+  retry(meetingId: string, source: EnqueueSource = 'direct'): void {
+    this.enqueue(meetingId, source)
   }
 
   getProgress(meetingId: string): number | undefined {
@@ -127,16 +149,22 @@ export class TranscriptionService {
         const hasError = await this.fileExists(errorPath)
 
         if (hasAudio && !hasTranscript && !hasError) {
-          this.enqueue(meetingId)
+          this.enqueue(meetingId, 'recovery-scan')
         } else if (hasAudio && !hasTranscript && hasError) {
           const errorData = await this.readErrorFile(errorPath)
           if (errorData && errorData.retries < 3) {
             console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
-            this.retry(meetingId)
+            this.retry(meetingId, 'recovery-scan')
           }
         }
       } catch (err) {
         console.warn(`Failed to inspect transcription state for ${meetingId}:`, err)
+        logAutodocFailure({
+          area: 'transcription',
+          message: 'Failed to inspect transcription state during pending scan',
+          error: err,
+          meetingId,
+        })
       }
     }
   }
@@ -148,17 +176,18 @@ export class TranscriptionService {
     this.processing = true
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
+    const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
       await this.processJob(meetingId)
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err)
-      await this.markFailed(meetingId, errorMsg)
+      await this.markFailed(meetingId, err instanceof Error ? err : String(err), dirSnapshot)
     } finally {
       this.activeJobId = null
       this.activeStatus = null
       this.activeProgress = undefined
       this.processing = false
+      this.enqueueSource.delete(meetingId)
       this.processNext()
     }
   }
@@ -546,12 +575,17 @@ export class TranscriptionService {
     return deduped.map((seg, i) => ({ ...seg, id: `${meetingId}-${i}` }))
   }
 
-  private async markFailed(meetingId: string, error: string): Promise<void> {
+  private async markFailed(
+    meetingId: string,
+    error: Error | string,
+    context?: TranscriptionDirSnapshot,
+  ): Promise<void> {
+    const errorMsg = error instanceof Error ? error.message : error
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
-      await writeFile(errorPath, JSON.stringify({ error, retries }))
+      await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
     } catch (err) {
       const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
       if (code !== 'ENOENT') throw err
@@ -561,8 +595,9 @@ export class TranscriptionService {
       message: 'Transcription failed',
       error,
       meetingId,
+      context,
     })
-    this.broadcastStatus(meetingId, 'failed')
+    this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
   }
 
   private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
@@ -579,11 +614,50 @@ export class TranscriptionService {
     }
   }
 
-  private broadcastStatus(meetingId: string, status: TranscriptionStatus, progress?: number): void {
+  private broadcastStatus(
+    meetingId: string,
+    status: TranscriptionStatus,
+    progress?: number,
+    errorCode?: string,
+  ): void {
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
+    const payload: TranscriptionStatusPayload = { meetingId, status, progress, errorCode }
     for (const win of windows) {
-      win.webContents.send('transcription:status-changed', { meetingId, status, progress })
+      win.webContents.send('transcription:status-changed', payload)
+    }
+  }
+
+  private async captureDirSnapshot(meetingId: string): Promise<TranscriptionDirSnapshot> {
+    const meetingDir = join(this.recordingsBaseDir, meetingId)
+    const transcriptPath = join(meetingDir, 'transcript.json')
+    const micWebm = join(meetingDir, 'mic.webm')
+    const systemWebm = join(meetingDir, 'system.webm')
+    const legacyAudio = join(meetingDir, 'audio.webm')
+    const errorPath = join(meetingDir, 'transcript.error')
+    const [hasMic, hasSystem, hasLegacy, existingError] = await Promise.all([
+      this.fileExists(micWebm),
+      this.fileExists(systemWebm),
+      this.fileExists(legacyAudio),
+      this.readErrorFile(errorPath),
+    ])
+
+    return {
+      source: this.enqueueSource.get(meetingId) ?? 'unknown',
+      files: {
+        micExists: hasMic,
+        micEncrypted: hasMic && await isEncrypted(micWebm),
+        systemExists: hasSystem,
+        systemEncrypted: hasSystem && await isEncrypted(systemWebm),
+        legacyExists: hasLegacy,
+        legacyEncrypted: hasLegacy && await isEncrypted(legacyAudio),
+        screenExists: await this.fileExists(join(meetingDir, 'screen.webm')),
+        transcriptExists: await this.fileExists(transcriptPath),
+        segmentsExists: await this.fileExists(join(meetingDir, 'segments.json')),
+        errorExists: await this.fileExists(errorPath),
+        metadataExists: await this.fileExists(join(meetingDir, 'metadata.json')),
+      },
+      retryCount: existingError?.retries ?? 0,
     }
   }
 

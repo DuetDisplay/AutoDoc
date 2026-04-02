@@ -6,6 +6,7 @@ import { execFile, execSync } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
+import { logAutodocFailure } from './autodoc-log'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -267,9 +268,40 @@ export class WhisperManager extends EventEmitter {
 
   private async linkOrCopy(source: string, dest: string): Promise<void> {
     if (IS_WIN) {
-      await copyFile(source, dest).catch(() => {})
-    } else {
-      await symlink(source, dest).catch(() => {})
+      try {
+        await copyFile(source, dest)
+        return
+      } catch (err) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Failed to copy Whisper dependency into app runtime',
+          error: err,
+          context: { source, dest },
+        })
+        throw err
+      }
+    }
+
+    try {
+      await symlink(source, dest)
+      return
+    } catch (symlinkError) {
+      try {
+        await copyFile(source, dest)
+        return
+      } catch (copyError) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Failed to link or copy Whisper dependency into app runtime',
+          error: copyError,
+          context: {
+            source,
+            dest,
+            symlinkError: symlinkError instanceof Error ? symlinkError.message : String(symlinkError),
+          },
+        })
+        throw copyError
+      }
     }
   }
 

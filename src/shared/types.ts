@@ -121,6 +121,13 @@ export interface RecordingPaths {
   audio: string
 }
 
+export interface TranscriptionStatusPayload {
+  meetingId: string
+  status: TranscriptionStatus
+  progress?: number
+  errorCode?: string
+}
+
 export type TranscriptionStatus =
   | 'pending'
   | 'queued'
@@ -137,6 +144,13 @@ export interface SpeakerInfo {
 
 export type SpeakerMap = Record<string, SpeakerInfo>
 
+export interface SegmentationStatusPayload {
+  meetingId: string
+  status: SegmentationStatus
+  progress?: number
+  errorCode?: string
+}
+
 export type SegmentationStatus =
   | 'pending'
   | 'queued'
@@ -149,12 +163,18 @@ export interface OllamaSetupStatus {
   phase: 'starting' | 'downloading' | 'pulling' | 'ready' | 'error'
   percent: number
   error?: string
+  failedStep?: 'starting' | 'downloading' | 'pulling' | 'ready'
 }
 
 export interface WhisperSetupStatus {
   phase: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
   percent: number
   error?: string
+  failedStep?: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready'
+}
+
+export interface DetectionAutoStopPayload {
+  reason: 'window_closed' | 'mic_idle' | 'provider_gone'
 }
 
 export interface AppRuntimeInfo {

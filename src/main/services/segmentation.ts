@@ -1,11 +1,25 @@
 import { BrowserWindow } from 'electron'
 import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
-import type { MeetingSegments, Transcript, SegmentationStatus } from '../../shared/types'
+import type { MeetingSegments, Transcript, SegmentationStatus, SegmentationStatusPayload } from '../../shared/types'
 import type { LLMProvider } from './llm'
 import type { OllamaManager } from './ollama-manager'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
+import { classifyError } from './error-classification'
+
+type EnqueueSource = 'direct' | 'recovery-scan'
+
+interface SegmentationDirSnapshot extends Record<string, unknown> {
+  source: EnqueueSource | 'unknown'
+  files: {
+    transcriptExists: boolean
+    transcriptEncrypted: boolean
+    segmentsExists: boolean
+    errorExists: boolean
+  }
+  retryCount: number
+}
 
 export class SegmentationService {
   private queue: string[] = []
@@ -13,6 +27,7 @@ export class SegmentationService {
   private activeStatus: SegmentationStatus | null = null
   private activeProgress: number | undefined = undefined
   private processing = false
+  private enqueueSource = new Map<string, EnqueueSource>()
 
   constructor(
     private llmProvider: LLMProvider,
@@ -20,16 +35,17 @@ export class SegmentationService {
     private recordingsBaseDir: string,
   ) {}
 
-  enqueue(meetingId: string): void {
+  enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
     if (this.queue.includes(meetingId)) return
+    this.enqueueSource.set(meetingId, source)
     this.queue.push(meetingId)
     this.broadcastStatus(meetingId, 'queued')
     this.processNext()
   }
 
-  retry(meetingId: string): void {
-    this.enqueue(meetingId)
+  retry(meetingId: string, source: EnqueueSource = 'direct'): void {
+    this.enqueue(meetingId, source)
   }
 
   getProgress(meetingId: string): number | undefined {
@@ -103,16 +119,22 @@ export class SegmentationService {
         const hasError = await this.fileExists(join(meetingDir, 'segments.error'))
 
         if (hasTranscript && !hasSegments && !hasError) {
-          this.enqueue(meetingId)
+          this.enqueue(meetingId, 'recovery-scan')
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
           if (errorData && errorData.retries < 3) {
             console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
-            this.retry(meetingId)
+            this.retry(meetingId, 'recovery-scan')
           }
         }
       } catch (err) {
         console.warn(`Failed to inspect segmentation state for ${meetingId}:`, err)
+        logAutodocFailure({
+          area: 'segmentation',
+          message: 'Failed to inspect segmentation state during pending scan',
+          error: err,
+          meetingId,
+        })
       }
     }
   }
@@ -124,16 +146,17 @@ export class SegmentationService {
     this.processing = true
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
+    const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
       await this.processJob(meetingId)
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err)
-      await this.markFailed(meetingId, errorMsg)
+      await this.markFailed(meetingId, err instanceof Error ? err : String(err), dirSnapshot)
     } finally {
       this.activeJobId = null
       this.activeStatus = null
       this.processing = false
+      this.enqueueSource.delete(meetingId)
       this.processNext()
     }
   }
@@ -207,12 +230,17 @@ export class SegmentationService {
     this.broadcastStatus(meetingId, 'complete')
   }
 
-  private async markFailed(meetingId: string, error: string): Promise<void> {
+  private async markFailed(
+    meetingId: string,
+    error: Error | string,
+    context?: SegmentationDirSnapshot,
+  ): Promise<void> {
+    const errorMsg = error instanceof Error ? error.message : error
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
-      await writeFile(errorPath, JSON.stringify({ error, retries }))
+      await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
     } catch (err) {
       const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
       if (code !== 'ENOENT') throw err
@@ -222,8 +250,9 @@ export class SegmentationService {
       message: 'Meeting notes generation failed',
       error,
       meetingId,
+      context,
     })
-    this.broadcastStatus(meetingId, 'failed')
+    this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
   }
 
   private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
@@ -239,11 +268,40 @@ export class SegmentationService {
     }
   }
 
-  private broadcastStatus(meetingId: string, status: SegmentationStatus, progress?: number): void {
+  private broadcastStatus(
+    meetingId: string,
+    status: SegmentationStatus,
+    progress?: number,
+    errorCode?: string,
+  ): void {
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
+    const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
     for (const win of windows) {
-      win.webContents.send('segmentation:status-changed', { meetingId, status, progress })
+      win.webContents.send('segmentation:status-changed', payload)
+    }
+  }
+
+  private async captureDirSnapshot(meetingId: string): Promise<SegmentationDirSnapshot> {
+    const meetingDir = join(this.recordingsBaseDir, meetingId)
+    const transcriptPath = join(meetingDir, 'transcript.json')
+    const errorPath = join(meetingDir, 'segments.error')
+    const [transcriptExists, segmentsExists, errorExists, existingError] = await Promise.all([
+      this.fileExists(transcriptPath),
+      this.fileExists(join(meetingDir, 'segments.json')),
+      this.fileExists(errorPath),
+      this.readErrorFile(errorPath),
+    ])
+
+    return {
+      source: this.enqueueSource.get(meetingId) ?? 'unknown',
+      files: {
+        transcriptExists,
+        transcriptEncrypted: transcriptExists && await isEncrypted(transcriptPath),
+        segmentsExists,
+        errorExists,
+      },
+      retryCount: existingError?.retries ?? 0,
     }
   }
 

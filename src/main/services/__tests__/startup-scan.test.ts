@@ -35,7 +35,7 @@ describe('startup scan', () => {
 
     await service.scanAndEnqueuePending()
 
-    expect(enqueueSpy).toHaveBeenCalledWith(meetingId)
+    expect(enqueueSpy).toHaveBeenCalledWith(meetingId, 'recovery-scan')
   })
 
   it('does not auto-retry failed segmentation jobs on startup after max retries', async () => {
@@ -77,7 +77,7 @@ describe('startup scan', () => {
 
     await service.scanAndEnqueuePending()
 
-    expect(enqueueSpy).toHaveBeenCalledWith(meetingId)
+    expect(enqueueSpy).toHaveBeenCalledWith(meetingId, 'recovery-scan')
   })
 
   it('does not auto-retry failed transcription jobs on startup after max retries', async () => {

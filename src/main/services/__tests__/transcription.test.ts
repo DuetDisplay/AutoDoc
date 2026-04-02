@@ -82,13 +82,22 @@ function createMockCalendarManager(): CalendarManager {
 }
 
 describe('TranscriptionService', () => {
+  const originalPlatform = process.platform
   let service: TranscriptionService
   let mockWhisper: WhisperManager
   let mockConverter: AudioConverter
   let mockCalendar: CalendarManager
 
+  const setPlatform = (platform: NodeJS.Platform) => {
+    Object.defineProperty(process, 'platform', {
+      value: platform,
+      configurable: true,
+    })
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
+    setPlatform(originalPlatform)
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
@@ -190,12 +199,14 @@ describe('TranscriptionService', () => {
   })
 
   it('chooses 10 whisper threads on a 20-thread machine', () => {
+    setPlatform('win32')
     osMock.availableParallelism.mockReturnValue(20)
 
     expect((service as any).getWhisperThreadCount()).toBe(10)
   })
 
   it('passes the computed thread count to whisper-cli', async () => {
+    setPlatform('win32')
     const child = new MockChildProcess()
     childProcessMock.spawn.mockReturnValue(child as any)
 
