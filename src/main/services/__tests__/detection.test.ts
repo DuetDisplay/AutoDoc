@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getAllWindows: vi.fn(() => []),
   isAutoRecordEnabled: vi.fn(() => false),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
+  execFile: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
@@ -25,6 +26,10 @@ vi.mock('../auto-record-store', () => ({
 
 vi.mock('../windows-meeting-detector', () => ({
   getActiveCaptureProcessIdsWindows: mocks.getActiveCaptureProcessIdsWindows,
+}))
+
+vi.mock('child_process', () => ({
+  execFile: mocks.execFile,
 }))
 
 function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
@@ -46,9 +51,19 @@ function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
 }
 
 describe('DetectionService', () => {
+  const originalPlatform = process.platform
+
+  const setPlatform = (platform: NodeJS.Platform) => {
+    Object.defineProperty(process, 'platform', {
+      value: platform,
+      configurable: true,
+    })
+  }
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-26T14:00:00Z'))
+    setPlatform(originalPlatform)
     mocks.showNotificationWindow.mockReset()
     mocks.hideNotificationWindow.mockReset()
     mocks.getAllWindows.mockReset()
@@ -57,9 +72,28 @@ describe('DetectionService', () => {
     mocks.isAutoRecordEnabled.mockReturnValue(false)
     mocks.getActiveCaptureProcessIdsWindows.mockReset()
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.execFile.mockReset()
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, '', '')
+    })
   })
 
-  it('prompts once per scheduled event even while ad-hoc detection remains active', async () => {
+  it('does not prompt for a scheduled event before meeting activity is detected', async () => {
+    setPlatform('win32')
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [makeEvent('evt-1', 5 * 60_000)],
+    )
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+  })
+
+  it('prompts once per scheduled event when provider activity starts', async () => {
+    setPlatform('win32')
+
     let events = [makeEvent('evt-1', 5 * 60_000)]
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
@@ -68,7 +102,6 @@ describe('DetectionService', () => {
 
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
 
-    await (service as any).poll()
     await (service as any).poll()
 
     events = [makeEvent('evt-2', 5 * 60_000)]
@@ -80,6 +113,8 @@ describe('DetectionService', () => {
   })
 
   it('prompts once per ad-hoc provider activation and resets when provider disappears', async () => {
+    setPlatform('win32')
+
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
       () => [],
@@ -104,10 +139,13 @@ describe('DetectionService', () => {
   })
 
   it('auto-records scheduled events without showing a prompt when enabled', async () => {
+    setPlatform('win32')
+
     const event = makeEvent('evt-1', 5 * 60_000)
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.isAutoRecordEnabled.mockReturnValue(true)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
@@ -120,7 +158,9 @@ describe('DetectionService', () => {
     expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {})
   })
 
-  it('re-prompts when a provider activates during an already-matched scheduled event', async () => {
+  it('waits for provider activity before prompting for a matched scheduled event', async () => {
+    setPlatform('win32')
+
     const event = makeEvent('evt-1', 5 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
@@ -134,12 +174,37 @@ describe('DetectionService', () => {
     await (service as any).poll()
     await (service as any).poll()
 
-    expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(2)
+    expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
     expect(mocks.showNotificationWindow.mock.calls[0][0].title).toBe('Event evt-1')
-    expect(mocks.showNotificationWindow.mock.calls[1][0].title).toBe('Event evt-1')
+  })
+
+  it('uses the matched event title on mac once mic activity starts', async () => {
+    setPlatform('darwin')
+
+    const event = makeEvent('evt-1', 5 * 60_000)
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [event],
+    )
+
+    mocks.execFile
+      .mockImplementationOnce((_file, _args, _options, callback) => {
+        callback(null, '', '')
+      })
+      .mockImplementationOnce((_file, _args, _options, callback) => {
+        callback(null, 'audio-in', '')
+      })
+
+    await (service as any).poll()
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.showNotificationWindow.mock.calls[0][0].title).toBe('Event evt-1')
   })
 
   it('auto-stops on Windows after the meeting provider disappears during recording', async () => {
+    setPlatform('win32')
+
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])

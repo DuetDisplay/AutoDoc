@@ -174,20 +174,19 @@ export class DetectionService {
   }
 
   private async handleCalendarEvent(event: CalendarEvent, providerSignalKey: string): Promise<void> {
-    if (providerSignalKey) {
-      const providerJustActivated = providerSignalKey !== this.lastProviderSignalKey
-      this.lastProviderSignalKey = providerSignalKey
-
-      if (providerJustActivated && this.promptedCalendarEventId === event.id) {
-        this.promptForCalendarEvent(event)
-        return
+    if (!providerSignalKey) {
+      if (this.lastProviderSignalKey) {
+        this.broadcast('detection:mic-inactive', {})
+        this.lastProviderSignalKey = ''
       }
-    } else if (this.lastProviderSignalKey) {
-      this.broadcast('detection:mic-inactive', {})
-      this.lastProviderSignalKey = ''
+      hideNotificationWindow()
+      return
     }
 
-    if (this.promptedCalendarEventId === event.id) return
+    const providerJustActivated = providerSignalKey !== this.lastProviderSignalKey
+    this.lastProviderSignalKey = providerSignalKey
+
+    if (!providerJustActivated && this.promptedCalendarEventId === event.id) return
 
     this.promptedCalendarEventId = event.id
     this.promptForCalendarEvent(event)
