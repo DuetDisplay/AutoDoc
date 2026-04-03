@@ -17,6 +17,7 @@ import {
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
+import { RecordingPickerOverlay } from './components/RecordingPickerOverlay'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
@@ -237,10 +238,11 @@ export default function App() {
           })
 
           useRecordingPickerStore.getState().openPicker({
-            title: 'Select the meeting window',
-            subtitle: 'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
+            title: 'Select the meeting window to start AI notes',
+            subtitle: 'Recording has not started yet. Choose the meeting window to begin instead of falling back to a screen capture.',
             sources,
             detectedId: selection.source?.id ?? null,
+            selectionContext,
           })
           recordDiagnosticAction({
             category: 'recording',
@@ -351,6 +353,7 @@ export default function App() {
           />
           <MeetingDetectedBanner />
           <PermissionToast />
+          <RecordingPickerOverlay onStartRecording={handleStart} />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

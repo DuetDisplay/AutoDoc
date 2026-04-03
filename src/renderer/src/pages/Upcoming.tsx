@@ -110,7 +110,7 @@ export function Upcoming() {
     window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
   }
 
-  const { isRecording, fetchSources, handleStart, handleStop } = useRecordingActions()
+  const { isRecording, fetchSources, handleStop } = useRecordingActions()
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -159,7 +159,6 @@ export function Upcoming() {
           <div className="flex items-center gap-2">
             <RecordingControls
               isRecording={isRecording}
-              onStartRecording={handleStart}
               onStopRecording={handleStop}
               onFetchSources={fetchSources}
             />
