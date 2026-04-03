@@ -5,127 +5,225 @@ import * as path from 'path'
 import * as os from 'os'
 import { Readable } from 'stream'
 import { execFileSync } from 'child_process'
-import { safeStorage } from 'electron'
-import ElectronStoreModule from 'electron-store'
-
-const Store =
-  (ElectronStoreModule as unknown as { default?: typeof ElectronStoreModule }).default ??
-  ElectronStoreModule
-
-let _store: InstanceType<typeof Store> | null = null
-function getStore(): InstanceType<typeof Store> {
-  if (!_store) _store = new Store({ name: 'autodoc-encryption' })
-  return _store
-}
+import { app, safeStorage } from 'electron'
 
 const STORE_KEY = 'encryption_key'
 const STORE_VERSION_KEY = 'encryption_key_version'
+const STORE_FILENAME = 'autodoc-encryption.json'
+const CANONICAL_APP_DIR = 'AutoDoc'
 
 const MAGIC = Buffer.from('ADOC', 'ascii')
 const BLOCK_SIZE = 65536 // 64KB plaintext per block
 const CHUNKED_VERSION = 0x01
+const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
+  'AutoDoc Safe Storage',
+  'autodoc Safe Storage',
+  'Autodoc Safe Storage',
+  'Electron Safe Storage',
+] as const
+
+interface StoredKeyFile {
+  [STORE_KEY]?: string
+  [STORE_VERSION_KEY]?: number
+}
+
+export class EncryptionKeyUnavailableError extends Error {
+  constructor(message = 'Encryption key unavailable for existing encrypted recordings') {
+    super(message)
+    this.name = 'EncryptionKeyUnavailableError'
+  }
+}
 
 // ─── Key Management ───
 
 let cachedKey: Buffer | null = null
+let cachedKeyError: Error | null = null
 
-export function getKey(): Buffer {
-  if (cachedKey) return cachedKey
-
-  // Try loading from store
-  const stored = getStore().get(STORE_KEY) as string | undefined
-  if (stored) {
-    try {
-      let b64: string
-      if (safeStorage.isEncryptionAvailable()) {
-        b64 = safeStorage.decryptString(Buffer.from(stored, 'latin1'))
-      } else {
-        b64 = stored
-      }
-      cachedKey = Buffer.from(b64, 'base64')
-      return cachedKey
-    } catch (err) {
-      // safeStorage key changed (e.g., app name changed) — try legacy keychain
-      console.warn('Failed to decrypt stored encryption key — trying legacy keychain:', err)
-      const recovered = tryRecoverFromLegacyKeychain(stored)
-      if (recovered) {
-        cachedKey = recovered
-        // Re-encrypt under the current safeStorage service name
-        reEncryptKey(recovered)
-        return cachedKey
-      }
-      // Unrecoverable — generate a fresh key
-      console.warn('Could not recover legacy key — generating new key')
-      getStore().delete(STORE_KEY)
-    }
-  }
-
-  // Generate new key
-  const key = crypto.randomBytes(32)
-  const b64 = key.toString('base64')
-
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(b64)
-    getStore().set(STORE_KEY, encrypted.toString('latin1'))
-  } else {
-    console.warn('safeStorage not available — storing encryption key as plaintext')
-    getStore().set(STORE_KEY, b64)
-  }
-  getStore().set(STORE_VERSION_KEY, 1)
-
-  cachedKey = key
-  return cachedKey
+function getPrimaryStorePath(): string {
+  return path.join(app.getPath('appData'), CANONICAL_APP_DIR, STORE_FILENAME)
 }
 
-/**
- * Try to decrypt the stored key using the legacy "autodoc Safe Storage" keychain entry.
- * This handles the migration from app.setName('autodoc') → app.setName('AutoDoc').
- */
-function tryRecoverFromLegacyKeychain(storedEncrypted: string): Buffer | null {
-  if (process.platform !== 'darwin') return null
+function getLegacyStorePaths(): string[] {
+  const paths = new Set<string>([
+    path.join(app.getPath('userData'), STORE_FILENAME),
+    path.join(app.getPath('appData'), 'autodoc', STORE_FILENAME),
+    path.join(app.getPath('appData'), 'Autodoc', STORE_FILENAME),
+    path.join(app.getPath('appData'), 'Electron', STORE_FILENAME),
+    getPrimaryStorePath(),
+  ])
+
+  return [...paths]
+}
+
+function readStoreFile(filePath: string): StoredKeyFile | null {
   try {
-    // Read the password from the legacy keychain entry
-    const legacyPassword = execFileSync('security', [
-      'find-generic-password',
-      '-s', 'autodoc Safe Storage',
-      '-w',
-    ], { timeout: 5000 }).toString().trim()
-
-    // The stored value was encrypted by Chromium's os_crypt using the legacy password.
-    // Chromium/Electron uses AES-128-CBC with a PBKDF2-derived key from the keychain password.
-    // Prefix: "v10" (3 bytes) + IV (16 bytes) + ciphertext
-    const buf = Buffer.from(storedEncrypted, 'latin1')
-    if (buf.length < 19 || buf.toString('ascii', 0, 3) !== 'v10') {
-      return null
-    }
-    const iv = buf.subarray(3, 19)
-    const ciphertext = buf.subarray(19)
-
-    // Derive key: PBKDF2(password, 'saltysalt', 1003, 16, 'sha1')
-    const derivedKey = crypto.pbkdf2Sync(legacyPassword, 'saltysalt', 1003, 16, 'sha1')
-    const decipher = crypto.createDecipheriv('aes-128-cbc', derivedKey, iv)
-    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
-    const b64 = decrypted.toString('utf-8')
-
-    const key = Buffer.from(b64, 'base64')
-    if (key.length === 32) {
-      console.log('Successfully recovered encryption key from legacy keychain')
-      return key
-    }
-    return null
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as StoredKeyFile
   } catch {
     return null
   }
 }
 
-function reEncryptKey(key: Buffer): void {
+function writeStoreFile(filePath: string, data: StoredKeyFile): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  const tempPath = `${filePath}.tmp`
+  fs.writeFileSync(tempPath, JSON.stringify(data))
+  fs.renameSync(tempPath, filePath)
+}
+
+function persistKey(key: Buffer): void {
   const b64 = key.toString('base64')
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(b64)
-    getStore().set(STORE_KEY, encrypted.toString('latin1'))
-  } else {
-    getStore().set(STORE_KEY, b64)
+  const storedValue = safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(b64).toString('latin1')
+    : b64
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('safeStorage not available — storing encryption key as plaintext')
   }
+
+  writeStoreFile(getPrimaryStorePath(), {
+    [STORE_KEY]: storedValue,
+    [STORE_VERSION_KEY]: 1,
+  })
+}
+
+function generateAndPersistKey(): Buffer {
+  const key = crypto.randomBytes(32)
+  persistKey(key)
+  cachedKey = key
+  cachedKeyError = null
+  return key
+}
+
+function decodeStoredKey(storedValue: string): Buffer | null {
+  try {
+    const b64 = safeStorage.isEncryptionAvailable()
+      ? safeStorage.decryptString(Buffer.from(storedValue, 'latin1'))
+      : storedValue
+    const key = Buffer.from(b64, 'base64')
+    return key.length === 32 ? key : null
+  } catch (err) {
+    console.warn('Failed to decrypt stored encryption key — trying legacy recovery:', err)
+    return tryRecoverFromLegacyKeychain(storedValue)
+  }
+}
+
+function loadKeyFromKnownStores(): Buffer | null {
+  for (const storePath of getLegacyStorePaths()) {
+    const store = readStoreFile(storePath)
+    const storedValue = store?.[STORE_KEY]
+    if (typeof storedValue !== 'string' || storedValue.length === 0) {
+      continue
+    }
+
+    const key = decodeStoredKey(storedValue)
+    if (!key) {
+      continue
+    }
+
+    cachedKey = key
+    cachedKeyError = null
+    if (storePath !== getPrimaryStorePath()) {
+      persistKey(key)
+    }
+    return key
+  }
+
+  return null
+}
+
+export function getKey(): Buffer {
+  if (cachedKey) return cachedKey
+  if (cachedKeyError) throw cachedKeyError
+
+  const recovered = loadKeyFromKnownStores()
+  if (recovered) return recovered
+
+  return generateAndPersistKey()
+}
+
+/**
+ * Tries known legacy macOS Chromium safeStorage service names.
+ */
+function tryRecoverFromLegacyKeychain(storedEncrypted: string): Buffer | null {
+  if (process.platform !== 'darwin') return null
+  for (const serviceName of LEGACY_MAC_SAFE_STORAGE_SERVICES) {
+    try {
+      const recovered = tryRecoverFromMacSafeStorageService(storedEncrypted, serviceName)
+      if (recovered) {
+        console.log(`Successfully recovered encryption key from legacy keychain service: ${serviceName}`)
+        return recovered
+      }
+    } catch {
+      // Try the next service name.
+    }
+  }
+
+  return null
+}
+
+function tryRecoverFromMacSafeStorageService(storedEncrypted: string, serviceName: string): Buffer | null {
+  const legacyPassword = execFileSync('security', [
+    'find-generic-password',
+    '-s', serviceName,
+    '-w',
+  ], { timeout: 5000 }).toString().trim()
+
+  const buf = Buffer.from(storedEncrypted, 'latin1')
+  if (buf.length < 19 || buf.toString('ascii', 0, 3) !== 'v10') {
+    return null
+  }
+
+  const iv = buf.subarray(3, 19)
+  const ciphertext = buf.subarray(19)
+  const derivedKey = crypto.pbkdf2Sync(legacyPassword, 'saltysalt', 1003, 16, 'sha1')
+  const decipher = crypto.createDecipheriv('aes-128-cbc', derivedKey, iv)
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+  const key = Buffer.from(decrypted.toString('utf-8'), 'base64')
+  return key.length === 32 ? key : null
+}
+
+async function recordingsContainEncryptedFiles(recordingsBaseDir: string): Promise<boolean> {
+  let entries: fs.Dirent[]
+  try {
+    entries = await fsp.readdir(recordingsBaseDir, { withFileTypes: true })
+  } catch {
+    return false
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+
+    const meetingDir = path.join(recordingsBaseDir, entry.name)
+    const files = await fsp.readdir(meetingDir).catch(() => [] as string[])
+    for (const filename of files) {
+      const filePath = path.join(meetingDir, filename)
+      if (await isEncrypted(filePath)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+export async function initializeEncryption(recordingsBaseDir: string): Promise<void> {
+  if (cachedKey) return
+  if (cachedKeyError) throw cachedKeyError
+
+  const recovered = loadKeyFromKnownStores()
+  if (recovered) {
+    cachedKey = recovered
+    return
+  }
+
+  if (await recordingsContainEncryptedFiles(recordingsBaseDir)) {
+    cachedKeyError = new EncryptionKeyUnavailableError(
+      'Encrypted recordings exist but the AutoDoc encryption key could not be recovered. Restore the prior autodoc-encryption.json store before retrying transcription.',
+    )
+    throw cachedKeyError
+  }
+
+  generateAndPersistKey()
 }
 
 // ─── JSON Encrypt/Decrypt ───
@@ -356,7 +454,7 @@ export async function isEncrypted(filePath: string): Promise<boolean> {
 }
 
 export async function migrateRecordings(recordingsBaseDir: string): Promise<void> {
-  const targetFiles = ['audio.webm', 'screen.webm', 'transcript.json', 'segments.json']
+  const targetFiles = ['audio.webm', 'mic.webm', 'system.webm', 'screen.webm', 'transcript.json', 'segments.json', 'speakers.json', 'metadata.json']
 
   let entries: fs.Dirent[]
   try {

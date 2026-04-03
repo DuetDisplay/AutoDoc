@@ -152,7 +152,9 @@ export class TranscriptionService {
           this.enqueue(meetingId, 'recovery-scan')
         } else if (hasAudio && !hasTranscript && hasError) {
           const errorData = await this.readErrorFile(errorPath)
-          if (errorData && errorData.retries < 3) {
+          const errorCode = errorData ? classifyError(errorData.error) : 'unknown'
+          const isPermanentFailure = errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
+          if (errorData && errorData.retries < 3 && !isPermanentFailure) {
             console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
             this.retry(meetingId, 'recovery-scan')
           }
@@ -583,7 +585,9 @@ export class TranscriptionService {
     const errorMsg = error instanceof Error ? error.message : error
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     const existing = await this.readErrorFile(errorPath)
-    const retries = (existing?.retries ?? 0) + 1
+    const errorCode = classifyError(errorMsg)
+    const isPermanentFailure = errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
+    const retries = isPermanentFailure ? 3 : (existing?.retries ?? 0) + 1
     try {
       await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
     } catch (err) {

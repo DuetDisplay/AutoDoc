@@ -1,6 +1,9 @@
 export function classifyError(rawError: string): string {
   const error = rawError.toLowerCase()
 
+  if (error.includes('encryption key unavailable')) {
+    return 'encryption-key-unavailable'
+  }
   if (error.includes('unable to authenticate') || error.includes('unsupported state')) {
     return 'key-mismatch'
   }

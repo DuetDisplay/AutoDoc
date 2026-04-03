@@ -3,7 +3,7 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
-import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles } from './services/crypto'
+import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
 import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -547,6 +547,40 @@ app.whenReady().then(async () => {
     })
   }
 
+  cleanupTempFiles().catch(() => {})
+  try {
+    await migrateDataDir()
+  } catch (err) {
+    logAutodocFailure({
+      area: 'app',
+      message: 'Data dir migration failed',
+      error: err,
+    })
+    console.error('Data dir migration failed:', err)
+  }
+
+  try {
+    await initializeEncryption(recordingService.getRecordingsBaseDir())
+  } catch (err) {
+    logAutodocFailure({
+      area: 'app',
+      message: 'Encryption key initialization failed',
+      error: err,
+    })
+    console.error('Encryption key initialization failed:', err)
+  }
+
+  try {
+    await migrateRecordings(recordingService.getRecordingsBaseDir())
+  } catch (err) {
+    logAutodocFailure({
+      area: 'app',
+      message: 'Encryption migration failed',
+      error: err,
+    })
+    console.error('Encryption migration failed:', err)
+  }
+
   createWindow()
 
   // System tray — show upcoming meetings, open app, quit
@@ -619,30 +653,6 @@ app.whenReady().then(async () => {
     ensureOllamaRunning()
     recoverPendingWork()
   })
-
-  // Migrate legacy ~/AutoDoc/ data, then encrypt unencrypted files, then enqueue work
-  cleanupTempFiles().catch(() => {})
-  migrateDataDir()
-    .catch((err) => {
-      logAutodocFailure({
-        area: 'app',
-        message: 'Data dir migration failed',
-        error: err,
-      })
-      console.error('Data dir migration failed:', err)
-    })
-    .then(() => migrateRecordings(recordingService.getRecordingsBaseDir()))
-    .catch((err) => {
-      logAutodocFailure({
-        area: 'app',
-        message: 'Encryption migration failed',
-        error: err,
-      })
-      console.error('Encryption migration failed:', err)
-    })
-    .finally(() => {
-      recoverPendingWork()
-    })
 
   setInterval(() => {
     recoverPendingWork()
