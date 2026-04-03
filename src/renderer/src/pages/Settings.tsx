@@ -4,6 +4,7 @@ import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, CalendarAccount } from '../../../shared/types'
 import { setAnalyticsConsent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
   const email = account.email.trim()
@@ -48,6 +49,11 @@ export function Settings() {
 
   const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'calendar_connect_requested',
+      details: { provider },
+    })
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
       addAccount(account)
@@ -61,6 +67,10 @@ export function Settings() {
   }
 
   const handleDisconnect = async (accountId: string) => {
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'calendar_disconnect_requested',
+    })
     await window.electronAPI.invoke('calendar:disconnect', accountId)
     removeAccount(accountId)
     const events = await window.electronAPI.invoke('calendar:get-events')
@@ -69,6 +79,11 @@ export function Settings() {
 
   const handleToggleAnalytics = async () => {
     const nextValue = !(analyticsConsent === true)
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'analytics_consent_toggled',
+      details: { enabled: nextValue },
+    })
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
     setAnalyticsConsentState(nextValue)

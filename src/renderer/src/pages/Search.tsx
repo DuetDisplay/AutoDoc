@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { trackEvent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { useSearchStore } from '../stores/search'
 
 export function Search() {
@@ -19,6 +20,14 @@ export function Search() {
     try {
       const res = await window.electronAPI.invoke('search:query', q)
       setResults(res, true)
+      recordDiagnosticAction({
+        category: 'search',
+        action: 'search_performed',
+        details: {
+          queryLength: q.trim().length,
+          resultCount: res.length,
+        },
+      })
       trackEvent('search_performed', { result_count: res.length })
     } catch (err) {
       console.error('Search failed:', err)

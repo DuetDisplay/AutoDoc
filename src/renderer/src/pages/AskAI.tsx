@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 export function AskAI() {
   const { messages, addMessage } = useChatStore()
@@ -26,6 +27,13 @@ export function AskAI() {
     setInput('')
     addMessage({ role: 'user', content: question })
     setLoading(true)
+    recordDiagnosticAction({
+      category: 'chat',
+      action: 'chat_message_sent',
+      details: {
+        questionLength: question.length,
+      },
+    })
     trackEvent('chat_message_sent')
 
     try {

@@ -27,7 +27,16 @@ declare module '@sentry/electron/main' {
 }
 
 declare module '@sentry/electron/renderer' {
-  export function init(): void
+  export interface RendererSentryEvent {
+    extra?: Record<string, unknown>
+    [key: string]: unknown
+  }
+
+  export interface RendererSentryInitOptions {
+    beforeSend?: (event: RendererSentryEvent) => RendererSentryEvent | null
+  }
+
+  export function init(options?: RendererSentryInitOptions): void
 }
 
 declare module 'electron-updater' {

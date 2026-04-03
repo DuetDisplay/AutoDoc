@@ -10,6 +10,7 @@ import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
 import { setAnalyticsConsent, trackEvent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 const TOTAL_DOTS = 10
 
@@ -18,12 +19,22 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
   const next = useCallback(() => {
     setStep((s) => {
+      recordDiagnosticAction({
+        category: 'onboarding',
+        action: 'onboarding_step_completed',
+        details: { step: s },
+      })
       trackEvent('onboarding_step_completed', { step: s })
       return s + 1
     })
   }, [])
 
   const handleAnalyticsChoice = async (consented: boolean) => {
+    recordDiagnosticAction({
+      category: 'onboarding',
+      action: 'analytics_choice_made',
+      details: { consented },
+    })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
     setAnalyticsConsent(consented)
     setStep((s) => s + 1)

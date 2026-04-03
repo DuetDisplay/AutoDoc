@@ -7,6 +7,7 @@ import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import { useToastStore } from '../stores/toast'
 import { trackEvent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { CalendarEvent } from '../../../shared/types'
 
 let calendarToastShown = false
@@ -61,6 +62,11 @@ export function Upcoming() {
 
   const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
+    recordDiagnosticAction({
+      category: 'calendar',
+      action: 'calendar_connect_requested',
+      details: { provider },
+    })
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
       addAccount(account)
@@ -76,6 +82,10 @@ export function Upcoming() {
 
   const handleSync = async () => {
     setSyncing(true)
+    recordDiagnosticAction({
+      category: 'calendar',
+      action: 'calendar_sync_requested',
+    })
     try {
       const syncedEvents = await window.electronAPI.invoke('calendar:sync')
       setEvents(syncedEvents)
@@ -88,6 +98,14 @@ export function Upcoming() {
   }
 
   const handleSetAutoRecord = (eventId: string, recurringEventId: string | null, mode: import('../../../shared/types').AutoRecordMode) => {
+    recordDiagnosticAction({
+      category: 'calendar',
+      action: 'auto_record_mode_changed',
+      details: {
+        mode,
+        hasRecurringEventId: recurringEventId !== null,
+      },
+    })
     setAutoRecord(eventId, mode)
     window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
   }

@@ -29,6 +29,7 @@ import { logAutodocFailure } from './services/autodoc-log'
 import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
+import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -144,6 +145,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 function createWindow(): void {
+  recordMainDiagnosticAction({ category: 'app', action: 'main_window_created' })
   const windowIcon = is.dev
     ? join(__dirname, process.platform === 'win32' ? '../../build/icon.ico' : '../../build/icon.png')
     : undefined
@@ -192,6 +194,13 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
 
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('diagnostics:record-action', (_event, payload) => {
+    recordRendererDiagnosticAction(payload)
+  })
+  ipcMain.handle('diagnostics:clear-trail', () => {
+    clearDiagnosticTrail()
+  })
+  recordMainDiagnosticAction({ category: 'app', action: 'app_ready' })
 
   const prefsStore = new PrefsStore()
   const runtimeContext = {

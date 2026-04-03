@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { HashRouter, Routes, Route } from 'react-router-dom'
+import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { Upcoming } from './pages/Upcoming'
 import { Recordings } from './pages/Recordings'
@@ -15,8 +15,25 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
+import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
+
+function RouteDiagnosticTracker() {
+  const location = useLocation()
+
+  useEffect(() => {
+    recordDiagnosticAction({
+      category: 'navigation',
+      action: 'route_viewed',
+      details: {
+        path: location.pathname,
+      },
+    })
+  }, [location.pathname])
+
+  return null
+}
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
@@ -37,14 +54,20 @@ export default function App() {
     // Restore analytics consent for returning users
     window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
       restoreAnalyticsConsent(consent === true)
+      setDiagnosticConsentEnabled(consent === true)
       updateRendererSentryConsent(consent === true)
       if (consent === true) {
+        recordDiagnosticAction({
+          category: 'app',
+          action: 'app_opened',
+        })
         trackEvent('app_opened')
       }
     })
 
     const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', (enabled) => {
       restoreAnalyticsConsent(enabled)
+      setDiagnosticConsentEnabled(enabled)
       updateRendererSentryConsent(enabled)
     })
 
@@ -160,6 +183,10 @@ export default function App() {
       void (async () => {
         if (isRecording || autoRecordStartInFlight.current) return
         autoRecordStartInFlight.current = true
+        recordDiagnosticAction({
+          category: 'recording',
+          action: 'auto_record_requested',
+        })
         try {
           const sources = await fetchSources()
           // Try meeting window first, fall back to first screen capture
@@ -186,6 +213,11 @@ export default function App() {
       void (async () => {
         if (!isRecording) return
         console.log('Auto-stopping recording — meeting ended')
+        recordDiagnosticAction({
+          category: 'recording',
+          action: 'auto_stop_triggered',
+          details: { reason },
+        })
         trackEvent('recording_auto_stopped', { reason, duration_seconds: elapsedSeconds })
         try {
           await handleStop()
@@ -205,6 +237,7 @@ export default function App() {
 
   return (
     <HashRouter>
+      <RouteDiagnosticTracker />
       <div className="flex h-screen bg-bg-primary relative">
         {/* Top drag region for moving the window */}
         <div

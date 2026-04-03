@@ -1,4 +1,5 @@
 import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoStopPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
+import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
@@ -23,6 +24,8 @@ export interface IpcSendEvents {
 export interface IpcInvokeEvents {
   'app:get-version': []
   'app:get-runtime-info': []
+  'diagnostics:record-action': [payload: DiagnosticActionPayload]
+  'diagnostics:clear-trail': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:disconnect': [accountId: string]
   'calendar:get-accounts': []
@@ -75,6 +78,8 @@ export interface IpcInvokeEvents {
 export interface IpcInvokeReturns {
   'app:get-version': string
   'app:get-runtime-info': AppRuntimeInfo
+  'diagnostics:record-action': void
+  'diagnostics:clear-trail': void
   'calendar:connect': CalendarAccount
   'calendar:disconnect': void
   'calendar:get-accounts': CalendarAccount[]

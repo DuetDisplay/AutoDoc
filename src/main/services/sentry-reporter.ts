@@ -1,4 +1,5 @@
 import type * as SentryType from '@sentry/electron/main'
+import { getDiagnosticTrail } from './diagnostic-trail'
 
 export interface ErrorContext {
   area: string
@@ -38,6 +39,7 @@ export function resetSentryScopes(): void {
 export function captureError(error: unknown, context: ErrorContext): void {
   const currentSentry = Sentry
   if (!currentSentry) return
+  const diagnosticTrail = getDiagnosticTrail()
 
   currentSentry.withScope((scope) => {
     scope.setTag('area', context.area)
@@ -48,7 +50,12 @@ export function captureError(error: unknown, context: ErrorContext): void {
       }
     }
     if (context.extra) {
-      scope.setExtras(context.extra)
+      scope.setExtras({
+        ...context.extra,
+        diagnosticTrail,
+      })
+    } else {
+      scope.setExtras({ diagnosticTrail })
     }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))

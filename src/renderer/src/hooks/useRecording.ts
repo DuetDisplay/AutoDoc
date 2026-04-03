@@ -3,6 +3,7 @@ import { useRecordingStore } from '../stores/recording'
 import { startCapture, stopCapture } from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
 import { trackEvent } from '../services/analytics'
+import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 /**
  * Full recording hook — sets up IPC listener, timer, and actions.
@@ -64,12 +65,27 @@ export function useRecording() {
   }, [setSources, setLoadingSources])
 
   const handleStart = useCallback(async (sourceId: string, sourceNameParam: string) => {
+    recordDiagnosticAction({
+      category: 'recording',
+      action: 'recording_start_requested',
+      details: {
+        sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
+      },
+    })
     try {
       const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
       await startCapture(sourceId, paths.meetingId)
+      recordDiagnosticAction({
+        category: 'recording',
+        action: 'recording_started',
+      })
       trackEvent('recording_started')
       return paths
     } catch (err) {
+      recordDiagnosticAction({
+        category: 'recording',
+        action: 'recording_start_failed_in_renderer',
+      })
       // Rollback main process state if capture fails (e.g. permission denied)
       stopCapture()
       await window.electronAPI.invoke('recording:stop').catch(() => {})
@@ -80,6 +96,13 @@ export function useRecording() {
   }, [reset])
 
   const handleStop = useCallback(async () => {
+    recordDiagnosticAction({
+      category: 'recording',
+      action: 'recording_stop_requested',
+      details: {
+        durationSeconds: useRecordingStore.getState().elapsedSeconds,
+      },
+    })
     try {
       stopCapture()
       await window.electronAPI.invoke('recording:stop')
