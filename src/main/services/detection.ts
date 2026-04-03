@@ -16,7 +16,7 @@ const AUTO_STOP_CONFIRM_MS = 6_000
 const WINDOW_CLOSED_CONFIRM_MS = 3_000
 const AUTO_RECORD_START_GRACE_MS = 15_000 // Suppress duplicate prompts while start is in flight
 const WINDOW_MISSING_POLLS_THRESHOLD = 2
-const PROVIDER_MISSING_POLLS_THRESHOLD = 3
+const PROVIDER_MISSING_POLLS_THRESHOLD = 2
 const MEETING_WINDOW_MISSING_POLLS_THRESHOLD = 3
 
 type AutoStopReason = 'window_closed' | 'mic_idle' | 'provider_gone'
@@ -246,6 +246,10 @@ export class DetectionService {
       return 'mic_idle'
     }
 
+    if (providerGoneStrong && windowGoneStrong) {
+      return 'provider_gone'
+    }
+
     if (providerGoneStrong) {
       if (snapshot.sourceType === 'screen' || browserLikeSource) {
         if (micIdleStrong || meetingWindowGoneStrong) {
@@ -379,6 +383,10 @@ export class DetectionService {
       return snapshot.providerDetected ? WINDOW_CLOSED_CONFIRM_MS : 0
     }
 
+    if (reason === 'provider_gone' && snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD) {
+      return 0
+    }
+
     return AUTO_STOP_CONFIRM_MS
   }
 
@@ -493,11 +501,6 @@ export class DetectionService {
       body,
       onRecord: () => {
         this.markAutoRecordPending()
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win) {
-          win.show()
-          win.focus()
-        }
         this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })
       },
       onDismiss: () => {},

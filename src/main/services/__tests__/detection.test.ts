@@ -325,12 +325,71 @@ describe('DetectionService', () => {
     }))
   })
 
-  it('does not auto-stop on macOS just because app focus or space changes hide the captured window', async () => {
+  it('auto-stops on Windows when provider is gone and recorded window closes, even if the meeting app window stays open', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.getSources.mockImplementation(async () => ([
+      { id: 'window:other', name: 'Slack' },
+    ] as any))
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
+      () => [],
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
+      reason: 'provider_gone',
+      sourceType: 'window',
+      providerDetected: false,
+      meetingWindowVisible: true,
+    }))
+  })
+
+  it('auto-stops on macOS when provider is gone and recorded window closes while mic is idle, even if the meeting app window stays open', async () => {
     setPlatform('darwin')
 
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, '', '')
+    })
+    mocks.getSources.mockImplementation(async () => ([
+      { id: 'window:other', name: 'Slack' },
+    ] as any))
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
+      () => [],
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
+      reason: 'provider_gone',
+      sourceType: 'window',
+      providerDetected: false,
+      meetingWindowVisible: true,
+    }))
+  })
+
+  it('does not auto-stop on macOS just because app focus or space changes hide the captured window', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.tinyspeck.slackmacgap'])
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, 'audio-in', '')
     })
@@ -383,7 +442,7 @@ describe('DetectionService', () => {
   it('logs when auto-stop is suppressed because the meeting still appears visible after a window switch', async () => {
     setPlatform('darwin')
 
-    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.tinyspeck.slackmacgap'])
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, 'audio-in', '')
     })

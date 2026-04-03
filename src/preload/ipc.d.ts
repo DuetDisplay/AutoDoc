@@ -19,6 +19,8 @@ export interface IpcSendEvents {
   'window:minimize': []
   'window:maximize': []
   'window:close': []
+  'window:show': []
+  'detection:request-picker': [suggestedId: string | null]
 }
 
 export interface IpcInvokeEvents {
@@ -140,6 +142,7 @@ export interface IpcOnEvents {
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
+  'detection:source-selected': [payload: { sourceId: string; sourceName: string }]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]

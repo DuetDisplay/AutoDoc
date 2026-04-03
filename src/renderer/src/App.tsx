@@ -237,13 +237,6 @@ export default function App() {
             selection_confidence: selection.confidence,
           })
 
-          useRecordingPickerStore.getState().openPicker({
-            title: 'Select the meeting window to start AI notes',
-            subtitle: 'Recording has not started yet. Choose the meeting window to begin instead of falling back to a screen capture.',
-            sources,
-            detectedId: selection.source?.id ?? null,
-            selectionContext,
-          })
           recordDiagnosticAction({
             category: 'recording',
             action: 'manual_source_selection_required',
@@ -257,7 +250,7 @@ export default function App() {
             has_suggestion: selection.source !== null,
             provider_hint: selection.providerHint ?? 'unknown',
           })
-          window.location.hash = ROUTES.upcoming
+          window.electronAPI.send('detection:request-picker', selection.source?.id ?? null)
         } catch (err) {
           autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
@@ -327,6 +320,20 @@ export default function App() {
       unsubCancelled()
     }
   }, [elapsedSeconds, handleStop, isRecording])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.on('detection:source-selected', ({ sourceId, sourceName }) => {
+      void (async () => {
+        if (isRecording) return
+        try {
+          await handleStart(sourceId, sourceName)
+        } catch (err) {
+          console.error('Picker source selection failed:', err)
+        }
+      })()
+    })
+    return unsub
+  }, [handleStart, isRecording])
 
   if (onboardingDone === null) return null
 
