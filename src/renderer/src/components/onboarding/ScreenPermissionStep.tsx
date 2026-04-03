@@ -38,7 +38,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Screen Recording</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {opened
-          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. You can continue for now.'
+          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. You can restart now or continue and restart later.'
           : 'AutoDoc detects your meeting window to capture screen shares and visuals. You can always enable this later in System Settings.'}
       </p>
 
@@ -52,16 +52,16 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       ) : opened ? (
         <>
           <button
-            onClick={onNext}
+            onClick={() => window.electronAPI.invoke('app:relaunch')}
             className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Continue →
+            Restart AutoDoc
           </button>
           <button
-            onClick={handleEnable}
+            onClick={onNext}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Open Settings again
+            Continue without restarting
           </button>
         </>
       ) : (

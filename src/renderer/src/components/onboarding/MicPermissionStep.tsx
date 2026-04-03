@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 export function MicPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
+  const [opened, setOpened] = useState(false)
 
   const checkPermission = useCallback(async (autoAdvance = false) => {
     const perms = await window.electronAPI.invoke('permissions:check')
@@ -28,7 +29,12 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       await checkPermission()
     } catch {
       window.electronAPI.invoke('permissions:open-settings', 'microphone')
+      setOpened(true)
     }
+  }
+
+  const handleRelaunch = () => {
+    window.electronAPI.invoke('app:relaunch')
   }
 
   return (
@@ -41,7 +47,9 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Microphone Access</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can't hear your meetings.
+        {opened
+          ? 'After enabling AutoDoc in System Settings, you may need to restart the app for it to take effect.'
+          : 'AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can\'t hear your meetings.'}
       </p>
 
       {granted ? (
@@ -51,6 +59,21 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
         >
           Continue →
         </button>
+      ) : opened ? (
+        <>
+          <button
+            onClick={handleRelaunch}
+            className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          >
+            Restart AutoDoc
+          </button>
+          <button
+            onClick={handleEnable}
+            className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
+          >
+            Open Settings again
+          </button>
+        </>
       ) : (
         <button
           onClick={handleEnable}
