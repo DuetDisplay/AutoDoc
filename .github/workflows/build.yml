@@ -13,6 +13,10 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    env:
+      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
 
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +81,10 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: write
+    env:
+      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
 
     steps:
       - uses: actions/checkout@v4

@@ -1,23 +1,27 @@
-import { defineConfig } from 'electron-vite'
+import { defineConfig, loadEnv } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-export default defineConfig({
-  main: {
-    define: {
-      'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(process.env.AUTODOC_SENTRY_DSN ?? ''),
-    },
-    build: {
-      externalizeDeps: {
-        exclude: ['electron-store'],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  return {
+    main: {
+      define: {
+        'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(env.AUTODOC_SENTRY_DSN ?? ''),
+      },
+      build: {
+        externalizeDeps: {
+          exclude: ['electron-store'],
+        },
       },
     },
-  },
-  preload: {},
-  renderer: {
-    plugins: [
-      tailwindcss(),
-      react()
-    ]
+    preload: {},
+    renderer: {
+      plugins: [
+        tailwindcss(),
+        react(),
+      ],
+    },
   }
 })

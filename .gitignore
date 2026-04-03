@@ -8,6 +8,8 @@ out
 .worktrees/
 .env
 .env.local
+.env.production
+.env.development.local
 
 # Generated icons (built from SVGs via scripts/generate-icons.js)
 build/icon.png
