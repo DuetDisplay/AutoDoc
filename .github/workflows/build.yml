@@ -79,7 +79,6 @@ jobs:
           retention-days: 14
 
   build-win:
-    if: false # Temporarily disabled while testing macOS release builds only
     runs-on: windows-2022
     permissions:
       contents: write
