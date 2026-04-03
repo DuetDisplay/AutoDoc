@@ -23,6 +23,7 @@ import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/a
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
+import { useRecordingPickerStore } from './stores/recording-picker'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 
 function RouteDiagnosticTracker() {
