@@ -59,6 +59,7 @@ export class TranscriptionService {
     private audioConverter: AudioConverter,
     private recordingsBaseDir: string,
     private calendarManager: CalendarManager,
+    private isMeetingActive: (meetingId: string) => boolean = () => false,
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -135,6 +136,8 @@ export class TranscriptionService {
 
     for (const meetingId of dirs) {
       try {
+        if (this.isMeetingActive(meetingId)) continue
+
         const meetingDir = join(this.recordingsBaseDir, meetingId)
         const dirStat = await stat(meetingDir).catch(() => null)
         if (!dirStat?.isDirectory()) continue
@@ -195,6 +198,11 @@ export class TranscriptionService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    if (this.isMeetingActive(meetingId)) {
+      console.log(`Skipping transcription for active recording: ${meetingId}`)
+      return
+    }
+
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
 

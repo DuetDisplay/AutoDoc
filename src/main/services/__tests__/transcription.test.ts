@@ -106,6 +106,7 @@ describe('TranscriptionService', () => {
       mockConverter,
       '/mock/home/AutoDoc/recordings',
       mockCalendar,
+      () => false,
     )
   })
 
@@ -154,6 +155,29 @@ describe('TranscriptionService', () => {
     fsMock.access.mockRejectedValue(new Error('ENOENT'))
     const status = await service.getStatus('meeting-123')
     expect(status).toBe('queued')
+  })
+
+  it('does not recover-scan an actively recording meeting', async () => {
+    fsMock.readdir.mockResolvedValue(['meeting-active'] as any)
+    fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      (meetingId) => meetingId === 'meeting-active',
+    )
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+    await service.scanAndEnqueuePending()
+
+    expect(enqueueSpy).not.toHaveBeenCalled()
   })
 
   it('retry keeps the previous error marker until a new run succeeds', () => {

@@ -1,12 +1,16 @@
 import * as Sentry from '@sentry/electron/renderer'
 import { getRendererDiagnosticTrail } from './diagnostic-trail'
+import { normalizeSentryBreadcrumb } from '../../../shared/sentry-breadcrumbs'
+import { installSemanticClickBreadcrumbs } from './sentry-click-breadcrumbs'
 
 let initialized = false
 let consentEnabled = false
+let semanticClickBreadcrumbsInstalled = false
 
 function ensureInitialized(): void {
   if (initialized) return
   Sentry.init({
+    beforeBreadcrumb: normalizeSentryBreadcrumb,
     beforeSend(event) {
       if (!consentEnabled) {
         return null
@@ -21,6 +25,12 @@ function ensureInitialized(): void {
       }
     },
   })
+
+  if (!semanticClickBreadcrumbsInstalled) {
+    installSemanticClickBreadcrumbs(() => consentEnabled)
+    semanticClickBreadcrumbsInstalled = true
+  }
+
   initialized = true
 }
 

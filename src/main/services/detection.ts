@@ -1,17 +1,39 @@
 import { BrowserWindow, desktopCapturer } from 'electron'
 import { execFile } from 'child_process'
+import { BROWSER_PATTERNS, MEETING_APP_PATTERNS } from '../../shared/constants'
 import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
 import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
 import { isAutoRecordEnabled } from './auto-record-store'
 import { getActiveCaptureProcessIdsMac } from './mac-meeting-detector'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Suppress pre-start prompts when an event begins within 10 minutes
-const AUTO_STOP_GRACE_MS = 30_000 // Wait 30s after mic goes silent before auto-stopping
+const AUTO_STOP_GRACE_MS = 30_000
+const AUTO_STOP_CONFIRM_MS = 6_000
+const WINDOW_CLOSED_CONFIRM_MS = 3_000
 const AUTO_RECORD_START_GRACE_MS = 15_000 // Suppress duplicate prompts while start is in flight
+const WINDOW_MISSING_POLLS_THRESHOLD = 2
+const PROVIDER_MISSING_POLLS_THRESHOLD = 3
+const MEETING_WINDOW_MISSING_POLLS_THRESHOLD = 3
+
+type AutoStopReason = 'window_closed' | 'mic_idle' | 'provider_gone'
+
+interface AutoStopPendingState {
+  reason: AutoStopReason
+  startedAt: number
+}
+
+interface AutoStopSnapshot {
+  sourceType: 'window' | 'screen'
+  providerDetected: boolean
+  meetingWindowVisible: boolean
+  windowMissingPolls: number
+  providerMissingPolls: number
+  micSilentPolls: number
+}
 
 interface MeetingProvider {
   id: string
@@ -56,8 +78,17 @@ export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastProviderSignalKey = ''
   private promptedCalendarEventId: string | null = null
-  private autoStopTimer: ReturnType<typeof setTimeout> | null = null
   private autoRecordPendingUntil = 0
+  private pendingAutoStop: AutoStopPendingState | null = null
+  private windowMissingPolls = 0
+  private providerMissingPolls = 0
+  private meetingWindowMissingPolls = 0
+  private micSilentPolls = 0
+  private wasRecording = false
+  private loggedFocusSwitchSuppression = false
+  private loggedLingeringWindowBlock = false
+  private suppressedProviderSignalKey = ''
+  private suppressedCalendarEventId: string | null = null
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -78,7 +109,7 @@ export class DetectionService {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
-    this.clearAutoStop()
+    this.resetAutoStopState()
   }
 
   dismissPrompt(): void {
@@ -88,41 +119,37 @@ export class DetectionService {
   private async poll(): Promise<void> {
     try {
       if (this.recordingService.getState().isRecording) {
+        this.wasRecording = true
         this.clearAutoRecordPending()
         const windowClosed = await this.isRecordedWindowClosed()
-        if (windowClosed) {
-          this.clearAutoStop()
-          this.broadcast('detection:auto-stop', { reason: 'window_closed' })
-          return
+        const provider = await this.getActiveProvider()
+        const providerDetected = provider !== null
+        const meetingWindowVisible = await this.isMeetingWindowOpen()
+        const micActive = process.platform === 'darwin'
+          ? await this.isMicInUseMac()
+          : null
+
+        this.updateAutoStopCounters({
+          windowClosed,
+          providerDetected,
+          meetingWindowVisible,
+          micActive,
+        })
+
+        const snapshot = this.getAutoStopSnapshot(providerDetected, meetingWindowVisible)
+        this.recognizeAutoStopEdgeCases(snapshot)
+        const reason = this.getAutoStopReason(snapshot)
+        if (reason) {
+          this.maybeBroadcastAutoStop(reason, snapshot)
+        } else {
+          this.cancelPendingAutoStop(snapshot)
         }
 
-        if (process.platform === 'darwin') {
-          const micActive = await this.isMicInUseMac()
-          if (micActive) {
-            this.clearAutoStop()
-          } else if (!this.autoStopTimer) {
-            const meetingWindowOpen = await this.isMeetingWindowOpen()
-            if (!meetingWindowOpen) {
-              this.broadcast('detection:auto-stop', { reason: 'provider_gone' })
-              return
-            }
-            this.scheduleAutoStop('mic_idle')
-          }
-        } else if (process.platform === 'win32') {
-          const provider = await this.getActiveProvider()
-          if (provider) {
-            this.clearAutoStop()
-          } else if (!this.autoStopTimer) {
-            this.scheduleAutoStop('provider_gone')
-          }
-        }
-
-        this.resetProviderState()
         hideNotificationWindow()
         return
       }
 
-      this.clearAutoStop()
+      this.resetAutoStopState()
 
       if (this.isAutoRecordPending()) {
         hideNotificationWindow()
@@ -132,6 +159,10 @@ export class DetectionService {
       const matchingEvent = this.findInProgressEvent()
       const provider = await this.getActiveProvider()
       const providerSignalKey = provider ? `${provider.id}:mic` : ''
+      if (this.wasRecording) {
+        this.suppressCurrentMeetingSignal(providerSignalKey, matchingEvent?.id ?? null)
+        this.wasRecording = false
+      }
       if (matchingEvent) {
         await this.handleCalendarEvent(matchingEvent, providerSignalKey)
         return
@@ -159,25 +190,200 @@ export class DetectionService {
     }
   }
 
-  private clearAutoStop(): void {
-    if (this.autoStopTimer) {
-      clearTimeout(this.autoStopTimer)
-      this.autoStopTimer = null
+  private resetAutoStopState(): void {
+    this.pendingAutoStop = null
+    this.windowMissingPolls = 0
+    this.providerMissingPolls = 0
+    this.meetingWindowMissingPolls = 0
+    this.micSilentPolls = 0
+    this.loggedFocusSwitchSuppression = false
+    this.loggedLingeringWindowBlock = false
+  }
+
+  private updateAutoStopCounters(params: {
+    windowClosed: boolean
+    providerDetected: boolean
+    meetingWindowVisible: boolean
+    micActive: boolean | null
+  }): void {
+    this.windowMissingPolls = params.windowClosed ? this.windowMissingPolls + 1 : 0
+    this.providerMissingPolls = params.providerDetected ? 0 : this.providerMissingPolls + 1
+    this.meetingWindowMissingPolls = params.meetingWindowVisible ? 0 : this.meetingWindowMissingPolls + 1
+
+    if (params.micActive === null) {
+      this.micSilentPolls = 0
+    } else {
+      this.micSilentPolls = params.micActive ? 0 : this.micSilentPolls + 1
     }
   }
 
-  private scheduleAutoStop(reason: 'mic_idle' | 'provider_gone'): void {
-    this.autoStopTimer = setTimeout(() => {
-      this.autoStopTimer = null
-      if (this.recordingService.getState().isRecording) {
-        this.broadcast('detection:auto-stop', { reason })
+  private getAutoStopSnapshot(
+    providerDetected: boolean,
+    meetingWindowVisible: boolean,
+  ): AutoStopSnapshot {
+    return {
+      sourceType: this.getRecordedSourceType(),
+      providerDetected,
+      meetingWindowVisible,
+      windowMissingPolls: this.windowMissingPolls,
+      providerMissingPolls: this.providerMissingPolls,
+      micSilentPolls: this.micSilentPolls,
+    }
+  }
+
+  private getAutoStopReason(snapshot: AutoStopSnapshot): AutoStopReason | null {
+    const micIdleStrong = this.micSilentPolls * POLL_INTERVAL_MS >= AUTO_STOP_GRACE_MS
+    const meetingWindowGoneStrong = this.meetingWindowMissingPolls >= MEETING_WINDOW_MISSING_POLLS_THRESHOLD
+    const providerGoneStrong = this.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD
+    const windowGoneStrong = snapshot.sourceType === 'window' && this.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
+    const browserLikeSource = this.isBrowserLikeSource()
+
+    if (windowGoneStrong && meetingWindowGoneStrong) {
+      return 'window_closed'
+    }
+
+    if (micIdleStrong && (providerGoneStrong || meetingWindowGoneStrong)) {
+      return 'mic_idle'
+    }
+
+    if (providerGoneStrong) {
+      if (snapshot.sourceType === 'screen' || browserLikeSource) {
+        if (micIdleStrong || meetingWindowGoneStrong) {
+          return 'provider_gone'
+        }
+      } else if (micIdleStrong || meetingWindowGoneStrong) {
+        return 'provider_gone'
       }
-    }, AUTO_STOP_GRACE_MS)
+    }
+
+    return null
+  }
+
+  private recognizeAutoStopEdgeCases(snapshot: AutoStopSnapshot): void {
+    const meetingId = this.recordingService.getState().meetingId ?? undefined
+    const micIdleStrong = this.micSilentPolls * POLL_INTERVAL_MS >= AUTO_STOP_GRACE_MS
+
+    if (
+      !this.loggedFocusSwitchSuppression
+      && snapshot.sourceType === 'window'
+      && snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
+      && snapshot.meetingWindowVisible
+    ) {
+      this.loggedFocusSwitchSuppression = true
+      logAutodocEvent({
+        area: 'detection',
+        message: 'Auto-stop suppressed — possible focus or desktop switch while meeting remains visible',
+        meetingId,
+        context: { ...snapshot },
+      })
+    }
+
+    if (
+      !this.loggedLingeringWindowBlock
+      && snapshot.sourceType === 'window'
+      && !snapshot.providerDetected
+      && snapshot.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD
+      && snapshot.meetingWindowVisible
+      && snapshot.windowMissingPolls === 0
+    ) {
+      this.loggedLingeringWindowBlock = true
+      logAutodocEvent({
+        area: 'detection',
+        message: micIdleStrong
+          ? 'Auto-stop blocked — meeting may be over, but the meeting window is still visible'
+          : 'Auto-stop blocked — meeting provider disappeared, but the meeting window is still visible',
+        meetingId,
+        context: { ...snapshot },
+      })
+    }
+  }
+
+  private maybeBroadcastAutoStop(reason: AutoStopReason, snapshot: AutoStopSnapshot): void {
+    if (!this.recordingService.getState().isRecording) return
+
+    if (!this.pendingAutoStop || this.pendingAutoStop.reason !== reason) {
+      this.pendingAutoStop = {
+        reason,
+        startedAt: Date.now(),
+      }
+      return
+    }
+
+    if (Date.now() - this.pendingAutoStop.startedAt < this.getAutoStopConfirmMs(reason, snapshot)) {
+      return
+    }
+
+    this.pendingAutoStop = null
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Auto-stop confirmed after sustained missing meeting signals',
+      meetingId: this.recordingService.getState().meetingId ?? undefined,
+      context: {
+        reason,
+        ...snapshot,
+      },
+    })
+    this.broadcast('detection:auto-stop', {
+      reason,
+      ...snapshot,
+    })
+  }
+
+  private cancelPendingAutoStop(snapshot: AutoStopSnapshot): void {
+    if (!this.pendingAutoStop) return
+
+    const pending = this.pendingAutoStop
+    this.pendingAutoStop = null
+    const recoveredSignals = this.getRecoveredSignals(snapshot)
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Auto-stop cancelled after meeting signals recovered',
+      meetingId: this.recordingService.getState().meetingId ?? undefined,
+      context: {
+        reason: pending.reason,
+        ...snapshot,
+        recoveredSignals,
+      },
+    })
+    this.broadcast('detection:auto-stop-cancelled', {
+      reason: pending.reason,
+      ...snapshot,
+      recoveredSignals,
+    })
+  }
+
+  private getRecoveredSignals(snapshot: AutoStopSnapshot): string[] {
+    const recovered: string[] = []
+
+    if (snapshot.windowMissingPolls === 0 && snapshot.sourceType === 'window') {
+      recovered.push('window_visible')
+    }
+
+    if (snapshot.providerDetected) {
+      recovered.push('provider_detected')
+    }
+
+    if (snapshot.meetingWindowVisible) {
+      recovered.push('meeting_window_visible')
+    }
+
+    if (snapshot.micSilentPolls === 0 && process.platform === 'darwin') {
+      recovered.push('mic_active')
+    }
+
+    return recovered.length > 0 ? recovered : ['signal_recovered']
+  }
+
+  private getAutoStopConfirmMs(reason: AutoStopReason, snapshot: AutoStopSnapshot): number {
+    if (reason === 'window_closed') {
+      return snapshot.providerDetected ? WINDOW_CLOSED_CONFIRM_MS : 0
+    }
+
+    return AUTO_STOP_CONFIRM_MS
   }
 
   private async isMeetingWindowOpen(): Promise<boolean> {
     try {
-      const { MEETING_APP_PATTERNS } = await import('../../shared/constants')
       const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
       return sources.some((s) =>
         MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))
@@ -201,6 +407,17 @@ export class DetectionService {
     }
   }
 
+  private getRecordedSourceType(): 'window' | 'screen' {
+    const sourceId = this.recordingService.getState().sourceId
+    return sourceId?.startsWith('screen:') ? 'screen' : 'window'
+  }
+
+  private isBrowserLikeSource(): boolean {
+    const sourceName = this.recordingService.getState().sourceName ?? ''
+    return BROWSER_PATTERNS.some((pattern) => pattern.test(sourceName))
+      || /\b(safari|chrome|firefox|edge|brave|arc|opera|vivaldi)\b/i.test(sourceName)
+  }
+
   private async handleCalendarEvent(event: CalendarEvent, providerSignalKey: string): Promise<void> {
     if (!providerSignalKey) {
       if (this.lastProviderSignalKey) {
@@ -208,6 +425,10 @@ export class DetectionService {
         this.lastProviderSignalKey = ''
       }
       hideNotificationWindow()
+      return
+    }
+
+    if (this.shouldSuppressPrompt(providerSignalKey, event.id)) {
       return
     }
 
@@ -227,10 +448,15 @@ export class DetectionService {
       return
     }
 
+    if (this.shouldSuppressPrompt(providerSignalKey, null)) {
+      this.lastProviderSignalKey = providerSignalKey
+      return
+    }
+
     if (providerSignalKey === this.lastProviderSignalKey) return
 
     this.lastProviderSignalKey = providerSignalKey
-    this.showPrompt(provider.name)
+    this.showPrompt(provider.name, provider.id)
   }
 
   private async getActiveProvider(): Promise<MeetingProvider | null> {
@@ -259,7 +485,7 @@ export class DetectionService {
     })
   }
 
-  private showPrompt(title: string): void {
+  private showPrompt(title: string, providerId: string | null): void {
     const body = 'Would you like to start AI notes?'
 
     showNotificationWindow({
@@ -272,7 +498,7 @@ export class DetectionService {
           win.show()
           win.focus()
         }
-        this.broadcast('detection:auto-record', {})
+        this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })
       },
       onDismiss: () => {},
     })
@@ -281,11 +507,14 @@ export class DetectionService {
   private promptForCalendarEvent(event: CalendarEvent): void {
     if (isAutoRecordEnabled(event.id, event.recurringEventId)) {
       this.markAutoRecordPending()
-      this.broadcast('detection:auto-record', {})
+      this.broadcast('detection:auto-record', {
+        providerId: inferProviderFromMeetingUrl(event.meetingUrl),
+        hasCalendarEvent: true,
+      })
       return
     }
 
-    this.showPrompt(event.title)
+    this.showPrompt(event.title, inferProviderFromMeetingUrl(event.meetingUrl))
   }
 
   private findInProgressEvent(): CalendarEvent | null {
@@ -314,6 +543,42 @@ export class DetectionService {
       this.broadcast('detection:mic-inactive', {})
       this.lastProviderSignalKey = ''
     }
+    this.suppressedProviderSignalKey = ''
+    this.suppressedCalendarEventId = null
+  }
+
+  private suppressCurrentMeetingSignal(providerSignalKey: string, eventId: string | null): void {
+    this.suppressedProviderSignalKey = providerSignalKey
+    this.suppressedCalendarEventId = eventId
+    if (providerSignalKey) {
+      this.lastProviderSignalKey = providerSignalKey
+    }
+    if (eventId) {
+      this.promptedCalendarEventId = eventId
+    }
+  }
+
+  private shouldSuppressPrompt(providerSignalKey: string, eventId: string | null): boolean {
+    if (!this.suppressedProviderSignalKey) {
+      return false
+    }
+
+    if (providerSignalKey !== this.suppressedProviderSignalKey) {
+      this.suppressedProviderSignalKey = ''
+      this.suppressedCalendarEventId = null
+      return false
+    }
+
+    if (eventId === null) {
+      return true
+    }
+
+    if (this.suppressedCalendarEventId === eventId) {
+      return true
+    }
+
+    this.suppressedCalendarEventId = null
+    return false
   }
 
   private markAutoRecordPending(): void {
@@ -337,4 +602,16 @@ export class DetectionService {
       win.webContents.send(channel, payload)
     }
   }
+}
+
+function inferProviderFromMeetingUrl(meetingUrl: string | null): string | null {
+  if (!meetingUrl) return null
+
+  if (/zoom\.us/i.test(meetingUrl)) return 'zoom'
+  if (/teams\.microsoft\.com/i.test(meetingUrl)) return 'teams'
+  if (/meet\.google\.com/i.test(meetingUrl)) return 'google_meet'
+  if (/webex\.com/i.test(meetingUrl)) return 'webex'
+  if (/slack\.com/i.test(meetingUrl)) return 'slack'
+
+  return null
 }

@@ -1,4 +1,11 @@
 declare module '@sentry/electron/main' {
+  export interface SentryBreadcrumb {
+    category?: string
+    message?: string
+    level?: string
+    data?: Record<string, unknown>
+  }
+
   export interface SentryEvent {
     server_name?: string
     [key: string]: unknown
@@ -15,6 +22,7 @@ declare module '@sentry/electron/main' {
     release?: string
     enabled?: boolean
     sendDefaultPii?: boolean
+    beforeBreadcrumb?: (breadcrumb: SentryBreadcrumb) => SentryBreadcrumb | null
     beforeSend?: (event: SentryEvent) => SentryEvent | null
   }
 
@@ -27,16 +35,25 @@ declare module '@sentry/electron/main' {
 }
 
 declare module '@sentry/electron/renderer' {
+  export interface RendererSentryBreadcrumb {
+    category?: string
+    message?: string
+    level?: string
+    data?: Record<string, unknown>
+  }
+
   export interface RendererSentryEvent {
     extra?: Record<string, unknown>
     [key: string]: unknown
   }
 
   export interface RendererSentryInitOptions {
+    beforeBreadcrumb?: (breadcrumb: RendererSentryBreadcrumb) => RendererSentryBreadcrumb | null
     beforeSend?: (event: RendererSentryEvent) => RendererSentryEvent | null
   }
 
   export function init(options?: RendererSentryInitOptions): void
+  export function addBreadcrumb(breadcrumb: RendererSentryBreadcrumb): void
 }
 
 declare module 'electron-updater' {
