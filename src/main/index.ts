@@ -33,7 +33,6 @@ import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag }
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import { enforceMacOSInstallLocation } from './services/application-install'
-import { showPickerWindow } from './picker-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -514,19 +513,6 @@ app.whenReady().then(async () => {
       wins[0].show()
       wins[0].focus()
     }
-  })
-
-  ipcMain.on('detection:request-picker', (_event, suggestedId: string | null) => {
-    void showPickerWindow({
-      suggestedId,
-      onSelect: (sourceId, sourceName) => {
-        const wins = BrowserWindow.getAllWindows()
-        for (const win of wins) {
-          win.webContents.send('detection:source-selected', { sourceId, sourceName })
-        }
-      },
-      onDismiss: () => {},
-    })
   })
 
   // Mutable state tracking Whisper setup progress

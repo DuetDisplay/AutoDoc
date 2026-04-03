@@ -46,6 +46,7 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
   const { events, setAccounts, setEvents } = useCalendarStore()
+  const openPicker = useRecordingPickerStore((state) => state.openPicker)
   const transcriptionFailures = useRef<Record<string, string>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
   const whisperFailureKey = useRef<string | null>(null)
@@ -250,7 +251,14 @@ export default function App() {
             has_suggestion: selection.source !== null,
             provider_hint: selection.providerHint ?? 'unknown',
           })
-          window.electronAPI.send('detection:request-picker', selection.source?.id ?? null)
+          window.electronAPI.send('window:show')
+          openPicker({
+            title: 'Select a window to record',
+            subtitle: null,
+            sources,
+            detectedId: selection.source?.id ?? null,
+            selectionContext,
+          })
         } catch (err) {
           autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
@@ -260,7 +268,7 @@ export default function App() {
       })()
     })
     return unsub
-  }, [events, isRecording, fetchSources, handleStart])
+  }, [events, isRecording, fetchSources, handleStart, openPicker])
 
   // Auto-stop recording when meeting-end signals stay gone long enough to be convincing.
   useEffect(() => {
@@ -320,20 +328,6 @@ export default function App() {
       unsubCancelled()
     }
   }, [elapsedSeconds, handleStop, isRecording])
-
-  useEffect(() => {
-    const unsub = window.electronAPI.on('detection:source-selected', ({ sourceId, sourceName }) => {
-      void (async () => {
-        if (isRecording) return
-        try {
-          await handleStart(sourceId, sourceName)
-        } catch (err) {
-          console.error('Picker source selection failed:', err)
-        }
-      })()
-    })
-    return unsub
-  }, [handleStart, isRecording])
 
   if (onboardingDone === null) return null
 
