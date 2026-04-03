@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer,
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
+import { createRequire } from 'module'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
 import { is } from '@electron-toolkit/utils'
@@ -30,6 +31,8 @@ import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../s
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
+import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
+import { enforceMacOSInstallLocation } from './services/application-install'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -71,18 +74,18 @@ let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
+const require = createRequire(import.meta.url)
 
 type MainSentryRuntimeModule = typeof import('@sentry/electron/main') & {
   getDefaultIntegrations(options: Record<string, unknown>): Array<{ name: string }>
 }
 
-async function initializeMainSentry(): Promise<void> {
+function initializeMainSentry(): void {
   if (!SENTRY_DSN || !shouldAllowSentryInEnv || mainSentryEnabled) return
 
   try {
     if (!mainSentry) {
-      // Dynamic import: @sentry/electron accesses app.getAppPath() at module scope.
-      mainSentry = await import('@sentry/electron/main')
+      mainSentry = require('@sentry/electron/main') as typeof import('@sentry/electron/main')
     }
 
     const sentryRuntime = mainSentry as MainSentryRuntimeModule
@@ -98,6 +101,7 @@ async function initializeMainSentry(): Promise<void> {
       enabled: true,
       sendDefaultPii: false,
       integrations,
+      beforeBreadcrumb: normalizeSentryBreadcrumb,
       beforeSend(event) {
         if (!analyticsConsentEnabled) {
           return null
@@ -133,7 +137,7 @@ if (!gotSingleInstanceLock) {
     console.warn('Failed to read initial analytics consent for Sentry:', err)
   }
 
-  void initializeMainSentry()
+  initializeMainSentry()
 
   app.on('second-instance', () => {
     focusMainWindow()
@@ -192,6 +196,7 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  if (!(await enforceMacOSInstallLocation())) return
 
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
@@ -333,6 +338,10 @@ app.whenReady().then(async () => {
     audioConverter,
     recordingService.getRecordingsBaseDir(),
     calendarManager,
+    (meetingId) => {
+      const state = recordingService.getState()
+      return state.isRecording && state.meetingId === meetingId
+    },
   )
   ollamaManager = new OllamaManager()
   const managedOllamaManager = ollamaManager
@@ -499,8 +508,15 @@ app.whenReady().then(async () => {
   })
 
   // Mutable state tracking Whisper setup progress
-  const whisperSetupState: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
-  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'downloading-whisper'
+  const whisperSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
+  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
+  const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] => (
+    lastSuccessfulWhisperPhase === 'downloading-ffmpeg'
+    || lastSuccessfulWhisperPhase === 'downloading-model'
+    || lastSuccessfulWhisperPhase === 'ready'
+      ? lastSuccessfulWhisperPhase
+      : 'downloading-whisper'
+  )
 
   whisperManager.on('setup-status', (status: WhisperSetupStatus) => {
     if (status.phase !== 'error') {
@@ -509,9 +525,7 @@ app.whenReady().then(async () => {
     whisperSetupState.phase = status.phase
     whisperSetupState.percent = status.percent
     whisperSetupState.error = status.error
-    whisperSetupState.failedStep = status.phase === 'error'
-      ? (lastSuccessfulWhisperPhase === 'error' ? 'downloading-whisper' : lastSuccessfulWhisperPhase)
-      : undefined
+    whisperSetupState.failedStep = status.phase === 'error' ? getWhisperFailedStep() : undefined
     updateWhisperSentryContext({
       ready: status.phase === 'ready',
       modelFilename: whisperManager.getModelInfo().filename,
@@ -630,7 +644,7 @@ app.whenReady().then(async () => {
     .catch((err) => {
       whisperSetupState.phase = 'error'
       whisperSetupState.error = err instanceof Error ? err.message : String(err)
-      whisperSetupState.failedStep = lastSuccessfulWhisperPhase === 'error' ? 'downloading-whisper' : lastSuccessfulWhisperPhase
+      whisperSetupState.failedStep = getWhisperFailedStep()
       updateWhisperSentryContext({
         ready: false,
         modelFilename: whisperManager.getModelInfo().filename,

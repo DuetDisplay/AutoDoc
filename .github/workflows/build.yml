@@ -66,15 +66,13 @@ jobs:
         run: npm run build && npx electron-builder --mac --publish never -c.mac.notarize=false
 
       - name: Upload macOS artifacts
-        if: always()
+        if: github.ref_type == 'branch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: autodoc-macos-${{ github.ref_name }}
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/*.blockmap
-            dist/latest*.yml
           if-no-files-found: warn
           retention-days: 14
 
@@ -176,13 +174,11 @@ jobs:
         run: npm run build:win
 
       - name: Upload Windows artifacts
-        if: success()
+        if: github.ref_type == 'branch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: autodoc-windows-${{ github.ref_name }}
           path: |
             dist/*-setup.exe
-            dist/*.blockmap
-            dist/latest*.yml
           if-no-files-found: warn
           retention-days: 14

@@ -3,16 +3,23 @@ productName: AutoDoc
 directories:
   buildResources: build
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - 'package.json'
+  - 'out/**/*'
+  - 'node_modules/**/*'
+  - 'resources/diarize.py'
+  - 'resources/icon.png'
+  - 'resources/trayTemplate.png'
+  - 'resources/trayTemplate@2x.png'
+  - 'native/**/bin/**/*'
+  - '!**/__tests__/**'
+  - '!**/*.{map,md,markdown,tsbuildinfo}'
+  - '!**/.DS_Store'
 asarUnpack:
   - 'resources/**'
   - 'native/**'
 win:
+  target:
+    - nsis
   executableName: autodoc
   icon: build/icon.ico
   forceCodeSigning: true
@@ -24,12 +31,12 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  target:
+    - dmg
+    - zip
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
     - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}
