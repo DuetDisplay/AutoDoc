@@ -15,6 +15,7 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
+import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
     // Restore analytics consent for returning users
     window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
       restoreAnalyticsConsent(consent === true)
+      updateRendererSentryConsent(consent === true)
       if (consent === true) {
         trackEvent('app_opened')
       }
@@ -43,6 +45,7 @@ export default function App() {
 
     const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', (enabled) => {
       restoreAnalyticsConsent(enabled)
+      updateRendererSentryConsent(enabled)
     })
 
     return unsubConsent

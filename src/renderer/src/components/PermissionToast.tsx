@@ -25,6 +25,7 @@ export function PermissionToast() {
     } else {
       window.electronAPI.invoke('permissions:open-settings', activeToast.type as 'screen' | 'microphone')
     }
+    dismissToast()
   }
 
   return (
