@@ -1,6 +1,6 @@
 {
   "name": "autodoc",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Local-first meeting assistant",
   "license": "AGPL-3.0-only",
   "main": "./out/main/index.js",
