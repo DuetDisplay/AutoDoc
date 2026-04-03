@@ -158,6 +158,31 @@ describe('DetectionService', () => {
     expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {})
   })
 
+  it('suppresses follow-up prompts while an auto-record start is pending', async () => {
+    setPlatform('darwin')
+
+    const scheduledEvent = makeEvent('evt-1', 5 * 60_000)
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [scheduledEvent],
+    )
+
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, 'audio-in', '')
+    })
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+
+    const promptConfig = mocks.showNotificationWindow.mock.calls[0][0]
+    promptConfig.onRecord()
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+  })
+
   it('waits for provider activity before prompting for a matched scheduled event', async () => {
     setPlatform('win32')
 

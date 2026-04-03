@@ -10,6 +10,7 @@ import { logAutodocFailure } from './autodoc-log'
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
 const AUTO_STOP_GRACE_MS = 30_000 // Wait 30s after mic goes silent before auto-stopping
+const AUTO_RECORD_START_GRACE_MS = 15_000 // Suppress duplicate prompts while start is in flight
 
 interface MeetingProvider {
   id: string
@@ -55,6 +56,7 @@ export class DetectionService {
   private lastProviderSignalKey = ''
   private promptedCalendarEventId: string | null = null
   private autoStopTimer: ReturnType<typeof setTimeout> | null = null
+  private autoRecordPendingUntil = 0
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -85,6 +87,7 @@ export class DetectionService {
   private async poll(): Promise<void> {
     try {
       if (this.recordingService.getState().isRecording) {
+        this.clearAutoRecordPending()
         const windowClosed = await this.isRecordedWindowClosed()
         if (windowClosed) {
           this.clearAutoStop()
@@ -119,6 +122,11 @@ export class DetectionService {
       }
 
       this.clearAutoStop()
+
+      if (this.isAutoRecordPending()) {
+        hideNotificationWindow()
+        return
+      }
 
       const matchingEvent = this.findMatchingEvent()
       const provider = await this.getActiveProvider()
@@ -251,6 +259,7 @@ export class DetectionService {
       title,
       body,
       onRecord: () => {
+        this.markAutoRecordPending()
         const win = BrowserWindow.getAllWindows()[0]
         if (win) {
           win.show()
@@ -264,6 +273,7 @@ export class DetectionService {
 
   private promptForCalendarEvent(event: CalendarEvent): void {
     if (isAutoRecordEnabled(event.id, event.recurringEventId)) {
+      this.markAutoRecordPending()
       this.broadcast('detection:auto-record', {})
       return
     }
@@ -291,6 +301,21 @@ export class DetectionService {
       this.broadcast('detection:mic-inactive', {})
       this.lastProviderSignalKey = ''
     }
+  }
+
+  private markAutoRecordPending(): void {
+    this.autoRecordPendingUntil = Date.now() + AUTO_RECORD_START_GRACE_MS
+  }
+
+  private clearAutoRecordPending(): void {
+    this.autoRecordPendingUntil = 0
+  }
+
+  private isAutoRecordPending(): boolean {
+    if (this.autoRecordPendingUntil === 0) return false
+    if (Date.now() < this.autoRecordPendingUntil) return true
+    this.autoRecordPendingUntil = 0
+    return false
   }
 
   private broadcast(channel: string, payload: Record<string, unknown>): void {

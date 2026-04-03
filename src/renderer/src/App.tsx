@@ -25,6 +25,7 @@ export default function App() {
   const segmentationFailures = useRef<Record<string, string>>({})
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
+  const autoRecordStartInFlight = useRef(false)
 
   useEffect(() => {
     // Initialize analytics early (stays opted-out until consent is restored/given)
@@ -146,9 +147,16 @@ export default function App() {
 
   // Auto-start recording when user clicks "Start AI Notes" from floating notification
   useEffect(() => {
+    if (isRecording) {
+      autoRecordStartInFlight.current = false
+    }
+  }, [isRecording])
+
+  useEffect(() => {
     const unsub = window.electronAPI.on('detection:auto-record', () => {
       void (async () => {
-        if (isRecording) return
+        if (isRecording || autoRecordStartInFlight.current) return
+        autoRecordStartInFlight.current = true
         try {
           const sources = await fetchSources()
           // Try meeting window first, fall back to first screen capture
@@ -157,8 +165,11 @@ export default function App() {
             ?? sources[0]
           if (detected) {
             await handleStart(detected.id, detected.name)
+          } else {
+            autoRecordStartInFlight.current = false
           }
         } catch (err) {
+          autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
         }
       })()
