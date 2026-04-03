@@ -39,4 +39,14 @@ describe('PrefsStore', () => {
     store.setOnboardingComplete()
     expect(store.isOnboardingComplete()).toBe(true)
   })
+
+  it('returns false for onboardingScreenSettingsOpened by default', () => {
+    expect(store.getOnboardingScreenSettingsOpened()).toBe(false)
+  })
+
+  it('clears onboardingScreenSettingsOpened when onboarding completes', () => {
+    store.setOnboardingScreenSettingsOpened(true)
+    store.setOnboardingComplete()
+    expect(store.getOnboardingScreenSettingsOpened()).toBe(false)
+  })
 })

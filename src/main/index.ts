@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, protocol, net, powerMonitor } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
@@ -266,15 +266,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
       const microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
-      // Screen recording: try getting sources — if we get thumbnails with actual content, we have permission
-      let screen = false
-      try {
-        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
-        // On macOS, sources are returned but thumbnails are empty when permission is denied
-        screen = sources.length > 0 && !sources[0].thumbnail.isEmpty()
-      } catch {
-        screen = false
-      }
+      const screen = systemPreferences.getMediaAccessStatus('screen') === 'granted'
       return { screen, microphone }
     }
     // On Windows/Linux, permissions are generally granted by default

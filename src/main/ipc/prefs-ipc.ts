@@ -28,6 +28,14 @@ export function registerPrefsIpc(
     prefsStore.setOnboardingStep(step)
   })
 
+  ipcMain.handle('prefs:get-onboarding-screen-settings-opened', (): boolean => {
+    return prefsStore.getOnboardingScreenSettingsOpened()
+  })
+
+  ipcMain.handle('prefs:set-onboarding-screen-settings-opened', (_event, opened: boolean): void => {
+    prefsStore.setOnboardingScreenSettingsOpened(opened)
+  })
+
   ipcMain.handle('app:relaunch', (): void => {
     app.relaunch()
     app.quit()

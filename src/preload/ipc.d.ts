@@ -65,6 +65,8 @@ export interface IpcInvokeEvents {
   'prefs:set-onboarding-complete': []
   'prefs:get-onboarding-step': []
   'prefs:set-onboarding-step': [step: number]
+  'prefs:get-onboarding-screen-settings-opened': []
+  'prefs:set-onboarding-screen-settings-opened': [opened: boolean]
   'app:relaunch': []
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
@@ -122,6 +124,8 @@ export interface IpcInvokeReturns {
   'prefs:set-onboarding-complete': void
   'prefs:get-onboarding-step': number
   'prefs:set-onboarding-step': void
+  'prefs:get-onboarding-screen-settings-opened': boolean
+  'prefs:set-onboarding-screen-settings-opened': void
   'app:relaunch': void
   'prefs:get-launch-at-login': boolean
   'prefs:set-launch-at-login': void

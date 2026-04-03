@@ -24,7 +24,6 @@ import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
-import { useRecordingPickerStore } from './stores/recording-picker'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()

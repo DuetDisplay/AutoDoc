@@ -4,6 +4,7 @@ import { app } from 'electron'
 interface PrefsSchema {
   onboardingComplete: boolean
   onboardingStep: number
+  onboardingScreenSettingsOpened: boolean
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
 }
@@ -14,6 +15,7 @@ function createPrefsStore(): Store<PrefsSchema> {
     defaults: {
       onboardingComplete: false,
       onboardingStep: 0,
+      onboardingScreenSettingsOpened: false,
       launchAtLogin: true,
       analyticsConsent: null,
     },
@@ -41,6 +43,7 @@ export class PrefsStore {
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
     this.store.set('onboardingStep', 0)
+    this.store.set('onboardingScreenSettingsOpened', false)
     // Enable launch at login when onboarding finishes
     this.setLaunchAtLogin(true)
   }
@@ -51,6 +54,14 @@ export class PrefsStore {
 
   setOnboardingStep(step: number): void {
     this.store.set('onboardingStep', step)
+  }
+
+  getOnboardingScreenSettingsOpened(): boolean {
+    return this.store.get('onboardingScreenSettingsOpened')
+  }
+
+  setOnboardingScreenSettingsOpened(opened: boolean): void {
+    this.store.set('onboardingScreenSettingsOpened', opened)
   }
 
   getLaunchAtLogin(): boolean {
