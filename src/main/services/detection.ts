@@ -4,11 +4,12 @@ import type { CalendarEvent } from '../../shared/types'
 import type { RecordingService } from './recording'
 import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
 import { isAutoRecordEnabled } from './auto-record-store'
+import { getActiveCaptureProcessIdsMac } from './mac-meeting-detector'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
 import { logAutodocFailure } from './autodoc-log'
 
 const POLL_INTERVAL_MS = 3_000
-const EVENT_WINDOW_MS = 10 * 60_000 // Match if event starts within +/- 10 minutes
+const EVENT_WINDOW_MS = 10 * 60_000 // Suppress pre-start prompts when an event begins within 10 minutes
 const AUTO_STOP_GRACE_MS = 30_000 // Wait 30s after mic goes silent before auto-stopping
 const AUTO_RECORD_START_GRACE_MS = 15_000 // Suppress duplicate prompts while start is in flight
 
@@ -128,11 +129,18 @@ export class DetectionService {
         return
       }
 
-      const matchingEvent = this.findMatchingEvent()
+      const matchingEvent = this.findInProgressEvent()
       const provider = await this.getActiveProvider()
       const providerSignalKey = provider ? `${provider.id}:mic` : ''
       if (matchingEvent) {
         await this.handleCalendarEvent(matchingEvent, providerSignalKey)
+        return
+      }
+
+      if (this.hasUpcomingEventSoon()) {
+        this.promptedCalendarEventId = null
+        this.resetProviderState()
+        hideNotificationWindow()
         return
       }
 
@@ -227,9 +235,8 @@ export class DetectionService {
 
   private async getActiveProvider(): Promise<MeetingProvider | null> {
     if (process.platform === 'darwin') {
-      return (await this.isMicInUseMac())
-        ? { id: 'mac-mic', name: 'Meeting detected', identifiers: [] }
-        : null
+      const activeIds = await getActiveCaptureProcessIdsMac()
+      return matchProviderFromIds(activeIds)
     }
 
     if (process.platform === 'win32') {
@@ -281,19 +288,25 @@ export class DetectionService {
     this.showPrompt(event.title)
   }
 
-  private findMatchingEvent(): CalendarEvent | null {
+  private findInProgressEvent(): CalendarEvent | null {
     const now = Date.now()
     const events = this.getCalendarEvents()
 
     for (const event of events) {
-      const isNearStart = Math.abs(event.startTime - now) < EVENT_WINDOW_MS
       const isDuring = event.startTime <= now && event.endTime >= now
-      if (isNearStart || isDuring) {
+      if (isDuring) {
         return event
       }
     }
 
     return null
+  }
+
+  private hasUpcomingEventSoon(): boolean {
+    const now = Date.now()
+    const events = this.getCalendarEvents()
+
+    return events.some((event) => event.startTime > now && event.startTime - now < EVENT_WINDOW_MS)
   }
 
   private resetProviderState(): void {

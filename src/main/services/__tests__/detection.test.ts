@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   hideNotificationWindow: vi.fn(),
   getAllWindows: vi.fn(() => []),
   isAutoRecordEnabled: vi.fn(() => false),
+  getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
   execFile: vi.fn(),
 }))
@@ -22,6 +23,10 @@ vi.mock('../../notification-window', () => ({
 
 vi.mock('../auto-record-store', () => ({
   isAutoRecordEnabled: mocks.isAutoRecordEnabled,
+}))
+
+vi.mock('../mac-meeting-detector', () => ({
+  getActiveCaptureProcessIdsMac: mocks.getActiveCaptureProcessIdsMac,
 }))
 
 vi.mock('../windows-meeting-detector', () => ({
@@ -70,6 +75,8 @@ describe('DetectionService', () => {
     mocks.getAllWindows.mockReturnValue([])
     mocks.isAutoRecordEnabled.mockReset()
     mocks.isAutoRecordEnabled.mockReturnValue(false)
+    mocks.getActiveCaptureProcessIdsMac.mockReset()
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
     mocks.getActiveCaptureProcessIdsWindows.mockReset()
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
     mocks.execFile.mockReset()
@@ -91,10 +98,25 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
   })
 
-  it('prompts once per scheduled event when provider activity starts', async () => {
+  it('does not prompt before a scheduled event starts even if provider activity is already detected', async () => {
     setPlatform('win32')
 
-    let events = [makeEvent('evt-1', 5 * 60_000)]
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [makeEvent('evt-1', 5 * 60_000)],
+    )
+
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+  })
+
+  it('prompts once per scheduled event when the event is in progress and provider activity starts', async () => {
+    setPlatform('win32')
+
+    let events = [makeEvent('evt-1', -1 * 60_000)]
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
       () => events,
@@ -104,7 +126,7 @@ describe('DetectionService', () => {
 
     await (service as any).poll()
 
-    events = [makeEvent('evt-2', 5 * 60_000)]
+    events = [makeEvent('evt-2', -1 * 60_000)]
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(2)
@@ -141,7 +163,7 @@ describe('DetectionService', () => {
   it('auto-records scheduled events without showing a prompt when enabled', async () => {
     setPlatform('win32')
 
-    const event = makeEvent('evt-1', 5 * 60_000)
+    const event = makeEvent('evt-1', -1 * 60_000)
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.isAutoRecordEnabled.mockReturnValue(true)
@@ -161,15 +183,13 @@ describe('DetectionService', () => {
   it('suppresses follow-up prompts while an auto-record start is pending', async () => {
     setPlatform('darwin')
 
-    const scheduledEvent = makeEvent('evt-1', 5 * 60_000)
+    const scheduledEvent = makeEvent('evt-1', -1 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
       () => [scheduledEvent],
     )
 
-    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
-      callback(null, 'audio-in', '')
-    })
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.tinyspeck.slackmacgap'])
 
     await (service as any).poll()
 
@@ -183,44 +203,57 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
   })
 
-  it('waits for provider activity before prompting for a matched scheduled event', async () => {
+  it('waits for the event to start before prompting for a matched scheduled event', async () => {
     setPlatform('win32')
 
-    const event = makeEvent('evt-1', 5 * 60_000)
+    let event = makeEvent('evt-1', 5 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
       () => [event],
     )
 
     mocks.getActiveCaptureProcessIdsWindows
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['slack.exe'])
       .mockResolvedValueOnce(['slack.exe'])
 
     await (service as any).poll()
+    event = makeEvent('evt-1', -1 * 60_000)
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
     expect(mocks.showNotificationWindow.mock.calls[0][0].title).toBe('Event evt-1')
   })
 
-  it('uses the matched event title on mac once mic activity starts', async () => {
+  it('does not prompt on mac for unknown active input processes', async () => {
     setPlatform('darwin')
 
-    const event = makeEvent('evt-1', 5 * 60_000)
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [],
+    )
+
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.apple.corespeechd'])
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+  })
+
+  it('uses the matched event title on mac once the event is in progress', async () => {
+    setPlatform('darwin')
+
+    let event = makeEvent('evt-1', 5 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
       () => [event],
     )
 
-    mocks.execFile
-      .mockImplementationOnce((_file, _args, _options, callback) => {
-        callback(null, '', '')
-      })
-      .mockImplementationOnce((_file, _args, _options, callback) => {
-        callback(null, 'audio-in', '')
-      })
+    mocks.getActiveCaptureProcessIdsMac
+      .mockResolvedValueOnce(['com.tinyspeck.slackmacgap'])
+      .mockResolvedValueOnce(['com.tinyspeck.slackmacgap'])
 
     await (service as any).poll()
+    event = makeEvent('evt-1', -1 * 60_000)
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
