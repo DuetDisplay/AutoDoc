@@ -9,7 +9,11 @@ import { AskAI } from './pages/AskAI'
 import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
 import { useRecording } from './hooks/useRecording'
-import { detectMeetingWindow } from './services/window-detection'
+import {
+  buildRecordingSelectionContext,
+  chooseAutoRecordSource,
+  findActiveCalendarEvent,
+} from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
@@ -18,6 +22,8 @@ import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/a
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
+import { getSavedSourcePreference } from './services/recording-source-preferences'
+import { useRecordingPickerStore } from './stores/recording-picker'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()
@@ -38,7 +44,7 @@ function RouteDiagnosticTracker() {
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
-  const { setAccounts, setEvents } = useCalendarStore()
+  const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
   const whisperFailureKey = useRef<string | null>(null)
@@ -179,46 +185,114 @@ export default function App() {
   }, [isRecording])
 
   useEffect(() => {
-    const unsub = window.electronAPI.on('detection:auto-record', () => {
+    const unsub = window.electronAPI.on('detection:auto-record', ({ providerId, hasCalendarEvent }) => {
       void (async () => {
         if (isRecording || autoRecordStartInFlight.current) return
         autoRecordStartInFlight.current = true
+        const activeEvent = findActiveCalendarEvent(events)
+        const selectionContext = buildRecordingSelectionContext(activeEvent, providerId)
         recordDiagnosticAction({
           category: 'recording',
           action: 'auto_record_requested',
+          details: {
+            providerId,
+            hasCalendarEvent,
+          },
         })
         try {
           const sources = await fetchSources()
-          // Try meeting window first, fall back to first screen capture
-          const detected = detectMeetingWindow(sources)
-            ?? sources.find((s) => s.id.startsWith('screen:'))
-            ?? sources[0]
-          if (detected) {
-            await handleStart(detected.id, detected.name)
-          } else {
-            autoRecordStartInFlight.current = false
+          const selection = chooseAutoRecordSource(
+            sources,
+            selectionContext,
+            getSavedSourcePreference(selectionContext),
+          )
+
+          if (selection.source && selection.confidence === 'high') {
+            await handleStart(selection.source.id, selection.source.name, selectionContext)
+            return
           }
+
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'meeting_window_detection_failed',
+            details: {
+              hasCalendarEvent,
+              providerId: selection.providerHint,
+              windowCount: selection.windowCount,
+              browserWindowCount: selection.browserWindowCount,
+              meetingWindowCount: selection.meetingWindowCount,
+              selectionMethod: selection.method,
+              selectionConfidence: selection.confidence,
+            },
+          })
+          trackEvent('meeting_window_detection_failed', {
+            trigger: 'auto_record',
+            has_calendar_event: hasCalendarEvent,
+            provider_hint: selection.providerHint ?? 'unknown',
+            window_count: selection.windowCount,
+            browser_window_count: selection.browserWindowCount,
+            meeting_window_count: selection.meetingWindowCount,
+            selection_method: selection.method,
+            selection_confidence: selection.confidence,
+          })
+
+          useRecordingPickerStore.getState().openPicker({
+            title: 'Select the meeting window',
+            subtitle: 'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
+            sources,
+            detectedId: selection.source?.id ?? null,
+          })
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'manual_source_selection_required',
+            details: {
+              trigger: 'auto_record',
+              hasSuggestion: selection.source !== null,
+            },
+          })
+          trackEvent('recording_manual_source_selection_required', {
+            trigger: 'auto_record',
+            has_suggestion: selection.source !== null,
+            provider_hint: selection.providerHint ?? 'unknown',
+          })
+          window.location.hash = ROUTES.upcoming
         } catch (err) {
           autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
+          return
         }
+        autoRecordStartInFlight.current = false
       })()
     })
     return unsub
-  }, [isRecording, fetchSources, handleStart])
+  }, [events, isRecording, fetchSources, handleStart])
 
-  // Auto-stop recording when meeting ends (mic goes silent for 30s)
+  // Auto-stop recording when meeting-end signals stay gone long enough to be convincing.
   useEffect(() => {
-    const unsub = window.electronAPI.on('detection:auto-stop', ({ reason }) => {
+    const unsub = window.electronAPI.on('detection:auto-stop', (payload) => {
       void (async () => {
         if (!isRecording) return
         console.log('Auto-stopping recording — meeting ended')
         recordDiagnosticAction({
           category: 'recording',
           action: 'auto_stop_triggered',
-          details: { reason },
+          details: {
+            reason: payload.reason,
+            sourceType: payload.sourceType,
+            providerDetected: payload.providerDetected,
+            meetingWindowVisible: payload.meetingWindowVisible,
+          },
         })
-        trackEvent('recording_auto_stopped', { reason, duration_seconds: elapsedSeconds })
+        trackEvent('recording_auto_stopped', {
+          reason: payload.reason,
+          duration_seconds: elapsedSeconds,
+          source_type: payload.sourceType,
+          provider_detected: payload.providerDetected,
+          meeting_window_visible: payload.meetingWindowVisible,
+          window_missing_polls: payload.windowMissingPolls,
+          provider_missing_polls: payload.providerMissingPolls,
+          mic_silent_polls: payload.micSilentPolls,
+        })
         try {
           await handleStop()
         } catch (err) {
@@ -226,7 +300,30 @@ export default function App() {
         }
       })()
     })
-    return unsub
+    const unsubCancelled = window.electronAPI.on('detection:auto-stop-cancelled', (payload) => {
+      recordDiagnosticAction({
+        category: 'recording',
+        action: 'auto_stop_cancelled',
+        details: {
+          reason: payload.reason,
+          recoveredSignals: payload.recoveredSignals.join(','),
+        },
+      })
+      trackEvent('recording_auto_stop_cancelled', {
+        reason: payload.reason,
+        source_type: payload.sourceType,
+        provider_detected: payload.providerDetected,
+        meeting_window_visible: payload.meetingWindowVisible,
+        window_missing_polls: payload.windowMissingPolls,
+        provider_missing_polls: payload.providerMissingPolls,
+        mic_silent_polls: payload.micSilentPolls,
+        recovered_signals: payload.recoveredSignals.join(','),
+      })
+    })
+    return () => {
+      unsub()
+      unsubCancelled()
+    }
   }, [elapsedSeconds, handleStop, isRecording])
 
   if (onboardingDone === null) return null

@@ -167,14 +167,29 @@ export interface OllamaSetupStatus {
 }
 
 export interface WhisperSetupStatus {
-  phase: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
+  phase: 'checking' | 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
   percent: number
   error?: string
   failedStep?: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready'
 }
 
+export interface DetectionAutoRecordPayload {
+  providerId: string | null
+  hasCalendarEvent: boolean
+}
+
 export interface DetectionAutoStopPayload {
   reason: 'window_closed' | 'mic_idle' | 'provider_gone'
+  sourceType: 'window' | 'screen'
+  providerDetected: boolean
+  meetingWindowVisible: boolean
+  windowMissingPolls: number
+  providerMissingPolls: number
+  micSilentPolls: number
+}
+
+export interface DetectionAutoStopCancelledPayload extends DetectionAutoStopPayload {
+  recoveredSignals: string[]
 }
 
 export interface AppRuntimeInfo {

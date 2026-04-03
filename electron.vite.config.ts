@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
     main: {
       define: {
         'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(env.AUTODOC_SENTRY_DSN ?? ''),
+        'process.env.AUTODOC_SENTRY_DEV': JSON.stringify(env.AUTODOC_SENTRY_DEV ?? ''),
       },
       build: {
         externalizeDeps: {

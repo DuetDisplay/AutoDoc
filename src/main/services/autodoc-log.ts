@@ -41,15 +41,14 @@ export function getAutodocLogPath(): string {
 
 export function logAutodocFailure(entry: LogEntryInput): void {
   const serializedError = serializeError(entry.error)
-  const line = `${JSON.stringify({
-    timestamp: new Date().toISOString(),
+  const line = buildLogLine({
     level: 'error',
     area: entry.area,
     message: entry.message,
-    meetingId: entry.meetingId ?? null,
+    meetingId: entry.meetingId,
     error: serializedError,
-    context: entry.context ?? null,
-  })}\n`
+    context: entry.context,
+  })
 
   captureError(entry.error ?? entry.message, {
     area: entry.area,
@@ -59,6 +58,21 @@ export function logAutodocFailure(entry: LogEntryInput): void {
       error: serializedError,
       context: entry.context ?? null,
     },
+  })
+
+  writeQueue = writeQueue
+    .then(() => appendLogLine(line))
+    .catch(() => {})
+}
+
+export function logAutodocEvent(entry: Omit<LogEntryInput, 'error'> & { level?: 'info' | 'warn' }): void {
+  const line = buildLogLine({
+    level: entry.level ?? 'info',
+    area: entry.area,
+    message: entry.message,
+    meetingId: entry.meetingId,
+    error: null,
+    context: entry.context,
   })
 
   writeQueue = writeQueue
@@ -78,6 +92,25 @@ async function appendLogLine(line: string): Promise<void> {
   }
 
   await appendFile(logPath, line, 'utf-8')
+}
+
+function buildLogLine(entry: {
+  level: 'info' | 'warn' | 'error'
+  area: LogArea
+  message: string
+  meetingId?: string
+  error: SerializedError | null
+  context?: Record<string, unknown>
+}): string {
+  return `${JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: entry.level,
+    area: entry.area,
+    message: entry.message,
+    meetingId: entry.meetingId ?? null,
+    error: entry.error,
+    context: entry.context ?? null,
+  })}\n`
 }
 
 async function rotateLogs(logPath: string): Promise<void> {

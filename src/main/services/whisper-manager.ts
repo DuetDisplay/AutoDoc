@@ -14,7 +14,7 @@ const IS_WIN = process.platform === 'win32'
 const WHISPER_VERSION = 'v1.8.4'
 const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_VERSION}/whisper-bin-x64.zip`
 const FFMPEG_WIN_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
-const WHISPER_PROBE_TIMEOUT_MS = 10_000
+const WHISPER_PROBE_TIMEOUT_MS = 30_000
 
 const DEFAULT_MODEL = IS_WIN
   ? {
@@ -40,7 +40,7 @@ export interface DownloadProgress {
 
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
-  private setupStatus: WhisperSetupStatus = { phase: 'downloading-whisper', percent: 0 }
+  private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   constructor() {
     super()
   }
@@ -110,27 +110,43 @@ export class WhisperManager extends EventEmitter {
   }
 
   async ensureReady(): Promise<void> {
-    await mkdir(this.getModelsDir(), { recursive: true })
+    try {
+      await mkdir(this.getModelsDir(), { recursive: true })
 
-    if (!(await this.isWhisperUsable())) {
-      this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
-      this.emit('setup-status', this.getSetupStatus())
-      await this.resolveWhisper()
       if (!(await this.isWhisperUsable())) {
-        throw new Error(
-          'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.',
-        )
+        this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
+        this.emit('setup-status', this.getSetupStatus())
+        await this.resolveWhisper()
+        if (!(await this.isWhisperUsable())) {
+          throw new Error(
+            IS_WIN
+              ? 'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.'
+              : 'whisper-cli failed startup validation after setup.',
+          )
+        }
       }
-    }
-    if (!(await this.fileExists(this.getFfmpegPath()))) {
-      this.setupStatus = { phase: 'downloading-ffmpeg', percent: 0 }
+      if (!(await this.fileExists(this.getFfmpegPath()))) {
+        this.setupStatus = { phase: 'downloading-ffmpeg', percent: 0 }
+        this.emit('setup-status', this.getSetupStatus())
+        await this.resolveFfmpeg()
+      }
+      if (!(await this.fileExists(this.getModelPath()))) {
+        this.setupStatus = { phase: 'downloading-model', percent: 0 }
+        this.emit('setup-status', this.getSetupStatus())
+        await this.downloadWithRetry(() => this.downloadModel(), 'model')
+      }
+
+      this.setupStatus = { phase: 'ready', percent: 100 }
       this.emit('setup-status', this.getSetupStatus())
-      await this.resolveFfmpeg()
-    }
-    if (!(await this.fileExists(this.getModelPath()))) {
-      this.setupStatus = { phase: 'downloading-model', percent: 0 }
+    } catch (err) {
+      this.setupStatus = {
+        phase: 'error',
+        percent: 0,
+        error: err instanceof Error ? err.message : String(err),
+        failedStep: this.getFailedStep(),
+      }
       this.emit('setup-status', this.getSetupStatus())
-      await this.downloadWithRetry(() => this.downloadModel(), 'model')
+      throw err
     }
   }
 
@@ -269,6 +285,7 @@ export class WhisperManager extends EventEmitter {
   private async linkOrCopy(source: string, dest: string): Promise<void> {
     if (IS_WIN) {
       try {
+        await rm(dest, { force: true })
         await copyFile(source, dest)
         return
       } catch (err) {
@@ -283,10 +300,12 @@ export class WhisperManager extends EventEmitter {
     }
 
     try {
+      await rm(dest, { force: true })
       await symlink(source, dest)
       return
     } catch (symlinkError) {
       try {
+        await rm(dest, { force: true })
         await copyFile(source, dest)
         return
       } catch (copyError) {
@@ -334,11 +353,24 @@ export class WhisperManager extends EventEmitter {
     return await new Promise<boolean>((resolve) => {
       execFile(
         this.getWhisperPath(),
-        ['--help'],
+        ['-ng', '--help'],
         { windowsHide: true, timeout: WHISPER_PROBE_TIMEOUT_MS },
         (err) => resolve(!err),
       )
     })
+  }
+
+  private getFailedStep(): WhisperSetupStatus['failedStep'] {
+    switch (this.setupStatus.phase) {
+      case 'downloading-whisper':
+        return 'downloading-whisper'
+      case 'downloading-ffmpeg':
+        return 'downloading-ffmpeg'
+      case 'downloading-model':
+        return 'downloading-model'
+      default:
+        return 'ready'
+    }
   }
 
 

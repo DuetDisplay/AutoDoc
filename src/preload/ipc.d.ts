@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoStopPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -136,9 +136,10 @@ export interface IpcOnEvents {
   'transcription:status-changed': [payload: TranscriptionStatusPayload]
   'segmentation:status-changed': [payload: SegmentationStatusPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
-  'detection:auto-record': [payload: Record<string, never>]
+  'detection:auto-record': [payload: DetectionAutoRecordPayload]
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
+  'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]

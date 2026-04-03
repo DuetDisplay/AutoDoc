@@ -7,9 +7,87 @@ interface CaptureHandles {
   videoStream: MediaStream
   audioStream: MediaStream
   micStream: MediaStream | null
+  pendingChunkWrites: Set<Promise<void>>
 }
 
 let activeCapture: CaptureHandles | null = null
+const RECORDER_STOP_TIMEOUT_MS = 5_000
+
+function trackChunkWrite(
+  pendingChunkWrites: Set<Promise<void>>,
+  meetingId: string,
+  type: 'video' | 'mic' | 'system',
+  data: Blob,
+): void {
+  let savePromise: Promise<void>
+  savePromise = (async () => {
+    const buffer = await data.arrayBuffer()
+    await window.electronAPI.invoke('recording:save-chunk', meetingId, type, buffer)
+  })()
+    .catch((err) => {
+      console.error(`Failed to persist ${type} recording chunk:`, err)
+    })
+    .finally(() => {
+      pendingChunkWrites.delete(savePromise)
+    })
+
+  pendingChunkWrites.add(savePromise)
+}
+
+function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Promise<void> {
+  if (!recorder || recorder.state === 'inactive') {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve) => {
+    let settled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const finalize = () => {
+      if (settled) return
+      settled = true
+      recorder.removeEventListener('stop', handleStop)
+      recorder.removeEventListener('error', handleError)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+      resolve()
+    }
+
+    const handleStop = () => finalize()
+    const handleError = (event: Event) => {
+      console.error(`Recorder ${label} stopped with an error event:`, event)
+      finalize()
+    }
+
+    timeoutId = setTimeout(() => {
+      console.error(`Timed out waiting for ${label} recorder to stop`)
+      finalize()
+    }, RECORDER_STOP_TIMEOUT_MS)
+
+    recorder.addEventListener('stop', handleStop, { once: true })
+    recorder.addEventListener('error', handleError, { once: true })
+
+    try {
+      recorder.requestData()
+    } catch {
+      // Ignore requestData failures during shutdown.
+    }
+
+    try {
+      recorder.stop()
+    } catch (err) {
+      console.error(`Failed to stop ${label} recorder cleanly:`, err)
+      finalize()
+    }
+  })
+}
+
+async function waitForPendingChunkWrites(pendingChunkWrites: Set<Promise<void>>): Promise<void> {
+  while (pendingChunkWrites.size > 0) {
+    await Promise.allSettled([...pendingChunkWrites])
+  }
+}
 
 export async function startCapture(
   sourceId: string,
@@ -86,6 +164,7 @@ export async function startCapture(
 
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
   const hasMic = micStream !== null && micStream.getAudioTracks().length > 0
+  const pendingChunkWrites = new Set<Promise<void>>()
 
   // 4. Set up video recorder (mux system audio into video for clean playback)
   const videoWithAudio = new MediaStream([
@@ -99,8 +178,7 @@ export async function startCapture(
 
   videoRecorder.ondataavailable = async (e) => {
     if (e.data.size > 0) {
-      const buffer = await e.data.arrayBuffer()
-      window.electronAPI.invoke('recording:save-chunk', meetingId, 'video', buffer)
+      trackChunkWrite(pendingChunkWrites, meetingId, 'video', e.data)
     }
   }
 
@@ -112,8 +190,7 @@ export async function startCapture(
     })
     micRecorder.ondataavailable = async (e) => {
       if (e.data.size > 0) {
-        const buffer = await e.data.arrayBuffer()
-        window.electronAPI.invoke('recording:save-chunk', meetingId, 'mic', buffer)
+        trackChunkWrite(pendingChunkWrites, meetingId, 'mic', e.data)
       }
     }
   }
@@ -126,8 +203,7 @@ export async function startCapture(
     })
     systemRecorder.ondataavailable = async (e) => {
       if (e.data.size > 0) {
-        const buffer = await e.data.arrayBuffer()
-        window.electronAPI.invoke('recording:save-chunk', meetingId, 'system', buffer)
+        trackChunkWrite(pendingChunkWrites, meetingId, 'system', e.data)
       }
     }
   }
@@ -144,23 +220,28 @@ export async function startCapture(
     videoStream,
     audioStream,
     micStream,
+    pendingChunkWrites,
   }
 }
 
-export function stopCapture(): void {
+export async function stopCapture(): Promise<void> {
   if (!activeCapture) return
 
-  const { videoRecorder, micRecorder, systemRecorder, videoStream, audioStream, micStream } = activeCapture
-
-  if (videoRecorder.state !== 'inactive') videoRecorder.stop()
-  if (micRecorder && micRecorder.state !== 'inactive') micRecorder.stop()
-  if (systemRecorder && systemRecorder.state !== 'inactive') systemRecorder.stop()
-
-  videoStream.getTracks().forEach((t) => t.stop())
-  audioStream.getTracks().forEach((t) => t.stop())
-  micStream?.getTracks().forEach((t) => t.stop())
-
+  const { videoRecorder, micRecorder, systemRecorder, videoStream, audioStream, micStream, pendingChunkWrites } = activeCapture
   activeCapture = null
+
+  try {
+    await Promise.all([
+      waitForRecorderStop(videoRecorder, 'video'),
+      waitForRecorderStop(micRecorder, 'mic'),
+      waitForRecorderStop(systemRecorder, 'system'),
+    ])
+    await waitForPendingChunkWrites(pendingChunkWrites)
+  } finally {
+    videoStream.getTracks().forEach((t) => t.stop())
+    audioStream.getTracks().forEach((t) => t.stop())
+    micStream?.getTracks().forEach((t) => t.stop())
+  }
 }
 
 export function isCapturing(): boolean {

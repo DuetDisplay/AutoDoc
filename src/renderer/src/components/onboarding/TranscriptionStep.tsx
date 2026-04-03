@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 
 const phaseLabels: Record<string, (percent: number) => string> = {
+  checking: () => 'Checking transcription engine...',
   'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
   'downloading-ffmpeg': (p) => `Downloading audio tools... ${p}%`,
   'downloading-model': (p) => `Downloading speech model... ${p}%`,
 }
 
 export function TranscriptionStep({ onNext }: { onNext: () => void }) {
-  const [phase, setPhase] = useState<string>('downloading-whisper')
+  const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
@@ -94,7 +95,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         <button
           onClick={async () => {
             setError(null)
-            setPhase('downloading-whisper')
+            setPhase('checking')
             setPercent(0)
             await window.electronAPI.invoke('whisper:retry-setup')
           }}

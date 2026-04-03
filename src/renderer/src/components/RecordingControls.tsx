@@ -1,10 +1,17 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { RecordingSource } from '../../../shared/types'
-import { detectMeetingWindow } from '../services/window-detection'
+import { useCalendarStore } from '../stores/calendar'
+import { useRecordingPickerStore } from '../stores/recording-picker'
+import {
+  buildRecordingSelectionContext,
+  chooseAutoRecordSource,
+  findActiveCalendarEvent,
+} from '../services/window-detection'
+import { getSavedSourcePreference } from '../services/recording-source-preferences'
 
 interface RecordingControlsProps {
   isRecording: boolean
-  onStartRecording: (sourceId: string, sourceName: string) => void
+  onStartRecording: (sourceId: string, sourceName: string, selectionContext?: ReturnType<typeof buildRecordingSelectionContext>) => Promise<unknown>
   onStopRecording: () => void
   onFetchSources: () => Promise<RecordingSource[]>
 }
@@ -15,30 +22,48 @@ export function RecordingControls({
   onStopRecording,
   onFetchSources,
 }: RecordingControlsProps) {
-  const [showPicker, setShowPicker] = useState(false)
-  const [sources, setSources] = useState<RecordingSource[]>([])
-  const [detectedId, setDetectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const events = useCalendarStore((state) => state.events)
+  const {
+    isOpen: showPicker,
+    title,
+    subtitle,
+    sources,
+    detectedId,
+    openPicker,
+    closePicker,
+  } = useRecordingPickerStore()
+  const selectionContext = useMemo(
+    () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
+    [events],
+  )
 
   const handleRecordClick = async () => {
     setLoading(true)
     try {
       const fetchedSources = await onFetchSources()
-      setSources(fetchedSources)
+      const selection = chooseAutoRecordSource(
+        fetchedSources,
+        selectionContext,
+        getSavedSourcePreference(selectionContext),
+      )
 
-      // Auto-detect meeting window
-      const detected = detectMeetingWindow(fetchedSources)
-      setDetectedId(detected?.id ?? null)
-
-      setShowPicker(true)
+      openPicker({
+        title: 'Select a window to record',
+        subtitle: selection.source && selection.confidence === 'high'
+          ? 'AutoDoc highlighted the most likely meeting window.'
+          : null,
+        sources: fetchedSources,
+        detectedId: selection.source?.id ?? null,
+      })
     } finally {
       setLoading(false)
     }
   }
 
   const handleSourceSelect = (source: RecordingSource) => {
-    setShowPicker(false)
-    onStartRecording(source.id, source.name)
+    closePicker()
+    void onStartRecording(source.id, source.name, selectionContext)
   }
 
   if (isRecording) {
@@ -66,12 +91,17 @@ export function RecordingControls({
         <>
           <div
             className="fixed inset-0 z-40"
-            onClick={() => setShowPicker(false)}
+            onClick={closePicker}
           />
           <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
-            <p className="text-[11px] font-medium text-ink-muted mb-2">
-              Select a window to record
+            <p className="text-[11px] font-medium text-ink-muted mb-1">
+              {title}
             </p>
+            {subtitle && (
+              <p className="text-[10px] text-ink-faint mb-2">
+                {subtitle}
+              </p>
+            )}
             <div className="flex flex-col gap-1.5">
               {sources.map((source) => (
                 <button

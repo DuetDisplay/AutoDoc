@@ -124,6 +124,12 @@ export function Sidebar() {
                 />
               </div>
             </div>
+          ) : whisperPhase === 'checking' ? (
+            <div className="px-2.5 py-2">
+              <span className="text-[11px] text-ink-faint">
+                Checking transcription engine...
+              </span>
+            </div>
           ) : null}
 
           {(setupPhase === 'starting' || setupPhase === 'downloading' || setupPhase === 'pulling') && setupPhase !== null ? (
