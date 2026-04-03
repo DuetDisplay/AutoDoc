@@ -17,6 +17,24 @@ export function disableSentryReporter(): void {
   Sentry = null
 }
 
+export function resetSentryScopes(): void {
+  const currentSentry = Sentry
+  if (!currentSentry) return
+
+  const scopeAwareSentry = currentSentry as typeof SentryType & {
+    getIsolationScope(): { clear(): void }
+    getCurrentScope(): { clear(): void }
+  }
+
+  const isolationScope = scopeAwareSentry.getIsolationScope()
+  const currentScope = scopeAwareSentry.getCurrentScope()
+
+  isolationScope.clear()
+  if (currentScope !== isolationScope) {
+    currentScope.clear()
+  }
+}
+
 export function captureError(error: unknown, context: ErrorContext): void {
   const currentSentry = Sentry
   if (!currentSentry) return

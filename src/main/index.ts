@@ -21,14 +21,14 @@ import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
-import { PrefsStore } from './services/prefs-store'
+import { PrefsStore, readInitialAnalyticsConsent } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
 import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
-import { disableSentryReporter, initSentryReporter, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
+import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -37,6 +37,8 @@ if (process.platform === 'win32') {
 }
 
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
+const shouldAllowSentryInEnv = !is.dev || !!process.env.AUTODOC_SENTRY_DEV
+const homeDir = homedir()
 
 function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
   if (typeof value === 'string') {
@@ -62,8 +64,56 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 
 let ollamaManager: OllamaManager | null = null
 let isQuitting = false
+let mainSentry: typeof import('@sentry/electron/main') | null = null
+let mainSentryEnabled = false
+let onMainSentryReady: (() => void) | null = null
+let analyticsConsentEnabled = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
+
+type MainSentryRuntimeModule = typeof import('@sentry/electron/main') & {
+  getDefaultIntegrations(options: Record<string, unknown>): Array<{ name: string }>
+}
+
+async function initializeMainSentry(): Promise<void> {
+  if (!SENTRY_DSN || !shouldAllowSentryInEnv || mainSentryEnabled) return
+
+  try {
+    if (!mainSentry) {
+      // Dynamic import: @sentry/electron accesses app.getAppPath() at module scope.
+      mainSentry = await import('@sentry/electron/main')
+    }
+
+    const sentryRuntime = mainSentry as MainSentryRuntimeModule
+    const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
+    const integrations = sentryRuntime
+      .getDefaultIntegrations({ sendDefaultPii: false })
+      .filter((integration) => integration.name !== 'MainProcessSession')
+
+    const initOptions = {
+      dsn: SENTRY_DSN,
+      environment: is.dev ? 'development' : 'production',
+      release: `autodoc@${app.getVersion()}`,
+      enabled: true,
+      sendDefaultPii: false,
+      integrations,
+      beforeSend(event) {
+        if (!analyticsConsentEnabled) {
+          return null
+        }
+        delete event.server_name
+        return deepScrub(event, scrubString)
+      },
+    }
+
+    sentryRuntime.init(initOptions as Parameters<typeof sentryRuntime.init>[0])
+    initSentryReporter(mainSentry)
+    mainSentryEnabled = true
+    onMainSentryReady?.()
+  } catch (err) {
+    console.warn('Failed to initialize Sentry:', err)
+  }
+}
 
 function focusMainWindow(): void {
   const [existingWindow] = BrowserWindow.getAllWindows()
@@ -76,6 +126,14 @@ function focusMainWindow(): void {
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
+  try {
+    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+  } catch (err) {
+    console.warn('Failed to read initial analytics consent for Sentry:', err)
+  }
+
+  void initializeMainSentry()
+
   app.on('second-instance', () => {
     focusMainWindow()
   })
@@ -146,10 +204,6 @@ app.whenReady().then(async () => {
   let whisperContext: Record<string, unknown> = { ready: false, modelFilename: null }
   let ollamaContext: Record<string, unknown> = { ready: false, modelName: null }
   let calendarContext: Record<string, unknown> = { connected: false, providerCount: 0, accountCount: 0 }
-  const homeDir = homedir()
-  const shouldAllowSentryInEnv = !is.dev || !!process.env.AUTODOC_SENTRY_DEV
-  let mainSentry: typeof import('@sentry/electron/main') | null = null
-  let mainSentryEnabled = false
 
   const applyCurrentSentryContext = (): void => {
     setGlobalTag('platform', process.platform)
@@ -161,47 +215,9 @@ app.whenReady().then(async () => {
     setGlobalContext('ollama', ollamaContext)
     setGlobalContext('calendar', calendarContext)
   }
-
-  const initializeMainSentry = async (): Promise<void> => {
-    if (!SENTRY_DSN || !shouldAllowSentryInEnv || mainSentryEnabled) return
-
-    if (!mainSentry) {
-      try {
-        // Dynamic import: @sentry/electron accesses app.getAppPath() at module scope.
-        mainSentry = await import('@sentry/electron/main')
-      } catch (err) {
-        console.warn('Failed to initialize Sentry:', err)
-        return
-      }
-    }
-
-    const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
-
-    mainSentry.init({
-      dsn: SENTRY_DSN,
-      environment: is.dev ? 'development' : 'production',
-      release: `autodoc@${app.getVersion()}`,
-      enabled: true,
-      sendDefaultPii: false,
-      beforeSend(event) {
-        delete event.server_name
-        return deepScrub(event, scrubString)
-      },
-    })
-    initSentryReporter(mainSentry)
+  onMainSentryReady = applyCurrentSentryContext
+  if (mainSentryEnabled) {
     applyCurrentSentryContext()
-    mainSentryEnabled = true
-  }
-
-  const disableMainSentry = async (): Promise<void> => {
-    disableSentryReporter()
-    if (!mainSentryEnabled || !mainSentry) return
-    mainSentryEnabled = false
-    try {
-      await mainSentry.close(2000)
-    } catch {
-      // Ignore shutdown failures — the reporter is already disabled.
-    }
   }
 
   const updateWhisperSentryContext = (context: Record<string, unknown>): void => {
@@ -220,11 +236,12 @@ app.whenReady().then(async () => {
   }
 
   registerPrefsIpc(prefsStore, (enabled) => {
-    void (enabled ? initializeMainSentry() : disableMainSentry())
+    analyticsConsentEnabled = enabled
+    if (mainSentryEnabled) {
+      resetSentryScopes()
+      applyCurrentSentryContext()
+    }
   })
-  if (prefsStore.getAnalyticsConsent() === true) {
-    await initializeMainSentry()
-  }
 
   // Auto-updater
   initAutoUpdater()

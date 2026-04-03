@@ -7,18 +7,26 @@ interface PrefsSchema {
   analyticsConsent: boolean | null // null = not yet asked
 }
 
+function createPrefsStore(): Store<PrefsSchema> {
+  return new Store<PrefsSchema>({
+    name: 'autodoc-prefs',
+    defaults: {
+      onboardingComplete: false,
+      launchAtLogin: true,
+      analyticsConsent: null,
+    },
+  })
+}
+
+export function readInitialAnalyticsConsent(): boolean | null {
+  return createPrefsStore().get('analyticsConsent')
+}
+
 export class PrefsStore {
   private store: Store<PrefsSchema>
 
   constructor() {
-    this.store = new Store<PrefsSchema>({
-      name: 'autodoc-prefs',
-      defaults: {
-        onboardingComplete: false,
-        launchAtLogin: true,
-        analyticsConsent: null,
-      },
-    })
+    this.store = createPrefsStore()
 
     // Sync the current preference to the OS on startup
     this.applyLaunchAtLogin()
