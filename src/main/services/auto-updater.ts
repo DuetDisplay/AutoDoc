@@ -49,6 +49,7 @@ export function initAutoUpdater(): void {
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.disableDifferentialDownload = true
 
   autoUpdater.on('checking-for-update', () => {
     broadcast({ state: 'checking' })
@@ -78,8 +79,8 @@ export function initAutoUpdater(): void {
       error: err,
       context: {
         channel: 'stable',
-        currentVersion: app.getVersion(),
-      },
+        currentVersion: app.getVersion()
+      }
     })
     broadcast({ state: 'error', error: formatUpdaterError(err) })
     // Reset to idle after 30s so it doesn't stay stuck on error

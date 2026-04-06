@@ -42,6 +42,12 @@ mac:
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}
+  backgroundColor: '#ffffff'
+  icon: null
+  window:
+    width: 540
+    height: 380
+  writeUpdateInfo: false
 linux:
   target:
     - AppImage

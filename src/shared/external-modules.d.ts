@@ -60,6 +60,7 @@ declare module 'electron-updater' {
   export const autoUpdater: {
     autoDownload: boolean
     autoInstallOnAppQuit: boolean
+    disableDifferentialDownload: boolean
     on(event: string, listener: (...args: any[]) => void): void
     checkForUpdates(): void
     quitAndInstall(): void
