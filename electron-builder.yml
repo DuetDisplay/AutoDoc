@@ -42,7 +42,6 @@ mac:
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}
-  backgroundColor: '#ffffff'
   icon: null
   window:
     width: 540
