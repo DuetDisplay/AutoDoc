@@ -22,6 +22,7 @@ vi.mock('../crypto', () => ({
 }))
 
 const fsMock = vi.mocked(await import('fs/promises'))
+const cryptoMock = vi.mocked(await import('../crypto'))
 
 function createMockProvider(): LLMProvider {
   return {
@@ -44,11 +45,14 @@ function createMockOllamaManager(): OllamaManager {
 
 describe('SegmentationService', () => {
   let service: SegmentationService
+  let provider: LLMProvider
 
   beforeEach(() => {
     vi.clearAllMocks()
+    fsMock.unlink.mockResolvedValue(undefined as any)
+    provider = createMockProvider()
     service = new SegmentationService(
-      createMockProvider(),
+      provider,
       createMockOllamaManager(),
       '/mock/home/AutoDoc/recordings',
     )
@@ -88,5 +92,30 @@ describe('SegmentationService', () => {
     fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)
 
     await expect((service as any).markFailed('deleted-meeting', 'This operation was aborted')).resolves.toBeUndefined()
+  })
+
+  it('skips LLM summarization when transcript only contains low-signal boilerplate', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(JSON.stringify([
+      { id: 'm1-0', meetingId: 'm1', speaker: 'Speaker', text: 'Subtitles by the Amara.org community', startMs: 0, endMs: 1000, confidence: -1 },
+      { id: 'm1-1', meetingId: 'm1', speaker: 'Speaker', text: 'Thank you.', startMs: 1000, endMs: 2000, confidence: -1 },
+    ]) as any)
+
+    await (service as any).processJob('m1')
+
+    expect(provider.summarize).not.toHaveBeenCalled()
+    expect(cryptoMock.encryptJSON).toHaveBeenCalledWith(
+      {
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: [],
+      },
+      '/mock/home/AutoDoc/recordings/m1/segments.json',
+    )
   })
 })

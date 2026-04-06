@@ -19,7 +19,16 @@ FILTERING — Skip content that is NOT part of the actual meeting:
 - Casual greetings, small talk, "can you hear me?", technical setup chatter
 - Filler conversation while waiting for people to join
 - Content clearly from a different source (e.g. a YouTube video, podcast, or news broadcast playing in the background)
+- Isolated outro boilerplate or subtitle artifacts like "thank you" or "Subtitles by the Amara.org community"
+- Any text that could plausibly be caused by silence, noise, or transcription error rather than a real meeting statement
 Only extract notes from the actual substantive meeting discussion.
+
+GROUNDING — This is critical:
+- NEVER invent facts, decisions, prices, metrics, deadlines, or action items.
+- NEVER infer a decision or commitment unless the transcript explicitly supports it.
+- If a number, percentage, dollar amount, date, or proper noun is not present in the transcript, do not include it.
+- If the transcript is empty, silent, low-signal, ambiguous, or mostly boilerplate, return empty arrays for every category.
+- When evidence is weak, omit the item. Missing a note is better than hallucinating one.
 
 Extract and categorize into these 5 categories:
 
@@ -81,6 +90,17 @@ interface RawSegment {
   sourceStartMs?: number
   sourceEndMs?: number
 }
+
+interface TranscriptLine {
+  startMs: number
+  text: string
+}
+
+const LOW_SIGNAL_NOTE_PATTERNS = [
+  /\bsubtitles by (the )?amara\.org community\b/i,
+  /\bamara\.org community\b/i,
+  /\bthank you\b/i,
+]
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
@@ -150,6 +170,7 @@ export class OllamaProvider implements LLMProvider {
     let totalTokensSoFar = 0
 
     for (let i = 0; i < chunks.length; i++) {
+      const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const chunkItemMin = Math.max(2, Math.round(estMinutes * 0.8 / chunks.length))
       const chunkItemMax = Math.max(5, Math.round(estMinutes * 1.5 / chunks.length))
       const chunkLabel = chunks.length > 1
@@ -174,7 +195,7 @@ export class OllamaProvider implements LLMProvider {
             onProgress?.(percent)
           })
           console.log(`Chunk ${i + 1}/${chunks.length} complete (${chunkTokens} tokens)`)
-          chunkResult = this.parseResponse(meetingId, raw, merged, durationMs, transcriptTimestamps)
+          chunkResult = this.parseResponse(meetingId, raw, merged, durationMs, transcriptTimestamps, chunkTranscriptLines)
           break
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -391,7 +412,14 @@ export class OllamaProvider implements LLMProvider {
     return result
   }
 
-  private parseResponse(meetingId: string, raw: string, existing?: MeetingSegments, durationMs?: number, transcriptTimestamps?: number[]): MeetingSegments {
+  private parseResponse(
+    meetingId: string,
+    raw: string,
+    existing?: MeetingSegments,
+    durationMs?: number,
+    transcriptTimestamps?: number[],
+    transcriptLines: TranscriptLine[] = [],
+  ): MeetingSegments {
     let parsed: Record<string, RawSegment[]>
     try {
       parsed = JSON.parse(raw)
@@ -439,6 +467,9 @@ export class OllamaProvider implements LLMProvider {
         const titleKey = String(item.title).toLowerCase().trim()
         // Skip duplicates (same title within this chunk or across chunks)
         if (seenTitles.has(titleKey) || existingTitles.has(titleKey)) continue
+        const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps)
+        const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps)
+        if (!this.isGroundedItem(item, sourceStartMs, sourceEndMs, transcriptLines)) continue
         seenTitles.add(titleKey)
 
         result[resultKey].push({
@@ -450,14 +481,98 @@ export class OllamaProvider implements LLMProvider {
           content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
-          sourceStartMs: this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps),
-          sourceEndMs: this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps),
+          sourceStartMs,
+          sourceEndMs,
         })
         index++
       }
     }
 
     return result
+  }
+
+  private parseTranscriptLines(transcript: string): TranscriptLine[] {
+    return transcript
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const match = line.match(/^\[(\d+):(\d+)(?::(\d+))?\]\s+(?:\[[^\]]+\]\s+)?(.+)$/)
+        if (!match) return null
+        const hours = match[3] !== undefined ? parseInt(match[1], 10) : 0
+        const minutes = match[3] !== undefined ? parseInt(match[2], 10) : parseInt(match[1], 10)
+        const seconds = match[3] !== undefined ? parseInt(match[3], 10) : parseInt(match[2], 10)
+        return {
+          startMs: ((hours * 3600) + (minutes * 60) + seconds) * 1000,
+          text: match[4].trim(),
+        }
+      })
+      .filter((line): line is TranscriptLine => line !== null)
+  }
+
+  private isGroundedItem(
+    item: RawSegment,
+    sourceStartMs: number,
+    sourceEndMs: number,
+    transcriptLines: TranscriptLine[],
+  ): boolean {
+    if (transcriptLines.length === 0) return true
+
+    const evidenceText = this.collectEvidenceText(sourceStartMs, sourceEndMs, transcriptLines)
+    if (!evidenceText) return false
+
+    const summaryText = `${String(item.title ?? '')} ${String(item.content ?? '')}`.trim()
+    if (LOW_SIGNAL_NOTE_PATTERNS.some((pattern) => pattern.test(summaryText))) {
+      return false
+    }
+    const summaryQuantities = this.extractQuantityTokens(summaryText)
+    if (summaryQuantities.length > 0) {
+      const evidenceQuantities = new Set(this.extractQuantityTokens(evidenceText))
+      if (summaryQuantities.some((token) => !evidenceQuantities.has(token))) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private collectEvidenceText(
+    sourceStartMs: number,
+    sourceEndMs: number,
+    transcriptLines: TranscriptLine[],
+  ): string {
+    if (transcriptLines.length === 0) return ''
+
+    const startMs = Math.min(sourceStartMs, sourceEndMs)
+    const endMs = Math.max(sourceStartMs, sourceEndMs)
+    const matchingIndexes = transcriptLines
+      .map((line, index) => (line.startMs >= startMs && line.startMs <= endMs ? index : -1))
+      .filter((index) => index >= 0)
+
+    if (matchingIndexes.length === 0) {
+      let closestIndex = 0
+      let minDiff = Math.abs(transcriptLines[0].startMs - startMs)
+      for (let i = 1; i < transcriptLines.length; i++) {
+        const diff = Math.abs(transcriptLines[i].startMs - startMs)
+        if (diff < minDiff) {
+          minDiff = diff
+          closestIndex = i
+        }
+      }
+      return transcriptLines
+        .slice(Math.max(0, closestIndex - 1), Math.min(transcriptLines.length, closestIndex + 2))
+        .map((line) => line.text)
+        .join(' ')
+    }
+
+    const first = Math.max(0, matchingIndexes[0] - 1)
+    const last = Math.min(transcriptLines.length, matchingIndexes[matchingIndexes.length - 1] + 2)
+    return transcriptLines
+      .slice(first, last)
+      .map((line) => line.text)
+      .join(' ')
+  }
+  private extractQuantityTokens(text: string): string[] {
+    return (text.match(/[$€£]?\d+(?:[.,]\d+)?%?/g) ?? []).map((token) => token.toLowerCase())
   }
 
   /** Extract all timestamp positions (in ms) from transcript lines like [02:30] or [01:05:30] */

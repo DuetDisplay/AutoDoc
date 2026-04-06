@@ -12,6 +12,7 @@ import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileIn
 import { logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
+import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -255,18 +256,36 @@ export class TranscriptionService {
         tempAudioWav,
         this.whisperManager.getFfmpegPath()
       ).catch(() => undefined)
+      const speechActivity = await this.detectAudioActivity(tempAudioWav).catch((err) => {
+        console.warn(`[transcription] Failed to detect audio activity (${meetingId}):`, err)
+        return []
+      })
+      const speechSignal = summarizeSpeechSignal(speechActivity, audioDuration)
       console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
-      t0 = Date.now()
-      const whisperOutput = await this.transcribeWithFallback(
-        tempAudioWav,
-        meetingId,
-        audioDuration,
-        tempPrefix,
-        tempFiles,
-      )
-      console.log(`[perf] Transcription (whisper): ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
-      let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
+      let transcripts: Transcript[] = []
+      if (speechSignal.likelySilent) {
+        console.log(
+          `[transcription] Skipping whisper for likely silent audio (${meetingId}, speech=${speechSignal.totalSpeechMs}ms, ratio=${speechSignal.speechRatio.toFixed(3)})`,
+        )
+      } else {
+        t0 = Date.now()
+        const whisperOutput = await this.transcribeWithFallback(
+          tempAudioWav,
+          meetingId,
+          audioDuration,
+          tempPrefix,
+          tempFiles,
+        )
+        console.log(`[perf] Transcription (whisper): ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
+        transcripts = filterLowSignalHallucinations(
+          this.mapToTranscripts(meetingId, whisperOutput),
+          speechSignal,
+        ).map((segment, index) => ({
+          ...segment,
+          id: `${meetingId}-${index}`,
+        }))
+      }
 
       // Speaker labeling (two-stream: system active = remote, system silent = "me")
       // Use system.webm if available; fall back to extracting audio from screen.webm

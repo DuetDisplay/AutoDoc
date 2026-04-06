@@ -7,6 +7,7 @@ import type { OllamaManager } from './ollama-manager'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 import { classifyError } from './error-classification'
+import { hasUsableTranscriptContent } from './transcript-guardrails'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 
@@ -170,6 +171,24 @@ export class SegmentationService {
       return
     }
 
+    const transcripts: Transcript[] = await isEncrypted(transcriptPath)
+      ? await decryptJSON<Transcript[]>(transcriptPath)
+      : JSON.parse(await readFile(transcriptPath, 'utf-8'))
+
+    if (!hasUsableTranscriptContent(transcripts)) {
+      await encryptJSON({
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: [],
+      }, segmentsPath)
+      await unlink(join(meetingDir, 'segments.error')).catch(() => {})
+      this.activeStatus = 'complete'
+      this.broadcastStatus(meetingId, 'complete')
+      return
+    }
+
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
     await this.ollamaManager.waitUntilReady()
@@ -178,10 +197,6 @@ export class SegmentationService {
     this.broadcastStatus(meetingId, 'segmenting', 0)
 
     const t0 = Date.now()
-
-    const transcripts: Transcript[] = await isEncrypted(transcriptPath)
-      ? await decryptJSON<Transcript[]>(transcriptPath)
-      : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     const fullText = transcripts
       .map((t) => {
