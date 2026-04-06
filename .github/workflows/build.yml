@@ -57,7 +57,8 @@ jobs:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
-        run: npm run build:mac
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release:mac
 
       - name: Build macOS artifacts (signed, no notarization)
         if: github.ref_type == 'branch'
@@ -72,18 +73,6 @@ jobs:
             dist/*.dmg
             dist/*.zip
           if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload macOS release assets
-        if: startsWith(github.ref, 'refs/tags/') && success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-macos-${{ github.ref_name }}
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/latest-mac.yml
-          if-no-files-found: error
           retention-days: 14
 
   build-win:
@@ -133,13 +122,14 @@ jobs:
       - name: Build Windows release
         if: startsWith(github.ref, 'refs/tags/')
         env:
+          GH_TOKEN: ${{ github.token }}
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
           SM_API_KEY: ***REMOVED***
           SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ***REMOVED***
           SM_KEYPAIR_ALIAS: REDACTED_KEYPAIR_ALIAS
-        run: npm run build:win
+        run: npm run release:win
 
       - name: Verify Windows signatures
         if: startsWith(github.ref, 'refs/tags/')
@@ -192,18 +182,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload Windows release assets
-        if: startsWith(github.ref, 'refs/tags/') && success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-windows-${{ github.ref_name }}
-          path: |
-            dist/*-setup.exe
-            dist/latest.yml
-          if-no-files-found: error
-          retention-days: 14
-
-  publish-release:
+  cleanup-release-assets:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     needs:
@@ -213,34 +192,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Download macOS release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-macos-${{ github.ref_name }}
-          path: release-assets/mac
-
-      - name: Download Windows release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-windows-${{ github.ref_name }}
-          path: release-assets/win
-
-      - name: Publish curated GitHub release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          tag="${GITHUB_REF_NAME}"
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" release-assets/mac/* release-assets/win/* --clobber
-          else
-            gh release create "$tag" release-assets/mac/* release-assets/win/* --verify-tag --title "$tag"
-          fi
-
       - name: Remove obsolete blockmap assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${GITHUB_REF_NAME}"
           release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")"
