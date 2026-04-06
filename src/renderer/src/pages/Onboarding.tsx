@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
 import { FeatureStep } from '../components/onboarding/FeatureStep'
@@ -15,32 +15,19 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 const TOTAL_DOTS = 10
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
-  const [step, setStep] = useState<number | null>(null)
-
-  useEffect(() => {
-    window.electronAPI.invoke('prefs:get-onboarding-step').then((saved) => {
-      setStep(saved ?? 0)
-    })
-  }, [])
-
-  const persistStep = useCallback((nextStep: number) => {
-    window.electronAPI.invoke('prefs:set-onboarding-step', nextStep)
-  }, [])
+  const [step, setStep] = useState(0)
 
   const next = useCallback(() => {
     setStep((s) => {
-      const current = s ?? 0
       recordDiagnosticAction({
         category: 'onboarding',
         action: 'onboarding_step_completed',
-        details: { step: current },
+        details: { step: s },
       })
-      trackEvent('onboarding_step_completed', { step: current })
-      const nextStep = current + 1
-      persistStep(nextStep)
-      return nextStep
+      trackEvent('onboarding_step_completed', { step: s })
+      return s + 1
     })
-  }, [persistStep])
+  }, [])
 
   const handleAnalyticsChoice = async (consented: boolean) => {
     recordDiagnosticAction({
@@ -50,11 +37,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
     setAnalyticsConsent(consented)
-    setStep((s) => {
-      const nextStep = (s ?? 0) + 1
-      persistStep(nextStep)
-      return nextStep
-    })
+    setStep((s) => s + 1)
   }
 
   const handleFinish = async () => {
@@ -125,8 +108,6 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         return null
     }
   }
-
-  if (step === null) return null
 
   return (
     <div className="h-screen bg-bg-primary flex flex-col items-center justify-center relative">

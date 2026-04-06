@@ -501,6 +501,11 @@ export class DetectionService {
       body,
       onRecord: () => {
         this.markAutoRecordPending()
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win) {
+          win.show()
+          win.focus()
+        }
         this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })
       },
       onDismiss: () => {},

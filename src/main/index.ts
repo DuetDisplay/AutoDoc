@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, protocol, net, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
@@ -266,7 +266,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
       const microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
-      const screen = systemPreferences.getMediaAccessStatus('screen') === 'granted'
+      // Screen recording: try getting sources — if we get thumbnails with actual content, we have permission
+      let screen = false
+      try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+        // On macOS, sources are returned but thumbnails are empty when permission is denied
+        screen = sources.length > 0 && !sources[0].thumbnail.isEmpty()
+      } catch {
+        screen = false
+      }
       return { screen, microphone }
     }
     // On Windows/Linux, permissions are generally granted by default
@@ -499,14 +507,6 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
-  ipcMain.on('window:show', () => {
-    const wins = BrowserWindow.getAllWindows()
-    if (wins.length > 0) {
-      wins[0].show()
-      wins[0].focus()
-    }
-  })
-
   // Mutable state tracking Whisper setup progress
   const whisperSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
@@ -687,10 +687,7 @@ app.whenReady().then(async () => {
     if (wins.length === 0) {
       createWindow()
     } else {
-      const hasVisibleWindow = wins.some((w) => w.isVisible())
-      if (!hasVisibleWindow) {
-        focusMainWindow()
-      }
+      focusMainWindow()
     }
   })
 })

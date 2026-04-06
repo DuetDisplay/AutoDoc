@@ -4,52 +4,25 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
 
-  const clearOpenedState = useCallback(async () => {
-    await window.electronAPI.invoke('prefs:set-onboarding-screen-settings-opened', false)
-    setOpened(false)
-  }, [])
-
-  const handleContinue = useCallback(async () => {
-    await clearOpenedState()
-    onNext()
-  }, [clearOpenedState, onNext])
-
   const checkPermission = useCallback(async (autoAdvance = false) => {
     const perms = await window.electronAPI.invoke('permissions:check')
     if (perms.screen) {
       if (autoAdvance) {
-        await clearOpenedState()
         onNext()
       } else {
         setGranted(true)
       }
-      return
     }
-    setGranted(false)
-  }, [clearOpenedState, onNext])
+  }, [onNext])
 
   useEffect(() => {
-    let cancelled = false
-
-    const restoreStepState = async () => {
-      const wasOpened = await window.electronAPI.invoke('prefs:get-onboarding-screen-settings-opened')
-      if (!cancelled) {
-        setOpened(wasOpened)
-      }
-      await checkPermission(true)
-    }
-
-    void restoreStepState()
+    checkPermission(true)
     const handleFocus = () => checkPermission()
     window.addEventListener('focus', handleFocus)
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', handleFocus)
-    }
+    return () => window.removeEventListener('focus', handleFocus)
   }, [checkPermission])
 
-  const handleEnable = async () => {
-    await window.electronAPI.invoke('prefs:set-onboarding-screen-settings-opened', true)
+  const handleEnable = () => {
     window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)
   }
@@ -65,13 +38,13 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Screen Recording</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {opened
-          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. You can restart now or continue and restart later.'
+          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. You can continue for now.'
           : 'AutoDoc detects your meeting window to capture screen shares and visuals. You can always enable this later in System Settings.'}
       </p>
 
       {granted ? (
         <button
-          onClick={() => void handleContinue()}
+          onClick={onNext}
           className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
           Continue →
@@ -79,16 +52,16 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       ) : opened ? (
         <>
           <button
-            onClick={() => window.electronAPI.invoke('app:relaunch')}
+            onClick={onNext}
             className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Restart AutoDoc
+            Continue →
           </button>
           <button
-            onClick={() => void handleContinue()}
+            onClick={handleEnable}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Continue without restarting
+            Open Settings again
           </button>
         </>
       ) : (

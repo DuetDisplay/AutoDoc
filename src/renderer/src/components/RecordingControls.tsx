@@ -11,19 +11,27 @@ import { getSavedSourcePreference } from '../services/recording-source-preferenc
 
 interface RecordingControlsProps {
   isRecording: boolean
+  onStartRecording: (sourceId: string, sourceName: string, selectionContext?: ReturnType<typeof buildRecordingSelectionContext>) => Promise<unknown>
   onStopRecording: () => void
   onFetchSources: () => Promise<RecordingSource[]>
 }
 
 export function RecordingControls({
   isRecording,
+  onStartRecording,
   onStopRecording,
   onFetchSources,
 }: RecordingControlsProps) {
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
   const {
+    isOpen: showPicker,
+    title,
+    subtitle,
+    sources,
+    detectedId,
     openPicker,
+    closePicker,
   } = useRecordingPickerStore()
   const selectionContext = useMemo(
     () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
@@ -47,11 +55,15 @@ export function RecordingControls({
           : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
-        selectionContext,
       })
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleSourceSelect = (source: RecordingSource) => {
+    closePicker()
+    void onStartRecording(source.id, source.name, selectionContext)
   }
 
   if (isRecording) {
@@ -66,7 +78,7 @@ export function RecordingControls({
   }
 
   return (
-    <div>
+    <div className="relative">
       <button
         onClick={handleRecordClick}
         disabled={loading}
@@ -74,6 +86,52 @@ export function RecordingControls({
       >
         {loading ? 'Loading...' : 'Record'}
       </button>
+
+      {showPicker && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={closePicker}
+          />
+          <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
+            <p className="text-[11px] font-medium text-ink-muted mb-1">
+              {title}
+            </p>
+            {subtitle && (
+              <p className="text-[10px] text-ink-faint mb-2">
+                {subtitle}
+              </p>
+            )}
+            <div className="flex flex-col gap-1.5">
+              {sources.map((source) => (
+                <button
+                  key={source.id}
+                  onClick={() => handleSourceSelect(source)}
+                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent transition-colors text-left ${
+                    source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
+                  }`}
+                >
+                  <img
+                    src={source.thumbnailDataUrl}
+                    alt={source.name}
+                    className="w-20 h-12 object-cover rounded border border-border-subtle"
+                  />
+                  <div className="flex flex-col flex-1 min-w-0">
+                    <span className="text-[12px] text-ink truncate">
+                      {source.name}
+                    </span>
+                    {source.id === detectedId && (
+                      <span className="text-[10px] text-status-connected font-medium">
+                        Detected meeting
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

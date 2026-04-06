@@ -17,14 +17,13 @@ import {
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
-import { RecordingPickerOverlay } from './components/RecordingPickerOverlay'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
-import { useRecordingPickerStore } from './stores/recording-picker'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
+import { useRecordingPickerStore } from './stores/recording-picker'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()
@@ -46,7 +45,6 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
   const { events, setAccounts, setEvents } = useCalendarStore()
-  const openPicker = useRecordingPickerStore((state) => state.openPicker)
   const transcriptionFailures = useRef<Record<string, string>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
   const whisperFailureKey = useRef<string | null>(null)
@@ -238,6 +236,12 @@ export default function App() {
             selection_confidence: selection.confidence,
           })
 
+          useRecordingPickerStore.getState().openPicker({
+            title: 'Select the meeting window',
+            subtitle: 'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
+            sources,
+            detectedId: selection.source?.id ?? null,
+          })
           recordDiagnosticAction({
             category: 'recording',
             action: 'manual_source_selection_required',
@@ -251,14 +255,7 @@ export default function App() {
             has_suggestion: selection.source !== null,
             provider_hint: selection.providerHint ?? 'unknown',
           })
-          window.electronAPI.send('window:show')
-          openPicker({
-            title: 'Select a window to record',
-            subtitle: null,
-            sources,
-            detectedId: selection.source?.id ?? null,
-            selectionContext,
-          })
+          window.location.hash = ROUTES.upcoming
         } catch (err) {
           autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
@@ -268,7 +265,7 @@ export default function App() {
       })()
     })
     return unsub
-  }, [events, isRecording, fetchSources, handleStart, openPicker])
+  }, [events, isRecording, fetchSources, handleStart])
 
   // Auto-stop recording when meeting-end signals stay gone long enough to be convincing.
   useEffect(() => {
@@ -354,7 +351,6 @@ export default function App() {
           />
           <MeetingDetectedBanner />
           <PermissionToast />
-          <RecordingPickerOverlay onStartRecording={handleStart} />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

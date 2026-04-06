@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
@@ -18,27 +18,6 @@ export function registerPrefsIpc(
 
   ipcMain.handle('prefs:set-onboarding-complete', (): void => {
     prefsStore.setOnboardingComplete()
-  })
-
-  ipcMain.handle('prefs:get-onboarding-step', (): number => {
-    return prefsStore.getOnboardingStep()
-  })
-
-  ipcMain.handle('prefs:set-onboarding-step', (_event, step: number): void => {
-    prefsStore.setOnboardingStep(step)
-  })
-
-  ipcMain.handle('prefs:get-onboarding-screen-settings-opened', (): boolean => {
-    return prefsStore.getOnboardingScreenSettingsOpened()
-  })
-
-  ipcMain.handle('prefs:set-onboarding-screen-settings-opened', (_event, opened: boolean): void => {
-    prefsStore.setOnboardingScreenSettingsOpened(opened)
-  })
-
-  ipcMain.handle('app:relaunch', (): void => {
-    app.relaunch()
-    app.quit()
   })
 
   ipcMain.handle('prefs:get-launch-at-login', (): boolean => {
