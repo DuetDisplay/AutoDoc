@@ -6,9 +6,9 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
 
   useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then((accounts) => {
-      if (accounts.length > 0) onNext()
+      if (accounts.length > 0) setConnected(true)
     })
-  }, [onNext])
+  }, [])
 
   const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)

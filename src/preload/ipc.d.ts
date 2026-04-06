@@ -62,6 +62,8 @@ export interface IpcInvokeEvents {
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
   'prefs:set-onboarding-complete': []
+  'prefs:get-onboarding-step': []
+  'prefs:set-onboarding-step': [step: number]
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
   'prefs:get-analytics-consent': []
@@ -116,6 +118,8 @@ export interface IpcInvokeReturns {
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean
   'prefs:set-onboarding-complete': void
+  'prefs:get-onboarding-step': number
+  'prefs:set-onboarding-step': void
   'prefs:get-launch-at-login': boolean
   'prefs:set-launch-at-login': void
   'prefs:get-analytics-consent': boolean | null

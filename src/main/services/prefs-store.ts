@@ -3,6 +3,7 @@ import { app } from 'electron'
 
 interface PrefsSchema {
   onboardingComplete: boolean
+  onboardingStep: number
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
 }
@@ -12,6 +13,7 @@ function createPrefsStore(): Store<PrefsSchema> {
     name: 'autodoc-prefs',
     defaults: {
       onboardingComplete: false,
+      onboardingStep: 0,
       launchAtLogin: true,
       analyticsConsent: null,
     },
@@ -38,8 +40,17 @@ export class PrefsStore {
 
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
+    this.store.set('onboardingStep', 0)
     // Enable launch at login when onboarding finishes
     this.setLaunchAtLogin(true)
+  }
+
+  getOnboardingStep(): number {
+    return this.store.get('onboardingStep')
+  }
+
+  setOnboardingStep(step: number): void {
+    this.store.set('onboardingStep', step)
   }
 
   getLaunchAtLogin(): boolean {

@@ -20,6 +20,14 @@ export function registerPrefsIpc(
     prefsStore.setOnboardingComplete()
   })
 
+  ipcMain.handle('prefs:get-onboarding-step', (): number => {
+    return prefsStore.getOnboardingStep()
+  })
+
+  ipcMain.handle('prefs:set-onboarding-step', (_event, step: number): void => {
+    prefsStore.setOnboardingStep(step)
+  })
+
   ipcMain.handle('prefs:get-launch-at-login', (): boolean => {
     return prefsStore.getLaunchAtLogin()
   })

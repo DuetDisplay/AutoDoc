@@ -4,19 +4,15 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
 
-  const checkPermission = useCallback(async (autoAdvance = false) => {
+  const checkPermission = useCallback(async () => {
     const perms = await window.electronAPI.invoke('permissions:check')
     if (perms.screen) {
-      if (autoAdvance) {
-        onNext()
-      } else {
-        setGranted(true)
-      }
+      setGranted(true)
     }
-  }, [onNext])
+  }, [])
 
   useEffect(() => {
-    checkPermission(true)
+    checkPermission()
     const handleFocus = () => checkPermission()
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)

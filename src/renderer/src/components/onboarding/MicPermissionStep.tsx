@@ -2,20 +2,17 @@ import { useState, useEffect, useCallback } from 'react'
 
 export function MicPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
+  const [openedSettings, setOpenedSettings] = useState(false)
 
-  const checkPermission = useCallback(async (autoAdvance = false) => {
+  const checkPermission = useCallback(async () => {
     const perms = await window.electronAPI.invoke('permissions:check')
     if (perms.microphone) {
-      if (autoAdvance) {
-        onNext()
-      } else {
-        setGranted(true)
-      }
+      setGranted(true)
     }
-  }, [onNext])
+  }, [])
 
   useEffect(() => {
-    checkPermission(true)
+    checkPermission()
     const handleFocus = () => checkPermission()
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
@@ -28,6 +25,7 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       await checkPermission()
     } catch {
       window.electronAPI.invoke('permissions:open-settings', 'microphone')
+      setOpenedSettings(true)
     }
   }
 
@@ -41,7 +39,9 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Microphone Access</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can't hear your meetings.
+        {openedSettings && !granted
+          ? 'macOS may require a restart for the permission to take effect. If you chose "Restart Later", you can continue setup and grant access from Settings later.'
+          : 'AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can\'t hear your meetings.'}
       </p>
 
       {granted ? (
@@ -51,6 +51,21 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
         >
           Continue →
         </button>
+      ) : openedSettings ? (
+        <>
+          <button
+            onClick={onNext}
+            className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+          >
+            Continue →
+          </button>
+          <button
+            onClick={handleEnable}
+            className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
+          >
+            Open Settings again
+          </button>
+        </>
       ) : (
         <button
           onClick={handleEnable}
