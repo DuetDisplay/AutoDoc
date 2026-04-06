@@ -10,6 +10,8 @@ files:
   - 'resources/icon.png'
   - 'resources/trayTemplate.png'
   - 'resources/trayTemplate@2x.png'
+  - 'resources/trayRecording.png'
+  - 'resources/trayRecording@2x.png'
   - 'native/**/bin/**/*'
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'

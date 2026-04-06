@@ -539,7 +539,12 @@ app.whenReady().then(async () => {
     }
   })
 
-  registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
+  const { stopActiveRecording } = registerRecordingIpc(
+    recordingService,
+    transcriptionService,
+    whisperManager,
+    calendarManager,
+  )
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(
     segmentationService,
@@ -616,7 +621,17 @@ app.whenReady().then(async () => {
       createWindow()
     }
   }
-  createTray(() => cachedEvents, showWindow)
+  createTray(() => cachedEvents, showWindow, {
+    getIsRecording: () => recordingService.getState().isRecording,
+    stopRecording: () => {
+      if (!recordingService.getState().isRecording) return
+      try {
+        stopActiveRecording()
+      } catch {
+        // Failure already logged in recording IPC
+      }
+    },
+  })
 
   detectionService.start()
   recoverPendingWork()

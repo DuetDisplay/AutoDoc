@@ -42,6 +42,27 @@ async function generate() {
       output: path.join(resourcesDir, 'trayTemplate@2x.png'),
       size: 36,
     },
+    // macOS tray — recording (colored, 18 + 36)
+    {
+      input: path.join(buildDir, 'trayRecording.svg'),
+      output: path.join(buildDir, 'trayRecording.png'),
+      size: 18,
+    },
+    {
+      input: path.join(buildDir, 'trayRecording.svg'),
+      output: path.join(buildDir, 'trayRecording@2x.png'),
+      size: 36,
+    },
+    {
+      input: path.join(buildDir, 'trayRecording.svg'),
+      output: path.join(resourcesDir, 'trayRecording.png'),
+      size: 18,
+    },
+    {
+      input: path.join(buildDir, 'trayRecording.svg'),
+      output: path.join(resourcesDir, 'trayRecording@2x.png'),
+      size: 36,
+    },
   ]
 
   for (const job of jobs) {

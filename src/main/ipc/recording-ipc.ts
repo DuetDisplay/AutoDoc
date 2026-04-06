@@ -10,6 +10,7 @@ import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocFailure } from '../services/autodoc-log'
+import { refreshTray } from '../services/tray'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
 
 /** Merge two audio files into one using amix filter */
@@ -77,7 +78,7 @@ export function registerRecordingIpc(
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
   calendarManager: CalendarManager,
-): void {
+): { stopActiveRecording: () => ReturnType<RecordingService['stopRecording']> } {
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
     let dirs: string[]
@@ -169,23 +170,7 @@ export function registerRecordingIpc(
     }))
   })
 
-  ipcMain.handle('recording:start', async (_event, sourceId: string, sourceName: string) => {
-    try {
-      const paths = await recordingService.startRecording(sourceId, sourceName)
-      broadcastState(recordingService.getState())
-      return paths
-    } catch (err) {
-      logAutodocFailure({
-        area: 'recording',
-        message: 'Failed to start recording',
-        error: err,
-        context: { sourceId, sourceName },
-      })
-      throw err
-    }
-  })
-
-  ipcMain.handle('recording:stop', () => {
+  function stopActiveRecording(): ReturnType<RecordingService['stopRecording']> {
     let result: ReturnType<RecordingService['stopRecording']>
     try {
       result = recordingService.stopRecording()
@@ -198,6 +183,7 @@ export function registerRecordingIpc(
       throw err
     }
     broadcastState(recordingService.getState())
+    refreshTray()
 
     const stoppedAt = Date.now()
     const metadata: MeetingMetadata = {
@@ -302,7 +288,26 @@ export function registerRecordingIpc(
     })
 
     return result
+  }
+
+  ipcMain.handle('recording:start', async (_event, sourceId: string, sourceName: string) => {
+    try {
+      const paths = await recordingService.startRecording(sourceId, sourceName)
+      broadcastState(recordingService.getState())
+      refreshTray()
+      return paths
+    } catch (err) {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to start recording',
+        error: err,
+        context: { sourceId, sourceName },
+      })
+      throw err
+    }
   })
+
+  ipcMain.handle('recording:stop', () => stopActiveRecording())
 
   ipcMain.handle('recording:get-state', () => {
     return recordingService.getState()
@@ -398,6 +403,8 @@ export function registerRecordingIpc(
     if (!dirStat?.isDirectory()) return
     await rm(meetingDir, { recursive: true, force: true })
   })
+
+  return { stopActiveRecording }
 }
 
 function broadcastState(state: RecordingState): void {
