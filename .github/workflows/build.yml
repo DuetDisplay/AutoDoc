@@ -118,6 +118,20 @@ jobs:
           SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ***REMOVED***
 
+      - name: Expose DigiCert tool paths
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $smToolsDir = Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64'
+          $smctlPath = Join-Path $smToolsDir 'smctl.exe'
+
+          if (-not (Test-Path $smctlPath)) {
+            throw "smctl.exe was not found at $smctlPath"
+          }
+
+          $smToolsDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Check DigiCert signing health
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -127,8 +141,8 @@ jobs:
           SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ***REMOVED***
         run: |
-          smctl healthcheck
-          smctl windows certsync --keypair-alias=REDACTED_KEYPAIR_ALIAS --store=system
+          & $env:SMCTL_PATH healthcheck
+          & $env:SMCTL_PATH windows certsync --keypair-alias=REDACTED_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
         if: startsWith(github.ref, 'refs/tags/')
