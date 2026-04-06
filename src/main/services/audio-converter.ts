@@ -49,6 +49,42 @@ export class AudioConverter {
     })
   }
 
+  extractClip(
+    inputPath: string,
+    outputPath: string,
+    ffmpegPath: string,
+    startSec: number,
+    durationSec: number,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+
+      const proc = spawn(ffmpegPath, [
+        '-ss', String(startSec),
+        '-t', String(durationSec),
+        '-i', inputPath,
+        '-ar', '16000',
+        '-ac', '1',
+        '-f', 'wav',
+        '-y',
+        outputPath,
+      ])
+
+      proc.on('error', (err) => reject(new Error(`ffmpeg extract spawn failed: ${err.message}`)))
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg extract exited with code ${code}: ${stderr.slice(-500)}`))
+        }
+      })
+    })
+  }
+
   /** Get duration of audio file in seconds using ffprobe/ffmpeg */
   getDuration(inputPath: string, ffmpegPath: string): Promise<number> {
     return new Promise((resolve, reject) => {

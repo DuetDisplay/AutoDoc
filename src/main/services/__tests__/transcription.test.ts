@@ -69,6 +69,7 @@ function createMockAudioConverter(): AudioConverter {
   return {
     convert: vi.fn().mockResolvedValue(undefined),
     mergeAudio: vi.fn().mockResolvedValue(undefined),
+    extractClip: vi.fn().mockResolvedValue(undefined),
     getDuration: vi.fn().mockResolvedValue(60),
   } as unknown as AudioConverter
 }
@@ -234,7 +235,7 @@ describe('TranscriptionService', () => {
     const child = new MockChildProcess()
     childProcessMock.spawn.mockReturnValue(child as any)
 
-    const promise = (service as any).runWhisper('/mock/tmp/audio.wav', 'meeting-123', 60)
+    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
     child.emit('close', 0)
 
     await expect(promise).resolves.toBeUndefined()
@@ -243,5 +244,75 @@ describe('TranscriptionService', () => {
       expect.arrayContaining(['-t', '10']),
     )
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it('passes short-segmentation flags when requested', async () => {
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const promise = (service as any).runWhisperPass(
+      '/mock/tmp/audio.wav',
+      'meeting-123',
+      60,
+      undefined,
+      ['-ml', '50', '-sow'],
+    )
+    child.emit('close', 0)
+
+    await expect(promise).resolves.toBeUndefined()
+    expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      '/mock/whisper',
+      expect.arrayContaining(['-ml', '50', '-sow']),
+    )
+  })
+
+  it('detects suspicious repetition loops', () => {
+    const transcripts = Array.from({ length: 30 }, (_, index) => ({
+      id: `meeting-1-${index}`,
+      meetingId: 'meeting-1',
+      speaker: 'Speaker',
+      text: [
+        'Yeah.',
+        "So what your concern is, is that we're unfairly penalizing 4.x when the event applies to",
+        'both 4.x?',
+      ][index % 3],
+      startMs: index * 1000,
+      endMs: (index + 1) * 1000,
+      confidence: -1,
+    }))
+
+    expect((service as any).hasSuspiciousRepetition(transcripts)).toBe(true)
+  })
+
+  it('does not flag normal transcript diversity as repetition', () => {
+    const transcripts = Array.from({ length: 30 }, (_, index) => ({
+      id: `meeting-1-${index}`,
+      meetingId: 'meeting-1',
+      speaker: 'Speaker',
+      text: `Unique segment ${index}`,
+      startMs: index * 1000,
+      endMs: (index + 1) * 1000,
+      confidence: -1,
+    }))
+
+    expect((service as any).hasSuspiciousRepetition(transcripts)).toBe(false)
+  })
+
+  it('uses chunked transcription for long recordings', async () => {
+    const chunkedOutput = { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'chunked' }] }
+    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked').mockResolvedValue(chunkedOutput)
+    const singlePassSpy = vi.spyOn(service as any, 'runWhisperPassAndRead')
+
+    const result = await (service as any).transcribeWithFallback(
+      '/mock/tmp/audio.wav',
+      'meeting-123',
+      240,
+      '/mock/tmp/audio',
+      [],
+    )
+
+    expect(result).toEqual(chunkedOutput)
+    expect(chunkedSpy).toHaveBeenCalled()
+    expect(singlePassSpy).not.toHaveBeenCalled()
   })
 })

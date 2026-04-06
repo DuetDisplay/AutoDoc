@@ -25,6 +25,13 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
+const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 180
+const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
+const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
+const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 50
+const REPETITION_WINDOW_SEGMENTS = 24
+const REPETITION_WINDOW_MAX_UNIQUE = 4
+const REPETITION_WINDOW_MIN_RATIO = 0.8
 type EnqueueSource = 'direct' | 'recovery-scan'
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
@@ -220,8 +227,7 @@ export class TranscriptionService {
 
     const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
     const tempAudioWav = `${tempPrefix}.wav`
-    const tempWhisperJson = `${tempPrefix}.wav.json`
-    const tempFiles: string[] = [tempAudioWav, tempWhisperJson]
+    const tempFiles: string[] = [tempAudioWav]
 
     try {
       const benchmarkStart = Date.now()
@@ -252,11 +258,14 @@ export class TranscriptionService {
       console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
 
       t0 = Date.now()
-      await this.runWhisper(tempAudioWav, meetingId, audioDuration)
+      const whisperOutput = await this.transcribeWithFallback(
+        tempAudioWav,
+        meetingId,
+        audioDuration,
+        tempPrefix,
+        tempFiles,
+      )
       console.log(`[perf] Transcription (whisper): ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
-
-      const whisperJson = await readFile(tempWhisperJson, 'utf-8')
-      const whisperOutput: WhisperOutput = JSON.parse(whisperJson)
       let transcripts = this.mapToTranscripts(meetingId, whisperOutput)
 
       // Speaker labeling (two-stream: system active = remote, system silent = "me")
@@ -455,7 +464,121 @@ export class TranscriptionService {
     await encryptJSON(speakerMap, speakersPath)
   }
 
-  private runWhisper(audioWavPath: string, meetingId: string, audioDurationSec?: number): Promise<void> {
+  private async transcribeWithFallback(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec: number | undefined,
+    tempPrefix: string,
+    tempFiles: string[],
+  ): Promise<WhisperOutput> {
+    if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
+      console.log(`[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`)
+      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles)
+    }
+
+    const output = await this.runWhisperPassAndRead(audioWavPath, meetingId, audioDurationSec, tempFiles)
+    const mapped = this.mapToTranscripts(meetingId, output)
+    if (audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
+      console.warn(`[transcription] Detected repetition loop, retrying in chunks (${meetingId})`)
+      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles)
+    }
+
+    return output
+  }
+
+  private async runWhisperChunked(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec: number,
+    tempPrefix: string,
+    tempFiles: string[],
+  ): Promise<WhisperOutput> {
+    const stepSec = Math.max(1, CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC)
+    const transcription: WhisperSegment[] = []
+    let lastAcceptedTo = 0
+    let chunkIndex = 0
+
+    for (let chunkStart = 0; chunkStart < audioDurationSec; chunkStart += stepSec) {
+      const chunkDuration = Math.min(CHUNKED_TRANSCRIPTION_WINDOW_SEC, audioDurationSec - chunkStart)
+      const chunkPath = `${tempPrefix}-chunk-${chunkIndex}.wav`
+      tempFiles.push(chunkPath)
+
+      await this.audioConverter.extractClip(
+        audioWavPath,
+        chunkPath,
+        this.whisperManager.getFfmpegPath(),
+        chunkStart,
+        chunkDuration,
+      )
+
+      const progressRange = {
+        start: Math.round((chunkStart / audioDurationSec) * 100),
+        end: Math.round((Math.min(chunkStart + chunkDuration, audioDurationSec) / audioDurationSec) * 100),
+      }
+      const chunkOutput = await this.runWhisperPassAndRead(
+        chunkPath,
+        meetingId,
+        chunkDuration,
+        tempFiles,
+        progressRange,
+        ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
+      )
+
+      const adjustedSegments = chunkOutput.transcription
+        .map((segment) => ({
+          offsets: {
+            from: segment.offsets.from + Math.round(chunkStart * 1000),
+            to: segment.offsets.to + Math.round(chunkStart * 1000),
+          },
+          text: segment.text,
+        }))
+        .sort((a, b) => a.offsets.from - b.offsets.from)
+
+      for (const segment of adjustedSegments) {
+        if (segment.offsets.to <= lastAcceptedTo) continue
+        const prev = transcription[transcription.length - 1]
+        if (
+          prev &&
+          this.normalizeTranscriptText(prev.text) === this.normalizeTranscriptText(segment.text) &&
+          segment.offsets.from <= prev.offsets.to + 1500
+        ) {
+          prev.offsets.to = Math.max(prev.offsets.to, segment.offsets.to)
+          lastAcceptedTo = Math.max(lastAcceptedTo, prev.offsets.to)
+          continue
+        }
+
+        transcription.push(segment)
+        lastAcceptedTo = Math.max(lastAcceptedTo, segment.offsets.to)
+      }
+
+      chunkIndex++
+    }
+
+    return { transcription }
+  }
+
+  private async runWhisperPassAndRead(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec: number | undefined,
+    tempFiles: string[],
+    progressRange?: { start: number; end: number },
+    extraArgs: string[] = [],
+  ): Promise<WhisperOutput> {
+    const jsonPath = `${audioWavPath}.json`
+    tempFiles.push(jsonPath)
+    await this.runWhisperPass(audioWavPath, meetingId, audioDurationSec, progressRange, extraArgs)
+    const whisperJson = await readFile(jsonPath, 'utf-8')
+    return JSON.parse(whisperJson) as WhisperOutput
+  }
+
+  private runWhisperPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    extraArgs: string[] = [],
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       let stderr = ''
       const threadCount = this.getWhisperThreadCount()
@@ -470,6 +593,8 @@ export class TranscriptionService {
       if (threadCount !== null) {
         args.splice(4, 0, '-t', String(threadCount))
       }
+
+      args.push(...extraArgs)
 
       const proc = spawn(this.whisperManager.getWhisperPath(), args)
 
@@ -488,7 +613,7 @@ export class TranscriptionService {
         // Parse whisper.cpp progress: "whisper_print_progress_callback: progress = 42%"
         const match = chunk.match(/progress\s*=\s*(\d+)%/)
         if (match) {
-          const progress = parseInt(match[1], 10)
+          const progress = this.scaleProgress(parseInt(match[1], 10), progressRange)
           this.broadcastStatus(meetingId, 'transcribing', progress)
         }
       })
@@ -504,7 +629,10 @@ export class TranscriptionService {
             const m = parseInt(tsMatch[2], 10)
             const s = parseInt(tsMatch[3], 10)
             const currentSec = h * 3600 + m * 60 + s + 30 // +30 since this segment is being completed
-            const progress = Math.min(99, Math.round((currentSec / audioDurationSec) * 100))
+            const progress = this.scaleProgress(
+              Math.min(99, Math.round((currentSec / audioDurationSec) * 100)),
+              progressRange,
+            )
             this.broadcastStatus(meetingId, 'transcribing', progress)
           }
         })
@@ -561,6 +689,18 @@ export class TranscriptionService {
     }
   }
 
+  private scaleProgress(progress: number, progressRange?: { start: number; end: number }): number {
+    if (!progressRange) return progress
+    const clamped = Math.max(0, Math.min(100, progress))
+    return Math.max(
+      progressRange.start,
+      Math.min(
+        99,
+        Math.round(progressRange.start + ((progressRange.end - progressRange.start) * clamped) / 100),
+      ),
+    )
+  }
+
   private mapToTranscripts(meetingId: string, output: WhisperOutput): Transcript[] {
     const raw = output.transcription.map((seg, index) => ({
       id: `${meetingId}-${index}`,
@@ -583,6 +723,45 @@ export class TranscriptionService {
 
     // Re-index IDs after dedup
     return deduped.map((seg, i) => ({ ...seg, id: `${meetingId}-${i}` }))
+  }
+
+  private hasSuspiciousRepetition(transcripts: Transcript[]): boolean {
+    if (transcripts.length < REPETITION_WINDOW_SEGMENTS) return false
+
+    for (let i = 0; i <= transcripts.length - REPETITION_WINDOW_SEGMENTS; i++) {
+      const window = transcripts.slice(i, i + REPETITION_WINDOW_SEGMENTS)
+      const normalized = window
+        .map((segment) => this.normalizeTranscriptText(segment.text))
+        .filter((segment) => segment.length > 0)
+
+      if (normalized.length < REPETITION_WINDOW_SEGMENTS) continue
+
+      const counts = new Map<string, number>()
+      for (const segment of normalized) {
+        counts.set(segment, (counts.get(segment) ?? 0) + 1)
+      }
+
+      const repeatedCoverage = [...counts.values()]
+        .sort((a, b) => b - a)
+        .slice(0, 3)
+        .reduce((sum, count) => sum + count, 0) / normalized.length
+      if (
+        counts.size <= REPETITION_WINDOW_MAX_UNIQUE &&
+        repeatedCoverage >= REPETITION_WINDOW_MIN_RATIO
+      ) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  private normalizeTranscriptText(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s.]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
   }
 
   private async markFailed(

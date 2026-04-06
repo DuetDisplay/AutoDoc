@@ -18,6 +18,10 @@ function getSpeakerColor(speakerId: string, speakerIds: string[]): { border: str
   return SPEAKER_COLORS[colorIndex]
 }
 
+function endsSentence(text: string): boolean {
+  return /[.!?]["']?$/.test(text.trim())
+}
+
 interface TranscriptViewProps {
   segments: Transcript[]
   status: TranscriptionStatus
@@ -86,12 +90,30 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
   const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
   const speakerIds = hasSpeakers ? Object.keys(speakers) : []
 
-  // Merge consecutive segments from the same speaker, but break on time gaps
-  const TIME_GAP_MS = 15_000 // start a new block if >15s gap between segments
+  // Merge short same-speaker fragments into readable sentence-like blocks,
+  // but stop before they turn into wall-of-text paragraphs.
+  const TIME_GAP_MS = 2_500
+  const MAX_GROUP_DURATION_MS = 20_000
+  const MAX_GROUP_SEGMENTS = 6
+  const MAX_GROUP_CHARACTERS = 220
+  const MIN_COMPLETE_GROUP_CHARACTERS = 90
   const merged: { speaker: string; startMs: number; endMs: number; texts: string[] }[] = []
   for (const seg of segments) {
     const last = merged[merged.length - 1]
-    if (last && last.speaker === seg.speaker && seg.startMs - last.endMs < TIME_GAP_MS) {
+    const currentGroupText = last?.texts.join(' ') ?? ''
+    const nextGroupText = currentGroupText ? `${currentGroupText} ${seg.text}` : seg.text
+    const groupLooksComplete =
+      currentGroupText.length >= MIN_COMPLETE_GROUP_CHARACTERS && endsSentence(currentGroupText)
+    const shouldMerge =
+      last &&
+      last.speaker === seg.speaker &&
+      seg.startMs - last.endMs < TIME_GAP_MS &&
+      seg.endMs - last.startMs <= MAX_GROUP_DURATION_MS &&
+      last.texts.length < MAX_GROUP_SEGMENTS &&
+      nextGroupText.length <= MAX_GROUP_CHARACTERS &&
+      !groupLooksComplete
+
+    if (shouldMerge) {
       last.texts.push(seg.text)
       last.endMs = seg.endMs
     } else {
