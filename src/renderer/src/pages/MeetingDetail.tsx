@@ -136,6 +136,8 @@ export function MeetingDetail() {
     mediaBaseUrl?: string
   } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
+  const contentScrollRef = useRef<HTMLDivElement | null>(null)
+  const transcriptTopRef = useRef<HTMLDivElement | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
@@ -210,6 +212,13 @@ export function MeetingDetail() {
     })
   }, [id])
 
+  const scrollTranscriptIntoView = useCallback(() => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0
+    }
+    transcriptTopRef.current?.scrollIntoView({ block: 'start' })
+  }, [])
+
   const seekToSegment = useCallback((ms: number) => {
     const seconds = ms / 1000
     const fromTab = activeTabRef.current
@@ -226,6 +235,7 @@ export function MeetingDetail() {
     setActiveTab('transcript')
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        scrollTranscriptIntoView()
         const el = mediaRef.current
         if (!el) {
           console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF — media ref still null', {
@@ -253,7 +263,7 @@ export function MeetingDetail() {
         })
       })
     })
-  }, [id])
+  }, [id, scrollTranscriptIntoView])
 
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
@@ -713,9 +723,9 @@ export function MeetingDetail() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6" data-content-scroll>
+      <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-6" data-content-scroll>
         {activeTab === 'notes' ? (
-          <div className="flex flex-col gap-4">
+          <div ref={transcriptTopRef} className="flex flex-col gap-4">
             {CATEGORY_ORDER.map((category) => {
               const items = getSegmentsForCategory(category)
               return (

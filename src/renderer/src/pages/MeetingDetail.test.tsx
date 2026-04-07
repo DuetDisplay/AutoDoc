@@ -5,17 +5,51 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MeetingDetail } from './MeetingDetail'
 
 beforeEach(() => {
+  vi.restoreAllMocks()
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    cb(0)
+    return 0
+  })
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
   window.electronAPI = {
     send: vi.fn(),
     invoke: vi.fn((channel: string) => {
       if (channel === 'transcription:get-status') return Promise.resolve('pending')
-      if (channel === 'transcription:get-transcript') return Promise.resolve([])
-      if (channel === 'segmentation:get-status') return Promise.resolve('pending')
+      if (channel === 'transcription:get-transcript') {
+        return Promise.resolve([
+          { id: 't1', meetingId: 'test-123', speaker: 'Speaker 1', text: 'Intro', startMs: 0, endMs: 5000, confidence: 0.9 },
+        ])
+      }
+      if (channel === 'segmentation:get-status') return Promise.resolve('complete')
       if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
-      if (channel === 'segmentation:get-segments') return Promise.resolve(null)
+      if (channel === 'segmentation:get-segments') {
+        return Promise.resolve({
+          decisions: [],
+          actionItems: [],
+          information: [
+            {
+              id: 's1',
+              meetingId: 'test-123',
+              category: 'information',
+              topic: 'Topic',
+              title: 'Test note',
+              content: 'Timestamped note',
+              assignee: null,
+              deadline: null,
+              sourceStartMs: 12000,
+              sourceEndMs: 12000,
+            },
+          ],
+          discussion: [],
+          statusUpdates: [],
+        })
+      }
       if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
       if (channel === 'recording:get-media')
-        return Promise.resolve({ hasVideo: false, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' })
+        return Promise.resolve({ hasVideo: true, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' })
       if (channel === 'speakers:get') return Promise.resolve({})
       return Promise.resolve(undefined)
     }),
@@ -53,6 +87,19 @@ describe('MeetingDetail', () => {
     const user = userEvent.setup()
 
     await user.click(screen.getByText('Transcript'))
-    expect(screen.getByText(/awaiting transcription\. this will begin/i)).toBeInTheDocument()
+    expect(document.querySelector('video')).toBeInTheDocument()
+  })
+
+  it('resets transcript scroll to the media area when clicking a note timestamp', async () => {
+    await renderMeetingDetail()
+    const user = userEvent.setup()
+    const contentScroll = document.querySelector('[data-content-scroll]') as HTMLDivElement
+    expect(contentScroll).toBeTruthy()
+    contentScroll.scrollTop = 480
+
+    await user.click(screen.getByRole('button', { name: /0:12/i }))
+
+    expect(contentScroll.scrollTop).toBe(0)
+    expect(document.querySelector('video')).toBeInTheDocument()
   })
 })
