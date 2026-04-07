@@ -14,7 +14,8 @@ beforeEach(() => {
       if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
       if (channel === 'segmentation:get-segments') return Promise.resolve(null)
       if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
-      if (channel === 'recording:get-media') return Promise.resolve({ hasVideo: false, hasAudio: false })
+      if (channel === 'recording:get-media')
+        return Promise.resolve({ hasVideo: false, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' })
       if (channel === 'speakers:get') return Promise.resolve({})
       return Promise.resolve(undefined)
     }),

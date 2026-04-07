@@ -265,6 +265,12 @@ export function registerRecordingIpc(
           await remuxForSeeking(whisperManager.getFfmpegPath(), videoPath, seekablePath)
           await unlink(videoPath)
           await rename(seekablePath, videoPath)
+          const finalStat = await stat(videoPath).catch(() => null)
+          console.log('[recording post-process] remux for seeking OK', {
+            meetingId: result.meetingId,
+            bytes: finalStat?.size,
+            path: videoPath,
+          })
         }
       } catch (err) {
         logAutodocFailure({

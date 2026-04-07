@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, RecordingMediaPlayerErrorReport, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -54,6 +54,7 @@ export interface IpcInvokeEvents {
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
   'recording:get-media': [meetingId: string]
+  'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
@@ -109,7 +110,8 @@ export interface IpcInvokeReturns {
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
-  'recording:get-media': { hasVideo: boolean; hasAudio: boolean; audioFile?: string }
+  'recording:get-media': { hasVideo: boolean; hasAudio: boolean; audioFile?: string; mediaBaseUrl?: string }
+  'recording:report-media-player-error': void
   'recording:get-detail': { title: string; sourceName: string | null; date: number; durationSeconds: number | null }
   'search:query': SearchResult[]
   'chat:send': string

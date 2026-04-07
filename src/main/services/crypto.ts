@@ -385,6 +385,54 @@ export async function decryptFileToTemp(encPath: string): Promise<string> {
   }
 }
 
+/** Cached decrypted paths for custom-protocol media (one decrypt per recording file, not per HTTP range). */
+const mediaDecryptCache = new Map<string, { tempPath: string; mtimeMs: number; size: number }>()
+const mediaDecryptInflight = new Map<string, Promise<string>>()
+
+export async function clearMediaDecryptCache(): Promise<void> {
+  for (const { tempPath } of mediaDecryptCache.values()) {
+    await fsp.unlink(tempPath).catch(() => {})
+  }
+  mediaDecryptCache.clear()
+  mediaDecryptInflight.clear()
+}
+
+/**
+ * Decrypt encrypted media to a temp file once per source path (until the file changes on disk).
+ * Deduplicates concurrent decrypts. Used by the loopback recording media server so range requests do not each
+ * decrypt hundreds of MB.
+ */
+export async function getDecryptedTempPathForMedia(encPath: string): Promise<string> {
+  const st = await fsp.stat(encPath)
+  const cached = mediaDecryptCache.get(encPath)
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+    try {
+      await fsp.access(cached.tempPath)
+      return cached.tempPath
+    } catch {
+      mediaDecryptCache.delete(encPath)
+    }
+  }
+  if (cached) {
+    await fsp.unlink(cached.tempPath).catch(() => {})
+    mediaDecryptCache.delete(encPath)
+  }
+
+  let inflight = mediaDecryptInflight.get(encPath)
+  if (!inflight) {
+    inflight = (async () => {
+      const tmp = await decryptFileToTemp(encPath)
+      const stFresh = await fsp.stat(encPath)
+      mediaDecryptCache.set(encPath, { tempPath: tmp, mtimeMs: stFresh.mtimeMs, size: stFresh.size })
+      return tmp
+    })().finally(() => {
+      mediaDecryptInflight.delete(encPath)
+    })
+    mediaDecryptInflight.set(encPath, inflight)
+  }
+  return inflight
+}
+
 export function createDecryptStream(encPath: string): Readable {
   const key = getKey()
 
@@ -505,6 +553,7 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
 }
 
 export async function cleanupTempFiles(): Promise<void> {
+  await clearMediaDecryptCache()
   const tmpdir = os.tmpdir()
   const entries = await fsp.readdir(tmpdir)
 

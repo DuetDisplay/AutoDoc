@@ -121,6 +121,17 @@ export interface RecordingPaths {
   audio: string
 }
 
+/** Renderer reports `<video>` / `<audio>` `error` for main-process logging and Sentry. */
+export interface RecordingMediaPlayerErrorReport {
+  meetingId: string
+  kind: 'video' | 'audio'
+  mediaErrorCode: number | null
+  mediaErrorMessage: string | null
+  currentSrc: string
+  networkState: number
+  readyState: number
+}
+
 export interface TranscriptionStatusPayload {
   meetingId: string
   status: TranscriptionStatus

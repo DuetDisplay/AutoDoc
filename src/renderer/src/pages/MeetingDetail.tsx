@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { SyntheticEvent } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
 import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus, SpeakerMap } from '../../../shared/types'
@@ -6,6 +7,7 @@ import { TranscriptView } from '../components/TranscriptView'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
+import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 
 type Tab = 'notes' | 'transcript' | 'settings'
 
@@ -127,42 +129,244 @@ export function MeetingDetail() {
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
-  const [media, setMedia] = useState<{ hasVideo: boolean; hasAudio: boolean; audioFile?: string } | null>(null)
+  const [media, setMedia] = useState<{
+    hasVideo: boolean
+    hasAudio: boolean
+    audioFile?: string
+    mediaBaseUrl?: string
+  } | null>(null)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
+  const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
+  const activeTabRef = useRef<Tab>('notes')
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const lastProgressLogAtRef = useRef(0)
+  const lastTimeUpdateLogAtRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
 
   const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
+  useEffect(() => {
+    activeTabRef.current = activeTab
+  }, [activeTab])
+
+  useEffect(() => {
+    mediaPlayerErrorLastAtRef.current.clear()
+  }, [id])
+
+  const reportRendererMediaError = useCallback(
+    (kind: 'video' | 'audio') => (e: SyntheticEvent<HTMLVideoElement | HTMLAudioElement>) => {
+      if (!id) return
+      const el = e.currentTarget
+      const me = el.error
+      const code = me?.code ?? -1
+      const dedupeKey = `${kind}:${code}:${el.currentSrc}`
+      const now = Date.now()
+      const prev = mediaPlayerErrorLastAtRef.current.get(dedupeKey) ?? 0
+      const dedupeMs = 60_000
+      if (now - prev < dedupeMs) return
+      mediaPlayerErrorLastAtRef.current.set(dedupeKey, now)
+
+      void window.electronAPI.invoke('recording:report-media-player-error', {
+        meetingId: id,
+        kind,
+        mediaErrorCode: me?.code ?? null,
+        mediaErrorMessage: me?.message ?? null,
+        currentSrc: el.currentSrc,
+        networkState: el.networkState,
+        readyState: el.readyState,
+      })
+    },
+    [id],
+  )
+
   const handleSeek = useCallback((ms: number) => {
     const el = mediaRef.current
-    if (!el) return
-    el.currentTime = ms / 1000
-    el.play()
-  }, [])
+    const seconds = ms / 1000
+    console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:requested', {
+      meetingId: id,
+      activeTab: activeTabRef.current,
+      targetMs: ms,
+      targetSec: seconds,
+      mediaMissing: !el,
+      ...(el ? snapshotMediaElement(el) : {}),
+    })
+    if (!el) {
+      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:aborted — no media element (wrong tab or not mounted?)')
+      return
+    }
+    try {
+      el.currentTime = seconds
+      console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime', {
+        afterAssign: el.currentTime,
+        seekableEmpty: el.seekable.length === 0,
+      })
+    } catch (e) {
+      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime threw', e)
+    }
+    void el.play().catch((err) => {
+      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:play() rejected', err)
+    })
+  }, [id])
 
   const seekToSegment = useCallback((ms: number) => {
+    const seconds = ms / 1000
+    const fromTab = activeTabRef.current
+    console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:requested', {
+      meetingId: id,
+      fromTab,
+      targetMs: ms,
+      targetSec: seconds,
+      note:
+        fromTab !== 'transcript'
+          ? 'switching to transcript tab — media may not exist until after React commit'
+          : undefined,
+    })
     setActiveTab('transcript')
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const el = mediaRef.current
-        if (!el) return
-        el.currentTime = ms / 1000
-        el.play()
+        if (!el) {
+          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF — media ref still null', {
+            meetingId: id,
+            fromTab,
+            likelyCause: 'video/audio not mounted yet (tab switch race) or no media for this recording',
+          })
+          return
+        }
+        console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF', {
+          meetingId: id,
+          ...snapshotMediaElement(el),
+        })
+        try {
+          el.currentTime = seconds
+          console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime', {
+            afterAssign: el.currentTime,
+            seekableEmpty: el.seekable.length === 0,
+          })
+        } catch (e) {
+          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime threw', e)
+        }
+        void el.play().catch((err) => {
+          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:play() rejected', err)
+        })
       })
     })
-  }, [])
+  }, [id])
 
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
-    if (!el) return
+    if (!el) {
+      console.warn(MEDIA_DEBUG_PREFIX, 'cyclePlaybackRate:no media element')
+      return
+    }
     const currentIdx = PLAYBACK_RATES.indexOf(playbackRate)
     const nextIdx = (currentIdx + 1) % PLAYBACK_RATES.length
     const newRate = PLAYBACK_RATES[nextIdx]
+    console.log(MEDIA_DEBUG_PREFIX, 'cyclePlaybackRate', { from: playbackRate, to: newRate })
     el.playbackRate = newRate
     setPlaybackRate(newRate)
   }, [playbackRate])
+
+  /** Console diagnostics for HTMLMediaElement lifecycle (load, buffer, seek, stall). */
+  useEffect(() => {
+    if (activeTab !== 'transcript' || !id || !media) return
+    const el = mediaRef.current
+    if (!el) return
+
+    const log = (event: string, extra?: Record<string, unknown>) => {
+      console.log(MEDIA_DEBUG_PREFIX, `media:${event}`, {
+        meetingId: id,
+        activeTab,
+        ...extra,
+        ...(el.isConnected ? snapshotMediaElement(el) : { detached: true }),
+      })
+    }
+
+    const onLoadStart = () => log('loadstart')
+    const onLoadedMeta = () => log('loadedmetadata')
+    const onLoadedData = () => log('loadeddata')
+    const onCanPlay = () => log('canplay')
+    const onCanPlayThrough = () => log('canplaythrough')
+    const onPlay = () => log('play')
+    const onPlaying = () => log('playing')
+    const onPause = () => log('pause')
+    const onWaiting = () => log('waiting')
+    const onStalled = () => log('stalled')
+    const onSuspend = () => log('suspend')
+    const onEmptied = () => log('emptied')
+    const onEnded = () => log('ended')
+    const onError = () => {
+      log('error', {
+        error: el.error ? { code: el.error.code, message: el.error.message } : null,
+      })
+    }
+    const onSeeking = () => log('seeking')
+    const onSeeked = () => log('seeked')
+    const onProgress = () => {
+      const now = Date.now()
+      if (now - lastProgressLogAtRef.current < 2000) return
+      lastProgressLogAtRef.current = now
+      log('progress (throttled ~2s)', { bufferedRanges: snapshotMediaElement(el).buffered })
+    }
+    const onTimeUpdate = () => {
+      const now = Date.now()
+      if (now - lastTimeUpdateLogAtRef.current < 8000) return
+      lastTimeUpdateLogAtRef.current = now
+      log('timeupdate (throttled ~8s)', { currentTime: el.currentTime })
+    }
+    const onRateChange = () => log('ratechange', { playbackRate: el.playbackRate })
+
+    el.addEventListener('loadstart', onLoadStart)
+    el.addEventListener('loadedmetadata', onLoadedMeta)
+    el.addEventListener('loadeddata', onLoadedData)
+    el.addEventListener('canplay', onCanPlay)
+    el.addEventListener('canplaythrough', onCanPlayThrough)
+    el.addEventListener('play', onPlay)
+    el.addEventListener('playing', onPlaying)
+    el.addEventListener('pause', onPause)
+    el.addEventListener('waiting', onWaiting)
+    el.addEventListener('stalled', onStalled)
+    el.addEventListener('suspend', onSuspend)
+    el.addEventListener('emptied', onEmptied)
+    el.addEventListener('ended', onEnded)
+    el.addEventListener('error', onError)
+    el.addEventListener('seeking', onSeeking)
+    el.addEventListener('seeked', onSeeked)
+    el.addEventListener('progress', onProgress)
+    el.addEventListener('timeupdate', onTimeUpdate)
+    el.addEventListener('ratechange', onRateChange)
+
+    console.log(MEDIA_DEBUG_PREFIX, 'media:lifecycle listeners attached', {
+      meetingId: id,
+      tag: el.tagName,
+      src: (el as HTMLMediaElement).currentSrc?.slice(0, 160),
+    })
+
+    return () => {
+      el.removeEventListener('loadstart', onLoadStart)
+      el.removeEventListener('loadedmetadata', onLoadedMeta)
+      el.removeEventListener('loadeddata', onLoadedData)
+      el.removeEventListener('canplay', onCanPlay)
+      el.removeEventListener('canplaythrough', onCanPlayThrough)
+      el.removeEventListener('play', onPlay)
+      el.removeEventListener('playing', onPlaying)
+      el.removeEventListener('pause', onPause)
+      el.removeEventListener('waiting', onWaiting)
+      el.removeEventListener('stalled', onStalled)
+      el.removeEventListener('suspend', onSuspend)
+      el.removeEventListener('emptied', onEmptied)
+      el.removeEventListener('ended', onEnded)
+      el.removeEventListener('error', onError)
+      el.removeEventListener('seeking', onSeeking)
+      el.removeEventListener('seeked', onSeeked)
+      el.removeEventListener('progress', onProgress)
+      el.removeEventListener('timeupdate', onTimeUpdate)
+      el.removeEventListener('ratechange', onRateChange)
+      console.log(MEDIA_DEBUG_PREFIX, 'media:lifecycle listeners detached', { meetingId: id })
+    }
+  }, [activeTab, id, media])
 
   const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
     if (!id) return
@@ -624,13 +828,14 @@ export function MeetingDetail() {
           </div>
         ) : activeTab === 'transcript' ? (
           <div className="flex flex-col gap-4">
-            {media?.hasVideo && (
+            {media?.hasVideo && media.mediaBaseUrl && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
                 <video
                   ref={mediaRef as React.RefObject<HTMLVideoElement>}
                   controls
                   className="w-full"
-                  src={`autodoc-media://${id}/screen.webm`}
+                  src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
+                  onError={reportRendererMediaError('video')}
                 />
                 <div className="flex justify-end px-3 py-1.5 border-t border-border">
                   <button
@@ -642,14 +847,15 @@ export function MeetingDetail() {
                 </div>
               </div>
             )}
-            {media?.hasAudio && !media?.hasVideo && (
+            {media?.hasAudio && !media?.hasVideo && media.mediaBaseUrl && (
               <div className="bg-bg-card border border-border rounded-xl p-4">
                 <div className="flex items-center gap-3">
                   <audio
                     ref={mediaRef as React.RefObject<HTMLAudioElement>}
                     controls
                     className="flex-1"
-                    src={`autodoc-media://${id}/${media?.audioFile ?? 'audio.webm'}`}
+                    src={`${media.mediaBaseUrl}/media/${id}/${media?.audioFile ?? 'audio.webm'}`}
+                    onError={reportRendererMediaError('audio')}
                   />
                   <button
                     onClick={cyclePlaybackRate}

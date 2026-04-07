@@ -1,10 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, protocol, net, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, desktopCapturer, powerMonitor } from 'electron'
 import { join } from 'path'
-import { pathToFileURL } from 'url'
 import { homedir } from 'os'
 import { createRequire } from 'module'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
-import { isEncrypted, decryptFileToTemp, migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
+import { migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
+import { startRecordingMediaHttpServer, stopRecordingMediaHttpServer } from './services/media-http-server'
 import { is } from '@electron-toolkit/utils'
 import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -27,7 +27,7 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
-import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus } from '../shared/types'
+import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus, RecordingMediaPlayerErrorReport } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
@@ -136,10 +136,6 @@ if (!gotSingleInstanceLock) {
     focusMainWindow()
   })
 }
-
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'autodoc-media', privileges: { stream: true, bypassCSP: true } },
-])
 
 function createWindow(): void {
   recordMainDiagnosticAction({ category: 'app', action: 'main_window_created' })
@@ -300,21 +296,13 @@ app.whenReady().then(async () => {
 
   const recordingService = new RecordingService()
 
-  // Serve recording media files via autodoc-media:// protocol
-  protocol.handle('autodoc-media', async (request) => {
-    const url = new URL(request.url)
-    // autodoc-media://{meetingId}/{filename}
-    const meetingId = url.hostname
-    const filename = url.pathname.slice(1) // remove leading /
-    const filePath = join(recordingService.getRecordingsBaseDir(), meetingId, filename)
-
-    if (await isEncrypted(filePath)) {
-      const tempPath = await decryptFileToTemp(filePath)
-      return net.fetch(pathToFileURL(tempPath).href)
-    }
-
-    return net.fetch(pathToFileURL(filePath).href)
-  })
+  let recordingMediaBaseUrl: string | null = null
+  try {
+    const port = await startRecordingMediaHttpServer(() => recordingService.getRecordingsBaseDir())
+    recordingMediaBaseUrl = `http://127.0.0.1:${port}`
+  } catch {
+    // Failure already reported via logAutodocFailure inside startRecordingMediaHttpServer
+  }
 
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
@@ -324,8 +312,23 @@ app.whenReady().then(async () => {
     const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
     const hasSystemAudio = await stat(systemPath).then(() => true).catch(() => false)
     const hasLegacyAudio = await stat(legacyAudioPath).then(() => true).catch(() => false)
-    return { hasVideo, hasAudio: hasSystemAudio || hasLegacyAudio, audioFile: hasSystemAudio ? 'system.webm' : 'audio.webm' }
+    return {
+      hasVideo,
+      hasAudio: hasSystemAudio || hasLegacyAudio,
+      audioFile: hasSystemAudio ? 'system.webm' : 'audio.webm',
+      mediaBaseUrl: recordingMediaBaseUrl ?? undefined,
+    }
   })
+
+  ipcMain.handle('recording:report-media-player-error', (_event, payload: RecordingMediaPlayerErrorReport) => {
+    logAutodocFailure({
+      area: 'recording',
+      message: 'Renderer media element error (video/audio)',
+      meetingId: payload.meetingId,
+      context: { surface: 'renderer', ...payload },
+    })
+  })
+
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
   const transcriptionService = new TranscriptionService(
@@ -698,6 +701,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
   ollamaManager?.stop()
+  stopRecordingMediaHttpServer()
 })
 
 app.on('window-all-closed', () => {
