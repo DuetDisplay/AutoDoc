@@ -33,12 +33,17 @@ function mergeAudioFiles(ffmpegPath: string, input1: string, input2: string, out
   })
 }
 
-/** Mux audio track into video file so playback has both video and audio */
+/** Mux audio track into video file so playback has both video and audio.
+ *  Screen chunks already embed system audio; we must map video from input 0 and
+ *  replacement audio from input 1 — otherwise ffmpeg keeps 0:a (system-only) and
+ *  the merged mic+system track is ignored, so HTML5 playback only hears system audio. */
 function muxAudioIntoVideo(ffmpegPath: string, videoPath: string, audioPath: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, [
       '-i', videoPath,
       '-i', audioPath,
+      '-map', '0:v:0',
+      '-map', '1:a:0',
       '-c', 'copy',
       '-y',
       outputPath,
