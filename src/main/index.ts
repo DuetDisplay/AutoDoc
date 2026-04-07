@@ -33,6 +33,7 @@ import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag }
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import { enforceMacOSInstallLocation } from './services/application-install'
+import { focusMainWindow, registerMainWindow } from './services/main-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -120,14 +121,6 @@ function initializeMainSentry(): void {
   }
 }
 
-function focusMainWindow(): void {
-  const [existingWindow] = BrowserWindow.getAllWindows()
-  if (!existingWindow) return
-  if (existingWindow.isMinimized()) existingWindow.restore()
-  existingWindow.show()
-  existingWindow.focus()
-}
-
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
@@ -169,6 +162,8 @@ function createWindow(): void {
       sandbox: false,
     },
   })
+
+  registerMainWindow(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -613,11 +608,7 @@ app.whenReady().then(async () => {
 
   // System tray — show upcoming meetings, open app, quit
   const showWindow = () => {
-    const wins = BrowserWindow.getAllWindows()
-    if (wins.length > 0) {
-      wins[0].show()
-      wins[0].focus()
-    } else {
+    if (!focusMainWindow()) {
       createWindow()
     }
   }
@@ -698,11 +689,8 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     recoverPendingWork()
-    const wins = BrowserWindow.getAllWindows()
-    if (wins.length === 0) {
+    if (!focusMainWindow()) {
       createWindow()
-    } else {
-      focusMainWindow()
     }
   })
 })

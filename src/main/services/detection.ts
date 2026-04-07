@@ -8,6 +8,7 @@ import { isAutoRecordEnabled } from './auto-record-store'
 import { getActiveCaptureProcessIdsMac } from './mac-meeting-detector'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { focusMainWindow } from './main-window'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Suppress pre-start prompts when an event begins within 10 minutes
@@ -501,11 +502,7 @@ export class DetectionService {
       body,
       onRecord: () => {
         this.markAutoRecordPending()
-        const win = BrowserWindow.getAllWindows()[0]
-        if (win) {
-          win.show()
-          win.focus()
-        }
+        focusMainWindow()
         this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })
       },
       onDismiss: () => {},
