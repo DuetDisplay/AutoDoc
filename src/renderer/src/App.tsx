@@ -241,6 +241,7 @@ export default function App() {
             subtitle: 'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
             sources,
             detectedId: selection.source?.id ?? null,
+            suggestionLabel: selection.source ? 'Suggested window' : null,
           })
           recordDiagnosticAction({
             category: 'recording',

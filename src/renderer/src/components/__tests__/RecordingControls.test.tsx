@@ -45,6 +45,28 @@ describe('RecordingControls', () => {
     expect(fetchSources).toHaveBeenCalled()
     expect(await screen.findByText('Zoom Meeting')).toBeInTheDocument()
     expect(await screen.findByText('Visual Studio Code')).toBeInTheDocument()
+    expect(await screen.findByText('Suggested window')).toBeInTheDocument()
+  })
+
+  it('pins the suggested source to the top of the picker list', async () => {
+    const sources = [
+      { id: 'window:1', name: 'Visual Studio Code', thumbnailDataUrl: 'data:image/png;base64,abc' },
+      { id: 'window:2', name: 'Zoom Meeting', thumbnailDataUrl: 'data:image/png;base64,def' },
+    ]
+    const fetchSources = vi.fn(async () => sources)
+
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={fetchSources}
+      />
+    )
+    await userEvent.click(screen.getByText('Record'))
+
+    const options = await screen.findAllByRole('button')
+    expect(options[1]).toHaveTextContent('Zoom Meeting')
   })
 
   it('calls onStartRecording when a source is selected', async () => {
@@ -65,6 +87,10 @@ describe('RecordingControls', () => {
     await userEvent.click(screen.getByText('Record'))
     await userEvent.click(await screen.findByText('Zoom Meeting'))
 
-    expect(onStart).toHaveBeenCalledWith('window:1', 'Zoom Meeting')
+    expect(onStart).toHaveBeenCalledWith('window:1', 'Zoom Meeting', {
+      eventId: null,
+      providerHint: null,
+      recurringEventId: null,
+    })
   })
 })

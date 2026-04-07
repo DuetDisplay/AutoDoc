@@ -30,9 +30,18 @@ export function RecordingControls({
     subtitle,
     sources,
     detectedId,
+    suggestionLabel,
     openPicker,
     closePicker,
   } = useRecordingPickerStore()
+  const orderedSources = useMemo(() => {
+    if (!detectedId) return sources
+
+    const detectedSource = sources.find((source) => source.id === detectedId)
+    if (!detectedSource) return sources
+
+    return [detectedSource, ...sources.filter((source) => source.id !== detectedId)]
+  }, [detectedId, sources])
   const selectionContext = useMemo(
     () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
     [events],
@@ -55,6 +64,11 @@ export function RecordingControls({
           : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
+        suggestionLabel: selection.source
+          ? selection.confidence === 'high'
+            ? 'Detected meeting'
+            : 'Suggested window'
+          : null,
       })
     } finally {
       setLoading(false)
@@ -103,7 +117,7 @@ export function RecordingControls({
               </p>
             )}
             <div className="flex flex-col gap-1.5">
-              {sources.map((source) => (
+              {orderedSources.map((source) => (
                 <button
                   key={source.id}
                   onClick={() => handleSourceSelect(source)}
@@ -120,9 +134,9 @@ export function RecordingControls({
                     <span className="text-[12px] text-ink truncate">
                       {source.name}
                     </span>
-                    {source.id === detectedId && (
+                    {source.id === detectedId && suggestionLabel && (
                       <span className="text-[10px] text-status-connected font-medium">
-                        Detected meeting
+                        {suggestionLabel}
                       </span>
                     )}
                   </div>

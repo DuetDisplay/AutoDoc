@@ -7,11 +7,13 @@ interface RecordingPickerState {
   subtitle: string | null
   sources: RecordingSource[]
   detectedId: string | null
+  suggestionLabel: string | null
   openPicker: (params: {
     title: string
     subtitle?: string | null
     sources: RecordingSource[]
     detectedId?: string | null
+    suggestionLabel?: string | null
   }) => void
   closePicker: () => void
 }
@@ -22,14 +24,16 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   subtitle: null,
   sources: [],
   detectedId: null,
+  suggestionLabel: null,
 
-  openPicker: ({ title, subtitle = null, sources, detectedId = null }) =>
+  openPicker: ({ title, subtitle = null, sources, detectedId = null, suggestionLabel = null }) =>
     set({
       isOpen: true,
       title,
       subtitle,
       sources,
       detectedId,
+      suggestionLabel,
     }),
 
   closePicker: () =>
@@ -38,5 +42,6 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       subtitle: null,
       sources: [],
       detectedId: null,
+      suggestionLabel: null,
     }),
 }))
