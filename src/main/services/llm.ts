@@ -449,6 +449,10 @@ export class OllamaProvider implements LLMProvider {
       discussion: 'discussion',
       status_updates: 'statusUpdates',
     }
+    const scopedTranscriptTimestamps =
+      transcriptLines.length > 0
+        ? transcriptLines.map((line) => line.startMs)
+        : transcriptTimestamps
 
     for (const [rawKey, resultKey] of Object.entries(fieldMap)) {
       const items = parsed[rawKey]
@@ -467,8 +471,8 @@ export class OllamaProvider implements LLMProvider {
         const titleKey = String(item.title).toLowerCase().trim()
         // Skip duplicates (same title within this chunk or across chunks)
         if (seenTitles.has(titleKey) || existingTitles.has(titleKey)) continue
-        const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps)
-        const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps)
+        const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, scopedTranscriptTimestamps)
+        const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, scopedTranscriptTimestamps)
         if (!this.isGroundedItem(item, sourceStartMs, sourceEndMs, transcriptLines)) continue
         seenTitles.add(titleKey)
 

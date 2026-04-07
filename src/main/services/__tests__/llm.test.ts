@@ -68,4 +68,43 @@ describe('OllamaProvider grounding', () => {
     expect(result.information).toHaveLength(1)
     expect(result.information[0].title).toContain('30%')
   })
+
+  it('snaps timestamps within the current transcript chunk to avoid cross-chunk jumps', () => {
+    const fullTranscript = [
+      '[00:00] [Speaker] Team introductions and agenda review.',
+      '[10:00] [Speaker] We should migrate the billing API before launch.',
+      '[10:05] [Speaker] Chris will own the billing API migration plan.',
+    ].join('\n')
+    const chunkTranscript = [
+      '[10:00] [Speaker] We should migrate the billing API before launch.',
+      '[10:05] [Speaker] Chris will own the billing API migration plan.',
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        decisions: [],
+        action_items: [
+          {
+            topic: 'Billing API',
+            title: 'Prepare billing API migration',
+            content: 'Chris will own the billing API migration plan before launch.',
+            sourceStartMs: 1000,
+            sourceEndMs: 1000,
+          },
+        ],
+        information: [],
+        discussion: [],
+        status_updates: [],
+      }),
+      undefined,
+      605_000,
+      (provider as any).extractTimestampsMs(fullTranscript),
+      (provider as any).parseTranscriptLines(chunkTranscript),
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.actionItems[0].sourceStartMs).toBe(600_000)
+    expect(result.actionItems[0].sourceEndMs).toBe(600_000)
+  })
 })
