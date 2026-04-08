@@ -2,6 +2,7 @@ node_modules
 dist
 out
 .DS_Store
+._*
 .eslintcache
 *.log*
 .superpowers/
@@ -21,3 +22,4 @@ resources/trayTemplate@2x.png
 
 # Generated native detector binaries
 native/*/bin/
+resources/certs/*.p12

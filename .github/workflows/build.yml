@@ -109,14 +109,24 @@ jobs:
       - name: Run bootstrap tests
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
+      - name: Materialize DigiCert client certificate
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP 'Certificate_pkcs12.p12'
+          [System.IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Setup DigiCert signing tools
         if: startsWith(github.ref, 'refs/tags/')
         uses: digicert/ssm-code-signing@v1.0.0
         env:
           SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ***REMOVED***
-          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
         if: startsWith(github.ref, 'refs/tags/')
@@ -137,22 +147,23 @@ jobs:
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ***REMOVED***
-          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
         run: |
           & $env:SMCTL_PATH healthcheck
-          & $env:SMCTL_PATH windows certsync --keypair-alias=REDACTED_KEYPAIR_ALIAS --store=system
+          & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ***REMOVED***
-          SM_CLIENT_CERT_FILE: ${{github.workspace}}\resources\certs\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ***REMOVED***
-          SM_KEYPAIR_ALIAS: REDACTED_KEYPAIR_ALIAS
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
         run: npm run build:win
 
       - name: Verify Windows signatures
