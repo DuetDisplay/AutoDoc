@@ -1,24 +1,86 @@
 #Requires -Version 5.1
 <#
-  Smoke checks for Windows installed-copy policy (single instance, upgrade/downgrade, redirect).
+  Smoke tests for Windows installed-copy policy.
+  Verifies single instance, same-version redirect, upgrade/downgrade prompts, and quit behavior.
 
-  Build two versions locally, e.g.:
-    npx electron-vite build
+  ── Prerequisites ─────────────────────────────────────────────────────────
+
+  You need two local builds with different version numbers.  Pick the current
+  version from package.json (the "newer" one) and one version below it (the
+  "older" one).  For example if package.json says 0.1.8:
+
+    $Stamp = Get-Date -Format "HHmmss"      # e.g. "142305"
+
+    npx electron-vite build                  # compile JS once
+
+    # Older version (0.1.7)
     npx electron-builder --win --publish never `
       "-c.forceCodeSigning=false" "-c.win.signAndEditExecutable=false" `
-      "-c.extraMetadata.version=0.1.7" "-c.directories.output=build-017-<STAMP>"
-    (repeat for 0.1.8 -> build-018-<STAMP>)
+      "-c.extraMetadata.version=0.1.7" "-c.directories.output=build-older-$Stamp"
 
-  Optional env:
-    $env:AUTODOC_SMOKE_STAMP = '<STAMP>'   # default: 165235 — must match your build-* folder suffix
+    # Newer / current version (0.1.8)
+    npx electron-builder --win --publish never `
+      "-c.forceCodeSigning=false" "-c.win.signAndEditExecutable=false" `
+      "-c.extraMetadata.version=0.1.8" "-c.directories.output=build-newer-$Stamp"
 
-  Expects under repo root:
-    build-017-<STAMP>\autodoc-0.1.7-setup.exe
-    build-018-<STAMP>\autodoc-0.1.8-setup.exe
-    build-017-<STAMP>\win-unpacked\autodoc.exe
-    build-018-<STAMP>\win-unpacked\autodoc.exe
+  Then run:
+    $env:AUTODOC_SMOKE_STAMP = $Stamp
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-install-policy-smoke.ps1
+
+  ── Environment variables ─────────────────────────────────────────────────
+
+    AUTODOC_SMOKE_STAMP     Build folder suffix (required — no default)
+    AUTODOC_SMOKE_OLDER     Older version string  (default: read from package.json, patch - 1)
+    AUTODOC_SMOKE_NEWER     Newer version string  (default: read from package.json)
+
+  The script expects under the repo root:
+    build-older-<STAMP>\autodoc-<OLDER>-setup.exe   (installer)
+    build-newer-<STAMP>\autodoc-<NEWER>-setup.exe   (installer)
+    build-older-<STAMP>\win-unpacked\autodoc.exe    (loose copy)
+    build-newer-<STAMP>\win-unpacked\autodoc.exe    (loose copy)
 #>
 $ErrorActionPreference = 'Stop'
+
+# ─── Resolve versions ──────────────────────────────────────────────────────
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+$Stamp = $env:AUTODOC_SMOKE_STAMP
+if ([string]::IsNullOrWhiteSpace($Stamp)) {
+  throw "Set `$env:AUTODOC_SMOKE_STAMP to the suffix of your build-older-* / build-newer-* folders before running."
+}
+
+function Get-PackageJsonVersion {
+  $pkg = Get-Content (Join-Path $RepoRoot 'package.json') -Raw | ConvertFrom-Json
+  return $pkg.version
+}
+
+function Get-PreviousPatchVersion([string]$Version) {
+  $parts = $Version -split '\.'
+  if ($parts.Count -lt 3) { throw "Cannot derive previous patch from version '$Version'" }
+  $patch = [int]$parts[-1]
+  if ($patch -le 0) { throw "Patch is already 0 for version '$Version' — set AUTODOC_SMOKE_OLDER explicitly" }
+  $parts[-1] = [string]($patch - 1)
+  return $parts -join '.'
+}
+
+$NewerVersion = $env:AUTODOC_SMOKE_NEWER
+if ([string]::IsNullOrWhiteSpace($NewerVersion)) { $NewerVersion = Get-PackageJsonVersion }
+$OlderVersion = $env:AUTODOC_SMOKE_OLDER
+if ([string]::IsNullOrWhiteSpace($OlderVersion)) { $OlderVersion = Get-PreviousPatchVersion $NewerVersion }
+
+Write-Host "Smoke test: older=$OlderVersion  newer=$NewerVersion  stamp=$Stamp" -ForegroundColor Cyan
+
+# ─── Paths ─────────────────────────────────────────────────────────────────
+
+$SetupOlder = Join-Path $RepoRoot "build-older-$Stamp\autodoc-$OlderVersion-setup.exe"
+$SetupNewer = Join-Path $RepoRoot "build-newer-$Stamp\autodoc-$NewerVersion-setup.exe"
+$LooseOlder = Join-Path $RepoRoot "build-older-$Stamp\win-unpacked\autodoc.exe"
+$LooseNewer = Join-Path $RepoRoot "build-newer-$Stamp\win-unpacked\autodoc.exe"
+$InstalledDir = Join-Path $env:LOCALAPPDATA 'Programs\autodoc'
+$InstalledExe = Join-Path $InstalledDir 'autodoc.exe'
+
+# ─── Win32 dialog detection ───────────────────────────────────────────────
 
 Add-Type -AssemblyName Microsoft.VisualBasic | Out-Null
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
@@ -67,16 +129,6 @@ public static class NativePolicyDialog {
   }
 }
 '@
-
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Stamp = $env:AUTODOC_SMOKE_STAMP
-if ([string]::IsNullOrWhiteSpace($Stamp)) { $Stamp = '165235' }
-$Setup017 = Join-Path $RepoRoot "build-017-$Stamp\autodoc-0.1.7-setup.exe"
-$Setup018 = Join-Path $RepoRoot "build-018-$Stamp\autodoc-0.1.8-setup.exe"
-$Loose017 = Join-Path $RepoRoot "build-017-$Stamp\win-unpacked\autodoc.exe"
-$Loose018 = Join-Path $RepoRoot "build-018-$Stamp\win-unpacked\autodoc.exe"
-$InstalledDir = Join-Path $env:LOCALAPPDATA 'Programs\autodoc'
-$InstalledExe = Join-Path $InstalledDir 'autodoc.exe'
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -182,10 +234,10 @@ function Wait-InstanceCount {
 
 # ─── Pre-checks ─────────────────────────────────────────────────────────────
 
-Assert-File $Setup017 '0.1.7 installer'
-Assert-File $Setup018 '0.1.8 installer'
-Assert-File $Loose017 '0.1.7 loose'
-Assert-File $Loose018 '0.1.8 loose'
+Assert-File $SetupOlder "$OlderVersion installer"
+Assert-File $SetupNewer "$NewerVersion installer"
+Assert-File $LooseOlder "$OlderVersion loose"
+Assert-File $LooseNewer "$NewerVersion loose"
 
 $results = [System.Collections.Generic.List[object]]::new()
 function Record {
@@ -203,8 +255,8 @@ try {
   Uninstall-Silent
 
   # 1 ── Single launch
-  Write-Step '1) Install 0.1.8, launch installed — opens normally'
-  Install-Silent $Setup018
+  Write-Step "1) Install $NewerVersion, launch installed — opens normally"
+  Install-Silent $SetupNewer
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 6
   $c = Get-InstanceRootCount
@@ -223,7 +275,7 @@ try {
 
   # 3a ── Same-version loose cold — redirects to installed copy
   Write-Step '3a) Same-version loose when not running — redirects to installed, no dialog'
-  Start-Process -FilePath $Loose018 | Out-Null
+  Start-Process -FilePath $LooseNewer | Out-Null
   Start-Sleep -Seconds 12
   $dlg = Send-Dialog -Choice Accept -TimeoutSec 3 -Quiet
   $c3 = Get-InstanceRootCount
@@ -245,7 +297,7 @@ try {
   Write-Step '3b) Same-version loose while running — focus, no dialog'
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 6
-  Start-Process -FilePath $Loose018 | Out-Null
+  Start-Process -FilePath $LooseNewer | Out-Null
   Start-Sleep -Seconds 6
   $dlg3b = Send-Dialog -Choice Accept -TimeoutSec 4 -Quiet
   $c3b = Get-InstanceRootCount
@@ -253,11 +305,11 @@ try {
   Record '3b same-ver loose warm' ((-not $dlg3b) -and ($c3b -eq 1)) "dialog: $dlg3b, instances: $c3b"
 
   # 4 ── Upgrade cold
-  Write-Step '4) Upgrade: install 0.1.7, loose 0.1.8 cold — accept'
+  Write-Step "4) Upgrade: install $OlderVersion, loose $NewerVersion cold — accept"
   Uninstall-Silent
-  Install-Silent $Setup017
+  Install-Silent $SetupOlder
   $vPre = Get-InstalledVersion
-  Start-Process -FilePath $Loose018 | Out-Null
+  Start-Process -FilePath $LooseNewer | Out-Null
   Start-Sleep -Seconds 12
   $ok4 = Send-Dialog -Choice Accept -TimeoutSec 90
   if (-not $ok4) { throw 'Upgrade dialog not found' }
@@ -265,14 +317,14 @@ try {
   Start-Sleep -Seconds 8
   $vPost = Get-InstalledVersion
   Stop-AllAutodoc
-  Record '4 upgrade cold accept' ($vPost -eq '0.1.8') "version: $vPre -> $vPost"
+  Record '4 upgrade cold accept' ($vPost -eq $NewerVersion) "version: $vPre -> $vPost"
 
   # 5 ── Downgrade cold
-  Write-Step '5) Downgrade: install 0.1.8, loose 0.1.7 cold — accept'
+  Write-Step "5) Downgrade: install $NewerVersion, loose $OlderVersion cold — accept"
   Uninstall-Silent
-  Install-Silent $Setup018
+  Install-Silent $SetupNewer
   $vPre5 = Get-InstalledVersion
-  Start-Process -FilePath $Loose017 | Out-Null
+  Start-Process -FilePath $LooseOlder | Out-Null
   Start-Sleep -Seconds 12
   $ok5 = Send-Dialog -Choice Accept -TimeoutSec 90
   if (-not $ok5) { throw 'Downgrade dialog not found' }
@@ -280,15 +332,15 @@ try {
   Start-Sleep -Seconds 8
   $vPost5 = Get-InstalledVersion
   Stop-AllAutodoc
-  Record '5 downgrade cold accept' ($vPost5 -eq '0.1.7') "version: $vPre5 -> $vPost5"
+  Record '5 downgrade cold accept' ($vPost5 -eq $OlderVersion) "version: $vPre5 -> $vPost5"
 
   # 6 ── Upgrade warm
-  Write-Step '6) Upgrade warm: install 0.1.7 running + loose 0.1.8 — accept'
+  Write-Step "6) Upgrade warm: install $OlderVersion running + loose $NewerVersion — accept"
   Uninstall-Silent
-  Install-Silent $Setup017
+  Install-Silent $SetupOlder
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 8
-  Start-Process -FilePath $Loose018 | Out-Null
+  Start-Process -FilePath $LooseNewer | Out-Null
   Start-Sleep -Seconds 10
   $ok6 = Send-Dialog -Choice Accept -TimeoutSec 90
   if (-not $ok6) { throw 'Upgrade warm dialog not found' }
@@ -296,15 +348,15 @@ try {
   Start-Sleep -Seconds 8
   $v6 = Get-InstalledVersion
   Stop-AllAutodoc
-  Record '6 upgrade warm accept' ($v6 -eq '0.1.8') "version: $v6"
+  Record '6 upgrade warm accept' ($v6 -eq $NewerVersion) "version: $v6"
 
   # 7 ── Downgrade warm
-  Write-Step '7) Downgrade warm: install 0.1.8 running + loose 0.1.7 — accept'
+  Write-Step "7) Downgrade warm: install $NewerVersion running + loose $OlderVersion — accept"
   Uninstall-Silent
-  Install-Silent $Setup018
+  Install-Silent $SetupNewer
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 8
-  Start-Process -FilePath $Loose017 | Out-Null
+  Start-Process -FilePath $LooseOlder | Out-Null
   Start-Sleep -Seconds 10
   $ok7 = Send-Dialog -Choice Accept -TimeoutSec 90
   if (-not $ok7) { throw 'Downgrade warm dialog not found' }
@@ -312,14 +364,14 @@ try {
   Start-Sleep -Seconds 8
   $v7 = Get-InstalledVersion
   Stop-AllAutodoc
-  Record '7 downgrade warm accept' ($v7 -eq '0.1.7') "version: $v7"
+  Record '7 downgrade warm accept' ($v7 -eq $OlderVersion) "version: $v7"
 
   # 8 ── Quit on upgrade
   Write-Step '8) Upgrade quit — installed unchanged, loose exits'
   Uninstall-Silent
-  Install-Silent $Setup017
+  Install-Silent $SetupOlder
   $v8pre = Get-InstalledVersion
-  $p8 = Start-Process -FilePath $Loose018 -PassThru
+  $p8 = Start-Process -FilePath $LooseNewer -PassThru
   Start-Sleep -Seconds 10
   $q8 = Send-Dialog -Choice Quit -TimeoutSec 90
   if (-not $q8) { throw 'Upgrade quit dialog not found' }
@@ -333,9 +385,9 @@ try {
   # 9 ── Quit on downgrade
   Write-Step '9) Downgrade quit — installed unchanged, loose exits'
   Uninstall-Silent
-  Install-Silent $Setup018
+  Install-Silent $SetupNewer
   $v9pre = Get-InstalledVersion
-  $p9 = Start-Process -FilePath $Loose017 -PassThru
+  $p9 = Start-Process -FilePath $LooseOlder -PassThru
   Start-Sleep -Seconds 10
   $q9 = Send-Dialog -Choice Quit -TimeoutSec 90
   if (-not $q9) { throw 'Downgrade quit dialog not found' }
