@@ -24,7 +24,9 @@ resources/trayTemplate@2x.png
 native/*/bin/
 resources/certs/*.p12
 
-# Local electron-builder outputs / loose copies for install-policy smoke tests (see scripts/*install-policy-smoke*)
+# Local electron-builder outputs for install-policy smoke tests (see scripts/*install-policy-smoke*)
+build-older-*/
+build-newer-*/
 build-[0-9][0-9][0-9]-*/
 build-out-*/
 build-output-*/
