@@ -35,7 +35,6 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Install Apple certificate
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
@@ -62,10 +61,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
         run: npm run build:mac
 
-      - name: Build macOS artifacts (unsigned)
+      - name: Build macOS artifacts (signed, no notarization)
         if: github.ref_type == 'branch'
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
       - name: Upload macOS artifacts
