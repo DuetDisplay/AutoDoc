@@ -145,8 +145,8 @@ if (!gotSingleInstanceLock) {
 
   initializeMainSentry()
 
-  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
-    void handleSecondInstanceLaunch(additionalData).then((handled) => {
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    void handleSecondInstanceLaunch(additionalData, argv).then((handled) => {
       if (!handled) {
         focusMainWindow()
       }

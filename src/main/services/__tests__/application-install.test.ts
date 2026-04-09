@@ -1,22 +1,44 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockAccess = vi.fn()
+const mockReadFile = vi.fn()
 const mockExecFile = vi.fn()
+const mockExecFileSync = vi.fn()
 const mockSpawn = vi.fn()
+const mockWriteFileSync = vi.fn()
 const mockShowMessageBox = vi.fn()
+const mockExit = vi.fn()
 const mockQuit = vi.fn()
 const mockGetVersion = vi.fn()
 const mockGetName = vi.fn()
 const mockGetPath = vi.fn()
 const mockUnref = vi.fn()
 
+function mockWindowsPaths(exePath = 'D:\\Builds\\AutoDoc\\autodoc.exe', tempPath = 'C:\\Temp') {
+  mockGetPath.mockImplementation((name: string) => {
+    if (name === 'exe') {
+      return exePath
+    }
+    if (name === 'temp') {
+      return tempPath
+    }
+    throw new Error(`unexpected app.getPath(${name})`)
+  })
+}
+
 vi.mock('node:fs/promises', () => ({
   access: mockAccess,
+  readFile: mockReadFile,
 }))
 
 vi.mock('node:child_process', () => ({
   execFile: mockExecFile,
+  execFileSync: mockExecFileSync,
   spawn: mockSpawn,
+}))
+
+vi.mock('node:fs', () => ({
+  writeFileSync: mockWriteFileSync,
 }))
 
 vi.mock('electron', () => ({
@@ -25,6 +47,7 @@ vi.mock('electron', () => ({
     getVersion: mockGetVersion,
     getName: mockGetName,
     getPath: mockGetPath,
+    exit: mockExit,
     quit: mockQuit,
   },
   dialog: {
@@ -46,10 +69,14 @@ describe('application-install', () => {
       if (name === 'exe') {
         return '/Volumes/AutoDoc/AutoDoc.app/Contents/MacOS/AutoDoc'
       }
+      if (name === 'temp') {
+        return '/tmp'
+      }
       throw new Error(`unexpected app.getPath(${name})`)
     })
     mockShowMessageBox.mockResolvedValue({ response: 0 })
     mockAccess.mockResolvedValue(undefined)
+    mockReadFile.mockRejectedValue(new Error('missing package.json'))
     mockSpawn.mockReturnValue({ unref: mockUnref })
     mockExecFile.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       callback(null, { stdout: '0.1.5\n', stderr: '' })
@@ -126,12 +153,7 @@ describe('application-install', () => {
   })
 
   it('prompts for an upgrade when a different Windows install is found', async () => {
-    mockGetPath.mockImplementation((name: string) => {
-      if (name === 'exe') {
-        return 'D:\\Builds\\AutoDoc\\autodoc.exe'
-      }
-      throw new Error(`unexpected app.getPath(${name})`)
-    })
+    mockWindowsPaths()
     mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       if (command === 'powershell.exe') {
         callback(null, {
@@ -151,26 +173,24 @@ describe('application-install', () => {
       title: 'Upgrade Installed Copy',
       buttons: ['Upgrade Installed Copy', 'Quit'],
     }))
-    expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
-      detached: true,
-      env: expect.objectContaining({
-        AUTODOC_TERMINATE_PIDS: '',
-        AUTODOC_WAIT_PIDS: String(process.pid),
-      }),
+    expect(mockExecFileSync).toHaveBeenCalledWith('schtasks.exe', expect.any(Array), expect.objectContaining({
+      encoding: 'utf8',
       stdio: 'ignore',
+      windowsHide: true,
     }))
-    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Wait-Process')
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    const createTaskArgs = (mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')
+    expect(createTaskArgs).toContain('/Create')
+    expect(createTaskArgs).toContain('/TR')
+    const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
+    expect(launcherScript).toContain('-File')
+    expect(launcherScript).toContain('-WaitPids')
+    expect(launcherScript).toContain('schtasks /Delete /TN')
+    expect(mockQuit).not.toHaveBeenCalled()
   })
 
   it('prompts for a downgrade when a newer Windows install is found', async () => {
     mockGetVersion.mockReturnValue('0.1.4')
-    mockGetPath.mockImplementation((name: string) => {
-      if (name === 'exe') {
-        return 'D:\\Builds\\AutoDoc\\autodoc.exe'
-      }
-      throw new Error(`unexpected app.getPath(${name})`)
-    })
+    mockWindowsPaths()
     mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       if (command === 'powershell.exe') {
         callback(null, {
@@ -190,21 +210,22 @@ describe('application-install', () => {
       title: 'Downgrade Installed Copy',
       buttons: ['Downgrade Installed Copy', 'Quit'],
     }))
-    expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
-      detached: true,
+    expect(mockExecFileSync).toHaveBeenCalledWith('schtasks.exe', expect.any(Array), expect.objectContaining({
+      encoding: 'utf8',
       stdio: 'ignore',
+      windowsHide: true,
     }))
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect((mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')).toContain('/Create')
+    const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
+    expect(launcherScript).toContain('-File')
+    expect(launcherScript).toContain('-WaitPids')
+    expect(launcherScript).toContain('schtasks /Delete /TN')
+    expect(mockQuit).not.toHaveBeenCalled()
   })
 
   it('handles a Windows lock conflict by prompting from the launched loose copy', async () => {
     mockGetVersion.mockReturnValue('0.1.8')
-    mockGetPath.mockImplementation((name: string) => {
-      if (name === 'exe') {
-        return 'D:\\Builds\\AutoDoc\\autodoc.exe'
-      }
-      throw new Error(`unexpected app.getPath(${name})`)
-    })
+    mockWindowsPaths()
     mockExecFile.mockImplementation((command: string, args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       if (command !== 'powershell.exe') {
         callback(null, { stdout: '', stderr: '' })
@@ -239,17 +260,50 @@ describe('application-install', () => {
       title: 'Upgrade Installed Copy',
       buttons: ['Upgrade Installed Copy', 'Quit'],
     }))
-    expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
-      detached: true,
-      env: expect.objectContaining({
-        AUTODOC_TERMINATE_PIDS: '4321,5678',
-        AUTODOC_WAIT_PIDS: `${process.pid},4321,5678`,
-      }),
+    expect(mockExecFileSync).toHaveBeenCalledWith('schtasks.exe', expect.any(Array), expect.objectContaining({
+      encoding: 'utf8',
       stdio: 'ignore',
+      windowsHide: true,
     }))
-    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Stop-Process')
-    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Wait-Process')
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect((mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')).toContain('/Create')
+    const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
+    expect(launcherScript).toContain('-TerminatePids "4321,5678"')
+    expect(launcherScript).toContain(`-WaitPids "${process.pid},4321,5678"`)
+    expect(launcherScript).toContain('schtasks /Delete /TN')
+    expect(mockQuit).not.toHaveBeenCalled()
+  })
+
+  it('handles a Windows downgrade launch from an older copy without structured launch data', async () => {
+    mockGetVersion.mockReturnValue('0.1.8')
+    mockWindowsPaths('C:\\Users\\chris\\AppData\\Local\\Programs\\AutoDoc\\autodoc.exe')
+    mockReadFile.mockResolvedValue(JSON.stringify({ version: '0.1.6' }))
+    mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (command === 'powershell.exe') {
+        callback(null, {
+          stdout: '{"DisplayVersion":"0.1.8","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}',
+          stderr: '',
+        })
+        return
+      }
+
+      callback(null, { stdout: '', stderr: '' })
+    })
+
+    const { handleSecondInstanceLaunch } = await loadModule()
+
+    await expect(handleSecondInstanceLaunch(undefined, ['D:\\Builds\\Old\\autodoc.exe'], 'win32')).resolves.toBe(true)
+
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Downgrade Installed Copy',
+      buttons: ['Downgrade Installed Copy', 'Quit'],
+    }))
+    expect(mockExecFileSync).toHaveBeenCalledWith('schtasks.exe', expect.any(Array), expect.objectContaining({
+      encoding: 'utf8',
+      stdio: 'ignore',
+      windowsHide: true,
+    }))
+    const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
+    expect(launcherScript).toContain('-WaitPids')
   })
 
   it('handles a second-instance launch from a different macOS version', async () => {

@@ -1,5 +1,6 @@
-import { execFile as execFileCallback, spawn } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { execFile as execFileCallback, execFileSync, spawn } from 'node:child_process'
+import { access, readFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { app, dialog } from 'electron'
@@ -72,7 +73,7 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
     locationLabel: installedApplication.locationLabel,
   })
   if (!userAcceptedReplacement) {
-    app.quit()
+    quitForInstalledCopyPolicy(platform)
     return false
   }
 
@@ -104,23 +105,30 @@ function normalizeVersion(version: string): number[] {
     .filter((segment) => Number.isFinite(segment))
 }
 
-export async function handleSecondInstanceLaunch(additionalData: unknown, platform: NodeJS.Platform = process.platform): Promise<boolean> {
-  if (!shouldEnforceInstalledCopyPolicy(platform) || secondInstancePromptOpen) {
+export async function handleSecondInstanceLaunch(
+  additionalData: unknown,
+  argvOrPlatform: string[] | NodeJS.Platform = [],
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  const argv = Array.isArray(argvOrPlatform) ? argvOrPlatform : []
+  const resolvedPlatform = Array.isArray(argvOrPlatform) ? platform : argvOrPlatform
+
+  if (!shouldEnforceInstalledCopyPolicy(resolvedPlatform) || secondInstancePromptOpen) {
     return false
   }
 
-  const secondInstance = parseSecondInstanceLaunchData(additionalData)
-  if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== platform) {
+  const secondInstance = await resolveSecondInstanceLaunchData(additionalData, argv, resolvedPlatform)
+  if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== resolvedPlatform) {
     return false
   }
 
-  const currentApplication = getCurrentApplication(platform)
-  const installedApplication = await readInstalledApplication(platform)
-  if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
+  const currentApplication = getCurrentApplication(resolvedPlatform)
+  const installedApplication = await readInstalledApplication(resolvedPlatform)
+  if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, resolvedPlatform)) {
     return false
   }
 
-  if (sameApplicationCopy(secondInstance.containerPath, currentApplication.containerPath, platform)) {
+  if (sameApplicationCopy(secondInstance.containerPath, currentApplication.containerPath, resolvedPlatform)) {
     return false
   }
 
@@ -131,7 +139,7 @@ export async function handleSecondInstanceLaunch(additionalData: unknown, platfo
   secondInstancePromptOpen = true
   try {
     const userAcceptedReplacement = await promptForInstalledCopyReplacement({
-      platform,
+      platform: resolvedPlatform,
       sourceVersion: secondInstance.version ?? app.getVersion(),
       installedVersion: installedApplication.version,
       locationLabel: installedApplication.locationLabel,
@@ -146,7 +154,7 @@ export async function handleSecondInstanceLaunch(additionalData: unknown, platfo
       return true
     }
 
-    replaceInstalledCopyAndRelaunch(sourceApplication, installedApplication, platform)
+    replaceInstalledCopyAndRelaunch(sourceApplication, installedApplication, resolvedPlatform)
     return true
   } finally {
     secondInstancePromptOpen = false
@@ -182,7 +190,7 @@ export async function handleSingleInstanceLockFailure(platform: NodeJS.Platform 
       locationLabel: installedApplication.locationLabel,
     })
     if (!userAcceptedReplacement) {
-      app.quit()
+      quitForInstalledCopyPolicy(platform)
       return true
     }
 
@@ -317,6 +325,50 @@ async function readRunningWindowsProcessIds(executablePath: string): Promise<num
   } catch {
     return []
   }
+}
+
+async function readFallbackWindowsSecondInstanceExecutablePath(): Promise<string | null> {
+  const currentExecutablePath = app.getPath('exe')
+  const executableName = basename(currentExecutablePath)
+  const script = [
+    `$processes = Get-CimInstance Win32_Process -Filter "Name = '${escapePowerShellSingleQuotedString(executableName)}'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath`,
+    'if ($processes) { $processes | ConvertTo-Json -Compress }',
+  ].join('; ')
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const { stdout } = await execFile('powershell.exe', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script,
+      ], {
+        encoding: 'utf8',
+      })
+
+      const trimmed = stdout.trim()
+      if (trimmed) {
+        const parsed = JSON.parse(trimmed) as string | string[]
+        const executablePaths = Array.isArray(parsed) ? parsed : [parsed]
+        const candidate = executablePaths.find((value) => (
+          typeof value === 'string'
+          && normalizeWindowsPath(value) !== normalizeWindowsPath(currentExecutablePath)
+        )) ?? null
+        if (candidate) {
+          return candidate
+        }
+      }
+    } catch {
+      // Keep polling briefly while the launched legacy process is still exiting.
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+
+  return null
 }
 
 async function readWindowsInstallFromRegistry(executableName: string): Promise<InstalledApplication | null> {
@@ -462,6 +514,41 @@ function parseSecondInstanceLaunchData(additionalData: unknown): SecondInstanceL
   }
 }
 
+async function resolveSecondInstanceLaunchData(
+  additionalData: unknown,
+  argv: string[],
+  platform: NodeJS.Platform,
+): Promise<SecondInstanceLaunchData | null> {
+  const structuredData = parseSecondInstanceLaunchData(additionalData)
+  if (structuredData) {
+    return structuredData
+  }
+
+  if (platform !== 'win32') {
+    return null
+  }
+
+  const fallbackExecutablePath = parseWindowsSecondInstanceExecutablePath(argv)
+    ?? await readFallbackWindowsSecondInstanceExecutablePath()
+  if (!fallbackExecutablePath) {
+    return null
+  }
+
+  try {
+    await access(fallbackExecutablePath)
+  } catch {
+    return null
+  }
+
+  return {
+    containerPath: dirname(fallbackExecutablePath),
+    executablePath: fallbackExecutablePath,
+    packaged: true,
+    platform,
+    version: await readPackagedApplicationVersion(dirname(fallbackExecutablePath), platform),
+  }
+}
+
 function sameApplicationCopy(leftPath: string, rightPath: string, platform: NodeJS.Platform): boolean {
   if (platform === 'win32') {
     return normalizeWindowsPath(leftPath) === normalizeWindowsPath(rightPath)
@@ -501,7 +588,7 @@ function replaceInstalledCopyAndRelaunch(
     if (platform === 'darwin') {
       relaunchInstalledMacBundle(sourceApplication.containerPath, installedApplication.launchPath)
     } else if (platform === 'win32') {
-      relaunchInstalledWindowsCopy(
+      void relaunchInstalledWindowsCopy(
         sourceApplication.containerPath,
         installedApplication.containerPath,
         installedApplication.launchPath,
@@ -514,7 +601,39 @@ function replaceInstalledCopyAndRelaunch(
     void showReplacementError(platform, error)
   }
 
-  app.quit()
+  quitForInstalledCopyPolicy(platform)
+}
+
+async function readPackagedApplicationVersion(containerPath: string, platform: NodeJS.Platform): Promise<string | null> {
+  const packageJsonPath = platform === 'darwin'
+    ? join(containerPath, 'Contents', 'Resources', 'app.asar', 'package.json')
+    : join(containerPath, 'resources', 'app.asar', 'package.json')
+
+  try {
+    const packageJson = await readFile(packageJsonPath, 'utf8')
+    const parsed = JSON.parse(packageJson) as { version?: unknown }
+    return typeof parsed.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : null
+  } catch {
+    return null
+  }
+}
+
+function parseWindowsSecondInstanceExecutablePath(argv: string[]): string | null {
+  const expectedExecutableName = basename(app.getPath('exe')).toLowerCase()
+
+  for (const value of argv) {
+    if (typeof value !== 'string') continue
+
+    const trimmed = value.trim().replace(/^"(.*)"$/, '$1')
+    if (!trimmed.toLowerCase().endsWith('.exe')) continue
+    if (basename(trimmed).toLowerCase() !== expectedExecutableName) continue
+
+    return trimmed
+  }
+
+  return null
 }
 
 function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePath: string): void {
@@ -550,48 +669,186 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
   child.unref()
 }
 
-function relaunchInstalledWindowsCopy(
+async function relaunchInstalledWindowsCopy(
   sourceRoot: string,
   installedRoot: string,
   installedExecutablePath: string,
   options?: WindowsReplacementOptions,
-): void {
+): Promise<void> {
   const terminateProcessIds = Array.from(new Set(options?.terminateProcessIds?.filter((processId) => processId > 0) ?? []))
   const waitForProcessIds = Array.from(new Set(options?.waitForProcessIds?.filter((processId) => processId > 0) ?? [process.pid]))
-  const script = [
-    '$pidValues = @()',
-    'if ($env:AUTODOC_WAIT_PIDS) { $pidValues = $env:AUTODOC_WAIT_PIDS -split "," | Where-Object { $_ } | ForEach-Object { [int]$_ } }',
-    '$terminatePids = @()',
-    'if ($env:AUTODOC_TERMINATE_PIDS) { $terminatePids = $env:AUTODOC_TERMINATE_PIDS -split "," | Where-Object { $_ } | ForEach-Object { [int]$_ } }',
-    'if ($terminatePids.Count -gt 0) { Stop-Process -Id $terminatePids -Force -ErrorAction SilentlyContinue }',
-    'if ($pidValues.Count -gt 0) { Wait-Process -Id $pidValues -ErrorAction SilentlyContinue }',
-    '$source = $env:AUTODOC_SOURCE',
-    '$target = $env:AUTODOC_TARGET',
-    '$targetExe = $env:AUTODOC_TARGET_EXE',
-    '$null = robocopy $source $target /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP',
-    'Start-Process -FilePath $targetExe',
-  ].join('; ')
+  const helperBasePath = join(app.getPath('temp'), `autodoc-installed-copy-${process.pid}-${Date.now()}`)
+  const scriptPath = `${helperBasePath}.ps1`
+  const launcherPath = `${helperBasePath}.cmd`
+  const logPath = `${helperBasePath}.log`
+  const scheduledTaskName = `AutoDocInstalledCopy-${process.pid}-${Date.now()}`
+  const script = `
+param(
+  [string]$Source,
+  [string]$Target,
+  [string]$TargetExe,
+  [string]$TerminatePids,
+  [string]$WaitPids,
+  [string]$LogPath
+)
 
-  const child = spawn('powershell.exe', [
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    script,
+$ErrorActionPreference = 'Stop'
+
+function Get-DescendantProcessIds([int[]]$RootIds) {
+  $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  if ($allProcesses.Count -eq 0) {
+    return @()
+  }
+
+  $childrenByParent = @{}
+  foreach ($process in $allProcesses) {
+    if (-not $childrenByParent.ContainsKey($process.ParentProcessId)) {
+      $childrenByParent[$process.ParentProcessId] = [System.Collections.Generic.List[int]]::new()
+    }
+    $childrenByParent[$process.ParentProcessId].Add([int]$process.ProcessId)
+  }
+
+  $pending = [System.Collections.Generic.Queue[int]]::new()
+  $seen = [System.Collections.Generic.HashSet[int]]::new()
+  foreach ($rootId in $RootIds) {
+    if ($rootId -gt 0 -and $seen.Add($rootId)) {
+      $pending.Enqueue($rootId)
+    }
+  }
+
+  while ($pending.Count -gt 0) {
+    $current = $pending.Dequeue()
+    if (-not $childrenByParent.ContainsKey($current)) {
+      continue
+    }
+
+    foreach ($childId in $childrenByParent[$current]) {
+      if ($childId -eq $PID) {
+        continue
+      }
+
+      if ($seen.Add($childId)) {
+        $pending.Enqueue($childId)
+      }
+    }
+  }
+
+  return @($seen)
+}
+
+function Parse-PidList([string]$RawValue) {
+  if ([string]::IsNullOrWhiteSpace($RawValue)) {
+    return @()
+  }
+
+  return @(
+    $RawValue -split ',' |
+      Where-Object { $_ } |
+      ForEach-Object { [int]$_ } |
+      Where-Object { $_ -gt 0 }
+  )
+}
+
+try {
+  $terminateRootIds = Parse-PidList $TerminatePids
+  $waitRootIds = Parse-PidList $WaitPids
+  $terminateIds = @(Get-DescendantProcessIds $terminateRootIds | Where-Object { $_ -ne $PID })
+  $waitIds = @(Get-DescendantProcessIds $waitRootIds | Where-Object { $_ -ne $PID })
+
+  if ($terminateIds.Count -gt 0) {
+    Stop-Process -Id $terminateIds -Force -ErrorAction SilentlyContinue
+  }
+
+  if ($waitIds.Count -gt 0) {
+    Wait-Process -Id $waitIds -ErrorAction SilentlyContinue
+  }
+
+  $null = robocopy $Source $Target /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+  if ($LASTEXITCODE -gt 7) {
+    throw "robocopy failed with exit code $LASTEXITCODE"
+  }
+
+  Start-Process -FilePath $TargetExe -WorkingDirectory (Split-Path -Parent $TargetExe)
+} catch {
+  $message = $_ | Out-String
+  Set-Content -Path $LogPath -Value $message -Encoding UTF8
+}
+`.trim()
+  const launcherScript = [
+    '@echo off',
+    [
+      'powershell.exe',
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-File',
+      quoteWindowsCommandArgument(scriptPath),
+      '-Source',
+      quoteWindowsCommandArgument(sourceRoot),
+      '-Target',
+      quoteWindowsCommandArgument(installedRoot),
+      '-TargetExe',
+      quoteWindowsCommandArgument(installedExecutablePath),
+      '-TerminatePids',
+      quoteWindowsCommandArgument(terminateProcessIds.join(',')),
+      '-WaitPids',
+      quoteWindowsCommandArgument(waitForProcessIds.join(',')),
+      '-LogPath',
+      quoteWindowsCommandArgument(logPath),
+    ].join(' '),
+    `schtasks /Delete /TN ${quoteWindowsCommandArgument(scheduledTaskName)} /F >nul 2>&1`,
+  ].join('\r\n')
+
+  writeFileSync(scriptPath, script, 'utf8')
+  writeFileSync(launcherPath, launcherScript, 'utf8')
+
+  execFileSync('schtasks.exe', [
+    '/Create',
+    '/TN',
+    scheduledTaskName,
+    '/SC',
+    'ONCE',
+    '/ST',
+    formatScheduledTaskTime(),
+    '/TR',
+    `cmd.exe /d /c ${quoteWindowsCommandArgument(launcherPath)}`,
+    '/F',
   ], {
-    detached: true,
-    env: {
-      ...process.env,
-      AUTODOC_SOURCE: sourceRoot,
-      AUTODOC_TARGET: installedRoot,
-      AUTODOC_TARGET_EXE: installedExecutablePath,
-      AUTODOC_TERMINATE_PIDS: terminateProcessIds.join(','),
-      AUTODOC_WAIT_PIDS: waitForProcessIds.join(','),
-    },
+    encoding: 'utf8',
+    windowsHide: true,
     stdio: 'ignore',
   })
+  execFileSync('schtasks.exe', [
+    '/Run',
+    '/TN',
+    scheduledTaskName,
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    stdio: 'ignore',
+  })
+}
 
-  child.unref()
+function quitForInstalledCopyPolicy(platform: NodeJS.Platform): void {
+  if (platform === 'win32') {
+    app.exit(0)
+    return
+  }
+
+  app.quit()
+}
+
+function quoteWindowsCommandArgument(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function formatScheduledTaskTime(date = new Date()): string {
+  const scheduledDate = new Date(date.getTime() + 60_000)
+  const hours = String(scheduledDate.getHours()).padStart(2, '0')
+  const minutes = String(scheduledDate.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
 }
 
 async function showReplacementError(platform: NodeJS.Platform, error: unknown): Promise<void> {
