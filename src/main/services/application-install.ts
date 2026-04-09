@@ -434,13 +434,20 @@ function replaceInstalledCopyAndRelaunch(
 }
 
 function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePath: string): void {
+  const stagedBundlePath = `${installedBundlePath}.codex-staged-${process.pid}`
+  const backupBundlePath = `${installedBundlePath}.codex-backup-${process.pid}`
   const script = [
     'while kill -0 "$AUTODOC_PID" 2>/dev/null; do',
     '  sleep 1',
     'done',
-    'rm -rf "$AUTODOC_TARGET"',
-    '/usr/bin/ditto "$AUTODOC_SOURCE" "$AUTODOC_TARGET"',
-    '/usr/bin/open -a "$AUTODOC_TARGET"',
+    'rm -rf "$AUTODOC_TARGET_TMP" "$AUTODOC_TARGET_BACKUP"',
+    '/usr/bin/ditto "$AUTODOC_SOURCE" "$AUTODOC_TARGET_TMP"',
+    'if [ -d "$AUTODOC_TARGET" ]; then',
+    '  /bin/mv "$AUTODOC_TARGET" "$AUTODOC_TARGET_BACKUP"',
+    'fi',
+    '/bin/mv "$AUTODOC_TARGET_TMP" "$AUTODOC_TARGET"',
+    'rm -rf "$AUTODOC_TARGET_BACKUP"',
+    '/usr/bin/open "$AUTODOC_TARGET"',
   ].join('\n')
 
   const child = spawn('/bin/sh', ['-c', script], {
@@ -450,6 +457,8 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
       AUTODOC_PID: String(process.pid),
       AUTODOC_SOURCE: sourceBundlePath,
       AUTODOC_TARGET: installedBundlePath,
+      AUTODOC_TARGET_BACKUP: backupBundlePath,
+      AUTODOC_TARGET_TMP: stagedBundlePath,
     },
     stdio: 'ignore',
   })
