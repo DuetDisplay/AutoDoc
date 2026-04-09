@@ -32,7 +32,11 @@ import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
-import { enforceMacOSInstallLocation } from './services/application-install'
+import {
+  buildSingleInstanceLaunchData,
+  enforceInstalledApplicationPolicy,
+  handleSecondInstanceLaunch,
+} from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
@@ -73,7 +77,7 @@ let mainSentry: typeof import('@sentry/electron/main') | null = null
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
-const gotSingleInstanceLock = app.requestSingleInstanceLock()
+const gotSingleInstanceLock = app.requestSingleInstanceLock(buildSingleInstanceLaunchData())
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
 const require = createRequire(import.meta.url)
 
@@ -132,8 +136,15 @@ if (!gotSingleInstanceLock) {
 
   initializeMainSentry()
 
-  app.on('second-instance', () => {
-    focusMainWindow()
+  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+    void handleSecondInstanceLaunch(additionalData).then((handled) => {
+      if (!handled) {
+        focusMainWindow()
+      }
+    }).catch((error) => {
+      console.warn('Failed to handle second AutoDoc launch:', error)
+      focusMainWindow()
+    })
   })
 }
 
@@ -187,7 +198,7 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
-  if (!(await enforceMacOSInstallLocation())) return
+  if (!(await enforceInstalledApplicationPolicy())) return
 
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
