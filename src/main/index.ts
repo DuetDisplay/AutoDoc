@@ -36,6 +36,7 @@ import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
   handleSecondInstanceLaunch,
+  handleSingleInstanceLockFailure,
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 
@@ -126,7 +127,15 @@ function initializeMainSentry(): void {
 }
 
 if (!gotSingleInstanceLock) {
-  app.quit()
+  void app.whenReady().then(async () => {
+    const handled = await handleSingleInstanceLockFailure()
+    if (!handled) {
+      app.quit()
+    }
+  }).catch((error) => {
+    console.warn('Failed to handle AutoDoc single-instance conflict:', error)
+    app.quit()
+  })
 } else {
   try {
     analyticsConsentEnabled = readInitialAnalyticsConsent() === true

@@ -4,7 +4,7 @@ on:
   push:
     branches:
       # Add a developer branch here when you want test artifacts from CI.
-      # - your-branch-name
+      - codex/single-instance-installed-copy
       - main
     tags:
       - 'v*'

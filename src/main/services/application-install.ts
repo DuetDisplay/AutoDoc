@@ -31,6 +31,11 @@ interface SecondInstanceLaunchData {
   version: string | null
 }
 
+interface WindowsReplacementOptions {
+  terminateProcessIds?: number[]
+  waitForProcessIds?: number[]
+}
+
 let secondInstancePromptOpen = false
 
 export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = process.platform): Record<string, string | boolean | null> {
@@ -148,6 +153,49 @@ export async function handleSecondInstanceLaunch(additionalData: unknown, platfo
   }
 }
 
+export async function handleSingleInstanceLockFailure(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  if (platform !== 'win32' || !shouldEnforceInstalledCopyPolicy(platform) || secondInstancePromptOpen) {
+    return false
+  }
+
+  const currentApplication = getCurrentApplication(platform)
+  const installedApplication = await readInstalledApplication(platform)
+  if (!installedApplication || sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
+    return false
+  }
+
+  if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
+    return false
+  }
+
+  const runningInstalledProcessIds = await readRunningWindowsProcessIds(installedApplication.executablePath)
+  if (runningInstalledProcessIds.length === 0) {
+    return false
+  }
+
+  secondInstancePromptOpen = true
+  try {
+    const userAcceptedReplacement = await promptForInstalledCopyReplacement({
+      platform,
+      sourceVersion: currentApplication.version ?? app.getVersion(),
+      installedVersion: installedApplication.version,
+      locationLabel: installedApplication.locationLabel,
+    })
+    if (!userAcceptedReplacement) {
+      app.quit()
+      return true
+    }
+
+    replaceInstalledCopyAndRelaunch(currentApplication, installedApplication, platform, {
+      terminateProcessIds: runningInstalledProcessIds,
+      waitForProcessIds: [process.pid, ...runningInstalledProcessIds],
+    })
+    return true
+  } finally {
+    secondInstancePromptOpen = false
+  }
+}
+
 function shouldEnforceInstalledCopyPolicy(platform: NodeJS.Platform): boolean {
   return app.isPackaged && (platform === 'darwin' || platform === 'win32')
 }
@@ -239,6 +287,36 @@ async function readInstalledWindowsApplication(): Promise<InstalledApplication |
   }
 
   return null
+}
+
+async function readRunningWindowsProcessIds(executablePath: string): Promise<number[]> {
+  try {
+    const normalizedExecutablePath = normalizeWindowsPath(executablePath)
+    const script = [
+      `$targetPath = '${escapePowerShellSingleQuotedString(normalizedExecutablePath)}'`,
+      `$processes = Get-CimInstance Win32_Process -Filter "Name = '${escapePowerShellSingleQuotedString(basename(executablePath))}'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Replace('/', '\\\\').ToLower() -eq $targetPath } | Select-Object -ExpandProperty ProcessId`,
+      'if ($processes) { $processes | ConvertTo-Json -Compress }',
+    ].join('; ')
+
+    const { stdout } = await execFile('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script,
+    ], {
+      encoding: 'utf8',
+    })
+
+    const trimmed = stdout.trim()
+    if (!trimmed) return []
+
+    const parsed = JSON.parse(trimmed) as number | number[]
+    const processIds = Array.isArray(parsed) ? parsed : [parsed]
+    return processIds.filter((processId): processId is number => Number.isInteger(processId) && processId > 0)
+  } catch {
+    return []
+  }
 }
 
 async function readWindowsInstallFromRegistry(executableName: string): Promise<InstalledApplication | null> {
@@ -417,12 +495,18 @@ function replaceInstalledCopyAndRelaunch(
   sourceApplication: ResolvedApplication,
   installedApplication: InstalledApplication,
   platform: NodeJS.Platform,
+  windowsOptions?: WindowsReplacementOptions,
 ): void {
   try {
     if (platform === 'darwin') {
       relaunchInstalledMacBundle(sourceApplication.containerPath, installedApplication.launchPath)
     } else if (platform === 'win32') {
-      relaunchInstalledWindowsCopy(sourceApplication.containerPath, installedApplication.containerPath, installedApplication.launchPath)
+      relaunchInstalledWindowsCopy(
+        sourceApplication.containerPath,
+        installedApplication.containerPath,
+        installedApplication.launchPath,
+        windowsOptions,
+      )
     } else {
       return
     }
@@ -466,10 +550,21 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
   child.unref()
 }
 
-function relaunchInstalledWindowsCopy(sourceRoot: string, installedRoot: string, installedExecutablePath: string): void {
+function relaunchInstalledWindowsCopy(
+  sourceRoot: string,
+  installedRoot: string,
+  installedExecutablePath: string,
+  options?: WindowsReplacementOptions,
+): void {
+  const terminateProcessIds = Array.from(new Set(options?.terminateProcessIds?.filter((processId) => processId > 0) ?? []))
+  const waitForProcessIds = Array.from(new Set(options?.waitForProcessIds?.filter((processId) => processId > 0) ?? [process.pid]))
   const script = [
-    '$pidToWait = [int]$env:AUTODOC_PID',
-    'while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Seconds 1 }',
+    '$pidValues = @()',
+    'if ($env:AUTODOC_WAIT_PIDS) { $pidValues = $env:AUTODOC_WAIT_PIDS -split "," | Where-Object { $_ } | ForEach-Object { [int]$_ } }',
+    '$terminatePids = @()',
+    'if ($env:AUTODOC_TERMINATE_PIDS) { $terminatePids = $env:AUTODOC_TERMINATE_PIDS -split "," | Where-Object { $_ } | ForEach-Object { [int]$_ } }',
+    'if ($terminatePids.Count -gt 0) { Stop-Process -Id $terminatePids -Force -ErrorAction SilentlyContinue }',
+    'if ($pidValues.Count -gt 0) { Wait-Process -Id $pidValues -ErrorAction SilentlyContinue }',
     '$source = $env:AUTODOC_SOURCE',
     '$target = $env:AUTODOC_TARGET',
     '$targetExe = $env:AUTODOC_TARGET_EXE',
@@ -487,10 +582,11 @@ function relaunchInstalledWindowsCopy(sourceRoot: string, installedRoot: string,
     detached: true,
     env: {
       ...process.env,
-      AUTODOC_PID: String(process.pid),
       AUTODOC_SOURCE: sourceRoot,
       AUTODOC_TARGET: installedRoot,
       AUTODOC_TARGET_EXE: installedExecutablePath,
+      AUTODOC_TERMINATE_PIDS: terminateProcessIds.join(','),
+      AUTODOC_WAIT_PIDS: waitForProcessIds.join(','),
     },
     stdio: 'ignore',
   })

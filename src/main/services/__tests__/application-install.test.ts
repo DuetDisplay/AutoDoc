@@ -153,8 +153,102 @@ describe('application-install', () => {
     }))
     expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
       detached: true,
+      env: expect.objectContaining({
+        AUTODOC_TERMINATE_PIDS: '',
+        AUTODOC_WAIT_PIDS: String(process.pid),
+      }),
       stdio: 'ignore',
     }))
+    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Wait-Process')
+    expect(mockQuit).toHaveBeenCalledTimes(1)
+  })
+
+  it('prompts for a downgrade when a newer Windows install is found', async () => {
+    mockGetVersion.mockReturnValue('0.1.4')
+    mockGetPath.mockImplementation((name: string) => {
+      if (name === 'exe') {
+        return 'D:\\Builds\\AutoDoc\\autodoc.exe'
+      }
+      throw new Error(`unexpected app.getPath(${name})`)
+    })
+    mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (command === 'powershell.exe') {
+        callback(null, {
+          stdout: '{"DisplayVersion":"0.1.6","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}',
+          stderr: '',
+        })
+        return
+      }
+      callback(null, { stdout: '', stderr: '' })
+    })
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(false)
+
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Downgrade Installed Copy',
+      buttons: ['Downgrade Installed Copy', 'Quit'],
+    }))
+    expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
+      detached: true,
+      stdio: 'ignore',
+    }))
+    expect(mockQuit).toHaveBeenCalledTimes(1)
+  })
+
+  it('handles a Windows lock conflict by prompting from the launched loose copy', async () => {
+    mockGetVersion.mockReturnValue('0.1.8')
+    mockGetPath.mockImplementation((name: string) => {
+      if (name === 'exe') {
+        return 'D:\\Builds\\AutoDoc\\autodoc.exe'
+      }
+      throw new Error(`unexpected app.getPath(${name})`)
+    })
+    mockExecFile.mockImplementation((command: string, args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (command !== 'powershell.exe') {
+        callback(null, { stdout: '', stderr: '' })
+        return
+      }
+
+      const script = args[4] ?? ''
+      if (script.includes('Get-ItemProperty')) {
+        callback(null, {
+          stdout: '{"DisplayVersion":"0.1.6","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}',
+          stderr: '',
+        })
+        return
+      }
+
+      if (script.includes('Get-CimInstance Win32_Process')) {
+        callback(null, {
+          stdout: '[4321,5678]',
+          stderr: '',
+        })
+        return
+      }
+
+      callback(null, { stdout: '', stderr: '' })
+    })
+
+    const { handleSingleInstanceLockFailure } = await loadModule()
+
+    await expect(handleSingleInstanceLockFailure('win32')).resolves.toBe(true)
+
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Upgrade Installed Copy',
+      buttons: ['Upgrade Installed Copy', 'Quit'],
+    }))
+    expect(mockSpawn).toHaveBeenCalledWith('powershell.exe', expect.any(Array), expect.objectContaining({
+      detached: true,
+      env: expect.objectContaining({
+        AUTODOC_TERMINATE_PIDS: '4321,5678',
+        AUTODOC_WAIT_PIDS: `${process.pid},4321,5678`,
+      }),
+      stdio: 'ignore',
+    }))
+    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Stop-Process')
+    expect((mockSpawn.mock.calls[0]?.[1] as string[]).join(' ')).toContain('Wait-Process')
     expect(mockQuit).toHaveBeenCalledTimes(1)
   })
 
