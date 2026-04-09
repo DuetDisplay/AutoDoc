@@ -63,7 +63,8 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
   }
 
   if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
-    return true
+    launchInstalledCopyAndQuit(installedApplication, platform)
+    return false
   }
 
   const userAcceptedReplacement = await promptForInstalledCopyReplacement({
@@ -117,30 +118,38 @@ export async function handleSecondInstanceLaunch(
     return false
   }
 
-  const secondInstance = await resolveSecondInstanceLaunchData(additionalData, argv, resolvedPlatform)
-  if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== resolvedPlatform) {
-    return false
-  }
-
-  const currentApplication = getCurrentApplication(resolvedPlatform)
-  const installedApplication = await readInstalledApplication(resolvedPlatform)
-  if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, resolvedPlatform)) {
-    return false
-  }
-
-  if (sameApplicationCopy(secondInstance.containerPath, currentApplication.containerPath, resolvedPlatform)) {
-    return false
-  }
-
-  if (compareVersionStrings(secondInstance.version ?? app.getVersion(), installedApplication.version) === 0) {
-    return false
-  }
-
+  // Serialize handlers: a second `second-instance` must not run the pre-prompt `await` chain in parallel
+  // or both can reach `promptForInstalledCopyReplacement` and the user sees duplicate dialogs.
   secondInstancePromptOpen = true
   try {
+    const secondInstance = await resolveSecondInstanceLaunchData(additionalData, argv, resolvedPlatform)
+    if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== resolvedPlatform) {
+      return false
+    }
+
+    const currentApplication = getCurrentApplication(resolvedPlatform)
+    const installedApplication = await readInstalledApplication(resolvedPlatform)
+    if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, resolvedPlatform)) {
+      return false
+    }
+
+    if (sameApplicationCopy(secondInstance.containerPath, currentApplication.containerPath, resolvedPlatform)) {
+      return false
+    }
+
+    if (
+      secondInstance.version !== null
+      && compareVersionStrings(secondInstance.version, installedApplication.version) === 0
+    ) {
+      return false
+    }
+
+    const sourceVersion = secondInstance.version
+      ?? (await readPackagedApplicationVersion(secondInstance.containerPath, resolvedPlatform))
+      ?? 'Unknown version'
     const userAcceptedReplacement = await promptForInstalledCopyReplacement({
       platform: resolvedPlatform,
-      sourceVersion: secondInstance.version ?? app.getVersion(),
+      sourceVersion,
       installedVersion: installedApplication.version,
       locationLabel: installedApplication.locationLabel,
     })
@@ -150,7 +159,7 @@ export async function handleSecondInstanceLaunch(
 
     const sourceApplication = await resolveSecondInstanceSource(secondInstance)
     if (!sourceApplication) {
-      await showReplacementError(platform, new Error('Could not locate the launched AutoDoc copy to replace the installed version.'))
+      await showReplacementError(resolvedPlatform, new Error('Could not locate the launched AutoDoc copy to replace the installed version.'))
       return true
     }
 
@@ -161,47 +170,12 @@ export async function handleSecondInstanceLaunch(
   }
 }
 
-export async function handleSingleInstanceLockFailure(platform: NodeJS.Platform = process.platform): Promise<boolean> {
-  if (platform !== 'win32' || !shouldEnforceInstalledCopyPolicy(platform) || secondInstancePromptOpen) {
-    return false
-  }
-
-  const currentApplication = getCurrentApplication(platform)
-  const installedApplication = await readInstalledApplication(platform)
-  if (!installedApplication || sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
-    return false
-  }
-
-  if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
-    return false
-  }
-
-  const runningInstalledProcessIds = await readRunningWindowsProcessIds(installedApplication.executablePath)
-  if (runningInstalledProcessIds.length === 0) {
-    return false
-  }
-
-  secondInstancePromptOpen = true
-  try {
-    const userAcceptedReplacement = await promptForInstalledCopyReplacement({
-      platform,
-      sourceVersion: currentApplication.version ?? app.getVersion(),
-      installedVersion: installedApplication.version,
-      locationLabel: installedApplication.locationLabel,
-    })
-    if (!userAcceptedReplacement) {
-      quitForInstalledCopyPolicy(platform)
-      return true
-    }
-
-    replaceInstalledCopyAndRelaunch(currentApplication, installedApplication, platform, {
-      terminateProcessIds: runningInstalledProcessIds,
-      waitForProcessIds: [process.pid, ...runningInstalledProcessIds],
-    })
-    return true
-  } finally {
-    secondInstancePromptOpen = false
-  }
+export async function handleSingleInstanceLockFailure(_platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  // When a second process loses `requestSingleInstanceLock`, the first process receives
+  // `second-instance` and must be the only one that shows install-policy UI. If we also
+  // prompt from this process, Electron can show two identical dialogs (especially during
+  // rapid re-launches or automated tests).
+  return false
 }
 
 function shouldEnforceInstalledCopyPolicy(platform: NodeJS.Platform): boolean {
@@ -297,36 +271,6 @@ async function readInstalledWindowsApplication(): Promise<InstalledApplication |
   return null
 }
 
-async function readRunningWindowsProcessIds(executablePath: string): Promise<number[]> {
-  try {
-    const normalizedExecutablePath = normalizeWindowsPath(executablePath)
-    const script = [
-      `$targetPath = '${escapePowerShellSingleQuotedString(normalizedExecutablePath)}'`,
-      `$processes = Get-CimInstance Win32_Process -Filter "Name = '${escapePowerShellSingleQuotedString(basename(executablePath))}'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Replace('/', '\\\\').ToLower() -eq $targetPath } | Select-Object -ExpandProperty ProcessId`,
-      'if ($processes) { $processes | ConvertTo-Json -Compress }',
-    ].join('; ')
-
-    const { stdout } = await execFile('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      script,
-    ], {
-      encoding: 'utf8',
-    })
-
-    const trimmed = stdout.trim()
-    if (!trimmed) return []
-
-    const parsed = JSON.parse(trimmed) as number | number[]
-    const processIds = Array.isArray(parsed) ? parsed : [parsed]
-    return processIds.filter((processId): processId is number => Number.isInteger(processId) && processId > 0)
-  } catch {
-    return []
-  }
-}
-
 async function readFallbackWindowsSecondInstanceExecutablePath(): Promise<string | null> {
   const currentExecutablePath = app.getPath('exe')
   const executableName = basename(currentExecutablePath)
@@ -375,7 +319,7 @@ async function readWindowsInstallFromRegistry(executableName: string): Promise<I
   try {
     const script = [
       `$paths = @(${WINDOWS_UNINSTALL_PATHS.map((path) => `'${path}'`).join(', ')})`,
-      `$entry = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq '${escapePowerShellSingleQuotedString(app.getName())}' } | Select-Object -First 1 DisplayVersion, InstallLocation, DisplayIcon`,
+      `$entry = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '${escapePowerShellSingleQuotedString(app.getName())}*' } | Select-Object -First 1 DisplayVersion, InstallLocation, DisplayIcon`,
       'if ($entry) { $entry | ConvertTo-Json -Compress }',
     ].join('; ')
 
@@ -521,6 +465,12 @@ async function resolveSecondInstanceLaunchData(
 ): Promise<SecondInstanceLaunchData | null> {
   const structuredData = parseSecondInstanceLaunchData(additionalData)
   if (structuredData) {
+    if (structuredData.version === null && structuredData.packaged === true) {
+      const inferredVersion = await readPackagedApplicationVersion(structuredData.containerPath, platform)
+      if (inferredVersion) {
+        return { ...structuredData, version: inferredVersion }
+      }
+    }
     return structuredData
   }
 
@@ -829,6 +779,24 @@ try {
     windowsHide: true,
     stdio: 'ignore',
   })
+}
+
+function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, platform: NodeJS.Platform): void {
+  try {
+    if (platform === 'darwin') {
+      spawn('/usr/bin/open', [installedApplication.launchPath], { detached: true, stdio: 'ignore' }).unref()
+    } else if (platform === 'win32') {
+      spawn(installedApplication.launchPath, [], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: dirname(installedApplication.launchPath),
+      }).unref()
+    }
+  } catch {
+    // If we can't launch the installed copy, fall through to quit silently.
+  }
+
+  quitForInstalledCopyPolicy(platform)
 }
 
 function quitForInstalledCopyPolicy(platform: NodeJS.Platform): void {

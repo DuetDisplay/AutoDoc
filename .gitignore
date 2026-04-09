@@ -23,3 +23,9 @@ resources/trayTemplate@2x.png
 # Generated native detector binaries
 native/*/bin/
 resources/certs/*.p12
+
+# Local electron-builder outputs / loose copies for install-policy smoke tests (see scripts/*install-policy-smoke*)
+build-[0-9][0-9][0-9]-*/
+build-out-*/
+build-output-*/
+test-builds/

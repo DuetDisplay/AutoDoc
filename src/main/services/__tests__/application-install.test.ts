@@ -91,14 +91,18 @@ describe('application-install', () => {
     expect(mockSpawn).not.toHaveBeenCalled()
   })
 
-  it('allows a loose macOS copy to continue when the Applications version matches', async () => {
+  it('redirects to the installed macOS copy and quits when the version matches', async () => {
     const { enforceInstalledApplicationPolicy } = await loadModule()
 
-    await expect(enforceInstalledApplicationPolicy('darwin')).resolves.toBe(true)
+    await expect(enforceInstalledApplicationPolicy('darwin')).resolves.toBe(false)
 
     expect(mockShowMessageBox).not.toHaveBeenCalled()
-    expect(mockSpawn).not.toHaveBeenCalled()
-    expect(mockQuit).not.toHaveBeenCalled()
+    expect(mockSpawn).toHaveBeenCalledTimes(1)
+    const [command, args, opts] = mockSpawn.mock.calls[0]
+    expect(command).toBe('/usr/bin/open')
+    expect(args[0]).toMatch(/[/\\]Applications[/\\]AutoDoc\.app$/)
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(mockQuit).toHaveBeenCalled()
   })
 
   it('prompts for an upgrade when the Applications copy is older', async () => {
@@ -223,27 +227,27 @@ describe('application-install', () => {
     expect(mockQuit).not.toHaveBeenCalled()
   })
 
-  it('handles a Windows lock conflict by prompting from the launched loose copy', async () => {
+  it('does not prompt from a Windows process that lost the single-instance lock', async () => {
     mockGetVersion.mockReturnValue('0.1.8')
     mockWindowsPaths()
-    mockExecFile.mockImplementation((command: string, args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
-      if (command !== 'powershell.exe') {
-        callback(null, { stdout: '', stderr: '' })
-        return
-      }
 
-      const script = args[4] ?? ''
-      if (script.includes('Get-ItemProperty')) {
-        callback(null, {
-          stdout: '{"DisplayVersion":"0.1.6","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}',
-          stderr: '',
-        })
-        return
-      }
+    const { handleSingleInstanceLockFailure } = await loadModule()
 
-      if (script.includes('Get-CimInstance Win32_Process')) {
+    await expect(handleSingleInstanceLockFailure('win32')).resolves.toBe(false)
+
+    expect(mockShowMessageBox).not.toHaveBeenCalled()
+    expect(mockExecFileSync).not.toHaveBeenCalled()
+    expect(mockWriteFileSync).not.toHaveBeenCalled()
+  })
+
+  it('handles a Windows downgrade when structured instance data omits version', async () => {
+    mockGetVersion.mockReturnValue('0.1.8')
+    mockWindowsPaths('C:\\Users\\chris\\AppData\\Local\\Programs\\AutoDoc\\autodoc.exe')
+    mockReadFile.mockResolvedValue(JSON.stringify({ version: '0.1.6' }))
+    mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (command === 'powershell.exe') {
         callback(null, {
-          stdout: '[4321,5678]',
+          stdout: '{"DisplayVersion":"0.1.8","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}',
           stderr: '',
         })
         return
@@ -252,25 +256,25 @@ describe('application-install', () => {
       callback(null, { stdout: '', stderr: '' })
     })
 
-    const { handleSingleInstanceLockFailure } = await loadModule()
+    const { handleSecondInstanceLaunch } = await loadModule()
 
-    await expect(handleSingleInstanceLockFailure('win32')).resolves.toBe(true)
+    await expect(handleSecondInstanceLaunch({
+      containerPath: 'D:\\Builds\\Old',
+      executablePath: 'D:\\Builds\\Old\\autodoc.exe',
+      packaged: true,
+      platform: 'win32',
+      version: null,
+    }, [], 'win32')).resolves.toBe(true)
 
     expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Upgrade Installed Copy',
-      buttons: ['Upgrade Installed Copy', 'Quit'],
+      title: 'Downgrade Installed Copy',
+      buttons: ['Downgrade Installed Copy', 'Quit'],
     }))
     expect(mockExecFileSync).toHaveBeenCalledWith('schtasks.exe', expect.any(Array), expect.objectContaining({
       encoding: 'utf8',
       stdio: 'ignore',
       windowsHide: true,
     }))
-    expect((mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')).toContain('/Create')
-    const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
-    expect(launcherScript).toContain('-TerminatePids "4321,5678"')
-    expect(launcherScript).toContain(`-WaitPids "${process.pid},4321,5678"`)
-    expect(launcherScript).toContain('schtasks /Delete /TN')
-    expect(mockQuit).not.toHaveBeenCalled()
   })
 
   it('handles a Windows downgrade launch from an older copy without structured launch data', async () => {
