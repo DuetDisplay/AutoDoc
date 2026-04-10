@@ -6,7 +6,6 @@ import { spawn } from 'child_process'
 import type { Transcript, TranscriptionStatus, SpeakerMap, TranscriptionStatusPayload } from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
-import { alignSpeakers } from './speaker-alignment'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
@@ -152,10 +151,14 @@ export class TranscriptionService {
 
         const audioPath = join(meetingDir, 'audio.webm')
         const micPath = join(meetingDir, 'mic.webm')
+        const systemPath = join(meetingDir, 'system.webm')
         const transcriptPath = join(meetingDir, 'transcript.json')
         const errorPath = join(meetingDir, 'transcript.error')
 
-        const hasAudio = await this.fileExists(audioPath) || await this.fileExists(micPath)
+        const hasAudio =
+          await this.fileExists(audioPath) ||
+          await this.fileExists(micPath) ||
+          await this.fileExists(systemPath)
         const hasTranscript = await this.fileExists(transcriptPath)
         const hasError = await this.fileExists(errorPath)
 
@@ -222,13 +225,12 @@ export class TranscriptionService {
     const hasSystem = await this.fileExists(systemWebm)
     const hasLegacy = await this.fileExists(legacyAudio)
 
-    if (!hasMic && !hasLegacy) {
+    if (!hasMic && !hasSystem && !hasLegacy) {
       return
     }
 
     const tempPrefix = join(tmpdir(), `autodoc-${meetingId}-${Date.now()}`)
-    const tempAudioWav = `${tempPrefix}.wav`
-    const tempFiles: string[] = [tempAudioWav]
+    const tempFiles: string[] = []
 
     try {
       const benchmarkStart = Date.now()
@@ -242,90 +244,41 @@ export class TranscriptionService {
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
 
-      // Prepare audio input for whisper
-      let t0 = Date.now()
-      const audioInput = await this.prepareWhisperInput(
-        micWebm, systemWebm, legacyAudio,
-        hasMic, hasSystem, hasLegacy,
-        tempPrefix, tempFiles,
-      )
-
-      await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
-
-      const audioDuration = await this.audioConverter.getDuration(
-        tempAudioWav,
-        this.whisperManager.getFfmpegPath()
-      ).catch(() => undefined)
-      const speechActivity = await this.detectAudioActivity(tempAudioWav).catch((err) => {
-        console.warn(`[transcription] Failed to detect audio activity (${meetingId}):`, err)
-        return []
-      })
-      const speechSignal = summarizeSpeechSignal(speechActivity, audioDuration)
-      console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
-
       let transcripts: Transcript[] = []
-      if (speechSignal.likelySilent) {
-        console.log(
-          `[transcription] Skipping whisper for likely silent audio (${meetingId}, speech=${speechSignal.totalSpeechMs}ms, ratio=${speechSignal.speechRatio.toFixed(3)})`,
-        )
+      if (hasMic && hasSystem) {
+        const [micTranscripts, systemTranscripts] = await Promise.all([
+          this.transcribeAudioSource(
+            meetingId,
+            micWebm,
+            'me',
+            `${tempPrefix}-mic`,
+            tempFiles,
+            { start: 0, end: 50 },
+          ),
+          this.transcribeAudioSource(
+            meetingId,
+            systemWebm,
+            'them',
+            `${tempPrefix}-system`,
+            tempFiles,
+            { start: 50, end: 100 },
+          ),
+        ])
+        transcripts = this.mergeTranscriptStreams(meetingId, micTranscripts, systemTranscripts)
       } else {
-        t0 = Date.now()
-        const whisperOutput = await this.transcribeWithFallback(
-          tempAudioWav,
+        const sourcePath = hasMic ? micWebm : hasSystem ? systemWebm : legacyAudio
+        const speaker = hasMic ? 'me' : hasSystem ? 'them' : 'Speaker'
+        transcripts = await this.transcribeAudioSource(
           meetingId,
-          audioDuration,
+          sourcePath,
+          speaker,
           tempPrefix,
           tempFiles,
         )
-        console.log(`[perf] Transcription (whisper): ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
-        transcripts = filterLowSignalHallucinations(
-          this.mapToTranscripts(meetingId, whisperOutput),
-          speechSignal,
-        ).map((segment, index) => ({
-          ...segment,
-          id: `${meetingId}-${index}`,
-        }))
       }
 
-      // Speaker labeling (two-stream: system active = remote, system silent = "me")
-      // Use system.webm if available; fall back to extracting audio from screen.webm
-      const screenWebm = join(meetingDir, 'screen.webm')
-      const hasScreen = await this.fileExists(screenWebm)
-      const canDiarize = hasMic && (hasSystem || hasScreen)
-
-      if (canDiarize) {
-        try {
-          t0 = Date.now()
-          this.activeStatus = 'diarizing'
-          this.broadcastStatus(meetingId, 'diarizing')
-
-          const tempSystemWav = `${tempPrefix}-system.wav`
-          tempFiles.push(tempSystemWav)
-
-          if (hasSystem) {
-            // Preferred: use the dedicated system audio stream
-            const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
-            await this.audioConverter.convert(systemInput, tempSystemWav, this.whisperManager.getFfmpegPath())
-          } else {
-            // Fallback: extract audio from screen.webm (system audio is muxed in)
-            console.log(`[diarize] system.webm missing, extracting audio from screen.webm (${meetingId})`)
-            const screenInput = await this.decryptIfNeeded(screenWebm, tempFiles)
-            await this.audioConverter.convert(screenInput, tempSystemWav, this.whisperManager.getFfmpegPath())
-          }
-
-          const systemSegments = await this.detectAudioActivity(tempSystemWav)
-          transcripts = alignSpeakers(transcripts, null, systemSegments)
-          await this.generateSpeakersJson(meetingId, transcripts)
-          console.log(`[perf] Speaker labeling: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
-        } catch (err) {
-          logAutodocFailure({
-            area: 'transcription',
-            message: 'Speaker labeling failed during transcription',
-            error: err,
-            meetingId,
-          })
-          console.error('Speaker labeling failed:', err)
-        }
+      if (transcripts.some((segment) => segment.speaker !== 'Speaker')) {
+        await this.generateSpeakersJson(meetingId, transcripts)
       }
 
       await encryptJSON(transcripts, transcriptPath)
@@ -370,24 +323,86 @@ export class TranscriptionService {
     return filePath
   }
 
-  private async prepareWhisperInput(
-    micWebm: string, systemWebm: string, legacyAudio: string,
-    hasMic: boolean, hasSystem: boolean, _hasLegacy: boolean,
-    tempPrefix: string, tempFiles: string[],
-  ): Promise<string> {
-    if (hasMic) {
-      const micInput = await this.decryptIfNeeded(micWebm, tempFiles)
-      if (hasSystem) {
-        const systemInput = await this.decryptIfNeeded(systemWebm, tempFiles)
-        const mergedPath = `${tempPrefix}-merged.webm`
-        tempFiles.push(mergedPath)
-        await this.audioConverter.mergeAudio(micInput, systemInput, mergedPath, this.whisperManager.getFfmpegPath())
-        return mergedPath
-      }
-      return micInput
+  private async transcribeAudioSource(
+    meetingId: string,
+    sourcePath: string,
+    speaker: string,
+    tempPrefix: string,
+    tempFiles: string[],
+    progressRange?: { start: number; end: number },
+  ): Promise<Transcript[]> {
+    const tempAudioWav = `${tempPrefix}.wav`
+    tempFiles.push(tempAudioWav)
+
+    const t0 = Date.now()
+    const audioInput = await this.decryptIfNeeded(sourcePath, tempFiles)
+    await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
+
+    const audioDuration = await this.audioConverter.getDuration(
+      tempAudioWav,
+      this.whisperManager.getFfmpegPath(),
+    ).catch(() => undefined)
+    const speechActivity = await this.detectAudioActivity(tempAudioWav).catch((err) => {
+      console.warn(`[transcription] Failed to detect audio activity (${meetingId}):`, err)
+      return []
+    })
+    const speechSignal = summarizeSpeechSignal(speechActivity, audioDuration)
+    console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
+
+    if (speechSignal.likelySilent) {
+      console.log(
+        `[transcription] Skipping whisper for likely silent audio (${meetingId}, speaker=${speaker}, speech=${speechSignal.totalSpeechMs}ms, ratio=${speechSignal.speechRatio.toFixed(3)})`,
+      )
+      return []
     }
-    // Legacy single-file format
-    return await this.decryptIfNeeded(legacyAudio, tempFiles)
+
+    const whisperStart = Date.now()
+    const whisperOutput = await this.transcribeWithFallback(
+      tempAudioWav,
+      meetingId,
+      audioDuration,
+      tempPrefix,
+      tempFiles,
+      progressRange,
+    )
+    console.log(`[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
+
+    return filterLowSignalHallucinations(
+      this.mapToTranscripts(meetingId, whisperOutput),
+      speechSignal,
+    ).map((segment) => ({
+      ...segment,
+      speaker,
+    }))
+  }
+
+  private mergeTranscriptStreams(
+    meetingId: string,
+    ...streams: Transcript[][]
+  ): Transcript[] {
+    const merged = streams
+      .flat()
+      .filter((segment) => segment.text.trim() !== '')
+      .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.speaker.localeCompare(b.speaker))
+
+    const deduped: Transcript[] = []
+    for (const segment of merged) {
+      const prev = deduped[deduped.length - 1]
+      const sameText = prev && this.normalizeTranscriptText(prev.text) === this.normalizeTranscriptText(segment.text)
+      const nearSameTime = prev && Math.abs(segment.startMs - prev.startMs) <= 1500
+      if (prev && sameText && nearSameTime) {
+        if (prev.speaker !== 'me' && segment.speaker === 'me') {
+          deduped[deduped.length - 1] = segment
+        }
+        continue
+      }
+      deduped.push(segment)
+    }
+
+    return deduped.map((segment, index) => ({
+      ...segment,
+      id: `${meetingId}-${index}`,
+    }))
   }
 
   private detectAudioActivity(wavPath: string): Promise<{ start: number; end: number }[]> {
@@ -489,17 +504,18 @@ export class TranscriptionService {
     audioDurationSec: number | undefined,
     tempPrefix: string,
     tempFiles: string[],
+    progressRange?: { start: number; end: number },
   ): Promise<WhisperOutput> {
     if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
       console.log(`[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`)
-      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles)
+      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles, progressRange)
     }
 
-    const output = await this.runWhisperPassAndRead(audioWavPath, meetingId, audioDurationSec, tempFiles)
+    const output = await this.runWhisperPassAndRead(audioWavPath, meetingId, audioDurationSec, tempFiles, progressRange)
     const mapped = this.mapToTranscripts(meetingId, output)
     if (audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
       console.warn(`[transcription] Detected repetition loop, retrying in chunks (${meetingId})`)
-      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles)
+      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles, progressRange)
     }
 
     return output
@@ -511,6 +527,7 @@ export class TranscriptionService {
     audioDurationSec: number,
     tempPrefix: string,
     tempFiles: string[],
+    progressRange?: { start: number; end: number },
   ): Promise<WhisperOutput> {
     const stepSec = Math.max(1, CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC)
     const transcription: WhisperSegment[] = []
@@ -530,7 +547,7 @@ export class TranscriptionService {
         chunkDuration,
       )
 
-      const progressRange = {
+      const chunkProgressRange = {
         start: Math.round((chunkStart / audioDurationSec) * 100),
         end: Math.round((Math.min(chunkStart + chunkDuration, audioDurationSec) / audioDurationSec) * 100),
       }
@@ -539,7 +556,12 @@ export class TranscriptionService {
         meetingId,
         chunkDuration,
         tempFiles,
-        progressRange,
+        progressRange
+          ? {
+              start: this.scaleProgress(chunkProgressRange.start, progressRange),
+              end: this.scaleProgress(chunkProgressRange.end, progressRange),
+            }
+          : chunkProgressRange,
         ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
       )
 

@@ -45,6 +45,13 @@ app.setName('AutoDoc')
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
 }
+if (process.platform === 'darwin' && is.dev) {
+  // Electron 39+ uses macOS CoreAudio Tap for desktop audio on 14.2+.
+  // When we launch from Terminal/IDE in dev, the parent app often lacks the
+  // required NSAudioCaptureUsageDescription key, so force the older screen/system
+  // audio permission flow for local testing.
+  app.commandLine.appendSwitch('disable-features', 'MacCatapLoopbackAudioForScreenShare')
+}
 
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
 const shouldAllowSentryInEnv = !is.dev || !!process.env.AUTODOC_SENTRY_DEV
@@ -327,15 +334,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const videoPath = join(baseDir, meetingId, 'screen.webm')
+    const micPath = join(baseDir, meetingId, 'mic.webm')
     const systemPath = join(baseDir, meetingId, 'system.webm')
     const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
     const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
+    const hasMicAudio = await stat(micPath).then(() => true).catch(() => false)
     const hasSystemAudio = await stat(systemPath).then(() => true).catch(() => false)
     const hasLegacyAudio = await stat(legacyAudioPath).then(() => true).catch(() => false)
+    const audioFile = hasSystemAudio ? 'system.webm' : hasMicAudio ? 'mic.webm' : hasLegacyAudio ? 'audio.webm' : undefined
     return {
       hasVideo,
-      hasAudio: hasSystemAudio || hasLegacyAudio,
-      audioFile: hasSystemAudio ? 'system.webm' : 'audio.webm',
+      hasAudio: Boolean(audioFile),
+      audioFile,
       mediaBaseUrl: recordingMediaBaseUrl ?? undefined,
     }
   })

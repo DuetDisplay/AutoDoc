@@ -1,6 +1,6 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, rename, rm, stat, unlink } from 'fs/promises'
+import { appendFile, readdir, rename, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
@@ -12,6 +12,20 @@ import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocFailure } from '../services/autodoc-log'
 import { refreshTray } from '../services/tray'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
+
+const SEGMENT_PAD_WIDTH = 4
+
+function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
+  return type === 'video' ? 'screen' : type
+}
+
+function getFinalFilename(type: 'video' | 'mic' | 'system'): string {
+  return `${getSegmentBaseName(type)}.webm`
+}
+
+function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: number): string {
+  return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
+}
 
 /** Merge two audio files into one using amix filter */
 function mergeAudioFiles(ffmpegPath: string, input1: string, input2: string, outputPath: string): Promise<void> {
@@ -31,6 +45,75 @@ function mergeAudioFiles(ffmpegPath: string, input1: string, input2: string, out
       else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
     })
   })
+}
+
+function concatWebmFiles(ffmpegPath: string, listPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listPath,
+      '-c', 'copy',
+      '-y',
+      outputPath,
+    ])
+    let stderr = ''
+    proc.on('error', (err) => reject(new Error(`ffmpeg concat spawn failed: ${err.message}`)))
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
+async function assembleSegmentedCaptureFile(
+  meetingDir: string,
+  type: 'video' | 'mic' | 'system',
+  ffmpegPath: string | null,
+): Promise<void> {
+  const finalFilename = getFinalFilename(type)
+  const finalPath = join(meetingDir, finalFilename)
+  const segmentPrefix = `${getSegmentBaseName(type)}-`
+  const segmentNames = (await readdir(meetingDir))
+    .filter((name) => name.startsWith(segmentPrefix) && name.endsWith('.webm'))
+    .sort((a, b) => a.localeCompare(b))
+
+  if (segmentNames.length === 0) {
+    return
+  }
+
+  await unlink(finalPath).catch(() => {})
+
+  if (segmentNames.length === 1) {
+    await rename(join(meetingDir, segmentNames[0]), finalPath)
+    return
+  }
+
+  if (!ffmpegPath) {
+    throw new Error(`Cannot assemble ${finalFilename} without ffmpeg`)
+  }
+
+  const listPath = join(meetingDir, `${segmentPrefix}concat.txt`)
+  const segmentPaths = segmentNames.map((name) => join(meetingDir, name))
+  const listFile = `${segmentPaths
+    .map((segmentPath) => `file '${segmentPath.replace(/'/g, "'\\''")}'`)
+    .join('\n')}\n`
+
+  await writeFile(listPath, listFile, 'utf-8')
+
+  try {
+    await concatWebmFiles(ffmpegPath, listPath, finalPath)
+    await Promise.all(segmentPaths.map((segmentPath) => unlink(segmentPath).catch(() => {})))
+  } finally {
+    await unlink(listPath).catch(() => {})
+  }
+}
+
+async function assembleRecordingSegments(meetingDir: string, ffmpegPath: string | null): Promise<void> {
+  await assembleSegmentedCaptureFile(meetingDir, 'video', ffmpegPath)
+  await assembleSegmentedCaptureFile(meetingDir, 'mic', ffmpegPath)
+  await assembleSegmentedCaptureFile(meetingDir, 'system', ffmpegPath)
 }
 
 /** Mux audio track into video file so playback has both video and audio.
@@ -113,10 +196,12 @@ export function registerRecordingIpc(
       const legacyAudioPath = join(meetingDir, 'audio.webm')
       const videoPath = join(meetingDir, 'screen.webm')
       const micStat = await stat(micPath).catch(() => null)
+      const systemPath = join(meetingDir, 'system.webm')
       const legacyAudioStat = await stat(legacyAudioPath).catch(() => null)
+      const systemStat = await stat(systemPath).catch(() => null)
       const videoStat = await stat(videoPath).catch(() => null)
 
-      const hasAudio = micStat !== null || legacyAudioStat !== null
+      const hasAudio = micStat !== null || systemStat !== null || legacyAudioStat !== null
       if (!hasAudio && !videoStat) continue
 
       const metadata = await readMetadata(meetingDir)
@@ -140,7 +225,7 @@ export function registerRecordingIpc(
       // Fallback duration: estimate from directory birthtime to last file mtime
       let duration = metadata?.durationSeconds ?? null
       if (duration == null) {
-        const primaryAudioStat = micStat ?? legacyAudioStat
+        const primaryAudioStat = micStat ?? systemStat ?? legacyAudioStat
         const lastMtime = Math.max(primaryAudioStat?.mtimeMs ?? 0, videoStat?.mtimeMs ?? 0)
         if (lastMtime > 0) {
           const estimated = Math.round((lastMtime - dirStat.birthtime.getTime()) / 1000)
@@ -217,10 +302,12 @@ export function registerRecordingIpc(
       const micPath = join(meetingDir, 'mic.webm')
       const systemPath = join(meetingDir, 'system.webm')
       const videoPath = join(meetingDir, 'screen.webm')
+      let ffmpegPath: string | null = null
 
       // Ensure ffmpeg is available before attempting mux
       try {
         await whisperManager.ensureReady()
+        ffmpegPath = whisperManager.getFfmpegPath()
       } catch (err) {
         logAutodocFailure({
           area: 'recording',
@@ -229,6 +316,18 @@ export function registerRecordingIpc(
           meetingId: result.meetingId,
         })
         console.error('whisperManager.ensureReady() failed — skipping mux:', err)
+      }
+
+      try {
+        await assembleRecordingSegments(meetingDir, ffmpegPath)
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to assemble segmented recording media',
+          error: err,
+          meetingId: result.meetingId,
+        })
+        console.error('Failed to assemble segmented recording media:', err)
       }
 
       // Mux audio into video so the video player has both tracks, then remux for seeking
@@ -243,11 +342,17 @@ export function registerRecordingIpc(
           if (systemStat) audioInputs.push(systemPath)
           if (audioInputs.length === 2) {
             const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
-            await mergeAudioFiles(whisperManager.getFfmpegPath(), micPath, systemPath, mergedAudioPath)
-            await muxAudioIntoVideo(whisperManager.getFfmpegPath(), videoPath, mergedAudioPath, muxedPath)
+            if (!ffmpegPath) {
+              throw new Error('ffmpeg path unavailable for merged audio mux')
+            }
+            await mergeAudioFiles(ffmpegPath, micPath, systemPath, mergedAudioPath)
+            await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath)
             await unlink(mergedAudioPath)
           } else {
-            await muxAudioIntoVideo(whisperManager.getFfmpegPath(), videoPath, audioInputs[0], muxedPath)
+            if (!ffmpegPath) {
+              throw new Error('ffmpeg path unavailable for audio mux')
+            }
+            await muxAudioIntoVideo(ffmpegPath, videoPath, audioInputs[0], muxedPath)
           }
           await unlink(videoPath)
           await rename(muxedPath, videoPath)
@@ -266,8 +371,11 @@ export function registerRecordingIpc(
       try {
         const videoExists = await stat(videoPath).catch(() => null)
         if (videoExists) {
+          if (!ffmpegPath) {
+            throw new Error('ffmpeg path unavailable for remux')
+          }
           const seekablePath = join(meetingDir, 'screen-seekable.webm')
-          await remuxForSeeking(whisperManager.getFfmpegPath(), videoPath, seekablePath)
+          await remuxForSeeking(ffmpegPath, videoPath, seekablePath)
           await unlink(videoPath)
           await rename(seekablePath, videoPath)
           const finalStat = await stat(videoPath).catch(() => null)
@@ -370,13 +478,19 @@ export function registerRecordingIpc(
 
   ipcMain.handle(
     'recording:save-chunk',
-    async (_event, meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer) => {
+    async (
+      _event,
+      meetingId: string,
+      type: 'video' | 'mic' | 'system',
+      chunk: ArrayBuffer,
+      segmentIndex = 0,
+    ) => {
       const currentState = recordingService.getState()
       if (!currentState.isRecording || currentState.meetingId !== meetingId) {
         return // Ignore chunks for stale or mismatched recordings
       }
       const baseDir = recordingService.getRecordingsBaseDir()
-      const filename = type === 'video' ? 'screen.webm' : type === 'mic' ? 'mic.webm' : 'system.webm'
+      const filename = getSegmentFilename(type, segmentIndex)
       const filePath = join(baseDir, meetingId, filename)
       try {
         await appendFile(filePath, Buffer.from(chunk))

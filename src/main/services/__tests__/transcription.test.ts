@@ -40,6 +40,7 @@ vi.mock('../crypto', () => ({
   decryptJSON: vi.fn(),
   decryptFileToTemp: vi.fn(),
   encryptJSON: vi.fn(),
+  encryptFileInPlace: vi.fn().mockResolvedValue(undefined),
 }))
 
 const fsMock = vi.mocked(await import('fs/promises'))
@@ -99,6 +100,7 @@ describe('TranscriptionService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setPlatform(originalPlatform)
+    fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
@@ -174,7 +176,7 @@ describe('TranscriptionService', () => {
       (meetingId) => meetingId === 'meeting-active',
     )
 
-    const enqueueSpy = vi.spyOn(service, 'enqueue')
+    const enqueueSpy = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
 
     await service.scanAndEnqueuePending()
 
@@ -221,6 +223,96 @@ describe('TranscriptionService', () => {
 
     const result = await service.getTranscript('missing-meeting')
     expect(result).toEqual([])
+  })
+
+  it('recover-scan enqueues meetings with only system audio', async () => {
+    fsMock.readdir.mockResolvedValue(['meeting-system-only'] as any)
+    fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+
+    await service.scanAndEnqueuePending()
+
+    expect(enqueueSpy).toHaveBeenCalledWith('meeting-system-only', 'recovery-scan')
+  })
+
+  it('transcribes from system audio when microphone capture is unavailable', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }],
+    })
+    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+      {
+        id: 'meeting-system-only-0',
+        meetingId: 'meeting-system-only',
+        speaker: 'Speaker',
+        text: 'Hello from speakers',
+        startMs: 0,
+        endMs: 1000,
+        confidence: -1,
+      },
+    ])
+
+    await expect((service as any).processJob('meeting-system-only')).resolves.toBeUndefined()
+
+    expect(mockConverter.convert).toHaveBeenCalledWith(
+      '/mock/home/AutoDoc/recordings/meeting-system-only/system.webm',
+      expect.stringContaining('/mock/tmp/autodoc-meeting-system-only-'),
+      '/mock/ffmpeg',
+    )
+  })
+
+  it('transcribes mic and system audio separately when both tracks exist', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'My microphone words' }],
+      })
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 500, to: 1500 }, text: 'Remote speaker words' }],
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-dual-0',
+          meetingId: 'meeting-dual',
+          speaker: 'Speaker',
+          text: 'My microphone words',
+          startMs: 0,
+          endMs: 1000,
+          confidence: -1,
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-dual-1',
+          meetingId: 'meeting-dual',
+          speaker: 'Speaker',
+          text: 'Remote speaker words',
+          startMs: 500,
+          endMs: 1500,
+          confidence: -1,
+        },
+      ])
+
+    await expect((service as any).processJob('meeting-dual')).resolves.toBeUndefined()
+
+    expect(mockConverter.convert).toHaveBeenCalledTimes(2)
+    expect(mockConverter.mergeAudio).not.toHaveBeenCalled()
   })
 
   it('chooses 10 whisper threads on a 20-thread machine', () => {
