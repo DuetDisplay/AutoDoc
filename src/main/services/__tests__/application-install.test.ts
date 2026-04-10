@@ -105,6 +105,26 @@ describe('application-install', () => {
     expect(mockQuit).toHaveBeenCalled()
   })
 
+  it('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
+    mockGetName.mockReturnValue('autodoc')
+    mockAccess.mockImplementation((targetPath: string) => {
+      if (targetPath.includes('/Applications/autodoc.app/')) {
+        return Promise.reject(new Error('missing'))
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('darwin')).resolves.toBe(false)
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1)
+    const [command, args] = mockSpawn.mock.calls[0]
+    expect(command).toBe('/usr/bin/open')
+    expect(args[0]).toMatch(/[/\\]Applications[/\\]AutoDoc\.app$/)
+    expect(mockQuit).toHaveBeenCalled()
+  })
+
   it('prompts for an upgrade when the Applications copy is older', async () => {
     mockExecFile.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       callback(null, { stdout: '0.1.4\n', stderr: '' })
@@ -308,6 +328,45 @@ describe('application-install', () => {
     }))
     const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
     expect(launcherScript).toContain('-WaitPids')
+  })
+
+  it('resolves macOS second-instance from argv when additionalData is missing', async () => {
+    mockGetPath.mockImplementation((name: string) => {
+      if (name === 'exe') {
+        return '/Applications/AutoDoc.app/Contents/MacOS/AutoDoc'
+      }
+      if (name === 'temp') {
+        return '/tmp'
+      }
+      throw new Error(`unexpected app.getPath(${name})`)
+    })
+    mockGetVersion.mockReturnValue('0.1.7')
+    mockExecFile.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      callback(null, { stdout: '0.1.7\n', stderr: '' })
+    })
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.includes('/Volumes/Loose/AutoDoc.app/') && path.endsWith('package.json')) {
+        return Promise.resolve(JSON.stringify({ version: '0.1.8' }))
+      }
+      return Promise.reject(new Error('missing'))
+    })
+
+    const { handleSecondInstanceLaunch } = await loadModule()
+
+    await expect(handleSecondInstanceLaunch(undefined, [
+      '/Volumes/Loose/AutoDoc.app/Contents/MacOS/AutoDoc',
+      '--synthetic-arg',
+    ], 'darwin')).resolves.toBe(true)
+
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Upgrade Applications Copy',
+      buttons: ['Upgrade in Applications', 'Quit'],
+    }))
+    expect(mockSpawn).toHaveBeenCalledWith('/bin/sh', expect.any(Array), expect.objectContaining({
+      detached: true,
+      stdio: 'ignore',
+    }))
+    expect(mockQuit).toHaveBeenCalledTimes(1)
   })
 
   it('handles a second-instance launch from a different macOS version', async () => {

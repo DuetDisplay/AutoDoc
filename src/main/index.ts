@@ -37,6 +37,7 @@ import {
   enforceInstalledApplicationPolicy,
   handleSecondInstanceLaunch,
   handleSingleInstanceLockFailure,
+  traceInstallPolicy,
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 
@@ -79,6 +80,11 @@ let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock(buildSingleInstanceLaunchData())
+traceInstallPolicy('index: single-instance lock result', {
+  gotLock: gotSingleInstanceLock,
+  execPath: process.execPath,
+  pid: process.pid,
+})
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
 const require = createRequire(import.meta.url)
 
@@ -127,15 +133,10 @@ function initializeMainSentry(): void {
 }
 
 if (!gotSingleInstanceLock) {
-  void app.whenReady().then(async () => {
-    const handled = await handleSingleInstanceLockFailure()
-    if (!handled) {
-      app.quit()
-    }
-  }).catch((error) => {
-    console.warn('Failed to handle AutoDoc single-instance conflict:', error)
-    app.quit()
-  })
+  traceInstallPolicy('index: secondary instance exiting (lock failed)')
+  app.exit(0)
+  // app.exit(0) may not terminate on macOS when app.whenReady() hasn't fired yet
+  setTimeout(() => process.exit(0), 2000).unref()
 } else {
   try {
     analyticsConsentEnabled = readInitialAnalyticsConsent() === true

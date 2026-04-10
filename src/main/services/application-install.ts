@@ -1,12 +1,14 @@
 import { execFile as execFileCallback, execFileSync, spawn } from 'node:child_process'
 import { access, readFile } from 'node:fs/promises'
-import { writeFileSync } from 'node:fs'
+import { appendFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { app, dialog } from 'electron'
 
 const execFile = promisify(execFileCallback)
 const APPLICATIONS_DIR = '/Applications'
+const INSTALL_POLICY_TRACE_ENABLED = process.env.AUTODOC_INSTALL_POLICY_TRACE === '1'
+const INSTALL_POLICY_TRACE_FILE = process.env.AUTODOC_INSTALL_POLICY_TRACE_FILE || '/tmp/autodoc-install-policy.log'
 const WINDOWS_UNINSTALL_PATHS = [
   'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
   'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
@@ -39,6 +41,17 @@ interface WindowsReplacementOptions {
 
 let secondInstancePromptOpen = false
 
+export function traceInstallPolicy(message: string, data?: Record<string, unknown>): void {
+  if (!INSTALL_POLICY_TRACE_ENABLED) return
+  const timestamp = new Date().toISOString()
+  const payload = data ? ` ${JSON.stringify(data)}` : ''
+  try {
+    appendFileSync(INSTALL_POLICY_TRACE_FILE, `[${timestamp}] ${message}${payload}\n`, 'utf8')
+  } catch {
+    // Trace logging is best-effort only.
+  }
+}
+
 export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = process.platform): Record<string, string | boolean | null> {
   const currentApplication = getCurrentApplication(platform)
 
@@ -53,16 +66,33 @@ export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = proces
 
 export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platform = process.platform): Promise<boolean> {
   if (!shouldEnforceInstalledCopyPolicy(platform)) {
+    traceInstallPolicy('enforce: skipped policy', { platform, packaged: app.isPackaged })
     return true
   }
 
   const currentApplication = getCurrentApplication(platform)
   const installedApplication = await readInstalledApplication(platform)
+  traceInstallPolicy('enforce: resolved applications', {
+    platform,
+    currentContainer: currentApplication.containerPath,
+    currentVersion: currentApplication.version,
+    installedContainer: installedApplication?.containerPath ?? null,
+    installedVersion: installedApplication?.version ?? null,
+  })
   if (!installedApplication || sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
+    traceInstallPolicy('enforce: no installed conflict', {
+      hasInstalled: Boolean(installedApplication),
+      sameCopy: installedApplication ? sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform) : null,
+    })
     return true
   }
 
   if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
+    traceInstallPolicy('enforce: same-version redirect', {
+      source: currentApplication.containerPath,
+      target: installedApplication.containerPath,
+      version: currentApplication.version ?? app.getVersion(),
+    })
     launchInstalledCopyAndQuit(installedApplication, platform)
     return false
   }
@@ -72,6 +102,12 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
     sourceVersion: currentApplication.version ?? app.getVersion(),
     installedVersion: installedApplication.version,
     locationLabel: installedApplication.locationLabel,
+  })
+  traceInstallPolicy('enforce: replacement prompt result', {
+    accepted: userAcceptedReplacement,
+    sourceVersion: currentApplication.version ?? app.getVersion(),
+    installedVersion: installedApplication.version,
+    platform,
   })
   if (!userAcceptedReplacement) {
     quitForInstalledCopyPolicy(platform)
@@ -115,6 +151,11 @@ export async function handleSecondInstanceLaunch(
   const resolvedPlatform = Array.isArray(argvOrPlatform) ? platform : argvOrPlatform
 
   if (!shouldEnforceInstalledCopyPolicy(resolvedPlatform) || secondInstancePromptOpen) {
+    traceInstallPolicy('second-instance: ignored pre-check', {
+      platform: resolvedPlatform,
+      shouldEnforce: shouldEnforceInstalledCopyPolicy(resolvedPlatform),
+      promptOpen: secondInstancePromptOpen,
+    })
     return false
   }
 
@@ -123,6 +164,14 @@ export async function handleSecondInstanceLaunch(
   secondInstancePromptOpen = true
   try {
     const secondInstance = await resolveSecondInstanceLaunchData(additionalData, argv, resolvedPlatform)
+    traceInstallPolicy('second-instance: resolved launch data', {
+      platform: resolvedPlatform,
+      argvCount: argv.length,
+      secondContainer: secondInstance?.containerPath ?? null,
+      secondExecutable: secondInstance?.executablePath ?? null,
+      secondVersion: secondInstance?.version ?? null,
+      secondPackaged: secondInstance?.packaged ?? null,
+    })
     if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== resolvedPlatform) {
       return false
     }
@@ -130,6 +179,10 @@ export async function handleSecondInstanceLaunch(
     const currentApplication = getCurrentApplication(resolvedPlatform)
     const installedApplication = await readInstalledApplication(resolvedPlatform)
     if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, resolvedPlatform)) {
+      traceInstallPolicy('second-instance: current copy is not installed target', {
+        currentContainer: currentApplication.containerPath,
+        installedContainer: installedApplication?.containerPath ?? null,
+      })
       return false
     }
 
@@ -153,6 +206,12 @@ export async function handleSecondInstanceLaunch(
       installedVersion: installedApplication.version,
       locationLabel: installedApplication.locationLabel,
     })
+    traceInstallPolicy('second-instance: replacement prompt result', {
+      accepted: userAcceptedReplacement,
+      sourceVersion,
+      installedVersion: installedApplication.version,
+      platform: resolvedPlatform,
+    })
     if (!userAcceptedReplacement) {
       return false
     }
@@ -175,6 +234,9 @@ export async function handleSingleInstanceLockFailure(_platform: NodeJS.Platform
   // `second-instance` and must be the only one that shows install-policy UI. If we also
   // prompt from this process, Electron can show two identical dialogs (especially during
   // rapid re-launches or automated tests).
+  traceInstallPolicy('single-instance lock failure: secondary instance exits without prompt', {
+    platform: _platform,
+  })
   return false
 }
 
@@ -211,22 +273,38 @@ async function readInstalledApplication(platform: NodeJS.Platform): Promise<Inst
 }
 
 async function readInstalledMacApplication(): Promise<InstalledApplication | null> {
-  const bundlePath = join(APPLICATIONS_DIR, `${app.getName()}.app`)
-  const executablePath = join(bundlePath, 'Contents', 'MacOS', basename(app.getPath('exe')))
+  const exeFromPath = basename(app.getPath('exe'))
+  const bundleNames = Array.from(new Set([
+    app.getName(),
+    'AutoDoc',
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)))
 
-  try {
-    await access(executablePath)
-  } catch {
-    return null
+  const executableNames = Array.from(new Set([exeFromPath, 'AutoDoc']))
+
+  for (const bundleName of bundleNames) {
+    const bundlePath = join(APPLICATIONS_DIR, `${bundleName}.app`)
+    for (const executableName of executableNames) {
+      const executablePath = join(bundlePath, 'Contents', 'MacOS', executableName)
+
+      try {
+        await access(executablePath)
+      } catch {
+        continue
+      }
+
+      traceInstallPolicy('mac installed candidate found', { bundlePath, executablePath })
+      return {
+        containerPath: bundlePath,
+        executablePath,
+        launchPath: bundlePath,
+        locationLabel: '/Applications',
+        version: await readBundleVersion(bundlePath),
+      }
+    }
   }
 
-  return {
-    containerPath: bundlePath,
-    executablePath,
-    launchPath: bundlePath,
-    locationLabel: '/Applications',
-    version: await readBundleVersion(bundlePath),
-  }
+  traceInstallPolicy('mac installed candidate not found', { bundleNames, executableNames })
+  return null
 }
 
 async function readBundleVersion(bundlePath: string): Promise<string | null> {
@@ -313,6 +391,63 @@ async function readFallbackWindowsSecondInstanceExecutablePath(): Promise<string
   }
 
   return null
+}
+
+/**
+ * When the user starts a second copy via `open`, argv may omit the .app path; scan `ps` for another
+ * main AutoDoc binary (not Helper apps) like the Windows WMI fallback.
+ */
+async function readFallbackMacSecondInstanceExecutablePath(): Promise<string | null> {
+  const currentExe = app.getPath('exe')
+  const currentResolved = resolve(currentExe)
+  const executableName = basename(currentExe)
+  const tokenPattern = new RegExp(
+    String.raw`(\/[^\s]+\/AutoDoc\.app\/Contents\/MacOS\/${escapeRegExp(executableName)})(?:\s|$)`,
+    'g',
+  )
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const { stdout } = await execFile('/bin/ps', ['-ax', '-o', 'args='], {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+      })
+
+      const seen = new Set<string>()
+      let match: RegExpExecArray | null
+      const haystack = stdout
+      tokenPattern.lastIndex = 0
+      while ((match = tokenPattern.exec(haystack)) !== null) {
+        const candidate = match[1]
+        if (seen.has(candidate)) {
+          continue
+        }
+        seen.add(candidate)
+
+        try {
+          if (resolve(candidate) === currentResolved) {
+            continue
+          }
+          await access(candidate)
+          return candidate
+        } catch {
+          continue
+        }
+      }
+    } catch {
+      // Ignore and retry while the second process may still be visible in ps.
+    }
+
+    await new Promise((resolveWait) => {
+      setTimeout(resolveWait, 100)
+    })
+  }
+
+  return null
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
 }
 
 async function readWindowsInstallFromRegistry(executableName: string): Promise<InstalledApplication | null> {
@@ -474,6 +609,42 @@ async function resolveSecondInstanceLaunchData(
     return structuredData
   }
 
+  if (platform === 'darwin') {
+    let macExecutablePath = parseMacSecondInstanceExecutablePath(argv)
+    traceInstallPolicy('second-instance: mac argv parse', {
+      argvPreview: argv.slice(0, 4),
+      parsedPath: macExecutablePath,
+    })
+    if (!macExecutablePath) {
+      macExecutablePath = await readFallbackMacSecondInstanceExecutablePath()
+      traceInstallPolicy('second-instance: mac ps fallback', {
+        parsedPath: macExecutablePath,
+      })
+    }
+    if (!macExecutablePath) {
+      return null
+    }
+
+    try {
+      await access(macExecutablePath)
+    } catch {
+      return null
+    }
+
+    const containerPath = getMacBundlePath(macExecutablePath)
+    if (!containerPath) {
+      return null
+    }
+
+    return {
+      containerPath,
+      executablePath: macExecutablePath,
+      packaged: true,
+      platform,
+      version: await readPackagedApplicationVersion(containerPath, platform),
+    }
+  }
+
   if (platform !== 'win32') {
     return null
   }
@@ -586,13 +757,38 @@ function parseWindowsSecondInstanceExecutablePath(argv: string[]): string | null
   return null
 }
 
+/** Second-instance argv on macOS often includes the loose copy's binary path; additionalData can be empty. */
+function parseMacSecondInstanceExecutablePath(argv: string[]): string | null {
+  const expectedExecutableName = basename(app.getPath('exe')).toLowerCase()
+
+  for (const value of argv) {
+    if (typeof value !== 'string') continue
+
+    const trimmed = value.trim().replace(/^"(.*)"$/, '$1')
+    const match = trimmed.match(/^(.*?\.app)\/Contents\/MacOS\/([^/]+)$/i)
+    if (!match) continue
+    if (match[2].toLowerCase() !== expectedExecutableName) continue
+    return trimmed
+  }
+
+  return null
+}
+
 function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePath: string): void {
   const stagedBundlePath = `${installedBundlePath}.codex-staged-${process.pid}`
   const backupBundlePath = `${installedBundlePath}.codex-backup-${process.pid}`
+  const installedExePath = join(installedBundlePath, 'Contents', 'MacOS', 'AutoDoc')
   const script = [
     'while kill -0 "$AUTODOC_PID" 2>/dev/null; do',
     '  sleep 1',
     'done',
+    // Kill any running instance from the installed location before replacing.
+    // In the "warm" scenario another copy from /Applications is still alive.
+    'pids=$(/bin/ps -axo pid=,comm= | /usr/bin/grep -F "$AUTODOC_INSTALLED_EXE" | /usr/bin/awk \'{print $1}\' | /usr/bin/grep -v "^$$\\$")',
+    'for p in $pids; do kill "$p" 2>/dev/null; done',
+    'sleep 1',
+    'for p in $pids; do kill -9 "$p" 2>/dev/null; done',
+    'sleep 1',
     'rm -rf "$AUTODOC_TARGET_TMP" "$AUTODOC_TARGET_BACKUP"',
     '/usr/bin/ditto "$AUTODOC_SOURCE" "$AUTODOC_TARGET_TMP"',
     'if [ -d "$AUTODOC_TARGET" ]; then',
@@ -608,6 +804,7 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
     env: {
       ...process.env,
       AUTODOC_PID: String(process.pid),
+      AUTODOC_INSTALLED_EXE: installedExePath,
       AUTODOC_SOURCE: sourceBundlePath,
       AUTODOC_TARGET: installedBundlePath,
       AUTODOC_TARGET_BACKUP: backupBundlePath,
@@ -799,13 +996,15 @@ function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, 
   quitForInstalledCopyPolicy(platform)
 }
 
-function quitForInstalledCopyPolicy(platform: NodeJS.Platform): void {
-  if (platform === 'win32') {
-    app.exit(0)
-    return
-  }
-
-  app.quit()
+function quitForInstalledCopyPolicy(_platform: NodeJS.Platform): void {
+  traceInstallPolicy('quitForInstalledCopyPolicy: calling app.exit(0)')
+  app.exit(0)
+  // app.exit(0) calls C exit() which should be immediate, but on macOS with
+  // GPU/utility helper processes it can stall. Belt-and-suspenders:
+  setTimeout(() => {
+    traceInstallPolicy('quitForInstalledCopyPolicy: app.exit(0) did not terminate, forcing process.exit(0)')
+    process.exit(0)
+  }, 2000).unref()
 }
 
 function quoteWindowsCommandArgument(value: string): string {

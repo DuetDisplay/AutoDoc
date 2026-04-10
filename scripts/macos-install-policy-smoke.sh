@@ -30,11 +30,20 @@
 # Then run:
 #   AUTODOC_SMOKE_STAMP=$STAMP bash scripts/macos-install-policy-smoke.sh
 #
+# On some volumes (exFAT / network sync), electron-builder may need:
+#   AUTODOC_DISABLE_ASAR_INTEGRITY=1
+# and unsigned local smoke builds:
+#   CSC_IDENTITY_AUTO_DISCOVERY=false … -c.mac.identity=null
+# Remove AppleDouble junk before packaging: find node_modules/electron/dist -name '._*' -delete
+#
 # ── Environment variables ─────────────────────────────────────────────────
 #
 #   AUTODOC_SMOKE_STAMP   Build folder suffix (required — no default)
 #   AUTODOC_SMOKE_OLDER   Older version string  (default: package.json patch - 1)
 #   AUTODOC_SMOKE_NEWER   Newer version string  (default: package.json version)
+#   AUTODOC_SMOKE_VERBOSE Set to 1 for timestamps, ps snapshots, dialog poll logs,
+#                         Accessibility button/window dumps, and osascript stderr.
+#                         Set to 2 to also enable bash xtrace (set -x).
 #
 # The script expects under the repo root:
 #   build-older-<STAMP>/autodoc-<OLDER>.dmg               (installer)
@@ -50,6 +59,120 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+VERBOSE="${AUTODOC_SMOKE_VERBOSE:-0}"
+export AUTODOC_SMOKE_VERBOSE
+[[ "$VERBOSE" == 2 ]] && set -x
+TRACE_FILE="${AUTODOC_INSTALL_POLICY_TRACE_FILE:-/tmp/autodoc-install-policy.log}"
+
+smoke_ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+
+vlog() {
+  [[ "$VERBOSE" == 1 ]] || [[ "$VERBOSE" == 2 ]] || return 0
+  printf '[%s][smoke] %s\n' "$(smoke_ts)" "$*" >&2
+}
+
+verbose() { [[ "$VERBOSE" == 1 ]] || [[ "$VERBOSE" == 2 ]]; }
+
+# Printed on every [FAIL] even when VERBOSE=0 so logs stay actionable in CI.
+smoke_fail_context() {
+  local reason="${1:-}"
+  echo "       --- fail context: $reason ---" >&2
+  ps -ax -o pid=,etime=,args= 2>/dev/null | grep -E '[A]utoDoc\.app/Contents/MacOS/AutoDoc' || echo "       (no main AutoDoc processes)" >&2
+  echo "       installed bundle present: $([[ -d "$INSTALLED_APP" ]] && echo yes || echo no)" >&2
+  [[ -f "${INSTALLED_APP}/Contents/Resources/app.asar" ]] && echo "       installed asar version: $(get_installed_version)" >&2 || true
+  if [[ -f "$TRACE_FILE" ]]; then
+    echo "       install-policy trace tail ($TRACE_FILE):" >&2
+    tail -n 30 "$TRACE_FILE" >&2 || true
+  fi
+}
+
+# Main AutoDoc binary processes only (matches count_instance_roots / test expectations).
+dump_autodoc_ps() {
+  local label="${1:-state}"
+  vlog "─── ps snapshot: $label ───"
+  ps -ax -o pid=,ppid=,user=,etime=,args= 2>/dev/null \
+    | grep -E '[A]utoDoc\.app/Contents/MacOS/AutoDoc' \
+    || vlog "(no main AutoDoc.app/Contents/MacOS/AutoDoc lines)"
+  vlog "main-root count (policy test metric): $(count_instance_roots)"
+}
+
+# All AutoDoc-related lines (helpers, GPU) for diagnosing duplicate instances.
+dump_autodoc_ps_wide() {
+  local label="${1:-state-wide}"
+  vlog "─── ps snapshot (wide): $label ───"
+  ps -ax -o pid=,ppid=,etime=,args= 2>/dev/null \
+    | grep -iE 'AutoDoc\.app|AutoDoc Helper' \
+    || vlog "(no AutoDoc lines)"
+}
+
+_ui_accessibility_dump_collect() {
+  osascript <<'APPLESCRIPT'
+set report to ""
+set nl to ASCII character 10
+tell application "System Events"
+  set procNames to {"AutoDoc"}
+  repeat with procName in procNames
+    try
+      tell (first process whose name is procName)
+        set report to report & "process: " & procName & nl
+        repeat with w in (every window)
+          set report to report & "  window: " & (name of w as string) & nl
+          try
+            repeat with s in (every sheet of w)
+              set report to report & "    sheet buttons:" & nl
+              repeat with b in (every button of s)
+                set report to report & "      [" & (name of b as string) & "]" & nl
+              end repeat
+            end repeat
+          end try
+          try
+            repeat with b in (every button of w)
+              set report to report & "    win-button: [" & (name of b as string) & "]" & nl
+            end repeat
+          end try
+        end repeat
+      end tell
+    on error errMsg number errNum
+      set report to report & "process " & procName & " err " & errNum & ": " & errMsg & nl
+    end try
+  end repeat
+end tell
+return report
+APPLESCRIPT
+}
+
+# Lists windows, sheets, and button AX titles. force=1 prints even if VERBOSE is off.
+dump_ui_accessibility() {
+  local force="${1:-0}"
+  [[ "$force" == 1 ]] || verbose || return 0
+  local ui_out hdr
+  hdr="─── Accessibility: windows / sheets / buttons (AutoDoc, Electron) ───"
+  if [[ "$force" == 1 ]]; then
+    printf '[%s][smoke] %s\n' "$(smoke_ts)" "$hdr" >&2
+  else
+    vlog "$hdr"
+  fi
+  if ! ui_out=$(_ui_accessibility_dump_collect 2>&1); then
+    if [[ "$force" == 1 ]]; then
+      echo "[smoke] Accessibility dump failed: $ui_out" >&2
+    else
+      vlog "Accessibility dump failed: $ui_out"
+    fi
+    return 0
+  fi
+  while IFS= read -r line; do
+    if [[ "$force" == 1 ]]; then
+      printf '[%s][smoke]   %s\n' "$(smoke_ts)" "$line" >&2
+    else
+      vlog "  $line"
+    fi
+  done <<< "$ui_out"
+}
+
+smoke_step() {
+  vlog "▶ $*"
+}
 
 # ─── Resolve versions ─────────────────────────────────────────────────────
 
@@ -74,7 +197,15 @@ remove_smoke_build_artifacts() {
     fi
   done
 }
-trap remove_smoke_build_artifacts EXIT
+cleanup_trace_env() {
+  launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE >/dev/null 2>&1 || true
+  launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE_FILE >/dev/null 2>&1 || true
+}
+on_exit_cleanup() {
+  remove_smoke_build_artifacts
+  cleanup_trace_env
+}
+trap on_exit_cleanup EXIT
 
 pkg_version() { node -e "process.stdout.write(require('${REPO_ROOT}/package.json').version)"; }
 
@@ -93,6 +224,11 @@ NEWER="${AUTODOC_SMOKE_NEWER:-$(pkg_version)}"
 OLDER="${AUTODOC_SMOKE_OLDER:-$(prev_patch "$NEWER")}"
 
 echo "Smoke test: older=$OLDER  newer=$NEWER  stamp=$STAMP"
+[[ "$VERBOSE" != 0 ]] && echo "Verbose: AUTODOC_SMOKE_VERBOSE=$VERBOSE (1=timestamps/ps/ui, 2=+ bash xtrace)" >&2
+rm -f "$TRACE_FILE" 2>/dev/null || true
+launchctl setenv AUTODOC_INSTALL_POLICY_TRACE "1" >/dev/null 2>&1 || true
+launchctl setenv AUTODOC_INSTALL_POLICY_TRACE_FILE "$TRACE_FILE" >/dev/null 2>&1 || true
+vlog "Install-policy trace file: $TRACE_FILE"
 
 # ─── Paths ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +244,8 @@ resolve_loose_bundle() {
   local sub p
   for sub in mac-arm64 mac-universal mac darwin arm64 x64; do
     p="${root}/${sub}/${APP_NAME}"
+    [[ -d "$p" ]] && { echo "$p"; return 0; }
+    p="${root}/${sub}/Electron.app"
     [[ -d "$p" ]] && { echo "$p"; return 0; }
   done
   return 1
@@ -129,10 +267,115 @@ LOOSE_NEWER="$(find_loose_app newer)" || { echo "Error: no loose $NEWER .app —
 die() { echo "FATAL: $*" >&2; exit 1; }
 assert_file() { [[ -e "$1" ]] || die "Missing $2: $1"; }
 
-assert_file "$DMG_OLDER"  "$OLDER dmg"
-assert_file "$DMG_NEWER"  "$NEWER dmg"
+cleanup_appledouble() {
+  local root="$1"
+  [[ -e "$root" ]] || return 0
+  find "$root" -name '._*' -delete 2>/dev/null || true
+}
+
+rewrite_plist_value() {
+  local plist="$1" key="$2" value="$3"
+  /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$plist" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :${key} string ${value}" "$plist" >/dev/null 2>&1
+}
+
+normalize_asar_package_json() {
+  local bundle_path="$1" version="$2"
+  local asar_path tmp_asan_root
+  asar_path="${bundle_path}/Contents/Resources/app.asar"
+  [[ -f "$asar_path" ]] || die "Missing app.asar in loose bundle: $bundle_path"
+
+  tmp_asan_root="$(mktemp -d /tmp/autodoc-smoke-asar.XXXXXX)"
+  (cd "$REPO_ROOT" && node - <<'NODE' "$asar_path" "$tmp_asan_root" "$version"
+const asar = require('@electron/asar');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const asarPath = process.argv[2];
+const tmpRoot = process.argv[3];
+const version = process.argv[4];
+const extractedDir = path.join(tmpRoot, 'app');
+const rewrittenAsarPath = `${asarPath}.tmp`;
+
+asar.extractAll(asarPath, extractedDir);
+
+const packageJsonPath = path.join(extractedDir, 'package.json');
+const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+pkg.name = 'autodoc';
+pkg.productName = 'AutoDoc';
+pkg.version = version;
+fs.writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+Promise.resolve(asar.createPackage(extractedDir, rewrittenAsarPath))
+  .then(() => {
+    fs.renameSync(rewrittenAsarPath, asarPath);
+  })
+  .catch((error) => {
+    console.error(error.stack || error);
+    process.exit(1);
+  });
+NODE
+  ) || die "Failed to normalize app.asar package metadata for: $bundle_path"
+  rm -rf "$tmp_asan_root"
+}
+
+normalize_loose_bundle() {
+  local bundle_path="$1" version="$2"
+  cleanup_appledouble "$bundle_path"
+
+  if [[ "$(basename "$bundle_path")" == "$APP_NAME" && -x "$bundle_path/Contents/MacOS/AutoDoc" ]]; then
+    echo "$bundle_path"
+    return 0
+  fi
+
+  local parent_dir normalized_bundle plist macos_dir
+  parent_dir="$(dirname "$bundle_path")"
+  normalized_bundle="${parent_dir}/${APP_NAME}"
+  plist="${bundle_path}/Contents/Info.plist"
+  macos_dir="${bundle_path}/Contents/MacOS"
+
+  [[ -f "$plist" ]] || die "Missing Info.plist in loose bundle: $bundle_path"
+  [[ -d "$macos_dir" ]] || die "Missing MacOS directory in loose bundle: $bundle_path"
+
+  if [[ "$bundle_path" != "$normalized_bundle" ]]; then
+    rm -rf "$normalized_bundle"
+    mv "$bundle_path" "$normalized_bundle"
+    bundle_path="$normalized_bundle"
+    plist="${bundle_path}/Contents/Info.plist"
+    macos_dir="${bundle_path}/Contents/MacOS"
+  fi
+
+  if [[ ! -e "${macos_dir}/AutoDoc" ]]; then
+    if [[ -e "${macos_dir}/Electron" ]]; then
+      cp "${macos_dir}/Electron" "${macos_dir}/AutoDoc"
+      chmod +x "${macos_dir}/AutoDoc"
+    else
+      die "Missing Electron executable in loose bundle: $bundle_path"
+    fi
+  fi
+
+  rewrite_plist_value "$plist" CFBundleDisplayName "AutoDoc"
+  rewrite_plist_value "$plist" CFBundleName "AutoDoc"
+  rewrite_plist_value "$plist" CFBundleExecutable "AutoDoc"
+  rewrite_plist_value "$plist" CFBundleIdentifier "com.kairos.autodoc"
+  rewrite_plist_value "$plist" CFBundleShortVersionString "$version"
+  rewrite_plist_value "$plist" CFBundleVersion "$version"
+  normalize_asar_package_json "$bundle_path" "$version"
+
+  echo "$bundle_path"
+}
+
+LOOSE_OLDER="$(normalize_loose_bundle "$LOOSE_OLDER" "$OLDER")"
+LOOSE_NEWER="$(normalize_loose_bundle "$LOOSE_NEWER" "$NEWER")"
+
 assert_file "$LOOSE_OLDER/Contents/MacOS/AutoDoc" "$OLDER loose app"
 assert_file "$LOOSE_NEWER/Contents/MacOS/AutoDoc" "$NEWER loose app"
+
+vlog "Resolved paths: INSTALLED_APP=$INSTALLED_APP"
+vlog "LOOSE_OLDER=$LOOSE_OLDER"
+vlog "LOOSE_NEWER=$LOOSE_NEWER"
+[[ -f "$DMG_OLDER" ]] && vlog "DMG_OLDER ok: $DMG_OLDER" || vlog "DMG_OLDER missing (install_smoke_copy will use loose bundle): $DMG_OLDER"
+[[ -f "$DMG_NEWER" ]] && vlog "DMG_NEWER ok: $DMG_NEWER" || vlog "DMG_NEWER missing: $DMG_NEWER"
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -145,6 +388,8 @@ record() {
     echo "[PASS] $name"
   else
     echo "[FAIL] $name"
+    smoke_fail_context "$name"
+    dump_ui_accessibility 1
   fi
   [[ -n "$detail" ]] && echo "       $detail"
 }
@@ -152,6 +397,12 @@ record() {
 stop_all_autodoc() {
   killall AutoDoc 2>/dev/null || true
   sleep 2
+  killall -9 AutoDoc 2>/dev/null || true
+  sleep 1
+  # Remove stale Electron single-instance lock so the next launch acquires a fresh lock
+  rm -f "$HOME/Library/Application Support/autodoc/SingletonLock" 2>/dev/null || true
+  rm -f "$HOME/Library/Application Support/autodoc/SingletonSocket" 2>/dev/null || true
+  rm -f "$HOME/Library/Application Support/autodoc/SingletonCookie" 2>/dev/null || true
 }
 
 count_instance_roots() {
@@ -160,14 +411,52 @@ count_instance_roots() {
   echo "$n"
 }
 
+count_apps_roots() {
+  local n
+  n=$(ps -ax -o args= 2>/dev/null | grep -E -c '[/]Applications[/]AutoDoc\.app/Contents/MacOS/AutoDoc' || true)
+  echo "$n"
+}
+
+count_non_apps_roots() {
+  local n
+  n=$(ps -ax -o args= 2>/dev/null | grep -E '[A]utoDoc\.app/Contents/MacOS/AutoDoc' | grep -E -v '[/]Applications[/]AutoDoc\.app/Contents/MacOS/AutoDoc' | wc -l | tr -d ' ')
+  echo "$n"
+}
+
 wait_instance_count() {
   local expected="$1" timeout_sec="${2:-90}"
   local deadline=$((SECONDS + timeout_sec))
+  local got
   while (( SECONDS < deadline )); do
-    [[ "$(count_instance_roots)" -eq "$expected" ]] && return 0
+    got=$(count_instance_roots)
+    [[ "$got" -eq "$expected" ]] && {
+      vlog "wait_instance_count: ok ($got main root(s), ${timeout_sec}s budget)"
+      return 0
+    }
+    vlog "wait_instance_count: want $expected, have $got (deadline in $((deadline - SECONDS))s)"
     sleep 0.5
   done
-  die "Expected ${expected} instance(s), got $(count_instance_roots) after ${timeout_sec}s"
+  got=$(count_instance_roots)
+  dump_autodoc_ps_wide "wait_instance_count timeout"
+  die "Expected ${expected} instance(s), got ${got} after ${timeout_sec}s"
+}
+
+wait_apps_only_single_instance() {
+  local timeout_sec="${1:-45}"
+  local deadline=$((SECONDS + timeout_sec))
+  local total apps non_apps
+  while (( SECONDS < deadline )); do
+    total="$(count_instance_roots)"
+    apps="$(count_apps_roots)"
+    non_apps="$(count_non_apps_roots)"
+    if [[ "$total" -eq 1 && "$apps" -eq 1 && "$non_apps" -eq 0 ]]; then
+      vlog "wait_apps_only_single_instance: settled"
+      return 0
+    fi
+    vlog "wait_apps_only_single_instance: total=$total apps=$apps non_apps=$non_apps (remaining $((deadline - SECONDS))s)"
+    sleep 1
+  done
+  return 1
 }
 
 get_installed_version() {
@@ -185,10 +474,38 @@ install_from_dmg() {
   local dmg="$1"
   local mnt
   mnt="$(mktemp -d /tmp/autodoc-smoke-mnt.XXXXXX)"
-  hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$dmg"
+  smoke_step "hdiutil attach $dmg -> $mnt"
+  if verbose; then
+    hdiutil attach -nobrowse -mountpoint "$mnt" "$dmg" >&2
+  else
+    hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$dmg"
+  fi
+  smoke_step "ditto $mnt/$APP_NAME -> $INSTALLED_APP"
   ditto "${mnt}/${APP_NAME}" "$INSTALLED_APP"
-  hdiutil detach -quiet "$mnt"
+  smoke_step "hdiutil detach $mnt"
+  if verbose; then
+    hdiutil detach "$mnt" >&2
+  else
+    hdiutil detach -quiet "$mnt"
+  fi
   rmdir "$mnt" 2>/dev/null || true
+}
+
+install_from_bundle() {
+  local bundle="$1"
+  cleanup_appledouble "$bundle"
+  rm -rf "$INSTALLED_APP"
+  ditto "$bundle" "$INSTALLED_APP"
+}
+
+install_smoke_copy() {
+  local dmg="$1" bundle="$2"
+  if [[ -f "$dmg" ]]; then
+    install_from_dmg "$dmg"
+  else
+    echo "Note: ${dmg##*/} missing; installing from loose bundle copy instead."
+    install_from_bundle "$bundle"
+  fi
 }
 
 uninstall_installed() {
@@ -196,66 +513,176 @@ uninstall_installed() {
   sleep 1
 }
 
+# Clicks install-policy message boxes from the main process. Electron often leaves the
+# sheet title empty or uses wording that does not include "Applications Copy", so we
+# match affirmative button labels (see application-install.ts) and fall back to title heuristics.
 send_dialog() {
   local choice="${1:-Accept}"
   local timeout_sec="${2:-90}"
+  local poll=0
   local deadline=$((SECONDS + timeout_sec))
+  local as_err
   while (( SECONDS < deadline )); do
+    poll=$((poll + 1))
+    if verbose && { [[ "$poll" -le 3 ]] || [[ $((poll % 12)) -eq 0 ]] || [[ $((deadline - SECONDS)) -le 8 ]]; }; then
+      vlog "send_dialog: poll #$poll choice=$choice (remaining ~$((deadline - SECONDS))s)"
+    fi
     local out="0"
+    as_err="$(mktemp "${TMPDIR:-/tmp}/autodoc-smoke-as.XXXXXX")"
     if [[ "$choice" == "Accept" ]]; then
-      out=$(osascript <<'APPLESCRIPT' 2>/dev/null || echo "0"
+      out=$(osascript <<'APPLESCRIPT' 2>"$as_err" || echo "0"
 tell application "System Events"
-  repeat with proc in (every process whose name is "AutoDoc")
-    repeat with w in every window of proc
-      set wt to name of w as string
-      if wt contains "Applications Copy" then
-        set frontmost of proc to true
+  set procNames to {"AutoDoc", "electron", "Electron"}
+  repeat with procName in procNames
+    try
+      set matchingProcs to every process whose name is procName
+      repeat with proc in matchingProcs
         try
-          click button 1 of w
-        on error
-          keystroke return
+          tell proc
+            set frontmost to true
+            repeat with w in (every window)
+              try
+                repeat with s in (every sheet of w)
+                  try
+                    repeat with btnLabel in {"Upgrade in Applications", "Downgrade in Applications", "Replace in Applications"}
+                      try
+                        click (first button of s whose name is btnLabel)
+                        return "1"
+                      end try
+                    end repeat
+                  end try
+                  try
+                    if (count of buttons of s) is 2 then
+                      click button 1 of s
+                      return "1"
+                    end if
+                  end try
+                end repeat
+              end try
+              try
+                repeat with btnLabel in {"Upgrade in Applications", "Downgrade in Applications", "Replace in Applications"}
+                  try
+                    click (first button of w whose name is btnLabel)
+                    return "1"
+                  end try
+                end repeat
+              end try
+              try
+                set wt to name of w as string
+                if wt contains "Applications Copy" or wt contains "/Applications" or wt contains "Upgrade Applications" or wt contains "Downgrade Applications" then
+                  try
+                    click button 1 of w
+                  on error
+                    keystroke return
+                  end try
+                  return "1"
+                end if
+              end try
+              try
+                repeat with t in (every static text of w)
+                  try
+                    set tx to value of t as string
+                    if tx contains "/Applications" and tx contains "AutoDoc" then
+                      if (count of buttons of w) is greater than 1 then
+                        click button 1 of w
+                        return "1"
+                      end if
+                    end if
+                  end try
+                end repeat
+              end try
+            end repeat
+          end tell
         end try
-        return "1"
-      end if
-    end repeat
+      end repeat
+    end try
   end repeat
 end tell
 return "0"
 APPLESCRIPT
 )
     else
-      out=$(osascript <<'APPLESCRIPT' 2>/dev/null || echo "0"
+      out=$(osascript <<'APPLESCRIPT' 2>"$as_err" || echo "0"
 tell application "System Events"
-  repeat with proc in (every process whose name is "AutoDoc")
-    repeat with w in every window of proc
-      set wt to name of w as string
-      if wt contains "Applications Copy" then
-        set frontmost of proc to true
+  set procNames to {"AutoDoc", "electron", "Electron"}
+  repeat with procName in procNames
+    try
+      set matchingProcs to every process whose name is procName
+      repeat with proc in matchingProcs
         try
-          click button "Quit" of w
-        on error
-          key code 53
+          tell proc
+            set frontmost to true
+            repeat with w in (every window)
+              try
+                repeat with s in (every sheet of w)
+                  try
+                    click (first button of s whose name is "Quit")
+                    return "1"
+                  end try
+                  try
+                    set bc to count of buttons of s
+                    if bc is 2 then
+                      click button bc of s
+                      return "1"
+                    end if
+                  end try
+                end repeat
+              end try
+              try
+                click (first button of w whose name is "Quit")
+                return "1"
+              end try
+              try
+                set wt to name of w as string
+                if wt contains "Applications Copy" or wt contains "/Applications" or wt contains "Upgrade Applications" or wt contains "Downgrade Applications" then
+                  try
+                    click button "Quit" of w
+                  on error
+                    key code 53
+                  end try
+                  return "1"
+                end if
+              end try
+              try
+                if (count of buttons of w) is 2 then
+                  click button 2 of w
+                  return "1"
+                end if
+              end try
+            end repeat
+          end tell
         end try
-        return "1"
-      end if
-    end repeat
+      end repeat
+    end try
   end repeat
 end tell
 return "0"
 APPLESCRIPT
 )
     fi
+    if verbose && [[ -s "$as_err" ]]; then
+      vlog "osascript stderr: $(tr '\n' ' ' < "$as_err")"
+    fi
+    rm -f "$as_err"
     if [[ "$out" == "1" ]]; then
+      vlog "send_dialog: clicked successfully (poll #$poll)"
       sleep 0.8
       return 0
     fi
     sleep 0.4
   done
+  printf '[%s][smoke] send_dialog: TIMEOUT after %ss choice=%s (set AUTODOC_SMOKE_VERBOSE=1 for poll trace)\n' "$(smoke_ts)" "$timeout_sec" "$choice" >&2
+  dump_autodoc_ps_wide "send_dialog timeout"
+  dump_ui_accessibility 1
   return 1
 }
 
 send_dialog_quiet() {
-  send_dialog "$1" "${2:-4}" 2>/dev/null || return 1
+  if verbose; then
+    send_dialog "$1" "${2:-4}" || return 1
+  else
+    send_dialog "$1" "${2:-4}" 2>/dev/null || return 1
+  fi
 }
 
 # ─── Tests ─────────────────────────────────────────────────────────────────
@@ -267,7 +694,7 @@ uninstall_installed
 
 echo ""
 echo "=== 1) Install $NEWER, launch installed — opens normally ==="
-install_from_dmg "$DMG_NEWER"
+install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 open "$INSTALLED_APP"
 sleep 6
 c=$(count_instance_roots)
@@ -290,15 +717,16 @@ open "$LOOSE_NEWER"
 sleep 12
 dlg=0
 send_dialog_quiet Accept 3 && dlg=1 || true
+wait_apps_only_single_instance 45 || true
 c3=$(count_instance_roots)
-running_apps=false
-if [[ "$c3" -ge 1 ]] && ps -ax -o args= | grep -q "[/]Applications[/]AutoDoc.app/Contents/MacOS/AutoDoc"; then
-  running_apps=true
-fi
+apps3=$(count_apps_roots)
+non_apps3=$(count_non_apps_roots)
+routing3="unsettled"
+[[ "$c3" -eq 1 && "$apps3" -eq 1 && "$non_apps3" -eq 0 ]] && routing3="apps-only"
 stop_all_autodoc
 ok3a=0
-[[ "$dlg" -eq 0 && "$c3" -eq 1 && "$running_apps" == "true" ]] && ok3a=1
-record "3a same-ver loose cold redirect" "$ok3a" "dialog detected: $dlg, instances: $c3, from /Applications: $running_apps"
+[[ "$dlg" -eq 0 && "$routing3" == "apps-only" ]] && ok3a=1
+record "3a same-ver loose cold redirect" "$ok3a" "dialog detected: $dlg, instances=$c3 apps=$apps3 non_apps=$non_apps3 routing=$routing3"
 
 echo ""
 echo "=== 3b) Same-version loose while running — focus, no dialog ==="
@@ -308,14 +736,19 @@ open "$LOOSE_NEWER"
 sleep 6
 dlg3b=0
 send_dialog_quiet Accept 4 && dlg3b=1 || true
+wait_apps_only_single_instance 45 || true
 c3b=$(count_instance_roots)
+apps3b=$(count_apps_roots)
+non_apps3b=$(count_non_apps_roots)
+routing3b="unsettled"
+[[ "$c3b" -eq 1 && "$apps3b" -eq 1 && "$non_apps3b" -eq 0 ]] && routing3b="apps-only"
 stop_all_autodoc
-record "3b same-ver loose warm" "$( [[ $dlg3b -eq 0 && $c3b -eq 1 ]] && echo 1 || echo 0 )" "dialog: $dlg3b, instances: $c3b"
+record "3b same-ver loose warm" "$( [[ $dlg3b -eq 0 && "$routing3b" == "apps-only" ]] && echo 1 || echo 0 )" "dialog=$dlg3b instances=$c3b apps=$apps3b non_apps=$non_apps3b routing=$routing3b"
 
 echo ""
 echo "=== 4) Upgrade: install $OLDER, loose $NEWER cold — accept ==="
 uninstall_installed
-install_from_dmg "$DMG_OLDER"
+install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 v_pre="$(get_installed_version)"
 open "$LOOSE_NEWER"
 sleep 12
@@ -329,7 +762,7 @@ record "4 upgrade cold accept" "$( [[ "$v_post" == "$NEWER" ]] && echo 1 || echo
 echo ""
 echo "=== 5) Downgrade: install $NEWER, loose $OLDER cold — accept ==="
 uninstall_installed
-install_from_dmg "$DMG_NEWER"
+install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 v_pre5="$(get_installed_version)"
 open "$LOOSE_OLDER"
 sleep 12
@@ -343,7 +776,7 @@ record "5 downgrade cold accept" "$( [[ "$v_post5" == "$OLDER" ]] && echo 1 || e
 echo ""
 echo "=== 6) Upgrade warm: $OLDER running + loose $NEWER — accept ==="
 uninstall_installed
-install_from_dmg "$DMG_OLDER"
+install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 open "$INSTALLED_APP"
 sleep 8
 open "$LOOSE_NEWER"
@@ -358,7 +791,7 @@ record "6 upgrade warm accept" "$( [[ "$v6" == "$NEWER" ]] && echo 1 || echo 0 )
 echo ""
 echo "=== 7) Downgrade warm: $NEWER running + loose $OLDER — accept ==="
 uninstall_installed
-install_from_dmg "$DMG_NEWER"
+install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 open "$INSTALLED_APP"
 sleep 8
 open "$LOOSE_OLDER"
@@ -373,7 +806,7 @@ record "7 downgrade warm accept" "$( [[ "$v7" == "$OLDER" ]] && echo 1 || echo 0
 echo ""
 echo "=== 8) Upgrade quit — /Applications unchanged, loose exits ==="
 uninstall_installed
-install_from_dmg "$DMG_OLDER"
+install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 v8pre="$(get_installed_version)"
 "$LOOSE_NEWER/Contents/MacOS/AutoDoc" &
 p8=$!
@@ -391,7 +824,7 @@ record "8 upgrade quit" "$( [[ "$v8post" == "$v8pre" && $alive -eq 0 && $n8 -eq 
 echo ""
 echo "=== 9) Downgrade quit — /Applications unchanged, loose exits ==="
 uninstall_installed
-install_from_dmg "$DMG_NEWER"
+install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 v9pre="$(get_installed_version)"
 "$LOOSE_OLDER/Contents/MacOS/AutoDoc" &
 p9=$!
