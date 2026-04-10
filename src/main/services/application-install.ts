@@ -699,17 +699,17 @@ function escapePowerShellSingleQuotedString(value: string): string {
   return value.replaceAll("'", "''")
 }
 
-function replaceInstalledCopyAndRelaunch(
+async function replaceInstalledCopyAndRelaunch(
   sourceApplication: ResolvedApplication,
   installedApplication: InstalledApplication,
   platform: NodeJS.Platform,
   windowsOptions?: WindowsReplacementOptions,
-): void {
+): Promise<void> {
   try {
     if (platform === 'darwin') {
       relaunchInstalledMacBundle(sourceApplication.containerPath, installedApplication.launchPath)
     } else if (platform === 'win32') {
-      void relaunchInstalledWindowsCopy(
+      await relaunchInstalledWindowsCopy(
         sourceApplication.containerPath,
         installedApplication.containerPath,
         installedApplication.launchPath,
@@ -719,7 +719,7 @@ function replaceInstalledCopyAndRelaunch(
       return
     }
   } catch (error) {
-    void showReplacementError(platform, error)
+    await showReplacementError(platform, error)
   }
 
   quitForInstalledCopyPolicy(platform)
@@ -784,7 +784,7 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
     'done',
     // Kill any running instance from the installed location before replacing.
     // In the "warm" scenario another copy from /Applications is still alive.
-    'pids=$(/bin/ps -axo pid=,comm= | /usr/bin/grep -F "$AUTODOC_INSTALLED_EXE" | /usr/bin/awk \'{print $1}\' | /usr/bin/grep -v "^$$\\$")',
+    'pids=$(/bin/ps -axo pid=,args= | /usr/bin/grep -F "$AUTODOC_INSTALLED_EXE" | /usr/bin/awk \'{print $1}\' | /usr/bin/grep -v "^$$\\$")',
     'for p in $pids; do kill "$p" 2>/dev/null; done',
     'sleep 1',
     'for p in $pids; do kill -9 "$p" 2>/dev/null; done',
