@@ -29,7 +29,7 @@
 
   ── Environment variables ─────────────────────────────────────────────────
 
-    AUTODOC_SMOKE_STAMP     Build folder suffix (required — no default)
+    AUTODOC_SMOKE_STAMP     Build folder suffix (required; no default)
     AUTODOC_SMOKE_OLDER     Older version string  (default: read from package.json, patch - 1)
     AUTODOC_SMOKE_NEWER     Newer version string  (default: read from package.json)
 
@@ -38,6 +38,8 @@
     build-newer-<STAMP>\autodoc-<NEWER>-setup.exe   (installer)
     build-older-<STAMP>\win-unpacked\autodoc.exe    (loose copy)
     build-newer-<STAMP>\win-unpacked\autodoc.exe    (loose copy)
+
+  After the run, build-older-<STAMP> and build-newer-<STAMP> under the repo are deleted.
 #>
 $ErrorActionPreference = 'Stop'
 
@@ -59,7 +61,7 @@ function Get-PreviousPatchVersion([string]$Version) {
   $parts = $Version -split '\.'
   if ($parts.Count -lt 3) { throw "Cannot derive previous patch from version '$Version'" }
   $patch = [int]$parts[-1]
-  if ($patch -le 0) { throw "Patch is already 0 for version '$Version' — set AUTODOC_SMOKE_OLDER explicitly" }
+  if ($patch -le 0) { throw "Patch is already 0 for version '$Version' - set AUTODOC_SMOKE_OLDER explicitly" }
   $parts[-1] = [string]($patch - 1)
   return $parts -join '.'
 }
@@ -232,12 +234,7 @@ function Wait-InstanceCount {
   throw "Expected $Expected instance(s), got $n after ${TimeoutSec}s"
 }
 
-# ─── Pre-checks ─────────────────────────────────────────────────────────────
-
-Assert-File $SetupOlder "$OlderVersion installer"
-Assert-File $SetupNewer "$NewerVersion installer"
-Assert-File $LooseOlder "$OlderVersion loose"
-Assert-File $LooseNewer "$NewerVersion loose"
+# ─── Pre-checks (inside try so finally can remove build dirs on failure) ───
 
 $results = [System.Collections.Generic.List[object]]::new()
 function Record {
@@ -250,12 +247,17 @@ function Record {
 # ─── Tests ──────────────────────────────────────────────────────────────────
 
 try {
+  Assert-File $SetupOlder "$OlderVersion installer"
+  Assert-File $SetupNewer "$NewerVersion installer"
+  Assert-File $LooseOlder "$OlderVersion loose"
+  Assert-File $LooseNewer "$NewerVersion loose"
+
   Write-Step 'Cleanup'
   Stop-AllAutodoc
   Uninstall-Silent
 
   # 1 ── Single launch
-  Write-Step "1) Install $NewerVersion, launch installed — opens normally"
+  Write-Step "1) Install $NewerVersion, launch installed - opens normally"
   Install-Silent $SetupNewer
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 6
@@ -264,7 +266,7 @@ try {
   Stop-AllAutodoc
 
   # 2 ── Double launch
-  Write-Step '2) Launch installed twice — single instance'
+  Write-Step '2) Launch installed twice - single instance'
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 6
   Start-Process -FilePath $InstalledExe | Out-Null
@@ -273,8 +275,8 @@ try {
   Record '2 single instance' ($c2 -eq 1) "instances: $c2"
   Stop-AllAutodoc
 
-  # 3a ── Same-version loose cold — redirects to installed copy
-  Write-Step '3a) Same-version loose when not running — redirects to installed, no dialog'
+  # 3a ── Same-version loose cold - redirects to installed copy
+  Write-Step '3a) Same-version loose when not running - redirects to installed, no dialog'
   Start-Process -FilePath $LooseNewer | Out-Null
   Start-Sleep -Seconds 12
   $dlg = Send-Dialog -Choice Accept -TimeoutSec 3 -Quiet
@@ -294,7 +296,7 @@ try {
   Record '3a same-ver loose cold redirect' ((-not $dlg) -and ($c3 -eq 1) -and $runningFromInstalled) "dialog: $dlg, instances: $c3, from installed: $runningFromInstalled"
 
   # 3b ── Same-version loose warm
-  Write-Step '3b) Same-version loose while running — focus, no dialog'
+  Write-Step '3b) Same-version loose while running - focus, no dialog'
   Start-Process -FilePath $InstalledExe | Out-Null
   Start-Sleep -Seconds 6
   Start-Process -FilePath $LooseNewer | Out-Null
@@ -305,7 +307,7 @@ try {
   Record '3b same-ver loose warm' ((-not $dlg3b) -and ($c3b -eq 1)) "dialog: $dlg3b, instances: $c3b"
 
   # 4 ── Upgrade cold
-  Write-Step "4) Upgrade: install $OlderVersion, loose $NewerVersion cold — accept"
+  Write-Step "4) Upgrade: install $OlderVersion, loose $NewerVersion cold - accept"
   Uninstall-Silent
   Install-Silent $SetupOlder
   $vPre = Get-InstalledVersion
@@ -320,7 +322,7 @@ try {
   Record '4 upgrade cold accept' ($vPost -eq $NewerVersion) "version: $vPre -> $vPost"
 
   # 5 ── Downgrade cold
-  Write-Step "5) Downgrade: install $NewerVersion, loose $OlderVersion cold — accept"
+  Write-Step "5) Downgrade: install $NewerVersion, loose $OlderVersion cold - accept"
   Uninstall-Silent
   Install-Silent $SetupNewer
   $vPre5 = Get-InstalledVersion
@@ -335,7 +337,7 @@ try {
   Record '5 downgrade cold accept' ($vPost5 -eq $OlderVersion) "version: $vPre5 -> $vPost5"
 
   # 6 ── Upgrade warm
-  Write-Step "6) Upgrade warm: install $OlderVersion running + loose $NewerVersion — accept"
+  Write-Step "6) Upgrade warm: install $OlderVersion running + loose $NewerVersion - accept"
   Uninstall-Silent
   Install-Silent $SetupOlder
   Start-Process -FilePath $InstalledExe | Out-Null
@@ -351,7 +353,7 @@ try {
   Record '6 upgrade warm accept' ($v6 -eq $NewerVersion) "version: $v6"
 
   # 7 ── Downgrade warm
-  Write-Step "7) Downgrade warm: install $NewerVersion running + loose $OlderVersion — accept"
+  Write-Step "7) Downgrade warm: install $NewerVersion running + loose $OlderVersion - accept"
   Uninstall-Silent
   Install-Silent $SetupNewer
   Start-Process -FilePath $InstalledExe | Out-Null
@@ -367,7 +369,7 @@ try {
   Record '7 downgrade warm accept' ($v7 -eq $OlderVersion) "version: $v7"
 
   # 8 ── Quit on upgrade
-  Write-Step '8) Upgrade quit — installed unchanged, loose exits'
+  Write-Step '8) Upgrade quit - installed unchanged, loose exits'
   Uninstall-Silent
   Install-Silent $SetupOlder
   $v8pre = Get-InstalledVersion
@@ -383,7 +385,7 @@ try {
   Record '8 upgrade quit' (($v8post -eq $v8pre) -and (-not $alive) -and ($n8 -eq 0)) "version: $v8pre -> $v8post, loose alive: $($null -ne $alive), instances: $n8"
 
   # 9 ── Quit on downgrade
-  Write-Step '9) Downgrade quit — installed unchanged, loose exits'
+  Write-Step '9) Downgrade quit - installed unchanged, loose exits'
   Uninstall-Silent
   Install-Silent $SetupNewer
   $v9pre = Get-InstalledVersion
@@ -405,6 +407,15 @@ catch {
 finally {
   Write-Step 'Final cleanup'
   Stop-AllAutodoc
+  if (-not [string]::IsNullOrWhiteSpace($Stamp)) {
+    foreach ($rel in @("build-older-$Stamp", "build-newer-$Stamp")) {
+      $buildDir = Join-Path $RepoRoot $rel
+      if (Test-Path -LiteralPath $buildDir) {
+        Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed smoke build: $buildDir" -ForegroundColor DarkGray
+      }
+    }
+  }
 }
 
 Write-Host "`n=== Summary ===" -ForegroundColor Yellow

@@ -41,6 +41,9 @@
 #   build-newer-<STAMP>/autodoc-<NEWER>.dmg               (installer)
 #   build-older-<STAMP>[-dir]/<arch>/AutoDoc.app           (loose copy)
 #   build-newer-<STAMP>[-dir]/<arch>/AutoDoc.app           (loose copy)
+#
+# On exit, build-older-<STAMP>, build-newer-<STAMP>, and optional *-dir
+# counterparts under the repo are deleted.
 # ──────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -55,6 +58,23 @@ if [[ -z "$STAMP" ]]; then
   echo "Error: set AUTODOC_SMOKE_STAMP to the suffix of your build-older-* / build-newer-* folders." >&2
   exit 1
 fi
+
+remove_smoke_build_artifacts() {
+  [[ -n "${STAMP:-}" ]] || return 0
+  local d
+  for d in \
+    "${REPO_ROOT}/build-older-${STAMP}" \
+    "${REPO_ROOT}/build-newer-${STAMP}" \
+    "${REPO_ROOT}/build-older-${STAMP}-dir" \
+    "${REPO_ROOT}/build-newer-${STAMP}-dir"
+  do
+    if [[ -d "$d" ]]; then
+      rm -rf "$d"
+      echo "Removed smoke build: $d" >&2
+    fi
+  done
+}
+trap remove_smoke_build_artifacts EXIT
 
 pkg_version() { node -e "process.stdout.write(require('${REPO_ROOT}/package.json').version)"; }
 
