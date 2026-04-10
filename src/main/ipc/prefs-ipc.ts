@@ -28,6 +28,17 @@ export function registerPrefsIpc(
     prefsStore.setOnboardingStep(step)
   })
 
+  ipcMain.handle('prefs:get-onboarding-permission-settings-opened', (_event, panel: 'microphone' | 'screen'): boolean => {
+    return prefsStore.getOnboardingPermissionSettingsOpened(panel)
+  })
+
+  ipcMain.handle(
+    'prefs:set-onboarding-permission-settings-opened',
+    (_event, panel: 'microphone' | 'screen', opened: boolean): void => {
+      prefsStore.setOnboardingPermissionSettingsOpened(panel, opened)
+    },
+  )
+
   ipcMain.handle('prefs:get-launch-at-login', (): boolean => {
     return prefsStore.getLaunchAtLogin()
   })

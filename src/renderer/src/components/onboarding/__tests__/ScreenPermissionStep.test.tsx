@@ -1,39 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MicPermissionStep } from '../MicPermissionStep'
+import { ScreenPermissionStep } from '../ScreenPermissionStep'
 
-describe('MicPermissionStep', () => {
+describe('ScreenPermissionStep', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
       if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: false })
-      if (channel === 'permissions:request-microphone') return Promise.resolve(false)
       return Promise.resolve({})
     })
-  })
-
-  it('renders required badge and enable button', () => {
-    render(<MicPermissionStep onNext={vi.fn()} />)
-    expect(screen.getByText('REQUIRED')).toBeInTheDocument()
-    expect(screen.getByText('Enable Microphone')).toBeInTheDocument()
-  })
-
-  it('does not show Continue until permission granted', () => {
-    render(<MicPermissionStep onNext={vi.fn()} />)
-    expect(screen.queryByText('Continue →')).not.toBeInTheDocument()
   })
 
   it('restores the continue state after returning from System Settings', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(true)
       if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: false })
-      if (channel === 'permissions:request-microphone') return Promise.resolve(false)
       return Promise.resolve({})
     })
 
-    render(<MicPermissionStep onNext={vi.fn()} />)
+    render(<ScreenPermissionStep onNext={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Continue →')).toBeInTheDocument()
@@ -45,70 +32,41 @@ describe('MicPermissionStep', () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(true)
       if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: false })
-      if (channel === 'permissions:request-microphone') return Promise.resolve(false)
       if (channel === 'prefs:set-onboarding-permission-settings-opened') return Promise.resolve()
       return Promise.resolve({})
     })
 
     const onNext = vi.fn()
-    render(<MicPermissionStep onNext={onNext} />)
+    render(<ScreenPermissionStep onNext={onNext} />)
 
     await userEvent.click(await screen.findByText('Continue →'))
 
     expect(window.electronAPI.invoke).toHaveBeenCalledWith(
       'prefs:set-onboarding-permission-settings-opened',
-      'microphone',
+      'screen',
       false,
     )
     expect(onNext).toHaveBeenCalledTimes(1)
   })
 
-  it('auto-advances after relaunch when microphone permission is already granted', async () => {
+  it('auto-advances after relaunch when screen permission is already granted', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(true)
-      if (channel === 'permissions:check') return Promise.resolve({ microphone: true, screen: false })
-      if (channel === 'permissions:request-microphone') return Promise.resolve(true)
+      if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: true })
       if (channel === 'prefs:set-onboarding-permission-settings-opened') return Promise.resolve()
       return Promise.resolve({})
     })
 
     const onNext = vi.fn()
-    render(<MicPermissionStep onNext={onNext} />)
+    render(<ScreenPermissionStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(onNext).toHaveBeenCalledTimes(1)
     })
     expect(window.electronAPI.invoke).toHaveBeenCalledWith(
       'prefs:set-onboarding-permission-settings-opened',
-      'microphone',
+      'screen',
       false,
     )
-  })
-
-  it('marks mic access granted after the Electron permission prompt succeeds', async () => {
-    const getUserMedia = vi.fn().mockResolvedValue({
-      getTracks: () => [{ stop: vi.fn() }],
-    })
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: { getUserMedia },
-    })
-
-    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
-      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
-      if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: false })
-      if (channel === 'permissions:request-microphone') return Promise.resolve(true)
-      if (channel === 'prefs:set-onboarding-permission-settings-opened') return Promise.resolve()
-      return Promise.resolve({})
-    })
-
-    render(<MicPermissionStep onNext={vi.fn()} />)
-
-    await userEvent.click(screen.getByText('Enable Microphone'))
-
-    await waitFor(() => {
-      expect(screen.getByText('Continue →')).toBeInTheDocument()
-    })
-    expect(getUserMedia).toHaveBeenCalledWith({ audio: true })
   })
 })

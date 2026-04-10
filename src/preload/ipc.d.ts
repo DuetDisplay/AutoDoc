@@ -65,10 +65,13 @@ export interface IpcInvokeEvents {
   'prefs:set-onboarding-complete': []
   'prefs:get-onboarding-step': []
   'prefs:set-onboarding-step': [step: number]
+  'prefs:get-onboarding-permission-settings-opened': [panel: 'microphone' | 'screen']
+  'prefs:set-onboarding-permission-settings-opened': [panel: 'microphone' | 'screen', opened: boolean]
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
   'prefs:get-analytics-consent': []
   'prefs:set-analytics-consent': [enabled: boolean]
+  'permissions:request-microphone': []
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -122,10 +125,13 @@ export interface IpcInvokeReturns {
   'prefs:set-onboarding-complete': void
   'prefs:get-onboarding-step': number
   'prefs:set-onboarding-step': void
+  'prefs:get-onboarding-permission-settings-opened': boolean
+  'prefs:set-onboarding-permission-settings-opened': void
   'prefs:get-launch-at-login': boolean
   'prefs:set-launch-at-login': void
   'prefs:get-analytics-consent': boolean | null
   'prefs:set-analytics-consent': void
+  'permissions:request-microphone': boolean
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus

@@ -4,21 +4,55 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
 
-  const checkPermission = useCallback(async () => {
-    const perms = await window.electronAPI.invoke('permissions:check')
-    if (perms.screen) {
-      setGranted(true)
-    }
+  const clearOpenedState = useCallback(async () => {
+    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', false)
+    setOpened(false)
   }, [])
 
+  const handleContinue = useCallback(async () => {
+    await clearOpenedState()
+    onNext()
+  }, [clearOpenedState, onNext])
+
+  const checkPermission = useCallback(async (autoAdvance = false) => {
+    const perms = await window.electronAPI.invoke('permissions:check')
+    if (perms.screen) {
+      if (autoAdvance) {
+        await clearOpenedState()
+        onNext()
+      } else {
+        setGranted(true)
+      }
+      return
+    }
+    setGranted(false)
+  }, [clearOpenedState, onNext])
+
   useEffect(() => {
-    checkPermission()
+    let cancelled = false
+
+    const restoreStepState = async () => {
+      const wasOpened = await window.electronAPI.invoke(
+        'prefs:get-onboarding-permission-settings-opened',
+        'screen',
+      )
+      if (!cancelled) {
+        setOpened(wasOpened)
+      }
+      await checkPermission(true)
+    }
+
+    void restoreStepState()
     const handleFocus = () => checkPermission()
     window.addEventListener('focus', handleFocus)
-    return () => window.removeEventListener('focus', handleFocus)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', handleFocus)
+    }
   }, [checkPermission])
 
-  const handleEnable = () => {
+  const handleEnable = async () => {
+    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', true)
     window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)
   }
@@ -40,7 +74,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
 
       {granted ? (
         <button
-          onClick={onNext}
+          onClick={() => void handleContinue()}
           className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
           Continue →
@@ -48,7 +82,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       ) : opened ? (
         <>
           <button
-            onClick={onNext}
+            onClick={() => void handleContinue()}
             className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
             Continue →
