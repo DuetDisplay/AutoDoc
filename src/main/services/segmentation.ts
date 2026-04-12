@@ -25,6 +25,7 @@ interface SegmentationDirSnapshot extends Record<string, unknown> {
 export class SegmentationService {
   private queue: string[] = []
   private activeJobId: string | null = null
+  private activeJobSource: EnqueueSource | null = null
   private activeStatus: SegmentationStatus | null = null
   private activeProgress: number | undefined = undefined
   private processing = false
@@ -39,8 +40,19 @@ export class SegmentationService {
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
     if (this.queue.includes(meetingId)) return
+    if (source === 'direct' && this.activeJobId && this.activeJobSource === 'recovery-scan') {
+      if (!this.queue.includes(this.activeJobId)) {
+        this.enqueueSource.set(this.activeJobId, 'recovery-scan')
+        this.queue.push(this.activeJobId)
+      }
+      this.llmProvider.abortActiveRequests?.('SEGMENTATION_PREEMPTED')
+    }
     this.enqueueSource.set(meetingId, source)
-    this.queue.push(meetingId)
+    if (source === 'direct') {
+      this.queue.unshift(meetingId)
+    } else {
+      this.queue.push(meetingId)
+    }
     this.broadcastStatus(meetingId, 'queued')
     this.processNext()
   }
@@ -147,14 +159,19 @@ export class SegmentationService {
     this.processing = true
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
+    this.activeJobSource = this.enqueueSource.get(meetingId) ?? 'direct'
     const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
       await this.processJob(meetingId)
     } catch (err) {
-      await this.markFailed(meetingId, err instanceof Error ? err : String(err), dirSnapshot)
+      const error = err instanceof Error ? err : new Error(String(err))
+      if (error.message !== 'SEGMENTATION_PREEMPTED') {
+        await this.markFailed(meetingId, error, dirSnapshot)
+      }
     } finally {
       this.activeJobId = null
+      this.activeJobSource = null
       this.activeStatus = null
       this.processing = false
       this.enqueueSource.delete(meetingId)

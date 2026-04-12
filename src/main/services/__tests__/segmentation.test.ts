@@ -34,6 +34,7 @@ function createMockProvider(): LLMProvider {
       statusUpdates: [],
     }),
     checkConnection: vi.fn().mockResolvedValue(true),
+    abortActiveRequests: vi.fn(),
   }
 }
 
@@ -117,5 +118,27 @@ describe('SegmentationService', () => {
       },
       '/mock/home/AutoDoc/recordings/m1/segments.json',
     )
+  })
+
+  it('prioritizes direct jobs ahead of recovery-scan jobs', () => {
+    vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
+
+    service.enqueue('recovery-1', 'recovery-scan')
+    service.enqueue('direct-1', 'direct')
+
+    expect((service as any).queue).toEqual(['direct-1', 'recovery-1'])
+  })
+
+  it('preempts an active recovery-scan job when a direct job arrives', () => {
+    vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
+
+    ;(service as any).activeJobId = 'recovery-active'
+    ;(service as any).activeJobSource = 'recovery-scan'
+    ;(service as any).processing = true
+
+    service.enqueue('direct-1', 'direct')
+
+    expect((provider.abortActiveRequests as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('SEGMENTATION_PREEMPTED')
+    expect((service as any).queue).toEqual(['direct-1', 'recovery-active'])
   })
 })

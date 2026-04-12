@@ -3,6 +3,7 @@ import type { MeetingSegments, SegmentCategory } from '../../shared/types'
 export interface LLMProvider {
   summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
+  abortActiveRequests?(reason?: string): void
 }
 
 const MAX_RETRIES = 2
@@ -117,6 +118,7 @@ const CATEGORY_MAP: Record<string, SegmentCategory> = {
 export class OllamaProvider implements LLMProvider {
   private baseUrl: string
   private model: string
+  private activeControllers = new Set<AbortController>()
 
   constructor(baseUrl: string, model: string) {
     this.baseUrl = baseUrl
@@ -140,6 +142,13 @@ export class OllamaProvider implements LLMProvider {
     } catch {
       return false
     }
+  }
+
+  abortActiveRequests(reason = 'SEGMENTATION_PREEMPTED'): void {
+    for (const controller of this.activeControllers) {
+      controller.abort(reason)
+    }
+    this.activeControllers.clear()
   }
 
   private estimateItemCount(durationMinutes: number): string {
@@ -200,6 +209,9 @@ export class OllamaProvider implements LLMProvider {
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
           console.error(`Chunk ${i + 1}/${chunks.length} failed:`, lastError.message)
+          if (lastError.message === 'SEGMENTATION_PREEMPTED') {
+            throw lastError
+          }
           if (attempt < MAX_RETRIES) continue
         }
       }
@@ -246,6 +258,7 @@ export class OllamaProvider implements LLMProvider {
   private async callOllama(transcript: string, onToken?: () => void): Promise<string> {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    this.activeControllers.add(controller)
 
     let res: Response
     try {
@@ -271,17 +284,23 @@ export class OllamaProvider implements LLMProvider {
       })
     } catch (err) {
       clearTimeout(requestTimer)
+      this.activeControllers.delete(controller)
+      if (controller.signal.aborted && controller.signal.reason === 'SEGMENTATION_PREEMPTED') {
+        throw new Error('SEGMENTATION_PREEMPTED')
+      }
       throw err
     }
 
     if (!res.ok) {
       clearTimeout(requestTimer)
+      this.activeControllers.delete(controller)
       const text = await res.text().catch(() => '')
       throw new Error(`Ollama returned ${res.status}: ${text.slice(0, 200)}`)
     }
 
     if (!res.body) {
       clearTimeout(requestTimer)
+      this.activeControllers.delete(controller)
       throw new Error('Ollama returned no response body')
     }
 
@@ -342,6 +361,7 @@ export class OllamaProvider implements LLMProvider {
       }
     } finally {
       clearTimeout(requestTimer)
+      this.activeControllers.delete(controller)
     }
 
     if (!content) {
