@@ -68,8 +68,8 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Screen Recording</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {opened
-          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. You can continue for now.'
-          : 'AutoDoc detects your meeting window to capture screen shares and visuals. You can always enable this later in System Settings.'}
+          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. Screen visuals and system audio are verified separately when recording starts.'
+          : 'AutoDoc uses screen recording permission to capture meeting visuals. macOS verifies system audio separately when a recording starts, so you can continue even if you skip this for now.'}
       </p>
 
       {granted ? (
