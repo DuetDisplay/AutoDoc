@@ -48,6 +48,17 @@ const AUDIO_WATCHDOG_INTERVAL_MS = 5_000
 const AUDIO_WATCHDOG_SILENCE_MS = 20_000
 const AUDIO_WATCHDOG_STARTUP_GRACE_MS = 12_000
 const AUDIO_SIGNAL_THRESHOLD = 4
+const VIDEO_RECORDER_MIME_CANDIDATES_WITH_AUDIO = [
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm'
+]
+const VIDEO_RECORDER_MIME_CANDIDATES = [
+  'video/webm;codecs=vp9',
+  'video/webm;codecs=vp8',
+  'video/webm'
+]
+const AUDIO_RECORDER_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm']
 const RECOVERY_FAILURE_MESSAGE =
   'Audio devices changed and AutoDoc could not reconnect automatically. This recording may be incomplete.'
 
@@ -58,7 +69,7 @@ async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
 
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
-    const selectKey = (kind: 'audioinput' | 'audiooutput') => {
+    const selectKey = (kind: 'audioinput' | 'audiooutput'): string | null => {
       const candidates = devices.filter((device) => device.kind === kind)
       if (candidates.length === 0) return null
       const preferred = candidates.find((device) => device.deviceId === 'default') ?? candidates[0]
@@ -67,7 +78,7 @@ async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
 
     return {
       defaultAudioInputKey: selectKey('audioinput'),
-      defaultAudioOutputKey: selectKey('audiooutput'),
+      defaultAudioOutputKey: selectKey('audiooutput')
     }
   } catch (err) {
     console.warn('Failed to enumerate media devices for capture watchdog:', err)
@@ -76,12 +87,65 @@ async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
 }
 
 function getAudioContextCtor(): typeof AudioContext | undefined {
-  return window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  return (
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  )
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function pickSupportedMimeType(candidates: string[]): string | null {
+  if (typeof MediaRecorder.isTypeSupported !== 'function') {
+    return candidates[0] ?? null
+  }
+
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? null
+}
+
+function createRecorder(
+  stream: MediaStream,
+  label: 'video' | 'mic' | 'system',
+  mimeCandidates: string[],
+  options: Omit<MediaRecorderOptions, 'mimeType'> = {}
+): MediaRecorder {
+  if (stream.getTracks().every((track) => track.readyState !== 'live')) {
+    throw new Error(`Cannot create ${label} recorder because its capture stream is not live`)
+  }
+
+  const mimeType = pickSupportedMimeType(mimeCandidates)
+  const recorderOptions = mimeType ? { ...options, mimeType } : { ...options }
+
+  try {
+    return new MediaRecorder(stream, recorderOptions)
+  } catch (err) {
+    throw new Error(
+      `Failed to create ${label} recorder${mimeType ? ` (${mimeType})` : ''}: ${describeError(err)}`
+    )
+  }
+}
+
+function startRecorder(recorder: MediaRecorder | null, label: 'video' | 'mic' | 'system'): void {
+  if (!recorder) return
+
+  try {
+    recorder.start(5000)
+  } catch (err) {
+    throw new Error(
+      `Failed to start ${label} recorder${recorder.mimeType ? ` (${recorder.mimeType})` : ''}: ${describeError(err)}`
+    )
+  }
+}
+
+function stopStream(stream: MediaStream): void {
+  stream.getTracks().forEach((track) => track.stop())
 }
 
 function createAudioWatchdog(
   stream: MediaStream | null,
-  label: 'mic' | 'system',
+  label: 'mic' | 'system'
 ): AudioWatchdog | null {
   if (!stream || stream.getAudioTracks().length === 0) {
     return null
@@ -107,7 +171,7 @@ function createAudioWatchdog(
       context,
       data: new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount)),
       hasObservedSignal: false,
-      lastSignalAt: Date.now(),
+      lastSignalAt: Date.now()
     }
   } catch (err) {
     console.warn(`Failed to create ${label} audio watchdog:`, err)
@@ -144,10 +208,9 @@ function trackChunkWrite(
   meetingId: string,
   type: 'video' | 'mic' | 'system',
   segmentIndex: number,
-  data: Blob,
+  data: Blob
 ): void {
-  let savePromise: Promise<void>
-  savePromise = (async () => {
+  const savePromise: Promise<void> = (async () => {
     const buffer = await data.arrayBuffer()
     await window.electronAPI.invoke('recording:save-chunk', meetingId, type, buffer, segmentIndex)
   })()
@@ -170,7 +233,7 @@ function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Pro
     let settled = false
     let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    const finalize = () => {
+    const finalize = (): void => {
       if (settled) return
       settled = true
       recorder.removeEventListener('stop', handleStop)
@@ -181,8 +244,8 @@ function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Pro
       resolve()
     }
 
-    const handleStop = () => finalize()
-    const handleError = (event: Event) => {
+    const handleStop = (): void => finalize()
+    const handleError = (event: Event): void => {
       console.error(`Recorder ${label} stopped with an error event:`, event)
       finalize()
     }
@@ -223,9 +286,9 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
       mandatory: {
         chromeMediaSource: 'desktop',
         chromeMediaSourceId: sourceId,
-        maxFrameRate: 30,
-      },
-    } as MediaTrackConstraints,
+        maxFrameRate: 30
+      }
+    } as MediaTrackConstraints
   })
 
   // Check screen recording permission — use the actual video track state
@@ -234,8 +297,13 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
   if (!videoTrack || videoTrack.readyState !== 'live') {
     useToastStore.getState().showToast({
       type: 'screen',
-      message: 'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
+      message:
+        'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.'
     })
+    stopStream(videoStream)
+    throw new Error(
+      'Screen capture stream is not live. Screen recording permission may be missing.'
+    )
   }
 
   let audioStream: MediaStream
@@ -244,16 +312,16 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
       audio: {
         mandatory: {
           chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId,
-        },
+          chromeMediaSourceId: sourceId
+        }
       } as MediaTrackConstraints,
       video: {
         mandatory: {
           chromeMediaSource: 'desktop',
           chromeMediaSourceId: sourceId,
-          maxFrameRate: 1,
-        },
-      } as MediaTrackConstraints,
+          maxFrameRate: 1
+        }
+      } as MediaTrackConstraints
     })
     audioStream.getVideoTracks().forEach((t) => t.stop())
   } catch (err) {
@@ -261,14 +329,15 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     audioStream = new MediaStream()
     useToastStore.getState().showToast({
       type: 'screen',
-      message: 'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.',
+      message:
+        'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
     })
   }
 
   let micStream: MediaStream | null = null
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
+      audio: { echoCancellation: true, noiseSuppression: true }
     })
   } catch {
     // Mic may not be available
@@ -277,19 +346,25 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
   if (!micStream || micStream.getAudioTracks().length === 0) {
     useToastStore.getState().showToast({
       type: 'microphone',
-      message: 'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
+      message:
+        'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.'
     })
   }
 
   return {
     videoStream,
     audioStream,
-    micStream,
+    micStream
   }
 }
 
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
-  if (activeCapture !== capture || capture.finalized || capture.finalizePromise || capture.recoveryPromise) {
+  if (
+    activeCapture !== capture ||
+    capture.finalized ||
+    capture.finalizePromise ||
+    capture.recoveryPromise
+  ) {
     return
   }
 
@@ -310,22 +385,24 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
   let watchdogTimer: ReturnType<typeof setInterval> | null = null
   let closed = false
 
-  const onDeviceChange = () => {
+  const onDeviceChange = (): void => {
     queueCaptureRecovery(capture, 'devicechange')
   }
 
   if (typeof navigator.mediaDevices?.addEventListener === 'function') {
     navigator.mediaDevices.addEventListener('devicechange', onDeviceChange)
-    cleanupFns.push(() => navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange))
+    cleanupFns.push(() =>
+      navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange)
+    )
   }
 
   const watchTrack = (
     track: MediaStreamTrack,
     label: string,
-    events: Array<'ended' | 'mute'>,
-  ) => {
+    events: Array<'ended' | 'mute'>
+  ): void => {
     for (const eventName of events) {
-      const handler = () => queueCaptureRecovery(capture, `${label}:${eventName}`)
+      const handler = (): void => queueCaptureRecovery(capture, `${label}:${eventName}`)
       track.addEventListener(eventName, handler)
       cleanupFns.push(() => track.removeEventListener(eventName, handler))
     }
@@ -335,7 +412,7 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
   capture.audioStream.getTracks().forEach((track) => watchTrack(track, 'system', ['ended', 'mute']))
   capture.micStream?.getTracks().forEach((track) => watchTrack(track, 'mic', ['ended', 'mute']))
 
-  const evaluateAudioWatchdog = async () => {
+  const evaluateAudioWatchdog = async (): Promise<void> => {
     if (closed || activeCapture !== capture || capture.finalized) {
       return
     }
@@ -365,18 +442,18 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
     const micLooksDead = Boolean(
       micWatchdog &&
       micRouteChanged &&
-      (
-        (micWatchdog.hasObservedSignal && now - micWatchdog.lastSignalAt >= AUDIO_WATCHDOG_SILENCE_MS) ||
-        (!micWatchdog.hasObservedSignal && now - capture.createdAt >= AUDIO_WATCHDOG_STARTUP_GRACE_MS)
-      ),
+      ((micWatchdog.hasObservedSignal &&
+        now - micWatchdog.lastSignalAt >= AUDIO_WATCHDOG_SILENCE_MS) ||
+        (!micWatchdog.hasObservedSignal &&
+          now - capture.createdAt >= AUDIO_WATCHDOG_STARTUP_GRACE_MS))
     )
     const systemLooksDead = Boolean(
       systemWatchdog &&
       outputRouteChanged &&
-      (
-        (systemWatchdog.hasObservedSignal && now - systemWatchdog.lastSignalAt >= AUDIO_WATCHDOG_SILENCE_MS) ||
-        (!systemWatchdog.hasObservedSignal && now - capture.createdAt >= AUDIO_WATCHDOG_STARTUP_GRACE_MS)
-      ),
+      ((systemWatchdog.hasObservedSignal &&
+        now - systemWatchdog.lastSignalAt >= AUDIO_WATCHDOG_SILENCE_MS) ||
+        (!systemWatchdog.hasObservedSignal &&
+          now - capture.createdAt >= AUDIO_WATCHDOG_STARTUP_GRACE_MS))
     )
 
     if (micLooksDead) {
@@ -426,7 +503,7 @@ function buildCaptureHandles(
   meetingId: string,
   segmentIndex: number,
   deviceSnapshot: DeviceSnapshot | null,
-  streams: CaptureStreams,
+  streams: CaptureStreams
 ): CaptureHandles {
   const { videoStream, audioStream, micStream } = streams
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
@@ -435,12 +512,16 @@ function buildCaptureHandles(
 
   const videoWithAudio = new MediaStream([
     ...videoStream.getVideoTracks(),
-    ...(hasSystemAudio ? audioStream.getAudioTracks() : []),
+    ...(hasSystemAudio ? audioStream.getAudioTracks() : [])
   ])
-  const videoRecorder = new MediaRecorder(videoWithAudio, {
-    mimeType: hasSystemAudio ? 'video/webm;codecs=vp9,opus' : 'video/webm;codecs=vp9',
-    videoBitsPerSecond: 1_500_000,
-  })
+  const videoRecorder = createRecorder(
+    videoWithAudio,
+    'video',
+    hasSystemAudio ? VIDEO_RECORDER_MIME_CANDIDATES_WITH_AUDIO : VIDEO_RECORDER_MIME_CANDIDATES,
+    {
+      videoBitsPerSecond: 1_500_000
+    }
+  )
 
   videoRecorder.ondataavailable = async (e) => {
     if (e.data.size > 0) {
@@ -450,9 +531,7 @@ function buildCaptureHandles(
 
   let micRecorder: MediaRecorder | null = null
   if (hasMic) {
-    micRecorder = new MediaRecorder(micStream!, {
-      mimeType: 'audio/webm;codecs=opus',
-    })
+    micRecorder = createRecorder(micStream!, 'mic', AUDIO_RECORDER_MIME_CANDIDATES)
     micRecorder.ondataavailable = async (e) => {
       if (e.data.size > 0) {
         trackChunkWrite(pendingChunkWrites, meetingId, 'mic', segmentIndex, e.data)
@@ -462,9 +541,7 @@ function buildCaptureHandles(
 
   let systemRecorder: MediaRecorder | null = null
   if (hasSystemAudio) {
-    systemRecorder = new MediaRecorder(audioStream, {
-      mimeType: 'audio/webm;codecs=opus',
-    })
+    systemRecorder = createRecorder(audioStream, 'system', AUDIO_RECORDER_MIME_CANDIDATES)
     systemRecorder.ondataavailable = async (e) => {
       if (e.data.size > 0) {
         trackChunkWrite(pendingChunkWrites, meetingId, 'system', segmentIndex, e.data)
@@ -490,25 +567,33 @@ function buildCaptureHandles(
     monitorLoopPromise: null,
     recoveryPromise: null,
     finalizePromise: null,
-    finalized: false,
+    finalized: false
   }
 }
 
 async function createCaptureSegment(
   sourceId: string,
   meetingId: string,
-  segmentIndex: number,
+  segmentIndex: number
 ): Promise<CaptureHandles> {
   const streams = await createCaptureStreams(sourceId)
-  const deviceSnapshot = await getDefaultDeviceSnapshot()
-  const capture = buildCaptureHandles(sourceId, meetingId, segmentIndex, deviceSnapshot, streams)
 
-  capture.videoRecorder.start(5000)
-  capture.micRecorder?.start(5000)
-  capture.systemRecorder?.start(5000)
-  installCaptureMonitoring(capture)
+  try {
+    const deviceSnapshot = await getDefaultDeviceSnapshot()
+    const capture = buildCaptureHandles(sourceId, meetingId, segmentIndex, deviceSnapshot, streams)
 
-  return capture
+    startRecorder(capture.videoRecorder, 'video')
+    startRecorder(capture.micRecorder, 'mic')
+    startRecorder(capture.systemRecorder, 'system')
+    installCaptureMonitoring(capture)
+
+    return capture
+  } catch (err) {
+    stopStream(streams.videoStream)
+    stopStream(streams.audioStream)
+    streams.micStream && stopStream(streams.micStream)
+    throw err
+  }
 }
 
 function finalizeCapture(capture: CaptureHandles): Promise<void> {
@@ -524,7 +609,7 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
       await Promise.all([
         waitForRecorderStop(capture.videoRecorder, 'video'),
         waitForRecorderStop(capture.micRecorder, 'mic'),
-        waitForRecorderStop(capture.systemRecorder, 'system'),
+        waitForRecorderStop(capture.systemRecorder, 'system')
       ])
       await waitForPendingChunkWrites(capture.pendingChunkWrites)
     } finally {
@@ -559,18 +644,18 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
       const replacement = await createCaptureSegment(
         capture.sourceId,
         capture.meetingId,
-        capture.segmentIndex + 1,
+        capture.segmentIndex + 1
       )
       activeCapture = replacement
       console.log('Capture recovered after device change', {
         meetingId: capture.meetingId,
         nextSegmentIndex: replacement.segmentIndex,
-        reason,
+        reason
       })
     } catch (err) {
       useToastStore.getState().showToast({
         type: 'microphone',
-        message: RECOVERY_FAILURE_MESSAGE,
+        message: RECOVERY_FAILURE_MESSAGE
       })
       console.error('Failed to recover capture after device change:', err)
     } finally {
@@ -581,10 +666,7 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
   return capture.recoveryPromise
 }
 
-export async function startCapture(
-  sourceId: string,
-  meetingId: string,
-): Promise<void> {
+export async function startCapture(sourceId: string, meetingId: string): Promise<void> {
   if (activeCapture) {
     throw new Error('Capture already active')
   }

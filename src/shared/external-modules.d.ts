@@ -35,6 +35,11 @@ declare module '@sentry/electron/main' {
 }
 
 declare module '@sentry/electron/renderer' {
+  export interface RendererSentryScope {
+    setTag(key: string, value: string): void
+    setExtras(extras: Record<string, unknown>): void
+  }
+
   export interface RendererSentryBreadcrumb {
     category?: string
     message?: string
@@ -54,6 +59,8 @@ declare module '@sentry/electron/renderer' {
 
   export function init(options?: RendererSentryInitOptions): void
   export function addBreadcrumb(breadcrumb: RendererSentryBreadcrumb): void
+  export function withScope(callback: (scope: RendererSentryScope) => void): void
+  export function captureException(error: unknown): void
 }
 
 declare module 'electron-updater' {
@@ -61,7 +68,7 @@ declare module 'electron-updater' {
     autoDownload: boolean
     autoInstallOnAppQuit: boolean
     disableDifferentialDownload: boolean
-    on(event: string, listener: (...args: any[]) => void): void
+    on(event: string, listener: (...args: unknown[]) => void): void
     checkForUpdates(): void
     quitAndInstall(): void
   }

@@ -5,6 +5,7 @@ import { detectMeetingWindow } from '../services/window-detection'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { saveSourcePreference } from '../services/recording-source-preferences'
+import { captureRecordingStartFailure } from '../services/renderer-sentry'
 import type { RecordingSelectionContext } from '../services/window-detection'
 import type { RecordingSource } from '../../../shared/types'
 
@@ -24,7 +25,7 @@ export function useRecording() {
     tick,
     reset,
     setSources,
-    setLoadingSources,
+    setLoadingSources
   } = useRecordingStore()
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -67,60 +68,69 @@ export function useRecording() {
     }
   }, [setSources, setLoadingSources])
 
-  const handleStart = useCallback(async (
-    sourceId: string,
-    sourceNameParam: string,
-    selectionContext?: RecordingSelectionContext,
-  ) => {
-    recordDiagnosticAction({
-      category: 'recording',
-      action: 'recording_start_requested',
-      details: {
-        sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
-      },
-    })
-    try {
-      const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
-      await startCapture(sourceId, paths.meetingId)
+  const handleStart = useCallback(
+    async (
+      sourceId: string,
+      sourceNameParam: string,
+      selectionContext?: RecordingSelectionContext
+    ) => {
       recordDiagnosticAction({
         category: 'recording',
-        action: 'recording_started',
+        action: 'recording_start_requested',
+        details: {
+          sourceType: sourceId.split(':', 1)[0] ?? 'unknown'
+        }
       })
-      if (selectionContext) {
-        saveSourcePreference(selectionContext, {
-          id: sourceId,
-          name: sourceNameParam,
-          thumbnailDataUrl: '',
-        } satisfies RecordingSource)
+      try {
+        const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
+        await startCapture(sourceId, paths.meetingId)
+        recordDiagnosticAction({
+          category: 'recording',
+          action: 'recording_started'
+        })
+        if (selectionContext) {
+          saveSourcePreference(selectionContext, {
+            id: sourceId,
+            name: sourceNameParam,
+            thumbnailDataUrl: ''
+          } satisfies RecordingSource)
+        }
+        trackEvent('recording_started')
+        return paths
+      } catch (err) {
+        recordDiagnosticAction({
+          category: 'recording',
+          action: 'recording_start_failed_in_renderer'
+        })
+        captureRecordingStartFailure(err, {
+          sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
+          sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
+        })
+        // Rollback main process state if capture fails (e.g. permission denied)
+        await stopCapture()
+        await window.electronAPI.invoke('recording:stop').catch(() => {})
+        reset()
+        trackEvent('recording_start_failed')
+        throw err
       }
-      trackEvent('recording_started')
-      return paths
-    } catch (err) {
-      recordDiagnosticAction({
-        category: 'recording',
-        action: 'recording_start_failed_in_renderer',
-      })
-      // Rollback main process state if capture fails (e.g. permission denied)
-      await stopCapture()
-      await window.electronAPI.invoke('recording:stop').catch(() => {})
-      reset()
-      trackEvent('recording_start_failed')
-      throw err
-    }
-  }, [reset])
+    },
+    [reset]
+  )
 
   const handleStop = useCallback(async () => {
     recordDiagnosticAction({
       category: 'recording',
       action: 'recording_stop_requested',
       details: {
-        durationSeconds: useRecordingStore.getState().elapsedSeconds,
-      },
+        durationSeconds: useRecordingStore.getState().elapsedSeconds
+      }
     })
     try {
       await stopCapture()
       await window.electronAPI.invoke('recording:stop')
-      trackEvent('recording_stopped', { duration_seconds: useRecordingStore.getState().elapsedSeconds })
+      trackEvent('recording_stopped', {
+        duration_seconds: useRecordingStore.getState().elapsedSeconds
+      })
       reset()
     } catch (err) {
       trackEvent('recording_stop_failed')
@@ -138,7 +148,7 @@ export function useRecording() {
     fetchSources,
     handleStart,
     handleStop,
-    detectMeetingWindow,
+    detectMeetingWindow
   }
 }
 
@@ -163,28 +173,35 @@ export function useRecordingActions() {
     }
   }, [setSources, setLoadingSources])
 
-  const handleStart = useCallback(async (
-    sourceId: string,
-    sourceNameParam: string,
-    selectionContext?: RecordingSelectionContext,
-  ) => {
-    const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
-    try {
-      await startCapture(sourceId, paths.meetingId)
-      if (selectionContext) {
-        saveSourcePreference(selectionContext, {
-          id: sourceId,
-          name: sourceNameParam,
-          thumbnailDataUrl: '',
-        } satisfies RecordingSource)
+  const handleStart = useCallback(
+    async (
+      sourceId: string,
+      sourceNameParam: string,
+      selectionContext?: RecordingSelectionContext
+    ) => {
+      const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
+      try {
+        await startCapture(sourceId, paths.meetingId)
+        if (selectionContext) {
+          saveSourcePreference(selectionContext, {
+            id: sourceId,
+            name: sourceNameParam,
+            thumbnailDataUrl: ''
+          } satisfies RecordingSource)
+        }
+      } catch (err) {
+        captureRecordingStartFailure(err, {
+          sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
+          sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
+        })
+        await stopCapture()
+        await window.electronAPI.invoke('recording:stop')
+        reset()
+        throw err
       }
-    } catch (err) {
-      await stopCapture()
-      await window.electronAPI.invoke('recording:stop')
-      reset()
-      throw err
-    }
-  }, [reset])
+    },
+    [reset]
+  )
 
   const handleStop = useCallback(async () => {
     await stopCapture()
@@ -197,6 +214,6 @@ export function useRecordingActions() {
     fetchSources,
     handleStart,
     handleStop,
-    detectMeetingWindow,
+    detectMeetingWindow
   }
 }

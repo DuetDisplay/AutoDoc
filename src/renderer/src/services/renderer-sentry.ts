@@ -7,6 +7,46 @@ let initialized = false
 let consentEnabled = false
 let semanticClickBreadcrumbsInstalled = false
 
+interface RecordingStartFailureContext {
+  sourceType: string
+  sourceSelectionMode: 'manual' | 'assisted'
+}
+
+function getErrorName(error: unknown): string {
+  if (error instanceof Error && error.name) {
+    return error.name
+  }
+
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name) {
+    return error.name
+  }
+
+  return 'UnknownError'
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return String(error)
+}
+
+function isExpectedRecordingStartFailure(error: unknown): boolean {
+  const name = getErrorName(error)
+  const message = getErrorMessage(error).toLowerCase()
+
+  return (
+    name === 'NotAllowedError' ||
+    name === 'PermissionDeniedError' ||
+    name === 'SecurityError' ||
+    message.includes('screen capture stream is not live') ||
+    message.includes('screen recording permission may be missing') ||
+    message.includes('permission denied') ||
+    message.includes('permission dismissed')
+  )
+}
+
 function ensureInitialized(): void {
   if (initialized) return
   Sentry.init({
@@ -20,10 +60,10 @@ function ensureInitialized(): void {
         ...event,
         extra: {
           ...(event.extra ?? {}),
-          diagnosticTrail: getRendererDiagnosticTrail(),
-        },
+          diagnosticTrail: getRendererDiagnosticTrail()
+        }
       }
-    },
+    }
   })
 
   if (!semanticClickBreadcrumbsInstalled) {
@@ -46,4 +86,28 @@ export function updateRendererSentryConsent(enabled: boolean): void {
   if (enabled) {
     ensureInitialized()
   }
+}
+
+export function captureRecordingStartFailure(
+  error: unknown,
+  context: RecordingStartFailureContext
+): void {
+  if (!consentEnabled || isExpectedRecordingStartFailure(error)) {
+    return
+  }
+
+  ensureInitialized()
+
+  Sentry.withScope((scope) => {
+    scope.setTag('feature_area', 'recording')
+    scope.setTag('recording_phase', 'start')
+    scope.setTag('source_type', context.sourceType)
+    scope.setExtras({
+      recordingSourceType: context.sourceType,
+      sourceSelectionMode: context.sourceSelectionMode,
+      recordingStartErrorName: getErrorName(error),
+      recordingStartErrorMessage: getErrorMessage(error)
+    })
+    Sentry.captureException(error instanceof Error ? error : new Error(getErrorMessage(error)))
+  })
 }

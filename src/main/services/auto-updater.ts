@@ -12,6 +12,28 @@ export interface UpdateStatus {
 
 let currentStatus: UpdateStatus = { state: 'idle' }
 
+function getUpdaterVersion(info: unknown): string | undefined {
+  if (!info || typeof info !== 'object') {
+    return undefined
+  }
+
+  const version = (info as { version?: unknown }).version
+  return typeof version === 'string' ? version : undefined
+}
+
+function getDownloadPercent(progress: unknown): number | undefined {
+  if (!progress || typeof progress !== 'object') {
+    return undefined
+  }
+
+  const percent = (progress as { percent?: unknown }).percent
+  return typeof percent === 'number' ? percent : undefined
+}
+
+function normalizeUpdaterError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err))
+}
+
 function formatUpdaterError(err: Error): string {
   const message = err.message || 'Unknown update error'
   const normalized = message.toLowerCase()
@@ -56,7 +78,7 @@ export function initAutoUpdater(): void {
   })
 
   autoUpdater.on('update-available', (info) => {
-    broadcast({ state: 'available', version: info.version })
+    broadcast({ state: 'available', version: getUpdaterVersion(info) })
   })
 
   autoUpdater.on('update-not-available', () => {
@@ -64,25 +86,27 @@ export function initAutoUpdater(): void {
   })
 
   autoUpdater.on('download-progress', (progress) => {
-    broadcast({ state: 'downloading', percent: Math.round(progress.percent) })
+    const percent = getDownloadPercent(progress)
+    broadcast({ state: 'downloading', percent: percent == null ? undefined : Math.round(percent) })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
-    broadcast({ state: 'downloaded', version: info.version })
+    broadcast({ state: 'downloaded', version: getUpdaterVersion(info) })
   })
 
   autoUpdater.on('error', (err) => {
+    const error = normalizeUpdaterError(err)
     console.error('Auto-updater error:', err)
     logAutodocFailure({
       area: 'app',
       message: 'Auto-updater failed',
-      error: err,
+      error,
       context: {
         channel: 'stable',
         currentVersion: app.getVersion()
       }
     })
-    broadcast({ state: 'error', error: formatUpdaterError(err) })
+    broadcast({ state: 'error', error: formatUpdaterError(error) })
     // Reset to idle after 30s so it doesn't stay stuck on error
     setTimeout(() => broadcast({ state: 'idle' }), 30_000)
   })
