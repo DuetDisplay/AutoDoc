@@ -91,6 +91,19 @@ export class TranscriptionService {
     return undefined
   }
 
+  private getNextProgress(status: TranscriptionStatus, progress?: number): number | undefined {
+    if (status !== 'transcribing' || progress == null) {
+      return progress
+    }
+
+    const baseline =
+      this.activeStatus === 'transcribing' && this.activeProgress != null
+        ? this.activeProgress
+        : undefined
+
+    return baseline == null ? progress : Math.max(baseline, progress)
+  }
+
   async getStatus(meetingId: string): Promise<TranscriptionStatus> {
     if (this.activeJobId === meetingId && this.activeStatus) {
       return this.activeStatus
@@ -852,9 +865,11 @@ export class TranscriptionService {
     progress?: number,
     errorCode?: string,
   ): void {
-    this.activeProgress = progress
+    const nextProgress = this.getNextProgress(status, progress)
+    this.activeStatus = status
+    this.activeProgress = nextProgress
     const windows = BrowserWindow.getAllWindows()
-    const payload: TranscriptionStatusPayload = { meetingId, status, progress, errorCode }
+    const payload: TranscriptionStatusPayload = { meetingId, status, progress: nextProgress, errorCode }
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', payload)
     }

@@ -18,6 +18,7 @@ beforeEach(() => {
     send: vi.fn(),
     invoke: vi.fn((channel: string) => {
       if (channel === 'transcription:get-status') return Promise.resolve('pending')
+      if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
       if (channel === 'transcription:get-transcript') {
         return Promise.resolve([
           { id: 't1', meetingId: 'test-123', speaker: 'Speaker 1', text: 'Intro', startMs: 0, endMs: 5000, confidence: 0.9 },
@@ -101,5 +102,28 @@ describe('MeetingDetail', () => {
 
     expect(contentScroll.scrollTop).toBe(0)
     expect(document.querySelector('video')).toBeInTheDocument()
+  })
+
+  it('restores the current transcription percentage when reopening the meeting', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'transcription:get-status') return Promise.resolve('transcribing')
+        if (channel === 'transcription:get-progress') return Promise.resolve(42)
+        if (channel === 'transcription:get-transcript') return Promise.resolve([])
+        if (channel === 'segmentation:get-status') return Promise.resolve('pending')
+        if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
+        if (channel === 'segmentation:get-segments') return Promise.resolve(null)
+        if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
+        if (channel === 'recording:get-media') return Promise.resolve({ hasVideo: false, hasAudio: true })
+        if (channel === 'speakers:get') return Promise.resolve({})
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {}),
+    } as any
+
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Transcribing 42%')).toBeInTheDocument()
   })
 })

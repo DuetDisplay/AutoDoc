@@ -72,4 +72,58 @@ describe('Recordings', () => {
 
     expect(screen.getByText(/Notes failed/)).toBeInTheDocument()
   })
+
+  it('shows a newly finished meeting without needing a remount', async () => {
+    let listCallCount = 0
+
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'recording:list') {
+          listCallCount += 1
+          if (listCallCount === 1) {
+            return Promise.resolve([])
+          }
+          return Promise.resolve([
+            {
+              meetingId: 'meeting-2',
+              title: 'Fresh Notes',
+              date: Date.now(),
+              duration: 120,
+              hasVideo: false,
+              hasAudio: true,
+              transcriptionStatus: 'queued',
+            },
+          ])
+        }
+        if (channel === 'segmentation:get-status') return Promise.resolve('pending')
+        if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
+        if (channel === 'transcription:get-status') return Promise.resolve('queued')
+        if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {}),
+    } as any
+
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <Recordings />
+        </MemoryRouter>,
+      )
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('No notes yet. Start a meeting to begin.')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Fresh Notes')).toBeInTheDocument()
+  })
 })

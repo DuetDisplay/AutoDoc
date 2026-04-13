@@ -407,4 +407,14 @@ describe('TranscriptionService', () => {
     expect(chunkedSpy).toHaveBeenCalled()
     expect(singlePassSpy).not.toHaveBeenCalled()
   })
+
+  it('keeps transcription progress monotonic when concurrent sources report out of order', () => {
+    ;(service as any).activeJobId = 'meeting-123'
+
+    ;(service as any).broadcastStatus('meeting-123', 'transcribing', 50)
+    ;(service as any).broadcastStatus('meeting-123', 'transcribing', 3)
+    ;(service as any).broadcastStatus('meeting-123', 'transcribing', 57)
+
+    expect(service.getProgress('meeting-123')).toBe(57)
+  })
 })

@@ -21,6 +21,17 @@ function formatDuration(seconds: number): string {
   return `${mins}m`
 }
 
+function mergeProgress(
+  status: TranscriptionStatus,
+  current: number | undefined,
+  next: number | undefined,
+): number | undefined {
+  if (status !== 'transcribing') return undefined
+  if (next == null) return current
+  if (current == null) return next
+  return Math.max(current, next)
+}
+
 const CATEGORY_ORDER: SegmentCategory[] = [
   'information',
   'decision',
@@ -458,7 +469,13 @@ export function MeetingDetail() {
     if (!id) return
 
     window.electronAPI.invoke('recording:get-detail', id).then(setDetail)
-    window.electronAPI.invoke('transcription:get-status', id).then(setTranscriptionStatus)
+    void Promise.all([
+      window.electronAPI.invoke('transcription:get-status', id),
+      window.electronAPI.invoke('transcription:get-progress', id),
+    ]).then(([status, progress]) => {
+      setTranscriptionStatus(status)
+      setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+    })
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
     window.electronAPI.invoke('segmentation:get-progress', id).then(setSegmentationProgress)
@@ -471,7 +488,7 @@ export function MeetingDetail() {
       (payload) => {
         if (payload.meetingId === id) {
           setTranscriptionStatus(payload.status)
-          setTranscriptionProgress(payload.progress)
+          setTranscriptionProgress((current) => mergeProgress(payload.status, current, payload.progress))
           if (payload.status === 'complete') {
             window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
             window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -531,6 +548,7 @@ export function MeetingDetail() {
   const handleReprocessTranscript = () => {
     if (!id) return
     setTranscriptionStatus('queued')
+    setTranscriptionProgress(undefined)
     setTranscript([])
     setSegments(null)
     setSegmentationStatus('pending')
@@ -565,8 +583,14 @@ export function MeetingDetail() {
 
     const refreshProcessingState = async () => {
       try {
-        const [latestTranscriptionStatus, latestSegmentationStatus, latestSegmentationProgress] = await Promise.all([
+        const [
+          latestTranscriptionStatus,
+          latestTranscriptionProgress,
+          latestSegmentationStatus,
+          latestSegmentationProgress,
+        ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
+          window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
         ])
@@ -574,6 +598,9 @@ export function MeetingDetail() {
         if (cancelled) return
 
         setTranscriptionStatus(latestTranscriptionStatus)
+        setTranscriptionProgress((current) =>
+          mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress),
+        )
         setSegmentationStatus(latestSegmentationStatus)
         setSegmentationProgress(latestSegmentationProgress)
 

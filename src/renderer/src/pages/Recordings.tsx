@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
@@ -27,6 +27,49 @@ function mergeRecordIfChanged<T>(
   return { ...prev, ...updates }
 }
 
+function mergeTranscriptionProgress(
+  prev: Record<string, number | undefined>,
+  updates: Record<string, { status: TranscriptionStatus; progress?: number }>,
+): Record<string, number | undefined> {
+  let changed = false
+  const next = { ...prev }
+
+  for (const [key, update] of Object.entries(updates)) {
+    if (update.status !== 'transcribing') {
+      if (prev[key] !== undefined) {
+        next[key] = undefined
+        changed = true
+      }
+      continue
+    }
+
+    if (update.progress == null) continue
+
+    const existing = prev[key]
+    const merged = existing == null ? update.progress : Math.max(existing, update.progress)
+    if (existing !== merged) {
+      next[key] = merged
+      changed = true
+    }
+  }
+
+  return changed ? next : prev
+}
+
+function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boolean {
+  if (prev.length !== next.length) return false
+  return prev.every((recording, index) => {
+    const other = next[index]
+    return recording.meetingId === other.meetingId &&
+      recording.title === other.title &&
+      recording.date === other.date &&
+      recording.duration === other.duration &&
+      recording.hasVideo === other.hasVideo &&
+      recording.hasAudio === other.hasAudio &&
+      recording.transcriptionStatus === other.transcriptionStatus
+  })
+}
+
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
@@ -34,38 +77,86 @@ export function Recordings() {
   const [transcriptionProgress, setTranscriptionProgress] = useState<Record<string, number | undefined>>({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const knownMeetingIdsRef = useRef<Set<string>>(new Set())
+
+  const refreshRecordings = useCallback(async () => {
+    const entries = await window.electronAPI.invoke('recording:list')
+
+    setRecordings((prev) => (areRecordingsEqual(prev, entries) ? prev : entries))
+    knownMeetingIdsRef.current = new Set(entries.map((entry) => entry.meetingId))
+
+    if (entries.length === 0) return
+
+    const updates = await Promise.all(
+      entries.map(async (entry) => ({
+        meetingId: entry.meetingId,
+        transcriptionProgress: await window.electronAPI.invoke(
+          'transcription:get-progress',
+          entry.meetingId,
+        ),
+        segmentationStatus: await window.electronAPI.invoke(
+          'segmentation:get-status',
+          entry.meetingId,
+        ),
+        segmentationProgress: await window.electronAPI.invoke(
+          'segmentation:get-progress',
+          entry.meetingId,
+        ),
+      })),
+    )
+
+    const transcriptionProgressByMeetingId = Object.fromEntries(
+      updates.map((update) => [
+        update.meetingId,
+        {
+          status: entries.find((entry) => entry.meetingId === update.meetingId)?.transcriptionStatus ?? 'pending',
+          progress: update.transcriptionProgress,
+        },
+      ]),
+    )
+    const segmentationStatusesByMeetingId = Object.fromEntries(
+      updates.map((update) => [update.meetingId, update.segmentationStatus]),
+    )
+    const segmentationProgressByMeetingId = Object.fromEntries(
+      updates.map((update) => [update.meetingId, update.segmentationProgress]),
+    )
+
+    setTranscriptionProgress((prev) =>
+      mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
+    )
+    setSegmentationStatuses((prev) =>
+      mergeRecordIfChanged(prev, segmentationStatusesByMeetingId),
+    )
+    setSegmentationProgress((prev) =>
+      mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
+    )
+  }, [])
 
   useEffect(() => {
-    window.electronAPI
-      .invoke('recording:list')
-      .then(async (entries) => {
-        setRecordings(entries)
-        const statuses: Record<string, SegmentationStatus> = {}
-        const progress: Record<string, number | undefined> = {}
-        await Promise.all(
-          entries.map(async (entry) => {
-            statuses[entry.meetingId] = await window.electronAPI.invoke(
-              'segmentation:get-status',
-              entry.meetingId,
-            )
-            progress[entry.meetingId] = await window.electronAPI.invoke(
-              'segmentation:get-progress',
-              entry.meetingId,
-            )
-          }),
-        )
-        setSegmentationStatuses(statuses)
-        setSegmentationProgress(progress)
-      })
+    refreshRecordings()
       .catch((err) => {
         console.error('Failed to list recordings:', err)
       })
       .finally(() => {
         setLoading(false)
       })
-  }, [])
+  }, [refreshRecordings])
 
   useEffect(() => {
+    const refreshIfUnknownMeeting = (meetingId: string) => {
+      if (!knownMeetingIdsRef.current.has(meetingId)) {
+        void refreshRecordings().catch((err) => {
+          console.error('Failed to refresh recordings after new processing event:', err)
+        })
+      }
+    }
+
+    const unsubRecording = window.electronAPI.on('recording:status-changed', () => {
+      void refreshRecordings().catch((err) => {
+        console.error('Failed to refresh recordings after recording status change:', err)
+      })
+    })
+
     const unsubTranscription = window.electronAPI.on(
       'transcription:status-changed',
       (payload) => {
@@ -76,10 +167,12 @@ export function Recordings() {
               : rec
           )
         )
-        setTranscriptionProgress((prev) => ({
-          ...prev,
-          [payload.meetingId]: payload.progress,
-        }))
+        setTranscriptionProgress((prev) =>
+          mergeTranscriptionProgress(prev, {
+            [payload.meetingId]: { status: payload.status, progress: payload.progress },
+          }),
+        )
+        refreshIfUnknownMeeting(payload.meetingId)
       }
     )
     const unsubSegmentation = window.electronAPI.on(
@@ -93,13 +186,23 @@ export function Recordings() {
           ...prev,
           [payload.meetingId]: payload.progress,
         }))
+        refreshIfUnknownMeeting(payload.meetingId)
       }
     )
+
+    const interval = setInterval(() => {
+      void refreshRecordings().catch((err) => {
+        console.error('Failed to refresh recordings list:', err)
+      })
+    }, 2000)
+
     return () => {
+      unsubRecording()
       unsubTranscription()
       unsubSegmentation()
+      clearInterval(interval)
     }
-  }, [])
+  }, [refreshRecordings])
 
   useEffect(() => {
     const activeMeetingIds = recordings
@@ -149,7 +252,10 @@ export function Recordings() {
         )
 
         const transcriptionProgressByMeetingId = Object.fromEntries(
-          updates.map((update) => [update.meetingId, update.transcriptionProgress]),
+          updates.map((update) => [
+            update.meetingId,
+            { status: update.transcriptionStatus, progress: update.transcriptionProgress },
+          ]),
         )
         const segmentationStatusesByMeetingId = Object.fromEntries(
           updates.map((update) => [update.meetingId, update.segmentationStatus]),
@@ -159,7 +265,7 @@ export function Recordings() {
         )
 
         setTranscriptionProgress((prev) =>
-          mergeRecordIfChanged(prev, transcriptionProgressByMeetingId),
+          mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
         )
 
         setSegmentationStatuses((prev) =>
