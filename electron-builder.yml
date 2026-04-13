@@ -57,6 +57,7 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+afterPack: ./scripts/after-pack-mac-privacy.cjs
 npmRebuild: false
 publish:
   provider: github
