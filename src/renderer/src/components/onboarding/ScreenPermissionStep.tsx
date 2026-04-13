@@ -52,9 +52,40 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
   }, [checkPermission])
 
   const handleEnable = async () => {
+    try {
+      const sources = await window.electronAPI.invoke('recording:get-sources')
+      const targetSource = sources.find((source) => source.id.startsWith('screen:')) ?? sources[0]
+
+      if (targetSource) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: targetSource.id,
+              maxFrameRate: 1,
+            },
+          } as MediaTrackConstraints,
+        })
+        stream.getTracks().forEach((track) => track.stop())
+      }
+    } catch {
+      // We'll fall through to the OS-level permission check below.
+    }
+
+    const perms = await window.electronAPI.invoke('permissions:check')
+    if (perms.screen) {
+      setGranted(true)
+      await clearOpenedState()
+      return
+    }
+
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', true)
-    window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)
+  }
+
+  const handleOpenSettings = async () => {
+    await window.electronAPI.invoke('permissions:open-settings', 'screen')
   }
 
   return (
@@ -68,7 +99,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Screen Recording</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {opened
-          ? 'After enabling AutoDoc in System Settings, you\'ll need to restart the app for it to take effect. Screen visuals and system audio are verified separately when recording starts.'
+          ? 'If macOS did not grant screen access automatically, you can enable it in System Settings. Screen visuals and system audio are verified separately when recording starts, and you may need to restart AutoDoc after changing the setting.'
           : 'AutoDoc uses screen recording permission to capture meeting visuals. macOS verifies system audio separately when a recording starts, so you can continue even if you skip this for now.'}
       </p>
 
@@ -88,7 +119,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
             Continue →
           </button>
           <button
-            onClick={handleEnable}
+            onClick={() => void handleOpenSettings()}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
             Open Settings again

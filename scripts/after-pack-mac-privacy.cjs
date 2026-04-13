@@ -4,7 +4,7 @@ const { join } = require('path')
 const { execFileSync } = require('child_process')
 
 const PRIVACY_STRINGS = {
-  NSMicrophoneUsageDescription: "Application requests access to the device's microphone.",
+  NSMicrophoneUsageDescription: 'Application requires access to the microphone.',
   NSAudioCaptureUsageDescription: 'Application requests access to capture system audio during screen recording.',
 }
 

@@ -53,24 +53,21 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
 
   const handleEnable = async () => {
     try {
-      const permissionGranted = await window.electronAPI.invoke('permissions:request-microphone')
-      if (permissionGranted) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-          stream.getTracks().forEach((t) => t.stop())
-        } catch {
-          // Recording capture performs its own getUserMedia validation later.
-        }
-        setGranted(true)
-        await clearOpenedState()
-        return
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((t) => t.stop())
     } catch {
-      // Fall through to System Settings recovery on prompt failures.
+      // We'll fall through to the OS-level permission check below.
+    }
+
+    const perms = await window.electronAPI.invoke('permissions:check')
+    if (perms.microphone) {
+      setGranted(true)
+      await clearOpenedState()
+      return
     }
 
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'microphone', true)
-    window.electronAPI.invoke('permissions:open-settings', 'microphone')
+    await window.electronAPI.invoke('permissions:open-settings', 'microphone')
     setOpenedSettings(true)
   }
 

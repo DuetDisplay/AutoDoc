@@ -291,14 +291,6 @@ app.whenReady().then(async () => {
     return { screen: true, microphone: true }
   })
 
-  ipcMain.handle('permissions:request-microphone', async () => {
-    if (process.platform !== 'darwin') {
-      return true
-    }
-
-    return systemPreferences.askForMediaAccess('microphone')
-  })
-
   ipcMain.handle('permissions:open-settings', (_event, panel: 'screen' | 'microphone') => {
     if (process.platform === 'darwin') {
       if (panel === 'screen') {

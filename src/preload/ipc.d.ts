@@ -71,7 +71,6 @@ export interface IpcInvokeEvents {
   'prefs:set-launch-at-login': [enabled: boolean]
   'prefs:get-analytics-consent': []
   'prefs:set-analytics-consent': [enabled: boolean]
-  'permissions:request-microphone': []
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -131,7 +130,6 @@ export interface IpcInvokeReturns {
   'prefs:set-launch-at-login': void
   'prefs:get-analytics-consent': boolean | null
   'prefs:set-analytics-consent': void
-  'permissions:request-microphone': boolean
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
