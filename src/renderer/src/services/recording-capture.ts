@@ -25,6 +25,7 @@ interface CaptureHandles {
   meetingId: string
   segmentIndex: number
   createdAt: number
+  stopping: boolean
   deviceSnapshot: DeviceSnapshot | null
   videoRecorder: MediaRecorder
   micRecorder: MediaRecorder | null
@@ -361,6 +362,7 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
   if (
     activeCapture !== capture ||
+    capture.stopping ||
     capture.finalized ||
     capture.finalizePromise ||
     capture.recoveryPromise
@@ -554,6 +556,7 @@ function buildCaptureHandles(
     meetingId,
     segmentIndex,
     createdAt: Date.now(),
+    stopping: false,
     deviceSnapshot,
     videoRecorder,
     micRecorder,
@@ -624,7 +627,7 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
 }
 
 async function recoverCapture(capture: CaptureHandles, reason: string): Promise<void> {
-  if (activeCapture !== capture || capture.finalized) {
+  if (activeCapture !== capture || capture.stopping || capture.finalized) {
     return
   }
 
@@ -636,16 +639,21 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
     console.warn(`Capture source changed during recording, attempting recovery (${reason})`)
     await finalizeCapture(capture)
 
-    if (activeCapture !== capture) {
+    if (activeCapture !== capture || capture.stopping) {
       return
     }
 
+    let replacement: CaptureHandles | null = null
     try {
-      const replacement = await createCaptureSegment(
+      replacement = await createCaptureSegment(
         capture.sourceId,
         capture.meetingId,
         capture.segmentIndex + 1
       )
+      if (activeCapture !== capture || capture.stopping) {
+        await finalizeCapture(replacement)
+        return
+      }
       activeCapture = replacement
       console.log('Capture recovered after device change', {
         meetingId: capture.meetingId,
@@ -653,10 +661,12 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
         reason
       })
     } catch (err) {
-      useToastStore.getState().showToast({
-        type: 'microphone',
-        message: RECOVERY_FAILURE_MESSAGE
-      })
+      if (!capture.stopping && activeCapture === capture) {
+        useToastStore.getState().showToast({
+          type: 'microphone',
+          message: RECOVERY_FAILURE_MESSAGE
+        })
+      }
       console.error('Failed to recover capture after device change:', err)
     } finally {
       capture.recoveryPromise = null
@@ -678,6 +688,7 @@ export async function stopCapture(): Promise<void> {
   if (!activeCapture) return
 
   const capture = activeCapture
+  capture.stopping = true
   activeCapture = null
 
   await capture.recoveryPromise?.catch(() => {})
