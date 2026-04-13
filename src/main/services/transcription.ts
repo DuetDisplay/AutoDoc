@@ -28,10 +28,25 @@ const RESERVED_LOGICAL_CPUS = 6
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 180
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
-const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 50
+const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 120
 const REPETITION_WINDOW_SEGMENTS = 24
 const REPETITION_WINDOW_MAX_UNIQUE = 4
 const REPETITION_WINDOW_MIN_RATIO = 0.8
+const CROSS_SPEAKER_DUPLICATE_LOOKBACK_MS = 6_000
+const CROSS_SPEAKER_MIN_OVERLAP_MS = 100
+const CROSS_SPEAKER_MIN_SHARED_WORDS = 3
+const CROSS_SPEAKER_MIN_CONTAINMENT = 0.65
+const CROSS_SPEAKER_MIN_OVERLAP_RATIO = 0.3
+const ECHO_SUPPRESSION_WINDOW_MS = 4_000
+const ECHO_SUPPRESSION_LEAD_MS = 2_000
+const ECHO_MAX_REFERENCE_SEGMENTS = 3
+const ECHO_MIN_WORD_COUNT = 3
+const ECHO_MIN_CHAR_COUNT = 15
+const ECHO_JACCARD_THRESHOLD = 0.5
+const ECHO_CONTAINMENT_THRESHOLD = 0.8
+const ECHO_TRIGRAM_THRESHOLD = 0.55
+const STITCH_ADJACENT_GAP_MS = 900
+const STITCH_MAX_COMBINED_CHARS = 240
 type EnqueueSource = 'direct' | 'recovery-scan'
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
@@ -277,7 +292,8 @@ export class TranscriptionService {
             { start: 50, end: 100 },
           ),
         ])
-        transcripts = this.mergeTranscriptStreams(meetingId, micTranscripts, systemTranscripts)
+        const filteredMicTranscripts = this.suppressAcousticEchoes(micTranscripts, systemTranscripts)
+        transcripts = this.mergeTranscriptStreams(meetingId, filteredMicTranscripts, systemTranscripts)
       } else {
         const sourcePath = hasMic ? micWebm : hasSystem ? systemWebm : legacyAudio
         const speaker = hasMic ? 'me' : hasSystem ? 'them' : 'Speaker'
@@ -380,13 +396,15 @@ export class TranscriptionService {
     )
     console.log(`[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
 
-    return filterLowSignalHallucinations(
-      this.mapToTranscripts(meetingId, whisperOutput),
-      speechSignal,
-    ).map((segment) => ({
-      ...segment,
-      speaker,
-    }))
+    return this.stitchAdjacentTranscriptFragments(
+      filterLowSignalHallucinations(
+        this.mapToTranscripts(meetingId, whisperOutput),
+        speechSignal,
+      ).map((segment) => ({
+        ...segment,
+        speaker,
+      })),
+    )
   }
 
   private mergeTranscriptStreams(
@@ -400,15 +418,28 @@ export class TranscriptionService {
 
     const deduped: Transcript[] = []
     for (const segment of merged) {
-      const prev = deduped[deduped.length - 1]
-      const sameText = prev && this.normalizeTranscriptText(prev.text) === this.normalizeTranscriptText(segment.text)
-      const nearSameTime = prev && Math.abs(segment.startMs - prev.startMs) <= 1500
-      if (prev && sameText && nearSameTime) {
-        if (prev.speaker !== 'me' && segment.speaker === 'me') {
-          deduped[deduped.length - 1] = segment
+      let duplicateIndex = -1
+
+      for (let index = deduped.length - 1; index >= 0; index--) {
+        const existing = deduped[index]
+        if (existing.endMs < segment.startMs - CROSS_SPEAKER_DUPLICATE_LOOKBACK_MS) {
+          break
         }
+
+        if (!this.areLikelyDuplicateSegments(existing, segment)) {
+          continue
+        }
+
+        duplicateIndex = index
+        break
+      }
+
+      if (duplicateIndex >= 0) {
+        const existing = deduped[duplicateIndex]
+        deduped[duplicateIndex] = this.pickPreferredDuplicateSegment(existing, segment)
         continue
       }
+
       deduped.push(segment)
     }
 
@@ -416,6 +447,326 @@ export class TranscriptionService {
       ...segment,
       id: `${meetingId}-${index}`,
     }))
+  }
+
+  private suppressAcousticEchoes(
+    micTranscripts: Transcript[],
+    systemTranscripts: Transcript[],
+  ): Transcript[] {
+    if (micTranscripts.length === 0 || systemTranscripts.length === 0) {
+      return micTranscripts
+    }
+
+    return micTranscripts.filter((micSegment) => {
+      if (!this.isEchoEligibleSegment(micSegment)) {
+        return true
+      }
+
+      const nearbySystemSegments = systemTranscripts.filter((systemSegment) =>
+        systemSegment.endMs >= micSegment.startMs - ECHO_SUPPRESSION_WINDOW_MS &&
+        systemSegment.startMs <= micSegment.endMs + ECHO_SUPPRESSION_LEAD_MS,
+      )
+
+      if (nearbySystemSegments.length === 0) {
+        return true
+      }
+
+      return !this.hasEchoReferenceMatch(micSegment, nearbySystemSegments)
+    })
+  }
+
+  private hasEchoReferenceMatch(
+    micSegment: Transcript,
+    nearbySystemSegments: Transcript[],
+  ): boolean {
+    const normalizedMic = this.normalizeTranscriptText(micSegment.text)
+    if (!normalizedMic) {
+      return false
+    }
+
+    const systemGroups = this.buildNearbySystemGroups(nearbySystemSegments)
+    for (const group of systemGroups) {
+      const normalizedSystem = this.normalizeTranscriptText(group.text)
+      if (!normalizedSystem) {
+        continue
+      }
+
+      const metrics = this.getTextSimilarityMetrics(normalizedMic, normalizedSystem)
+      if (metrics.shorterWordCount < ECHO_MIN_WORD_COUNT) {
+        continue
+      }
+
+      if (
+        this.isStrongContainmentMatch(normalizedMic, normalizedSystem, metrics.shorterWordCount) ||
+        metrics.containment >= ECHO_CONTAINMENT_THRESHOLD ||
+        metrics.jaccard >= ECHO_JACCARD_THRESHOLD ||
+        (metrics.trigram >= ECHO_TRIGRAM_THRESHOLD &&
+          metrics.containment >= CROSS_SPEAKER_MIN_CONTAINMENT)
+      ) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  private buildNearbySystemGroups(systemTranscripts: Transcript[]): Array<{
+    text: string
+    startMs: number
+    endMs: number
+  }> {
+    const groups: Array<{ text: string; startMs: number; endMs: number }> = []
+
+    for (let startIndex = 0; startIndex < systemTranscripts.length; startIndex++) {
+      let combinedText = ''
+      let groupStartMs = systemTranscripts[startIndex].startMs
+      let groupEndMs = systemTranscripts[startIndex].endMs
+
+      for (
+        let endIndex = startIndex;
+        endIndex < Math.min(systemTranscripts.length, startIndex + ECHO_MAX_REFERENCE_SEGMENTS);
+        endIndex++
+      ) {
+        const segment = systemTranscripts[endIndex]
+        combinedText = combinedText ? `${combinedText} ${segment.text}` : segment.text
+        groupStartMs = Math.min(groupStartMs, segment.startMs)
+        groupEndMs = Math.max(groupEndMs, segment.endMs)
+        groups.push({
+          text: combinedText,
+          startMs: groupStartMs,
+          endMs: groupEndMs,
+        })
+      }
+    }
+
+    return groups
+  }
+
+  private isEchoEligibleSegment(segment: Transcript): boolean {
+    const normalized = this.normalizeTranscriptText(segment.text)
+    if (!normalized) {
+      return false
+    }
+
+    const wordCount = normalized.split(' ').filter(Boolean).length
+    return wordCount >= ECHO_MIN_WORD_COUNT || normalized.length >= ECHO_MIN_CHAR_COUNT
+  }
+
+  private areLikelyDuplicateSegments(a: Transcript, b: Transcript): boolean {
+    if (a.speaker === b.speaker) {
+      const sameText = this.normalizeTranscriptText(a.text) === this.normalizeTranscriptText(b.text)
+      const nearSameTime = Math.abs(a.startMs - b.startMs) <= 1500
+      return sameText && nearSameTime
+    }
+
+    const overlapMs = this.getOverlapMs(a, b)
+    if (overlapMs < CROSS_SPEAKER_MIN_OVERLAP_MS) {
+      return false
+    }
+
+    const normalizedA = this.normalizeTranscriptText(a.text)
+    const normalizedB = this.normalizeTranscriptText(b.text)
+    if (!normalizedA || !normalizedB) {
+      return false
+    }
+
+    if (normalizedA === normalizedB) {
+      return true
+    }
+
+    const similarity = this.getTextSimilarityMetrics(normalizedA, normalizedB)
+    if (similarity.shorterWordCount < CROSS_SPEAKER_MIN_SHARED_WORDS) {
+      return false
+    }
+
+    if (this.isStrongContainmentMatch(normalizedA, normalizedB, similarity.shorterWordCount)) {
+      return true
+    }
+
+    if (similarity.containment < CROSS_SPEAKER_MIN_CONTAINMENT) {
+      return false
+    }
+
+    const shortestDuration = Math.max(1, Math.min(a.endMs - a.startMs, b.endMs - b.startMs))
+    const overlapRatio = overlapMs / shortestDuration
+    if (overlapRatio < CROSS_SPEAKER_MIN_OVERLAP_RATIO) {
+      return false
+    }
+
+    return (
+      normalizedA.includes(normalizedB) ||
+      normalizedB.includes(normalizedA) ||
+      similarity.sharedWords >= CROSS_SPEAKER_MIN_SHARED_WORDS + 1 ||
+      similarity.jaccard >= ECHO_JACCARD_THRESHOLD
+    )
+  }
+
+  private pickPreferredDuplicateSegment(a: Transcript, b: Transcript): Transcript {
+    const aScore = this.getTranscriptSegmentScore(a)
+    const bScore = this.getTranscriptSegmentScore(b)
+
+    if (aScore !== bScore) {
+      return aScore > bScore ? a : b
+    }
+
+    if (a.startMs !== b.startMs) {
+      return a.startMs < b.startMs ? a : b
+    }
+
+    if (a.endMs !== b.endMs) {
+      return a.endMs > b.endMs ? a : b
+    }
+
+    return a
+  }
+
+  private getTranscriptSegmentScore(segment: Transcript): number {
+    const normalized = this.normalizeTranscriptText(segment.text)
+    const wordCount = normalized ? normalized.split(' ').length : 0
+    const durationScore = Math.min(20, Math.round((segment.endMs - segment.startMs) / 250))
+    return wordCount * 100 + normalized.length + durationScore
+  }
+
+  private getOverlapMs(a: Transcript, b: Transcript): number {
+    return Math.max(0, Math.min(a.endMs, b.endMs) - Math.max(a.startMs, b.startMs))
+  }
+
+  private getUniqueWords(text: string): Set<string> {
+    return new Set(text.split(' ').filter(Boolean))
+  }
+
+  private countSharedWords(a: Set<string>, b: Set<string>): number {
+    let shared = 0
+    for (const word of a) {
+      if (b.has(word)) {
+        shared += 1
+      }
+    }
+    return shared
+  }
+
+  private getTextSimilarityMetrics(a: string, b: string): {
+    sharedWords: number
+    shorterWordCount: number
+    containment: number
+    jaccard: number
+    trigram: number
+  } {
+    const wordsA = this.getUniqueWords(a)
+    const wordsB = this.getUniqueWords(b)
+    const sharedWords = this.countSharedWords(wordsA, wordsB)
+    const shorterWordCount = Math.min(wordsA.size, wordsB.size)
+    const unionSize = wordsA.size + wordsB.size - sharedWords
+
+    return {
+      sharedWords,
+      shorterWordCount,
+      containment: shorterWordCount === 0 ? 0 : sharedWords / shorterWordCount,
+      jaccard: unionSize === 0 ? 0 : sharedWords / unionSize,
+      trigram: this.getTrigramSimilarity(a, b),
+    }
+  }
+
+  private isStrongContainmentMatch(a: string, b: string, shorterWordCount: number): boolean {
+    if (shorterWordCount < CROSS_SPEAKER_MIN_SHARED_WORDS) {
+      return false
+    }
+
+    const shorter = a.length <= b.length ? a : b
+    const longer = a.length <= b.length ? b : a
+    return longer.includes(shorter)
+  }
+
+  private getTrigramSimilarity(a: string, b: string): number {
+    const trigramsA = this.getCharacterNgrams(a, 3)
+    const trigramsB = this.getCharacterNgrams(b, 3)
+    if (trigramsA.size === 0 || trigramsB.size === 0) {
+      return 0
+    }
+
+    const shared = this.countSharedWords(trigramsA, trigramsB)
+    const unionSize = trigramsA.size + trigramsB.size - shared
+    return unionSize === 0 ? 0 : shared / unionSize
+  }
+
+  private getCharacterNgrams(text: string, size: number): Set<string> {
+    const compact = text.replace(/\s+/g, ' ').trim()
+    if (compact.length < size) {
+      return compact ? new Set([compact]) : new Set()
+    }
+
+    const grams = new Set<string>()
+    for (let index = 0; index <= compact.length - size; index++) {
+      grams.add(compact.slice(index, index + size))
+    }
+    return grams
+  }
+
+  private stitchAdjacentTranscriptFragments(transcripts: Transcript[]): Transcript[] {
+    if (transcripts.length <= 1) {
+      return transcripts
+    }
+
+    const stitched: Transcript[] = []
+
+    for (const segment of transcripts) {
+      const prev = stitched[stitched.length - 1]
+      if (!prev || !this.shouldStitchSegments(prev, segment)) {
+        stitched.push({ ...segment })
+        continue
+      }
+
+      prev.text = this.joinTranscriptText(prev.text, segment.text)
+      prev.endMs = Math.max(prev.endMs, segment.endMs)
+      prev.confidence = Math.max(prev.confidence, segment.confidence)
+    }
+
+    return stitched.map((segment, index) => ({
+      ...segment,
+      id: `${segment.meetingId}-${index}`,
+    }))
+  }
+
+  private shouldStitchSegments(prev: Transcript, next: Transcript): boolean {
+    if (prev.speaker !== next.speaker) {
+      return false
+    }
+
+    const gapMs = next.startMs - prev.endMs
+    if (gapMs < 0 || gapMs > STITCH_ADJACENT_GAP_MS) {
+      return false
+    }
+
+    const prevText = prev.text.trim()
+    const nextText = next.text.trim()
+    if (!prevText || !nextText) {
+      return false
+    }
+
+    if ((prevText.length + 1 + nextText.length) > STITCH_MAX_COMBINED_CHARS) {
+      return false
+    }
+
+    if (/[.!?]["')\]]?$/.test(prevText)) {
+      return false
+    }
+
+    return (
+      prevText.length < 140 ||
+      /^[a-z]/.test(nextText) ||
+      /^(and|but|so|because|then|to|for|with|that|which|who|we|i|it|they|he|she|you)\b/i.test(nextText)
+    )
+  }
+
+  private joinTranscriptText(prevText: string, nextText: string): string {
+    const left = prevText.trim()
+    const right = nextText.trim()
+    if (!left) return right
+    if (!right) return left
+    if (/[-/(\[]$/.test(left)) {
+      return `${left}${right}`
+    }
+    return `${left} ${right}`.replace(/\s+/g, ' ').trim()
   }
 
   private detectAudioActivity(wavPath: string): Promise<{ start: number; end: number }[]> {

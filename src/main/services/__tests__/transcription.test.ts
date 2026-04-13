@@ -315,6 +315,208 @@ describe('TranscriptionService', () => {
     expect(mockConverter.mergeAudio).not.toHaveBeenCalled()
   })
 
+  it('collapses overlapping cross-speaker duplicates when dual-channel audio echoes the same utterance', () => {
+    const merged = (service as any).mergeTranscriptStreams(
+      'meeting-echo',
+      [
+        {
+          id: 'me-1',
+          meetingId: 'meeting-echo',
+          speaker: 'me',
+          text: 'Do we want to run this through QA?',
+          startMs: 1200,
+          endMs: 3400,
+          confidence: -1,
+        },
+      ],
+      [
+        {
+          id: 'them-1',
+          meetingId: 'meeting-echo',
+          speaker: 'them',
+          text: 'Do we want to run this through QA? I thought we had talked about that already.',
+          startMs: 900,
+          endMs: 4800,
+          confidence: -1,
+        },
+        {
+          id: 'them-2',
+          meetingId: 'meeting-echo',
+          speaker: 'them',
+          text: 'Let us make sure the release checklist is current.',
+          startMs: 6000,
+          endMs: 8600,
+          confidence: -1,
+        },
+      ],
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged[0].speaker).toBe('them')
+    expect(merged[0].text).toContain('I thought we had talked about that already')
+    expect(merged[1].text).toContain('release checklist')
+  })
+
+  it('suppresses mic echo when nearby system segments contain the same utterance with different chunking', () => {
+    const filtered = (service as any).suppressAcousticEchoes(
+      [
+        {
+          id: 'me-1',
+          meetingId: 'meeting-echo-pass',
+          speaker: 'me',
+          text: 'Do we want to run this through QA? I thought we had talked about that already.',
+          startMs: 7800,
+          endMs: 11800,
+          confidence: -1,
+        },
+        {
+          id: 'me-2',
+          meetingId: 'meeting-echo-pass',
+          speaker: 'me',
+          text: 'I can take the release checklist after lunch.',
+          startMs: 15000,
+          endMs: 18500,
+          confidence: -1,
+        },
+      ],
+      [
+        {
+          id: 'them-1',
+          meetingId: 'meeting-echo-pass',
+          speaker: 'them',
+          text: 'Do we want to run this through QA?',
+          startMs: 7600,
+          endMs: 9100,
+          confidence: -1,
+        },
+        {
+          id: 'them-2',
+          meetingId: 'meeting-echo-pass',
+          speaker: 'them',
+          text: 'I thought we had talked about that already.',
+          startMs: 9050,
+          endMs: 11900,
+          confidence: -1,
+        },
+      ],
+    )
+
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0].text).toContain('release checklist')
+  })
+
+  it('preserves mic speech when nearby system text is on-topic but materially different', () => {
+    const filtered = (service as any).suppressAcousticEchoes(
+      [
+        {
+          id: 'me-1',
+          meetingId: 'meeting-real-speech',
+          speaker: 'me',
+          text: 'I can own the Windows follow-up and send the email this afternoon.',
+          startMs: 10000,
+          endMs: 14200,
+          confidence: -1,
+        },
+      ],
+      [
+        {
+          id: 'them-1',
+          meetingId: 'meeting-real-speech',
+          speaker: 'them',
+          text: 'Can you send an update once the launch checklist is ready?',
+          startMs: 9200,
+          endMs: 12900,
+          confidence: -1,
+        },
+      ],
+    )
+
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0].speaker).toBe('me')
+  })
+
+  it('preserves distinct overlapping back-and-forth between speakers', () => {
+    const merged = (service as any).mergeTranscriptStreams(
+      'meeting-dialogue',
+      [
+        {
+          id: 'me-1',
+          meetingId: 'meeting-dialogue',
+          speaker: 'me',
+          text: 'Should we run a smoke test before launch?',
+          startMs: 1000,
+          endMs: 3200,
+          confidence: -1,
+        },
+      ],
+      [
+        {
+          id: 'them-1',
+          meetingId: 'meeting-dialogue',
+          speaker: 'them',
+          text: 'Yes, but I want QA involved as well.',
+          startMs: 2600,
+          endMs: 5100,
+          confidence: -1,
+        },
+      ],
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged.map((segment: any) => segment.speaker)).toEqual(['me', 'them'])
+  })
+
+  it('stitches adjacent same-speaker fragments into a more complete thought', () => {
+    const stitched = (service as any).stitchAdjacentTranscriptFragments([
+      {
+        id: 'meeting-fragments-0',
+        meetingId: 'meeting-fragments',
+        speaker: 'them',
+        text: 'I think the next step is',
+        startMs: 1000,
+        endMs: 2200,
+        confidence: -1,
+      },
+      {
+        id: 'meeting-fragments-1',
+        meetingId: 'meeting-fragments',
+        speaker: 'them',
+        text: 'to send the design review this afternoon',
+        startMs: 2350,
+        endMs: 4200,
+        confidence: -1,
+      },
+    ])
+
+    expect(stitched).toHaveLength(1)
+    expect(stitched[0].text).toBe('I think the next step is to send the design review this afternoon')
+  })
+
+  it('does not stitch clearly separate sentences that already end cleanly', () => {
+    const stitched = (service as any).stitchAdjacentTranscriptFragments([
+      {
+        id: 'meeting-sentences-0',
+        meetingId: 'meeting-sentences',
+        speaker: 'them',
+        text: 'I sent the update already.',
+        startMs: 1000,
+        endMs: 2200,
+        confidence: -1,
+      },
+      {
+        id: 'meeting-sentences-1',
+        meetingId: 'meeting-sentences',
+        speaker: 'them',
+        text: 'Can you take a look at the rollout plan?',
+        startMs: 2350,
+        endMs: 4300,
+        confidence: -1,
+      },
+    ])
+
+    expect(stitched).toHaveLength(2)
+  })
+
   it('chooses 10 whisper threads on a 20-thread machine', () => {
     setPlatform('win32')
     osMock.availableParallelism.mockReturnValue(20)
@@ -416,5 +618,57 @@ describe('TranscriptionService', () => {
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 57)
 
     expect(service.getProgress('meeting-123')).toBe(57)
+  })
+
+  it('runs acoustic echo suppression before merging dual-channel transcripts', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }],
+      })
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }],
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-dual-echo-0',
+          meetingId: 'meeting-dual-echo',
+          speaker: 'Speaker',
+          text: 'echoed sentence',
+          startMs: 1000,
+          endMs: 3000,
+          confidence: -1,
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-dual-echo-1',
+          meetingId: 'meeting-dual-echo',
+          speaker: 'Speaker',
+          text: 'echoed sentence',
+          startMs: 1000,
+          endMs: 3000,
+          confidence: -1,
+        },
+      ])
+
+    const suppressSpy = vi.spyOn(service as any, 'suppressAcousticEchoes')
+    const mergeSpy = vi.spyOn(service as any, 'mergeTranscriptStreams')
+
+    await expect((service as any).processJob('meeting-dual-echo')).resolves.toBeUndefined()
+
+    expect(suppressSpy).toHaveBeenCalledTimes(1)
+    expect(mergeSpy).toHaveBeenCalledWith(
+      'meeting-dual-echo',
+      suppressSpy.mock.results[0]?.value,
+      expect.any(Array),
+    )
   })
 })
