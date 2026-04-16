@@ -42,6 +42,12 @@ import { focusMainWindow, registerMainWindow } from './services/main-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
+const isE2E = process.env.AUTODOC_E2E === '1'
+
+if (isE2E) {
+  app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
+}
+
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
 }
@@ -54,7 +60,7 @@ if (process.platform === 'darwin' && is.dev) {
 }
 
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
-const shouldAllowSentryInEnv = !is.dev || !!process.env.AUTODOC_SENTRY_DEV
+const shouldAllowSentryInEnv = !isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV)
 const homeDir = homedir()
 
 function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
@@ -194,7 +200,7 @@ function createWindow(): void {
 
   // Hide to tray instead of closing (unless user is quitting)
   mainWindow.on('close', (e) => {
-    if (!isQuitting) {
+    if (!isQuitting && !isE2E) {
       e.preventDefault()
       mainWindow.hide()
     }
@@ -276,10 +282,20 @@ app.whenReady().then(async () => {
   })
 
   // Auto-updater
-  initAutoUpdater()
+  if (!isE2E) {
+    initAutoUpdater()
+  }
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
-  ipcMain.handle('updater:check', () => checkForUpdates())
-  ipcMain.handle('updater:install', () => installUpdate())
+  ipcMain.handle('updater:check', () => {
+    if (!isE2E) {
+      checkForUpdates()
+    }
+  })
+  ipcMain.handle('updater:install', () => {
+    if (!isE2E) {
+      installUpdate()
+    }
+  })
 
   ipcMain.handle('permissions:check', async () => {
     if (process.platform === 'darwin') {
@@ -632,88 +648,92 @@ app.whenReady().then(async () => {
   createWindow()
 
   // System tray — show upcoming meetings, open app, quit
-  const showWindow = () => {
-    if (!focusMainWindow()) {
-      createWindow()
+  if (!isE2E) {
+    const showWindow = () => {
+      if (!focusMainWindow()) {
+        createWindow()
+      }
     }
+    createTray(() => cachedEvents, showWindow, {
+      getIsRecording: () => recordingService.getState().isRecording,
+      stopRecording: () => {
+        if (!recordingService.getState().isRecording) return
+        try {
+          stopActiveRecording()
+        } catch {
+          // Failure already logged in recording IPC
+        }
+      },
+    })
+
+    recoverPendingWork()
+    detectionService.start()
+
+    // Start whisper tools + model download in the background — don't block the window
+    whisperManager.startSetup()
+      .then(() => {
+        lastSuccessfulWhisperPhase = 'ready'
+        whisperSetupState.phase = 'ready'
+        whisperSetupState.percent = 100
+        delete whisperSetupState.error
+        delete whisperSetupState.failedStep
+        updateWhisperSentryContext({
+          ready: true,
+          modelFilename: whisperManager.getModelInfo().filename,
+          whisperVersion: 'v1.8.4',
+          phase: 'ready',
+          failedStep: null,
+        })
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+        }
+      })
+      .catch((err) => {
+        whisperSetupState.phase = 'error'
+        whisperSetupState.error = err instanceof Error ? err.message : String(err)
+        whisperSetupState.failedStep = getWhisperFailedStep()
+        updateWhisperSentryContext({
+          ready: false,
+          modelFilename: whisperManager.getModelInfo().filename,
+          whisperVersion: 'v1.8.4',
+          phase: 'error',
+          failedStep: whisperSetupState.failedStep ?? null,
+        })
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+        }
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Failed to set up whisper tools',
+          error: err,
+        })
+        console.error('Failed to set up whisper tools:', err)
+      })
+
+    // Start Ollama + pull model in the background — don't block the window
+    ensureOllamaRunning()
+
+    powerMonitor.on('resume', () => {
+      ensureOllamaRunning()
+      recoverPendingWork()
+    })
+
+    powerMonitor.on('unlock-screen', () => {
+      ensureOllamaRunning()
+      recoverPendingWork()
+    })
+
+    setInterval(() => {
+      recoverPendingWork()
+    }, PENDING_RECOVERY_INTERVAL_MS)
   }
-  createTray(() => cachedEvents, showWindow, {
-    getIsRecording: () => recordingService.getState().isRecording,
-    stopRecording: () => {
-      if (!recordingService.getState().isRecording) return
-      try {
-        stopActiveRecording()
-      } catch {
-        // Failure already logged in recording IPC
-      }
-    },
-  })
-
-  detectionService.start()
-  recoverPendingWork()
-
-  // Start whisper tools + model download in the background — don't block the window
-  whisperManager.startSetup()
-    .then(() => {
-      lastSuccessfulWhisperPhase = 'ready'
-      whisperSetupState.phase = 'ready'
-      whisperSetupState.percent = 100
-      delete whisperSetupState.error
-      delete whisperSetupState.failedStep
-      updateWhisperSentryContext({
-        ready: true,
-        modelFilename: whisperManager.getModelInfo().filename,
-        whisperVersion: 'v1.8.4',
-        phase: 'ready',
-        failedStep: null,
-      })
-      const windows = BrowserWindow.getAllWindows()
-      for (const win of windows) {
-        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
-      }
-    })
-    .catch((err) => {
-      whisperSetupState.phase = 'error'
-      whisperSetupState.error = err instanceof Error ? err.message : String(err)
-      whisperSetupState.failedStep = getWhisperFailedStep()
-      updateWhisperSentryContext({
-        ready: false,
-        modelFilename: whisperManager.getModelInfo().filename,
-        whisperVersion: 'v1.8.4',
-        phase: 'error',
-        failedStep: whisperSetupState.failedStep ?? null,
-      })
-      const windows = BrowserWindow.getAllWindows()
-      for (const win of windows) {
-        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
-      }
-      logAutodocFailure({
-        area: 'whisper',
-        message: 'Failed to set up whisper tools',
-        error: err,
-      })
-      console.error('Failed to set up whisper tools:', err)
-    })
-
-  // Start Ollama + pull model in the background — don't block the window
-  ensureOllamaRunning()
-
-  powerMonitor.on('resume', () => {
-    ensureOllamaRunning()
-    recoverPendingWork()
-  })
-
-  powerMonitor.on('unlock-screen', () => {
-    ensureOllamaRunning()
-    recoverPendingWork()
-  })
-
-  setInterval(() => {
-    recoverPendingWork()
-  }, PENDING_RECOVERY_INTERVAL_MS)
 
   app.on('activate', () => {
-    recoverPendingWork()
+    if (!isE2E) {
+      recoverPendingWork()
+    }
     if (!focusMainWindow()) {
       createWindow()
     }
@@ -727,7 +747,11 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  // Don't quit — the tray keeps the app alive
+  if (!isE2E) {
+    // Don't quit — the tray keeps the app alive
+    return
+  }
+  app.quit()
 })
 
 process.on('uncaughtException', (error) => {

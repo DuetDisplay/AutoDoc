@@ -33,6 +33,8 @@
     "test:run": "vitest run",
     "test:main": "vitest --config vitest.main.config.mts",
     "test:main:run": "vitest run --config vitest.main.config.mts",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
