@@ -1,6 +1,9 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { WhisperSetupStatus } from '../../shared/types'
+import { getE2EWhisperStatus, retryE2EWhisperSetup } from '../services/e2e-fixtures'
+
+const isE2E = process.env.AUTODOC_E2E === '1'
 
 export function registerWhisperIpc(
   whisperManager: WhisperManager,
@@ -9,6 +12,10 @@ export function registerWhisperIpc(
   ipcMain.handle(
     'whisper:get-setup-status',
     (): WhisperSetupStatus => {
+      if (isE2E) {
+        return getE2EWhisperStatus()
+      }
+
       return getWhisperSetupStatus()
     },
   )
@@ -16,6 +23,15 @@ export function registerWhisperIpc(
   ipcMain.handle(
     'whisper:retry-setup',
     async (): Promise<void> => {
+      if (isE2E) {
+        const nextStatus = retryE2EWhisperSetup()
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('whisper:setup-progress', nextStatus)
+        }
+        return
+      }
+
       try {
         await whisperManager.startSetup()
       } catch (err) {

@@ -39,6 +39,7 @@ import {
   traceInstallPolicy,
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
+import { getE2EOllamaStatus, getE2EPermissions, getE2EWhisperStatus } from './services/e2e-fixtures'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -298,6 +299,10 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('permissions:check', async () => {
+    if (isE2E) {
+      return getE2EPermissions()
+    }
+
     if (process.platform === 'darwin') {
       const microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
       const screen = systemPreferences.getMediaAccessStatus('screen') === 'granted'
@@ -308,6 +313,10 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('permissions:open-settings', (_event, panel: 'screen' | 'microphone') => {
+    if (isE2E) {
+      return
+    }
+
     if (process.platform === 'darwin') {
       if (panel === 'screen') {
         shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
@@ -383,8 +392,10 @@ app.whenReady().then(async () => {
   const managedOllamaManager = ollamaManager
 
   // Mutable state tracking Ollama setup progress
-  const ollamaSetupState: OllamaSetupStatus = { phase: 'starting', percent: 0 }
-  let lastSuccessfulOllamaPhase: OllamaSetupStatus['phase'] = 'starting'
+  const ollamaSetupState: OllamaSetupStatus = isE2E
+    ? getE2EOllamaStatus()
+    : { phase: 'starting', percent: 0 }
+  let lastSuccessfulOllamaPhase: OllamaSetupStatus['phase'] = isE2E ? ollamaSetupState.phase : 'starting'
 
   function broadcastOllamaStatus(): void {
     updateOllamaSentryContext({
@@ -544,8 +555,10 @@ app.whenReady().then(async () => {
   })
 
   // Mutable state tracking Whisper setup progress
-  const whisperSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
-  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
+  const whisperSetupState: WhisperSetupStatus = isE2E
+    ? getE2EWhisperStatus()
+    : { phase: 'checking', percent: 0 }
+  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = isE2E ? whisperSetupState.phase : 'checking'
   const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] => (
     lastSuccessfulWhisperPhase === 'downloading-ffmpeg'
     || lastSuccessfulWhisperPhase === 'downloading-model'

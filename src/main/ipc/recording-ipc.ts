@@ -11,9 +11,11 @@ import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocFailure } from '../services/autodoc-log'
 import { refreshTray } from '../services/tray'
+import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import type { CalendarEvent, RecordingEntry, RecordingSource, RecordingState, MeetingMetadata } from '../../shared/types'
 
 const SEGMENT_PAD_WIDTH = 4
+const isE2E = process.env.AUTODOC_E2E === '1'
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
   return type === 'video' ? 'screen' : type
@@ -248,6 +250,10 @@ export function registerRecordingIpc(
   })
 
   ipcMain.handle('recording:get-sources', async (): Promise<RecordingSource[]> => {
+    if (isE2E) {
+      return getE2ERecordingSources()
+    }
+
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],
       thumbnailSize: { width: 320, height: 180 },

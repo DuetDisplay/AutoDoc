@@ -1,8 +1,11 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import type { SegmentationService } from '../services/segmentation'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
 import type { MeetingSegments, SegmentationStatus, OllamaSetupStatus } from '../../shared/types'
+import { getE2EOllamaStatus, retryE2EOllamaSetup } from '../services/e2e-fixtures'
+
+const isE2E = process.env.AUTODOC_E2E === '1'
 
 export function registerLlmIpc(
   segmentationService: SegmentationService,
@@ -14,6 +17,10 @@ export function registerLlmIpc(
   ipcMain.handle(
     'ollama:check-status',
     async (): Promise<boolean> => {
+      if (isE2E) {
+        return getE2EOllamaStatus().phase === 'ready'
+      }
+
       const running = await ollamaManager.isServerRunning()
       if (!running) ensureOllamaRunning()
       return running
@@ -65,6 +72,10 @@ export function registerLlmIpc(
   ipcMain.handle(
     'ollama:get-setup-status',
     (): OllamaSetupStatus => {
+      if (isE2E) {
+        return getE2EOllamaStatus()
+      }
+
       return getOllamaSetupStatus()
     }
   )
@@ -72,6 +83,15 @@ export function registerLlmIpc(
   ipcMain.handle(
     'ollama:retry-setup',
     async (): Promise<void> => {
+      if (isE2E) {
+        const nextStatus = retryE2EOllamaSetup()
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send('ollama:setup-progress', nextStatus)
+        }
+        return
+      }
+
       ensureOllamaRunning()
     }
   )

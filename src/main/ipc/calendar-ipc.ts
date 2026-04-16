@@ -2,6 +2,14 @@ import { ipcMain, BrowserWindow } from 'electron'
 import type { CalendarManager } from '../services/calendar-manager'
 import { setAutoRecord, getAutoRecordMode } from '../services/auto-record-store'
 import type { AutoRecordMode, CalendarEvent } from '../../shared/types'
+import {
+  connectE2ECalendar,
+  disconnectE2ECalendar,
+  getE2ECalendarAccounts,
+  getE2ECalendarEvents,
+} from '../services/e2e-fixtures'
+
+const isE2E = process.env.AUTODOC_E2E === '1'
 
 export function registerCalendarIpc(
   calendarManager: CalendarManager,
@@ -9,6 +17,16 @@ export function registerCalendarIpc(
   onConnectionChanged?: (connected: boolean) => void,
 ): void {
   ipcMain.handle('calendar:connect', async (_event, providerType: 'google' | 'microsoft') => {
+    if (isE2E) {
+      const account = connectE2ECalendar(providerType)
+      const enriched = applyAutoRecordState(getE2ECalendarEvents())
+      pushEventsToRenderer(enriched)
+      onEventsUpdated?.(enriched)
+      pushConnectionStatus(true)
+      onConnectionChanged?.(true)
+      return account
+    }
+
     const account = await calendarManager.connect(providerType)
 
     const events = await calendarManager.fetchAllUpcomingEvents()
@@ -31,6 +49,17 @@ export function registerCalendarIpc(
   })
 
   ipcMain.handle('calendar:disconnect', async (_event, accountId: string) => {
+    if (isE2E) {
+      disconnectE2ECalendar(accountId)
+      const enriched = applyAutoRecordState(getE2ECalendarEvents())
+      pushEventsToRenderer(enriched)
+      onEventsUpdated?.(enriched)
+      const connected = getE2ECalendarAccounts().length > 0
+      pushConnectionStatus(connected)
+      onConnectionChanged?.(connected)
+      return
+    }
+
     await calendarManager.disconnect(accountId)
 
     if (calendarManager.getAccounts().length === 0) {
@@ -48,15 +77,30 @@ export function registerCalendarIpc(
   })
 
   ipcMain.handle('calendar:get-accounts', () => {
+    if (isE2E) {
+      return getE2ECalendarAccounts()
+    }
+
     return calendarManager.getAccounts()
   })
 
   ipcMain.handle('calendar:get-events', async () => {
+    if (isE2E) {
+      return applyAutoRecordState(getE2ECalendarEvents())
+    }
+
     const events = await calendarManager.fetchAllUpcomingEvents()
     return applyAutoRecordState(events)
   })
 
   ipcMain.handle('calendar:sync', async () => {
+    if (isE2E) {
+      const enriched = applyAutoRecordState(getE2ECalendarEvents())
+      pushEventsToRenderer(enriched)
+      onEventsUpdated?.(enriched)
+      return enriched
+    }
+
     const events = await calendarManager.fetchAllUpcomingEvents()
     const enriched = applyAutoRecordState(events)
     pushEventsToRenderer(enriched)
