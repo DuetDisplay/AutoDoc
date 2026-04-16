@@ -7,6 +7,7 @@ import type {
 } from './types'
 
 export interface E2EScenario {
+  platform?: 'darwin' | 'win32'
   permissions?: {
     microphone?: boolean
     screen?: boolean
@@ -14,10 +15,12 @@ export interface E2EScenario {
   whisper?: {
     status?: WhisperSetupStatus
     retryStatus?: WhisperSetupStatus
+    retryStatuses?: WhisperSetupStatus[]
   }
   ollama?: {
     status?: OllamaSetupStatus
     retryStatus?: OllamaSetupStatus
+    retryStatuses?: OllamaSetupStatus[]
   }
   calendar?: {
     accounts?: CalendarAccount[]

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { expect, type Page, _electron as electron } from '@playwright/test'
 import type { E2EScenario } from '../../src/shared/e2e'
+import type { OllamaSetupStatus, WhisperSetupStatus } from '../../src/shared/types'
 
 export async function launchE2EApp(scenario?: E2EScenario) {
   const mainEntry = path.join(process.cwd(), 'out', 'main', 'index.js')
@@ -31,4 +32,16 @@ export async function stubMediaCapture(page: Page): Promise<void> {
       throw new Error('E2E media capture is stubbed')
     }
   })
+}
+
+export async function setWhisperStatus(page: Page, status: WhisperSetupStatus): Promise<void> {
+  await page.evaluate(async (nextStatus) => {
+    await window.electronAPI.invoke('e2e:set-whisper-status', nextStatus)
+  }, status)
+}
+
+export async function setOllamaStatus(page: Page, status: OllamaSetupStatus): Promise<void> {
+  await page.evaluate(async (nextStatus) => {
+    await window.electronAPI.invoke('e2e:set-ollama-status', nextStatus)
+  }, status)
 }

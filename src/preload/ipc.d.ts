@@ -75,6 +75,8 @@ export interface IpcInvokeEvents {
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
   'whisper:retry-setup': []
+  'e2e:set-whisper-status': [status: WhisperSetupStatus]
+  'e2e:set-ollama-status': [status: OllamaSetupStatus]
   'updater:get-status': []
   'updater:check': []
   'updater:install': []
@@ -134,6 +136,8 @@ export interface IpcInvokeReturns {
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
   'whisper:retry-setup': void
+  'e2e:set-whisper-status': void
+  'e2e:set-ollama-status': void
   'updater:get-status': UpdateStatus
   'updater:check': void
   'updater:install': void

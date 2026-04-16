@@ -39,7 +39,14 @@ import {
   traceInstallPolicy,
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
-import { getE2EOllamaStatus, getE2EPermissions, getE2EWhisperStatus } from './services/e2e-fixtures'
+import {
+  getE2EOllamaStatus,
+  getE2EPermissions,
+  getE2EPlatform,
+  getE2EWhisperStatus,
+  setE2EOllamaStatus,
+  setE2EWhisperStatus,
+} from './services/e2e-fixtures'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -512,7 +519,7 @@ app.whenReady().then(async () => {
     recordingService.getRecordingsBaseDir(),
   )
   ipcMain.handle('app:get-runtime-info', (): AppRuntimeInfo => ({
-    platform: process.platform,
+    platform: isE2E ? getE2EPlatform() : process.platform,
     storagePath: app.getPath('userData'),
     whisperModel: whisperManager.getModelName(),
     ollamaModel: managedOllamaManager.getModel(),
@@ -587,6 +594,29 @@ app.whenReady().then(async () => {
       win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
     }
   })
+
+  if (isE2E) {
+    ipcMain.handle('e2e:set-whisper-status', (_event, status: WhisperSetupStatus) => {
+      const nextStatus = setE2EWhisperStatus(status)
+      whisperSetupState.phase = nextStatus.phase
+      whisperSetupState.percent = nextStatus.percent
+      whisperSetupState.error = nextStatus.error
+      whisperSetupState.failedStep = nextStatus.failedStep
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+      }
+    })
+
+    ipcMain.handle('e2e:set-ollama-status', (_event, status: OllamaSetupStatus) => {
+      const nextStatus = setE2EOllamaStatus(status)
+      ollamaSetupState.phase = nextStatus.phase
+      ollamaSetupState.percent = nextStatus.percent
+      ollamaSetupState.error = nextStatus.error
+      ollamaSetupState.failedStep = nextStatus.failedStep
+      broadcastOllamaStatus()
+    })
+  }
 
   const { stopActiveRecording } = registerRecordingIpc(
     recordingService,

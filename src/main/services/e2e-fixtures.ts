@@ -45,10 +45,13 @@ function parseScenario(): E2EScenario {
 }
 
 const scenario = parseScenario()
+const platform = scenario.platform ?? process.platform
 const permissions = {
-  microphone: scenario.permissions?.microphone ?? false,
-  screen: scenario.permissions?.screen ?? false,
+  microphone: scenario.permissions?.microphone ?? (platform === 'win32'),
+  screen: scenario.permissions?.screen ?? (platform === 'win32'),
 }
+const whisperRetryStatuses = [...(scenario.whisper?.retryStatuses ?? [])]
+const ollamaRetryStatuses = [...(scenario.ollama?.retryStatuses ?? [])]
 
 let whisperStatus: WhisperSetupStatus = clone(
   scenario.whisper?.status ?? DEFAULT_WHISPER_STATUS,
@@ -66,12 +69,22 @@ export function getE2EPermissions(): { microphone: boolean; screen: boolean } {
   return { ...permissions }
 }
 
+export function getE2EPlatform(): NodeJS.Platform {
+  return platform
+}
+
 export function getE2EWhisperStatus(): WhisperSetupStatus {
   return clone(whisperStatus)
 }
 
 export function retryE2EWhisperSetup(): WhisperSetupStatus {
-  whisperStatus = clone(scenario.whisper?.retryStatus ?? whisperStatus)
+  const nextStatus = whisperRetryStatuses.shift() ?? scenario.whisper?.retryStatus ?? whisperStatus
+  whisperStatus = clone(nextStatus)
+  return getE2EWhisperStatus()
+}
+
+export function setE2EWhisperStatus(status: WhisperSetupStatus): WhisperSetupStatus {
+  whisperStatus = clone(status)
   return getE2EWhisperStatus()
 }
 
@@ -80,7 +93,13 @@ export function getE2EOllamaStatus(): OllamaSetupStatus {
 }
 
 export function retryE2EOllamaSetup(): OllamaSetupStatus {
-  ollamaStatus = clone(scenario.ollama?.retryStatus ?? ollamaStatus)
+  const nextStatus = ollamaRetryStatuses.shift() ?? scenario.ollama?.retryStatus ?? ollamaStatus
+  ollamaStatus = clone(nextStatus)
+  return getE2EOllamaStatus()
+}
+
+export function setE2EOllamaStatus(status: OllamaSetupStatus): OllamaSetupStatus {
+  ollamaStatus = clone(status)
   return getE2EOllamaStatus()
 }
 

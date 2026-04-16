@@ -35,6 +35,7 @@
     "test:main:run": "vitest run --config vitest.main.config.mts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:onboarding": "npm run build && npm run test:run -- src/renderer/src/components/onboarding/__tests__/TranscriptionStep.test.tsx src/renderer/src/pages/__tests__/Onboarding.test.tsx && npm run test:main:run -- src/main/services/__tests__/whisper-onboarding-install.test.ts src/main/services/__tests__/ollama-onboarding-install.test.ts && npm run test:e2e -- e2e/onboarding-smoke.spec.ts e2e/onboarding-journey.spec.ts",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
