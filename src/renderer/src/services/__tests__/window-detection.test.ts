@@ -10,10 +10,10 @@ describe('detectMeetingWindow', () => {
     { id: 's:0', name: 'Entire Screen', thumbnailDataUrl: '' },
   ]
 
-  it('detects Zoom window', () => {
+  it('prefers the strongest meeting window candidate', () => {
     const result = detectMeetingWindow(sources)
     expect(result).not.toBeNull()
-    expect(result!.id).toBe('w:1')
+    expect(result!.id).toBe('w:3')
   })
 
   it('detects Google Meet in browser', () => {

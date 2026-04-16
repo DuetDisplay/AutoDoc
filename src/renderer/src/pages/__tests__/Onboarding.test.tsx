@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Onboarding } from '../Onboarding'
+import { resetRendererStores } from '../../test/fixtures'
 
 beforeEach(() => {
+  resetRendererStores()
   vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
     if (channel === 'prefs:get-onboarding-step') return Promise.resolve(0)
+    if (channel === 'calendar:get-accounts') return Promise.resolve([])
+    if (channel === 'whisper:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
+    if (channel === 'ollama:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
     return Promise.resolve({} as never)
   })
 })
@@ -40,5 +45,38 @@ describe('Onboarding', () => {
       const dots = document.querySelectorAll('[data-testid="step-dot"]')
       expect(dots.length).toBe(10)
     })
+  })
+
+  it('resumes from the saved onboarding step', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(6)
+      if (channel === 'calendar:get-accounts') return Promise.resolve([])
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+  })
+
+  it('persists the analytics opt-in choice and advances to the all-set step', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(9)
+      if (channel === 'prefs:set-analytics-consent') return Promise.resolve(args[0])
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(undefined)
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /share anonymous data/i }))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 10)
+    })
+
+    expect(await screen.findByRole('heading', { name: /you’re all set|you're all set/i })).toBeInTheDocument()
   })
 })

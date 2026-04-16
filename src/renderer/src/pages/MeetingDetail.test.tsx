@@ -1,10 +1,17 @@
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MeetingDetail } from './MeetingDetail'
+import {
+  createMeetingSegments,
+  createTranscript,
+  installMockElectronApi,
+  resetRendererStores,
+} from '../test/fixtures'
 
 beforeEach(() => {
+  resetRendererStores()
   vi.restoreAllMocks()
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     cb(0)
@@ -14,48 +21,38 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   })
-  window.electronAPI = {
-    send: vi.fn(),
-    invoke: vi.fn((channel: string) => {
-      if (channel === 'transcription:get-status') return Promise.resolve('pending')
-      if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
-      if (channel === 'transcription:get-transcript') {
-        return Promise.resolve([
-          { id: 't1', meetingId: 'test-123', speaker: 'Speaker 1', text: 'Intro', startMs: 0, endMs: 5000, confidence: 0.9 },
-        ])
-      }
-      if (channel === 'segmentation:get-status') return Promise.resolve('complete')
-      if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
-      if (channel === 'segmentation:get-segments') {
-        return Promise.resolve({
-          decisions: [],
-          actionItems: [],
-          information: [
-            {
-              id: 's1',
-              meetingId: 'test-123',
-              category: 'information',
-              topic: 'Topic',
-              title: 'Test note',
-              content: 'Timestamped note',
-              assignee: null,
-              deadline: null,
-              sourceStartMs: 12000,
-              sourceEndMs: 12000,
-            },
-          ],
-          discussion: [],
-          statusUpdates: [],
-        })
-      }
-      if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
-      if (channel === 'recording:get-media')
-        return Promise.resolve({ hasVideo: true, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' })
-      if (channel === 'speakers:get') return Promise.resolve({})
-      return Promise.resolve(undefined)
-    }),
-    on: vi.fn(() => () => {}),
-  } as any
+  installMockElectronApi({
+    'transcription:get-status': 'pending',
+    'transcription:get-progress': undefined,
+    'transcription:get-transcript': [
+      { id: 't1', meetingId: 'test-123', speaker: 'Speaker 1', text: 'Intro', startMs: 0, endMs: 5000, confidence: 0.9 },
+    ],
+    'segmentation:get-status': 'complete',
+    'segmentation:get-progress': undefined,
+    'segmentation:get-segments': {
+      decisions: [],
+      actionItems: [],
+      information: [
+        {
+          id: 's1',
+          meetingId: 'test-123',
+          category: 'information',
+          topic: 'Topic',
+          title: 'Test note',
+          content: 'Timestamped note',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 12000,
+          sourceEndMs: 12000,
+        },
+      ],
+      discussion: [],
+      statusUpdates: [],
+    },
+    'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+    'recording:get-media': { hasVideo: true, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' },
+    'speakers:get': {},
+  })
 })
 
 async function renderMeetingDetail() {
@@ -105,25 +102,121 @@ describe('MeetingDetail', () => {
   })
 
   it('restores the current transcription percentage when reopening the meeting', async () => {
-    window.electronAPI = {
-      send: vi.fn(),
-      invoke: vi.fn((channel: string) => {
-        if (channel === 'transcription:get-status') return Promise.resolve('transcribing')
-        if (channel === 'transcription:get-progress') return Promise.resolve(42)
-        if (channel === 'transcription:get-transcript') return Promise.resolve([])
-        if (channel === 'segmentation:get-status') return Promise.resolve('pending')
-        if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
-        if (channel === 'segmentation:get-segments') return Promise.resolve(null)
-        if (channel === 'recording:get-detail') return Promise.resolve({ title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 })
-        if (channel === 'recording:get-media') return Promise.resolve({ hasVideo: false, hasAudio: true })
-        if (channel === 'speakers:get') return Promise.resolve({})
-        return Promise.resolve(undefined)
-      }),
-      on: vi.fn(() => () => {}),
-    } as any
+    installMockElectronApi({
+      'transcription:get-status': 'transcribing',
+      'transcription:get-progress': 42,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'pending',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'speakers:get': {},
+    })
 
     await renderMeetingDetail()
 
     expect(screen.getByText('Transcribing 42%')).toBeInTheDocument()
+  })
+
+  it('updates the transcript and notes when processing completes live', async () => {
+    const transcript = [createTranscript({ meetingId: 'test-123', text: 'Launch the PR regression suite.' })]
+    const segments = createMeetingSegments({
+      information: [
+        {
+          id: 'seg-1',
+          meetingId: 'test-123',
+          category: 'information',
+          topic: 'Testing',
+          title: 'Regression suite',
+          content: 'Launch the PR regression suite after onboarding finishes.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 12_000,
+          sourceEndMs: 18_000,
+        },
+      ],
+    })
+
+    const api = installMockElectronApi({
+      'transcription:get-status': 'transcribing',
+      'transcription:get-progress': 55,
+      'transcription:get-transcript': transcript,
+      'segmentation:get-status': 'segmenting',
+      'segmentation:get-progress': 10,
+      'segmentation:get-segments': segments,
+      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'speakers:get': {
+        'speaker-1': { label: 'Taylor' },
+      },
+    })
+
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Transcribing 55%')).toBeInTheDocument()
+    expect(screen.getAllByText(/analyzing transcript/i).length).toBeGreaterThan(0)
+
+    await act(async () => {
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        progress: 100,
+      })
+      api.emit('segmentation:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        progress: 100,
+      })
+      await Promise.resolve()
+    })
+
+    expect(await screen.findByText('Regression suite')).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Transcript'))
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Taylor').length).toBeGreaterThan(0)
+    })
+    expect(screen.getByText('Launch the PR regression suite.')).toBeInTheDocument()
+  })
+
+  it('renames a speaker and keeps the new label visible in transcript view', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [
+        createTranscript({
+          meetingId: 'test-123',
+          speaker: 'speaker-1',
+          text: 'We should rename speakers from the meeting detail view.',
+        }),
+      ],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': createMeetingSegments(),
+      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'speakers:get': {
+        'speaker-1': {
+          label: 'Speaker 1',
+          suggestions: ['Avery'],
+        },
+      },
+      'speakers:rename': undefined,
+    })
+
+    await renderMeetingDetail()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Transcript'))
+    await user.click(screen.getByRole('button', { name: 'rename' }))
+    await user.click(screen.getByRole('button', { name: 'Avery' }))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('speakers:rename', 'test-123', 'speaker-1', 'Avery')
+      expect(screen.getAllByText('Avery').length).toBeGreaterThan(0)
+    })
   })
 })
