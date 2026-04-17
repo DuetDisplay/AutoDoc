@@ -12,6 +12,8 @@ import { logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
+import { alignSpeakers } from './speaker-alignment'
+import type { DiarizationService } from './diarization'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -82,6 +84,7 @@ export class TranscriptionService {
     private recordingsBaseDir: string,
     private calendarManager: CalendarManager,
     private isMeetingActive: (meetingId: string) => boolean = () => false,
+    private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -274,7 +277,8 @@ export class TranscriptionService {
 
       let transcripts: Transcript[] = []
       if (hasMic && hasSystem) {
-        const [micTranscripts, systemTranscripts] = await Promise.all([
+        const shouldDiarizeSystem = this.diarizationService != null
+        const [micTranscripts, rawSystemTranscripts] = await Promise.all([
           this.transcribeAudioSource(
             meetingId,
             micWebm,
@@ -290,20 +294,42 @@ export class TranscriptionService {
             `${tempPrefix}-system`,
             tempFiles,
             { start: 50, end: 100 },
+            !shouldDiarizeSystem,
           ),
         ])
+        const systemTranscripts = shouldDiarizeSystem
+          ? await this.diarizeTranscriptsForSource(
+              meetingId,
+              systemWebm,
+              rawSystemTranscripts,
+              `${tempPrefix}-system-diarization`,
+              tempFiles,
+            )
+          : rawSystemTranscripts
         const filteredMicTranscripts = this.suppressAcousticEchoes(micTranscripts, systemTranscripts)
         transcripts = this.mergeTranscriptStreams(meetingId, filteredMicTranscripts, systemTranscripts)
       } else {
         const sourcePath = hasMic ? micWebm : hasSystem ? systemWebm : legacyAudio
         const speaker = hasMic ? 'me' : hasSystem ? 'them' : 'Speaker'
+        const shouldDiarizeSource = this.diarizationService != null && speaker !== 'me'
         transcripts = await this.transcribeAudioSource(
           meetingId,
           sourcePath,
           speaker,
           tempPrefix,
           tempFiles,
+          undefined,
+          !shouldDiarizeSource,
         )
+        if (shouldDiarizeSource) {
+          transcripts = await this.diarizeTranscriptsForSource(
+            meetingId,
+            sourcePath,
+            transcripts,
+            `${tempPrefix}-diarization`,
+            tempFiles,
+          )
+        }
       }
 
       if (transcripts.some((segment) => segment.speaker !== 'Speaker')) {
@@ -359,6 +385,7 @@ export class TranscriptionService {
     tempPrefix: string,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
+    stitch = true,
   ): Promise<Transcript[]> {
     const tempAudioWav = `${tempPrefix}.wav`
     tempFiles.push(tempAudioWav)
@@ -396,15 +423,46 @@ export class TranscriptionService {
     )
     console.log(`[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
 
-    return this.stitchAdjacentTranscriptFragments(
-      filterLowSignalHallucinations(
-        this.mapToTranscripts(meetingId, whisperOutput),
-        speechSignal,
-      ).map((segment) => ({
-        ...segment,
-        speaker,
-      })),
-    )
+    const transcripts = filterLowSignalHallucinations(
+      this.mapToTranscripts(meetingId, whisperOutput),
+      speechSignal,
+    ).map((segment) => ({
+      ...segment,
+      speaker,
+    }))
+
+    return stitch ? this.stitchAdjacentTranscriptFragments(transcripts) : transcripts
+  }
+
+  private async diarizeTranscriptsForSource(
+    meetingId: string,
+    sourcePath: string,
+    transcripts: Transcript[],
+    tempPrefix: string,
+    tempFiles: string[],
+  ): Promise<Transcript[]> {
+    if (!this.diarizationService || transcripts.length === 0) {
+      return this.stitchAdjacentTranscriptFragments(transcripts)
+    }
+
+    const tempAudioWav = `${tempPrefix}.wav`
+    tempFiles.push(tempAudioWav)
+
+    try {
+      this.activeStatus = 'diarizing'
+      this.broadcastStatus(meetingId, 'diarizing')
+
+      const audioInput = await this.decryptIfNeeded(sourcePath, tempFiles)
+      await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
+
+      const diarization = await this.diarizationService.diarize(tempAudioWav)
+      return this.stitchAdjacentTranscriptFragments(
+        alignSpeakers(transcripts, diarization, null),
+      )
+    } catch (err) {
+      console.warn(`[transcription] Diarization failed, keeping existing speaker labels (${meetingId}):`, err)
+      return this.stitchAdjacentTranscriptFragments(transcripts)
+    }
   }
 
   private mergeTranscriptStreams(

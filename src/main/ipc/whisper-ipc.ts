@@ -5,6 +5,7 @@ import type { WhisperSetupStatus } from '../../shared/types'
 export function registerWhisperIpc(
   whisperManager: WhisperManager,
   getWhisperSetupStatus: () => WhisperSetupStatus,
+  retryTranscriptionSetup?: () => Promise<void>,
 ): void {
   ipcMain.handle(
     'whisper:get-setup-status',
@@ -17,7 +18,11 @@ export function registerWhisperIpc(
     'whisper:retry-setup',
     async (): Promise<void> => {
       try {
-        await whisperManager.startSetup()
+        if (retryTranscriptionSetup) {
+          await retryTranscriptionSetup()
+        } else {
+          await whisperManager.startSetup()
+        }
       } catch (err) {
         console.error('Whisper retry failed:', err)
       }

@@ -17,6 +17,7 @@ type LogArea =
   | 'segmentation'
   | 'ollama'
   | 'whisper'
+  | 'diarization'
   | 'detection'
 
 interface LogEntryInput {
