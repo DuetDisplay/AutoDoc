@@ -234,6 +234,8 @@ vlog "Install-policy trace file: $TRACE_FILE"
 
 APP_NAME="AutoDoc.app"
 INSTALLED_APP="/Applications/${APP_NAME}"
+USER_DATA_DIR="${HOME}/Library/Application Support/AutoDoc"
+USER_DATA_MARKER="${USER_DATA_DIR}/models/uninstall-smoke-marker.bin"
 
 DMG_OLDER="${REPO_ROOT}/build-older-${STAMP}/autodoc-${OLDER}.dmg"
 DMG_NEWER="${REPO_ROOT}/build-newer-${STAMP}/autodoc-${NEWER}.dmg"
@@ -511,6 +513,17 @@ install_smoke_copy() {
 uninstall_installed() {
   rm -rf "$INSTALLED_APP"
   sleep 1
+}
+
+seed_smoke_local_data() {
+  mkdir -p "$(dirname "$USER_DATA_MARKER")"
+  mkdir -p "${USER_DATA_DIR}/recordings/meeting-1"
+  printf 'autodoc smoke marker' > "$USER_DATA_MARKER"
+  printf 'recording marker' > "${USER_DATA_DIR}/recordings/meeting-1/audio.webm"
+}
+
+clear_smoke_local_data() {
+  rm -rf "$USER_DATA_DIR"
 }
 
 # Clicks install-policy message boxes from the main process. Electron often leaves the
@@ -840,9 +853,24 @@ record "9 downgrade quit" "$( [[ "$v9post" == "$v9pre" && $alive9 -eq 0 && $n9 -
   "version: $v9pre -> $v9post, loose alive: $alive9, instances: $n9"
 
 echo ""
+echo "=== 10) Removing AutoDoc.app leaves local data behind on macOS ==="
+uninstall_installed
+install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
+seed_smoke_local_data
+uninstall_installed
+app_removed=0
+data_marker_present=0
+[[ ! -d "$INSTALLED_APP" ]] && app_removed=1
+[[ -f "$USER_DATA_MARKER" ]] && data_marker_present=1
+record "10 mac uninstall keeps local data" "$( [[ $app_removed -eq 1 && $data_marker_present -eq 1 ]] && echo 1 || echo 0 )" \
+  "app removed: $app_removed, local data marker present: $data_marker_present"
+clear_smoke_local_data
+
+echo ""
 echo "=== Final cleanup ==="
 stop_all_autodoc
 uninstall_installed || true
+clear_smoke_local_data
 
 echo ""
 echo "=== Summary ==="

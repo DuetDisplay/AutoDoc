@@ -81,6 +81,8 @@ $LooseOlder = Join-Path $RepoRoot "build-older-$Stamp\win-unpacked\autodoc.exe"
 $LooseNewer = Join-Path $RepoRoot "build-newer-$Stamp\win-unpacked\autodoc.exe"
 $InstalledDir = Join-Path $env:LOCALAPPDATA 'Programs\autodoc'
 $InstalledExe = Join-Path $InstalledDir 'autodoc.exe'
+$UserDataDir = Join-Path $env:APPDATA 'AutoDoc'
+$UserDataMarker = Join-Path $UserDataDir 'models\uninstall-smoke-marker.bin'
 
 # ─── Win32 dialog detection ───────────────────────────────────────────────
 
@@ -193,6 +195,35 @@ function Uninstall-Silent {
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
   }
   Start-Sleep -Seconds 4
+}
+
+function Uninstall-WithDeleteAppData {
+  $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -like 'AutoDoc*' } | Select-Object -First 1
+  if (-not $entry) { return }
+  if ($entry.QuietUninstallString) {
+    $cmd = "$($entry.QuietUninstallString) --delete-app-data"
+    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
+  } elseif ($entry.UninstallString) {
+    $cmd = $entry.UninstallString
+    if ($cmd -notmatch '(?i)/S(\s|$)') { $cmd = "$cmd /S" }
+    $cmd = "$cmd --delete-app-data"
+    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
+  }
+  Start-Sleep -Seconds 4
+}
+
+function Seed-SmokeLocalData {
+  New-Item -ItemType Directory -Force -Path (Split-Path $UserDataMarker -Parent) | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $UserDataDir 'recordings\meeting-1') | Out-Null
+  Set-Content -LiteralPath $UserDataMarker -Value 'autodoc smoke marker' -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $UserDataDir 'recordings\meeting-1\audio.webm') -Value 'recording marker' -Encoding utf8
+}
+
+function Clear-SmokeLocalData {
+  if (Test-Path -LiteralPath $UserDataDir) {
+    Remove-Item -LiteralPath $UserDataDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Send-Dialog {
@@ -399,6 +430,26 @@ try {
   $n9 = Get-InstanceRootCount
   Stop-AllAutodoc
   Record '9 downgrade quit' (($v9post -eq $v9pre) -and (-not $alive9) -and ($n9 -eq 0)) "version: $v9pre -> $v9post, loose alive: $($null -ne $alive9), instances: $n9"
+
+  # 10 ── Default uninstall keeps local data
+  Write-Step '10) Silent uninstall keeps local AutoDoc data by default'
+  Uninstall-Silent
+  Install-Silent $SetupNewer
+  Seed-SmokeLocalData
+  Uninstall-Silent
+  $appRemoved10 = -not (Test-Path -LiteralPath $InstalledExe)
+  $markerPresent10 = Test-Path -LiteralPath $UserDataMarker
+  Record '10 uninstall keeps local data' ($appRemoved10 -and $markerPresent10) "installed exe present: $(-not $appRemoved10), local data marker present: $markerPresent10"
+  Clear-SmokeLocalData
+
+  # 11 ── Uninstall with explicit delete flag removes local data
+  Write-Step '11) Silent uninstall with delete flag removes local AutoDoc data'
+  Install-Silent $SetupNewer
+  Seed-SmokeLocalData
+  Uninstall-WithDeleteAppData
+  $appRemoved11 = -not (Test-Path -LiteralPath $InstalledExe)
+  $markerPresent11 = Test-Path -LiteralPath $UserDataMarker
+  Record '11 uninstall delete-app-data removes local data' ($appRemoved11 -and (-not $markerPresent11)) "installed exe present: $(-not $appRemoved11), local data marker present: $markerPresent11"
 }
 catch {
   Write-Host "FATAL: $_" -ForegroundColor Red
@@ -407,6 +458,7 @@ catch {
 finally {
   Write-Step 'Final cleanup'
   Stop-AllAutodoc
+  Clear-SmokeLocalData
   if (-not [string]::IsNullOrWhiteSpace($Stamp)) {
     foreach ($rel in @("build-older-$Stamp", "build-newer-$Stamp")) {
       $buildDir = Join-Path $RepoRoot $rel

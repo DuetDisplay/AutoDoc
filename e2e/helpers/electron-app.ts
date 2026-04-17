@@ -5,7 +5,11 @@ import { expect, type Page, _electron as electron } from '@playwright/test'
 import type { E2EScenario } from '../../src/shared/e2e'
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../src/shared/types'
 
-export async function launchE2EApp(scenario?: E2EScenario) {
+async function launchApp(options: {
+  scenario?: E2EScenario
+  userDataDir?: string
+  realSetup?: boolean
+}) {
   const mainEntry = path.join(process.cwd(), 'out', 'main', 'index.js')
   expect(existsSync(mainEntry)).toBeTruthy()
 
@@ -13,27 +17,38 @@ export async function launchE2EApp(scenario?: E2EScenario) {
     args: [mainEntry],
     env: {
       ...process.env,
-      AUTODOC_E2E: '1',
-      AUTODOC_E2E_SCENARIO: scenario ? JSON.stringify(scenario) : '',
       NODE_ENV: 'test',
+      ...(options.realSetup ? { AUTODOC_TEST_REAL_SETUP: '1' } : { AUTODOC_E2E: '1' }),
+      ...(options.scenario ? { AUTODOC_E2E_SCENARIO: JSON.stringify(options.scenario) } : {}),
+      ...(options.userDataDir ? { AUTODOC_TEST_USER_DATA_DIR: options.userDataDir } : {}),
     },
   })
 }
 
-export async function launchRealSetupApp() {
-  const mainEntry = path.join(process.cwd(), 'out', 'main', 'index.js')
-  expect(existsSync(mainEntry)).toBeTruthy()
+export async function launchE2EApp(scenario?: E2EScenario) {
+  return await launchApp({ scenario })
+}
 
-  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
-  const electronApp = await electron.launch({
-    args: [mainEntry],
-    env: {
-      ...process.env,
-      AUTODOC_TEST_REAL_SETUP: '1',
-      AUTODOC_TEST_USER_DATA_DIR: userDataDir,
-      NODE_ENV: 'test',
+export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
+  const electronApp = await launchApp({ scenario, userDataDir })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
     },
-  })
+  }
+}
+
+export async function launchRealSetupApp() {
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
+  const electronApp = await launchApp({ realSetup: true, userDataDir })
 
   return {
     electronApp,
@@ -79,5 +94,12 @@ export async function jumpToOnboardingStep(page: Page, step: number): Promise<vo
   await page.evaluate(async (nextStep) => {
     await window.electronAPI.invoke('prefs:set-onboarding-step', nextStep)
   }, step)
+  await page.reload()
+}
+
+export async function completeOnboarding(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await window.electronAPI.invoke('prefs:set-onboarding-complete')
+  })
   await page.reload()
 }

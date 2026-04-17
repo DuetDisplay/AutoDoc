@@ -57,10 +57,10 @@ const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
 
-if (isE2E) {
-  app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
-} else if (testUserDataDir) {
+if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
+} else if (isE2E) {
+  app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
 }
 
 if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
