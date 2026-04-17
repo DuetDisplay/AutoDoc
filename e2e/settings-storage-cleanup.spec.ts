@@ -13,6 +13,8 @@ const MARKERS = {
   log: ['logs', 'autodoc.log'],
 } as const
 
+const RESET_CLEANUP_TIMEOUT_MS = process.platform === 'win32' ? 15000 : 5000
+
 async function seedManagedStorage(userDataDir: string): Promise<void> {
   const files = [
     path.join(userDataDir, ...MARKERS.whisperModel),
@@ -49,6 +51,21 @@ async function confirmResetAndWaitForClose(page: Page): Promise<void> {
   await page.getByRole('button', { name: /delete all local autodoc data/i }).click()
   await dialogPromise
   await closePromise
+}
+
+async function expectResetCleanup(userDataDir: string): Promise<void> {
+  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.whisperModel)), {
+    timeout: RESET_CLEANUP_TIMEOUT_MS,
+  }).toBe(false)
+  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.ollamaBlob)), {
+    timeout: RESET_CLEANUP_TIMEOUT_MS,
+  }).toBe(false)
+  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.recording)), {
+    timeout: RESET_CLEANUP_TIMEOUT_MS,
+  }).toBe(false)
+  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.log)), {
+    timeout: RESET_CLEANUP_TIMEOUT_MS,
+  }).toBe(false)
 }
 
 test('macOS settings cleanup removes managed downloads and keeps recordings', async () => {
@@ -117,11 +134,7 @@ test('macOS settings reset deletes all local AutoDoc data from the temp smoke di
 
     await openSettings(page)
     await confirmResetAndWaitForClose(page)
-
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.whisperModel))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.ollamaBlob))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.recording))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.log))).toBe(false)
+    await expectResetCleanup(app.userDataDir)
   } finally {
     await app.cleanup()
   }
@@ -138,11 +151,7 @@ test('Windows settings reset deletes all local AutoDoc data from the temp smoke 
 
     await openSettings(page)
     await confirmResetAndWaitForClose(page)
-
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.whisperModel))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.ollamaBlob))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.recording))).toBe(false)
-    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.log))).toBe(false)
+    await expectResetCleanup(app.userDataDir)
   } finally {
     await app.cleanup()
   }

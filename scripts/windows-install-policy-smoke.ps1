@@ -183,17 +183,133 @@ function Install-Silent {
   Start-Sleep -Seconds 4
 }
 
+function Get-AutoDocUninstallProcesses {
+  return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    ($_.Name -eq 'Un_A.exe') `
+      -or ($_.ExecutablePath -and $_.ExecutablePath -ieq (Join-Path $InstalledDir 'Uninstall autodoc.exe')) `
+      -or ($_.CommandLine -and $_.CommandLine -match [regex]::Escape((Join-Path $InstalledDir 'Uninstall autodoc.exe'))) `
+      -or ($_.CommandLine -and $_.CommandLine -match [regex]::Escape("_?=$InstalledDir\"))
+  })
+}
+
+function Stop-AllAutoDocUninstall {
+  Get-AutoDocUninstallProcesses |
+    Sort-Object ProcessId -Descending |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 2
+}
+
+function Find-UninstallPromptProcess {
+  return @(Get-Process -Name 'Un_A' -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowTitle -like 'AutoDoc Uninstall*' } |
+    Select-Object -First 1)
+}
+
+function Wait-AutoDocUninstallComplete {
+  param(
+    [int]$TimeoutSec = 120,
+    [int[]]$LauncherProcessIds = @()
+  )
+
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+
+  while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+    $promptVisible = Find-UninstallPromptProcess | Select-Object -First 1
+    if ($promptVisible) {
+      foreach ($launcherPid in $LauncherProcessIds) {
+        Stop-Process -Id $launcherPid -Force -ErrorAction SilentlyContinue
+      }
+      $title = $promptVisible.MainWindowTitle
+      Stop-AllAutoDocUninstall
+      throw "Unexpected AutoDoc uninstall prompt appeared during a silent uninstall step: $title"
+    }
+
+    $launcherAlive = @($LauncherProcessIds | Where-Object {
+      Get-Process -Id $_ -ErrorAction SilentlyContinue
+    }).Count -gt 0
+    $remaining = Get-AutoDocUninstallProcesses
+    if ((-not $launcherAlive) -and $remaining.Count -eq 0) {
+      return
+    }
+
+    Start-Sleep -Milliseconds 500
+  }
+
+  $details = (Get-AutoDocUninstallProcesses |
+    Select-Object Name, ProcessId, ParentProcessId, ExecutablePath, CommandLine |
+    Format-List |
+    Out-String).Trim()
+  foreach ($launcherPid in $LauncherProcessIds) {
+    Stop-Process -Id $launcherPid -Force -ErrorAction SilentlyContinue
+  }
+  Stop-AllAutoDocUninstall
+  throw "Timed out waiting for AutoDoc uninstall to finish. Remaining processes:`n$details"
+}
+
+function Split-ExecutableAndArguments {
+  param([Parameter(Mandatory = $true)][string]$CommandLine)
+
+  $trimmed = $CommandLine.Trim()
+  if ([string]::IsNullOrWhiteSpace($trimmed)) {
+    throw "Cannot launch an empty AutoDoc uninstall command line."
+  }
+
+  if ($trimmed.StartsWith('"')) {
+    $closingQuoteIndex = $trimmed.IndexOf('"', 1)
+    if ($closingQuoteIndex -lt 0) {
+      throw "Unable to parse quoted AutoDoc uninstall command line: $CommandLine"
+    }
+
+    $filePath = $trimmed.Substring(1, $closingQuoteIndex - 1)
+    $arguments = $trimmed.Substring($closingQuoteIndex + 1).Trim()
+  } else {
+    $firstSpaceIndex = $trimmed.IndexOf(' ')
+    if ($firstSpaceIndex -lt 0) {
+      $filePath = $trimmed
+      $arguments = ''
+    } else {
+      $filePath = $trimmed.Substring(0, $firstSpaceIndex)
+      $arguments = $trimmed.Substring($firstSpaceIndex + 1).Trim()
+    }
+  }
+
+  return @{
+    FilePath = $filePath
+    Arguments = $arguments
+  }
+}
+
+function Invoke-AutoDocUninstallCommand {
+  param([string]$CommandLine)
+
+  $parsed = Split-ExecutableAndArguments $CommandLine
+  if (-not (Test-Path -LiteralPath $parsed.FilePath)) {
+    throw "AutoDoc uninstall executable not found: $($parsed.FilePath)"
+  }
+
+  $startProcessArgs = @{
+    FilePath = $parsed.FilePath
+    PassThru = $true
+  }
+  if (-not [string]::IsNullOrWhiteSpace($parsed.Arguments)) {
+    $startProcessArgs.ArgumentList = $parsed.Arguments
+  }
+
+  $launcher = Start-Process @startProcessArgs
+  Wait-AutoDocUninstallComplete -TimeoutSec 180 -LauncherProcessIds @($launcher.Id)
+}
+
 function Uninstall-Silent {
   $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
     Where-Object { $_.DisplayName -like 'AutoDoc*' } | Select-Object -First 1
   if (-not $entry) { return }
   $quiet = $entry.QuietUninstallString
   if ($quiet) {
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $quiet -Wait
+    Invoke-AutoDocUninstallCommand $quiet
   } elseif ($entry.UninstallString) {
     $cmd = $entry.UninstallString
     if ($cmd -notmatch '(?i)/S(\s|$)') { $cmd = "$cmd /S" }
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
+    Invoke-AutoDocUninstallCommand $cmd
   }
   Start-Sleep -Seconds 4
 }
@@ -204,12 +320,12 @@ function Uninstall-WithDeleteAppData {
   if (-not $entry) { return }
   if ($entry.QuietUninstallString) {
     $cmd = "$($entry.QuietUninstallString) --delete-app-data"
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
+    Invoke-AutoDocUninstallCommand $cmd
   } elseif ($entry.UninstallString) {
     $cmd = $entry.UninstallString
     if ($cmd -notmatch '(?i)/S(\s|$)') { $cmd = "$cmd /S" }
     $cmd = "$cmd --delete-app-data"
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -Wait
+    Invoke-AutoDocUninstallCommand $cmd
   }
   Start-Sleep -Seconds 4
 }
@@ -459,6 +575,7 @@ catch {
 finally {
   Write-Step 'Final cleanup'
   Stop-AllAutodoc
+  Stop-AllAutoDocUninstall
   Clear-SmokeLocalData
   Remove-Item Env:AUTODOC_TEST_USER_DATA_DIR -ErrorAction SilentlyContinue
   if (-not [string]::IsNullOrWhiteSpace($Stamp)) {

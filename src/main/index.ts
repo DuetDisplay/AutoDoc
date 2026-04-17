@@ -1,8 +1,9 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
+import { spawn } from 'child_process'
 import { createRequire } from 'module'
-import { rmSync } from 'fs'
+import { readdirSync, rmSync } from 'fs'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
 import { startRecordingMediaHttpServer, stopRecordingMediaHttpServer } from './services/media-http-server'
@@ -130,6 +131,49 @@ traceInstallPolicy('index: single-instance lock result', {
 })
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
 const require = createRequire(import.meta.url)
+
+function scheduleWindowsE2ETestResetCleanup(targetPaths: string[]): void {
+  const escapedTargets = targetPaths
+    .map((targetPath) => `'${targetPath.replaceAll("'", "''")}'`)
+    .join(', ')
+  const script = [
+    `$targets = @(${escapedTargets})`,
+    'for ($attempt = 0; $attempt -lt 60; $attempt++) {',
+    '  $remaining = @($targets | Where-Object { Test-Path -LiteralPath $_ })',
+    '  if ($remaining.Count -eq 0) { exit 0 }',
+    '  foreach ($target in $remaining) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }',
+    '  Start-Sleep -Milliseconds 200',
+    '}',
+  ].join('; ')
+
+  spawn('powershell', [
+    '-NoProfile',
+    '-WindowStyle',
+    'Hidden',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    script,
+  ], {
+    detached: true,
+    stdio: 'ignore',
+  }).unref()
+}
+
+function clearWindowsE2ETestUserDataContents(userDataPath: string): void {
+  try {
+    const entries = readdirSync(userDataPath, { withFileTypes: true })
+    for (const entry of entries) {
+      try {
+        rmSync(join(userDataPath, entry.name), { recursive: true, force: true })
+      } catch {
+        // Some Chromium-managed files may still be locked during shutdown.
+      }
+    }
+  } catch {
+    // Best-effort only. The detached cleanup process removes any leftovers after exit.
+  }
+}
 
 type MainSentryRuntimeModule = typeof import('@sentry/electron/main') & {
   getDefaultIntegrations(options: Record<string, unknown>): Array<{ name: string }>
@@ -563,6 +607,23 @@ app.whenReady().then(async () => {
 
     managedOllamaManager.stop()
     managedOllamaManager.resetReady()
+
+    if (process.platform === 'win32' && isE2E && testUserDataDir) {
+      const userDataPath = app.getPath('userData')
+      const targetPaths = getResetLocalDataTargets({
+        userDataPath,
+        appDataPath: app.getPath('appData'),
+        testUserDataDir,
+        isE2E,
+        isRealSetupTest,
+      })
+      // In Windows-hosted E2E runs, deleting the temp profile after process exit
+      // avoids relaunching an unmanaged second app instance that Playwright can't own.
+      clearWindowsE2ETestUserDataContents(userDataPath)
+      scheduleWindowsE2ETestResetCleanup(targetPaths)
+      setTimeout(() => app.exit(0), 100)
+      return
+    }
 
     const relaunchArgs = process.argv
       .slice(1)

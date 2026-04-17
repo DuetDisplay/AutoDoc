@@ -824,6 +824,9 @@ async function relaunchInstalledWindowsCopy(
 ): Promise<void> {
   const terminateProcessIds = Array.from(new Set(options?.terminateProcessIds?.filter((processId) => processId > 0) ?? []))
   const waitForProcessIds = Array.from(new Set(options?.waitForProcessIds?.filter((processId) => processId > 0) ?? [process.pid]))
+  const relaunchTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR ?? ''
+  const relaunchE2E = process.env.AUTODOC_E2E ?? ''
+  const relaunchRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP ?? ''
   const helperBasePath = join(app.getPath('temp'), `autodoc-installed-copy-${process.pid}-${Date.now()}`)
   const scriptPath = `${helperBasePath}.ps1`
   const launcherPath = `${helperBasePath}.cmd`
@@ -836,6 +839,9 @@ param(
   [string]$TargetExe,
   [string]$TerminatePids,
   [string]$WaitPids,
+  [string]$RelaunchTestUserDataDir,
+  [string]$RelaunchE2E,
+  [string]$RelaunchRealSetupTest,
   [string]$LogPath
 )
 
@@ -910,12 +916,28 @@ try {
     Wait-Process -Id $waitIds -ErrorAction SilentlyContinue
   }
 
-  $null = robocopy $Source $Target /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+  $uninstallExeName = "Uninstall $(Split-Path -Leaf $TargetExe)"
+  $null = robocopy $Source $Target /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XF $uninstallExeName
   if ($LASTEXITCODE -gt 7) {
     throw "robocopy failed with exit code $LASTEXITCODE"
   }
 
-  Start-Process -FilePath $TargetExe -WorkingDirectory (Split-Path -Parent $TargetExe)
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $TargetExe
+  $startInfo.WorkingDirectory = Split-Path -Parent $TargetExe
+  $startInfo.UseShellExecute = $false
+
+  if (-not [string]::IsNullOrWhiteSpace($RelaunchTestUserDataDir)) {
+    $startInfo.EnvironmentVariables['AUTODOC_TEST_USER_DATA_DIR'] = $RelaunchTestUserDataDir
+  }
+  if (-not [string]::IsNullOrWhiteSpace($RelaunchE2E)) {
+    $startInfo.EnvironmentVariables['AUTODOC_E2E'] = $RelaunchE2E
+  }
+  if (-not [string]::IsNullOrWhiteSpace($RelaunchRealSetupTest)) {
+    $startInfo.EnvironmentVariables['AUTODOC_TEST_REAL_SETUP'] = $RelaunchRealSetupTest
+  }
+
+  [System.Diagnostics.Process]::Start($startInfo) | Out-Null
 } catch {
   $message = $_ | Out-String
   Set-Content -Path $LogPath -Value $message -Encoding UTF8
@@ -942,6 +964,12 @@ try {
       quoteWindowsCommandArgument(terminateProcessIds.join(',')),
       '-WaitPids',
       quoteWindowsCommandArgument(waitForProcessIds.join(',')),
+      '-RelaunchTestUserDataDir',
+      quoteWindowsCommandArgument(relaunchTestUserDataDir),
+      '-RelaunchE2E',
+      quoteWindowsCommandArgument(relaunchE2E),
+      '-RelaunchRealSetupTest',
+      quoteWindowsCommandArgument(relaunchRealSetupTest),
       '-LogPath',
       quoteWindowsCommandArgument(logPath),
     ].join(' '),

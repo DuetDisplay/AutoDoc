@@ -57,6 +57,9 @@ describe('crypto module', () => {
   })
 
   afterEach(async () => {
+    delete process.env.AUTODOC_TEST_USER_DATA_DIR
+    delete process.env.AUTODOC_E2E
+    delete process.env.AUTODOC_TEST_REAL_SETUP
     await fsp.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -114,6 +117,16 @@ describe('crypto module', () => {
       expect(key.length).toBe(32)
       expect(warnSpy).toHaveBeenCalled()
       warnSpy.mockRestore()
+    })
+
+    it('keeps isolated test runs inside the temp userData directory', async () => {
+      process.env.AUTODOC_TEST_USER_DATA_DIR = userDataDir
+
+      const { getKey } = await freshImport()
+      getKey()
+
+      expect(fs.existsSync(path.join(userDataDir, 'autodoc-encryption.json'))).toBe(true)
+      expect(fs.existsSync(path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'))).toBe(false)
     })
   })
 

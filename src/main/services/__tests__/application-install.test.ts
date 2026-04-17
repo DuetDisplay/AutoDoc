@@ -205,9 +205,12 @@ describe('application-install', () => {
     const createTaskArgs = (mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')
     expect(createTaskArgs).toContain('/Create')
     expect(createTaskArgs).toContain('/TR')
+    const replacementScript = mockWriteFileSync.mock.calls[0]?.[1] as string
     const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
     expect(launcherScript).toContain('-File')
     expect(launcherScript).toContain('-WaitPids')
+    expect(replacementScript).toContain('$uninstallExeName = "Uninstall $(Split-Path -Leaf $TargetExe)"')
+    expect(replacementScript).toContain('/XF $uninstallExeName')
     expect(launcherScript).toContain('schtasks /Delete /TN')
     expect(mockQuit).not.toHaveBeenCalled()
   })
@@ -240,9 +243,12 @@ describe('application-install', () => {
       windowsHide: true,
     }))
     expect((mockExecFileSync.mock.calls[0]?.[1] as string[]).join(' ')).toContain('/Create')
+    const replacementScript = mockWriteFileSync.mock.calls[0]?.[1] as string
     const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
     expect(launcherScript).toContain('-File')
     expect(launcherScript).toContain('-WaitPids')
+    expect(replacementScript).toContain('$uninstallExeName = "Uninstall $(Split-Path -Leaf $TargetExe)"')
+    expect(replacementScript).toContain('/XF $uninstallExeName')
     expect(launcherScript).toContain('schtasks /Delete /TN')
     expect(mockQuit).not.toHaveBeenCalled()
   })
@@ -326,8 +332,10 @@ describe('application-install', () => {
       stdio: 'ignore',
       windowsHide: true,
     }))
+    const replacementScript = mockWriteFileSync.mock.calls[0]?.[1] as string
     const launcherScript = mockWriteFileSync.mock.calls[1]?.[1] as string
     expect(launcherScript).toContain('-WaitPids')
+    expect(replacementScript).toContain('/XF $uninstallExeName')
   })
 
   it('resolves macOS second-instance from argv when additionalData is missing', async () => {

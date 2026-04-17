@@ -1,4 +1,4 @@
-import { basename, join, resolve } from 'path'
+import { basename, posix, resolve, win32 } from 'path'
 import { tmpdir } from 'os'
 
 export interface ResetLocalDataOptions {
@@ -13,10 +13,23 @@ function normalizePath(targetPath: string): string {
   return resolve(targetPath)
 }
 
+function normalizePathForComparison(targetPath: string): string {
+  return normalizePath(targetPath)
+    .replace(/[\\/]+/g, '/')
+    .replace(/\/$/, '')
+}
+
 function isWithinTempDir(targetPath: string): boolean {
-  const normalizedTarget = normalizePath(targetPath)
-  const normalizedTmp = `${normalizePath(tmpdir())}/`
-  return normalizedTarget === normalizePath(tmpdir()) || normalizedTarget.startsWith(normalizedTmp)
+  const normalizedTarget = normalizePathForComparison(targetPath)
+  const normalizedTmp = normalizePathForComparison(tmpdir())
+  return normalizedTarget === normalizedTmp || normalizedTarget.startsWith(`${normalizedTmp}/`)
+}
+
+function joinAppDataPath(appDataPath: string, folderName: string): string {
+  const joinPath = /^[A-Za-z]:/.test(appDataPath) || appDataPath.includes('\\')
+    ? win32.join
+    : posix.join
+  return joinPath(appDataPath, folderName)
 }
 
 export function isSafeTestResetPath(targetPath: string): boolean {
@@ -48,8 +61,8 @@ export function getResetLocalDataTargets(options: ResetLocalDataOptions): string
 
   return [...new Set([
     userDataPath,
-    join(appDataPath, 'AutoDoc'),
-    join(appDataPath, 'autodoc'),
-    join(appDataPath, 'Autodoc'),
+    joinAppDataPath(appDataPath, 'AutoDoc'),
+    joinAppDataPath(appDataPath, 'autodoc'),
+    joinAppDataPath(appDataPath, 'Autodoc'),
   ])]
 }
