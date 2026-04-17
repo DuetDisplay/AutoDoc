@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
-import type { AppRuntimeInfo, CalendarAccount } from '../../../shared/types'
+import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
 import { setAnalyticsConsent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
@@ -13,6 +13,23 @@ function getCalendarAccountLabel(account: CalendarAccount): string {
   }
 
   return account.provider === 'google' ? 'Google account' : 'Microsoft account'
+}
+
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return 'Loading...'
+  if (bytes <= 0) return '0 B'
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+
+  const digits = value >= 10 || unitIndex === 0 ? 0 : 1
+  return `${value.toFixed(digits)} ${units[unitIndex]}`
 }
 
 export function Settings() {
@@ -28,12 +45,22 @@ export function Settings() {
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
+  const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
+  const [storageNotice, setStorageNotice] = useState<string | null>(null)
+  const [storageError, setStorageError] = useState<string | null>(null)
+  const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
+  const [isResettingLocalData, setIsResettingLocalData] = useState(false)
+
+  const refreshStorageInfo = useCallback(() => {
+    return window.electronAPI.invoke('app:get-storage-info').then(setStorageInfo)
+  }, [])
 
   useEffect(() => {
     window.electronAPI.invoke('app:get-version').then(setAppVersion)
     window.electronAPI.invoke('updater:get-status').then(setUpdateStatus)
     window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
+    void refreshStorageInfo()
     window.electronAPI.invoke('prefs:get-analytics-consent').then(setAnalyticsConsentState)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', setAnalyticsConsentState)
@@ -41,7 +68,7 @@ export function Settings() {
       unsub()
       unsubConsent()
     }
-  }, [])
+  }, [refreshStorageInfo])
 
   useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then(setAccounts)
@@ -88,6 +115,48 @@ export function Settings() {
     setAnalyticsConsent(nextValue)
     setAnalyticsConsentState(nextValue)
   }
+
+  const handleRemoveDownloadedComponents = async () => {
+    const confirmed = window.confirm(
+      'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.',
+    )
+    if (!confirmed) return
+
+    setStorageNotice(null)
+    setStorageError(null)
+    setIsRemovingDownloads(true)
+    try {
+      const nextStorageInfo = await window.electronAPI.invoke('app:clear-downloaded-components')
+      setStorageInfo(nextStorageInfo)
+      setStorageNotice('Downloaded AI components removed. AutoDoc will re-download them when needed.')
+    } catch (err) {
+      setStorageError(err instanceof Error ? err.message : 'Failed to remove downloaded AI components.')
+    } finally {
+      setIsRemovingDownloads(false)
+    }
+  }
+
+  const handleResetLocalData = async () => {
+    const confirmed = window.confirm(
+      'Delete all local AutoDoc data and restart? This removes recordings, transcripts, settings, and downloaded AI components from this machine.',
+    )
+    if (!confirmed) return
+
+    setStorageNotice(null)
+    setStorageError(null)
+    setIsResettingLocalData(true)
+    try {
+      await window.electronAPI.invoke('app:reset-local-data')
+      setStorageNotice('Restarting AutoDoc and clearing local data...')
+    } catch (err) {
+      setIsResettingLocalData(false)
+      setStorageError(err instanceof Error ? err.message : 'Failed to delete local AutoDoc data.')
+    }
+  }
+
+  const uninstallGuidance = runtimeInfo?.platform === 'win32'
+    ? 'Windows uninstall can optionally remove AutoDoc local data. Use the controls here any time you want to reclaim space without uninstalling.'
+    : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
 
   return (
     <div className="flex flex-col h-full">
@@ -221,6 +290,73 @@ export function Settings() {
           <p className="text-[12px] text-ink-muted font-mono">
             {runtimeInfo?.storagePath ?? 'Loading...'}
           </p>
+        </div>
+        <div>
+          <h3 className="text-[13px] font-semibold text-ink mb-2">Storage</h3>
+          <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-[12px] text-ink">Downloaded AI components</span>
+                <span className="text-[12px] font-medium text-ink">
+                  {formatBytes(storageInfo?.downloadedComponentsBytes)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-[12px] text-ink">Recordings and transcripts</span>
+                <span className="text-[12px] font-medium text-ink">
+                  {formatBytes(storageInfo?.recordingsBytes)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-[12px] text-ink">Logs</span>
+                <span className="text-[12px] font-medium text-ink">
+                  {formatBytes(storageInfo?.logsBytes)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-[12px] text-ink">Other local app data</span>
+                <span className="text-[12px] font-medium text-ink">
+                  {formatBytes(storageInfo?.otherLocalDataBytes)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-border-subtle pt-2">
+                <span className="text-[12px] font-semibold text-ink">Total</span>
+                <span className="text-[12px] font-semibold text-ink">
+                  {formatBytes(storageInfo?.totalBytes)}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[12px] text-ink-muted mt-4">
+              {uninstallGuidance}
+            </p>
+
+            <div className="flex flex-wrap gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => void handleRemoveDownloadedComponents()}
+                disabled={isRemovingDownloads || isResettingLocalData}
+                className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+              >
+                {isRemovingDownloads ? 'Removing Downloaded AI...' : 'Remove Downloaded AI Components'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleResetLocalData()}
+                disabled={isResettingLocalData || isRemovingDownloads}
+                className="text-[12px] font-medium text-clay-dark bg-[#F8E7DE] px-4 py-2 rounded-lg hover:bg-[#F3D8CC] transition-colors disabled:opacity-50"
+              >
+                {isResettingLocalData ? 'Restarting AutoDoc...' : 'Delete All Local AutoDoc Data'}
+              </button>
+            </div>
+
+            {storageNotice && (
+              <p className="text-[12px] text-sage mt-3">{storageNotice}</p>
+            )}
+            {storageError && (
+              <p className="text-[12px] text-clay mt-3">{storageError}</p>
+            )}
+          </div>
         </div>
         <div>
           <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>

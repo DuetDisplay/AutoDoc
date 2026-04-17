@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, systemPreferences, powerMonitor } f
 import { join } from 'path'
 import { homedir } from 'os'
 import { createRequire } from 'module'
+import { rmSync } from 'fs'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
 import { startRecordingMediaHttpServer, stopRecordingMediaHttpServer } from './services/media-http-server'
@@ -27,7 +28,7 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
-import type { AppRuntimeInfo, OllamaSetupStatus, WhisperSetupStatus, RecordingMediaPlayerErrorReport } from '../shared/types'
+import type { AppRuntimeInfo, AppStorageInfo, OllamaSetupStatus, WhisperSetupStatus, RecordingMediaPlayerErrorReport } from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
@@ -47,17 +48,33 @@ import {
   setE2EOllamaStatus,
   setE2EWhisperStatus,
 } from './services/e2e-fixtures'
+import { clearDownloadedComponents, getAppStorageInfo } from './services/storage-manager'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
+const RESET_LOCAL_DATA_ARG = '--reset-local-data'
 
 if (isE2E) {
   app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
 } else if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
+}
+
+if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
+  const userDataPath = app.getPath('userData')
+  const appDataPath = app.getPath('appData')
+  for (const targetPath of [
+    userDataPath,
+    join(appDataPath, 'AutoDoc'),
+    join(appDataPath, 'autodoc'),
+    join(appDataPath, 'Autodoc'),
+  ]) {
+    rmSync(targetPath, { recursive: true, force: true })
+  }
+  process.argv = process.argv.filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
 }
 
 if (process.platform === 'win32') {
@@ -528,6 +545,30 @@ app.whenReady().then(async () => {
     whisperModel: whisperManager.getModelName(),
     ollamaModel: managedOllamaManager.getModel(),
   }))
+  ipcMain.handle('app:get-storage-info', async (): Promise<AppStorageInfo> => {
+    return await getAppStorageInfo()
+  })
+  ipcMain.handle('app:clear-downloaded-components', async (): Promise<AppStorageInfo> => {
+    managedOllamaManager.stop()
+    managedOllamaManager.resetReady()
+    await clearDownloadedComponents()
+    return await getAppStorageInfo()
+  })
+  ipcMain.handle('app:reset-local-data', (): void => {
+    if (recordingService.getState().isRecording) {
+      throw new Error('Stop the current recording before deleting local AutoDoc data.')
+    }
+
+    managedOllamaManager.stop()
+    managedOllamaManager.resetReady()
+
+    const relaunchArgs = process.argv
+      .slice(1)
+      .filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
+
+    app.relaunch({ args: [...relaunchArgs, RESET_LOCAL_DATA_ARG] })
+    setTimeout(() => app.exit(0), 100)
+  })
   let pendingRecoveryPromise: Promise<unknown> | null = null
 
   const recoverPendingWork = (): void => {

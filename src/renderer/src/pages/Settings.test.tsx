@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './Settings'
 import {
   createCalendarAccount,
   createRuntimeInfo,
+  createStorageInfo,
   createUpdateStatus,
   installMockElectronApi,
   resetRendererStores,
@@ -26,6 +27,7 @@ describe('Settings', () => {
       'app:get-version': '0.1.11',
       'updater:get-status': createUpdateStatus(),
       'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
       'calendar:get-accounts': () => state.accounts,
       'calendar:get-events': () => state.events,
@@ -70,6 +72,7 @@ describe('Settings', () => {
       'app:get-version': '0.1.11',
       'updater:get-status': createUpdateStatus(),
       'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
       'prefs:set-analytics-consent': (enabled: boolean) => {
         state.analyticsConsent = enabled
@@ -106,5 +109,65 @@ describe('Settings', () => {
     expect(
       screen.getByRole('button', { name: /toggle analytics and crash reports/i }),
     ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('removes downloaded AI components from settings', async () => {
+    let storageInfo = createStorageInfo()
+
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': () => storageInfo,
+      'app:clear-downloaded-components': () => {
+        storageInfo = createStorageInfo({
+          downloadedComponentsBytes: 0,
+          totalBytes: storageInfo.totalBytes - storageInfo.downloadedComponentsBytes,
+        })
+        return storageInfo
+      },
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+    })
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<Settings />)
+
+    expect(await screen.findByText('Downloaded AI components')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /remove downloaded ai components/i }))
+
+    expect(await screen.findByText(/downloaded ai components removed/i)).toBeInTheDocument()
+    expect(screen.getByText('0 B')).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
+  })
+
+  it('starts a full local reset from settings after confirmation', async () => {
+    const api = installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'app:reset-local-data': undefined,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+    })
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<Settings />)
+
+    await screen.findByText('Downloaded AI components')
+    await user.click(screen.getByRole('button', { name: /delete all local autodoc data/i }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('app:reset-local-data')
+    })
+    expect(screen.getByText(/restarting autodoc and clearing local data/i)).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
   })
 })

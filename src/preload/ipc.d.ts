@@ -1,4 +1,4 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, RecordingMediaPlayerErrorReport, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
+import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, RecordingMediaPlayerErrorReport, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, AppStorageInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -24,6 +24,9 @@ export interface IpcSendEvents {
 export interface IpcInvokeEvents {
   'app:get-version': []
   'app:get-runtime-info': []
+  'app:get-storage-info': []
+  'app:clear-downloaded-components': []
+  'app:reset-local-data': []
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
@@ -85,6 +88,9 @@ export interface IpcInvokeEvents {
 export interface IpcInvokeReturns {
   'app:get-version': string
   'app:get-runtime-info': AppRuntimeInfo
+  'app:get-storage-info': AppStorageInfo
+  'app:clear-downloaded-components': AppStorageInfo
+  'app:reset-local-data': void
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
   'calendar:connect': CalendarAccount

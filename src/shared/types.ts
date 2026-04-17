@@ -209,3 +209,12 @@ export interface AppRuntimeInfo {
   whisperModel: string
   ollamaModel: string
 }
+
+export interface AppStorageInfo {
+  storagePath: string
+  downloadedComponentsBytes: number
+  recordingsBytes: number
+  logsBytes: number
+  otherLocalDataBytes: number
+  totalBytes: number
+}

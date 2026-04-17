@@ -1,6 +1,7 @@
 import { vi } from 'vitest'
 import type {
   AppRuntimeInfo,
+  AppStorageInfo,
   CalendarAccount,
   CalendarEvent,
   MeetingSegments,
@@ -207,6 +208,18 @@ export function createRuntimeInfo(overrides: Partial<AppRuntimeInfo> = {}): AppR
     storagePath: '/tmp/autodoc-tests',
     whisperModel: 'ggml-base.en.bin',
     ollamaModel: 'llama3.2:3b',
+    ...overrides,
+  }
+}
+
+export function createStorageInfo(overrides: Partial<AppStorageInfo> = {}): AppStorageInfo {
+  return {
+    storagePath: '/tmp/autodoc-tests',
+    downloadedComponentsBytes: 6_500_000_000,
+    recordingsBytes: 1_250_000_000,
+    logsBytes: 3_200_000,
+    otherLocalDataBytes: 42_000,
+    totalBytes: 7_753_242_000,
     ...overrides,
   }
 }
