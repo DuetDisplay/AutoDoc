@@ -81,8 +81,9 @@ $LooseOlder = Join-Path $RepoRoot "build-older-$Stamp\win-unpacked\autodoc.exe"
 $LooseNewer = Join-Path $RepoRoot "build-newer-$Stamp\win-unpacked\autodoc.exe"
 $InstalledDir = Join-Path $env:LOCALAPPDATA 'Programs\autodoc'
 $InstalledExe = Join-Path $InstalledDir 'autodoc.exe'
-$UserDataDir = Join-Path $env:APPDATA 'AutoDoc'
+$UserDataDir = Join-Path $env:TEMP "autodoc-smoke-user-data-$Stamp"
 $UserDataMarker = Join-Path $UserDataDir 'models\uninstall-smoke-marker.bin'
+$env:AUTODOC_TEST_USER_DATA_DIR = $UserDataDir
 
 # ─── Win32 dialog detection ───────────────────────────────────────────────
 
@@ -459,6 +460,7 @@ finally {
   Write-Step 'Final cleanup'
   Stop-AllAutodoc
   Clear-SmokeLocalData
+  Remove-Item Env:AUTODOC_TEST_USER_DATA_DIR -ErrorAction SilentlyContinue
   if (-not [string]::IsNullOrWhiteSpace($Stamp)) {
     foreach ($rel in @("build-older-$Stamp", "build-newer-$Stamp")) {
       $buildDir = Join-Path $RepoRoot $rel

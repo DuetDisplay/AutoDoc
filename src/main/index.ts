@@ -49,6 +49,7 @@ import {
   setE2EWhisperStatus,
 } from './services/e2e-fixtures'
 import { clearDownloadedComponents, getAppStorageInfo } from './services/storage-manager'
+import { getResetLocalDataTargets } from './services/reset-local-data'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -66,12 +67,13 @@ if (testUserDataDir) {
 if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
   const userDataPath = app.getPath('userData')
   const appDataPath = app.getPath('appData')
-  for (const targetPath of [
+  for (const targetPath of getResetLocalDataTargets({
     userDataPath,
-    join(appDataPath, 'AutoDoc'),
-    join(appDataPath, 'autodoc'),
-    join(appDataPath, 'Autodoc'),
-  ]) {
+    appDataPath,
+    testUserDataDir,
+    isE2E,
+    isRealSetupTest,
+  })) {
     rmSync(targetPath, { recursive: true, force: true })
   }
   process.argv = process.argv.filter((arg) => arg !== RESET_LOCAL_DATA_ARG)

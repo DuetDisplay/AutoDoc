@@ -43,8 +43,10 @@ async function loadWhisperManager(
   }))
 
   const mod = await import('../whisper-manager')
+  const storageMod = await import('../storage-manager')
   return {
     WhisperManager: mod.WhisperManager,
+    clearDownloadedComponents: storageMod.clearDownloadedComponents,
     execSyncMock,
     execFileMock,
   }
@@ -181,6 +183,118 @@ describe('Whisper onboarding dependency installation', () => {
         'downloading-model',
         'ready',
       ])
+      expect(execSyncMock).not.toHaveBeenCalled()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('re-downloads packaged macOS whisper assets after downloaded components are cleared', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-recovery-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+      })
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+      await writeFile(manager.getWhisperPath(), 'whisper')
+      await writeFile(manager.getFfmpegPath(), 'ffmpeg')
+      await writeFile(manager.getModelPath(), 'model')
+
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      await clearDownloadedComponents()
+      await expect(access(manager.getWhisperPath())).rejects.toThrow()
+      await expect(access(manager.getFfmpegPath())).rejects.toThrow()
+      await expect(access(manager.getModelPath())).rejects.toThrow()
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const downloadWhisperSpy = vi
+        .spyOn(manager as never, 'downloadWhisperMac')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'whisper')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'model')
+        })
+
+      await manager.ensureReady()
+
+      expect(downloadWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      await expect(access(manager.getModelPath())).resolves.toBeUndefined()
+      expect(execSyncMock).not.toHaveBeenCalled()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('re-downloads packaged Windows whisper assets after downloaded components are cleared', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-recovery-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+      })
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+      await writeFile(manager.getWhisperPath(), 'whisper exe')
+      await writeFile(manager.getFfmpegPath(), 'ffmpeg exe')
+      await writeFile(manager.getModelPath(), 'model')
+      await writeFile(join(manager.getModelsDir(), 'whisper.dll'), 'dll')
+      await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
+
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      await clearDownloadedComponents()
+      await expect(access(manager.getWhisperPath())).rejects.toThrow()
+      await expect(access(manager.getFfmpegPath())).rejects.toThrow()
+      await expect(access(manager.getModelPath())).rejects.toThrow()
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const downloadWhisperSpy = vi
+        .spyOn(manager as never, 'downloadWhisperWindows')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'whisper exe')
+          await writeFile(join(manager.getModelsDir(), 'whisper.dll'), 'dll')
+          await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'model')
+        })
+
+      await manager.ensureReady()
+
+      expect(downloadWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      await expect(access(manager.getModelPath())).resolves.toBeUndefined()
+      await expect(access(join(manager.getModelsDir(), 'whisper.dll'))).resolves.toBeUndefined()
+      await expect(access(join(manager.getModelsDir(), 'ggml.dll'))).resolves.toBeUndefined()
       expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {

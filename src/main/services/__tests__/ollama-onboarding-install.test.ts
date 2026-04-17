@@ -34,8 +34,10 @@ async function loadOllamaManager(platform: 'darwin' | 'win32', rootDir: string, 
   }))
 
   const mod = await import('../ollama-manager')
+  const storageMod = await import('../storage-manager')
   return {
     OllamaManager: mod.OllamaManager,
+    clearDownloadedComponents: storageMod.clearDownloadedComponents,
     execSyncMock,
   }
 }
@@ -145,6 +147,118 @@ describe('Ollama onboarding dependency installation', () => {
       expect(execSyncMock).not.toHaveBeenCalled()
       await expect(access(join(rootDir, 'models', 'ollama-runtime', 'ollama.exe'))).resolves.toBeUndefined()
       await expect(access(join(rootDir, 'ollama-data'))).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('restarts packaged macOS Ollama setup after downloaded components are cleared', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-recovery-'))
+
+    try {
+      const { OllamaManager, clearDownloadedComponents, execSyncMock } = await loadOllamaManager('darwin', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new OllamaManager()
+      const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+      const dataDir = join(rootDir, 'ollama-data')
+      await mkdir(runtimeDir, { recursive: true })
+      await mkdir(dataDir, { recursive: true })
+      await writeFile(join(runtimeDir, 'ollama'), 'binary')
+      await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
+
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      await clearDownloadedComponents()
+      await expect(access(join(runtimeDir, 'ollama'))).rejects.toThrow()
+      await expect(access(join(dataDir, 'model-ready.txt'))).rejects.toThrow()
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const downloadBinarySpy = vi.spyOn(manager as never, 'downloadBinary').mockImplementation(async () => {
+        await mkdir(runtimeDir, { recursive: true })
+        await writeFile(join(runtimeDir, 'ollama'), 'binary')
+      })
+      const startSpy = vi.spyOn(manager, 'start').mockImplementation(async () => {
+        await manager.ensureReady()
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'serve-ready.txt'), 'ready')
+      })
+      const pullSpy = vi.spyOn(manager, 'pullModel').mockImplementation(async () => {
+        manager.emit('pull-start', manager.getModel())
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
+        manager.emit('pull-complete', manager.getModel())
+      })
+
+      manager.resetReady()
+      await manager.waitUntilReady()
+
+      expect(downloadBinarySpy).toHaveBeenCalledTimes(1)
+      expect(startSpy).toHaveBeenCalledTimes(1)
+      expect(pullSpy).toHaveBeenCalledTimes(1)
+      await expect(access(join(runtimeDir, 'ollama'))).resolves.toBeUndefined()
+      await expect(access(join(dataDir, 'serve-ready.txt'))).resolves.toBeUndefined()
+      await expect(access(join(dataDir, 'model-ready.txt'))).resolves.toBeUndefined()
+      expect(execSyncMock).not.toHaveBeenCalled()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('restarts packaged Windows Ollama setup after downloaded components are cleared', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-win-recovery-'))
+
+    try {
+      const { OllamaManager, clearDownloadedComponents, execSyncMock } = await loadOllamaManager('win32', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new OllamaManager()
+      const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+      const dataDir = join(rootDir, 'ollama-data')
+      await mkdir(runtimeDir, { recursive: true })
+      await mkdir(dataDir, { recursive: true })
+      await writeFile(join(runtimeDir, 'ollama.exe'), 'binary')
+      await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
+
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      await clearDownloadedComponents()
+      await expect(access(join(runtimeDir, 'ollama.exe'))).rejects.toThrow()
+      await expect(access(join(dataDir, 'model-ready.txt'))).rejects.toThrow()
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const downloadBinarySpy = vi.spyOn(manager as never, 'downloadBinary').mockImplementation(async () => {
+        await mkdir(runtimeDir, { recursive: true })
+        await writeFile(join(runtimeDir, 'ollama.exe'), 'binary')
+      })
+      const startSpy = vi.spyOn(manager, 'start').mockImplementation(async () => {
+        await manager.ensureReady()
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'serve-ready.txt'), 'ready')
+      })
+      const pullSpy = vi.spyOn(manager, 'pullModel').mockImplementation(async () => {
+        manager.emit('pull-start', manager.getModel())
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
+        manager.emit('pull-complete', manager.getModel())
+      })
+
+      manager.resetReady()
+      await manager.waitUntilReady()
+
+      expect(downloadBinarySpy).toHaveBeenCalledTimes(1)
+      expect(startSpy).toHaveBeenCalledTimes(1)
+      expect(pullSpy).toHaveBeenCalledTimes(1)
+      await expect(access(join(runtimeDir, 'ollama.exe'))).resolves.toBeUndefined()
+      await expect(access(join(dataDir, 'serve-ready.txt'))).resolves.toBeUndefined()
+      await expect(access(join(dataDir, 'model-ready.txt'))).resolves.toBeUndefined()
+      expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })

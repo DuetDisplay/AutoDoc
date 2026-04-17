@@ -200,6 +200,7 @@ remove_smoke_build_artifacts() {
 cleanup_trace_env() {
   launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE >/dev/null 2>&1 || true
   launchctl unsetenv AUTODOC_INSTALL_POLICY_TRACE_FILE >/dev/null 2>&1 || true
+  launchctl unsetenv AUTODOC_TEST_USER_DATA_DIR >/dev/null 2>&1 || true
 }
 on_exit_cleanup() {
   remove_smoke_build_artifacts
@@ -234,7 +235,7 @@ vlog "Install-policy trace file: $TRACE_FILE"
 
 APP_NAME="AutoDoc.app"
 INSTALLED_APP="/Applications/${APP_NAME}"
-USER_DATA_DIR="${HOME}/Library/Application Support/AutoDoc"
+USER_DATA_DIR="/tmp/autodoc-smoke-user-data-${STAMP}"
 USER_DATA_MARKER="${USER_DATA_DIR}/models/uninstall-smoke-marker.bin"
 
 DMG_OLDER="${REPO_ROOT}/build-older-${STAMP}/autodoc-${OLDER}.dmg"
@@ -378,6 +379,8 @@ vlog "LOOSE_OLDER=$LOOSE_OLDER"
 vlog "LOOSE_NEWER=$LOOSE_NEWER"
 [[ -f "$DMG_OLDER" ]] && vlog "DMG_OLDER ok: $DMG_OLDER" || vlog "DMG_OLDER missing (install_smoke_copy will use loose bundle): $DMG_OLDER"
 [[ -f "$DMG_NEWER" ]] && vlog "DMG_NEWER ok: $DMG_NEWER" || vlog "DMG_NEWER missing: $DMG_NEWER"
+launchctl setenv AUTODOC_TEST_USER_DATA_DIR "$USER_DATA_DIR" >/dev/null 2>&1 || true
+vlog "Smoke userData path: $USER_DATA_DIR"
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
 

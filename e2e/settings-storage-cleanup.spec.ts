@@ -43,6 +43,14 @@ async function acceptNextDialog(page: Page): Promise<void> {
   await dialog.accept()
 }
 
+async function confirmResetAndWaitForClose(page: Page): Promise<void> {
+  const dialogPromise = acceptNextDialog(page)
+  const closePromise = page.waitForEvent('close')
+  await page.getByRole('button', { name: /delete all local autodoc data/i }).click()
+  await dialogPromise
+  await closePromise
+}
+
 test('macOS settings cleanup removes managed downloads and keeps recordings', async () => {
   const app = await launchIsolatedE2EApp({
     platform: 'darwin',
@@ -93,6 +101,48 @@ test('Windows settings cleanup shows Windows guidance and removes managed downlo
     expect(existsSync(path.join(app.userDataDir, ...MARKERS.ffmpeg))).toBe(false)
     expect(existsSync(path.join(app.userDataDir, ...MARKERS.ollamaBlob))).toBe(false)
     expect(existsSync(path.join(app.userDataDir, ...MARKERS.recording))).toBe(true)
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test('macOS settings reset deletes all local AutoDoc data from the temp smoke directory', async () => {
+  const app = await launchIsolatedE2EApp({
+    platform: 'darwin',
+  })
+
+  try {
+    await seedManagedStorage(app.userDataDir)
+    const page = await app.electronApp.firstWindow()
+
+    await openSettings(page)
+    await confirmResetAndWaitForClose(page)
+
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.whisperModel))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.ollamaBlob))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.recording))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.log))).toBe(false)
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test('Windows settings reset deletes all local AutoDoc data from the temp smoke directory', async () => {
+  const app = await launchIsolatedE2EApp({
+    platform: 'win32',
+  })
+
+  try {
+    await seedManagedStorage(app.userDataDir)
+    const page = await app.electronApp.firstWindow()
+
+    await openSettings(page)
+    await confirmResetAndWaitForClose(page)
+
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.whisperModel))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.ollamaBlob))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.recording))).toBe(false)
+    await expect.poll(() => existsSync(path.join(app.userDataDir, ...MARKERS.log))).toBe(false)
   } finally {
     await app.cleanup()
   }
