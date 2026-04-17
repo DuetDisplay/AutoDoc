@@ -66,9 +66,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
   const statusLabel = phase === 'starting'
     ? 'Starting local AI engine...'
     : phase === 'downloading'
-      ? `Downloading AI model... ${percent}%`
+      ? `Downloading local AI engine... ${percent}%`
       : phase === 'pulling'
-        ? `Installing model... ${percent}%`
+        ? `Downloading AI model... ${percent}%`
         : error
           ? `Setup failed: ${error}`
           : 'Preparing...'
@@ -80,7 +80,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc uses a local AI model to analyze your transcripts and generate smart notes. This downloads once and runs entirely on your machine.
+        AutoDoc is downloading a one-time local AI setup so your transcripts can be analyzed on your machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">

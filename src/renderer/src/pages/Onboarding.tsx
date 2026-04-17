@@ -82,7 +82,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
             body="AutoDoc quietly records your meeting audio, transcribes it locally, and identifies who's speaking — all on your device."
             features={[
               { icon: '🎤', iconBg: 'bg-sage-light', title: 'Captures audio', description: 'Records mic and system audio separately for clean speaker identification' },
-              { icon: '📝', iconBg: 'bg-dusk-light', title: 'Transcribes locally', description: 'whisper.cpp runs on-device — fast, private, no internet needed' },
+              { icon: '📝', iconBg: 'bg-dusk-light', title: 'Transcribes locally', description: 'AutoDoc installs a one-time speech engine, then transcribes on-device' },
               { icon: '👥', iconBg: 'bg-mist-light', title: 'Identifies speakers', description: "Knows who's talking — labels \"Me\" vs \"Them\" automatically" },
             ]}
             onNext={next}

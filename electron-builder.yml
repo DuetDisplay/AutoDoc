@@ -19,6 +19,7 @@ files:
 asarUnpack:
   - 'resources/**'
   - 'native/**'
+  - 'node_modules/ffmpeg-static/**'
 win:
   target:
     - nsis

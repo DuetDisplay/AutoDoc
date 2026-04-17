@@ -4,10 +4,19 @@ import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { WhisperManager } from '../whisper-manager'
 
+let isPackaged = false
+
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => '/mock/home'),
+    get isPackaged() {
+      return isPackaged
+    },
   },
+}))
+
+vi.mock('ffmpeg-static', () => ({
+  default: '/mock/ffmpeg-static',
 }))
 
 vi.mock('fs/promises', () => ({
@@ -17,6 +26,7 @@ vi.mock('fs/promises', () => ({
   readdir: vi.fn(),
   rm: vi.fn(),
   symlink: vi.fn(),
+  chmod: vi.fn(),
 }))
 
 vi.mock('child_process', () => ({
@@ -28,12 +38,14 @@ const mockAccess = vi.mocked(fsPromises.access)
 const mockCopyFile = vi.mocked(fsPromises.copyFile)
 const mockReaddir = vi.mocked(fsPromises.readdir)
 const mockExecFile = vi.mocked(childProcess.execFile)
+const mockExecSync = vi.mocked(childProcess.execSync)
 
 describe('WhisperManager', () => {
   let manager: WhisperManager
 
   beforeEach(() => {
     vi.clearAllMocks()
+    isPackaged = false
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
     mockExecFile.mockImplementation((...args: any[]) => {
@@ -164,5 +176,53 @@ describe('WhisperManager', () => {
     } else {
       expect(mockCopyFile).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('uses system runtime fallback in dev mode', async () => {
+    mockExecFile
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('missing binary'))
+        return {} as never
+      })
+      .mockImplementation((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(null)
+        return {} as never
+      })
+    mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
+    const linkOrCopySpy = vi.spyOn(manager as never, 'linkOrCopy').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+
+    await manager.ensureReady()
+
+    expect(mockExecSync).toHaveBeenCalled()
+    if (process.platform !== 'win32') {
+      expect(linkOrCopySpy).toHaveBeenCalled()
+    }
+  })
+
+  it('ignores system runtime fallback in packaged builds', async () => {
+    isPackaged = true
+    manager = new WhisperManager()
+    mockExecFile
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('missing binary'))
+        return {} as never
+      })
+      .mockImplementation((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(null)
+        return {} as never
+      })
+    mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
+    const resolveWhisperSpy = vi.spyOn(manager as never, 'resolveWhisper').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+
+    await manager.ensureReady()
+
+    expect(resolveWhisperSpy).toHaveBeenCalled()
+    expect(mockExecSync).not.toHaveBeenCalled()
   })
 })

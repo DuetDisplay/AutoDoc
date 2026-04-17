@@ -5,6 +5,7 @@ import { createWriteStream } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
+import { canUseSystemRuntimeFallback } from './runtime-policy'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -109,16 +110,15 @@ export class OllamaManager extends EventEmitter {
     await mkdir(this.getOllamaDataDir(), { recursive: true })
 
     if (!(await this.isReady())) {
-      if (IS_WIN) {
-        await this.downloadBinary()
-      } else {
+      if (canUseSystemRuntimeFallback()) {
         const systemBinary = this.findSystemOllama()
         if (systemBinary) {
           await copyFile(systemBinary, this.getBinaryPath())
-        } else {
-          await this.downloadBinary()
+          return
         }
       }
+
+      await this.downloadBinary()
     }
   }
 

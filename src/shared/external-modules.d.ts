@@ -1,3 +1,8 @@
+declare module 'ffmpeg-static' {
+  const ffmpegStaticPath: string | null
+  export default ffmpegStaticPath
+}
+
 declare module '@sentry/electron/main' {
   export interface SentryBreadcrumb {
     category?: string

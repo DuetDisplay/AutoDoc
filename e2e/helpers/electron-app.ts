@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { expect, type Page, _electron as electron } from '@playwright/test'
 import type { E2EScenario } from '../../src/shared/e2e'
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../src/shared/types'
@@ -17,6 +18,34 @@ export async function launchE2EApp(scenario?: E2EScenario) {
       NODE_ENV: 'test',
     },
   })
+}
+
+export async function launchRealSetupApp() {
+  const mainEntry = path.join(process.cwd(), 'out', 'main', 'index.js')
+  expect(existsSync(mainEntry)).toBeTruthy()
+
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
+  const electronApp = await electron.launch({
+    args: [mainEntry],
+    env: {
+      ...process.env,
+      AUTODOC_TEST_REAL_SETUP: '1',
+      AUTODOC_TEST_USER_DATA_DIR: userDataDir,
+      NODE_ENV: 'test',
+    },
+  })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
+    },
+  }
 }
 
 export async function stubMediaCapture(page: Page): Promise<void> {
@@ -44,4 +73,11 @@ export async function setOllamaStatus(page: Page, status: OllamaSetupStatus): Pr
   await page.evaluate(async (nextStatus) => {
     await window.electronAPI.invoke('e2e:set-ollama-status', nextStatus)
   }, status)
+}
+
+export async function jumpToOnboardingStep(page: Page, step: number): Promise<void> {
+  await page.evaluate(async (nextStep) => {
+    await window.electronAPI.invoke('prefs:set-onboarding-step', nextStep)
+  }, step)
+  await page.reload()
 }

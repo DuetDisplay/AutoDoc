@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readlink, rm, writeFile, access } from 'fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, access } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -12,7 +12,11 @@ function setPlatform(platform: NodeJS.Platform) {
   })
 }
 
-async function loadWhisperManager(platform: 'darwin' | 'win32', rootDir: string) {
+async function loadWhisperManager(
+  platform: 'darwin' | 'win32',
+  rootDir: string,
+  options?: { isPackaged?: boolean; ffmpegStaticPath?: string | null },
+) {
   setPlatform(platform)
   vi.resetModules()
 
@@ -25,12 +29,17 @@ async function loadWhisperManager(platform: 'darwin' | 'win32', rootDir: string)
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn(() => rootDir),
+      isPackaged: options?.isPackaged ?? false,
     },
   }))
 
   vi.doMock('child_process', () => ({
     execFile: execFileMock,
     execSync: execSyncMock,
+  }))
+
+  vi.doMock('ffmpeg-static', () => ({
+    default: options?.ffmpegStaticPath ?? null,
   }))
 
   const mod = await import('../whisper-manager')
@@ -45,13 +54,55 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
+  vi.doUnmock('ffmpeg-static')
   vi.resetModules()
   setPlatform(originalPlatform)
 })
 
 describe('Whisper onboarding dependency installation', () => {
-  it('completes the macOS dependency setup flow and leaves runtime files on disk', async () => {
+  it('completes the packaged macOS dependency setup flow with managed runtime assets', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+      })
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new WhisperManager()
+      const downloadWhisperSpy = vi
+        .spyOn(manager as never, 'downloadWhisperMac')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'whisper')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'model')
+        })
+
+      await manager.ensureReady()
+
+      await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      await expect(access(manager.getModelPath())).resolves.toBeUndefined()
+      expect(downloadWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      expect(execSyncMock).not.toHaveBeenCalled()
+      await expect(manager.isReady()).resolves.toBe(true)
+      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', percent: 100 })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('still allows macOS dev builds to adopt system binaries', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-dev-mac-'))
     const systemBinDir = join(rootDir, 'system-bin')
     await mkdir(systemBinDir, { recursive: true })
 
@@ -80,23 +131,25 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
-      await expect(readlink(manager.getWhisperPath())).resolves.toBe(whisperBinary)
-      await expect(readlink(manager.getFfmpegPath())).resolves.toBe(ffmpegBinary)
       expect(downloadModelSpy).toHaveBeenCalledTimes(1)
       await expect(manager.isReady()).resolves.toBe(true)
-      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', percent: 100 })
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
 
-  it('completes the Windows dependency setup flow and emits the full install sequence', async () => {
+  it('completes the packaged Windows dependency setup flow and emits the full install sequence', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
     try {
-      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir)
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+      })
       execSyncMock.mockImplementation(() => {
-        throw new Error('not installed')
+        throw new Error('system lookup should not be used in packaged mode')
       })
 
       const manager = new WhisperManager()
@@ -109,10 +162,6 @@ describe('Whisper onboarding dependency installation', () => {
         await writeFile(manager.getWhisperPath(), 'whisper exe')
         await writeFile(join(manager.getModelsDir(), 'whisper.dll'), 'dll')
         await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
-      })
-
-      vi.spyOn(manager as never, 'downloadFfmpegWindows').mockImplementation(async () => {
-        await writeFile(manager.getFfmpegPath(), 'ffmpeg exe')
       })
 
       vi.spyOn(manager as never, 'downloadModel').mockImplementation(async () => {
@@ -132,6 +181,7 @@ describe('Whisper onboarding dependency installation', () => {
         'downloading-model',
         'ready',
       ])
+      expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })

@@ -1,12 +1,14 @@
 import { app } from 'electron'
-import { access, mkdir, copyFile, rm, readdir, symlink } from 'fs/promises'
-import { dirname, join } from 'path'
+import { access, mkdir, copyFile, rm, readdir, symlink, chmod } from 'fs/promises'
+import { basename, dirname, join } from 'path'
 import { createWriteStream } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter } from 'events'
+import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocFailure } from './autodoc-log'
+import { canUseSystemRuntimeFallback, usesManagedRuntimeOnly } from './runtime-policy'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -15,6 +17,9 @@ const WHISPER_VERSION = 'v1.8.4'
 const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_VERSION}/whisper-bin-x64.zip`
 const FFMPEG_WIN_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
+const HOMEBREW_API_ROOT = 'https://formulae.brew.sh/api/formula'
+const MAC_WHISPER_FORMULA = 'whisper-cpp'
+const MAC_GGML_FORMULA = 'ggml'
 
 const DEFAULT_MODEL = IS_WIN
   ? {
@@ -36,6 +41,21 @@ export interface DownloadProgress {
   percent: number
   bytesDownloaded: number
   bytesTotal: number
+}
+
+interface HomebrewBottleFile {
+  url?: string
+}
+
+interface HomebrewFormulaResponse {
+  versions?: {
+    stable?: string
+  }
+  bottle?: {
+    stable?: {
+      files?: Record<string, HomebrewBottleFile>
+    }
+  }
 }
 
 export class WhisperManager extends EventEmitter {
@@ -152,38 +172,48 @@ export class WhisperManager extends EventEmitter {
 
   private async resolveWhisper(): Promise<void> {
     const binaryName = IS_WIN ? 'whisper-cli.exe' : 'whisper-cli'
-    const systemPath = this.findSystemBinary(binaryName)
-    if (systemPath) {
-      if (IS_WIN) {
-        await this.copyWhisperBundle(systemPath, this.getWhisperPath())
-      } else {
-        await this.linkOrCopy(systemPath, this.getWhisperPath())
+    if (canUseSystemRuntimeFallback()) {
+      const systemPath = this.findSystemBinary(binaryName)
+      if (systemPath) {
+        if (IS_WIN) {
+          await this.copyWhisperBundle(systemPath, this.getWhisperPath())
+        } else {
+          await this.linkOrCopy(systemPath, this.getWhisperPath())
+        }
+        return
       }
-      return
     }
+
     if (IS_WIN) {
       await this.downloadWhisperWindows()
       return
     }
-    throw new Error(
-      'whisper-cli not found. Install it with: brew install whisper-cpp',
-    )
+
+    await this.downloadWhisperMac()
   }
 
   private async resolveFfmpeg(): Promise<void> {
-    const binaryName = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg'
-    const systemPath = this.findSystemBinary(binaryName)
-    if (systemPath) {
-      await this.linkOrCopy(systemPath, this.getFfmpegPath())
+    const packagedFfmpegPath = this.getPackagedFfmpegPath()
+    if (packagedFfmpegPath) {
+      await this.installBundledBinary(packagedFfmpegPath, this.getFfmpegPath())
       return
     }
-    if (IS_WIN) {
+
+    if (canUseSystemRuntimeFallback()) {
+      const binaryName = IS_WIN ? 'ffmpeg.exe' : 'ffmpeg'
+      const systemPath = this.findSystemBinary(binaryName)
+      if (systemPath) {
+        await this.linkOrCopy(systemPath, this.getFfmpegPath())
+        return
+      }
+    }
+
+    if (IS_WIN && !usesManagedRuntimeOnly()) {
       await this.downloadFfmpegWindows()
       return
     }
-    throw new Error(
-      'ffmpeg not found. Install it with: brew install ffmpeg',
-    )
+
+    throw new Error('AutoDoc could not finish setting up its audio tools. Please reinstall AutoDoc and try again.')
   }
 
   private async downloadWhisperWindows(): Promise<void> {
@@ -253,7 +283,57 @@ export class WhisperManager extends EventEmitter {
     }
 
     await copyFile(ffmpegExe, this.getFfmpegPath())
+    await chmod(this.getFfmpegPath(), 0o755)
     await rm(zipPath, { force: true })
+    await rm(extractDir, { recursive: true, force: true })
+  }
+
+  private async downloadWhisperMac(): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const extractDir = join(modelsDir, '_whisper_extract')
+    await rm(extractDir, { recursive: true, force: true })
+    await mkdir(extractDir, { recursive: true })
+
+    const bottleTag = this.getMacHomebrewBottleTag()
+    const whisperFormula = await this.fetchHomebrewFormula(MAC_WHISPER_FORMULA)
+    const ggmlFormula = await this.fetchHomebrewFormula(MAC_GGML_FORMULA)
+    const whisperUrl = this.getHomebrewBottleUrl(whisperFormula, bottleTag, MAC_WHISPER_FORMULA)
+    const ggmlUrl = this.getHomebrewBottleUrl(ggmlFormula, bottleTag, MAC_GGML_FORMULA)
+    const whisperArchivePath = join(extractDir, 'whisper-cpp.tar.gz')
+    const ggmlArchivePath = join(extractDir, 'ggml.tar.gz')
+
+    await this.downloadGhcrBottle(whisperUrl, MAC_WHISPER_FORMULA, whisperArchivePath, (p) => {
+      this.setupStatus = { phase: 'downloading-whisper', percent: Math.round(p / 2) }
+      this.emit('setup-status', this.getSetupStatus())
+    })
+    await this.extractTarGz(whisperArchivePath, extractDir)
+
+    await this.downloadGhcrBottle(ggmlUrl, MAC_GGML_FORMULA, ggmlArchivePath, (p) => {
+      this.setupStatus = { phase: 'downloading-whisper', percent: 50 + Math.round(p / 2) }
+      this.emit('setup-status', this.getSetupStatus())
+    })
+    await this.extractTarGz(ggmlArchivePath, extractDir)
+
+    const whisperCli = await this.findFileRecursive(extractDir, 'whisper-cli')
+    if (!whisperCli) {
+      throw new Error('AutoDoc could not unpack the transcription runtime for macOS.')
+    }
+
+    await copyFile(whisperCli, this.getWhisperPath())
+    await chmod(this.getWhisperPath(), 0o755)
+
+    await this.copyMatchingFiles(
+      join(extractDir, MAC_WHISPER_FORMULA, whisperFormula.versions?.stable ?? WHISPER_VERSION.replace(/^v/, ''), 'lib'),
+      /^libwhisper.*\.dylib$/i,
+      modelsDir,
+    )
+    await this.copyMatchingFiles(
+      join(extractDir, MAC_GGML_FORMULA, ggmlFormula.versions?.stable ?? '', 'lib'),
+      /^libggml.*\.dylib$/i,
+      modelsDir,
+    )
+
+    await this.rewriteMacWhisperDependencies()
     await rm(extractDir, { recursive: true, force: true })
   }
 
@@ -279,6 +359,22 @@ export class WhisperManager extends EventEmitter {
       return result.split(/\r?\n/)[0] || null
     } catch {
       return null
+    }
+  }
+
+  private getPackagedFfmpegPath(): string | null {
+    if (!usesManagedRuntimeOnly()) {
+      return null
+    }
+
+    return ffmpegStatic
+  }
+
+  private async installBundledBinary(source: string, dest: string): Promise<void> {
+    await rm(dest, { force: true })
+    await copyFile(source, dest)
+    if (!IS_WIN) {
+      await chmod(dest, 0o755)
     }
   }
 
@@ -345,6 +441,140 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
+  private async copyMatchingFiles(sourceDir: string, pattern: RegExp, destDir: string): Promise<void> {
+    const entries = await readdir(sourceDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !pattern.test(entry.name)) {
+        continue
+      }
+
+      await copyFile(join(sourceDir, entry.name), join(destDir, entry.name))
+    }
+  }
+
+  private getMacHomebrewBottleTag(): string {
+    const majorVersion = Number(process.getSystemVersion().split('.')[0] ?? 0)
+    const archPrefix = process.arch === 'arm64' ? 'arm64_' : ''
+
+    if (majorVersion >= 16) return `${archPrefix}tahoe`
+    if (majorVersion >= 15) return `${archPrefix}sequoia`
+    return `${archPrefix}sonoma`
+  }
+
+  private async fetchHomebrewFormula(name: string): Promise<HomebrewFormulaResponse> {
+    const response = await fetch(`${HOMEBREW_API_ROOT}/${name}.json`)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${name} metadata: ${response.status} ${response.statusText}`)
+    }
+
+    return (await response.json()) as HomebrewFormulaResponse
+  }
+
+  private getHomebrewBottleUrl(formula: HomebrewFormulaResponse, bottleTag: string, formulaName: string): string {
+    const url = formula.bottle?.stable?.files?.[bottleTag]?.url
+    if (!url) {
+      throw new Error(`AutoDoc does not have a supported ${formulaName} runtime package for this Mac.`)
+    }
+
+    return url
+  }
+
+  private async downloadGhcrBottle(
+    url: string,
+    packageName: string,
+    destPath: string,
+    onProgress?: (percent: number) => void,
+  ): Promise<void> {
+    const scope = `repository:homebrew/core/${packageName}:pull`
+    const tokenUrl = `https://ghcr.io/token?scope=${encodeURIComponent(scope)}`
+    const tokenResponse = await fetch(tokenUrl)
+    if (!tokenResponse.ok) {
+      throw new Error(`Failed to authorize ${packageName} download: ${tokenResponse.status} ${tokenResponse.statusText}`)
+    }
+
+    const tokenPayload = (await tokenResponse.json()) as { token?: string }
+    if (!tokenPayload.token) {
+      throw new Error(`Failed to authorize ${packageName} download: missing token.`)
+    }
+
+    await this.downloadFile(url, destPath, packageName, onProgress, {
+      headers: {
+        Authorization: `Bearer ${tokenPayload.token}`,
+      },
+    })
+  }
+
+  private async extractTarGz(archivePath: string, destDir: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      execFile('tar', ['xzf', archivePath, '-C', destDir], (err) => {
+        if (err) reject(new Error(`Failed to extract archive: ${err.message}`))
+        else resolve()
+      })
+    })
+  }
+
+  private async rewriteMacWhisperDependencies(): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const binaryPath = this.getWhisperPath()
+    const entries = await readdir(modelsDir, { withFileTypes: true })
+    const dylibPaths = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.dylib'))
+      .map((entry) => join(modelsDir, entry.name))
+
+    for (const dylibPath of dylibPaths) {
+      await this.setMacInstallName(dylibPath, `@loader_path/${basename(dylibPath)}`)
+      await this.rewriteMacLoadCommands(dylibPath, '@loader_path')
+    }
+
+    await this.rewriteMacLoadCommands(binaryPath, '@executable_path')
+  }
+
+  private async rewriteMacLoadCommands(filePath: string, localPrefix: '@loader_path' | '@executable_path'): Promise<void> {
+    const dependencies = await this.listMacDependencies(filePath)
+
+    for (const dependency of dependencies) {
+      const dependencyName = basename(dependency)
+      if (!dependencyName.startsWith('libwhisper') && !dependencyName.startsWith('libggml')) {
+        continue
+      }
+
+      await this.changeMacDependency(filePath, dependency, `${localPrefix}/${dependencyName}`)
+    }
+  }
+
+  private async listMacDependencies(filePath: string): Promise<string[]> {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile('otool', ['-L', filePath], { encoding: 'utf8' }, (err, resultStdout) => {
+        if (err) reject(new Error(`Failed to inspect macOS runtime links: ${err.message}`))
+        else resolve(resultStdout)
+      })
+    })
+
+    return stdout
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim().split(' ')[0])
+      .filter(Boolean)
+  }
+
+  private async setMacInstallName(filePath: string, installName: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      execFile('install_name_tool', ['-id', installName, filePath], (err) => {
+        if (err) reject(new Error(`Failed to rewrite macOS runtime id: ${err.message}`))
+        else resolve()
+      })
+    })
+  }
+
+  private async changeMacDependency(filePath: string, oldPath: string, newPath: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      execFile('install_name_tool', ['-change', oldPath, newPath, filePath], (err) => {
+        if (err) reject(new Error(`Failed to rewrite macOS runtime dependency: ${err.message}`))
+        else resolve()
+      })
+    })
+  }
+
   private async isWhisperUsable(): Promise<boolean> {
     if (!(await this.fileExists(this.getWhisperPath()))) {
       return false
@@ -409,8 +639,9 @@ export class WhisperManager extends EventEmitter {
     destPath: string,
     label: string,
     onProgress?: (percent: number) => void,
+    init?: RequestInit,
   ): Promise<void> {
-    const response = await fetch(url, { redirect: 'follow' })
+    const response = await fetch(url, { redirect: 'follow', ...init })
     if (!response.ok) {
       throw new Error(`Failed to download ${label}: ${response.status} ${response.statusText}`)
     }

@@ -1,43 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
 const phaseLabels: Record<string, (percent: number) => string> = {
-  checking: () => 'Checking transcription engine...',
+  checking: () => 'Checking transcription setup...',
   'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
-  'downloading-ffmpeg': (p) => `Downloading audio tools... ${p}%`,
+  'downloading-ffmpeg': (p) => `Installing audio tools... ${p}%`,
   'downloading-model': (p) => `Downloading speech model... ${p}%`,
-}
-
-type InstallHelp = {
-  title: string
-  body: string
-  command: string
-  retryLabel: string
-}
-
-function getInstallHelp(error: string | null): InstallHelp | null {
-  if (!error) return null
-
-  if (error.includes('brew install whisper-cpp')) {
-    return {
-      title: 'Install Whisper to Continue',
-      body:
-        'AutoDoc runs transcription locally on your Mac. Because whisper.cpp does not publish official prebuilt macOS binaries, this build expects a one-time Homebrew install of Whisper before setup can finish.',
-      command: 'brew install whisper-cpp',
-      retryLabel: 'Retry After Installing',
-    }
-  }
-
-  if (error.includes('brew install ffmpeg')) {
-    return {
-      title: 'Install FFmpeg to Continue',
-      body:
-        'AutoDoc uses FFmpeg locally to prepare meeting audio before transcription. This build expects a one-time Homebrew install of FFmpeg on macOS before setup can finish.',
-      command: 'brew install ffmpeg',
-      retryLabel: 'Retry After Installing',
-    }
-  }
-
-  return null
 }
 
 export function TranscriptionStep({ onNext }: { onNext: () => void }) {
@@ -50,6 +17,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const markReady = () => {
     setPhase('ready')
     setPercent(100)
+    setError(null)
     if (!advanceTimer.current) {
       advanceTimer.current = setTimeout(onNext, 1500)
     }
@@ -81,8 +49,6 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     return () => clearTimeout(timer)
   }, [])
 
-  const installHelp = getInstallHelp(error)
-
   if (phase === 'ready') {
     return (
       <div className="text-center">
@@ -93,7 +59,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         </div>
         <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Transcription Ready</h2>
         <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-          Speech-to-text is set up and ready to go.
+          Your local transcription engine is installed and ready to go.
         </p>
         <button
           onClick={onNext}
@@ -112,7 +78,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up Transcription</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc uses a local speech engine to transcribe your meetings on-device. This downloads once and runs entirely on your machine.
+        AutoDoc is downloading a one-time local transcription setup. After that, your speech-to-text runs on-device.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
@@ -122,17 +88,15 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         />
       </div>
       <div className="text-[12px] text-ink-faint mb-5">
-        {phaseLabels[phase]?.(percent)
-          ?? (installHelp ? 'Manual install required before setup can continue.' : error ? `Setup failed: ${error}` : 'Preparing...')}
+        {phaseLabels[phase]?.(percent) ?? (error ? `Setup failed: ${error}` : 'Preparing...')}
       </div>
 
-      {installHelp && (
+      {error && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
-          <h3 className="text-[14px] font-semibold text-ink mb-2">{installHelp.title}</h3>
-          <p className="text-[13px] text-ink-muted leading-relaxed mb-3">{installHelp.body}</p>
-          <div className="rounded-md bg-white/80 px-3 py-2 text-[12px] text-ink font-medium">
-            Open Terminal and run: <code>{installHelp.command}</code>
-          </div>
+          <h3 className="text-[14px] font-semibold text-ink mb-2">We hit a setup issue</h3>
+          <p className="text-[13px] text-ink-muted leading-relaxed">
+            AutoDoc could not finish installing transcription just yet. Retry to resume the managed setup.
+          </p>
         </div>
       )}
 
@@ -145,11 +109,9 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
               setPercent(0)
               await window.electronAPI.invoke('whisper:retry-setup')
             }}
-            className={installHelp
-              ? 'px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors'
-              : 'px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors'}
+            className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            {installHelp ? installHelp.retryLabel : 'Retry'}
+            Retry
           </button>
         </div>
       )}
@@ -159,7 +121,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
         >
-          Continue — this will finish in the background
+          Continue - this will finish in the background
         </button>
       )}
     </div>

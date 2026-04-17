@@ -12,7 +12,7 @@ function setPlatform(platform: NodeJS.Platform) {
   })
 }
 
-async function loadOllamaManager(platform: 'darwin' | 'win32', rootDir: string) {
+async function loadOllamaManager(platform: 'darwin' | 'win32', rootDir: string, isPackaged = false) {
   setPlatform(platform)
   vi.resetModules()
 
@@ -23,6 +23,7 @@ async function loadOllamaManager(platform: 'darwin' | 'win32', rootDir: string) 
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn(() => rootDir),
+      isPackaged: isPackaged,
     },
   }))
 
@@ -48,13 +49,13 @@ afterEach(() => {
 })
 
 describe('Ollama onboarding dependency installation', () => {
-  it('installs a macOS runtime binary and waits for startup plus model pull before resolving', async () => {
+  it('installs a packaged macOS runtime binary and waits for startup plus model pull before resolving', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-'))
 
     try {
-      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir, true)
       execSyncMock.mockImplementation(() => {
-        throw new Error('not installed')
+        throw new Error('system lookup should not be used in packaged mode')
       })
 
       const manager = new OllamaManager()
@@ -94,6 +95,7 @@ describe('Ollama onboarding dependency installation', () => {
       await expect(readFile(join(rootDir, 'ollama-data', 'model-ready.txt'), 'utf-8')).resolves.toContain(
         manager.getModel(),
       )
+      expect(execSyncMock).not.toHaveBeenCalled()
       expect(statuses).toEqual(['download-start', 'download-complete', 'pull-start', 'pull-complete'])
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
@@ -101,11 +103,35 @@ describe('Ollama onboarding dependency installation', () => {
     }
   })
 
-  it('installs a Windows runtime binary before startup continues', async () => {
+  it('allows macOS dev builds to adopt a system runtime', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-'))
+    const systemBinary = join(rootDir, 'system-ollama')
+    await writeFile(systemBinary, 'binary')
+
+    try {
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
+      execSyncMock.mockReturnValue(systemBinary)
+
+      const manager = new OllamaManager()
+      await manager.ensureReady()
+
+      expect(execSyncMock).toHaveBeenCalled()
+      await expect(access(join(rootDir, 'models', 'ollama-runtime', 'ollama'))).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs a packaged Windows runtime binary before startup continues', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-win-'))
 
     try {
-      const { OllamaManager } = await loadOllamaManager('win32', rootDir)
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('win32', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
       const manager = new OllamaManager()
 
       vi.spyOn(manager as never, 'downloadBinary').mockImplementation(async () => {
@@ -116,6 +142,7 @@ describe('Ollama onboarding dependency installation', () => {
 
       await manager.ensureReady()
 
+      expect(execSyncMock).not.toHaveBeenCalled()
       await expect(access(join(rootDir, 'models', 'ollama-runtime', 'ollama.exe'))).resolves.toBeUndefined()
       await expect(access(join(rootDir, 'ollama-data'))).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)

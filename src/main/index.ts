@@ -51,9 +51,13 @@ import {
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
+const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 if (isE2E) {
   app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
+} else if (testUserDataDir) {
+  app.setPath('userData', testUserDataDir)
 }
 
 if (process.platform === 'win32') {
@@ -697,20 +701,24 @@ app.whenReady().then(async () => {
         createWindow()
       }
     }
-    createTray(() => cachedEvents, showWindow, {
-      getIsRecording: () => recordingService.getState().isRecording,
-      stopRecording: () => {
-        if (!recordingService.getState().isRecording) return
-        try {
-          stopActiveRecording()
-        } catch {
-          // Failure already logged in recording IPC
-        }
-      },
-    })
+    if (!isRealSetupTest) {
+      createTray(() => cachedEvents, showWindow, {
+        getIsRecording: () => recordingService.getState().isRecording,
+        stopRecording: () => {
+          if (!recordingService.getState().isRecording) return
+          try {
+            stopActiveRecording()
+          } catch {
+            // Failure already logged in recording IPC
+          }
+        },
+      })
+    }
 
     recoverPendingWork()
-    detectionService.start()
+    if (!isRealSetupTest) {
+      detectionService.start()
+    }
 
     // Start whisper tools + model download in the background — don't block the window
     whisperManager.startSetup()
@@ -758,19 +766,21 @@ app.whenReady().then(async () => {
     // Start Ollama + pull model in the background — don't block the window
     ensureOllamaRunning()
 
-    powerMonitor.on('resume', () => {
-      ensureOllamaRunning()
-      recoverPendingWork()
-    })
+    if (!isRealSetupTest) {
+      powerMonitor.on('resume', () => {
+        ensureOllamaRunning()
+        recoverPendingWork()
+      })
 
-    powerMonitor.on('unlock-screen', () => {
-      ensureOllamaRunning()
-      recoverPendingWork()
-    })
+      powerMonitor.on('unlock-screen', () => {
+        ensureOllamaRunning()
+        recoverPendingWork()
+      })
 
-    setInterval(() => {
-      recoverPendingWork()
-    }, PENDING_RECOVERY_INTERVAL_MS)
+      setInterval(() => {
+        recoverPendingWork()
+      }, PENDING_RECOVERY_INTERVAL_MS)
+    }
   }
 
   app.on('activate', () => {
@@ -790,7 +800,7 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (!isE2E) {
+  if (!isE2E && !isRealSetupTest) {
     // Don't quit — the tray keeps the app alive
     return
   }

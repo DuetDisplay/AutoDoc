@@ -2,6 +2,7 @@ import Store from 'electron-store'
 import { app } from 'electron'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
+const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 interface PrefsSchema {
   onboardingComplete: boolean
@@ -96,7 +97,7 @@ export class PrefsStore {
   }
 
   private applyLaunchAtLogin(): void {
-    if (isE2E) return
+    if (isE2E || isRealSetupTest) return
     app.setLoginItemSettings({ openAtLogin: this.store.get('launchAtLogin') })
   }
 }
