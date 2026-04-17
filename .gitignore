@@ -6,6 +6,7 @@ out
 .eslintcache
 *.log*
 .superpowers/
+.codex/
 .worktrees/
 .env
 .env.local
