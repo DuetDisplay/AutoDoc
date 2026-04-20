@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-const { mkdir, access } = require('fs/promises')
+const { mkdir, access, rm } = require('fs/promises')
 const { createWriteStream } = require('fs')
 const { join } = require('path')
+const { spawn } = require('child_process')
 
 const PYTHON_RELEASE_TAG = '20260414'
 const PYTHON_VERSION = '3.11.15'
 const OUTPUT_DIR = join(process.cwd(), 'vendor', 'python-runtime')
+const BUNDLE_DIR = join(process.cwd(), 'vendor', 'python-runtime-bundle')
 
 const TARGETS = {
   'darwin-arm64': {
@@ -121,6 +123,46 @@ async function ensureTargetArchive(targetKey) {
   await downloadFile(getArchiveUrl(target), archivePath, archiveFilename)
 }
 
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { stdio: 'inherit', windowsHide: true })
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`${command} exited with code ${code}`))
+    })
+  })
+}
+
+async function ensureBundledRuntime(targetKey) {
+  const target = TARGETS[targetKey]
+  if (!target) {
+    throw new Error(`Unknown Python runtime target: ${targetKey}`)
+  }
+
+  const archiveFilename = getArchiveFilename(target)
+  const archivePath = join(OUTPUT_DIR, archiveFilename)
+  const runtimeDir = join(BUNDLE_DIR, targetKey)
+  const pythonRelativePath = target.platform === 'win32'
+    ? ['python', 'python.exe']
+    : ['python', 'bin', 'python3']
+  const pythonPath = join(runtimeDir, ...pythonRelativePath)
+
+  if (await fileExists(pythonPath)) {
+    console.log(`[python-runtime] Reusing extracted runtime for ${targetKey}`)
+    return
+  }
+
+  await rm(runtimeDir, { recursive: true, force: true })
+  await mkdir(runtimeDir, { recursive: true })
+  console.log(`[python-runtime] Extracting runtime for ${targetKey}`)
+  await run('tar', ['-xzf', archivePath, '-C', runtimeDir])
+
+  if (!(await fileExists(pythonPath))) {
+    throw new Error(`Managed Python runtime extracted without expected executable: ${pythonPath}`)
+  }
+}
+
 async function main() {
   const targetKeys = getRequestedTargetKeys()
   if (targetKeys.length === 0) {
@@ -130,6 +172,7 @@ async function main() {
 
   for (const targetKey of targetKeys) {
     await ensureTargetArchive(targetKey)
+    await ensureBundledRuntime(targetKey)
   }
 }
 

@@ -138,13 +138,29 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          $smToolsDir = Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64'
-          $smctlPath = Join-Path $smToolsDir 'smctl.exe'
+          $smctlCommand = Get-Command smctl.exe -ErrorAction SilentlyContinue
+          if (-not $smctlCommand) {
+            $candidatePaths = @()
 
-          if (-not (Test-Path $smctlPath)) {
-            throw "smctl.exe was not found at $smctlPath"
+            if ($env:LOCALAPPDATA) {
+              $candidatePaths += Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64\smctl.exe'
+            }
+            if ($env:ProgramFiles) {
+              $candidatePaths += Join-Path $env:ProgramFiles 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+            }
+            if (${env:ProgramFiles(x86)}) {
+              $candidatePaths += Join-Path ${env:ProgramFiles(x86)} 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+            }
+
+            $smctlPath = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $smctlPath) {
+              throw 'smctl.exe was not found on PATH or in the standard DigiCert install locations.'
+            }
+          } else {
+            $smctlPath = $smctlCommand.Source
           }
 
+          $smToolsDir = Split-Path -Parent $smctlPath
           $smToolsDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 

@@ -100,6 +100,17 @@ export class DiarizationService extends EventEmitter {
     return join(app.getAppPath(), 'vendor', MANAGED_PYTHON_SUBDIR, archiveName)
   }
 
+  private getBundledRuntimeDir(target: ManagedPythonTarget): string {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, MANAGED_PYTHON_SUBDIR, target.key)
+    }
+    return join(app.getAppPath(), 'vendor', `${MANAGED_PYTHON_SUBDIR}-bundle`, target.key)
+  }
+
+  private getBundledRuntimePythonPath(target: ManagedPythonTarget): string {
+    return join(this.getBundledRuntimeDir(target), ...target.executableRelativePath)
+  }
+
   private getBundledModelPath(): string {
     if (app.isPackaged) {
       return join(process.resourcesPath, MANAGED_MODEL_SUBDIR, BUNDLED_MODEL_NAME)
@@ -193,6 +204,11 @@ export class DiarizationService extends EventEmitter {
       const provisionedPython = this.getProvisionedPythonPath(target)
       if (await this.fileExists(provisionedPython)) {
         return provisionedPython
+      }
+
+      const bundledRuntimePython = this.getBundledRuntimePythonPath(target)
+      if (await this.fileExists(bundledRuntimePython)) {
+        return bundledRuntimePython
       }
 
       const bundledArchive = this.getBundledArchivePath(target)

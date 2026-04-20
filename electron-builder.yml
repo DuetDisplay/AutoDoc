@@ -18,7 +18,7 @@ files:
   - '!**/*.{map,md,markdown,tsbuildinfo}'
   - '!**/.DS_Store'
 extraResources:
-  - from: vendor/python-runtime
+  - from: vendor/python-runtime-bundle
     to: python-runtime
     filter:
       - '**/*'

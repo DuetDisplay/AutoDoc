@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiarizationService } from '../diarization'
-import { getManagedPythonArchiveFilename, getManagedPythonTarget } from '../managed-python'
+import { getManagedPythonTarget } from '../managed-python'
 
 vi.mock('electron', () => ({
   app: {
@@ -62,25 +62,21 @@ describe('DiarizationService bootstrap resolution', () => {
     })
   })
 
-  it('prefers a bundled runtime archive over a system Python', async () => {
+  it('prefers a bundled packaged runtime over a system Python', async () => {
     const target = getManagedPythonTarget(process.platform, process.arch)
     expect(target).not.toBeNull()
 
-    const bundledArchive = `/mock/resources/python-runtime/${getManagedPythonArchiveFilename(target!)}`
+    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
     fsMock.access.mockImplementation(async (path) => {
-      if (String(path) === bundledArchive) return undefined
+      if (String(path) === bundledRuntimePython) return undefined
       throw new Error('ENOENT')
     })
 
     const service = new DiarizationService()
-    const provisionSpy = vi
-      .spyOn(service as any, 'provisionManagedRuntimeFromArchive')
-      .mockResolvedValue('/mock/home/python-runtime/provisioned/python/bin/python3')
 
     const result = await (service as any).resolveBootstrapPython()
 
-    expect(result).toBe('/mock/home/python-runtime/provisioned/python/bin/python3')
-    expect(provisionSpy).toHaveBeenCalledWith(target, bundledArchive)
+    expect(result).toBe(bundledRuntimePython)
     expect(childProcessMock.execSync).not.toHaveBeenCalled()
   })
 
