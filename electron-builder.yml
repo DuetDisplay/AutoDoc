@@ -26,10 +26,6 @@ extraResources:
     to: diarization-model
     filter:
       - '**/*'
-  - from: vendor/diarization-wheelhouse
-    to: diarization-wheelhouse
-    filter:
-      - '**/*'
 asarUnpack:
   - 'resources/**'
   - 'native/**'
@@ -74,6 +70,7 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 afterPack: ./scripts/after-pack-mac-privacy.cjs
+afterSign: ./scripts/after-sign-mac-binaries.cjs
 npmRebuild: false
 publish:
   provider: github

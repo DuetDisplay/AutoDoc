@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-const { access, mkdir, rm, readdir, writeFile } = require('fs/promises')
+const { access, mkdir, rm, writeFile } = require('fs/promises')
 const { join } = require('path')
 const { spawn } = require('child_process')
 
 const REQUIREMENTS_PATH = join(process.cwd(), 'resources', 'diarization-requirements.txt')
-const OUTPUT_DIR = join(process.cwd(), 'vendor', 'diarization-wheelhouse')
-const TMP_DIR = join(process.cwd(), 'vendor', '.tmp', 'diarization-wheelhouse-python')
+const OUTPUT_DIR = join(process.cwd(), 'vendor', 'python-runtime-bundle')
 const PYTHON_RELEASE_TAG = '20260414'
 const PYTHON_VERSION = '3.11.15'
 
@@ -58,85 +57,72 @@ function run(command, args, env = process.env) {
 }
 
 async function ensureManagedPythonExtracted(targetKey, target) {
-  const archivePath = join(process.cwd(), 'vendor', 'python-runtime', getArchiveFilename(target))
-  if (!(await fileExists(archivePath))) {
-    throw new Error(`Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`)
+  const pythonPath = join(OUTPUT_DIR, targetKey, ...target.executable)
+  if (!(await fileExists(pythonPath))) {
+    throw new Error(`Managed Python runtime not found at ${pythonPath}. Run prepare-python-runtime first.`)
   }
-
-  const pythonPath = join(TMP_DIR, targetKey, ...target.executable)
-  if (await fileExists(pythonPath)) {
-    return pythonPath
-  }
-
-  await rm(join(TMP_DIR, targetKey), { recursive: true, force: true })
-  await mkdir(join(TMP_DIR, targetKey), { recursive: true })
-  await run('tar', ['-xzf', archivePath, '-C', join(TMP_DIR, targetKey)])
   return pythonPath
 }
 
-async function isWheelhouseReady(targetKey) {
-  const wheelhouseDir = join(OUTPUT_DIR, targetKey)
-  if (!(await fileExists(wheelhouseDir))) {
-    return false
-  }
-
-  const entries = await readdir(wheelhouseDir)
-  return entries.some((entry) => entry.endsWith('.whl'))
+function getReadyMarkerPath(targetKey) {
+  return join(OUTPUT_DIR, targetKey, 'AUTODOC_DIARIZATION_READY.txt')
 }
 
-async function ensureWheelhouse(targetKey) {
+async function isRuntimeReady(targetKey) {
+  return fileExists(getReadyMarkerPath(targetKey))
+}
+
+async function ensureBundledRuntime(targetKey) {
   const target = TARGETS[targetKey]
   if (!target) {
-    console.log(`[diarization-wheelhouse] Unsupported target ${targetKey}; skipping`)
+    console.log(`[diarization-runtime] Unsupported target ${targetKey}; skipping`)
     return
   }
 
   if (targetKey !== getCurrentTargetKey()) {
     console.warn(
-      `[diarization-wheelhouse] Skipping ${targetKey}: wheel bundling currently runs on the matching host platform/arch only.`,
+      `[diarization-runtime] Skipping ${targetKey}: dependency bundling currently runs on the matching host platform/arch only.`,
     )
     return
   }
 
-  if (await isWheelhouseReady(targetKey)) {
-    console.log(`[diarization-wheelhouse] Reusing bundled wheels for ${targetKey}`)
+  if (await isRuntimeReady(targetKey)) {
+    console.log(`[diarization-runtime] Reusing bundled diarization runtime for ${targetKey}`)
     return
   }
 
   const pythonPath = await ensureManagedPythonExtracted(targetKey, target)
-  const wheelhouseDir = join(OUTPUT_DIR, targetKey)
-  await rm(wheelhouseDir, { recursive: true, force: true })
-  await mkdir(wheelhouseDir, { recursive: true })
+  const runtimeDir = join(OUTPUT_DIR, targetKey)
+  await mkdir(runtimeDir, { recursive: true })
 
-  console.log(`[diarization-wheelhouse] Downloading diarization wheels for ${targetKey}`)
+  console.log(`[diarization-runtime] Installing diarization dependencies into bundled runtime for ${targetKey}`)
   await run(pythonPath, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'])
   await run(pythonPath, [
     '-m',
     'pip',
-    'wheel',
-    '--wheel-dir',
-    wheelhouseDir,
+    'install',
     '--requirement',
     REQUIREMENTS_PATH,
   ])
 
   await writeFile(
-    join(wheelhouseDir, 'MANIFEST.txt'),
+    getReadyMarkerPath(targetKey),
     [
       `target=${targetKey}`,
       `python=${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}`,
       'requirements=resources/diarization-requirements.txt',
+      'mode=preinstalled-runtime',
     ].join('\n'),
   )
 }
 
 async function main() {
   const targetKey = process.env.AUTODOC_DIARIZATION_WHEELHOUSE_TARGET?.trim() || getCurrentTargetKey()
-  await ensureWheelhouse(targetKey)
+  await ensureBundledRuntime(targetKey)
 }
 
 main().catch((err) => {
-  console.error('[diarization-wheelhouse] Failed to prepare bundled diarization wheelhouse')
+  console.error('[diarization-runtime] Failed to prepare bundled diarization runtime')
   console.error(err)
   process.exitCode = 1
 })

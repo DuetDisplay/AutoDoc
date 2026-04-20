@@ -39,13 +39,8 @@ function getArchiveUrl(target) {
 }
 
 function getDefaultTargetKeys() {
-  if (process.platform === 'darwin') {
-    return ['darwin-arm64', 'darwin-x64']
-  }
-  if (process.platform === 'win32') {
-    return ['win32-arm64', 'win32-x64']
-  }
-  return []
+  const targetKey = `${process.platform}-${process.arch}`
+  return TARGETS[targetKey] ? [targetKey] : []
 }
 
 function getRequestedTargetKeys() {

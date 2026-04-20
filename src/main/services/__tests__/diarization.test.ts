@@ -13,7 +13,6 @@ vi.mock('electron', () => ({
 vi.mock('fs/promises', () => ({
   access: vi.fn(),
   mkdir: vi.fn(),
-  readdir: vi.fn(),
   rm: vi.fn(),
 }))
 
@@ -93,13 +92,18 @@ describe('DiarizationService bootstrap resolution', () => {
   })
 
   it('does not deadlock when startSetup calls ensureReady internally', async () => {
-    fsMock.access.mockRejectedValue(new Error('ENOENT'))
+    const target = getManagedPythonTarget(process.platform, process.arch)
+    expect(target).not.toBeNull()
+
+    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path) === bundledRuntimePython) return undefined
+      throw new Error('ENOENT')
+    })
 
     const service = new DiarizationService()
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
-    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
     vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
-    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue('/mock/resources/diarization-wheelhouse/darwin-arm64')
     vi.spyOn(service as any, 'ensureModelReady').mockResolvedValue('/mock/model/community-1')
     vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
 
@@ -107,41 +111,35 @@ describe('DiarizationService bootstrap resolution', () => {
     expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
   })
 
-  it('prefers bundled diarization wheels in packaged builds', async () => {
+  it('uses the packaged bundled runtime directly in packaged builds', async () => {
+    const target = getManagedPythonTarget(process.platform, process.arch)
+    expect(target).not.toBeNull()
+
+    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path) === bundledRuntimePython) return undefined
+      throw new Error('ENOENT')
+    })
+
     const service = new DiarizationService()
+    const runCommandSpy = vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
 
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
-    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
     vi.spyOn(service as any, 'ensureModelReady').mockResolvedValue('/mock/model/community-1')
     vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
-    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue('/mock/resources/diarization-wheelhouse/darwin-arm64')
-
-    const runCommandSpy = vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
 
     await expect(service.ensureReady()).resolves.toBeUndefined()
 
-    expect(runCommandSpy).toHaveBeenCalledWith('/usr/bin/python3', ['-m', 'venv', '/mock/home/python-env'])
-    expect(runCommandSpy).toHaveBeenCalledWith(
-      '/mock/home/python-env/bin/pip',
-      [
-        'install',
-        '--no-index',
-        '--find-links',
-        '/mock/resources/diarization-wheelhouse/darwin-arm64',
-        '--requirement',
-        '/mock/resources/diarization-requirements.txt',
-      ],
-    )
+    expect(runCommandSpy).not.toHaveBeenCalled()
+    expect(service.getSetupStatus()).toEqual({ phase: 'downloading-speaker-model', percent: 75 })
   })
 
-  it('fails packaged setup when bundled diarization wheels are missing', async () => {
+  it('fails packaged setup when the bundled runtime is missing', async () => {
     const service = new DiarizationService()
 
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
-    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
-    vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
-    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue(null)
+    fsMock.access.mockRejectedValue(new Error('ENOENT'))
 
-    await expect(service.ensureReady()).rejects.toThrow(/Bundled speaker diarization Python dependencies are missing/)
+    await expect(service.ensureReady()).rejects.toThrow(/Bundled speaker diarization runtime is missing/)
   })
 })
