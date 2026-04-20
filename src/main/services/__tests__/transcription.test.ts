@@ -72,6 +72,7 @@ function createMockAudioConverter(): AudioConverter {
     convert: vi.fn().mockResolvedValue(undefined),
     mergeAudio: vi.fn().mockResolvedValue(undefined),
     extractClip: vi.fn().mockResolvedValue(undefined),
+    concatClips: vi.fn().mockResolvedValue(undefined),
     getDuration: vi.fn().mockResolvedValue(60),
   } as unknown as AudioConverter
 }
@@ -409,6 +410,75 @@ describe('TranscriptionService', () => {
       speaker_1: { label: 'Speaker 1' },
       speaker_2: { label: 'Speaker 2' },
     })
+  })
+
+  it('compacts diarization audio to transcript windows and remaps speaker timings back to the original meeting', async () => {
+    const mockDiarization = createMockDiarizationService()
+    mockDiarization.diarize.mockResolvedValue({
+      speakers: [
+        { id: 'SPEAKER_00', segments: [{ start: 0.2, end: 4.2 }] },
+        { id: 'SPEAKER_01', segments: [{ start: 4.2, end: 9.5 }] },
+      ],
+    })
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      mockDiarization as any,
+    )
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(mockConverter.getDuration as any).mockResolvedValue(900)
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
+      transcription: [
+        { offsets: { from: 120000, to: 123000 }, text: 'First remote speaker' },
+        { offsets: { from: 420000, to: 424000 }, text: 'Second remote speaker' },
+      ],
+    })
+    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+      {
+        id: 'meeting-compact-0',
+        meetingId: 'meeting-compact',
+        speaker: 'Speaker',
+        text: 'First remote speaker',
+        startMs: 120000,
+        endMs: 123000,
+        confidence: -1,
+      },
+      {
+        id: 'meeting-compact-1',
+        meetingId: 'meeting-compact',
+        speaker: 'Speaker',
+        text: 'Second remote speaker',
+        startMs: 420000,
+        endMs: 424000,
+        confidence: -1,
+      },
+    ])
+
+    await expect((service as any).processJob('meeting-compact')).resolves.toBeUndefined()
+
+    expect(mockConverter.extractClip).toHaveBeenCalledTimes(2)
+    expect(mockConverter.concatClips).toHaveBeenCalledTimes(1)
+    expect(mockDiarization.diarize).toHaveBeenCalledWith(
+      expect.stringContaining('-compact.wav'),
+    )
+
+    const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('transcript.json'),
+    )
+
+    expect(transcriptWrite?.[0]).toEqual([
+      expect.objectContaining({ speaker: 'speaker_1', text: 'First remote speaker' }),
+      expect.objectContaining({ speaker: 'speaker_2', text: 'Second remote speaker' }),
+    ])
   })
 
   it('falls back to the existing speaker label when diarization fails', async () => {

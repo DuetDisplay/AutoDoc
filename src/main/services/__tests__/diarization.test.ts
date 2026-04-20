@@ -94,4 +94,18 @@ describe('DiarizationService bootstrap resolution', () => {
     expect(result).toBe('/usr/bin/python3')
     expect(childProcessMock.execSync).toHaveBeenCalled()
   })
+
+  it('does not deadlock when startSetup calls ensureReady internally', async () => {
+    fsMock.access.mockRejectedValue(new Error('ENOENT'))
+
+    const service = new DiarizationService()
+    vi.spyOn(service, 'isReady').mockResolvedValue(false)
+    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
+    vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'ensureModelReady').mockResolvedValue('/mock/model/community-1')
+    vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
+
+    await expect(service.startSetup()).resolves.toBeUndefined()
+    expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
+  })
 })

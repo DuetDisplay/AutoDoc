@@ -13,7 +13,7 @@ import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
 import { alignSpeakers } from './speaker-alignment'
-import type { DiarizationService } from './diarization'
+import type { DiarizationResult, DiarizationService } from './diarization'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -49,6 +49,10 @@ const ECHO_CONTAINMENT_THRESHOLD = 0.8
 const ECHO_TRIGRAM_THRESHOLD = 0.55
 const STITCH_ADJACENT_GAP_MS = 900
 const STITCH_MAX_COMBINED_CHARS = 240
+const DIARIZATION_WINDOW_CONTEXT_SEC = 0.75
+const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
+const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
+const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
 type EnqueueSource = 'direct' | 'recovery-scan'
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
@@ -67,6 +71,13 @@ interface TranscriptionDirSnapshot extends Record<string, unknown> {
     metadataExists: boolean
   }
   retryCount: number
+}
+
+interface DiarizationWindowMapping {
+  compactStart: number
+  compactEnd: number
+  originalStart: number
+  originalEnd: number
 }
 
 export class TranscriptionService {
@@ -454,15 +465,185 @@ export class TranscriptionService {
 
       const audioInput = await this.decryptIfNeeded(sourcePath, tempFiles)
       await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
+      const audioDuration = await this.audioConverter.getDuration(
+        tempAudioWav,
+        this.whisperManager.getFfmpegPath(),
+      ).catch(() => undefined)
+      const diarizationInput = await this.prepareDiarizationInput(
+        meetingId,
+        tempAudioWav,
+        transcripts,
+        tempPrefix,
+        tempFiles,
+        audioDuration,
+      )
 
-      const diarization = await this.diarizationService.diarize(tempAudioWav)
+      const diarization = await this.diarizationService.diarize(diarizationInput.wavPath)
+      const remappedDiarization = diarizationInput.mapping
+        ? this.remapDiarizationResultToOriginalTimeline(diarization, diarizationInput.mapping)
+        : diarization
       return this.stitchAdjacentTranscriptFragments(
-        alignSpeakers(transcripts, diarization, null),
+        alignSpeakers(transcripts, remappedDiarization, null),
       )
     } catch (err) {
       console.warn(`[transcription] Diarization failed, keeping existing speaker labels (${meetingId}):`, err)
       return this.stitchAdjacentTranscriptFragments(transcripts)
     }
+  }
+
+  private async prepareDiarizationInput(
+    meetingId: string,
+    fullAudioWav: string,
+    transcripts: Transcript[],
+    tempPrefix: string,
+    tempFiles: string[],
+    audioDurationSec?: number,
+  ): Promise<{ wavPath: string; mapping: DiarizationWindowMapping[] | null }> {
+    const mapping = this.buildDiarizationWindowMappings(transcripts, audioDurationSec)
+    if (mapping.length === 0) {
+      return { wavPath: fullAudioWav, mapping: null }
+    }
+
+    const compactDuration = mapping[mapping.length - 1]?.compactEnd ?? 0
+    const originalDuration = audioDurationSec ?? mapping[mapping.length - 1]?.originalEnd ?? 0
+    const reductionRatio = originalDuration > 0 ? 1 - compactDuration / originalDuration : 0
+
+    if (
+      originalDuration < DIARIZATION_COMPACTION_THRESHOLD_SEC ||
+      reductionRatio < DIARIZATION_MIN_REDUCTION_RATIO
+    ) {
+      return { wavPath: fullAudioWav, mapping: null }
+    }
+
+    console.log(
+      `[transcription] Compacting diarization input (${meetingId}, windows=${mapping.length}, compact=${compactDuration.toFixed(1)}s/${originalDuration.toFixed(1)}s)`,
+    )
+
+    const clipPaths: string[] = []
+    for (const [index, window] of mapping.entries()) {
+      const clipPath = `${tempPrefix}-clip-${index}.wav`
+      tempFiles.push(clipPath)
+      clipPaths.push(clipPath)
+      await this.audioConverter.extractClip(
+        fullAudioWav,
+        clipPath,
+        this.whisperManager.getFfmpegPath(),
+        window.originalStart,
+        window.originalEnd - window.originalStart,
+      )
+    }
+
+    if (clipPaths.length === 1) {
+      return { wavPath: clipPaths[0], mapping }
+    }
+
+    const compactPath = `${tempPrefix}-compact.wav`
+    const concatListPath = `${tempPrefix}-concat.txt`
+    tempFiles.push(compactPath, concatListPath)
+    await this.audioConverter.concatClips(
+      clipPaths,
+      compactPath,
+      this.whisperManager.getFfmpegPath(),
+      concatListPath,
+    )
+
+    return { wavPath: compactPath, mapping }
+  }
+
+  private buildDiarizationWindowMappings(
+    transcripts: Transcript[],
+    audioDurationSec?: number,
+  ): DiarizationWindowMapping[] {
+    const windows = transcripts
+      .map((segment) => ({
+        start: Math.max(0, segment.startMs / 1000 - DIARIZATION_WINDOW_CONTEXT_SEC),
+        end: segment.endMs / 1000 + DIARIZATION_WINDOW_CONTEXT_SEC,
+      }))
+      .filter((window) => window.end > window.start)
+      .sort((a, b) => a.start - b.start)
+
+    if (windows.length === 0) {
+      return []
+    }
+
+    const merged: Array<{ start: number; end: number }> = []
+    for (const window of windows) {
+      const boundedEnd = audioDurationSec == null ? window.end : Math.min(window.end, audioDurationSec)
+      if (boundedEnd <= window.start) {
+        continue
+      }
+
+      const previous = merged[merged.length - 1]
+      if (!previous || window.start > previous.end + DIARIZATION_WINDOW_MERGE_GAP_SEC) {
+        merged.push({ start: window.start, end: boundedEnd })
+        continue
+      }
+
+      previous.end = Math.max(previous.end, boundedEnd)
+    }
+
+    let compactCursor = 0
+    return merged.map((window) => {
+      const duration = window.end - window.start
+      const mapping = {
+        compactStart: compactCursor,
+        compactEnd: compactCursor + duration,
+        originalStart: window.start,
+        originalEnd: window.end,
+      }
+      compactCursor += duration
+      return mapping
+    })
+  }
+
+  private remapDiarizationResultToOriginalTimeline(
+    diarization: DiarizationResult,
+    mapping: DiarizationWindowMapping[],
+  ): DiarizationResult {
+    return {
+      speakers: diarization.speakers
+        .map((speaker) => ({
+          id: speaker.id,
+          segments: this.mergeDiarizationSegments(
+            speaker.segments.flatMap((segment) =>
+              mapping.flatMap((window) => {
+                const overlapStart = Math.max(segment.start, window.compactStart)
+                const overlapEnd = Math.min(segment.end, window.compactEnd)
+                if (overlapEnd <= overlapStart) {
+                  return []
+                }
+
+                return [{
+                  start: Number((window.originalStart + overlapStart - window.compactStart).toFixed(3)),
+                  end: Number((window.originalStart + overlapEnd - window.compactStart).toFixed(3)),
+                }]
+              }),
+            ),
+          ),
+        }))
+        .filter((speaker) => speaker.segments.length > 0),
+    }
+  }
+
+  private mergeDiarizationSegments(segments: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> {
+    if (segments.length <= 1) {
+      return segments
+    }
+
+    const sorted = [...segments].sort((a, b) => a.start - b.start || a.end - b.end)
+    const merged: Array<{ start: number; end: number }> = []
+
+    for (const segment of sorted) {
+      const previous = merged[merged.length - 1]
+      if (!previous || segment.start > previous.end + 0.05) {
+        merged.push({ ...segment })
+        continue
+      }
+
+      previous.end = Math.max(previous.end, segment.end)
+    }
+
+    return merged
   }
 
   private mergeTranscriptStreams(

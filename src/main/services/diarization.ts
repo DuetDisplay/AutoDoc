@@ -54,7 +54,7 @@ export class DiarizationService extends EventEmitter {
 
   private async runSetup(): Promise<void> {
     try {
-      await this.ensureReady()
+      await this.ensureReady(false)
       this.setSetupStatus({ phase: 'ready', percent: 100 })
     } catch (err) {
       this.setSetupStatus({
@@ -141,9 +141,9 @@ export class DiarizationService extends EventEmitter {
     return usable
   }
 
-  async ensureReady(): Promise<void> {
+  async ensureReady(awaitActiveSetup = true): Promise<void> {
     if (await this.isReady()) return
-    if (this.setupPromise) return this.setupPromise
+    if (awaitActiveSetup && this.setupPromise) return this.setupPromise
 
     const envDir = this.getEnvDir()
     await mkdir(envDir, { recursive: true })

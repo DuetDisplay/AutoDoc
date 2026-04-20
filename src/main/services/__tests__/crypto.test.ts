@@ -10,9 +10,13 @@ let mockPaths = {
   appData: '',
   userData: '',
 }
+let mockIsPackaged = true
 
 vi.mock('electron', () => ({
   app: {
+    get isPackaged() {
+      return mockIsPackaged
+    },
     getPath: vi.fn((name: string) => {
       if (name === 'appData') return mockPaths.appData
       if (name === 'userData') return mockPaths.userData
@@ -45,6 +49,7 @@ describe('crypto module', () => {
     appDataDir = path.join(tmpDir, 'appData')
     userDataDir = path.join(tmpDir, 'userData')
     mockPaths = { appData: appDataDir, userData: userDataDir }
+    mockIsPackaged = true
     await fsp.mkdir(appDataDir, { recursive: true })
     await fsp.mkdir(userDataDir, { recursive: true })
     vi.mocked(electron.safeStorage.isEncryptionAvailable).mockReturnValue(true)
@@ -114,6 +119,28 @@ describe('crypto module', () => {
       expect(key.length).toBe(32)
       expect(warnSpy).toHaveBeenCalled()
       warnSpy.mockRestore()
+    })
+
+    it('uses an isolated userData store in dev without touching the production appData store', async () => {
+      mockIsPackaged = false
+      await fsp.mkdir(path.join(appDataDir, 'AutoDoc'), { recursive: true })
+      await fsp.writeFile(
+        path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'),
+        JSON.stringify({
+          encryption_key: 'enc:not-the-dev-key',
+          encryption_key_version: 1,
+        }),
+      )
+
+      const { getKey } = await freshImport()
+      const devKey = getKey()
+
+      const devStoreRaw = await fsp.readFile(path.join(userDataDir, 'autodoc-encryption.json'), 'utf-8')
+      const prodStoreRaw = await fsp.readFile(path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'), 'utf-8')
+
+      expect(devStoreRaw).toContain('enc:')
+      expect(prodStoreRaw).toContain('not-the-dev-key')
+      expect(Buffer.from(JSON.parse(devStoreRaw).encryption_key.replace('enc:', ''), 'base64').equals(devKey)).toBe(true)
     })
   })
 

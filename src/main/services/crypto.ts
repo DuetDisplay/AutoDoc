@@ -39,11 +39,22 @@ export class EncryptionKeyUnavailableError extends Error {
 let cachedKey: Buffer | null = null
 let cachedKeyError: Error | null = null
 
+function usesIsolatedDevStore(): boolean {
+  return !app.isPackaged
+}
+
 function getPrimaryStorePath(): string {
+  if (usesIsolatedDevStore()) {
+    return path.join(app.getPath('userData'), STORE_FILENAME)
+  }
   return path.join(app.getPath('appData'), CANONICAL_APP_DIR, STORE_FILENAME)
 }
 
 function getLegacyStorePaths(): string[] {
+  if (usesIsolatedDevStore()) {
+    return [getPrimaryStorePath()]
+  }
+
   const paths = new Set<string>([
     path.join(app.getPath('userData'), STORE_FILENAME),
     path.join(app.getPath('appData'), 'autodoc', STORE_FILENAME),

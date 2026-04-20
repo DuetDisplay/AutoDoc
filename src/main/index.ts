@@ -49,6 +49,10 @@ import { focusMainWindow, registerMainWindow } from './services/main-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
+if (is.dev) {
+  // Keep local dev/testing isolated from the installed app's recordings, models, and key store.
+  app.setPath('userData', join(app.getPath('appData'), 'AutoDoc Dev'))
+}
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
 }

@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { writeFile, unlink } from 'fs/promises'
 
 export class AudioConverter {
   convert(inputPath: string, outputPath: string, ffmpegPath: string): Promise<void> {
@@ -80,6 +81,62 @@ export class AudioConverter {
           resolve()
         } else {
           reject(new Error(`ffmpeg extract exited with code ${code}: ${stderr.slice(-500)}`))
+        }
+      })
+    })
+  }
+
+  concatClips(
+    inputPaths: string[],
+    outputPath: string,
+    ffmpegPath: string,
+    concatListPath: string,
+  ): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      if (inputPaths.length === 0) {
+        reject(new Error('ffmpeg concat requires at least one input clip'))
+        return
+      }
+
+      const escapePath = (filePath: string) => filePath.replace(/'/g, "'\\''")
+
+      try {
+        await writeFile(
+          concatListPath,
+          inputPaths.map((filePath) => `file '${escapePath(filePath)}'`).join('\n'),
+          'utf-8',
+        )
+      } catch (err) {
+        reject(err)
+        return
+      }
+
+      let stderr = ''
+      const proc = spawn(ffmpegPath, [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-ar', '16000',
+        '-ac', '1',
+        '-f', 'wav',
+        '-y',
+        outputPath,
+      ])
+
+      proc.on('error', async (err) => {
+        await unlink(concatListPath).catch(() => {})
+        reject(new Error(`ffmpeg concat spawn failed: ${err.message}`))
+      })
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', async (code: number | null) => {
+        await unlink(concatListPath).catch(() => {})
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`))
         }
       })
     })

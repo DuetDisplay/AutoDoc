@@ -8,6 +8,36 @@ import sys
 import json
 import os
 
+def resolve_device(pipeline):
+    preferred = os.environ.get("PYANNOTE_DEVICE", "").strip().lower()
+
+    try:
+        import torch
+    except ImportError:
+        return None
+
+    if preferred:
+        if preferred == "cpu":
+            return None
+        return torch.device(preferred)
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+
+    return None
+
+def resolve_annotation(diarization):
+    if hasattr(diarization, "speaker_diarization") and diarization.speaker_diarization is not None:
+        return diarization.speaker_diarization
+
+    if hasattr(diarization, "exclusive_speaker_diarization") and diarization.exclusive_speaker_diarization is not None:
+        return diarization.exclusive_speaker_diarization
+
+    return diarization
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: diarize.py <wav_path>"}), file=sys.stderr)
@@ -46,12 +76,31 @@ def main():
         print("2. If using a remote Hugging Face repo, set HF_TOKEN/HUGGINGFACE_TOKEN", file=sys.stderr)
         sys.exit(1)
 
+    target_device = resolve_device(pipeline)
+    if target_device is not None and hasattr(pipeline, "to"):
+        try:
+            pipeline.to(target_device)
+            print(json.dumps({"device": str(target_device)}), file=sys.stderr)
+        except Exception as exc:
+            print(
+                json.dumps({"warning": f"Failed to move diarization pipeline to {target_device}: {exc}"}),
+                file=sys.stderr,
+            )
+
     # Run diarization
     diarization = pipeline(wav_path)
+    annotation = resolve_annotation(diarization)
+
+    if not hasattr(annotation, "itertracks"):
+        print(
+            json.dumps({"error": f"Unsupported diarization output type: {type(diarization).__name__}"}),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Collect segments by speaker
     speakers = {}
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
+    for turn, _, speaker in annotation.itertracks(yield_label=True):
         if speaker not in speakers:
             speakers[speaker] = {"id": speaker, "segments": []}
         speakers[speaker]["segments"].append({
