@@ -7,6 +7,7 @@ out
 *.log*
 .superpowers/
 .worktrees/
+.codex/
 .env
 .env.local
 .env.production
@@ -23,6 +24,7 @@ resources/trayTemplate@2x.png
 # Generated native detector binaries
 native/*/bin/
 resources/certs/*.p12
+vendor/
 vendor/python-runtime/
 vendor/diarization-model/
 

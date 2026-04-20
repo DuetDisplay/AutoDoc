@@ -107,4 +107,109 @@ describe('OllamaProvider grounding', () => {
     expect(result.actionItems[0].sourceStartMs).toBe(600_000)
     expect(result.actionItems[0].sourceEndMs).toBe(600_000)
   })
+
+  it('normalizes overly specific topics into a smaller set of broad themes after chunk merge', () => {
+    const segments = {
+      decisions: [],
+      actionItems: [],
+      information: [
+        {
+          id: 'i1',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Build Testing',
+          title: 'Mac build under test',
+          content: 'QA is validating the latest Mac build and tracking failures.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i2',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Nightly Build Tests',
+          title: 'Nightly jobs need more coverage',
+          content: 'The team discussed build dashboards, nightly jobs, and automated test health.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i3',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Build Validation',
+          title: 'Release validation gaps remain',
+          content: 'Build validation still needs more QA automation before release.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i4',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Mixpanel Reporting',
+          title: 'Mixpanel events are noisy',
+          content: 'Reporting in Mixpanel is noisy because event tracking includes too many plan switches.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i5',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Mixpanel Configuration',
+          title: 'Current Mixpanel setup has limitations',
+          content: 'The current Mixpanel configuration makes event analysis less precise.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i6',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Mixpanel Event Quality',
+          title: 'Event-based workflows are hard to measure',
+          content: 'Mixpanel cannot cleanly represent some event-based workflows, which hurts reporting quality.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+        {
+          id: 'i7',
+          meetingId: 'meeting-1',
+          category: 'information',
+          topic: 'Open Source Packaging',
+          title: 'Open source user groups differ',
+          content: 'Some users customize the code while a larger group mainly values transparency.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0,
+        },
+      ],
+      discussion: [],
+      statusUpdates: [],
+    }
+
+    ;(provider as any).normalizeMergedTopics(segments)
+
+    const uniqueTopics = new Set(segments.information.map((item) => item.topic))
+    expect(uniqueTopics.size).toBeLessThanOrEqual(3)
+    expect(segments.information[0].topic).toBe(segments.information[1].topic)
+    expect(segments.information[1].topic).toBe(segments.information[2].topic)
+    expect(segments.information[3].topic).toBe(segments.information[4].topic)
+    expect(segments.information[4].topic).toBe(segments.information[5].topic)
+    expect(segments.information[6].topic).toBe('Open Source Packaging')
+  })
 })

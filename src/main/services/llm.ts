@@ -1,4 +1,4 @@
-import type { MeetingSegments, SegmentCategory } from '../../shared/types'
+import type { MeetingSegments, Segment, SegmentCategory } from '../../shared/types'
 
 export interface LLMProvider {
   summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments>
@@ -12,6 +12,15 @@ const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high w
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+const MAX_UNIQUE_TOPICS = 6
+const TOPIC_MERGE_THRESHOLD = 0.52
+const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
+const TOPIC_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'current', 'discussion', 'for', 'from',
+  'how', 'in', 'is', 'it', 'its', 'of', 'on', 'or', 'reported', 'review', 'shared', 'status',
+  'team', 'that', 'the', 'their', 'them', 'there', 'these', 'this', 'to', 'update', 'updates',
+  'was', 'were', 'what', 'with',
+])
 
 const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture everything of value from the transcript. People rely on these notes to remember what happened.
 
@@ -95,6 +104,11 @@ interface RawSegment {
 interface TranscriptLine {
   startMs: number
   text: string
+}
+
+interface TopicGroup {
+  segments: Segment[]
+  labelCounts: Map<string, number>
 }
 
 const LOW_SIGNAL_NOTE_PATTERNS = [
@@ -182,8 +196,9 @@ export class OllamaProvider implements LLMProvider {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const chunkItemMin = Math.max(2, Math.round(estMinutes * 0.8 / chunks.length))
       const chunkItemMax = Math.max(5, Math.round(estMinutes * 1.5 / chunks.length))
+      const knownTopics = this.extractKnownTopics(merged)
       const chunkLabel = chunks.length > 1
-        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}`
+        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
         : `\n\n${itemGuidance}`
 
       let lastError: Error | null = null
@@ -233,7 +248,24 @@ export class OllamaProvider implements LLMProvider {
       onProgress?.(percent)
     }
 
+    this.normalizeMergedTopics(merged)
     return merged
+  }
+
+  private extractKnownTopics(segments: MeetingSegments): string[] {
+    const seen = new Set<string>()
+    const topics: string[] = []
+
+    for (const item of this.flattenSegments(segments)) {
+      const topic = item.topic?.trim()
+      if (!topic) continue
+      const key = this.normalizeTopicText(topic)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      topics.push(topic)
+    }
+
+    return topics.slice(0, MAX_UNIQUE_TOPICS)
   }
 
   private chunkTranscript(transcript: string): string[] {
@@ -513,6 +545,238 @@ export class OllamaProvider implements LLMProvider {
     }
 
     return result
+  }
+
+  private normalizeMergedTopics(segments: MeetingSegments): void {
+    const items = this.flattenSegments(segments).filter((item) => item.topic?.trim())
+    if (items.length === 0) return
+
+    let groups = this.buildTopicGroups(items)
+    groups = this.mergeExactAndNearDuplicateTopics(groups)
+    groups = this.reduceTopicGroups(groups)
+
+    for (const group of groups) {
+      const canonical = this.pickCanonicalTopic(group)
+      for (const segment of group.segments) {
+        segment.topic = canonical
+      }
+    }
+  }
+
+  private flattenSegments(segments: MeetingSegments): Segment[] {
+    return [
+      ...segments.decisions,
+      ...segments.actionItems,
+      ...segments.information,
+      ...segments.discussion,
+      ...segments.statusUpdates,
+    ]
+  }
+
+  private buildTopicGroups(items: Segment[]): TopicGroup[] {
+    const groups: TopicGroup[] = []
+    const topicMap = new Map<string, TopicGroup>()
+
+    for (const item of items) {
+      const topic = item.topic?.trim()
+      if (!topic) continue
+
+      const key = this.normalizeTopicText(topic)
+      const existing = topicMap.get(key)
+      if (existing) {
+        existing.segments.push(item)
+        existing.labelCounts.set(topic, (existing.labelCounts.get(topic) ?? 0) + 1)
+        continue
+      }
+
+      const group: TopicGroup = {
+        segments: [item],
+        labelCounts: new Map([[topic, 1]]),
+      }
+      topicMap.set(key, group)
+      groups.push(group)
+    }
+
+    return groups
+  }
+
+  private mergeExactAndNearDuplicateTopics(groups: TopicGroup[]): TopicGroup[] {
+    let changed = true
+
+    while (changed) {
+      changed = false
+      outer: for (let i = 0; i < groups.length; i++) {
+        for (let j = i + 1; j < groups.length; j++) {
+          if (this.getTopicGroupSimilarity(groups[i], groups[j]) < TOPIC_MERGE_THRESHOLD) {
+            continue
+          }
+
+          groups[i] = this.mergeTopicGroups(groups[i], groups[j])
+          groups.splice(j, 1)
+          changed = true
+          break outer
+        }
+      }
+    }
+
+    return groups
+  }
+
+  private reduceTopicGroups(groups: TopicGroup[]): TopicGroup[] {
+    while (groups.length > MAX_UNIQUE_TOPICS || groups.some((group) => group.segments.length === 1 && groups.length > 1)) {
+      let sourceIndex = -1
+
+      if (groups.length > MAX_UNIQUE_TOPICS) {
+        sourceIndex = this.findSmallestGroupIndex(groups)
+      } else {
+        sourceIndex = groups.findIndex((group) => group.segments.length === 1)
+      }
+
+      if (sourceIndex < 0) break
+
+      let bestTargetIndex = -1
+      let bestScore = -1
+
+      for (let targetIndex = 0; targetIndex < groups.length; targetIndex++) {
+        if (targetIndex === sourceIndex) continue
+
+        const similarity = this.getTopicGroupSimilarity(groups[sourceIndex], groups[targetIndex])
+        const sizeBonus = groups[targetIndex].segments.length * 0.02
+        const score = similarity + sizeBonus
+        if (score > bestScore) {
+          bestScore = score
+          bestTargetIndex = targetIndex
+        }
+      }
+
+      if (bestTargetIndex < 0) break
+
+      const mustMerge = groups.length > MAX_UNIQUE_TOPICS
+      if (!mustMerge && bestScore < TOPIC_SINGLETON_MERGE_THRESHOLD) {
+        break
+      }
+
+      groups[bestTargetIndex] = this.mergeTopicGroups(groups[bestTargetIndex], groups[sourceIndex])
+      groups.splice(sourceIndex, 1)
+    }
+
+    return groups
+  }
+
+  private findSmallestGroupIndex(groups: TopicGroup[]): number {
+    let smallestIndex = 0
+    for (let i = 1; i < groups.length; i++) {
+      if (groups[i].segments.length < groups[smallestIndex].segments.length) {
+        smallestIndex = i
+      }
+    }
+    return smallestIndex
+  }
+
+  private mergeTopicGroups(primary: TopicGroup, secondary: TopicGroup): TopicGroup {
+    const labelCounts = new Map(primary.labelCounts)
+    for (const [label, count] of secondary.labelCounts.entries()) {
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + count)
+    }
+
+    return {
+      segments: [...primary.segments, ...secondary.segments],
+      labelCounts,
+    }
+  }
+
+  private pickCanonicalTopic(group: TopicGroup): string {
+    const candidates = [...group.labelCounts.entries()]
+    candidates.sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1]
+
+      const aWords = this.tokenizeTopic(a[0]).length
+      const bWords = this.tokenizeTopic(b[0]).length
+      if (aWords !== bWords) return aWords - bWords
+
+      if (a[0].length !== b[0].length) return a[0].length - b[0].length
+      return a[0].localeCompare(b[0])
+    })
+
+    return candidates[0]?.[0] ?? 'General'
+  }
+
+  private getTopicGroupSimilarity(a: TopicGroup, b: TopicGroup): number {
+    const aTopics = [...a.labelCounts.keys()]
+    const bTopics = [...b.labelCounts.keys()]
+    const directTopicSimilarity = Math.max(
+      ...aTopics.flatMap((left) => bTopics.map((right) => this.getTopicTextSimilarity(left, right))),
+      0,
+    )
+
+    const aHeadlineTokens = this.getGroupTokens(a, false)
+    const bHeadlineTokens = this.getGroupTokens(b, false)
+    const aContextTokens = this.getGroupTokens(a, true)
+    const bContextTokens = this.getGroupTokens(b, true)
+
+    const headlineSimilarity = this.getTokenSetSimilarity(aHeadlineTokens, bHeadlineTokens)
+    const contextSimilarity = this.getTokenSetSimilarity(aContextTokens, bContextTokens)
+
+    return Math.max(
+      directTopicSimilarity,
+      headlineSimilarity,
+      (headlineSimilarity * 0.65) + (contextSimilarity * 0.35),
+    )
+  }
+
+  private getGroupTokens(group: TopicGroup, includeContent: boolean): Set<string> {
+    const tokens = new Set<string>()
+
+    for (const segment of group.segments) {
+      for (const token of this.tokenizeTopic(`${segment.topic ?? ''} ${segment.title}${includeContent ? ` ${segment.content}` : ''}`)) {
+        tokens.add(token)
+      }
+    }
+
+    return tokens
+  }
+
+  private getTopicTextSimilarity(left: string, right: string): number {
+    const normalizedLeft = this.normalizeTopicText(left)
+    const normalizedRight = this.normalizeTopicText(right)
+    if (!normalizedLeft || !normalizedRight) return 0
+    if (normalizedLeft === normalizedRight) return 1
+    if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+      return 0.9
+    }
+
+    return this.getTokenSetSimilarity(
+      new Set(this.tokenizeTopic(left)),
+      new Set(this.tokenizeTopic(right)),
+    )
+  }
+
+  private getTokenSetSimilarity(left: Set<string>, right: Set<string>): number {
+    if (left.size === 0 || right.size === 0) return 0
+
+    let shared = 0
+    for (const token of left) {
+      if (right.has(token)) shared++
+    }
+
+    const shorterSize = Math.min(left.size, right.size)
+    const unionSize = left.size + right.size - shared
+    const containment = shorterSize === 0 ? 0 : shared / shorterSize
+    const jaccard = unionSize === 0 ? 0 : shared / unionSize
+    return Math.max(containment, jaccard)
+  }
+
+  private normalizeTopicText(text: string): string {
+    return this.tokenizeTopic(text).join(' ')
+  }
+
+  private tokenizeTopic(text: string): string[] {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3 && !TOPIC_STOP_WORDS.has(token))
   }
 
   private parseTranscriptLines(transcript: string): TranscriptLine[] {
