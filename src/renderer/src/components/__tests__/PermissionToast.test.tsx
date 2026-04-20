@@ -27,6 +27,29 @@ describe('PermissionToast', () => {
     expect(screen.getByText('Enable screen recording')).toBeInTheDocument()
   })
 
+  it('renders an action button when the toast includes one', () => {
+    useToastStore.setState({
+      activeToast: {
+        type: 'screen',
+        message: 'Enable screen recording',
+        action: { label: 'Enable', type: 'open-settings', target: 'screen' },
+      },
+    })
+    render(<PermissionToast />)
+    expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument()
+  })
+
+  it('does not render an action button for non-actionable warnings', () => {
+    useToastStore.setState({
+      activeToast: {
+        type: 'warning',
+        message: 'Audio devices changed and AutoDoc could not reconnect automatically.',
+      },
+    })
+    render(<PermissionToast />)
+    expect(screen.queryByRole('button', { name: 'Enable' })).toBeNull()
+  })
+
   it('dismisses on X click', async () => {
     vi.useRealTimers()
     useToastStore.setState({

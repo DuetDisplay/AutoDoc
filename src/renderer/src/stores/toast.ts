@@ -1,8 +1,15 @@
 import { create } from 'zustand'
 
-interface Toast {
-  type: 'screen' | 'microphone' | 'calendar'
+export interface ToastAction {
+  label: string
+  type: 'open-settings' | 'navigate'
+  target: 'screen' | 'microphone' | string
+}
+
+export interface Toast {
+  type: 'screen' | 'microphone' | 'calendar' | 'warning'
   message: string
+  action?: ToastAction
 }
 
 interface ToastStore {

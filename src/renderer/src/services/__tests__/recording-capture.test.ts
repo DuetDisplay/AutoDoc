@@ -78,28 +78,30 @@ describe('recording-capture', () => {
     recoveryReject = null
 
     let getUserMediaCallCount = 0
+    const getUserMediaMock = vi.fn((constraints: MediaStreamConstraints) => {
+      getUserMediaCallCount += 1
+
+      if (getUserMediaCallCount === 4) {
+        return new Promise<MockMediaStream>((_, reject) => {
+          recoveryReject = reject
+        })
+      }
+
+      if (constraints.audio === false) {
+        return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+      }
+
+      if (constraints.audio && constraints.video) {
+        return Promise.resolve(
+          new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]),
+        )
+      }
+
+      return Promise.resolve(new MockMediaStream([new MockTrack('audio')]))
+    })
+
     const mediaDevices = {
-      getUserMedia: vi.fn((constraints: MediaStreamConstraints) => {
-        getUserMediaCallCount += 1
-
-        if (getUserMediaCallCount === 4) {
-          return new Promise<MockMediaStream>((_, reject) => {
-            recoveryReject = reject
-          })
-        }
-
-        if (constraints.audio === false) {
-          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
-        }
-
-        if (constraints.audio && constraints.video) {
-          return Promise.resolve(
-            new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]),
-          )
-        }
-
-        return Promise.resolve(new MockMediaStream([new MockTrack('audio')]))
-      }),
+      getUserMedia: getUserMediaMock,
       enumerateDevices: vi.fn().mockResolvedValue([
         { kind: 'audioinput', deviceId: 'default', groupId: 'mic-default', label: 'Mic' },
         { kind: 'audiooutput', deviceId: 'default', groupId: 'speaker-default', label: 'Speaker' },
@@ -145,6 +147,24 @@ describe('recording-capture', () => {
     recoveryReject?.(new Error('meeting already ended'))
     await Promise.resolve()
     await stopPromise
+
+    expect(useToastStore.getState().activeToast).toBeNull()
+  })
+
+  it('does not show a recovery failure toast when recovery fails', async () => {
+    const { startCapture } = await import('../recording-capture')
+    const { useToastStore } = await import('../../stores/toast')
+
+    useToastStore.setState({ activeToast: null })
+
+    await startCapture('window:1', 'meeting-1')
+
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(750)
+    await Promise.resolve()
+    recoveryReject?.(new Error('route switch failed'))
+    await Promise.resolve()
 
     expect(useToastStore.getState().activeToast).toBeNull()
   })
