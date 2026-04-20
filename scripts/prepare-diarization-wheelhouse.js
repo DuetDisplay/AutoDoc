@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { access, mkdir, rm, writeFile } = require('fs/promises')
+const { access, mkdir, readFile, readdir, rm, stat, writeFile } = require('fs/promises')
 const { join } = require('path')
 const { spawn } = require('child_process')
 
@@ -8,6 +8,7 @@ const REQUIREMENTS_PATH = join(process.cwd(), 'resources', 'diarization-requirem
 const OUTPUT_DIR = join(process.cwd(), 'vendor', 'python-runtime-bundle')
 const PYTHON_RELEASE_TAG = '20260414'
 const PYTHON_VERSION = '3.11.15'
+const BUNDLE_FORMAT = 'preinstalled-runtime-v2-pruned'
 
 const TARGETS = {
   'darwin-arm64': {
@@ -69,7 +70,76 @@ function getReadyMarkerPath(targetKey) {
 }
 
 async function isRuntimeReady(targetKey) {
-  return fileExists(getReadyMarkerPath(targetKey))
+  const markerPath = getReadyMarkerPath(targetKey)
+  if (!(await fileExists(markerPath))) {
+    return false
+  }
+
+  try {
+    const contents = await readFile(markerPath, 'utf8')
+    return contents.includes(`mode=${BUNDLE_FORMAT}`)
+  } catch {
+    return false
+  }
+}
+
+async function walkAndPrune(rootPath, pruneFn) {
+  const entries = await readdir(rootPath, { withFileTypes: true })
+  for (const entry of entries) {
+    const entryPath = join(rootPath, entry.name)
+    const shouldPrune = await pruneFn(entryPath, entry)
+    if (shouldPrune) {
+      await rm(entryPath, { recursive: true, force: true })
+      continue
+    }
+
+    if (entry.isDirectory()) {
+      await walkAndPrune(entryPath, pruneFn)
+    }
+  }
+}
+
+async function pruneBundledRuntime(targetKey) {
+  const runtimeDir = join(OUTPUT_DIR, targetKey)
+  const sitePackagesDir = join(runtimeDir, 'python', 'lib', 'python3.11', 'site-packages')
+
+  const removePaths = [
+    join(sitePackagesDir, 'torch', 'include'),
+    join(sitePackagesDir, 'torch', 'testing'),
+    join(sitePackagesDir, 'torch', 'share'),
+  ]
+
+  for (const removePath of removePaths) {
+    await rm(removePath, { recursive: true, force: true })
+  }
+
+  await walkAndPrune(runtimeDir, async (entryPath, entry) => {
+    if (entry.isDirectory()) {
+      return (
+        entry.name === '__pycache__' ||
+        entry.name === 'tests' ||
+        entry.name === 'test'
+      )
+    }
+
+    if (!entry.isFile()) {
+      return false
+    }
+
+    return (
+      entry.name.endsWith('.pyc') ||
+      entry.name.endsWith('.pyo') ||
+      entry.name.endsWith('.a') ||
+      entry.name.endsWith('.h') ||
+      entry.name.endsWith('.hpp') ||
+      entry.name.endsWith('.cuh')
+    )
+  })
+
+  const runtimeInfo = await stat(runtimeDir)
+  if (!runtimeInfo.isDirectory()) {
+    throw new Error(`Bundled diarization runtime directory is missing after pruning: ${runtimeDir}`)
+  }
 }
 
 async function ensureBundledRuntime(targetKey) {
@@ -105,13 +175,15 @@ async function ensureBundledRuntime(targetKey) {
     REQUIREMENTS_PATH,
   ])
 
+  await pruneBundledRuntime(targetKey)
+
   await writeFile(
     getReadyMarkerPath(targetKey),
     [
       `target=${targetKey}`,
       `python=${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}`,
       'requirements=resources/diarization-requirements.txt',
-      'mode=preinstalled-runtime',
+      `mode=${BUNDLE_FORMAT}`,
     ].join('\n'),
   )
 }
