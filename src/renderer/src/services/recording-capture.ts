@@ -60,8 +60,6 @@ const VIDEO_RECORDER_MIME_CANDIDATES = [
   'video/webm'
 ]
 const AUDIO_RECORDER_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm']
-const RECOVERY_FAILURE_MESSAGE =
-  'Audio devices changed and AutoDoc could not reconnect automatically. This recording may be incomplete.'
 
 async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
   if (typeof navigator.mediaDevices?.enumerateDevices !== 'function') {
@@ -299,7 +297,12 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     useToastStore.getState().showToast({
       type: 'screen',
       message:
-        'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.'
+        'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
+      action: {
+        label: 'Enable',
+        type: 'open-settings',
+        target: 'screen'
+      }
     })
     stopStream(videoStream)
     throw new Error(
@@ -348,7 +351,12 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     useToastStore.getState().showToast({
       type: 'microphone',
       message:
-        'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.'
+        'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
+      action: {
+        label: 'Enable',
+        type: 'open-settings',
+        target: 'microphone'
+      }
     })
   }
 
@@ -661,12 +669,6 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
         reason
       })
     } catch (err) {
-      if (!capture.stopping && activeCapture === capture) {
-        useToastStore.getState().showToast({
-          type: 'microphone',
-          message: RECOVERY_FAILURE_MESSAGE
-        })
-      }
       console.error('Failed to recover capture after device change:', err)
     } finally {
       capture.recoveryPromise = null

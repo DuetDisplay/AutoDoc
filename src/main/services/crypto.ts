@@ -39,29 +39,32 @@ export class EncryptionKeyUnavailableError extends Error {
 let cachedKey: Buffer | null = null
 let cachedKeyError: Error | null = null
 
-function shouldUseIsolatedTestStorage(): boolean {
-  return Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR)
+function usesIsolatedStore(): boolean {
+  return !app.isPackaged
+    || Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR)
     || process.env.AUTODOC_E2E === '1'
     || process.env.AUTODOC_TEST_REAL_SETUP === '1'
 }
 
 function getPrimaryStorePath(): string {
-  if (shouldUseIsolatedTestStorage()) {
+  if (usesIsolatedStore()) {
     return path.join(app.getPath('userData'), STORE_FILENAME)
   }
   return path.join(app.getPath('appData'), CANONICAL_APP_DIR, STORE_FILENAME)
 }
 
 function getLegacyStorePaths(): string[] {
-  const paths = new Set<string>([path.join(app.getPath('userData'), STORE_FILENAME), getPrimaryStorePath()])
-
-  if (shouldUseIsolatedTestStorage()) {
-    return [...paths]
+  if (usesIsolatedStore()) {
+    return [getPrimaryStorePath()]
   }
 
-  paths.add(path.join(app.getPath('appData'), 'autodoc', STORE_FILENAME))
-  paths.add(path.join(app.getPath('appData'), 'Autodoc', STORE_FILENAME))
-  paths.add(path.join(app.getPath('appData'), 'Electron', STORE_FILENAME))
+  const paths = new Set<string>([
+    path.join(app.getPath('userData'), STORE_FILENAME),
+    path.join(app.getPath('appData'), 'autodoc', STORE_FILENAME),
+    path.join(app.getPath('appData'), 'Autodoc', STORE_FILENAME),
+    path.join(app.getPath('appData'), 'Electron', STORE_FILENAME),
+    getPrimaryStorePath(),
+  ])
 
   return [...paths]
 }

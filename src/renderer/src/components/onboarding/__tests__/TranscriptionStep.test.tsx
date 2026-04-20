@@ -28,7 +28,7 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Setting Up Transcription')).toBeInTheDocument()
-    expect(screen.getByText(/one-time local transcription setup/i)).toBeInTheDocument()
+    expect(screen.getByText(/local speech engine and local speaker identification/i)).toBeInTheDocument()
     expect(screen.getByText(/downloading transcription engine\.\.\. 42%/i)).toBeInTheDocument()
     expect(screen.queryByText(/brew install/i)).not.toBeInTheDocument()
   })

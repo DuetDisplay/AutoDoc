@@ -178,10 +178,39 @@ export interface OllamaSetupStatus {
 }
 
 export interface WhisperSetupStatus {
-  phase: 'checking' | 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready' | 'error'
+  phase:
+    | 'checking'
+    | 'downloading-whisper'
+    | 'downloading-ffmpeg'
+    | 'downloading-model'
+    | 'preparing-speaker-runtime'
+    | 'installing-speaker-id'
+    | 'downloading-speaker-model'
+    | 'ready'
+    | 'error'
   percent: number
   error?: string
-  failedStep?: 'downloading-whisper' | 'downloading-ffmpeg' | 'downloading-model' | 'ready'
+  failedStep?:
+    | 'downloading-whisper'
+    | 'downloading-ffmpeg'
+    | 'downloading-model'
+    | 'preparing-speaker-runtime'
+    | 'installing-speaker-id'
+    | 'downloading-speaker-model'
+    | 'ready'
+}
+
+export interface DiarizationSetupStatus {
+  phase:
+    | 'checking'
+    | 'preparing-speaker-runtime'
+    | 'installing-speaker-id'
+    | 'downloading-speaker-model'
+    | 'ready'
+    | 'error'
+  percent: number
+  error?: string
+  failedStep?: 'preparing-speaker-runtime' | 'installing-speaker-id' | 'downloading-speaker-model' | 'ready'
 }
 
 export interface DetectionAutoRecordPayload {

@@ -8,6 +8,7 @@ const isE2E = process.env.AUTODOC_E2E === '1'
 export function registerWhisperIpc(
   whisperManager: WhisperManager,
   getWhisperSetupStatus: () => WhisperSetupStatus,
+  retryTranscriptionSetup?: () => Promise<void>,
 ): void {
   ipcMain.handle(
     'whisper:get-setup-status',
@@ -33,7 +34,11 @@ export function registerWhisperIpc(
       }
 
       try {
-        await whisperManager.startSetup()
+        if (retryTranscriptionSetup) {
+          await retryTranscriptionSetup()
+        } else {
+          await whisperManager.startSetup()
+        }
       } catch (err) {
         console.error('Whisper retry failed:', err)
       }

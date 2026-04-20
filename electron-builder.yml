@@ -16,6 +16,15 @@ files:
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'
   - '!**/.DS_Store'
+extraResources:
+  - from: vendor/python-runtime
+    to: python-runtime
+    filter:
+      - '**/*'
+  - from: vendor/diarization-model
+    to: diarization-model
+    filter:
+      - '**/*'
 asarUnpack:
   - 'resources/**'
   - 'native/**'

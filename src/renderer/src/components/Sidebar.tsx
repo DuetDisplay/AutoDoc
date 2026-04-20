@@ -108,14 +108,23 @@ export function Sidebar() {
         <div className="mt-auto flex flex-col gap-2">
           {whisperPhase === 'downloading-whisper' ||
           whisperPhase === 'downloading-ffmpeg' ||
-          whisperPhase === 'downloading-model' ? (
+          whisperPhase === 'downloading-model' ||
+          whisperPhase === 'preparing-speaker-runtime' ||
+          whisperPhase === 'installing-speaker-id' ||
+          whisperPhase === 'downloading-speaker-model' ? (
             <div className="px-2.5 py-2 flex flex-col gap-1.5">
               <span className="text-[11px] text-ink-faint">
                 {whisperPhase === 'downloading-whisper'
                   ? `Downloading transcription engine... ${whisperPercent}%`
                   : whisperPhase === 'downloading-ffmpeg'
                     ? `Downloading audio tools... ${whisperPercent}%`
-                    : `Downloading speech model... ${whisperPercent}%`}
+                    : whisperPhase === 'downloading-model'
+                      ? `Downloading speech model... ${whisperPercent}%`
+                      : whisperPhase === 'preparing-speaker-runtime'
+                        ? `Preparing speaker ID runtime... ${whisperPercent}%`
+                        : whisperPhase === 'installing-speaker-id'
+                          ? `Installing speaker ID... ${whisperPercent}%`
+                          : `Downloading speaker model... ${whisperPercent}%`}
               </span>
               <div className="w-full h-1 bg-border rounded-full overflow-hidden">
                 <div

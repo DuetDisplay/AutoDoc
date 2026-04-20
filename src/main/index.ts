@@ -15,6 +15,7 @@ import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
+import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
@@ -29,7 +30,14 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import { logAutodocFailure } from './services/autodoc-log'
-import type { AppRuntimeInfo, AppStorageInfo, OllamaSetupStatus, WhisperSetupStatus, RecordingMediaPlayerErrorReport } from '../shared/types'
+import type {
+  AppRuntimeInfo,
+  AppStorageInfo,
+  OllamaSetupStatus,
+  WhisperSetupStatus,
+  DiarizationSetupStatus,
+  RecordingMediaPlayerErrorReport,
+} from '../shared/types'
 import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
 import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
 import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
@@ -45,7 +53,6 @@ import {
   getE2EOllamaStatus,
   getE2EPermissions,
   getE2EPlatform,
-  getE2EWhisperStatus,
   setE2EOllamaStatus,
   setE2EWhisperStatus,
 } from './services/e2e-fixtures'
@@ -63,6 +70,9 @@ if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
 } else if (isE2E) {
   app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
+} else if (is.dev) {
+  // Keep local dev/testing isolated from the installed app's recordings, models, and key store.
+  app.setPath('userData', join(app.getPath('appData'), 'AutoDoc Dev'))
 }
 
 if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
@@ -79,7 +89,6 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
   }
   process.argv = process.argv.filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
 }
-
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.autodoc.app')
 }
@@ -452,6 +461,7 @@ app.whenReady().then(async () => {
 
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
+  const diarizationService = new DiarizationService()
   const transcriptionService = new TranscriptionService(
     whisperManager,
     audioConverter,
@@ -461,6 +471,7 @@ app.whenReady().then(async () => {
       const state = recordingService.getState()
       return state.isRecording && state.meetingId === meetingId
     },
+    diarizationService,
   )
   ollamaManager = new OllamaManager()
   const managedOllamaManager = ollamaManager
@@ -669,11 +680,12 @@ app.whenReady().then(async () => {
     detectionService.dismissPrompt()
   })
 
-  // Mutable state tracking Whisper setup progress
-  const whisperSetupState: WhisperSetupStatus = isE2E
-    ? getE2EWhisperStatus()
+  const whisperEngineSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
+  const diarizationSetupState: DiarizationSetupStatus = isE2E
+    ? { phase: 'ready', percent: 100 }
     : { phase: 'checking', percent: 0 }
-  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = isE2E ? whisperSetupState.phase : 'checking'
+  let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
+  let lastSuccessfulDiarizationPhase: DiarizationSetupStatus['phase'] = isE2E ? 'ready' : 'checking'
   const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] => (
     lastSuccessfulWhisperPhase === 'downloading-ffmpeg'
     || lastSuccessfulWhisperPhase === 'downloading-model'
@@ -682,37 +694,82 @@ app.whenReady().then(async () => {
       : 'downloading-whisper'
   )
 
+  const getDiarizationFailedStep = (): DiarizationSetupStatus['failedStep'] => (
+    lastSuccessfulDiarizationPhase === 'installing-speaker-id'
+    || lastSuccessfulDiarizationPhase === 'downloading-speaker-model'
+    || lastSuccessfulDiarizationPhase === 'ready'
+      ? lastSuccessfulDiarizationPhase
+      : 'preparing-speaker-runtime'
+  )
+
+  const mapDiarizationToTranscriptionStatus = (status: DiarizationSetupStatus): WhisperSetupStatus => ({
+    phase: status.phase,
+    percent: status.percent,
+    error: status.error,
+    failedStep: status.failedStep,
+  })
+
+  const getCombinedTranscriptionSetupStatus = (): WhisperSetupStatus => {
+    if (whisperEngineSetupState.phase === 'error') {
+      return { ...whisperEngineSetupState }
+    }
+    if (whisperEngineSetupState.phase !== 'ready') {
+      return { ...whisperEngineSetupState }
+    }
+
+    const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(diarizationSetupState)
+    if (diarizationAsTranscription.phase === 'error' || diarizationAsTranscription.phase !== 'ready') {
+      return diarizationAsTranscription
+    }
+
+    return { phase: 'ready', percent: 100 }
+  }
+
+  const broadcastTranscriptionSetupStatus = (): void => {
+    const combined = getCombinedTranscriptionSetupStatus()
+    updateWhisperSentryContext({
+      ready: combined.phase === 'ready',
+      modelFilename: whisperManager.getModelInfo().filename,
+      whisperVersion: 'v1.8.4',
+      phase: combined.phase,
+      failedStep: combined.failedStep ?? null,
+      diarizationPhase: diarizationSetupState.phase,
+      diarizationFailedStep: diarizationSetupState.failedStep ?? null,
+    })
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('whisper:setup-progress', combined)
+    }
+  }
+
   whisperManager.on('setup-status', (status: WhisperSetupStatus) => {
     if (status.phase !== 'error') {
       lastSuccessfulWhisperPhase = status.phase
     }
-    whisperSetupState.phase = status.phase
-    whisperSetupState.percent = status.percent
-    whisperSetupState.error = status.error
-    whisperSetupState.failedStep = status.phase === 'error' ? getWhisperFailedStep() : undefined
-    updateWhisperSentryContext({
-      ready: status.phase === 'ready',
-      modelFilename: whisperManager.getModelInfo().filename,
-      whisperVersion: 'v1.8.4',
-      phase: status.phase,
-      failedStep: whisperSetupState.failedStep ?? null,
-    })
-    const windows = BrowserWindow.getAllWindows()
-    for (const win of windows) {
-      win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+    whisperEngineSetupState.phase = status.phase
+    whisperEngineSetupState.percent = status.percent
+    whisperEngineSetupState.error = status.error
+    whisperEngineSetupState.failedStep = status.phase === 'error' ? getWhisperFailedStep() : undefined
+    broadcastTranscriptionSetupStatus()
+  })
+
+  diarizationService.on('setup-status', (status: DiarizationSetupStatus) => {
+    if (status.phase !== 'error') {
+      lastSuccessfulDiarizationPhase = status.phase
     }
+    diarizationSetupState.phase = status.phase
+    diarizationSetupState.percent = status.percent
+    diarizationSetupState.error = status.error
+    diarizationSetupState.failedStep = status.phase === 'error' ? getDiarizationFailedStep() : undefined
+    broadcastTranscriptionSetupStatus()
   })
 
   if (isE2E) {
     ipcMain.handle('e2e:set-whisper-status', (_event, status: WhisperSetupStatus) => {
       const nextStatus = setE2EWhisperStatus(status)
-      whisperSetupState.phase = nextStatus.phase
-      whisperSetupState.percent = nextStatus.percent
-      whisperSetupState.error = nextStatus.error
-      whisperSetupState.failedStep = nextStatus.failedStep
       const windows = BrowserWindow.getAllWindows()
       for (const win of windows) {
-        win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
+        win.webContents.send('whisper:setup-progress', nextStatus)
       }
     })
 
@@ -740,7 +797,16 @@ app.whenReady().then(async () => {
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
   )
-  registerWhisperIpc(whisperManager, () => ({ ...whisperSetupState }))
+  registerWhisperIpc(
+    whisperManager,
+    () => getCombinedTranscriptionSetupStatus(),
+    async () => {
+      await Promise.allSettled([
+        whisperManager.startSetup(),
+        diarizationService.startSetup(),
+      ])
+    },
+  )
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider, calendarManager)
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
@@ -828,43 +894,45 @@ app.whenReady().then(async () => {
     whisperManager.startSetup()
       .then(() => {
         lastSuccessfulWhisperPhase = 'ready'
-        whisperSetupState.phase = 'ready'
-        whisperSetupState.percent = 100
-        delete whisperSetupState.error
-        delete whisperSetupState.failedStep
-        updateWhisperSentryContext({
-          ready: true,
-          modelFilename: whisperManager.getModelInfo().filename,
-          whisperVersion: 'v1.8.4',
-          phase: 'ready',
-          failedStep: null,
-        })
-        const windows = BrowserWindow.getAllWindows()
-        for (const win of windows) {
-          win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
-        }
+        whisperEngineSetupState.phase = 'ready'
+        whisperEngineSetupState.percent = 100
+        delete whisperEngineSetupState.error
+        delete whisperEngineSetupState.failedStep
+        broadcastTranscriptionSetupStatus()
       })
       .catch((err) => {
-        whisperSetupState.phase = 'error'
-        whisperSetupState.error = err instanceof Error ? err.message : String(err)
-        whisperSetupState.failedStep = getWhisperFailedStep()
-        updateWhisperSentryContext({
-          ready: false,
-          modelFilename: whisperManager.getModelInfo().filename,
-          whisperVersion: 'v1.8.4',
-          phase: 'error',
-          failedStep: whisperSetupState.failedStep ?? null,
-        })
-        const windows = BrowserWindow.getAllWindows()
-        for (const win of windows) {
-          win.webContents.send('whisper:setup-progress', { ...whisperSetupState })
-        }
+        whisperEngineSetupState.phase = 'error'
+        whisperEngineSetupState.error = err instanceof Error ? err.message : String(err)
+        whisperEngineSetupState.failedStep = getWhisperFailedStep()
+        broadcastTranscriptionSetupStatus()
         logAutodocFailure({
           area: 'whisper',
           message: 'Failed to set up whisper tools',
           error: err,
         })
         console.error('Failed to set up whisper tools:', err)
+      })
+
+    diarizationService.startSetup()
+      .then(() => {
+        lastSuccessfulDiarizationPhase = 'ready'
+        diarizationSetupState.phase = 'ready'
+        diarizationSetupState.percent = 100
+        delete diarizationSetupState.error
+        delete diarizationSetupState.failedStep
+        broadcastTranscriptionSetupStatus()
+      })
+      .catch((err) => {
+        diarizationSetupState.phase = 'error'
+        diarizationSetupState.error = err instanceof Error ? err.message : String(err)
+        diarizationSetupState.failedStep = getDiarizationFailedStep()
+        broadcastTranscriptionSetupStatus()
+        logAutodocFailure({
+          area: 'diarization',
+          message: 'Failed to set up speaker diarization',
+          error: err,
+        })
+        console.error('Failed to set up speaker diarization:', err)
       })
 
     // Start Ollama + pull model in the background — don't block the window

@@ -5,6 +5,9 @@ const phaseLabels: Record<string, (percent: number) => string> = {
   'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
   'downloading-ffmpeg': (p) => `Installing audio tools... ${p}%`,
   'downloading-model': (p) => `Downloading speech model... ${p}%`,
+  'preparing-speaker-runtime': (p) => `Preparing speaker identification runtime... ${p}%`,
+  'installing-speaker-id': (p) => `Installing speaker identification... ${p}%`,
+  'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`,
 }
 
 export function TranscriptionStep({ onNext }: { onNext: () => void }) {
@@ -78,7 +81,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up Transcription</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc is downloading a one-time local transcription setup. After that, your speech-to-text runs on-device.
+        AutoDoc uses a local speech engine and local speaker identification to process meetings on-device. This downloads once and runs entirely on your machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">

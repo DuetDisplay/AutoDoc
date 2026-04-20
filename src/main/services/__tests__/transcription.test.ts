@@ -46,6 +46,7 @@ vi.mock('../crypto', () => ({
 const fsMock = vi.mocked(await import('fs/promises'))
 const childProcessMock = vi.mocked(await import('child_process'))
 const osMock = vi.mocked(await import('os'))
+const cryptoMock = vi.mocked(await import('../crypto'))
 
 class MockChildProcess extends EventEmitter {
   pid = 1234
@@ -71,16 +72,22 @@ function createMockAudioConverter(): AudioConverter {
     convert: vi.fn().mockResolvedValue(undefined),
     mergeAudio: vi.fn().mockResolvedValue(undefined),
     extractClip: vi.fn().mockResolvedValue(undefined),
+    concatClips: vi.fn().mockResolvedValue(undefined),
     getDuration: vi.fn().mockResolvedValue(60),
   } as unknown as AudioConverter
 }
-
 
 function createMockCalendarManager(): CalendarManager {
   return {
     isConnected: vi.fn().mockReturnValue(false),
     fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
   } as unknown as CalendarManager
+}
+
+function createMockDiarizationService() {
+  return {
+    diarize: vi.fn(),
+  }
 }
 
 describe('TranscriptionService', () => {
@@ -313,6 +320,210 @@ describe('TranscriptionService', () => {
 
     expect(mockConverter.convert).toHaveBeenCalledTimes(2)
     expect(mockConverter.mergeAudio).not.toHaveBeenCalled()
+  })
+
+  it('relabels remote system segments as speaker_1, speaker_2, etc. when diarization succeeds', async () => {
+    const mockDiarization = createMockDiarizationService()
+    mockDiarization.diarize.mockResolvedValue({
+      speakers: [
+        { id: 'SPEAKER_00', segments: [{ start: 0.4, end: 1.2 }] },
+        { id: 'SPEAKER_01', segments: [{ start: 1.2, end: 2.4 }] },
+      ],
+    })
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      mockDiarization as any,
+    )
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 3 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }],
+      })
+      .mockResolvedValueOnce({
+        transcription: [
+          { offsets: { from: 500, to: 1200 }, text: 'Remote speaker one' },
+          { offsets: { from: 1200, to: 2200 }, text: 'Remote speaker two' },
+        ],
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-diarized-0',
+          meetingId: 'meeting-diarized',
+          speaker: 'Speaker',
+          text: 'My microphone words',
+          startMs: 0,
+          endMs: 900,
+          confidence: -1,
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-diarized-1',
+          meetingId: 'meeting-diarized',
+          speaker: 'Speaker',
+          text: 'Remote speaker one',
+          startMs: 500,
+          endMs: 1200,
+          confidence: -1,
+        },
+        {
+          id: 'meeting-diarized-2',
+          meetingId: 'meeting-diarized',
+          speaker: 'Speaker',
+          text: 'Remote speaker two',
+          startMs: 1200,
+          endMs: 2200,
+          confidence: -1,
+        },
+      ])
+
+    await expect((service as any).processJob('meeting-diarized')).resolves.toBeUndefined()
+
+    const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('transcript.json'),
+    )
+    const speakersWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('speakers.json'),
+    )
+
+    expect(mockDiarization.diarize).toHaveBeenCalledTimes(1)
+    expect(transcriptWrite?.[0]).toEqual([
+      expect.objectContaining({ speaker: 'me', text: 'My microphone words' }),
+      expect.objectContaining({ speaker: 'speaker_1', text: 'Remote speaker one' }),
+      expect.objectContaining({ speaker: 'speaker_2', text: 'Remote speaker two' }),
+    ])
+    expect(speakersWrite?.[0]).toEqual({
+      me: { label: 'Me' },
+      speaker_1: { label: 'Speaker 1' },
+      speaker_2: { label: 'Speaker 2' },
+    })
+  })
+
+  it('compacts diarization audio to transcript windows and remaps speaker timings back to the original meeting', async () => {
+    const mockDiarization = createMockDiarizationService()
+    mockDiarization.diarize.mockResolvedValue({
+      speakers: [
+        { id: 'SPEAKER_00', segments: [{ start: 0.2, end: 4.2 }] },
+        { id: 'SPEAKER_01', segments: [{ start: 4.2, end: 9.5 }] },
+      ],
+    })
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      mockDiarization as any,
+    )
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(mockConverter.getDuration as any).mockResolvedValue(900)
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
+      transcription: [
+        { offsets: { from: 120000, to: 123000 }, text: 'First remote speaker' },
+        { offsets: { from: 420000, to: 424000 }, text: 'Second remote speaker' },
+      ],
+    })
+    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+      {
+        id: 'meeting-compact-0',
+        meetingId: 'meeting-compact',
+        speaker: 'Speaker',
+        text: 'First remote speaker',
+        startMs: 120000,
+        endMs: 123000,
+        confidence: -1,
+      },
+      {
+        id: 'meeting-compact-1',
+        meetingId: 'meeting-compact',
+        speaker: 'Speaker',
+        text: 'Second remote speaker',
+        startMs: 420000,
+        endMs: 424000,
+        confidence: -1,
+      },
+    ])
+
+    await expect((service as any).processJob('meeting-compact')).resolves.toBeUndefined()
+
+    expect(mockConverter.extractClip).toHaveBeenCalledTimes(2)
+    expect(mockConverter.concatClips).toHaveBeenCalledTimes(1)
+    expect(mockDiarization.diarize).toHaveBeenCalledWith(
+      expect.stringContaining('-compact.wav'),
+    )
+
+    const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('transcript.json'),
+    )
+
+    expect(transcriptWrite?.[0]).toEqual([
+      expect.objectContaining({ speaker: 'speaker_1', text: 'First remote speaker' }),
+      expect.objectContaining({ speaker: 'speaker_2', text: 'Second remote speaker' }),
+    ])
+  })
+
+  it('falls back to the existing speaker label when diarization fails', async () => {
+    const mockDiarization = createMockDiarizationService()
+    mockDiarization.diarize.mockRejectedValue(new Error('pyannote unavailable'))
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      mockDiarization as any,
+    )
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }],
+    })
+    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+      {
+        id: 'meeting-diarization-fallback-0',
+        meetingId: 'meeting-diarization-fallback',
+        speaker: 'Speaker',
+        text: 'Hello from speakers',
+        startMs: 0,
+        endMs: 1000,
+        confidence: -1,
+      },
+    ])
+
+    await expect((service as any).processJob('meeting-diarization-fallback')).resolves.toBeUndefined()
+
+    const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('transcript.json'),
+    )
+
+    expect(mockDiarization.diarize).toHaveBeenCalledTimes(1)
+    expect(transcriptWrite?.[0]).toEqual([
+      expect.objectContaining({ speaker: 'them', text: 'Hello from speakers' }),
+    ])
   })
 
   it('collapses overlapping cross-speaker duplicates when dual-channel audio echoes the same utterance', () => {

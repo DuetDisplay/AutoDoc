@@ -9,6 +9,7 @@ import { useToastStore } from '../stores/toast'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { CalendarEvent } from '../../../shared/types'
+import { ROUTES } from '../../../shared/constants'
 
 let calendarToastShown = false
 
@@ -56,6 +57,11 @@ export function Upcoming() {
       useToastStore.getState().showToast({
         type: 'calendar',
         message: 'Connect a calendar to see upcoming meetings and auto-name recordings.',
+        action: {
+          label: 'Open Settings',
+          type: 'navigate',
+          target: ROUTES.settings,
+        },
       })
     }
   }, [isConnected, calendarChecked])
