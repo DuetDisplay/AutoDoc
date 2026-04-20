@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { access, mkdir, rm } from 'fs/promises'
+import { access, mkdir, readdir, rm } from 'fs/promises'
 import { createWriteStream } from 'fs'
 import { join } from 'path'
 import { spawn, execSync, execFile } from 'child_process'
@@ -16,6 +16,7 @@ import {
 const IS_WIN = process.platform === 'win32'
 const MANAGED_PYTHON_SUBDIR = 'python-runtime'
 const MANAGED_MODEL_SUBDIR = 'diarization-model'
+const MANAGED_WHEELHOUSE_SUBDIR = 'diarization-wheelhouse'
 const BUNDLED_MODEL_NAME = 'community-1'
 const REMOTE_MODEL_ID = 'pyannote/speaker-diarization-community-1'
 const PROBE_TIMEOUT_MS = 30_000
@@ -106,6 +107,20 @@ export class DiarizationService extends EventEmitter {
     return join(app.getAppPath(), 'vendor', MANAGED_MODEL_SUBDIR, BUNDLED_MODEL_NAME)
   }
 
+  private getRequirementsPath(): string {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'diarization-requirements.txt')
+    }
+    return join(app.getAppPath(), 'resources', 'diarization-requirements.txt')
+  }
+
+  private getBundledWheelhousePath(target: ManagedPythonTarget): string {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, MANAGED_WHEELHOUSE_SUBDIR, target.key)
+    }
+    return join(app.getAppPath(), 'vendor', MANAGED_WHEELHOUSE_SUBDIR, target.key)
+  }
+
   private getManagedRuntimeRoot(): string {
     return join(app.getPath('userData'), MANAGED_PYTHON_SUBDIR)
   }
@@ -159,15 +174,8 @@ export class DiarizationService extends EventEmitter {
     }
 
     this.setSetupStatus({ phase: 'installing-speaker-id', percent: 55 })
-    await this.runCommand(this.getPipPath(), ['install', '--upgrade', 'pip'])
-    await this.runCommand(this.getPipPath(), [
-      'install',
-      'pyannote.audio==4.0.4',
-      'torch',
-      'torchaudio',
-      'soundfile',
-      'huggingface_hub',
-    ])
+    const target = getManagedPythonTarget(process.platform, process.arch)
+    await this.installPythonDependencies(target)
 
     this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
     const modelPath = await this.ensureModelReady()
@@ -250,6 +258,50 @@ export class DiarizationService extends EventEmitter {
 
   private async isPipelineDirectory(path: string): Promise<boolean> {
     return this.fileExists(join(path, 'config.yaml'))
+  }
+
+  private async installPythonDependencies(target: ManagedPythonTarget | null): Promise<void> {
+    const requirementsPath = this.getRequirementsPath()
+    const bundledWheelhouse = target ? await this.resolveBundledWheelhouse(target) : null
+
+    if (bundledWheelhouse) {
+      await this.runCommand(this.getPipPath(), [
+        'install',
+        '--no-index',
+        '--find-links',
+        bundledWheelhouse,
+        '--requirement',
+        requirementsPath,
+      ])
+      return
+    }
+
+    if (app.isPackaged) {
+      throw new Error(
+        'Bundled speaker diarization Python dependencies are missing. Rebuild after running prepare:diarization-wheelhouse.',
+      )
+    }
+
+    await this.runCommand(this.getPipPath(), ['install', '--upgrade', 'pip'])
+    await this.runCommand(this.getPipPath(), [
+      'install',
+      '--requirement',
+      requirementsPath,
+    ])
+  }
+
+  private async resolveBundledWheelhouse(target: ManagedPythonTarget): Promise<string | null> {
+    const wheelhousePath = this.getBundledWheelhousePath(target)
+    if (!(await this.fileExists(wheelhousePath))) {
+      return null
+    }
+
+    const entries = await readdir(wheelhousePath)
+    if (!entries.some((entry) => entry.endsWith('.whl'))) {
+      return null
+    }
+
+    return wheelhousePath
   }
 
   private async downloadModelSnapshot(pythonPath: string, modelPath: string, token: string): Promise<void> {

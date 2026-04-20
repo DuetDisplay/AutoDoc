@@ -19,6 +19,8 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +98,8 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4

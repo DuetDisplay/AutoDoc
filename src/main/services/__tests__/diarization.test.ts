@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
 vi.mock('fs/promises', () => ({
   access: vi.fn(),
   mkdir: vi.fn(),
+  readdir: vi.fn(),
   rm: vi.fn(),
 }))
 
@@ -102,10 +103,49 @@ describe('DiarizationService bootstrap resolution', () => {
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
     vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
     vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue('/mock/resources/diarization-wheelhouse/darwin-arm64')
     vi.spyOn(service as any, 'ensureModelReady').mockResolvedValue('/mock/model/community-1')
     vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
 
     await expect(service.startSetup()).resolves.toBeUndefined()
     expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
+  })
+
+  it('prefers bundled diarization wheels in packaged builds', async () => {
+    const service = new DiarizationService()
+
+    vi.spyOn(service, 'isReady').mockResolvedValue(false)
+    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
+    vi.spyOn(service as any, 'ensureModelReady').mockResolvedValue('/mock/model/community-1')
+    vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
+    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue('/mock/resources/diarization-wheelhouse/darwin-arm64')
+
+    const runCommandSpy = vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
+
+    await expect(service.ensureReady()).resolves.toBeUndefined()
+
+    expect(runCommandSpy).toHaveBeenCalledWith('/usr/bin/python3', ['-m', 'venv', '/mock/home/python-env'])
+    expect(runCommandSpy).toHaveBeenCalledWith(
+      '/mock/home/python-env/bin/pip',
+      [
+        'install',
+        '--no-index',
+        '--find-links',
+        '/mock/resources/diarization-wheelhouse/darwin-arm64',
+        '--requirement',
+        '/mock/resources/diarization-requirements.txt',
+      ],
+    )
+  })
+
+  it('fails packaged setup when bundled diarization wheels are missing', async () => {
+    const service = new DiarizationService()
+
+    vi.spyOn(service, 'isReady').mockResolvedValue(false)
+    vi.spyOn(service as any, 'resolveBootstrapPython').mockResolvedValue('/usr/bin/python3')
+    vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'resolveBundledWheelhouse').mockResolvedValue(null)
+
+    await expect(service.ensureReady()).rejects.toThrow(/Bundled speaker diarization Python dependencies are missing/)
   })
 })

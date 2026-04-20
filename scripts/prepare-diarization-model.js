@@ -83,8 +83,9 @@ async function ensureModelSnapshot() {
   }
 
   if (!HF_TOKEN) {
-    console.warn('[diarization-model] HF_TOKEN/HUGGINGFACE_TOKEN not set; skipping bundled diarization model download')
-    return
+    throw new Error(
+      'HF_TOKEN/HUGGINGFACE_TOKEN is required to bundle the speaker diarization model. Add it to your local environment or CI secrets before running the build.',
+    )
   }
 
   const configPath = join(MODEL_DIR, 'config.yaml')

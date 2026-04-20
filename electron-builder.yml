@@ -7,6 +7,7 @@ files:
   - 'out/**/*'
   - 'node_modules/**/*'
   - 'resources/diarize.py'
+  - 'resources/diarization-requirements.txt'
   - 'resources/icon.png'
   - 'resources/trayTemplate.png'
   - 'resources/trayTemplate@2x.png'
@@ -23,6 +24,10 @@ extraResources:
       - '**/*'
   - from: vendor/diarization-model
     to: diarization-model
+    filter:
+      - '**/*'
+  - from: vendor/diarization-wheelhouse
+    to: diarization-wheelhouse
     filter:
       - '**/*'
 asarUnpack:

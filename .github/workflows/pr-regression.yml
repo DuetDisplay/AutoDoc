@@ -9,6 +9,9 @@ jobs:
     name: PR Onboarding
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
