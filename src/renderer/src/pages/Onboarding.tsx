@@ -12,31 +12,60 @@ import { AllSetStep } from '../components/onboarding/AllSetStep'
 import { setAnalyticsConsent, trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
-const TOTAL_DOTS = 10
+const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
+const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 7, 8, 9, 10] as const
+
+function getVisibleStepOrder(platform: string | null): readonly number[] {
+  return platform === 'win32' ? WINDOWS_STEP_ORDER : DARWIN_STEP_ORDER
+}
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
-  const [step, setStep] = useState<number | null>(null)
+  const [platform, setPlatform] = useState<string | null>(null)
+  const [stepIndex, setStepIndex] = useState<number | null>(null)
+  const stepOrder = getVisibleStepOrder(platform)
+  const step = stepIndex === null ? null : stepOrder[stepIndex] ?? stepOrder[0]
+  const totalDots = Math.max(0, stepOrder.length - 1)
 
   useEffect(() => {
-    window.electronAPI.invoke('prefs:get-onboarding-step').then((saved) => {
-      setStep(saved ?? 0)
+    Promise.all([
+      window.electronAPI.invoke('prefs:get-onboarding-step'),
+      window.electronAPI.invoke('app:get-runtime-info'),
+    ]).then(([saved, runtimeInfo]) => {
+      const resolvedPlatform = runtimeInfo?.platform ?? 'darwin'
+      const visibleSteps = getVisibleStepOrder(resolvedPlatform)
+      const savedStep = saved ?? 0
+      const exactIndex = visibleSteps.indexOf(savedStep)
+
+      setPlatform(resolvedPlatform)
+
+      if (exactIndex !== -1) {
+        setStepIndex(exactIndex)
+        return
+      }
+
+      const migratedIndex = visibleSteps.findIndex((candidate) => candidate > savedStep)
+      const nextIndex = migratedIndex === -1 ? visibleSteps.length - 1 : migratedIndex
+      const normalizedStep = visibleSteps[nextIndex] ?? visibleSteps[0]
+      setStepIndex(nextIndex)
+      void window.electronAPI.invoke('prefs:set-onboarding-step', normalizedStep)
     })
   }, [])
 
   const next = useCallback(() => {
-    setStep((s) => {
-      const current = s ?? 0
+    setStepIndex((currentIndex) => {
+      const current = currentIndex ?? 0
       recordDiagnosticAction({
         category: 'onboarding',
         action: 'onboarding_step_completed',
-        details: { step: current },
+        details: { step: stepOrder[current] ?? stepOrder[0] },
       })
-      trackEvent('onboarding_step_completed', { step: current })
-      const nextStep = current + 1
+      trackEvent('onboarding_step_completed', { step: stepOrder[current] ?? stepOrder[0] })
+      const nextIndex = Math.min(current + 1, stepOrder.length - 1)
+      const nextStep = stepOrder[nextIndex] ?? stepOrder[stepOrder.length - 1]
       window.electronAPI.invoke('prefs:set-onboarding-step', nextStep)
-      return nextStep
+      return nextIndex
     })
-  }, [])
+  }, [stepOrder])
 
   const handleAnalyticsChoice = async (consented: boolean) => {
     recordDiagnosticAction({
@@ -46,10 +75,11 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
     setAnalyticsConsent(consented)
-    setStep((s) => {
-      const nextStep = (s ?? 0) + 1
+    setStepIndex((currentIndex) => {
+      const nextIndex = Math.min((currentIndex ?? 0) + 1, stepOrder.length - 1)
+      const nextStep = stepOrder[nextIndex] ?? stepOrder[stepOrder.length - 1]
       window.electronAPI.invoke('prefs:set-onboarding-step', nextStep)
-      return nextStep
+      return nextIndex
     })
   }
 
@@ -133,9 +163,9 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       />
 
       {/* Step dots (hidden on All Set screen) */}
-      {step < TOTAL_DOTS && (
+      {stepIndex !== null && stepIndex < totalDots && (
         <div className="absolute top-7 left-1/2 -translate-x-1/2">
-          <StepDots total={TOTAL_DOTS} current={step} />
+          <StepDots total={totalDots} current={stepIndex} />
         </div>
       )}
 
