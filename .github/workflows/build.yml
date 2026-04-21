@@ -7,9 +7,24 @@ on:
       - codex/single-instance-installed-copy
       - main
   workflow_dispatch:
+    inputs:
+      release_platform:
+        description: Release target to build and publish
+        required: false
+        default: mac
+        type: choice
+        options:
+          - mac
+          - all
+      release_tag:
+        description: Tag name for release assets (leave blank for non-release runs)
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-mac:
+    if: github.event_name == 'push' || inputs.release_platform == 'mac' || inputs.release_platform == 'all'
     runs-on: macos-latest
     permissions:
       contents: write
@@ -54,7 +69,7 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build macOS release (signed + notarized)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
@@ -62,11 +77,11 @@ jobs:
         run: npm run build:mac
 
       - name: Build macOS artifacts (signed, no notarization)
-        if: github.ref_type == 'branch'
+        if: github.event_name == 'push' && github.ref_type == 'branch'
         run: npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
       - name: Upload macOS artifacts
-        if: github.ref_type == 'branch' && success()
+        if: github.event_name == 'push' && github.ref_type == 'branch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: autodoc-macos-${{ github.run_number }}
@@ -77,10 +92,10 @@ jobs:
           retention-days: 14
 
       - name: Upload macOS release assets
-        if: startsWith(github.ref, 'refs/tags/') && success()
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos-${{ github.ref_name }}
+          name: release-macos-${{ inputs.release_tag }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -89,6 +104,7 @@ jobs:
           retention-days: 14
 
   build-win:
+    if: github.event_name == 'push' || inputs.release_platform == 'all'
     runs-on: windows-2022
     permissions:
       contents: write
@@ -114,7 +130,7 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Materialize DigiCert client certificate
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         shell: pwsh
         env:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
@@ -124,7 +140,7 @@ jobs:
           "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert signing tools
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         uses: digicert/ssm-code-signing@v1.0.0
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -133,7 +149,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         shell: pwsh
         run: |
           $smctlCommand = Get-Command smctl.exe -ErrorAction SilentlyContinue
@@ -163,7 +179,7 @@ jobs:
           "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check DigiCert signing health
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -176,7 +192,7 @@ jobs:
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
@@ -187,7 +203,7 @@ jobs:
         run: npm run build:win
 
       - name: Verify Windows signatures
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         shell: pwsh
         run: |
           $files = @(
@@ -224,11 +240,11 @@ jobs:
           }
 
       - name: Build Windows artifacts
-        if: github.ref_type == 'branch'
+        if: github.event_name == 'push' && github.ref_type == 'branch'
         run: npm run build && npx electron-builder --win --publish never --config.win.forceCodeSigning=false
 
       - name: Upload Windows artifacts
-        if: github.ref_type == 'branch' && success()
+        if: github.event_name == 'push' && github.ref_type == 'branch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: autodoc-windows-${{ github.run_number }}
@@ -238,10 +254,10 @@ jobs:
           retention-days: 14
 
       - name: Upload Windows release assets
-        if: startsWith(github.ref, 'refs/tags/') && success()
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows-${{ github.ref_name }}
+          name: release-windows-${{ inputs.release_tag }}
           path: |
             dist/*-setup.exe
             dist/latest.yml
@@ -249,7 +265,14 @@ jobs:
           retention-days: 14
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'workflow_dispatch' &&
+        inputs.release_tag != '' &&
+        needs.build-mac.result == 'success' &&
+        (inputs.release_platform != 'all' || needs.build-win.result == 'success')
+      }}
     runs-on: ubuntu-latest
     needs:
       - build-mac
@@ -259,37 +282,43 @@ jobs:
 
     steps:
       - name: Download macOS release assets
+        if: needs.build-mac.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-macos-${{ github.ref_name }}
+          name: release-macos-${{ inputs.release_tag }}
           path: release-assets/mac
 
       - name: Download Windows release assets
+        if: inputs.release_platform == 'all' && needs.build-win.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-windows-${{ github.ref_name }}
+          name: release-windows-${{ inputs.release_tag }}
           path: release-assets/win
 
       - name: Publish curated GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          assets=(release-assets/mac/*)
+          if [ -d release-assets/win ]; then
+            assets+=(release-assets/win/*)
+          fi
 
-          if gh release view "$tag" -R "$GH_REPO" >/dev/null 2>&1; then
-            gh release upload "$tag" release-assets/mac/* release-assets/win/* --clobber -R "$GH_REPO"
+          if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber -R "$GH_REPO"
           else
-            gh release create "$tag" release-assets/mac/* release-assets/win/* --verify-tag --title "$tag" -R "$GH_REPO"
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
           fi
 
       - name: Remove obsolete blockmap assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${tag}")"
+          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}")"
           blockmap_ids="$(jq -r '.assets[] | select(.name | endswith(".blockmap")) | .id' <<<"$release_json")"
 
           if [ -z "$blockmap_ids" ]; then
