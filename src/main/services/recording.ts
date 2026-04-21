@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { mkdir } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import type { RecordingState, RecordingPaths } from '../../shared/types'
+import type { RecordingState, RecordingPaths, RecordingTrackingContext } from '../../shared/types'
 import { RECORDING_SUBDIR } from '../../shared/constants'
 
 export class RecordingService {
@@ -12,13 +12,20 @@ export class RecordingService {
     startedAt: null,
     sourceId: null,
     sourceName: null,
+    trackedMeetingSourceId: null,
+    trackedMeetingSourceName: null,
+    trackedMeetingProviderId: null
   }
 
   getState(): RecordingState {
     return { ...this.state }
   }
 
-  async startRecording(sourceId: string, sourceName: string): Promise<RecordingPaths> {
+  async startRecording(
+    sourceId: string,
+    sourceName: string,
+    trackingContext: RecordingTrackingContext | null = null
+  ): Promise<RecordingPaths> {
     if (this.state.isRecording) {
       throw new Error('Already recording')
     }
@@ -33,13 +40,16 @@ export class RecordingService {
       startedAt: Date.now(),
       sourceId,
       sourceName,
+      trackedMeetingSourceId: trackingContext?.meetingSourceId ?? null,
+      trackedMeetingSourceName: trackingContext?.meetingSourceName ?? null,
+      trackedMeetingProviderId: trackingContext?.providerId ?? null
     }
 
     return {
       meetingId,
       dir,
       video: join(dir, 'screen.webm'),
-      audio: join(dir, 'audio.webm'),
+      audio: join(dir, 'audio.webm')
     }
   }
 
@@ -56,6 +66,9 @@ export class RecordingService {
       startedAt: null,
       sourceId: null,
       sourceName: null,
+      trackedMeetingSourceId: null,
+      trackedMeetingSourceName: null,
+      trackedMeetingProviderId: null
     }
 
     return { meetingId, startedAt, sourceName }

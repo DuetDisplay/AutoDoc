@@ -12,38 +12,38 @@ const mocks = vi.hoisted(() => ({
   isAutoRecordEnabled: vi.fn(() => false),
   getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
-  execFile: vi.fn(),
+  execFile: vi.fn()
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: mocks.getAllWindows },
-  desktopCapturer: { getSources: mocks.getSources },
+  desktopCapturer: { getSources: mocks.getSources }
 }))
 
 vi.mock('../../notification-window', () => ({
   showNotificationWindow: mocks.showNotificationWindow,
-  hideNotificationWindow: mocks.hideNotificationWindow,
+  hideNotificationWindow: mocks.hideNotificationWindow
 }))
 
 vi.mock('../auto-record-store', () => ({
-  isAutoRecordEnabled: mocks.isAutoRecordEnabled,
+  isAutoRecordEnabled: mocks.isAutoRecordEnabled
 }))
 
 vi.mock('../autodoc-log', () => ({
   logAutodocEvent: mocks.logAutodocEvent,
-  logAutodocFailure: mocks.logAutodocFailure,
+  logAutodocFailure: mocks.logAutodocFailure
 }))
 
 vi.mock('../mac-meeting-detector', () => ({
-  getActiveCaptureProcessIdsMac: mocks.getActiveCaptureProcessIdsMac,
+  getActiveCaptureProcessIdsMac: mocks.getActiveCaptureProcessIdsMac
 }))
 
 vi.mock('../windows-meeting-detector', () => ({
-  getActiveCaptureProcessIdsWindows: mocks.getActiveCaptureProcessIdsWindows,
+  getActiveCaptureProcessIdsWindows: mocks.getActiveCaptureProcessIdsWindows
 }))
 
 vi.mock('child_process', () => ({
-  execFile: mocks.execFile,
+  execFile: mocks.execFile
 }))
 
 function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
@@ -60,7 +60,7 @@ function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
     attendees: [],
     meetingUrl: null,
     autoRecord: 'off',
-    syncedAt: Date.now(),
+    syncedAt: Date.now()
   }
 }
 
@@ -70,7 +70,7 @@ describe('DetectionService', () => {
   const setPlatform = (platform: NodeJS.Platform) => {
     Object.defineProperty(process, 'platform', {
       value: platform,
-      configurable: true,
+      configurable: true
     })
   }
 
@@ -103,7 +103,7 @@ describe('DetectionService', () => {
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [makeEvent('evt-1', 5 * 60_000)],
+      () => [makeEvent('evt-1', 5 * 60_000)]
     )
 
     await (service as any).poll()
@@ -116,7 +116,7 @@ describe('DetectionService', () => {
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [makeEvent('evt-1', 5 * 60_000)],
+      () => [makeEvent('evt-1', 5 * 60_000)]
     )
 
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
@@ -132,7 +132,7 @@ describe('DetectionService', () => {
     let events = [makeEvent('evt-1', -1 * 60_000)]
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => events,
+      () => events
     )
 
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
@@ -152,7 +152,7 @@ describe('DetectionService', () => {
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [],
+      () => []
     )
 
     mocks.getActiveCaptureProcessIdsWindows
@@ -184,7 +184,7 @@ describe('DetectionService', () => {
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [event],
+      () => [event]
     )
 
     await (service as any).poll()
@@ -192,7 +192,7 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
     expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
       hasCalendarEvent: true,
-      providerId: null,
+      providerId: null
     })
   })
 
@@ -202,7 +202,7 @@ describe('DetectionService', () => {
     const scheduledEvent = makeEvent('evt-1', -1 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [scheduledEvent],
+      () => [scheduledEvent]
     )
 
     mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.tinyspeck.slackmacgap'])
@@ -225,7 +225,7 @@ describe('DetectionService', () => {
     let event = makeEvent('evt-1', 5 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [event],
+      () => [event]
     )
 
     mocks.getActiveCaptureProcessIdsWindows
@@ -245,7 +245,7 @@ describe('DetectionService', () => {
 
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [],
+      () => []
     )
 
     mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.apple.corespeechd'])
@@ -261,7 +261,7 @@ describe('DetectionService', () => {
     let event = makeEvent('evt-1', 5 * 60_000)
     const service = new DetectionService(
       { getState: () => ({ isRecording: false }) } as never,
-      () => [event],
+      () => [event]
     )
 
     mocks.getActiveCaptureProcessIdsMac
@@ -282,13 +282,15 @@ describe('DetectionService', () => {
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:1', name: 'Microsoft Teams' },
-    ] as any))
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:1', name: 'Microsoft Teams' }] as any
+    )
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 8; i += 1) {
@@ -308,8 +310,10 @@ describe('DetectionService', () => {
     mocks.getSources.mockResolvedValue([] as any)
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 8; i += 1) {
@@ -317,12 +321,52 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
-      reason: 'window_closed',
-      sourceType: 'window',
-      providerDetected: false,
-      meetingWindowVisible: false,
-    }))
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'window_closed',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
+  })
+
+  it('auto-stops on Windows screen capture when the tracked meeting window disappears after the provider goes away', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:other', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'screen',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
   })
 
   it('auto-stops on Windows when provider is gone and recorded window closes, even if the meeting app window stays open', async () => {
@@ -331,13 +375,13 @@ describe('DetectionService', () => {
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:other', name: 'Slack' },
-    ] as any))
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:other', name: 'Slack' }] as any)
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 5; i += 1) {
@@ -345,12 +389,44 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
-      reason: 'provider_gone',
-      sourceType: 'window',
-      providerDetected: false,
-      meetingWindowVisible: true,
-    }))
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: true
+      })
+    )
+  })
+
+  it('does not auto-stop on Windows screen capture when the tracked meeting window disappears but the provider is still active', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:other', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 8; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
   })
 
   it('auto-stops on macOS when provider is gone and recorded window closes while mic is idle, even if the meeting app window stays open', async () => {
@@ -362,13 +438,13 @@ describe('DetectionService', () => {
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, '', '')
     })
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:other', name: 'Slack' },
-    ] as any))
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:other', name: 'Slack' }] as any)
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 5; i += 1) {
@@ -376,12 +452,55 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
-      reason: 'provider_gone',
-      sourceType: 'window',
-      providerDetected: false,
-      meetingWindowVisible: true,
-    }))
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: true
+      })
+    )
+  })
+
+  it('auto-stops on macOS screen capture when the tracked meeting window disappears after the provider goes away, even if audio-in still looks active', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, 'audio-in', '')
+    })
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:other', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'screen',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
   })
 
   it('does not auto-stop on macOS just because app focus or space changes hide the captured window', async () => {
@@ -393,13 +512,15 @@ describe('DetectionService', () => {
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, 'audio-in', '')
     })
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:other', name: 'Slack | Huddle' },
-    ] as any))
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:other', name: 'Slack | Huddle' }] as any
+    )
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 8; i += 1) {
@@ -422,8 +543,10 @@ describe('DetectionService', () => {
     mocks.getSources.mockResolvedValue([] as any)
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({ isRecording: true, sourceId: 'window:1', sourceName: 'Slack Huddle' })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 8; i += 1) {
@@ -431,12 +554,15 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-stop', expect.objectContaining({
-      reason: 'window_closed',
-      sourceType: 'window',
-      providerDetected: false,
-      meetingWindowVisible: false,
-    }))
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'window_closed',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
   })
 
   it('logs when auto-stop is suppressed because the meeting still appears visible after a window switch', async () => {
@@ -446,13 +572,20 @@ describe('DetectionService', () => {
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, 'audio-in', '')
     })
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:other', name: 'Slack | Huddle' },
-    ] as any))
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:other', name: 'Slack | Huddle' }] as any
+    )
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, meetingId: 'meeting-1', sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({
+          isRecording: true,
+          meetingId: 'meeting-1',
+          sourceId: 'window:1',
+          sourceName: 'Slack Huddle'
+        })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 3; i += 1) {
@@ -460,24 +593,34 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
-      area: 'detection',
-      meetingId: 'meeting-1',
-      message: 'Auto-stop suppressed — possible focus or desktop switch while meeting remains visible',
-    }))
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'detection',
+        meetingId: 'meeting-1',
+        message:
+          'Auto-stop suppressed — possible focus or desktop switch while meeting remains visible'
+      })
+    )
   })
 
   it('logs when auto-stop is blocked because the meeting window lingers after provider activity disappears', async () => {
     setPlatform('win32')
 
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
-    mocks.getSources.mockImplementation(async () => ([
-      { id: 'window:1', name: 'Slack | Huddle' },
-    ] as any))
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:1', name: 'Slack | Huddle' }] as any
+    )
 
     const service = new DetectionService(
-      { getState: () => ({ isRecording: true, meetingId: 'meeting-2', sourceId: 'window:1', sourceName: 'Slack Huddle' }) } as never,
-      () => [],
+      {
+        getState: () => ({
+          isRecording: true,
+          meetingId: 'meeting-2',
+          sourceId: 'window:1',
+          sourceName: 'Slack Huddle'
+        })
+      } as never,
+      () => []
     )
 
     for (let i = 0; i < 4; i += 1) {
@@ -485,11 +628,14 @@ describe('DetectionService', () => {
       await vi.advanceTimersByTimeAsync(3_000)
     }
 
-    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
-      area: 'detection',
-      meetingId: 'meeting-2',
-      message: 'Auto-stop blocked — meeting provider disappeared, but the meeting window is still visible',
-    }))
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'detection',
+        meetingId: 'meeting-2',
+        message:
+          'Auto-stop blocked — meeting provider disappeared, but the meeting window is still visible'
+      })
+    )
   })
 
   it('does not immediately re-prompt after a manual stop while the same meeting signal is still active', async () => {
@@ -504,10 +650,10 @@ describe('DetectionService', () => {
         getState: () => ({
           isRecording,
           sourceId: 'window:1',
-          sourceName: 'Slack - Huddle',
-        }),
+          sourceName: 'Slack - Huddle'
+        })
       } as never,
-      () => [event],
+      () => [event]
     )
 
     await (service as any).poll()

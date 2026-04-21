@@ -53,12 +53,16 @@ const MEETING_PROVIDERS: readonly MeetingProvider[] = [
       'ms-teams',
       'ms-teams.exe',
       'com.microsoft.teams',
-      'com.microsoft.teams2',
-    ],
+      'com.microsoft.teams2'
+    ]
   },
   { id: 'slack', name: 'Slack', identifiers: ['slack', 'slack.exe', 'com.tinyspeck.slackmacgap'] },
-  { id: 'webex', name: 'Webex', identifiers: ['webex', 'webex.exe', 'ciscowebexstart', 'com.cisco.webexmeetingsapp'] },
-  { id: 'discord', name: 'Discord', identifiers: ['discord', 'discord.exe', 'com.hnc.discord'] },
+  {
+    id: 'webex',
+    name: 'Webex',
+    identifiers: ['webex', 'webex.exe', 'ciscowebexstart', 'com.cisco.webexmeetingsapp']
+  },
+  { id: 'discord', name: 'Discord', identifiers: ['discord', 'discord.exe', 'com.hnc.discord'] }
 ]
 
 function normalize(value: string): string {
@@ -68,7 +72,9 @@ function normalize(value: string): string {
 function matchProviderFromIds(ids: string[]): MeetingProvider | null {
   for (const id of ids) {
     const normalizedId = normalize(id)
-    const matched = MEETING_PROVIDERS.find((provider) => provider.identifiers.includes(normalizedId))
+    const matched = MEETING_PROVIDERS.find((provider) =>
+      provider.identifiers.includes(normalizedId)
+    )
     if (matched) return matched
   }
 
@@ -94,7 +100,7 @@ export class DetectionService {
 
   constructor(
     private recordingService: RecordingService,
-    getCalendarEvents: () => CalendarEvent[],
+    getCalendarEvents: () => CalendarEvent[]
   ) {
     this.getCalendarEvents = getCalendarEvents
   }
@@ -125,16 +131,14 @@ export class DetectionService {
         const windowClosed = await this.isRecordedWindowClosed()
         const provider = await this.getActiveProvider()
         const providerDetected = provider !== null
-        const meetingWindowVisible = await this.isMeetingWindowOpen()
-        const micActive = process.platform === 'darwin'
-          ? await this.isMicInUseMac()
-          : null
+        const meetingWindowVisible = await this.getMeetingWindowVisibleForAutoStop()
+        const micActive = process.platform === 'darwin' ? await this.isMicInUseMac() : null
 
         this.updateAutoStopCounters({
           windowClosed,
           providerDetected,
           meetingWindowVisible,
-          micActive,
+          micActive
         })
 
         const snapshot = this.getAutoStopSnapshot(providerDetected, meetingWindowVisible)
@@ -185,8 +189,8 @@ export class DetectionService {
         error: err,
         context: {
           isRecording: this.recordingService.getState().isRecording,
-          providerSignalKey: this.lastProviderSignalKey || null,
-        },
+          providerSignalKey: this.lastProviderSignalKey || null
+        }
       })
     }
   }
@@ -209,7 +213,9 @@ export class DetectionService {
   }): void {
     this.windowMissingPolls = params.windowClosed ? this.windowMissingPolls + 1 : 0
     this.providerMissingPolls = params.providerDetected ? 0 : this.providerMissingPolls + 1
-    this.meetingWindowMissingPolls = params.meetingWindowVisible ? 0 : this.meetingWindowMissingPolls + 1
+    this.meetingWindowMissingPolls = params.meetingWindowVisible
+      ? 0
+      : this.meetingWindowMissingPolls + 1
 
     if (params.micActive === null) {
       this.micSilentPolls = 0
@@ -220,7 +226,7 @@ export class DetectionService {
 
   private getAutoStopSnapshot(
     providerDetected: boolean,
-    meetingWindowVisible: boolean,
+    meetingWindowVisible: boolean
   ): AutoStopSnapshot {
     return {
       sourceType: this.getRecordedSourceType(),
@@ -228,15 +234,17 @@ export class DetectionService {
       meetingWindowVisible,
       windowMissingPolls: this.windowMissingPolls,
       providerMissingPolls: this.providerMissingPolls,
-      micSilentPolls: this.micSilentPolls,
+      micSilentPolls: this.micSilentPolls
     }
   }
 
   private getAutoStopReason(snapshot: AutoStopSnapshot): AutoStopReason | null {
     const micIdleStrong = this.micSilentPolls * POLL_INTERVAL_MS >= AUTO_STOP_GRACE_MS
-    const meetingWindowGoneStrong = this.meetingWindowMissingPolls >= MEETING_WINDOW_MISSING_POLLS_THRESHOLD
+    const meetingWindowGoneStrong =
+      this.meetingWindowMissingPolls >= MEETING_WINDOW_MISSING_POLLS_THRESHOLD
     const providerGoneStrong = this.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD
-    const windowGoneStrong = snapshot.sourceType === 'window' && this.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
+    const windowGoneStrong =
+      snapshot.sourceType === 'window' && this.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
     const browserLikeSource = this.isBrowserLikeSource()
 
     if (windowGoneStrong && meetingWindowGoneStrong) {
@@ -269,27 +277,28 @@ export class DetectionService {
     const micIdleStrong = this.micSilentPolls * POLL_INTERVAL_MS >= AUTO_STOP_GRACE_MS
 
     if (
-      !this.loggedFocusSwitchSuppression
-      && snapshot.sourceType === 'window'
-      && snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
-      && snapshot.meetingWindowVisible
+      !this.loggedFocusSwitchSuppression &&
+      snapshot.sourceType === 'window' &&
+      snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD &&
+      snapshot.meetingWindowVisible
     ) {
       this.loggedFocusSwitchSuppression = true
       logAutodocEvent({
         area: 'detection',
-        message: 'Auto-stop suppressed — possible focus or desktop switch while meeting remains visible',
+        message:
+          'Auto-stop suppressed — possible focus or desktop switch while meeting remains visible',
         meetingId,
-        context: { ...snapshot },
+        context: { ...snapshot }
       })
     }
 
     if (
-      !this.loggedLingeringWindowBlock
-      && snapshot.sourceType === 'window'
-      && !snapshot.providerDetected
-      && snapshot.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD
-      && snapshot.meetingWindowVisible
-      && snapshot.windowMissingPolls === 0
+      !this.loggedLingeringWindowBlock &&
+      snapshot.sourceType === 'window' &&
+      !snapshot.providerDetected &&
+      snapshot.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD &&
+      snapshot.meetingWindowVisible &&
+      snapshot.windowMissingPolls === 0
     ) {
       this.loggedLingeringWindowBlock = true
       logAutodocEvent({
@@ -298,7 +307,7 @@ export class DetectionService {
           ? 'Auto-stop blocked — meeting may be over, but the meeting window is still visible'
           : 'Auto-stop blocked — meeting provider disappeared, but the meeting window is still visible',
         meetingId,
-        context: { ...snapshot },
+        context: { ...snapshot }
       })
     }
   }
@@ -309,7 +318,7 @@ export class DetectionService {
     if (!this.pendingAutoStop || this.pendingAutoStop.reason !== reason) {
       this.pendingAutoStop = {
         reason,
-        startedAt: Date.now(),
+        startedAt: Date.now()
       }
       return
     }
@@ -325,12 +334,12 @@ export class DetectionService {
       meetingId: this.recordingService.getState().meetingId ?? undefined,
       context: {
         reason,
-        ...snapshot,
-      },
+        ...snapshot
+      }
     })
     this.broadcast('detection:auto-stop', {
       reason,
-      ...snapshot,
+      ...snapshot
     })
   }
 
@@ -347,13 +356,13 @@ export class DetectionService {
       context: {
         reason: pending.reason,
         ...snapshot,
-        recoveredSignals,
-      },
+        recoveredSignals
+      }
     })
     this.broadcast('detection:auto-stop-cancelled', {
       reason: pending.reason,
       ...snapshot,
-      recoveredSignals,
+      recoveredSignals
     })
   }
 
@@ -384,7 +393,10 @@ export class DetectionService {
       return snapshot.providerDetected ? WINDOW_CLOSED_CONFIRM_MS : 0
     }
 
-    if (reason === 'provider_gone' && snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD) {
+    if (
+      reason === 'provider_gone' &&
+      snapshot.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
+    ) {
       return 0
     }
 
@@ -393,12 +405,54 @@ export class DetectionService {
 
   private async isMeetingWindowOpen(): Promise<boolean> {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
-      return sources.some((s) =>
-        MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))
-      )
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 1, height: 1 }
+      })
+      return sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name)))
     } catch {
       return true
+    }
+  }
+
+  private async getMeetingWindowVisibleForAutoStop(): Promise<boolean> {
+    if (this.getRecordedSourceType() === 'screen') {
+      const trackedMeetingVisible = await this.isTrackedMeetingWindowVisible()
+      if (trackedMeetingVisible !== null) {
+        return trackedMeetingVisible
+      }
+    }
+
+    return this.isMeetingWindowOpen()
+  }
+
+  private async isTrackedMeetingWindowVisible(): Promise<boolean | null> {
+    const state = this.recordingService.getState()
+    const trackedSourceId = state.trackedMeetingSourceId ?? null
+    const trackedSourceName = state.trackedMeetingSourceName ?? null
+
+    if (!trackedSourceId && !trackedSourceName) {
+      return null
+    }
+
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 1, height: 1 }
+      })
+
+      if (trackedSourceId && sources.some((source) => source.id === trackedSourceId)) {
+        return true
+      }
+
+      if (trackedSourceName) {
+        const normalizedTrackedName = normalize(trackedSourceName)
+        return sources.some((source) => normalize(source.name) === normalizedTrackedName)
+      }
+
+      return false
+    } catch {
+      return null
     }
   }
 
@@ -409,7 +463,10 @@ export class DetectionService {
     }
 
     try {
-      const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 1, height: 1 }
+      })
       return !sources.some((s) => s.id === state.sourceId)
     } catch {
       return false
@@ -423,11 +480,16 @@ export class DetectionService {
 
   private isBrowserLikeSource(): boolean {
     const sourceName = this.recordingService.getState().sourceName ?? ''
-    return BROWSER_PATTERNS.some((pattern) => pattern.test(sourceName))
-      || /\b(safari|chrome|firefox|edge|brave|arc|opera|vivaldi)\b/i.test(sourceName)
+    return (
+      BROWSER_PATTERNS.some((pattern) => pattern.test(sourceName)) ||
+      /\b(safari|chrome|firefox|edge|brave|arc|opera|vivaldi)\b/i.test(sourceName)
+    )
   }
 
-  private async handleCalendarEvent(event: CalendarEvent, providerSignalKey: string): Promise<void> {
+  private async handleCalendarEvent(
+    event: CalendarEvent,
+    providerSignalKey: string
+  ): Promise<void> {
     if (!providerSignalKey) {
       if (this.lastProviderSignalKey) {
         this.broadcast('detection:mic-inactive', {})
@@ -450,7 +512,10 @@ export class DetectionService {
     this.promptForCalendarEvent(event)
   }
 
-  private async handleAdHocDetection(provider: MeetingProvider | null, providerSignalKey: string): Promise<void> {
+  private async handleAdHocDetection(
+    provider: MeetingProvider | null,
+    providerSignalKey: string
+  ): Promise<void> {
     if (!provider) {
       this.resetProviderState()
       hideNotificationWindow()
@@ -505,7 +570,7 @@ export class DetectionService {
         focusMainWindow()
         this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })
       },
-      onDismiss: () => {},
+      onDismiss: () => {}
     })
   }
 
@@ -514,7 +579,7 @@ export class DetectionService {
       this.markAutoRecordPending()
       this.broadcast('detection:auto-record', {
         providerId: inferProviderFromMeetingUrl(event.meetingUrl),
-        hasCalendarEvent: true,
+        hasCalendarEvent: true
       })
       return
     }

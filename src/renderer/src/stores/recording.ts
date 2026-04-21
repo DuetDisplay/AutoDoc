@@ -19,6 +19,9 @@ export const useRecordingStore = create<RecordingStore>((set) => ({
   startedAt: null,
   sourceId: null,
   sourceName: null,
+  trackedMeetingSourceId: null,
+  trackedMeetingSourceName: null,
+  trackedMeetingProviderId: null,
   elapsedSeconds: 0,
   sources: [],
   isLoadingSources: false,
@@ -26,16 +29,14 @@ export const useRecordingStore = create<RecordingStore>((set) => ({
   setRecordingState: (state) =>
     set({
       ...state,
-      elapsedSeconds: state.startedAt
-        ? Math.floor((Date.now() - state.startedAt) / 1000)
-        : 0,
+      elapsedSeconds: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0
     }),
 
   tick: () =>
     set((s) => ({
       elapsedSeconds: s.startedAt
         ? Math.floor((Date.now() - s.startedAt) / 1000)
-        : s.elapsedSeconds + 1,
+        : s.elapsedSeconds + 1
     })),
 
   setSources: (sources) => set({ sources }),
@@ -48,6 +49,9 @@ export const useRecordingStore = create<RecordingStore>((set) => ({
       startedAt: null,
       sourceId: null,
       sourceName: null,
-      elapsedSeconds: 0,
-    }),
+      trackedMeetingSourceId: null,
+      trackedMeetingSourceName: null,
+      trackedMeetingProviderId: null,
+      elapsedSeconds: 0
+    })
 }))

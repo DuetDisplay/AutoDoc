@@ -11,8 +11,9 @@ import { ROUTES } from '../../shared/constants'
 import { useRecording } from './hooks/useRecording'
 import {
   buildRecordingSelectionContext,
+  buildRecordingTrackingContext,
   chooseAutoRecordSource,
-  findActiveCalendarEvent,
+  findActiveCalendarEvent
 } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
@@ -33,8 +34,8 @@ function RouteDiagnosticTracker() {
       category: 'navigation',
       action: 'route_viewed',
       details: {
-        path: location.pathname,
-      },
+        path: location.pathname
+      }
     })
   }, [location.pathname])
 
@@ -43,7 +44,8 @@ function RouteDiagnosticTracker() {
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
-  const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } = useRecording()
+  const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } =
+    useRecording()
   const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
@@ -65,7 +67,7 @@ export default function App() {
       if (consent === true) {
         recordDiagnosticAction({
           category: 'app',
-          action: 'app_opened',
+          action: 'app_opened'
         })
         trackEvent('app_opened')
       }
@@ -185,86 +187,95 @@ export default function App() {
   }, [isRecording])
 
   useEffect(() => {
-    const unsub = window.electronAPI.on('detection:auto-record', ({ providerId, hasCalendarEvent }) => {
-      void (async () => {
-        if (isRecording || autoRecordStartInFlight.current) return
-        autoRecordStartInFlight.current = true
-        const activeEvent = findActiveCalendarEvent(events)
-        const selectionContext = buildRecordingSelectionContext(activeEvent, providerId)
-        recordDiagnosticAction({
-          category: 'recording',
-          action: 'auto_record_requested',
-          details: {
-            providerId,
-            hasCalendarEvent,
-          },
-        })
-        try {
-          const sources = await fetchSources()
-          const selection = chooseAutoRecordSource(
-            sources,
-            selectionContext,
-            getSavedSourcePreference(selectionContext),
-          )
+    const unsub = window.electronAPI.on(
+      'detection:auto-record',
+      ({ providerId, hasCalendarEvent }) => {
+        void (async () => {
+          if (isRecording || autoRecordStartInFlight.current) return
+          autoRecordStartInFlight.current = true
+          const activeEvent = findActiveCalendarEvent(events)
+          const selectionContext = buildRecordingSelectionContext(activeEvent, providerId)
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'auto_record_requested',
+            details: {
+              providerId,
+              hasCalendarEvent
+            }
+          })
+          try {
+            const sources = await fetchSources()
+            const selection = chooseAutoRecordSource(
+              sources,
+              selectionContext,
+              getSavedSourcePreference(selectionContext)
+            )
 
-          if (selection.source && selection.confidence === 'high') {
-            await handleStart(selection.source.id, selection.source.name, selectionContext)
+            if (selection.source && selection.confidence === 'high') {
+              await handleStart(
+                selection.source.id,
+                selection.source.name,
+                selectionContext,
+                buildRecordingTrackingContext(selection.source, selection.source, selectionContext)
+              )
+              return
+            }
+
+            recordDiagnosticAction({
+              category: 'recording',
+              action: 'meeting_window_detection_failed',
+              details: {
+                hasCalendarEvent,
+                providerId: selection.providerHint,
+                windowCount: selection.windowCount,
+                browserWindowCount: selection.browserWindowCount,
+                meetingWindowCount: selection.meetingWindowCount,
+                selectionMethod: selection.method,
+                selectionConfidence: selection.confidence
+              }
+            })
+            trackEvent('meeting_window_detection_failed', {
+              trigger: 'auto_record',
+              has_calendar_event: hasCalendarEvent,
+              provider_hint: selection.providerHint ?? 'unknown',
+              window_count: selection.windowCount,
+              browser_window_count: selection.browserWindowCount,
+              meeting_window_count: selection.meetingWindowCount,
+              selection_method: selection.method,
+              selection_confidence: selection.confidence
+            })
+
+            useRecordingPickerStore.getState().openPicker({
+              title: 'Select the meeting window',
+              subtitle:
+                'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
+              sources,
+              detectedId: selection.source?.id ?? null,
+              suggestionLabel: selection.source ? 'Suggested window' : null
+            })
+            recordDiagnosticAction({
+              category: 'recording',
+              action: 'manual_source_selection_required',
+              details: {
+                trigger: 'auto_record',
+                hasSuggestion: selection.source !== null
+              }
+            })
+            trackEvent('recording_manual_source_selection_required', {
+              trigger: 'auto_record',
+              has_suggestion: selection.source !== null,
+              provider_hint: selection.providerHint ?? 'unknown'
+            })
+            window.location.hash = ROUTES.upcoming
+          } catch (err) {
+            autoRecordStartInFlight.current = false
+            console.error('Auto-record failed:', err)
             return
           }
-
-          recordDiagnosticAction({
-            category: 'recording',
-            action: 'meeting_window_detection_failed',
-            details: {
-              hasCalendarEvent,
-              providerId: selection.providerHint,
-              windowCount: selection.windowCount,
-              browserWindowCount: selection.browserWindowCount,
-              meetingWindowCount: selection.meetingWindowCount,
-              selectionMethod: selection.method,
-              selectionConfidence: selection.confidence,
-            },
-          })
-          trackEvent('meeting_window_detection_failed', {
-            trigger: 'auto_record',
-            has_calendar_event: hasCalendarEvent,
-            provider_hint: selection.providerHint ?? 'unknown',
-            window_count: selection.windowCount,
-            browser_window_count: selection.browserWindowCount,
-            meeting_window_count: selection.meetingWindowCount,
-            selection_method: selection.method,
-            selection_confidence: selection.confidence,
-          })
-
-          useRecordingPickerStore.getState().openPicker({
-            title: 'Select the meeting window',
-            subtitle: 'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
-            sources,
-            detectedId: selection.source?.id ?? null,
-            suggestionLabel: selection.source ? 'Suggested window' : null,
-          })
-          recordDiagnosticAction({
-            category: 'recording',
-            action: 'manual_source_selection_required',
-            details: {
-              trigger: 'auto_record',
-              hasSuggestion: selection.source !== null,
-            },
-          })
-          trackEvent('recording_manual_source_selection_required', {
-            trigger: 'auto_record',
-            has_suggestion: selection.source !== null,
-            provider_hint: selection.providerHint ?? 'unknown',
-          })
-          window.location.hash = ROUTES.upcoming
-        } catch (err) {
           autoRecordStartInFlight.current = false
-          console.error('Auto-record failed:', err)
-          return
-        }
-        autoRecordStartInFlight.current = false
-      })()
-    })
+        })()
+      }
+    )
     return unsub
   }, [events, isRecording, fetchSources, handleStart])
 
@@ -281,8 +292,8 @@ export default function App() {
             reason: payload.reason,
             sourceType: payload.sourceType,
             providerDetected: payload.providerDetected,
-            meetingWindowVisible: payload.meetingWindowVisible,
-          },
+            meetingWindowVisible: payload.meetingWindowVisible
+          }
         })
         trackEvent('recording_auto_stopped', {
           reason: payload.reason,
@@ -292,7 +303,7 @@ export default function App() {
           meeting_window_visible: payload.meetingWindowVisible,
           window_missing_polls: payload.windowMissingPolls,
           provider_missing_polls: payload.providerMissingPolls,
-          mic_silent_polls: payload.micSilentPolls,
+          mic_silent_polls: payload.micSilentPolls
         })
         try {
           await handleStop()
@@ -307,8 +318,8 @@ export default function App() {
         action: 'auto_stop_cancelled',
         details: {
           reason: payload.reason,
-          recoveredSignals: payload.recoveredSignals.join(','),
-        },
+          recoveredSignals: payload.recoveredSignals.join(',')
+        }
       })
       trackEvent('recording_auto_stop_cancelled', {
         reason: payload.reason,
@@ -318,7 +329,7 @@ export default function App() {
         window_missing_polls: payload.windowMissingPolls,
         provider_missing_polls: payload.providerMissingPolls,
         mic_silent_polls: payload.micSilentPolls,
-        recovered_signals: payload.recoveredSignals.join(','),
+        recovered_signals: payload.recoveredSignals.join(',')
       })
     })
     return () => {

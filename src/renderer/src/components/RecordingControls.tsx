@@ -1,17 +1,23 @@
 import { useMemo, useState } from 'react'
-import type { RecordingSource } from '../../../shared/types'
+import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
 import {
   buildRecordingSelectionContext,
+  buildRecordingTrackingContext,
   chooseAutoRecordSource,
-  findActiveCalendarEvent,
+  findActiveCalendarEvent
 } from '../services/window-detection'
 import { getSavedSourcePreference } from '../services/recording-source-preferences'
 
 interface RecordingControlsProps {
   isRecording: boolean
-  onStartRecording: (sourceId: string, sourceName: string, selectionContext?: ReturnType<typeof buildRecordingSelectionContext>) => Promise<unknown>
+  onStartRecording: (
+    sourceId: string,
+    sourceName: string,
+    selectionContext?: ReturnType<typeof buildRecordingSelectionContext>,
+    trackingContext?: RecordingTrackingContext | null
+  ) => Promise<unknown>
   onStopRecording: () => void
   onFetchSources: () => Promise<RecordingSource[]>
 }
@@ -20,7 +26,7 @@ export function RecordingControls({
   isRecording,
   onStartRecording,
   onStopRecording,
-  onFetchSources,
+  onFetchSources
 }: RecordingControlsProps) {
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
@@ -32,7 +38,7 @@ export function RecordingControls({
     detectedId,
     suggestionLabel,
     openPicker,
-    closePicker,
+    closePicker
   } = useRecordingPickerStore()
   const orderedSources = useMemo(() => {
     if (!detectedId) return sources
@@ -44,7 +50,7 @@ export function RecordingControls({
   }, [detectedId, sources])
   const selectionContext = useMemo(
     () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
-    [events],
+    [events]
   )
 
   const handleRecordClick = async () => {
@@ -54,21 +60,22 @@ export function RecordingControls({
       const selection = chooseAutoRecordSource(
         fetchedSources,
         selectionContext,
-        getSavedSourcePreference(selectionContext),
+        getSavedSourcePreference(selectionContext)
       )
 
       openPicker({
         title: 'Select a window to record',
-        subtitle: selection.source && selection.confidence === 'high'
-          ? 'AutoDoc highlighted the most likely meeting window.'
-          : null,
+        subtitle:
+          selection.source && selection.confidence === 'high'
+            ? 'AutoDoc highlighted the most likely meeting window.'
+            : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
         suggestionLabel: selection.source
           ? selection.confidence === 'high'
             ? 'Detected meeting'
             : 'Suggested window'
-          : null,
+          : null
       })
     } finally {
       setLoading(false)
@@ -77,7 +84,15 @@ export function RecordingControls({
 
   const handleSourceSelect = (source: RecordingSource) => {
     closePicker()
-    void onStartRecording(source.id, source.name, selectionContext)
+    const detectedSource = detectedId
+      ? (sources.find((candidate) => candidate.id === detectedId) ?? null)
+      : null
+    void onStartRecording(
+      source.id,
+      source.name,
+      selectionContext,
+      buildRecordingTrackingContext(source, detectedSource, selectionContext)
+    )
   }
 
   if (isRecording) {
@@ -103,19 +118,10 @@ export function RecordingControls({
 
       {showPicker && (
         <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={closePicker}
-          />
+          <div className="fixed inset-0 z-40" onClick={closePicker} />
           <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
-            <p className="text-[11px] font-medium text-ink-muted mb-1">
-              {title}
-            </p>
-            {subtitle && (
-              <p className="text-[10px] text-ink-faint mb-2">
-                {subtitle}
-              </p>
-            )}
+            <p className="text-[11px] font-medium text-ink-muted mb-1">{title}</p>
+            {subtitle && <p className="text-[10px] text-ink-faint mb-2">{subtitle}</p>}
             <div className="flex flex-col gap-1.5">
               {orderedSources.map((source) => (
                 <button
@@ -131,9 +137,7 @@ export function RecordingControls({
                     className="w-20 h-12 object-cover rounded border border-border-subtle"
                   />
                   <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-[12px] text-ink truncate">
-                      {source.name}
-                    </span>
+                    <span className="text-[12px] text-ink truncate">{source.name}</span>
                     {source.id === detectedId && suggestionLabel && (
                       <span className="text-[10px] text-status-connected font-medium">
                         {suggestionLabel}

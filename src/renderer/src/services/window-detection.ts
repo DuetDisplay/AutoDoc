@@ -1,5 +1,9 @@
 import { BROWSER_PATTERNS, MEETING_APP_PATTERNS } from '../../../shared/constants'
-import type { CalendarEvent, RecordingSource } from '../../../shared/types'
+import type {
+  CalendarEvent,
+  RecordingSource,
+  RecordingTrackingContext
+} from '../../../shared/types'
 import type { SavedSourcePreference } from './recording-source-preferences'
 
 export interface RecordingSelectionContext {
@@ -34,13 +38,13 @@ const BROWSER_NAME_PATTERNS = [
   /\bbrave\b/i,
   /\barc\b/i,
   /\bopera\b/i,
-  /\bvivaldi\b/i,
+  /\bvivaldi\b/i
 ]
 
 export function detectMeetingWindow(
   sources: RecordingSource[],
   context?: RecordingSelectionContext,
-  preference?: SavedSourcePreference | null,
+  preference?: SavedSourcePreference | null
 ): RecordingSource | null {
   const selection = chooseAutoRecordSource(sources, context, preference)
   return selection.source
@@ -49,7 +53,7 @@ export function detectMeetingWindow(
 export function chooseAutoRecordSource(
   sources: RecordingSource[],
   context?: RecordingSelectionContext,
-  preference?: SavedSourcePreference | null,
+  preference?: SavedSourcePreference | null
 ): AutoRecordSourceSelection {
   const windows = sources.filter((source) => !source.id.startsWith('screen:'))
   const providerHint = context?.providerHint ?? null
@@ -62,7 +66,7 @@ export function chooseAutoRecordSource(
       providerHint,
       windowCount: 0,
       browserWindowCount: 0,
-      meetingWindowCount: 0,
+      meetingWindowCount: 0
     }
   }
 
@@ -110,7 +114,7 @@ export function chooseAutoRecordSource(
       providerHint,
       windowCount: windows.length,
       browserWindowCount,
-      meetingWindowCount,
+      meetingWindowCount
     }
   }
 
@@ -123,11 +127,14 @@ export function chooseAutoRecordSource(
     providerHint,
     windowCount: windows.length,
     browserWindowCount,
-    meetingWindowCount,
+    meetingWindowCount
   }
 }
 
-export function findActiveCalendarEvent(events: CalendarEvent[], now = Date.now()): CalendarEvent | null {
+export function findActiveCalendarEvent(
+  events: CalendarEvent[],
+  now = Date.now()
+): CalendarEvent | null {
   for (const event of events) {
     if (event.startTime <= now && event.endTime >= now) {
       return event
@@ -139,12 +146,32 @@ export function findActiveCalendarEvent(events: CalendarEvent[], now = Date.now(
 
 export function buildRecordingSelectionContext(
   event: CalendarEvent | null,
-  fallbackProviderId: string | null = null,
+  fallbackProviderId: string | null = null
 ): RecordingSelectionContext {
   return {
     eventId: event?.id ?? null,
     recurringEventId: event?.recurringEventId ?? null,
-    providerHint: inferProviderHint(event?.meetingUrl) ?? fallbackProviderId,
+    providerHint: inferProviderHint(event?.meetingUrl) ?? fallbackProviderId
+  }
+}
+
+export function buildRecordingTrackingContext(
+  selectedSource: RecordingSource,
+  detectedMeetingSource: RecordingSource | null,
+  selectionContext?: RecordingSelectionContext
+): RecordingTrackingContext | null {
+  const trackedSource = selectedSource.id.startsWith('screen:')
+    ? detectedMeetingSource
+    : selectedSource
+
+  if (!trackedSource) {
+    return null
+  }
+
+  return {
+    meetingSourceId: trackedSource.id,
+    meetingSourceName: trackedSource.name,
+    providerId: selectionContext?.providerHint ?? null
   }
 }
 
@@ -160,7 +187,10 @@ export function inferProviderHint(meetingUrl: string | null | undefined): string
   return null
 }
 
-function matchesPreferredSource(source: RecordingSource, preference: SavedSourcePreference): boolean {
+function matchesPreferredSource(
+  source: RecordingSource,
+  preference: SavedSourcePreference
+): boolean {
   if (source.id === preference.sourceId) return true
   return normalizeWindowName(source.name) === normalizeWindowName(preference.sourceName)
 }
@@ -170,8 +200,10 @@ function isMeetingPatternMatch(name: string): boolean {
 }
 
 function isBrowserWindowName(name: string): boolean {
-  return BROWSER_PATTERNS.some((pattern) => pattern.test(name))
-    || BROWSER_NAME_PATTERNS.some((pattern) => pattern.test(name))
+  return (
+    BROWSER_PATTERNS.some((pattern) => pattern.test(name)) ||
+    BROWSER_NAME_PATTERNS.some((pattern) => pattern.test(name))
+  )
 }
 
 function matchesProviderHint(name: string, providerHint: string): boolean {
@@ -183,7 +215,11 @@ function matchesProviderHint(name: string, providerHint: string): boolean {
     case 'teams':
       return normalizedName.includes('teams')
     case 'google_meet':
-      return normalizedName.includes('google meet') || normalizedName.includes('meet.google.com') || normalizedName.includes('meet ')
+      return (
+        normalizedName.includes('google meet') ||
+        normalizedName.includes('meet.google.com') ||
+        normalizedName.includes('meet ')
+      )
     case 'webex':
       return normalizedName.includes('webex')
     case 'slack':

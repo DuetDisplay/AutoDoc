@@ -5,6 +5,7 @@ import type {
   RecordingEntry,
   RecordingSource,
   RecordingState,
+  RecordingTrackingContext,
   RecordingPaths,
   RecordingMediaPlayerErrorReport,
   Transcript,
@@ -66,7 +67,11 @@ export interface IpcInvokeEvents {
   'permissions:open-settings': [panel: 'screen' | 'microphone']
   'recording:list': []
   'recording:get-sources': []
-  'recording:start': [sourceId: string, sourceName: string]
+  'recording:start': [
+    sourceId: string,
+    sourceName: string,
+    trackingContext?: RecordingTrackingContext | null
+  ]
   'recording:stop': []
   'recording:get-state': []
   'recording:save-chunk': [

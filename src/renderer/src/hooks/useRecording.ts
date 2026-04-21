@@ -7,7 +7,7 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { saveSourcePreference } from '../services/recording-source-preferences'
 import { captureRecordingStartFailure } from '../services/renderer-sentry'
 import type { RecordingSelectionContext } from '../services/window-detection'
-import type { RecordingSource } from '../../../shared/types'
+import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 
 /**
  * Full recording hook — sets up IPC listener, timer, and actions.
@@ -72,7 +72,8 @@ export function useRecording() {
     async (
       sourceId: string,
       sourceNameParam: string,
-      selectionContext?: RecordingSelectionContext
+      selectionContext?: RecordingSelectionContext,
+      trackingContext?: RecordingTrackingContext | null
     ) => {
       recordDiagnosticAction({
         category: 'recording',
@@ -82,7 +83,12 @@ export function useRecording() {
         }
       })
       try {
-        const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
+        const paths = await window.electronAPI.invoke(
+          'recording:start',
+          sourceId,
+          sourceNameParam,
+          trackingContext ?? null
+        )
         await startCapture(sourceId, paths.meetingId)
         recordDiagnosticAction({
           category: 'recording',
@@ -177,9 +183,15 @@ export function useRecordingActions() {
     async (
       sourceId: string,
       sourceNameParam: string,
-      selectionContext?: RecordingSelectionContext
+      selectionContext?: RecordingSelectionContext,
+      trackingContext?: RecordingTrackingContext | null
     ) => {
-      const paths = await window.electronAPI.invoke('recording:start', sourceId, sourceNameParam)
+      const paths = await window.electronAPI.invoke(
+        'recording:start',
+        sourceId,
+        sourceNameParam,
+        trackingContext ?? null
+      )
       try {
         await startCapture(sourceId, paths.meetingId)
         if (selectionContext) {

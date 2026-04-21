@@ -6,7 +6,7 @@ import type {
   CalendarEvent,
   MeetingSegments,
   RecordingEntry,
-  Transcript,
+  Transcript
 } from '../../../shared/types'
 import type { SearchResult, UpdateStatus } from '../../../preload/ipc.d'
 import { useCalendarStore } from '../stores/calendar'
@@ -27,7 +27,9 @@ export interface MockElectronAPI {
   setHandler: (channel: string, handler: InvokeHandler) => void
 }
 
-export function createElectronApiMock(handlers: Record<string, InvokeHandler> = {}): MockElectronAPI {
+export function createElectronApiMock(
+  handlers: Record<string, InvokeHandler> = {}
+): MockElectronAPI {
   const listenerMap = new Map<string, Set<Listener>>()
 
   const api: MockElectronAPI = {
@@ -57,13 +59,15 @@ export function createElectronApiMock(handlers: Record<string, InvokeHandler> = 
     },
     setHandler: (channel: string, handler: InvokeHandler) => {
       handlers[channel] = handler
-    },
+    }
   }
 
   return api
 }
 
-export function installMockElectronApi(handlers: Record<string, InvokeHandler> = {}): MockElectronAPI {
+export function installMockElectronApi(
+  handlers: Record<string, InvokeHandler> = {}
+): MockElectronAPI {
   const api = createElectronApiMock(handlers)
   window.electronAPI = api as any
   return api
@@ -74,7 +78,7 @@ export function resetRendererStores(): void {
     accounts: [],
     isConnecting: false,
     events: [],
-    isSyncing: false,
+    isSyncing: false
   })
   useChatStore.setState({ messages: [] })
   useSearchStore.setState({ query: '', results: [], searched: false })
@@ -85,9 +89,12 @@ export function resetRendererStores(): void {
     startedAt: null,
     sourceId: null,
     sourceName: null,
+    trackedMeetingSourceId: null,
+    trackedMeetingSourceName: null,
+    trackedMeetingProviderId: null,
     elapsedSeconds: 0,
     sources: [],
-    isLoadingSources: false,
+    isLoadingSources: false
   })
 }
 
@@ -97,7 +104,7 @@ export function createCalendarAccount(overrides: Partial<CalendarAccount> = {}):
     provider: 'google',
     email: 'team@example.com',
     connectedAt: new Date('2026-04-16T09:00:00Z').getTime(),
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -115,7 +122,7 @@ export function createCalendarEvent(overrides: Partial<CalendarEvent> = {}): Cal
     meetingUrl: 'https://meet.google.com/road-map-sync',
     autoRecord: 'off',
     syncedAt: new Date('2026-04-16T13:55:00Z').getTime(),
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -128,7 +135,7 @@ export function createRecordingEntry(overrides: Partial<RecordingEntry> = {}): R
     hasVideo: true,
     hasAudio: true,
     transcriptionStatus: 'complete',
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -141,7 +148,7 @@ export function createTranscript(overrides: Partial<Transcript> = {}): Transcrip
     startMs: 12_000,
     endMs: 18_000,
     confidence: 0.95,
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -158,8 +165,8 @@ export function createMeetingSegments(overrides: Partial<MeetingSegments> = {}):
         assignee: 'Chris',
         deadline: 'Friday',
         sourceStartMs: 12_000,
-        sourceEndMs: 18_000,
-      },
+        sourceEndMs: 18_000
+      }
     ],
     actionItems: [],
     information: [
@@ -173,12 +180,12 @@ export function createMeetingSegments(overrides: Partial<MeetingSegments> = {}):
         assignee: null,
         deadline: null,
         sourceStartMs: 20_000,
-        sourceEndMs: 24_000,
-      },
+        sourceEndMs: 24_000
+      }
     ],
     discussion: [],
     statusUpdates: [],
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -190,15 +197,15 @@ export function createSearchResult(overrides: Partial<SearchResult> = {}): Searc
     matches: [
       {
         type: 'transcript',
-        text: 'We should ship the transcript highlights this week.',
+        text: 'We should ship the transcript highlights this week.'
       },
       {
         type: 'segment',
         category: 'decision',
-        text: 'Ship transcript highlights: Launch transcript highlights to the beta cohort on Friday.',
-      },
+        text: 'Ship transcript highlights: Launch transcript highlights to the beta cohort on Friday.'
+      }
     ],
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -208,7 +215,7 @@ export function createRuntimeInfo(overrides: Partial<AppRuntimeInfo> = {}): AppR
     storagePath: '/tmp/autodoc-tests',
     whisperModel: 'ggml-base.en.bin',
     ollamaModel: 'llama3.2:3b',
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -220,13 +227,13 @@ export function createStorageInfo(overrides: Partial<AppStorageInfo> = {}): AppS
     logsBytes: 3_200_000,
     otherLocalDataBytes: 42_000,
     totalBytes: 7_753_242_000,
-    ...overrides,
+    ...overrides
   }
 }
 
 export function createUpdateStatus(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
   return {
     state: 'idle',
-    ...overrides,
+    ...overrides
   }
 }

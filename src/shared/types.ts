@@ -52,10 +52,10 @@ export interface CalendarAccount {
 }
 
 export interface CalendarEvent {
-  id: string                          // `{provider}_{externalId}` — unique across providers
-  externalId: string                  // provider's native event ID
-  accountId: string                   // which connected account owns this event
-  provider: 'google' | 'microsoft'   // source provider
+  id: string // `{provider}_{externalId}` — unique across providers
+  externalId: string // provider's native event ID
+  accountId: string // which connected account owns this event
+  provider: 'google' | 'microsoft' // source provider
   recurringEventId: string | null
   title: string
   startTime: number
@@ -106,12 +106,21 @@ export interface RecordingSource {
   thumbnailDataUrl: string
 }
 
+export interface RecordingTrackingContext {
+  meetingSourceId: string | null
+  meetingSourceName: string | null
+  providerId: string | null
+}
+
 export interface RecordingState {
   isRecording: boolean
   meetingId: string | null
   startedAt: number | null
   sourceId: string | null
   sourceName: string | null
+  trackedMeetingSourceId?: string | null
+  trackedMeetingSourceName?: string | null
+  trackedMeetingProviderId?: string | null
 }
 
 export interface RecordingPaths {
@@ -210,7 +219,11 @@ export interface DiarizationSetupStatus {
     | 'error'
   percent: number
   error?: string
-  failedStep?: 'preparing-speaker-runtime' | 'installing-speaker-id' | 'downloading-speaker-model' | 'ready'
+  failedStep?:
+    | 'preparing-speaker-runtime'
+    | 'installing-speaker-id'
+    | 'downloading-speaker-model'
+    | 'ready'
 }
 
 export interface DetectionAutoRecordPayload {
