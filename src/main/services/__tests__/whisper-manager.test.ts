@@ -54,6 +54,7 @@ describe('WhisperManager', () => {
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
     mockMkdtemp.mockResolvedValue('/mock/probe-dir')
+    mockReaddir.mockResolvedValue([] as never)
     mockWriteFile.mockResolvedValue(undefined)
     mockExecFile.mockImplementation((...args: any[]) => {
       const callback = args[args.length - 1]

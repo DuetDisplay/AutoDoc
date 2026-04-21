@@ -10,7 +10,7 @@ import {
   getManagedPythonArchiveFilename,
   getManagedPythonDownloadUrl,
   getManagedPythonTarget,
-  type ManagedPythonTarget,
+  type ManagedPythonTarget
 } from './managed-python'
 
 const IS_WIN = process.platform === 'win32'
@@ -60,7 +60,7 @@ export class DiarizationService extends EventEmitter {
         phase: 'error',
         percent: 0,
         error: err instanceof Error ? err.message : String(err),
-        failedStep: this.getFailedStep(),
+        failedStep: this.getFailedStep()
       })
       throw err
     }
@@ -206,14 +206,16 @@ export class DiarizationService extends EventEmitter {
     if (app.isPackaged && target) {
       if (!packagedBundledPython || !(await this.fileExists(packagedBundledPython))) {
         throw new Error(
-          'Bundled speaker diarization runtime is missing. Rebuild after running prepare:python-runtime and prepare:diarization-wheelhouse.',
+          'Bundled speaker diarization runtime is missing. Rebuild after running prepare:python-runtime and prepare:diarization-wheelhouse.'
         )
       }
 
       this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
       const modelPath = await this.ensureModelReady()
       if (!(await this.isPythonEnvUsable(packagedBundledPython, modelPath))) {
-        throw new Error('Bundled speaker diarization runtime did not pass validation after packaging.')
+        throw new Error(
+          'Bundled speaker diarization runtime did not pass validation after packaging.'
+        )
       }
 
       this.markReady()
@@ -264,14 +266,20 @@ export class DiarizationService extends EventEmitter {
         try {
           return await this.provisionManagedRuntimeFromArchive(target, bundledArchive)
         } catch (err) {
-          console.warn('Failed to provision bundled Python runtime, attempting network provisioning:', err)
+          console.warn(
+            'Failed to provision bundled Python runtime, attempting network provisioning:',
+            err
+          )
         }
       }
 
       try {
         return await this.provisionManagedRuntimeFromDownload(target)
       } catch (err) {
-        console.warn('Failed to provision managed Python runtime, falling back to system Python:', err)
+        console.warn(
+          'Failed to provision managed Python runtime, falling back to system Python:',
+          err
+        )
       }
     }
 
@@ -297,7 +305,7 @@ export class DiarizationService extends EventEmitter {
     const token = process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || ''
     if (!token) {
       throw new Error(
-        'Bundled speaker model is missing. Rebuild with HF_TOKEN/HUGGINGFACE_TOKEN so setup can finish offline for end users.',
+        'Bundled speaker model is missing. Rebuild with HF_TOKEN/HUGGINGFACE_TOKEN so setup can finish offline for end users.'
       )
     }
 
@@ -326,15 +334,21 @@ export class DiarizationService extends EventEmitter {
 
   private async installPythonDependencies(): Promise<void> {
     const requirementsPath = this.getRequirementsPath()
-    await this.runCommand(this.getPipPath(), ['install', '--upgrade', 'pip'])
-    await this.runCommand(this.getPipPath(), [
+    await this.runCommand(this.getPythonPath(), ['-m', 'pip', 'install', '--upgrade', 'pip'])
+    await this.runCommand(this.getPythonPath(), [
+      '-m',
+      'pip',
       'install',
       '--requirement',
-      requirementsPath,
+      requirementsPath
     ])
   }
 
-  private async downloadModelSnapshot(pythonPath: string, modelPath: string, token: string): Promise<void> {
+  private async downloadModelSnapshot(
+    pythonPath: string,
+    modelPath: string,
+    token: string
+  ): Promise<void> {
     const code = [
       'import os',
       'from huggingface_hub import snapshot_download',
@@ -343,13 +357,13 @@ export class DiarizationService extends EventEmitter {
       '    token=os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN"),',
       `    local_dir=r"${modelPath}",`,
       '    local_dir_use_symlinks=False,',
-      ')',
+      ')'
     ].join('\n')
 
     await this.runCommand(pythonPath, ['-c', code], {
       ...process.env,
       HF_TOKEN: token,
-      HUGGINGFACE_TOKEN: token,
+      HUGGINGFACE_TOKEN: token
     })
   }
 
@@ -357,16 +371,20 @@ export class DiarizationService extends EventEmitter {
     return await new Promise<boolean>((resolve) => {
       execFile(
         pythonPath,
-        ['-c', 'import sys; from pyannote.audio import Pipeline; Pipeline.from_pretrained(sys.argv[1]); print("ok")', modelPath],
+        [
+          '-c',
+          'import sys; from pyannote.audio import Pipeline; Pipeline.from_pretrained(sys.argv[1]); print("ok")',
+          modelPath
+        ],
         {
           windowsHide: true,
           timeout: PROBE_TIMEOUT_MS,
           env: {
             ...process.env,
-            PYANNOTE_METRICS_ENABLED: '0',
-          },
+            PYANNOTE_METRICS_ENABLED: '0'
+          }
         },
-        (err) => resolve(!err),
+        (err) => resolve(!err)
       )
     })
   }
@@ -391,7 +409,7 @@ export class DiarizationService extends EventEmitter {
       await this.downloadFile(
         getManagedPythonDownloadUrl(target),
         archivePath,
-        `python-runtime-${target.key}`,
+        `python-runtime-${target.key}`
       )
     }
 
@@ -400,7 +418,7 @@ export class DiarizationService extends EventEmitter {
 
   private async provisionManagedRuntimeFromArchive(
     target: ManagedPythonTarget,
-    archivePath: string,
+    archivePath: string
   ): Promise<string> {
     const runtimeDir = this.getProvisionedRuntimeDir(target)
     const pythonPath = this.getProvisionedPythonPath(target)
@@ -444,21 +462,28 @@ export class DiarizationService extends EventEmitter {
           HF_TOKEN: process.env.HF_TOKEN ?? '',
           HUGGINGFACE_TOKEN: process.env.HUGGINGFACE_TOKEN ?? '',
           PYANNOTE_PIPELINE: pipelinePath,
-          PYANNOTE_METRICS_ENABLED: '0',
+          PYANNOTE_METRICS_ENABLED: '0'
         },
-        windowsHide: true,
+        windowsHide: true
       })
 
       let stdout = ''
       let stderr = ''
 
-      proc.stdout.on('data', (data: Buffer) => { stdout += data.toString() })
-      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString()
+      })
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
 
-      const timeout = setTimeout(() => {
-        proc.kill()
-        reject(new Error('Diarization timed out after 30 minutes'))
-      }, 30 * 60 * 1000)
+      const timeout = setTimeout(
+        () => {
+          proc.kill()
+          reject(new Error('Diarization timed out after 30 minutes'))
+        },
+        30 * 60 * 1000
+      )
 
       proc.on('error', (err) => {
         clearTimeout(timeout)
@@ -505,11 +530,17 @@ export class DiarizationService extends EventEmitter {
     }
   }
 
-  private runCommand(command: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  private runCommand(
+    command: string,
+    args: string[],
+    env: NodeJS.ProcessEnv = process.env
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const proc = spawn(command, args, { windowsHide: true, env })
       let stderr = ''
-      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
       proc.on('error', (err) => reject(err))
       proc.on('close', (code) => {
         if (code === 0) resolve()

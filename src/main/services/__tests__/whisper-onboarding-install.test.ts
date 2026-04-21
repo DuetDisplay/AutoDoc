@@ -29,7 +29,7 @@ async function loadWhisperManager(
 
   vi.doMock('electron', () => ({
     app: {
-      getPath: vi.fn(() => rootDir),
+      getPath: vi.fn((name: string) => (name === 'appData' ? join(rootDir, 'app-data') : rootDir)),
       isPackaged: options?.isPackaged ?? false
     }
   }))
@@ -58,6 +58,7 @@ afterEach(async () => {
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
   vi.doUnmock('ffmpeg-static')
+  delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
   vi.resetModules()
   setPlatform(originalPlatform)
 })
@@ -104,7 +105,7 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('still allows macOS dev builds to adopt system binaries', async () => {
+  it('allows macOS dev builds to adopt system binaries when explicitly enabled', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-dev-mac-'))
     const systemBinDir = join(rootDir, 'system-bin')
     await mkdir(systemBinDir, { recursive: true })
@@ -115,6 +116,7 @@ describe('Whisper onboarding dependency installation', () => {
     await writeFile(ffmpegBinary, 'ffmpeg')
 
     try {
+      process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK = '1'
       const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir)
       execSyncMock.mockImplementation((command: string) => {
         if (command.includes('whisper-cli')) return whisperBinary
@@ -135,6 +137,38 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reuses installed app whisper assets in dev without redownloading them', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-dev-reuse-'))
+    const installedModelsDir = join(rootDir, 'app-data', 'AutoDoc', 'models')
+
+    try {
+      await mkdir(installedModelsDir, { recursive: true })
+      await writeFile(join(installedModelsDir, 'whisper-cli.exe'), 'whisper')
+      await writeFile(join(installedModelsDir, 'ffmpeg.exe'), 'ffmpeg')
+      await writeFile(join(installedModelsDir, 'ggml-distil-large-v3.bin'), 'model')
+
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be needed when installed assets exist')
+      })
+
+      const manager = new WhisperManager()
+      const resolveWhisperSpy = vi.spyOn(manager as never, 'resolveWhisper')
+      const downloadModelSpy = vi.spyOn(manager as never, 'downloadModel')
+
+      await manager.ensureReady()
+
+      expect(resolveWhisperSpy).not.toHaveBeenCalled()
+      expect(downloadModelSpy).not.toHaveBeenCalled()
+      await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
@@ -243,6 +277,7 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(join(manager.getModelsDir(), 'whisper.dll'))).resolves.toBeUndefined()
       await expect(access(join(manager.getModelsDir(), 'ggml.dll'))).resolves.toBeUndefined()
       expect(statuses).toEqual([
+        'checking',
         'downloading-whisper',
         'downloading-ffmpeg',
         'downloading-model',

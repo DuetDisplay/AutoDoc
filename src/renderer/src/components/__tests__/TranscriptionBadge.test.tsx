@@ -1,6 +1,13 @@
 import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { TranscriptionBadge } from '../TranscriptionBadge'
+import { createElectronApiMock } from '../../test/fixtures'
+
+beforeEach(() => {
+  window.electronAPI = createElectronApiMock({
+    'whisper:get-setup-status': { phase: 'ready', percent: 100 }
+  }) as any
+})
 
 describe('TranscriptionBadge', () => {
   it('shows "Awaiting transcription" for pending status', () => {
@@ -13,9 +20,13 @@ describe('TranscriptionBadge', () => {
     expect(screen.getByText('Awaiting transcription')).toBeInTheDocument()
   })
 
-  it('shows "Downloading model..." for downloading status', () => {
+  it('shows whisper setup progress for downloading status', async () => {
+    window.electronAPI = createElectronApiMock({
+      'whisper:get-setup-status': { phase: 'checking', percent: 0 }
+    }) as any
+
     render(<TranscriptionBadge status="downloading" />)
-    expect(screen.getByText('Downloading model...')).toBeInTheDocument()
+    expect(await screen.findByText('Checking transcription engine...')).toBeInTheDocument()
   })
 
   it('shows "Transcribing..." for transcribing status without progress', () => {

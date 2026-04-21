@@ -1,10 +1,12 @@
 import { app } from 'electron'
-import { access, mkdir, chmod, rm, copyFile } from 'fs/promises'
+import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { MODELS_SUBDIR } from '../../shared/constants'
+import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 
 const IS_WIN = process.platform === 'win32'
@@ -68,7 +70,7 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getOllamaDataDir(): string {
-    return join(app.getPath('userData'), 'ollama-data')
+    return this.getInstalledFallbackOllamaDataDir() ?? join(app.getPath('userData'), 'ollama-data')
   }
 
   async isReady(): Promise<boolean> {
@@ -83,7 +85,7 @@ export class OllamaManager extends EventEmitter {
   async isServerRunning(): Promise<boolean> {
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(2000)
       })
       return res.ok
     } catch {
@@ -94,7 +96,7 @@ export class OllamaManager extends EventEmitter {
   async hasModel(): Promise<boolean> {
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(3000)
       })
       if (!res.ok) return false
       const data = (await res.json()) as { models?: { name: string }[] }
@@ -109,6 +111,8 @@ export class OllamaManager extends EventEmitter {
     await mkdir(this.getRuntimeDir(), { recursive: true })
     await mkdir(this.getOllamaDataDir(), { recursive: true })
 
+    await this.adoptInstalledRuntimeIfAvailable()
+
     if (!(await this.isReady())) {
       if (canUseSystemRuntimeFallback()) {
         const systemBinary = this.findSystemOllama()
@@ -120,6 +124,33 @@ export class OllamaManager extends EventEmitter {
 
       await this.downloadBinary()
     }
+  }
+
+  private getInstalledFallbackOllamaDataDir(): string | null {
+    const installedOllamaDataDir = getInstalledOllamaDataDir()
+    if (
+      !installedOllamaDataDir ||
+      installedOllamaDataDir === join(app.getPath('userData'), 'ollama-data') ||
+      !existsSync(installedOllamaDataDir)
+    ) {
+      return null
+    }
+
+    return installedOllamaDataDir
+  }
+
+  private async adoptInstalledRuntimeIfAvailable(): Promise<void> {
+    const installedModelsDir = getInstalledModelsDir()
+    if (!installedModelsDir || installedModelsDir === this.getModelsDir()) {
+      return
+    }
+
+    const installedRuntimeDir = join(installedModelsDir, 'ollama-runtime')
+    if (!(await this.fileExists(installedRuntimeDir))) {
+      return
+    }
+
+    await this.copyDirectoryContentsIfMissing(installedRuntimeDir, this.getRuntimeDir())
   }
 
   private findSystemOllama(): string | null {
@@ -147,9 +178,9 @@ export class OllamaManager extends EventEmitter {
         env: {
           ...process.env,
           OLLAMA_HOST: OLLAMA_HOST,
-          OLLAMA_MODELS: this.getOllamaDataDir(),
+          OLLAMA_MODELS: this.getOllamaDataDir()
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe']
       })
 
       this.process = proc
@@ -218,10 +249,10 @@ export class OllamaManager extends EventEmitter {
   private killProcessOnPort(): void {
     try {
       if (IS_WIN) {
-        const output = execSync(
-          `netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`,
-          { encoding: 'utf-8', timeout: 5000 },
-        ).trim()
+        const output = execSync(`netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`, {
+          encoding: 'utf-8',
+          timeout: 5000
+        }).trim()
         const pids = new Set<string>()
         for (const line of output.split(/\r?\n/)) {
           const pid = line.trim().split(/\s+/).pop()
@@ -237,7 +268,7 @@ export class OllamaManager extends EventEmitter {
       } else {
         const pids = execSync(`lsof -ti :${OLLAMA_PORT}`, {
           encoding: 'utf-8',
-          timeout: 5000,
+          timeout: 5000
         }).trim()
         for (const pid of pids.split(/\n/)) {
           if (pid) {
@@ -265,7 +296,7 @@ export class OllamaManager extends EventEmitter {
     const res = await fetch(`${OLLAMA_BASE_URL}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: this.model, stream: true }),
+      body: JSON.stringify({ name: this.model, stream: true })
     })
 
     if (!res.ok) {
@@ -294,7 +325,7 @@ export class OllamaManager extends EventEmitter {
             this.emit('pull-progress', {
               model: this.model,
               percent: Math.round((data.completed / data.total) * 100),
-              status: data.status ?? 'downloading',
+              status: data.status ?? 'downloading'
             })
           }
         } catch {
@@ -329,11 +360,15 @@ export class OllamaManager extends EventEmitter {
     await new Promise<void>((resolve, reject) => {
       execFile(
         'powershell',
-        ['-NoProfile', '-Command', `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${runtimeDir}'`],
+        [
+          '-NoProfile',
+          '-Command',
+          `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${runtimeDir}'`
+        ],
         (err) => {
           if (err) reject(new Error(`Failed to extract Ollama: ${err.message}`))
           else resolve()
-        },
+        }
       )
     })
 
@@ -381,7 +416,7 @@ export class OllamaManager extends EventEmitter {
           file: 'ollama',
           percent: totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0,
           bytesDownloaded: downloadedBytes,
-          bytesTotal: totalBytes,
+          bytesTotal: totalBytes
         })
       }
     } finally {
@@ -390,6 +425,38 @@ export class OllamaManager extends EventEmitter {
         fileStream.on('finish', resolve)
         fileStream.on('error', reject)
       })
+    }
+  }
+
+  private async fileExists(targetPath: string): Promise<boolean> {
+    try {
+      await access(targetPath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async copyDirectoryContentsIfMissing(sourceDir: string, destDir: string): Promise<void> {
+    const entries = await readdir(sourceDir, { withFileTypes: true })
+    for (const entry of entries) {
+      const sourcePath = join(sourceDir, entry.name)
+      const destPath = join(destDir, entry.name)
+
+      if (entry.isDirectory()) {
+        await mkdir(destPath, { recursive: true })
+        await this.copyDirectoryContentsIfMissing(sourcePath, destPath)
+        continue
+      }
+
+      if (!entry.isFile() || (await this.fileExists(destPath))) {
+        continue
+      }
+
+      await copyFile(sourcePath, destPath)
+      if (!IS_WIN && entry.name === 'ollama') {
+        await chmod(destPath, 0o755)
+      }
     }
   }
 }

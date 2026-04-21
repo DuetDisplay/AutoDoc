@@ -1,5 +1,12 @@
-import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type {
+  Transcript,
+  TranscriptionStatus,
+  SpeakerMap,
+  WhisperSetupStatus
+} from '../../../shared/types'
 import { SPEAKER_COLORS } from '../../../shared/constants'
+import { getWhisperSetupLabel } from '../services/setup-status-labels'
 
 function formatTimestamp(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -30,6 +37,19 @@ interface TranscriptViewProps {
 }
 
 export function TranscriptView({ segments, status, onSeek, speakers }: TranscriptViewProps) {
+  const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus | null>(null)
+
+  useEffect(() => {
+    if (status !== 'downloading') {
+      setSetupStatus(null)
+      return
+    }
+
+    window.electronAPI.invoke('whisper:get-setup-status').then(setSetupStatus)
+    const unsub = window.electronAPI.on('whisper:setup-progress', setSetupStatus)
+    return unsub
+  }, [status])
+
   if (status === 'pending' || status === 'queued') {
     return (
       <p className="text-[12px] text-ink-muted">
@@ -43,7 +63,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
         <p className="text-[12px] text-ink-muted">
-          Downloading transcription model...
+          {getWhisperSetupLabel(setupStatus) ?? 'Preparing transcription engine...'}
         </p>
       </div>
     )
@@ -53,9 +73,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
     return (
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
-        <p className="text-[12px] text-ink-muted">
-          Transcribing audio...
-        </p>
+        <p className="text-[12px] text-ink-muted">Transcribing audio...</p>
       </div>
     )
   }
@@ -64,9 +82,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
     return (
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
-        <p className="text-[12px] text-ink-muted">
-          Identifying speakers...
-        </p>
+        <p className="text-[12px] text-ink-muted">Identifying speakers...</p>
       </div>
     )
   }
@@ -80,11 +96,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
   }
 
   if (segments.length === 0) {
-    return (
-      <p className="text-[12px] text-ink-muted">
-        No transcript segments found.
-      </p>
-    )
+    return <p className="text-[12px] text-ink-muted">No transcript segments found.</p>
   }
 
   const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
@@ -117,7 +129,12 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
       last.texts.push(seg.text)
       last.endMs = seg.endMs
     } else {
-      merged.push({ speaker: seg.speaker, startMs: seg.startMs, endMs: seg.endMs, texts: [seg.text] })
+      merged.push({
+        speaker: seg.speaker,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        texts: [seg.text]
+      })
     }
   }
 
@@ -132,7 +149,17 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
             key={i}
             className="flex gap-3 rounded-lg transition-shadow"
             data-searchable
-            style={color ? { borderLeft: `3px solid ${color.border}`, backgroundColor: color.bg, paddingLeft: '8px', paddingTop: '6px', paddingBottom: '6px' } : undefined}
+            style={
+              color
+                ? {
+                    borderLeft: `3px solid ${color.border}`,
+                    backgroundColor: color.bg,
+                    paddingLeft: '8px',
+                    paddingTop: '6px',
+                    paddingBottom: '6px'
+                  }
+                : undefined
+            }
           >
             {onSeek ? (
               <button
@@ -155,9 +182,7 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
                   {speakerLabel}
                 </span>
               )}
-              <p className="text-[12.5px] text-ink leading-relaxed">
-                {group.texts.join(' ')}
-              </p>
+              <p className="text-[12.5px] text-ink leading-relaxed">{group.texts.join(' ')}</p>
             </div>
           </div>
         )

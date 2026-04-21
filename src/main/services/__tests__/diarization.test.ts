@@ -7,24 +7,24 @@ vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => '/mock/home'),
     getAppPath: vi.fn(() => '/mock/app'),
-    isPackaged: true,
-  },
+    isPackaged: true
+  }
 }))
 
 vi.mock('fs/promises', () => ({
   access: vi.fn(),
   mkdir: vi.fn(),
-  rm: vi.fn(),
+  rm: vi.fn()
 }))
 
 vi.mock('fs', () => ({
-  createWriteStream: vi.fn(),
+  createWriteStream: vi.fn()
 }))
 
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
   execSync: vi.fn(),
-  execFile: vi.fn(),
+  execFile: vi.fn()
 }))
 
 const fsMock = vi.mocked(await import('fs/promises'))
@@ -39,26 +39,26 @@ describe('DiarizationService bootstrap resolution', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     Object.defineProperty(process, 'platform', {
       value: 'darwin',
-      configurable: true,
+      configurable: true
     })
     Object.defineProperty(process, 'arch', {
       value: 'arm64',
-      configurable: true,
+      configurable: true
     })
     Object.defineProperty(process, 'resourcesPath', {
       value: '/mock/resources',
-      configurable: true,
+      configurable: true
     })
   })
 
   afterAll(() => {
     Object.defineProperty(process, 'platform', {
       value: originalPlatform,
-      configurable: true,
+      configurable: true
     })
     Object.defineProperty(process, 'arch', {
       value: originalArch,
-      configurable: true,
+      configurable: true
     })
   })
 
@@ -72,7 +72,7 @@ describe('DiarizationService bootstrap resolution', () => {
       target!.key,
       'python',
       'bin',
-      'python3',
+      'python3'
     )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
@@ -92,7 +92,9 @@ describe('DiarizationService bootstrap resolution', () => {
     childProcessMock.execSync.mockReturnValue('/usr/bin/python3\n' as any)
 
     const service = new DiarizationService()
-    vi.spyOn(service as any, 'provisionManagedRuntimeFromDownload').mockRejectedValue(new Error('offline'))
+    vi.spyOn(service as any, 'provisionManagedRuntimeFromDownload').mockRejectedValue(
+      new Error('offline')
+    )
     const result = await (service as any).resolveBootstrapPython()
 
     expect(result).toBe('/usr/bin/python3')
@@ -109,7 +111,7 @@ describe('DiarizationService bootstrap resolution', () => {
       target!.key,
       'python',
       'bin',
-      'python3',
+      'python3'
     )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
@@ -136,7 +138,7 @@ describe('DiarizationService bootstrap resolution', () => {
       target!.key,
       'python',
       'bin',
-      'python3',
+      'python3'
     )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
@@ -162,6 +164,33 @@ describe('DiarizationService bootstrap resolution', () => {
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
     fsMock.access.mockRejectedValue(new Error('ENOENT'))
 
-    await expect(service.ensureReady()).rejects.toThrow(/Bundled speaker diarization runtime is missing/)
+    await expect(service.ensureReady()).rejects.toThrow(
+      /Bundled speaker diarization runtime is missing/
+    )
+  })
+
+  it('installs diarization dependencies through python -m pip on Windows-compatible setups', async () => {
+    const service = new DiarizationService()
+    const runCommandSpy = vi.spyOn(service as any, 'runCommand').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'getPythonPath').mockReturnValue(
+      '/mock/home/python-env/Scripts/python.exe'
+    )
+
+    await (service as any).installPythonDependencies()
+
+    expect(runCommandSpy).toHaveBeenNthCalledWith(1, '/mock/home/python-env/Scripts/python.exe', [
+      '-m',
+      'pip',
+      'install',
+      '--upgrade',
+      'pip'
+    ])
+    expect(runCommandSpy).toHaveBeenNthCalledWith(2, '/mock/home/python-env/Scripts/python.exe', [
+      '-m',
+      'pip',
+      'install',
+      '--requirement',
+      path.join('/mock/resources', 'diarization-requirements.txt')
+    ])
   })
 })

@@ -1,31 +1,32 @@
 import { useState, useEffect } from 'react'
 import type { SegmentationStatus, OllamaSetupStatus } from '../../../shared/types'
+import { getOllamaSetupLabel } from '../services/setup-status-labels'
 
 const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: string }> = {
   pending: {
     label: 'Awaiting notes',
-    className: 'text-ink-faint bg-bg-accent',
+    className: 'text-ink-faint bg-bg-accent'
   },
   queued: {
     label: 'Queued for notes',
-    className: 'text-ink-faint bg-bg-accent',
+    className: 'text-ink-faint bg-bg-accent'
   },
   'downloading-model': {
     label: 'Downloading AI model...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse',
+    className: 'text-ink-muted bg-bg-accent animate-pulse'
   },
   segmenting: {
     label: 'Generating notes...',
-    className: 'text-ink-muted bg-bg-accent',
+    className: 'text-ink-muted bg-bg-accent'
   },
   complete: {
     label: 'Notes ready',
-    className: 'text-green-700 bg-green-50',
+    className: 'text-green-700 bg-green-50'
   },
   failed: {
     label: 'Notes failed — Retry',
-    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100',
-  },
+    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100'
+  }
 }
 
 interface SegmentationBadgeProps {
@@ -53,12 +54,7 @@ export function SegmentationBadge({ status, progress, onRetry }: SegmentationBad
     label = `Generating notes... ${progress}%`
   }
   if (status === 'downloading-model' && ollamaProgress) {
-    const pct = ollamaProgress.percent ?? 0
-    if (ollamaProgress.phase === 'downloading') {
-      label = `Downloading Ollama... ${pct}%`
-    } else if (ollamaProgress.phase === 'pulling') {
-      label = `Downloading AI model... ${pct}%`
-    }
+    label = getOllamaSetupLabel(ollamaProgress) ?? label
   }
 
   const showProgress = status === 'segmenting' && progress != null
@@ -74,9 +70,7 @@ export function SegmentationBadge({ status, progress, onRetry }: SegmentationBad
           style={{ width: `${progress}%` }}
         />
       )}
-      <span className="relative">
-        {label}
-      </span>
+      <span className="relative">{label}</span>
     </span>
   )
 }

@@ -19,6 +19,7 @@ import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocFailure } from './autodoc-log'
+import { getInstalledModelsDir } from './dev-runtime-paths'
 import {
   canUseSystemRuntimeFallback,
   canUseSystemWhisperFallback,
@@ -155,6 +156,10 @@ export class WhisperManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     try {
       await mkdir(this.getModelsDir(), { recursive: true })
+      this.setupStatus = { phase: 'checking', percent: 0 }
+      this.emit('setup-status', this.getSetupStatus())
+
+      await this.adoptInstalledAssetsIfAvailable()
 
       if (!(await this.fileExists(this.getWhisperPath()))) {
         this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
@@ -198,6 +203,52 @@ export class WhisperManager extends EventEmitter {
       }
       this.emit('setup-status', this.getSetupStatus())
       throw err
+    }
+  }
+
+  private async adoptInstalledAssetsIfAvailable(): Promise<void> {
+    const installedModelsDir = getInstalledModelsDir()
+    if (!installedModelsDir || installedModelsDir === this.getModelsDir()) {
+      return
+    }
+
+    await this.copyIfMissing(
+      join(installedModelsDir, basename(this.getWhisperPath())),
+      this.getWhisperPath()
+    )
+    await this.copyIfMissing(
+      join(installedModelsDir, basename(this.getFfmpegPath())),
+      this.getFfmpegPath()
+    )
+    await this.copyIfMissing(
+      join(installedModelsDir, basename(this.getModelPath())),
+      this.getModelPath()
+    )
+
+    if (!IS_WIN) {
+      return
+    }
+
+    let entries: Awaited<ReturnType<typeof readdir>>
+    try {
+      entries = await readdir(installedModelsDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    if (!Array.isArray(entries)) {
+      return
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) {
+        continue
+      }
+
+      await this.copyIfMissing(
+        join(installedModelsDir, entry.name),
+        join(this.getModelsDir(), entry.name)
+      )
     }
   }
 
@@ -561,7 +612,9 @@ export class WhisperManager extends EventEmitter {
   }
 
   private getMacHomebrewBottleTag(): string {
-    const majorVersion = Number(process.getSystemVersion().split('.')[0] ?? 0)
+    const systemVersion =
+      typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : '14.0.0'
+    const majorVersion = Number(systemVersion.split('.')[0] ?? 0)
     const archPrefix = process.arch === 'arm64' ? 'arm64_' : ''
 
     if (majorVersion >= 16) return `${archPrefix}tahoe`
@@ -822,6 +875,20 @@ export class WhisperManager extends EventEmitter {
       return true
     } catch {
       return false
+    }
+  }
+
+  private async copyIfMissing(source: string, destination: string): Promise<void> {
+    if (await this.fileExists(destination)) {
+      return
+    }
+    if (!(await this.fileExists(source))) {
+      return
+    }
+
+    await copyFile(source, destination)
+    if (!IS_WIN) {
+      await chmod(destination, 0o755)
     }
   }
 

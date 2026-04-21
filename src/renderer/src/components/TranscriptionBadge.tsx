@@ -1,34 +1,36 @@
-import type { TranscriptionStatus } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type { TranscriptionStatus, WhisperSetupStatus } from '../../../shared/types'
+import { getWhisperSetupLabel } from '../services/setup-status-labels'
 
 const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: string }> = {
   pending: {
     label: 'Awaiting transcription',
-    className: 'text-ink-faint bg-bg-accent',
+    className: 'text-ink-faint bg-bg-accent'
   },
   queued: {
     label: 'Awaiting transcription',
-    className: 'text-ink-faint bg-bg-accent',
+    className: 'text-ink-faint bg-bg-accent'
   },
   downloading: {
     label: 'Downloading model...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse',
+    className: 'text-ink-muted bg-bg-accent animate-pulse'
   },
   transcribing: {
     label: 'Transcribing...',
-    className: 'text-ink-muted bg-bg-accent',
+    className: 'text-ink-muted bg-bg-accent'
   },
   diarizing: {
     label: 'Identifying speakers...',
-    className: 'text-ink-muted bg-bg-accent animate-pulse',
+    className: 'text-ink-muted bg-bg-accent animate-pulse'
   },
   complete: {
     label: 'Transcribed',
-    className: 'text-green-700 bg-green-50',
+    className: 'text-green-700 bg-green-50'
   },
   failed: {
     label: 'Failed — Retry',
-    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100',
-  },
+    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100'
+  }
 }
 
 interface TranscriptionBadgeProps {
@@ -39,7 +41,21 @@ interface TranscriptionBadgeProps {
 
 export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
+  const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus | null>(null)
+
+  useEffect(() => {
+    if (status !== 'downloading') {
+      setSetupStatus(null)
+      return
+    }
+
+    window.electronAPI.invoke('whisper:get-setup-status').then(setSetupStatus)
+    const unsub = window.electronAPI.on('whisper:setup-progress', setSetupStatus)
+    return unsub
+  }, [status])
+
   const showProgress = status === 'transcribing' && progress != null
+  const setupLabel = status === 'downloading' ? getWhisperSetupLabel(setupStatus) : null
 
   return (
     <span
@@ -53,7 +69,7 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
         />
       )}
       <span className="relative">
-        {showProgress ? `Transcribing ${progress}%` : config.label}
+        {showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label)}
       </span>
     </span>
   )

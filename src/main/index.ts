@@ -732,11 +732,16 @@ app.whenReady().then(async () => {
   })
 
   const whisperEngineSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
-  const diarizationSetupState: DiarizationSetupStatus = isE2E
-    ? { phase: 'ready', percent: 100 }
-    : { phase: 'checking', percent: 0 }
+  const isSpeakerDiarizationSetupEnabled = (): boolean =>
+    isE2E || isExperimentalSpeakerDiarizationEnabled()
+  const diarizationSetupState: DiarizationSetupStatus = isSpeakerDiarizationSetupEnabled()
+    ? isE2E
+      ? { phase: 'ready', percent: 100 }
+      : { phase: 'checking', percent: 0 }
+    : { phase: 'ready', percent: 100 }
   let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
-  let lastSuccessfulDiarizationPhase: DiarizationSetupStatus['phase'] = isE2E ? 'ready' : 'checking'
+  let lastSuccessfulDiarizationPhase: DiarizationSetupStatus['phase'] =
+    isSpeakerDiarizationSetupEnabled() ? (isE2E ? 'ready' : 'checking') : 'ready'
   const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] =>
     lastSuccessfulWhisperPhase === 'downloading-ffmpeg' ||
     lastSuccessfulWhisperPhase === 'downloading-model' ||
@@ -766,6 +771,9 @@ app.whenReady().then(async () => {
     }
     if (whisperEngineSetupState.phase !== 'ready') {
       return { ...whisperEngineSetupState }
+    }
+    if (!isSpeakerDiarizationSetupEnabled()) {
+      return { phase: 'ready', percent: 100 }
     }
 
     const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(diarizationSetupState)
@@ -809,6 +817,9 @@ app.whenReady().then(async () => {
   })
 
   diarizationService.on('setup-status', (status: DiarizationSetupStatus) => {
+    if (!isSpeakerDiarizationSetupEnabled()) {
+      return
+    }
     if (status.phase !== 'error') {
       lastSuccessfulDiarizationPhase = status.phase
     }
@@ -821,6 +832,15 @@ app.whenReady().then(async () => {
   })
 
   const startDiarizationSetup = async (): Promise<void> => {
+    if (!isSpeakerDiarizationSetupEnabled()) {
+      lastSuccessfulDiarizationPhase = 'ready'
+      diarizationSetupState.phase = 'ready'
+      diarizationSetupState.percent = 100
+      delete diarizationSetupState.error
+      delete diarizationSetupState.failedStep
+      broadcastTranscriptionSetupStatus()
+      return
+    }
     await diarizationService.startSetup()
   }
 
@@ -932,6 +952,37 @@ app.whenReady().then(async () => {
         resetSentryScopes()
         applyCurrentSentryContext()
       }
+    },
+    (enabled) => {
+      if (!enabled) {
+        lastSuccessfulDiarizationPhase = 'ready'
+        diarizationSetupState.phase = 'ready'
+        diarizationSetupState.percent = 100
+        delete diarizationSetupState.error
+        delete diarizationSetupState.failedStep
+        broadcastTranscriptionSetupStatus()
+        return
+      }
+
+      lastSuccessfulDiarizationPhase = 'checking'
+      diarizationSetupState.phase = 'checking'
+      diarizationSetupState.percent = 0
+      delete diarizationSetupState.error
+      delete diarizationSetupState.failedStep
+      broadcastTranscriptionSetupStatus()
+
+      startDiarizationSetup().catch((err) => {
+        diarizationSetupState.phase = 'error'
+        diarizationSetupState.error = err instanceof Error ? err.message : String(err)
+        diarizationSetupState.failedStep = getDiarizationFailedStep()
+        broadcastTranscriptionSetupStatus()
+        logAutodocFailure({
+          area: 'diarization',
+          message: 'Failed to set up speaker diarization after enabling the experimental feature',
+          error: err
+        })
+        console.error('Failed to set up speaker diarization after enabling experimental mode:', err)
+      })
     }
   )
 
