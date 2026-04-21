@@ -50,6 +50,7 @@ describe('WhisperManager', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isPackaged = false
+    delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
     mockMkdtemp.mockResolvedValue('/mock/probe-dir')
@@ -188,7 +189,8 @@ describe('WhisperManager', () => {
     }
   })
 
-  it('uses system runtime fallback in dev mode', async () => {
+  it('uses system runtime fallback in dev mode when explicitly enabled', async () => {
+    process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK = '1'
     mockExecFile
       .mockImplementationOnce((...args: any[]) => {
         const callback = args[args.length - 1]
@@ -210,6 +212,30 @@ describe('WhisperManager', () => {
     if (process.platform !== 'win32') {
       expect(linkOrCopySpy).toHaveBeenCalled()
     }
+  })
+
+  it('prefers the managed runtime in dev mode by default', async () => {
+    mockExecFile
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('missing binary'))
+        return {} as never
+      })
+      .mockImplementation((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(null)
+        return {} as never
+      })
+    mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
+    const resolveWhisperSpy = vi
+      .spyOn(manager as never, 'resolveWhisper')
+      .mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+
+    await manager.ensureReady()
+
+    expect(resolveWhisperSpy).toHaveBeenCalled()
+    expect(mockExecSync).not.toHaveBeenCalled()
   })
 
   it('ignores system runtime fallback in packaged builds', async () => {

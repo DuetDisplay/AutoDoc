@@ -19,7 +19,11 @@ import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocFailure } from './autodoc-log'
-import { canUseSystemRuntimeFallback, usesManagedRuntimeOnly } from './runtime-policy'
+import {
+  canUseSystemRuntimeFallback,
+  canUseSystemWhisperFallback,
+  usesManagedRuntimeOnly
+} from './runtime-policy'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -199,7 +203,7 @@ export class WhisperManager extends EventEmitter {
 
   private async resolveWhisper(): Promise<void> {
     const binaryName = IS_WIN ? 'whisper-cli.exe' : 'whisper-cli'
-    if (canUseSystemRuntimeFallback()) {
+    if (canUseSystemWhisperFallback()) {
       const systemPath = this.findSystemBinary(binaryName)
       if (systemPath) {
         if (IS_WIN) {

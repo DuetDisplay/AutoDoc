@@ -356,11 +356,16 @@ export function registerRecordingIpc(
         await whisperManager.ensureReady()
         ffmpegPath = whisperManager.getFfmpegPath()
       } catch (err) {
+        const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
+          .then(() => whisperManager.getFfmpegPath())
+          .catch(() => null)
+        ffmpegPath = existingFfmpeg
         logAutodocFailure({
           area: 'recording',
           message: 'Failed to ensure whisper tools are ready during recording post-processing',
           error: err,
-          meetingId: result.meetingId
+          meetingId: result.meetingId,
+          context: { ffmpegPathAvailable: Boolean(existingFfmpeg) }
         })
         console.error('whisperManager.ensureReady() failed — skipping mux:', err)
       }
