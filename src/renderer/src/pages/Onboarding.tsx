@@ -23,13 +23,13 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const stepOrder = getVisibleStepOrder(platform)
-  const step = stepIndex === null ? null : stepOrder[stepIndex] ?? stepOrder[0]
+  const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
 
   useEffect(() => {
     Promise.all([
       window.electronAPI.invoke('prefs:get-onboarding-step'),
-      window.electronAPI.invoke('app:get-runtime-info'),
+      window.electronAPI.invoke('app:get-runtime-info')
     ]).then(([saved, runtimeInfo]) => {
       const resolvedPlatform = runtimeInfo?.platform ?? 'darwin'
       const visibleSteps = getVisibleStepOrder(resolvedPlatform)
@@ -57,7 +57,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       recordDiagnosticAction({
         category: 'onboarding',
         action: 'onboarding_step_completed',
-        details: { step: stepOrder[current] ?? stepOrder[0] },
+        details: { step: stepOrder[current] ?? stepOrder[0] }
       })
       trackEvent('onboarding_step_completed', { step: stepOrder[current] ?? stepOrder[0] })
       const nextIndex = Math.min(current + 1, stepOrder.length - 1)
@@ -67,11 +67,21 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     })
   }, [stepOrder])
 
+  const back = useCallback(() => {
+    setStepIndex((currentIndex) => {
+      const current = currentIndex ?? 0
+      const previousIndex = Math.max(0, current - 1)
+      const previousStep = stepOrder[previousIndex] ?? stepOrder[0]
+      void window.electronAPI.invoke('prefs:set-onboarding-step', previousStep)
+      return previousIndex
+    })
+  }, [stepOrder])
+
   const handleAnalyticsChoice = async (consented: boolean) => {
     recordDiagnosticAction({
       category: 'onboarding',
       action: 'analytics_choice_made',
-      details: { consented },
+      details: { consented }
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
     setAnalyticsConsent(consented)
@@ -111,9 +121,25 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
             heading="How It Works"
             body="AutoDoc quietly records your meeting audio, transcribes it locally, and identifies who's speaking — all on your device."
             features={[
-              { icon: '🎤', iconBg: 'bg-sage-light', title: 'Captures audio', description: 'Records mic and system audio separately for clean speaker identification' },
-              { icon: '📝', iconBg: 'bg-dusk-light', title: 'Transcribes locally', description: 'AutoDoc installs a one-time speech engine, then transcribes on-device' },
-              { icon: '👥', iconBg: 'bg-mist-light', title: 'Identifies speakers', description: "Knows who's talking — labels \"Me\" vs \"Them\" automatically" },
+              {
+                icon: '🎤',
+                iconBg: 'bg-sage-light',
+                title: 'Captures audio',
+                description:
+                  'Records mic and system audio separately for clean speaker identification'
+              },
+              {
+                icon: '📝',
+                iconBg: 'bg-dusk-light',
+                title: 'Transcribes locally',
+                description: 'AutoDoc installs a one-time speech engine, then transcribes on-device'
+              },
+              {
+                icon: '👥',
+                iconBg: 'bg-mist-light',
+                title: 'Identifies speakers',
+                description: 'Knows who\'s talking — labels "Me" vs "Them" automatically'
+              }
             ]}
             onNext={next}
           />
@@ -126,9 +152,24 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
             heading="Notes That Think"
             body="Inspired by Andy Grove's High Output Management, AutoDoc breaks every meeting into the patterns that matter — fully editable by you."
             features={[
-              { icon: '✅', iconBg: 'bg-[#FEF3C7]', title: 'Decisions', description: 'What was decided and why' },
-              { icon: '📌', iconBg: 'bg-clay-light', title: 'Action Items', description: 'Who does what, by when' },
-              { icon: '💬', iconBg: 'bg-sage-light', title: 'Discussion & Status', description: 'Key points, updates, and context' },
+              {
+                icon: '✅',
+                iconBg: 'bg-[#FEF3C7]',
+                title: 'Decisions',
+                description: 'What was decided and why'
+              },
+              {
+                icon: '📌',
+                iconBg: 'bg-clay-light',
+                title: 'Action Items',
+                description: 'Who does what, by when'
+              },
+              {
+                icon: '💬',
+                iconBg: 'bg-sage-light',
+                title: 'Discussion & Status',
+                description: 'Key points, updates, and context'
+              }
             ]}
             onNext={next}
           />
@@ -167,6 +208,16 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         <div className="absolute top-7 left-1/2 -translate-x-1/2">
           <StepDots total={totalDots} current={stepIndex} />
         </div>
+      )}
+
+      {stepIndex !== null && stepIndex > 0 && (
+        <button
+          type="button"
+          onClick={back}
+          className="absolute top-6 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
+        >
+          ← Back
+        </button>
       )}
 
       {/* Content */}

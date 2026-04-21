@@ -9,14 +9,14 @@ const originalPlatform = process.platform
 function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', {
     configurable: true,
-    value: platform,
+    value: platform
   })
 }
 
 async function loadWhisperManager(
   platform: 'darwin' | 'win32',
   rootDir: string,
-  options?: { isPackaged?: boolean; ffmpegStaticPath?: string | null },
+  options?: { isPackaged?: boolean; ffmpegStaticPath?: string | null }
 ) {
   setPlatform(platform)
   vi.resetModules()
@@ -30,17 +30,17 @@ async function loadWhisperManager(
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn(() => rootDir),
-      isPackaged: options?.isPackaged ?? false,
-    },
+      isPackaged: options?.isPackaged ?? false
+    }
   }))
 
   vi.doMock('child_process', () => ({
     execFile: execFileMock,
-    execSync: execSyncMock,
+    execSync: execSyncMock
   }))
 
   vi.doMock('ffmpeg-static', () => ({
-    default: options?.ffmpegStaticPath ?? null,
+    default: options?.ffmpegStaticPath ?? null
   }))
 
   const mod = await import('../whisper-manager')
@@ -49,7 +49,7 @@ async function loadWhisperManager(
     WhisperManager: mod.WhisperManager,
     clearDownloadedComponents: storageMod.clearDownloadedComponents,
     execSyncMock,
-    execFileMock,
+    execFileMock
   }
 }
 
@@ -71,7 +71,7 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
+        ffmpegStaticPath: bundledFfmpeg
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -146,7 +146,7 @@ describe('Whisper onboarding dependency installation', () => {
 
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true,
+        isPackaged: true
       })
 
       const manager = new WhisperManager()
@@ -157,9 +157,15 @@ describe('Whisper onboarding dependency installation', () => {
 
       await (manager as any).ensureMacCompatibilitySymlinks()
 
-      await expect(readlink(join(manager.getModelsDir(), 'libwhisper.1.dylib'))).resolves.toBe('libwhisper.1.8.4.dylib')
-      await expect(readlink(join(manager.getModelsDir(), 'libggml.0.dylib'))).resolves.toBe('libggml.0.10.0.dylib')
-      await expect(readlink(join(manager.getModelsDir(), 'libggml-base.0.dylib'))).resolves.toBe('libggml-base.0.10.0.dylib')
+      await expect(readlink(join(manager.getModelsDir(), 'libwhisper.1.dylib'))).resolves.toBe(
+        'libwhisper.1.8.4.dylib'
+      )
+      await expect(readlink(join(manager.getModelsDir(), 'libggml.0.dylib'))).resolves.toBe(
+        'libggml.0.10.0.dylib'
+      )
+      await expect(readlink(join(manager.getModelsDir(), 'libggml-base.0.dylib'))).resolves.toBe(
+        'libggml-base.0.10.0.dylib'
+      )
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -170,7 +176,7 @@ describe('Whisper onboarding dependency installation', () => {
 
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true,
+        isPackaged: true
       })
 
       const manager = new WhisperManager()
@@ -186,7 +192,11 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(destPath, 'stale dylib')
       await chmod(destPath, 0o444)
 
-      await (manager as any).copyMatchingFiles(sourceDir, /^libwhisper.*\.dylib$/i, manager.getModelsDir())
+      await (manager as any).copyMatchingFiles(
+        sourceDir,
+        /^libwhisper.*\.dylib$/i,
+        manager.getModelsDir()
+      )
 
       await expect(readFile(destPath, 'utf8')).resolves.toBe('fresh dylib')
       await expect(access(destPath, constants.W_OK)).resolves.toBeUndefined()
@@ -203,7 +213,7 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
+        ffmpegStaticPath: bundledFfmpeg
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -236,7 +246,7 @@ describe('Whisper onboarding dependency installation', () => {
         'downloading-whisper',
         'downloading-ffmpeg',
         'downloading-model',
-        'ready',
+        'ready'
       ])
       expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
@@ -251,10 +261,14 @@ describe('Whisper onboarding dependency installation', () => {
     await writeFile(bundledFfmpeg, 'ffmpeg')
 
     try {
-      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
-      })
+      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager(
+        'darwin',
+        rootDir,
+        {
+          isPackaged: true,
+          ffmpegStaticPath: bundledFfmpeg
+        }
+      )
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
       })
@@ -264,6 +278,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(manager.getWhisperPath(), 'whisper')
       await writeFile(manager.getFfmpegPath(), 'ffmpeg')
       await writeFile(manager.getModelPath(), 'model')
+      ;(manager as any).runtimeValidated = true
 
       await expect(manager.isReady()).resolves.toBe(true)
 
@@ -304,10 +319,14 @@ describe('Whisper onboarding dependency installation', () => {
     await writeFile(bundledFfmpeg, 'ffmpeg')
 
     try {
-      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager('win32', rootDir, {
-        isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
-      })
+      const { WhisperManager, clearDownloadedComponents, execSyncMock } = await loadWhisperManager(
+        'win32',
+        rootDir,
+        {
+          isPackaged: true,
+          ffmpegStaticPath: bundledFfmpeg
+        }
+      )
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
       })
@@ -319,6 +338,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(manager.getModelPath(), 'model')
       await writeFile(join(manager.getModelsDir(), 'whisper.dll'), 'dll')
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
+      ;(manager as any).runtimeValidated = true
 
       await expect(manager.isReady()).resolves.toBe(true)
 

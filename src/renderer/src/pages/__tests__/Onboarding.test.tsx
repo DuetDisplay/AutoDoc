@@ -10,8 +10,10 @@ beforeEach(() => {
     if (channel === 'prefs:get-onboarding-step') return Promise.resolve(0)
     if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
     if (channel === 'calendar:get-accounts') return Promise.resolve([])
-    if (channel === 'whisper:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
-    if (channel === 'ollama:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
+    if (channel === 'whisper:get-setup-status')
+      return Promise.resolve({ phase: 'ready', percent: 100 })
+    if (channel === 'ollama:get-setup-status')
+      return Promise.resolve({ phase: 'ready', percent: 100 })
     return Promise.resolve({} as never)
   })
 })
@@ -37,6 +39,30 @@ describe('Onboarding', () => {
     expect(screen.getByText('How It Works')).toBeInTheDocument()
     await userEvent.click(screen.getByText('Next →'))
     expect(screen.getByText('Notes That Think')).toBeInTheDocument()
+  })
+
+  it('goes back to the previous onboarding screen and persists the previous step', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(0)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(args[0])
+      if (channel === 'calendar:get-accounts') return Promise.resolve([])
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
+      if (channel === 'ollama:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    await userEvent.click(await screen.findByText('Get Started →'))
+    expect(screen.getByText('Private by Design')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /back/i }))
+
+    expect(await screen.findByText(/your meetings talk/i)).toBeInTheDocument()
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 0)
   })
 
   it('renders step dots', async () => {
@@ -80,16 +106,21 @@ describe('Onboarding', () => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 10)
     })
 
-    expect(await screen.findByRole('heading', { name: /you’re all set|you're all set/i })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: /you’re all set|you're all set/i })
+    ).toBeInTheDocument()
   })
 
   it('skips macOS permission steps on Windows', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'prefs:get-onboarding-step') return Promise.resolve(0)
-      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo({ platform: 'win32' }))
+      if (channel === 'app:get-runtime-info')
+        return Promise.resolve(createRuntimeInfo({ platform: 'win32' }))
       if (channel === 'calendar:get-accounts') return Promise.resolve([])
-      if (channel === 'whisper:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
-      if (channel === 'ollama:get-setup-status') return Promise.resolve({ phase: 'ready', percent: 100 })
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
+      if (channel === 'ollama:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
       return Promise.resolve({} as never)
     })
 
@@ -105,7 +136,8 @@ describe('Onboarding', () => {
   it('migrates saved Windows permission-step progress to calendar', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
       if (channel === 'prefs:get-onboarding-step') return Promise.resolve(5)
-      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo({ platform: 'win32' }))
+      if (channel === 'app:get-runtime-info')
+        return Promise.resolve(createRuntimeInfo({ platform: 'win32' }))
       if (channel === 'prefs:set-onboarding-step') return Promise.resolve(args[0])
       if (channel === 'calendar:get-accounts') return Promise.resolve([])
       return Promise.resolve({} as never)

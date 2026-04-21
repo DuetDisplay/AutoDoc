@@ -11,32 +11,36 @@ vi.mock('electron', () => ({
     getPath: vi.fn(() => '/mock/home'),
     get isPackaged() {
       return isPackaged
-    },
-  },
+    }
+  }
 }))
 
 vi.mock('ffmpeg-static', () => ({
-  default: '/mock/ffmpeg-static',
+  default: '/mock/ffmpeg-static'
 }))
 
 vi.mock('fs/promises', () => ({
   access: vi.fn(),
   mkdir: vi.fn(),
+  mkdtemp: vi.fn(),
   copyFile: vi.fn(),
   readdir: vi.fn(),
   rm: vi.fn(),
   symlink: vi.fn(),
   chmod: vi.fn(),
+  writeFile: vi.fn()
 }))
 
 vi.mock('child_process', () => ({
   execFile: vi.fn(),
-  execSync: vi.fn(() => ''),
+  execSync: vi.fn(() => '')
 }))
 
 const mockAccess = vi.mocked(fsPromises.access)
 const mockCopyFile = vi.mocked(fsPromises.copyFile)
+const mockMkdtemp = vi.mocked(fsPromises.mkdtemp)
 const mockReaddir = vi.mocked(fsPromises.readdir)
+const mockWriteFile = vi.mocked(fsPromises.writeFile)
 const mockExecFile = vi.mocked(childProcess.execFile)
 const mockExecSync = vi.mocked(childProcess.execSync)
 
@@ -48,6 +52,8 @@ describe('WhisperManager', () => {
     isPackaged = false
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
+    mockMkdtemp.mockResolvedValue('/mock/probe-dir')
+    mockWriteFile.mockResolvedValue(undefined)
     mockExecFile.mockImplementation((...args: any[]) => {
       const callback = args[args.length - 1]
       callback(null)
@@ -63,7 +69,7 @@ describe('WhisperManager', () => {
     expect(manager.getWhisperPath()).toBe(
       process.platform === 'win32'
         ? join('/mock/home', 'models', 'whisper-cli.exe')
-        : join('/mock/home', 'models', 'whisper-cpp'),
+        : join('/mock/home', 'models', 'whisper-cpp')
     )
   })
 
@@ -71,7 +77,7 @@ describe('WhisperManager', () => {
     expect(manager.getFfmpegPath()).toBe(
       process.platform === 'win32'
         ? join('/mock/home', 'models', 'ffmpeg.exe')
-        : join('/mock/home', 'models', 'ffmpeg'),
+        : join('/mock/home', 'models', 'ffmpeg')
     )
   })
 
@@ -79,14 +85,14 @@ describe('WhisperManager', () => {
     expect(manager.getModelPath()).toBe(
       process.platform === 'win32'
         ? join('/mock/home', 'models', 'ggml-distil-large-v3.bin')
-        : join('/mock/home', 'models', 'ggml-large-v3.bin'),
+        : join('/mock/home', 'models', 'ggml-large-v3.bin')
     )
   })
 
   it('reports ready when all files exist', async () => {
+    ;(manager as any).runtimeValidated = true
     const ready = await manager.isReady()
     expect(ready).toBe(true)
-    expect(mockExecFile).toHaveBeenCalled()
   })
 
   it('reports not ready when whisper binary is missing', async () => {
@@ -104,13 +110,7 @@ describe('WhisperManager', () => {
     expect(ready).toBe(false)
   })
 
-  it('reports not ready when whisper exists but fails to launch', async () => {
-    mockExecFile.mockImplementation((...args: any[]) => {
-      const callback = args[args.length - 1]
-      callback(new Error('loader failure'))
-      return {} as never
-    })
-
+  it('reports not ready when runtime has not been validated yet', async () => {
     const ready = await manager.isReady()
     expect(ready).toBe(false)
   })
@@ -138,9 +138,7 @@ describe('WhisperManager', () => {
   })
 
   it('allows setup to run again after a successful startSetup call', async () => {
-    const ensureReadySpy = vi
-      .spyOn(manager, 'ensureReady')
-      .mockResolvedValue(undefined)
+    const ensureReadySpy = vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
 
     await manager.startSetup()
     await manager.startSetup()
@@ -153,26 +151,38 @@ describe('WhisperManager', () => {
       {
         name: 'whisper.dll',
         isFile: () => true,
-        isDirectory: () => false,
+        isDirectory: () => false
       },
       {
         name: 'ggml.dll',
         isFile: () => true,
-        isDirectory: () => false,
+        isDirectory: () => false
       },
       {
         name: 'README.md',
         isFile: () => true,
-        isDirectory: () => false,
-      },
+        isDirectory: () => false
+      }
     ] as never)
 
-    await (manager as any).copyWhisperBundle('C:\\tmp\\whisper-cli.exe', 'C:\\dest\\whisper-cli.exe')
+    await (manager as any).copyWhisperBundle(
+      'C:\\tmp\\whisper-cli.exe',
+      'C:\\dest\\whisper-cli.exe'
+    )
 
     if (process.platform === 'win32') {
-      expect(mockCopyFile).toHaveBeenCalledWith('C:\\tmp\\whisper-cli.exe', 'C:\\dest\\whisper-cli.exe')
-      expect(mockCopyFile).toHaveBeenCalledWith('C:\\tmp\\whisper.dll', join('/mock/home', 'models', 'whisper.dll'))
-      expect(mockCopyFile).toHaveBeenCalledWith('C:\\tmp\\ggml.dll', join('/mock/home', 'models', 'ggml.dll'))
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        'C:\\tmp\\whisper-cli.exe',
+        'C:\\dest\\whisper-cli.exe'
+      )
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        'C:\\tmp\\whisper.dll',
+        join('/mock/home', 'models', 'whisper.dll')
+      )
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        'C:\\tmp\\ggml.dll',
+        join('/mock/home', 'models', 'ggml.dll')
+      )
     } else {
       expect(mockCopyFile).toHaveBeenCalledTimes(1)
     }
@@ -217,7 +227,9 @@ describe('WhisperManager', () => {
         return {} as never
       })
     mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
-    const resolveWhisperSpy = vi.spyOn(manager as never, 'resolveWhisper').mockResolvedValue(undefined)
+    const resolveWhisperSpy = vi
+      .spyOn(manager as never, 'resolveWhisper')
+      .mockResolvedValue(undefined)
     vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
 
     await manager.ensureReady()
@@ -235,23 +247,33 @@ describe('WhisperManager', () => {
       {
         name: 'libwhisper.1.8.4.dylib',
         isFile: () => true,
-        isDirectory: () => false,
+        isDirectory: () => false
       },
       {
         name: 'libggml.0.10.0.dylib',
         isFile: () => true,
-        isDirectory: () => false,
+        isDirectory: () => false
       },
       {
         name: 'libggml-base.0.10.0.dylib',
         isFile: () => true,
-        isDirectory: () => false,
+        isDirectory: () => false
+      },
+      {
+        name: 'libomp.dylib',
+        isFile: () => true,
+        isDirectory: () => false
+      },
+      {
+        name: 'libggml-metal.so',
+        isFile: () => true,
+        isDirectory: () => false
       },
       {
         name: 'libwhisper.1.dylib',
         isFile: () => false,
-        isDirectory: () => false,
-      },
+        isDirectory: () => false
+      }
     ] as never)
 
     await (manager as any).resignMacWhisperRuntime()
@@ -259,22 +281,112 @@ describe('WhisperManager', () => {
     expect(mockExecFile).toHaveBeenCalledWith(
       'codesign',
       ['--sign', '-', '--force', join('/mock/home', 'models', 'libwhisper.1.8.4.dylib')],
-      expect.any(Function),
+      expect.any(Function)
     )
     expect(mockExecFile).toHaveBeenCalledWith(
       'codesign',
       ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml.0.10.0.dylib')],
-      expect.any(Function),
+      expect.any(Function)
     )
     expect(mockExecFile).toHaveBeenCalledWith(
       'codesign',
       ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml-base.0.10.0.dylib')],
-      expect.any(Function),
+      expect.any(Function)
+    )
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', join('/mock/home', 'models', 'libomp.dylib')],
+      expect.any(Function)
+    )
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml-metal.so')],
+      expect.any(Function)
     )
     expect(mockExecFile).toHaveBeenCalledWith(
       'codesign',
       ['--sign', '-', '--force', manager.getWhisperPath()],
-      expect.any(Function),
+      expect.any(Function)
+    )
+  })
+
+  it('rewrites copied ggml backend bundles to load local runtime dependencies', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    mockReaddir.mockResolvedValue([
+      {
+        name: 'libwhisper.1.8.4.dylib',
+        isFile: () => true,
+        isDirectory: () => false
+      },
+      {
+        name: 'libggml.0.10.0.dylib',
+        isFile: () => true,
+        isDirectory: () => false
+      },
+      {
+        name: 'libggml-base.0.10.0.dylib',
+        isFile: () => true,
+        isDirectory: () => false
+      },
+      {
+        name: 'libomp.dylib',
+        isFile: () => true,
+        isDirectory: () => false
+      },
+      {
+        name: 'libggml-metal.so',
+        isFile: () => true,
+        isDirectory: () => false
+      }
+    ] as never)
+
+    const listDepsSpy = vi
+      .spyOn(manager as never, 'listMacDependencies')
+      .mockResolvedValue(['@rpath/libggml-base.0.dylib', '/usr/lib/libSystem.B.dylib'])
+    const setInstallNameSpy = vi
+      .spyOn(manager as never, 'setMacInstallName')
+      .mockResolvedValue(undefined)
+    const rewriteSpy = vi
+      .spyOn(manager as never, 'rewriteMacLoadCommands')
+      .mockResolvedValue(undefined)
+
+    await (manager as any).rewriteMacWhisperDependencies()
+
+    expect(setInstallNameSpy).toHaveBeenCalledTimes(4)
+    expect(rewriteSpy).toHaveBeenCalledWith(
+      join('/mock/home', 'models', 'libggml-metal.so'),
+      '@loader_path'
+    )
+    expect(rewriteSpy).toHaveBeenCalledWith(manager.getWhisperPath(), '@executable_path')
+    expect(listDepsSpy).not.toHaveBeenCalled()
+  })
+
+  it('rewrites local libomp references inside copied ggml backend bundles', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const changeDependencySpy = vi
+      .spyOn(manager as never, 'changeMacDependency')
+      .mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'listMacDependencies').mockResolvedValue([
+      '@@HOMEBREW_PREFIX@@/opt/libomp/lib/libomp.dylib',
+      '@rpath/libggml-base.0.dylib',
+      '/usr/lib/libSystem.B.dylib'
+    ])
+
+    await (manager as any).rewriteMacLoadCommands(
+      '/mock/home/models/libggml-cpu-apple_m4.so',
+      '@loader_path'
+    )
+
+    expect(changeDependencySpy).toHaveBeenCalledWith(
+      '/mock/home/models/libggml-cpu-apple_m4.so',
+      '@@HOMEBREW_PREFIX@@/opt/libomp/lib/libomp.dylib',
+      '@loader_path/libomp.dylib'
     )
   })
 })
