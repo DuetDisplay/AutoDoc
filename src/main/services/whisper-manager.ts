@@ -333,8 +333,38 @@ export class WhisperManager extends EventEmitter {
       modelsDir,
     )
 
+    await this.ensureMacCompatibilitySymlinks()
     await this.rewriteMacWhisperDependencies()
     await rm(extractDir, { recursive: true, force: true })
+  }
+
+  private async ensureMacCompatibilitySymlinks(): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const entries = await readdir(modelsDir, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.dylib')) {
+        continue
+      }
+
+      const compatibilityName = this.getMacCompatibilityDylibName(entry.name)
+      if (!compatibilityName || compatibilityName === entry.name) {
+        continue
+      }
+
+      await rm(join(modelsDir, compatibilityName), { force: true })
+      await symlink(entry.name, join(modelsDir, compatibilityName))
+    }
+  }
+
+  private getMacCompatibilityDylibName(filename: string): string | null {
+    const match = /^(lib(?:whisper|ggml(?:-base)?))\.(\d+)(?:\.\d+)*\.dylib$/i.exec(filename)
+    if (!match) {
+      return null
+    }
+
+    const [, libraryName, majorVersion] = match
+    return `${libraryName}.${majorVersion}.dylib`
   }
 
   private async findFileRecursive(dir: string, filename: string): Promise<string | null> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, access } from 'fs/promises'
+import { mkdtemp, mkdir, readlink, rm, writeFile, access } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -135,6 +135,30 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       expect(downloadModelSpy).toHaveBeenCalledTimes(1)
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates macOS compatibility symlinks for packaged whisper dylibs', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-links-'))
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+      await writeFile(join(manager.getModelsDir(), 'libwhisper.1.8.4.dylib'), 'whisper dylib')
+      await writeFile(join(manager.getModelsDir(), 'libggml.0.10.0.dylib'), 'ggml dylib')
+      await writeFile(join(manager.getModelsDir(), 'libggml-base.0.10.0.dylib'), 'ggml base dylib')
+
+      await (manager as any).ensureMacCompatibilitySymlinks()
+
+      await expect(readlink(join(manager.getModelsDir(), 'libwhisper.1.dylib'))).resolves.toBe('libwhisper.1.8.4.dylib')
+      await expect(readlink(join(manager.getModelsDir(), 'libggml.0.dylib'))).resolves.toBe('libggml.0.10.0.dylib')
+      await expect(readlink(join(manager.getModelsDir(), 'libggml-base.0.dylib'))).resolves.toBe('libggml-base.0.10.0.dylib')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
