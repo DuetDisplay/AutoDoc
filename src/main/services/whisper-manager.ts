@@ -335,6 +335,7 @@ export class WhisperManager extends EventEmitter {
 
     await this.ensureMacCompatibilitySymlinks()
     await this.rewriteMacWhisperDependencies()
+    await this.resignMacWhisperRuntime()
     await rm(extractDir, { recursive: true, force: true })
   }
 
@@ -451,7 +452,12 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async copyWhisperBundle(sourceBinary: string, destBinary: string): Promise<void> {
+    await rm(destBinary, { force: true })
     await copyFile(sourceBinary, destBinary)
+
+    if (!IS_WIN) {
+      await chmod(destBinary, 0o755)
+    }
 
     if (!IS_WIN) {
       return
@@ -478,7 +484,12 @@ export class WhisperManager extends EventEmitter {
         continue
       }
 
-      await copyFile(join(sourceDir, entry.name), join(destDir, entry.name))
+      const sourcePath = join(sourceDir, entry.name)
+      const destPath = join(destDir, entry.name)
+
+      await rm(destPath, { force: true })
+      await copyFile(sourcePath, destPath)
+      await chmod(destPath, 0o755)
     }
   }
 
@@ -557,6 +568,26 @@ export class WhisperManager extends EventEmitter {
     }
 
     await this.rewriteMacLoadCommands(binaryPath, '@executable_path')
+  }
+
+  private async resignMacWhisperRuntime(): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const entries = await readdir(modelsDir, { withFileTypes: true })
+    const runtimePaths = [
+      ...entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.dylib'))
+        .map((entry) => join(modelsDir, entry.name)),
+      this.getWhisperPath(),
+    ]
+
+    for (const runtimePath of runtimePaths) {
+      await new Promise<void>((resolve, reject) => {
+        execFile('codesign', ['--sign', '-', '--force', runtimePath], (err) => {
+          if (err) reject(new Error(`Failed to re-sign macOS transcription runtime: ${err.message}`))
+          else resolve()
+        })
+      })
+    }
   }
 
   private async rewriteMacLoadCommands(filePath: string, localPrefix: '@loader_path' | '@executable_path'): Promise<void> {

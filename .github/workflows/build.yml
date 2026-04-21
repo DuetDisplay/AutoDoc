@@ -6,8 +6,6 @@ on:
       # Add a developer branch here when you want test artifacts from CI.
       - codex/single-instance-installed-copy
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 jobs:

@@ -225,4 +225,56 @@ describe('WhisperManager', () => {
     expect(resolveWhisperSpy).toHaveBeenCalled()
     expect(mockExecSync).not.toHaveBeenCalled()
   })
+
+  it('re-signs the rewritten macOS whisper runtime after patching load commands', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    mockReaddir.mockResolvedValue([
+      {
+        name: 'libwhisper.1.8.4.dylib',
+        isFile: () => true,
+        isDirectory: () => false,
+      },
+      {
+        name: 'libggml.0.10.0.dylib',
+        isFile: () => true,
+        isDirectory: () => false,
+      },
+      {
+        name: 'libggml-base.0.10.0.dylib',
+        isFile: () => true,
+        isDirectory: () => false,
+      },
+      {
+        name: 'libwhisper.1.dylib',
+        isFile: () => false,
+        isDirectory: () => false,
+      },
+    ] as never)
+
+    await (manager as any).resignMacWhisperRuntime()
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', join('/mock/home', 'models', 'libwhisper.1.8.4.dylib')],
+      expect.any(Function),
+    )
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml.0.10.0.dylib')],
+      expect.any(Function),
+    )
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml-base.0.10.0.dylib')],
+      expect.any(Function),
+    )
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'codesign',
+      ['--sign', '-', '--force', manager.getWhisperPath()],
+      expect.any(Function),
+    )
+  })
 })

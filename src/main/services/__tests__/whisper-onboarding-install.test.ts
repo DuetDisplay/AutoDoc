@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readlink, rm, writeFile, access } from 'fs/promises'
+import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
+import { constants } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -159,6 +160,36 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(readlink(join(manager.getModelsDir(), 'libwhisper.1.dylib'))).resolves.toBe('libwhisper.1.8.4.dylib')
       await expect(readlink(join(manager.getModelsDir(), 'libggml.0.dylib'))).resolves.toBe('libggml.0.10.0.dylib')
       await expect(readlink(join(manager.getModelsDir(), 'libggml-base.0.dylib'))).resolves.toBe('libggml-base.0.10.0.dylib')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('overwrites read-only macOS dylibs during setup retries', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-retry-'))
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+      })
+
+      const manager = new WhisperManager()
+      const sourceDir = join(rootDir, 'source-libs')
+      await mkdir(sourceDir, { recursive: true })
+      await mkdir(manager.getModelsDir(), { recursive: true })
+
+      const sourcePath = join(sourceDir, 'libwhisper.1.8.4.dylib')
+      const destPath = join(manager.getModelsDir(), 'libwhisper.1.8.4.dylib')
+
+      await writeFile(sourcePath, 'fresh dylib')
+      await chmod(sourcePath, 0o444)
+      await writeFile(destPath, 'stale dylib')
+      await chmod(destPath, 0o444)
+
+      await (manager as any).copyMatchingFiles(sourceDir, /^libwhisper.*\.dylib$/i, manager.getModelsDir())
+
+      await expect(readFile(destPath, 'utf8')).resolves.toBe('fresh dylib')
+      await expect(access(destPath, constants.W_OK)).resolves.toBeUndefined()
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

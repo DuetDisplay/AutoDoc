@@ -70,7 +70,6 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 afterPack: ./scripts/after-pack-mac-privacy.cjs
-afterSign: ./scripts/after-sign-mac-binaries.cjs
 npmRebuild: false
 publish:
   provider: github

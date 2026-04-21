@@ -1,0 +1,122 @@
+name: Release macOS Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag to publish macOS assets to
+        required: true
+        type: string
+      build_ref:
+        description: Git ref to build (defaults to the tag)
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.build_ref != '' && inputs.build_ref || inputs.release_tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run bootstrap tests
+        run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
+
+      - name: Install Apple certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.DD_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Build macOS release (signed + notarized)
+        env:
+          APPLE_ID: ${{ secrets.DD_APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
+        run: npm run build:mac
+
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ inputs.release_tag }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-mac
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos-${{ inputs.release_tag }}
+          path: release-assets/mac
+
+      - name: Publish macOS GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/mac/* --clobber -R "$GH_REPO"
+          else
+            gh release create "$RELEASE_TAG" release-assets/mac/* --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
+          fi
+
+      - name: Remove obsolete blockmap assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}")"
+          blockmap_ids="$(jq -r '.assets[] | select(.name | endswith(".blockmap")) | .id' <<<"$release_json")"
+
+          if [ -z "$blockmap_ids" ]; then
+            exit 0
+          fi
+
+          while IFS= read -r asset_id; do
+            gh api --method DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
+          done <<<"$blockmap_ids"
