@@ -6,7 +6,10 @@ import { createRequire } from 'module'
 import { readdirSync, rmSync } from 'fs'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
 import { migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
-import { startRecordingMediaHttpServer, stopRecordingMediaHttpServer } from './services/media-http-server'
+import {
+  startRecordingMediaHttpServer,
+  stopRecordingMediaHttpServer
+} from './services/media-http-server'
 import { is } from '@electron-toolkit/utils'
 import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
@@ -36,17 +39,31 @@ import type {
   OllamaSetupStatus,
   WhisperSetupStatus,
   DiarizationSetupStatus,
-  RecordingMediaPlayerErrorReport,
+  RecordingMediaPlayerErrorReport
 } from '../shared/types'
-import { initAutoUpdater, getUpdateStatus, checkForUpdates, installUpdate } from './services/auto-updater'
-import { initSentryReporter, resetSentryScopes, setGlobalContext, setGlobalTag } from './services/sentry-reporter'
-import { clearDiagnosticTrail, recordMainDiagnosticAction, recordRendererDiagnosticAction } from './services/diagnostic-trail'
+import {
+  initAutoUpdater,
+  getUpdateStatus,
+  checkForUpdates,
+  installUpdate
+} from './services/auto-updater'
+import {
+  initSentryReporter,
+  resetSentryScopes,
+  setGlobalContext,
+  setGlobalTag
+} from './services/sentry-reporter'
+import {
+  clearDiagnosticTrail,
+  recordMainDiagnosticAction,
+  recordRendererDiagnosticAction
+} from './services/diagnostic-trail'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
   handleSecondInstanceLaunch,
-  traceInstallPolicy,
+  traceInstallPolicy
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 import {
@@ -54,7 +71,7 @@ import {
   getE2EPermissions,
   getE2EPlatform,
   setE2EOllamaStatus,
-  setE2EWhisperStatus,
+  setE2EWhisperStatus
 } from './services/e2e-fixtures'
 import { clearDownloadedComponents, getAppStorageInfo } from './services/storage-manager'
 import { getResetLocalDataTargets } from './services/reset-local-data'
@@ -83,7 +100,7 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
     appDataPath,
     testUserDataDir,
     isE2E,
-    isRealSetupTest,
+    isRealSetupTest
   })) {
     rmSync(targetPath, { recursive: true, force: true })
   }
@@ -136,7 +153,7 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock(buildSingleInstanceL
 traceInstallPolicy('index: single-instance lock result', {
   gotLock: gotSingleInstanceLock,
   execPath: process.execPath,
-  pid: process.pid,
+  pid: process.pid
 })
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
 const require = createRequire(import.meta.url)
@@ -152,21 +169,17 @@ function scheduleWindowsE2ETestResetCleanup(targetPaths: string[]): void {
     '  if ($remaining.Count -eq 0) { exit 0 }',
     '  foreach ($target in $remaining) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }',
     '  Start-Sleep -Milliseconds 200',
-    '}',
+    '}'
   ].join('; ')
 
-  spawn('powershell', [
-    '-NoProfile',
-    '-WindowStyle',
-    'Hidden',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    script,
-  ], {
-    detached: true,
-    stdio: 'ignore',
-  }).unref()
+  spawn(
+    'powershell',
+    ['-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    {
+      detached: true,
+      stdio: 'ignore'
+    }
+  ).unref()
 }
 
 function clearWindowsE2ETestUserDataContents(userDataPath: string): void {
@@ -216,7 +229,7 @@ function initializeMainSentry(): void {
         }
         delete event.server_name
         return deepScrub(event, scrubString)
-      },
+      }
     }
 
     sentryRuntime.init(initOptions as Parameters<typeof sentryRuntime.init>[0])
@@ -243,21 +256,26 @@ if (!gotSingleInstanceLock) {
   initializeMainSentry()
 
   app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
-    void handleSecondInstanceLaunch(additionalData, argv).then((handled) => {
-      if (!handled) {
+    void handleSecondInstanceLaunch(additionalData, argv)
+      .then((handled) => {
+        if (!handled) {
+          focusMainWindow()
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to handle second AutoDoc launch:', error)
         focusMainWindow()
-      }
-    }).catch((error) => {
-      console.warn('Failed to handle second AutoDoc launch:', error)
-      focusMainWindow()
-    })
+      })
   })
 }
 
 function createWindow(): void {
   recordMainDiagnosticAction({ category: 'app', action: 'main_window_created' })
   const windowIcon = is.dev
-    ? join(__dirname, process.platform === 'win32' ? '../../build/icon.ico' : '../../build/icon.png')
+    ? join(
+        __dirname,
+        process.platform === 'win32' ? '../../build/icon.ico' : '../../build/icon.png'
+      )
     : undefined
 
   const mainWindow = new BrowserWindow({
@@ -272,8 +290,8 @@ function createWindow(): void {
     icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-    },
+      sandbox: false
+    }
   })
 
   registerMainWindow(mainWindow)
@@ -321,11 +339,15 @@ app.whenReady().then(async () => {
     arch: process.arch,
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron,
-    nodeVersion: process.versions.node,
+    nodeVersion: process.versions.node
   }
   let whisperContext: Record<string, unknown> = { ready: false, modelFilename: null }
   let ollamaContext: Record<string, unknown> = { ready: false, modelName: null }
-  let calendarContext: Record<string, unknown> = { connected: false, providerCount: 0, accountCount: 0 }
+  let calendarContext: Record<string, unknown> = {
+    connected: false,
+    providerCount: 0,
+    accountCount: 0
+  }
 
   const applyCurrentSentryContext = (): void => {
     setGlobalTag('platform', process.platform)
@@ -357,13 +379,9 @@ app.whenReady().then(async () => {
     applyCurrentSentryContext()
   }
 
-  registerPrefsIpc(prefsStore, (enabled) => {
-    analyticsConsentEnabled = enabled
-    if (mainSentryEnabled) {
-      resetSentryScopes()
-      applyCurrentSentryContext()
-    }
-  })
+  const isExperimentalSpeakerDiarizationEnabled = (): boolean => {
+    return prefsStore.getExperimentalSpeakerDiarization()
+  }
 
   // Auto-updater
   if (!isE2E) {
@@ -402,24 +420,34 @@ app.whenReady().then(async () => {
 
     if (process.platform === 'darwin') {
       if (panel === 'screen') {
-        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+        shell.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+        )
       } else {
-        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+        shell.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+        )
       }
     }
   })
 
   const calendarManager = new CalendarManager()
-  registerCalendarIpc(calendarManager, (events) => {
-    cachedEvents = events
-    updateTrayMenu()
-  }, (connected) => {
-    updateCalendarSentryContext({
-      connected,
-      providerCount: connected ? new Set(calendarManager.getAccounts().map((account) => account.provider)).size : 0,
-      accountCount: calendarManager.getAccounts().length,
-    })
-  })
+  registerCalendarIpc(
+    calendarManager,
+    (events) => {
+      cachedEvents = events
+      updateTrayMenu()
+    },
+    (connected) => {
+      updateCalendarSentryContext({
+        connected,
+        providerCount: connected
+          ? new Set(calendarManager.getAccounts().map((account) => account.provider)).size
+          : 0,
+        accountCount: calendarManager.getAccounts().length
+      })
+    }
+  )
 
   const recordingService = new RecordingService()
 
@@ -437,27 +465,44 @@ app.whenReady().then(async () => {
     const micPath = join(baseDir, meetingId, 'mic.webm')
     const systemPath = join(baseDir, meetingId, 'system.webm')
     const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
-    const hasVideo = await stat(videoPath).then(() => true).catch(() => false)
-    const hasMicAudio = await stat(micPath).then(() => true).catch(() => false)
-    const hasSystemAudio = await stat(systemPath).then(() => true).catch(() => false)
-    const hasLegacyAudio = await stat(legacyAudioPath).then(() => true).catch(() => false)
-    const audioFile = hasSystemAudio ? 'system.webm' : hasMicAudio ? 'mic.webm' : hasLegacyAudio ? 'audio.webm' : undefined
+    const hasVideo = await stat(videoPath)
+      .then(() => true)
+      .catch(() => false)
+    const hasMicAudio = await stat(micPath)
+      .then(() => true)
+      .catch(() => false)
+    const hasSystemAudio = await stat(systemPath)
+      .then(() => true)
+      .catch(() => false)
+    const hasLegacyAudio = await stat(legacyAudioPath)
+      .then(() => true)
+      .catch(() => false)
+    const audioFile = hasSystemAudio
+      ? 'system.webm'
+      : hasMicAudio
+        ? 'mic.webm'
+        : hasLegacyAudio
+          ? 'audio.webm'
+          : undefined
     return {
       hasVideo,
       hasAudio: Boolean(audioFile),
       audioFile,
-      mediaBaseUrl: recordingMediaBaseUrl ?? undefined,
+      mediaBaseUrl: recordingMediaBaseUrl ?? undefined
     }
   })
 
-  ipcMain.handle('recording:report-media-player-error', (_event, payload: RecordingMediaPlayerErrorReport) => {
-    logAutodocFailure({
-      area: 'recording',
-      message: 'Renderer media element error (video/audio)',
-      meetingId: payload.meetingId,
-      context: { surface: 'renderer', ...payload },
-    })
-  })
+  ipcMain.handle(
+    'recording:report-media-player-error',
+    (_event, payload: RecordingMediaPlayerErrorReport) => {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Renderer media element error (video/audio)',
+        meetingId: payload.meetingId,
+        context: { surface: 'renderer', ...payload }
+      })
+    }
+  )
 
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
@@ -472,6 +517,7 @@ app.whenReady().then(async () => {
       return state.isRecording && state.meetingId === meetingId
     },
     diarizationService,
+    isExperimentalSpeakerDiarizationEnabled
   )
   ollamaManager = new OllamaManager()
   const managedOllamaManager = ollamaManager
@@ -480,14 +526,16 @@ app.whenReady().then(async () => {
   const ollamaSetupState: OllamaSetupStatus = isE2E
     ? getE2EOllamaStatus()
     : { phase: 'starting', percent: 0 }
-  let lastSuccessfulOllamaPhase: OllamaSetupStatus['phase'] = isE2E ? ollamaSetupState.phase : 'starting'
+  let lastSuccessfulOllamaPhase: OllamaSetupStatus['phase'] = isE2E
+    ? ollamaSetupState.phase
+    : 'starting'
 
   function broadcastOllamaStatus(): void {
     updateOllamaSentryContext({
       ready: ollamaSetupState.phase === 'ready',
       modelName: managedOllamaManager.getModel(),
       phase: ollamaSetupState.phase,
-      failedStep: ollamaSetupState.failedStep ?? null,
+      failedStep: ollamaSetupState.failedStep ?? null
     })
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
@@ -563,7 +611,8 @@ app.whenReady().then(async () => {
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
 
-    ollamaRecoveryPromise = managedOllamaManager.startAndPull()
+    ollamaRecoveryPromise = managedOllamaManager
+      .startAndPull()
       .then(() => {
         lastSuccessfulOllamaPhase = 'ready'
         ollamaSetupState.phase = 'ready'
@@ -576,12 +625,13 @@ app.whenReady().then(async () => {
         ollamaSetupState.phase = 'error'
         ollamaSetupState.percent = 0
         ollamaSetupState.error = err instanceof Error ? err.message : String(err)
-        ollamaSetupState.failedStep = lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
+        ollamaSetupState.failedStep =
+          lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
         broadcastOllamaStatus()
         logAutodocFailure({
           area: 'ollama',
           message: 'Failed to start managed Ollama server',
-          error: err,
+          error: err
         })
         console.error('Failed to start Ollama:', err)
       })
@@ -590,18 +640,24 @@ app.whenReady().then(async () => {
       })
   }
 
-  const ollamaProvider = new OllamaProvider(managedOllamaManager.getBaseUrl(), managedOllamaManager.getModel())
+  const ollamaProvider = new OllamaProvider(
+    managedOllamaManager.getBaseUrl(),
+    managedOllamaManager.getModel()
+  )
   const segmentationService = new SegmentationService(
     ollamaProvider,
     ollamaManager,
-    recordingService.getRecordingsBaseDir(),
+    recordingService.getRecordingsBaseDir()
   )
-  ipcMain.handle('app:get-runtime-info', (): AppRuntimeInfo => ({
-    platform: isE2E ? getE2EPlatform() : process.platform,
-    storagePath: app.getPath('userData'),
-    whisperModel: whisperManager.getModelName(),
-    ollamaModel: managedOllamaManager.getModel(),
-  }))
+  ipcMain.handle(
+    'app:get-runtime-info',
+    (): AppRuntimeInfo => ({
+      platform: isE2E ? getE2EPlatform() : process.platform,
+      storagePath: app.getPath('userData'),
+      whisperModel: whisperManager.getModelName(),
+      ollamaModel: managedOllamaManager.getModel()
+    })
+  )
   ipcMain.handle('app:get-storage-info', async (): Promise<AppStorageInfo> => {
     return await getAppStorageInfo()
   })
@@ -626,7 +682,7 @@ app.whenReady().then(async () => {
         appDataPath: app.getPath('appData'),
         testUserDataDir,
         isE2E,
-        isRealSetupTest,
+        isRealSetupTest
       })
       // In Windows-hosted E2E runs, deleting the temp profile after process exit
       // avoids relaunching an unmanaged second app instance that Playwright can't own.
@@ -636,9 +692,7 @@ app.whenReady().then(async () => {
       return
     }
 
-    const relaunchArgs = process.argv
-      .slice(1)
-      .filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
+    const relaunchArgs = process.argv.slice(1).filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
 
     app.relaunch({ args: [...relaunchArgs, RESET_LOCAL_DATA_ARG] })
     setTimeout(() => app.exit(0), 100)
@@ -650,13 +704,13 @@ app.whenReady().then(async () => {
 
     pendingRecoveryPromise = Promise.all([
       transcriptionService.scanAndEnqueuePending(),
-      segmentationService.scanAndEnqueuePending(),
+      segmentationService.scanAndEnqueuePending()
     ])
       .catch((err) => {
         logAutodocFailure({
           area: 'app',
           message: 'Pending meeting recovery failed',
-          error: err,
+          error: err
         })
         console.error('Pending meeting recovery failed:', err)
       })
@@ -671,10 +725,7 @@ app.whenReady().then(async () => {
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
-  const detectionService = new DetectionService(
-    recordingService,
-    () => cachedEvents,
-  )
+  const detectionService = new DetectionService(recordingService, () => cachedEvents)
 
   ipcMain.handle('detection:dismiss', () => {
     detectionService.dismissPrompt()
@@ -686,27 +737,27 @@ app.whenReady().then(async () => {
     : { phase: 'checking', percent: 0 }
   let lastSuccessfulWhisperPhase: WhisperSetupStatus['phase'] = 'checking'
   let lastSuccessfulDiarizationPhase: DiarizationSetupStatus['phase'] = isE2E ? 'ready' : 'checking'
-  const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] => (
-    lastSuccessfulWhisperPhase === 'downloading-ffmpeg'
-    || lastSuccessfulWhisperPhase === 'downloading-model'
-    || lastSuccessfulWhisperPhase === 'ready'
+  const getWhisperFailedStep = (): WhisperSetupStatus['failedStep'] =>
+    lastSuccessfulWhisperPhase === 'downloading-ffmpeg' ||
+    lastSuccessfulWhisperPhase === 'downloading-model' ||
+    lastSuccessfulWhisperPhase === 'ready'
       ? lastSuccessfulWhisperPhase
       : 'downloading-whisper'
-  )
 
-  const getDiarizationFailedStep = (): DiarizationSetupStatus['failedStep'] => (
-    lastSuccessfulDiarizationPhase === 'installing-speaker-id'
-    || lastSuccessfulDiarizationPhase === 'downloading-speaker-model'
-    || lastSuccessfulDiarizationPhase === 'ready'
+  const getDiarizationFailedStep = (): DiarizationSetupStatus['failedStep'] =>
+    lastSuccessfulDiarizationPhase === 'installing-speaker-id' ||
+    lastSuccessfulDiarizationPhase === 'downloading-speaker-model' ||
+    lastSuccessfulDiarizationPhase === 'ready'
       ? lastSuccessfulDiarizationPhase
       : 'preparing-speaker-runtime'
-  )
 
-  const mapDiarizationToTranscriptionStatus = (status: DiarizationSetupStatus): WhisperSetupStatus => ({
+  const mapDiarizationToTranscriptionStatus = (
+    status: DiarizationSetupStatus
+  ): WhisperSetupStatus => ({
     phase: status.phase,
     percent: status.percent,
     error: status.error,
-    failedStep: status.failedStep,
+    failedStep: status.failedStep
   })
 
   const getCombinedTranscriptionSetupStatus = (): WhisperSetupStatus => {
@@ -718,7 +769,10 @@ app.whenReady().then(async () => {
     }
 
     const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(diarizationSetupState)
-    if (diarizationAsTranscription.phase === 'error' || diarizationAsTranscription.phase !== 'ready') {
+    if (
+      diarizationAsTranscription.phase === 'error' ||
+      diarizationAsTranscription.phase !== 'ready'
+    ) {
       return diarizationAsTranscription
     }
 
@@ -734,7 +788,7 @@ app.whenReady().then(async () => {
       phase: combined.phase,
       failedStep: combined.failedStep ?? null,
       diarizationPhase: diarizationSetupState.phase,
-      diarizationFailedStep: diarizationSetupState.failedStep ?? null,
+      diarizationFailedStep: diarizationSetupState.failedStep ?? null
     })
     const windows = BrowserWindow.getAllWindows()
     for (const win of windows) {
@@ -749,7 +803,8 @@ app.whenReady().then(async () => {
     whisperEngineSetupState.phase = status.phase
     whisperEngineSetupState.percent = status.percent
     whisperEngineSetupState.error = status.error
-    whisperEngineSetupState.failedStep = status.phase === 'error' ? getWhisperFailedStep() : undefined
+    whisperEngineSetupState.failedStep =
+      status.phase === 'error' ? getWhisperFailedStep() : undefined
     broadcastTranscriptionSetupStatus()
   })
 
@@ -760,9 +815,14 @@ app.whenReady().then(async () => {
     diarizationSetupState.phase = status.phase
     diarizationSetupState.percent = status.percent
     diarizationSetupState.error = status.error
-    diarizationSetupState.failedStep = status.phase === 'error' ? getDiarizationFailedStep() : undefined
+    diarizationSetupState.failedStep =
+      status.phase === 'error' ? getDiarizationFailedStep() : undefined
     broadcastTranscriptionSetupStatus()
   })
+
+  const startDiarizationSetup = async (): Promise<void> => {
+    await diarizationService.startSetup()
+  }
 
   if (isE2E) {
     ipcMain.handle('e2e:set-whisper-status', (_event, status: WhisperSetupStatus) => {
@@ -787,7 +847,7 @@ app.whenReady().then(async () => {
     recordingService,
     transcriptionService,
     whisperManager,
-    calendarManager,
+    calendarManager
   )
   registerTranscriptionIpc(transcriptionService)
   registerLlmIpc(
@@ -795,27 +855,29 @@ app.whenReady().then(async () => {
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
-    ensureOllamaRunning,
+    ensureOllamaRunning
   )
   registerWhisperIpc(
     whisperManager,
     () => getCombinedTranscriptionSetupStatus(),
     async () => {
-      await Promise.allSettled([
-        whisperManager.startSetup(),
-        diarizationService.startSetup(),
-      ])
-    },
+      await Promise.allSettled([whisperManager.startSetup(), startDiarizationSetup()])
+    }
   )
   registerSearchIpc(recordingService.getRecordingsBaseDir())
-  registerChatIpc(recordingService.getRecordingsBaseDir(), managedOllamaManager, ollamaProvider, calendarManager)
+  registerChatIpc(
+    recordingService.getRecordingsBaseDir(),
+    managedOllamaManager,
+    ollamaProvider,
+    calendarManager
+  )
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 
   const restoredAccounts = await calendarManager.initialize()
   updateCalendarSentryContext({
     connected: restoredAccounts.length > 0,
     providerCount: new Set(restoredAccounts.map((account) => account.provider)).size,
-    accountCount: restoredAccounts.length,
+    accountCount: restoredAccounts.length
   })
   if (restoredAccounts.length > 0) {
     calendarManager.startSync((events) => {
@@ -835,7 +897,7 @@ app.whenReady().then(async () => {
     logAutodocFailure({
       area: 'app',
       message: 'Data dir migration failed',
-      error: err,
+      error: err
     })
     console.error('Data dir migration failed:', err)
   }
@@ -846,7 +908,7 @@ app.whenReady().then(async () => {
     logAutodocFailure({
       area: 'app',
       message: 'Encryption key initialization failed',
-      error: err,
+      error: err
     })
     console.error('Encryption key initialization failed:', err)
   }
@@ -857,10 +919,21 @@ app.whenReady().then(async () => {
     logAutodocFailure({
       area: 'app',
       message: 'Encryption migration failed',
-      error: err,
+      error: err
     })
     console.error('Encryption migration failed:', err)
   }
+
+  registerPrefsIpc(
+    prefsStore,
+    (enabled) => {
+      analyticsConsentEnabled = enabled
+      if (mainSentryEnabled) {
+        resetSentryScopes()
+        applyCurrentSentryContext()
+      }
+    }
+  )
 
   createWindow()
 
@@ -881,7 +954,7 @@ app.whenReady().then(async () => {
           } catch {
             // Failure already logged in recording IPC
           }
-        },
+        }
       })
     }
 
@@ -891,7 +964,8 @@ app.whenReady().then(async () => {
     }
 
     // Start whisper tools + model download in the background — don't block the window
-    whisperManager.startSetup()
+    whisperManager
+      .startSetup()
       .then(() => {
         lastSuccessfulWhisperPhase = 'ready'
         whisperEngineSetupState.phase = 'ready'
@@ -908,12 +982,12 @@ app.whenReady().then(async () => {
         logAutodocFailure({
           area: 'whisper',
           message: 'Failed to set up whisper tools',
-          error: err,
+          error: err
         })
         console.error('Failed to set up whisper tools:', err)
       })
 
-    diarizationService.startSetup()
+    startDiarizationSetup()
       .then(() => {
         lastSuccessfulDiarizationPhase = 'ready'
         diarizationSetupState.phase = 'ready'
@@ -930,7 +1004,7 @@ app.whenReady().then(async () => {
         logAutodocFailure({
           area: 'diarization',
           message: 'Failed to set up speaker diarization',
-          error: err,
+          error: err
         })
         console.error('Failed to set up speaker diarization:', err)
       })
@@ -983,7 +1057,7 @@ process.on('uncaughtException', (error) => {
   logAutodocFailure({
     area: 'app',
     message: 'Uncaught exception in main process',
-    error,
+    error
   })
   console.error('Uncaught exception in main process:', error)
 })
@@ -992,7 +1066,7 @@ process.on('unhandledRejection', (reason) => {
   logAutodocFailure({
     area: 'app',
     message: 'Unhandled rejection in main process',
-    error: reason,
+    error: reason
   })
   console.error('Unhandled rejection in main process:', reason)
 })

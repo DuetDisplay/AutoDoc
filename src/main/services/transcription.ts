@@ -3,11 +3,22 @@ import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 import { availableParallelism, constants as osConstants, cpus, setPriority, tmpdir } from 'os'
 import { spawn } from 'child_process'
-import type { Transcript, TranscriptionStatus, SpeakerMap, TranscriptionStatusPayload } from '../../shared/types'
+import type {
+  Transcript,
+  TranscriptionStatus,
+  SpeakerMap,
+  TranscriptionStatusPayload
+} from '../../shared/types'
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
-import { encryptJSON, decryptJSON, decryptFileToTemp, isEncrypted, encryptFileInPlace } from './crypto'
+import {
+  encryptJSON,
+  decryptJSON,
+  decryptFileToTemp,
+  isEncrypted,
+  encryptFileInPlace
+} from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
@@ -96,6 +107,7 @@ export class TranscriptionService {
     private calendarManager: CalendarManager,
     private isMeetingActive: (meetingId: string) => boolean = () => false,
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
+    private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -149,7 +161,7 @@ export class TranscriptionService {
     if (hasTranscript && hasError) {
       const [transcriptStat, errorStat] = await Promise.all([
         stat(transcriptPath).catch(() => null),
-        stat(errorPath).catch(() => null),
+        stat(errorPath).catch(() => null)
       ])
       if (transcriptStat && errorStat && errorStat.mtimeMs > transcriptStat.mtimeMs) {
         return 'failed'
@@ -198,9 +210,9 @@ export class TranscriptionService {
         const errorPath = join(meetingDir, 'transcript.error')
 
         const hasAudio =
-          await this.fileExists(audioPath) ||
-          await this.fileExists(micPath) ||
-          await this.fileExists(systemPath)
+          (await this.fileExists(audioPath)) ||
+          (await this.fileExists(micPath)) ||
+          (await this.fileExists(systemPath))
         const hasTranscript = await this.fileExists(transcriptPath)
         const hasError = await this.fileExists(errorPath)
 
@@ -209,9 +221,12 @@ export class TranscriptionService {
         } else if (hasAudio && !hasTranscript && hasError) {
           const errorData = await this.readErrorFile(errorPath)
           const errorCode = errorData ? classifyError(errorData.error) : 'unknown'
-          const isPermanentFailure = errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
+          const isPermanentFailure =
+            errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
           if (errorData && errorData.retries < 3 && !isPermanentFailure) {
-            console.log(`Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+            console.log(
+              `Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`
+            )
             this.retry(meetingId, 'recovery-scan')
           }
         }
@@ -221,7 +236,7 @@ export class TranscriptionService {
           area: 'transcription',
           message: 'Failed to inspect transcription state during pending scan',
           error: err,
-          meetingId,
+          meetingId
         })
       }
     }
@@ -286,18 +301,16 @@ export class TranscriptionService {
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
 
+      const shouldUseExperimentalDiarization =
+        this.diarizationService != null && this.isExperimentalSpeakerDiarizationEnabled()
       let transcripts: Transcript[] = []
       if (hasMic && hasSystem) {
-        const shouldDiarizeSystem = this.diarizationService != null
+        const shouldDiarizeSystem = shouldUseExperimentalDiarization
         const [micTranscripts, rawSystemTranscripts] = await Promise.all([
-          this.transcribeAudioSource(
-            meetingId,
-            micWebm,
-            'me',
-            `${tempPrefix}-mic`,
-            tempFiles,
-            { start: 0, end: 50 },
-          ),
+          this.transcribeAudioSource(meetingId, micWebm, 'me', `${tempPrefix}-mic`, tempFiles, {
+            start: 0,
+            end: 50
+          }),
           this.transcribeAudioSource(
             meetingId,
             systemWebm,
@@ -305,8 +318,8 @@ export class TranscriptionService {
             `${tempPrefix}-system`,
             tempFiles,
             { start: 50, end: 100 },
-            !shouldDiarizeSystem,
-          ),
+            !shouldDiarizeSystem
+          )
         ])
         const systemTranscripts = shouldDiarizeSystem
           ? await this.diarizeTranscriptsForSource(
@@ -314,15 +327,22 @@ export class TranscriptionService {
               systemWebm,
               rawSystemTranscripts,
               `${tempPrefix}-system-diarization`,
-              tempFiles,
+              tempFiles
             )
           : rawSystemTranscripts
-        const filteredMicTranscripts = this.suppressAcousticEchoes(micTranscripts, systemTranscripts)
-        transcripts = this.mergeTranscriptStreams(meetingId, filteredMicTranscripts, systemTranscripts)
+        const filteredMicTranscripts = this.suppressAcousticEchoes(
+          micTranscripts,
+          systemTranscripts
+        )
+        transcripts = this.mergeTranscriptStreams(
+          meetingId,
+          filteredMicTranscripts,
+          systemTranscripts
+        )
       } else {
         const sourcePath = hasMic ? micWebm : hasSystem ? systemWebm : legacyAudio
         const speaker = hasMic ? 'me' : hasSystem ? 'them' : 'Speaker'
-        const shouldDiarizeSource = this.diarizationService != null && speaker !== 'me'
+        const shouldDiarizeSource = shouldUseExperimentalDiarization && speaker !== 'me'
         transcripts = await this.transcribeAudioSource(
           meetingId,
           sourcePath,
@@ -330,7 +350,7 @@ export class TranscriptionService {
           tempPrefix,
           tempFiles,
           undefined,
-          !shouldDiarizeSource,
+          !shouldDiarizeSource
         )
         if (shouldDiarizeSource) {
           transcripts = await this.diarizeTranscriptsForSource(
@@ -338,7 +358,7 @@ export class TranscriptionService {
             sourcePath,
             transcripts,
             `${tempPrefix}-diarization`,
-            tempFiles,
+            tempFiles
           )
         }
       }
@@ -362,13 +382,15 @@ export class TranscriptionService {
             area: 'transcription',
             message: `Failed to encrypt ${filename} after transcription`,
             error: err,
-            meetingId,
+            meetingId
           })
           console.error(`Failed to encrypt ${filePath}:`, err)
         }
       }
 
-      console.log(`[perf] Transcription total: ${((Date.now() - benchmarkStart) / 1000).toFixed(1)}s (${meetingId})`)
+      console.log(
+        `[perf] Transcription total: ${((Date.now() - benchmarkStart) / 1000).toFixed(1)}s (${meetingId})`
+      )
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -396,7 +418,7 @@ export class TranscriptionService {
     tempPrefix: string,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    stitch = true,
+    stitch = true
   ): Promise<Transcript[]> {
     const tempAudioWav = `${tempPrefix}.wav`
     tempFiles.push(tempAudioWav)
@@ -405,20 +427,21 @@ export class TranscriptionService {
     const audioInput = await this.decryptIfNeeded(sourcePath, tempFiles)
     await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
 
-    const audioDuration = await this.audioConverter.getDuration(
-      tempAudioWav,
-      this.whisperManager.getFfmpegPath(),
-    ).catch(() => undefined)
+    const audioDuration = await this.audioConverter
+      .getDuration(tempAudioWav, this.whisperManager.getFfmpegPath())
+      .catch(() => undefined)
     const speechActivity = await this.detectAudioActivity(tempAudioWav).catch((err) => {
       console.warn(`[transcription] Failed to detect audio activity (${meetingId}):`, err)
       return []
     })
     const speechSignal = summarizeSpeechSignal(speechActivity, audioDuration)
-    console.log(`[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
+    console.log(
+      `[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
+    )
 
     if (speechSignal.likelySilent) {
       console.log(
-        `[transcription] Skipping whisper for likely silent audio (${meetingId}, speaker=${speaker}, speech=${speechSignal.totalSpeechMs}ms, ratio=${speechSignal.speechRatio.toFixed(3)})`,
+        `[transcription] Skipping whisper for likely silent audio (${meetingId}, speaker=${speaker}, speech=${speechSignal.totalSpeechMs}ms, ratio=${speechSignal.speechRatio.toFixed(3)})`
       )
       return []
     }
@@ -430,16 +453,18 @@ export class TranscriptionService {
       audioDuration,
       tempPrefix,
       tempFiles,
-      progressRange,
+      progressRange
     )
-    console.log(`[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`)
+    console.log(
+      `[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
+    )
 
     const transcripts = filterLowSignalHallucinations(
       this.mapToTranscripts(meetingId, whisperOutput),
-      speechSignal,
+      speechSignal
     ).map((segment) => ({
       ...segment,
-      speaker,
+      speaker
     }))
 
     return stitch ? this.stitchAdjacentTranscriptFragments(transcripts) : transcripts
@@ -450,7 +475,7 @@ export class TranscriptionService {
     sourcePath: string,
     transcripts: Transcript[],
     tempPrefix: string,
-    tempFiles: string[],
+    tempFiles: string[]
   ): Promise<Transcript[]> {
     if (!this.diarizationService || transcripts.length === 0) {
       return this.stitchAdjacentTranscriptFragments(transcripts)
@@ -464,18 +489,21 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'diarizing')
 
       const audioInput = await this.decryptIfNeeded(sourcePath, tempFiles)
-      await this.audioConverter.convert(audioInput, tempAudioWav, this.whisperManager.getFfmpegPath())
-      const audioDuration = await this.audioConverter.getDuration(
+      await this.audioConverter.convert(
+        audioInput,
         tempAudioWav,
-        this.whisperManager.getFfmpegPath(),
-      ).catch(() => undefined)
+        this.whisperManager.getFfmpegPath()
+      )
+      const audioDuration = await this.audioConverter
+        .getDuration(tempAudioWav, this.whisperManager.getFfmpegPath())
+        .catch(() => undefined)
       const diarizationInput = await this.prepareDiarizationInput(
         meetingId,
         tempAudioWav,
         transcripts,
         tempPrefix,
         tempFiles,
-        audioDuration,
+        audioDuration
       )
 
       const diarization = await this.diarizationService.diarize(diarizationInput.wavPath)
@@ -483,10 +511,13 @@ export class TranscriptionService {
         ? this.remapDiarizationResultToOriginalTimeline(diarization, diarizationInput.mapping)
         : diarization
       return this.stitchAdjacentTranscriptFragments(
-        alignSpeakers(transcripts, remappedDiarization, null),
+        alignSpeakers(transcripts, remappedDiarization, null)
       )
     } catch (err) {
-      console.warn(`[transcription] Diarization failed, keeping existing speaker labels (${meetingId}):`, err)
+      console.warn(
+        `[transcription] Diarization failed, keeping existing speaker labels (${meetingId}):`,
+        err
+      )
       return this.stitchAdjacentTranscriptFragments(transcripts)
     }
   }
@@ -497,7 +528,7 @@ export class TranscriptionService {
     transcripts: Transcript[],
     tempPrefix: string,
     tempFiles: string[],
-    audioDurationSec?: number,
+    audioDurationSec?: number
   ): Promise<{ wavPath: string; mapping: DiarizationWindowMapping[] | null }> {
     const mapping = this.buildDiarizationWindowMappings(transcripts, audioDurationSec)
     if (mapping.length === 0) {
@@ -516,7 +547,7 @@ export class TranscriptionService {
     }
 
     console.log(
-      `[transcription] Compacting diarization input (${meetingId}, windows=${mapping.length}, compact=${compactDuration.toFixed(1)}s/${originalDuration.toFixed(1)}s)`,
+      `[transcription] Compacting diarization input (${meetingId}, windows=${mapping.length}, compact=${compactDuration.toFixed(1)}s/${originalDuration.toFixed(1)}s)`
     )
 
     const clipPaths: string[] = []
@@ -529,7 +560,7 @@ export class TranscriptionService {
         clipPath,
         this.whisperManager.getFfmpegPath(),
         window.originalStart,
-        window.originalEnd - window.originalStart,
+        window.originalEnd - window.originalStart
       )
     }
 
@@ -544,7 +575,7 @@ export class TranscriptionService {
       clipPaths,
       compactPath,
       this.whisperManager.getFfmpegPath(),
-      concatListPath,
+      concatListPath
     )
 
     return { wavPath: compactPath, mapping }
@@ -552,12 +583,12 @@ export class TranscriptionService {
 
   private buildDiarizationWindowMappings(
     transcripts: Transcript[],
-    audioDurationSec?: number,
+    audioDurationSec?: number
   ): DiarizationWindowMapping[] {
     const windows = transcripts
       .map((segment) => ({
         start: Math.max(0, segment.startMs / 1000 - DIARIZATION_WINDOW_CONTEXT_SEC),
-        end: segment.endMs / 1000 + DIARIZATION_WINDOW_CONTEXT_SEC,
+        end: segment.endMs / 1000 + DIARIZATION_WINDOW_CONTEXT_SEC
       }))
       .filter((window) => window.end > window.start)
       .sort((a, b) => a.start - b.start)
@@ -568,7 +599,8 @@ export class TranscriptionService {
 
     const merged: Array<{ start: number; end: number }> = []
     for (const window of windows) {
-      const boundedEnd = audioDurationSec == null ? window.end : Math.min(window.end, audioDurationSec)
+      const boundedEnd =
+        audioDurationSec == null ? window.end : Math.min(window.end, audioDurationSec)
       if (boundedEnd <= window.start) {
         continue
       }
@@ -589,7 +621,7 @@ export class TranscriptionService {
         compactStart: compactCursor,
         compactEnd: compactCursor + duration,
         originalStart: window.start,
-        originalEnd: window.end,
+        originalEnd: window.end
       }
       compactCursor += duration
       return mapping
@@ -598,7 +630,7 @@ export class TranscriptionService {
 
   private remapDiarizationResultToOriginalTimeline(
     diarization: DiarizationResult,
-    mapping: DiarizationWindowMapping[],
+    mapping: DiarizationWindowMapping[]
   ): DiarizationResult {
     return {
       speakers: diarization.speakers
@@ -613,19 +645,27 @@ export class TranscriptionService {
                   return []
                 }
 
-                return [{
-                  start: Number((window.originalStart + overlapStart - window.compactStart).toFixed(3)),
-                  end: Number((window.originalStart + overlapEnd - window.compactStart).toFixed(3)),
-                }]
-              }),
-            ),
-          ),
+                return [
+                  {
+                    start: Number(
+                      (window.originalStart + overlapStart - window.compactStart).toFixed(3)
+                    ),
+                    end: Number(
+                      (window.originalStart + overlapEnd - window.compactStart).toFixed(3)
+                    )
+                  }
+                ]
+              })
+            )
+          )
         }))
-        .filter((speaker) => speaker.segments.length > 0),
+        .filter((speaker) => speaker.segments.length > 0)
     }
   }
 
-  private mergeDiarizationSegments(segments: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> {
+  private mergeDiarizationSegments(
+    segments: Array<{ start: number; end: number }>
+  ): Array<{ start: number; end: number }> {
     if (segments.length <= 1) {
       return segments
     }
@@ -646,14 +686,13 @@ export class TranscriptionService {
     return merged
   }
 
-  private mergeTranscriptStreams(
-    meetingId: string,
-    ...streams: Transcript[][]
-  ): Transcript[] {
+  private mergeTranscriptStreams(meetingId: string, ...streams: Transcript[][]): Transcript[] {
     const merged = streams
       .flat()
       .filter((segment) => segment.text.trim() !== '')
-      .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.speaker.localeCompare(b.speaker))
+      .sort(
+        (a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.speaker.localeCompare(b.speaker)
+      )
 
     const deduped: Transcript[] = []
     for (const segment of merged) {
@@ -684,13 +723,13 @@ export class TranscriptionService {
 
     return deduped.map((segment, index) => ({
       ...segment,
-      id: `${meetingId}-${index}`,
+      id: `${meetingId}-${index}`
     }))
   }
 
   private suppressAcousticEchoes(
     micTranscripts: Transcript[],
-    systemTranscripts: Transcript[],
+    systemTranscripts: Transcript[]
   ): Transcript[] {
     if (micTranscripts.length === 0 || systemTranscripts.length === 0) {
       return micTranscripts
@@ -701,9 +740,10 @@ export class TranscriptionService {
         return true
       }
 
-      const nearbySystemSegments = systemTranscripts.filter((systemSegment) =>
-        systemSegment.endMs >= micSegment.startMs - ECHO_SUPPRESSION_WINDOW_MS &&
-        systemSegment.startMs <= micSegment.endMs + ECHO_SUPPRESSION_LEAD_MS,
+      const nearbySystemSegments = systemTranscripts.filter(
+        (systemSegment) =>
+          systemSegment.endMs >= micSegment.startMs - ECHO_SUPPRESSION_WINDOW_MS &&
+          systemSegment.startMs <= micSegment.endMs + ECHO_SUPPRESSION_LEAD_MS
       )
 
       if (nearbySystemSegments.length === 0) {
@@ -716,7 +756,7 @@ export class TranscriptionService {
 
   private hasEchoReferenceMatch(
     micSegment: Transcript,
-    nearbySystemSegments: Transcript[],
+    nearbySystemSegments: Transcript[]
   ): boolean {
     const normalizedMic = this.normalizeTranscriptText(micSegment.text)
     if (!normalizedMic) {
@@ -773,7 +813,7 @@ export class TranscriptionService {
         groups.push({
           text: combinedText,
           startMs: groupStartMs,
-          endMs: groupEndMs,
+          endMs: groupEndMs
         })
       }
     }
@@ -884,7 +924,10 @@ export class TranscriptionService {
     return shared
   }
 
-  private getTextSimilarityMetrics(a: string, b: string): {
+  private getTextSimilarityMetrics(
+    a: string,
+    b: string
+  ): {
     sharedWords: number
     shorterWordCount: number
     containment: number
@@ -902,7 +945,7 @@ export class TranscriptionService {
       shorterWordCount,
       containment: shorterWordCount === 0 ? 0 : sharedWords / shorterWordCount,
       jaccard: unionSize === 0 ? 0 : sharedWords / unionSize,
-      trigram: this.getTrigramSimilarity(a, b),
+      trigram: this.getTrigramSimilarity(a, b)
     }
   }
 
@@ -962,7 +1005,7 @@ export class TranscriptionService {
 
     return stitched.map((segment, index) => ({
       ...segment,
-      id: `${segment.meetingId}-${index}`,
+      id: `${segment.meetingId}-${index}`
     }))
   }
 
@@ -982,7 +1025,7 @@ export class TranscriptionService {
       return false
     }
 
-    if ((prevText.length + 1 + nextText.length) > STITCH_MAX_COMBINED_CHARS) {
+    if (prevText.length + 1 + nextText.length > STITCH_MAX_COMBINED_CHARS) {
       return false
     }
 
@@ -993,7 +1036,9 @@ export class TranscriptionService {
     return (
       prevText.length < 140 ||
       /^[a-z]/.test(nextText) ||
-      /^(and|but|so|because|then|to|for|with|that|which|who|we|i|it|they|he|she|you)\b/i.test(nextText)
+      /^(and|but|so|because|then|to|for|with|that|which|who|we|i|it|they|he|she|you)\b/i.test(
+        nextText
+      )
     )
   }
 
@@ -1011,13 +1056,21 @@ export class TranscriptionService {
   private detectAudioActivity(wavPath: string): Promise<{ start: number; end: number }[]> {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.whisperManager.getFfmpegPath(), [
-        '-i', wavPath,
-        '-af', 'silencedetect=noise=-30dB:d=0.5',
-        '-f', 'null', '-',
+        '-i',
+        wavPath,
+        '-af',
+        'silencedetect=noise=-30dB:d=0.5',
+        '-f',
+        'null',
+        '-'
       ])
       let stderr = ''
-      proc.on('error', (err) => reject(new Error(`ffmpeg silencedetect spawn failed: ${err.message}`)))
-      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('error', (err) =>
+        reject(new Error(`ffmpeg silencedetect spawn failed: ${err.message}`))
+      )
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
       proc.on('close', (code) => {
         if (code !== 0) {
           reject(new Error(`ffmpeg silencedetect failed: ${stderr.slice(-500)}`))
@@ -1034,7 +1087,10 @@ export class TranscriptionService {
 
         const durMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/)
         const totalDuration = durMatch
-          ? parseInt(durMatch[1]) * 3600 + parseInt(durMatch[2]) * 60 + parseInt(durMatch[3]) + parseFloat('0.' + durMatch[4])
+          ? parseInt(durMatch[1]) * 3600 +
+            parseInt(durMatch[2]) * 60 +
+            parseInt(durMatch[3]) +
+            parseFloat('0.' + durMatch[4])
           : 0
 
         const active: { start: number; end: number }[] = []
@@ -1077,23 +1133,39 @@ export class TranscriptionService {
     }
 
     const speakerMap: SpeakerMap = {}
-    let speakerNum = 0
-    for (const id of speakerIds) {
-      if (id === 'me') {
-        speakerMap[id] = { label: 'Me' }
-      } else if (id === 'them') {
-        speakerMap[id] = {
-          label: 'Them',
-          ...(suggestions.length > 0 ? { suggestions } : {}),
+    if (this.isExperimentalSpeakerDiarizationEnabled()) {
+      const orderedSpeakerIds = transcripts
+        .map((segment) => segment.speaker)
+        .filter(
+          (speakerId, index, allSpeakerIds) =>
+            speakerId !== 'Speaker' && allSpeakerIds.indexOf(speakerId) === index
+        )
+
+      orderedSpeakerIds.forEach((speakerId, index) => {
+        speakerMap[speakerId] = {
+          label: `Speaker ${index + 1}`,
+          ...(speakerId !== 'me' && suggestions.length > 0 ? { suggestions } : {})
         }
-      } else if (id === 'Speaker') {
-        // Legacy un-diarized segment, skip
-        continue
-      } else {
-        speakerNum++
-        speakerMap[id] = {
-          label: `Speaker ${speakerNum}`,
-          ...(suggestions.length > 0 ? { suggestions } : {}),
+      })
+    } else {
+      let speakerNum = 0
+      for (const id of speakerIds) {
+        if (id === 'me') {
+          speakerMap[id] = { label: 'Me' }
+        } else if (id === 'them') {
+          speakerMap[id] = {
+            label: 'Them',
+            ...(suggestions.length > 0 ? { suggestions } : {})
+          }
+        } else if (id === 'Speaker') {
+          // Legacy un-diarized segment, skip
+          continue
+        } else {
+          speakerNum++
+          speakerMap[id] = {
+            label: `Speaker ${speakerNum}`,
+            ...(suggestions.length > 0 ? { suggestions } : {})
+          }
         }
       }
     }
@@ -1107,18 +1179,40 @@ export class TranscriptionService {
     audioDurationSec: number | undefined,
     tempPrefix: string,
     tempFiles: string[],
-    progressRange?: { start: number; end: number },
+    progressRange?: { start: number; end: number }
   ): Promise<WhisperOutput> {
     if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
-      console.log(`[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`)
-      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles, progressRange)
+      console.log(
+        `[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`
+      )
+      return await this.runWhisperChunked(
+        audioWavPath,
+        meetingId,
+        audioDurationSec,
+        tempPrefix,
+        tempFiles,
+        progressRange
+      )
     }
 
-    const output = await this.runWhisperPassAndRead(audioWavPath, meetingId, audioDurationSec, tempFiles, progressRange)
+    const output = await this.runWhisperPassAndRead(
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      tempFiles,
+      progressRange
+    )
     const mapped = this.mapToTranscripts(meetingId, output)
     if (audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
       console.warn(`[transcription] Detected repetition loop, retrying in chunks (${meetingId})`)
-      return await this.runWhisperChunked(audioWavPath, meetingId, audioDurationSec, tempPrefix, tempFiles, progressRange)
+      return await this.runWhisperChunked(
+        audioWavPath,
+        meetingId,
+        audioDurationSec,
+        tempPrefix,
+        tempFiles,
+        progressRange
+      )
     }
 
     return output
@@ -1130,15 +1224,21 @@ export class TranscriptionService {
     audioDurationSec: number,
     tempPrefix: string,
     tempFiles: string[],
-    progressRange?: { start: number; end: number },
+    progressRange?: { start: number; end: number }
   ): Promise<WhisperOutput> {
-    const stepSec = Math.max(1, CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC)
+    const stepSec = Math.max(
+      1,
+      CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC
+    )
     const transcription: WhisperSegment[] = []
     let lastAcceptedTo = 0
     let chunkIndex = 0
 
     for (let chunkStart = 0; chunkStart < audioDurationSec; chunkStart += stepSec) {
-      const chunkDuration = Math.min(CHUNKED_TRANSCRIPTION_WINDOW_SEC, audioDurationSec - chunkStart)
+      const chunkDuration = Math.min(
+        CHUNKED_TRANSCRIPTION_WINDOW_SEC,
+        audioDurationSec - chunkStart
+      )
       const chunkPath = `${tempPrefix}-chunk-${chunkIndex}.wav`
       tempFiles.push(chunkPath)
 
@@ -1147,12 +1247,14 @@ export class TranscriptionService {
         chunkPath,
         this.whisperManager.getFfmpegPath(),
         chunkStart,
-        chunkDuration,
+        chunkDuration
       )
 
       const chunkProgressRange = {
         start: Math.round((chunkStart / audioDurationSec) * 100),
-        end: Math.round((Math.min(chunkStart + chunkDuration, audioDurationSec) / audioDurationSec) * 100),
+        end: Math.round(
+          (Math.min(chunkStart + chunkDuration, audioDurationSec) / audioDurationSec) * 100
+        )
       }
       const chunkOutput = await this.runWhisperPassAndRead(
         chunkPath,
@@ -1162,19 +1264,19 @@ export class TranscriptionService {
         progressRange
           ? {
               start: this.scaleProgress(chunkProgressRange.start, progressRange),
-              end: this.scaleProgress(chunkProgressRange.end, progressRange),
+              end: this.scaleProgress(chunkProgressRange.end, progressRange)
             }
           : chunkProgressRange,
-        ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
+        ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow']
       )
 
       const adjustedSegments = chunkOutput.transcription
         .map((segment) => ({
           offsets: {
             from: segment.offsets.from + Math.round(chunkStart * 1000),
-            to: segment.offsets.to + Math.round(chunkStart * 1000),
+            to: segment.offsets.to + Math.round(chunkStart * 1000)
           },
-          text: segment.text,
+          text: segment.text
         }))
         .sort((a, b) => a.offsets.from - b.offsets.from)
 
@@ -1207,7 +1309,7 @@ export class TranscriptionService {
     audioDurationSec: number | undefined,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    extraArgs: string[] = [],
+    extraArgs: string[] = []
   ): Promise<WhisperOutput> {
     const jsonPath = `${audioWavPath}.json`
     tempFiles.push(jsonPath)
@@ -1221,17 +1323,20 @@ export class TranscriptionService {
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
-    extraArgs: string[] = [],
+    extraArgs: string[] = []
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       let stderr = ''
       const threadCount = this.getWhisperThreadCount()
       const args = [
-        '-m', this.whisperManager.getModelPath(),
-        '-f', audioWavPath,
+        '-m',
+        this.whisperManager.getModelPath(),
+        '-f',
+        audioWavPath,
         '-oj',
-        '-l', 'en',
-        '-pp',
+        '-l',
+        'en',
+        '-pp'
       ]
 
       if (threadCount !== null) {
@@ -1275,7 +1380,7 @@ export class TranscriptionService {
             const currentSec = h * 3600 + m * 60 + s + 30 // +30 since this segment is being completed
             const progress = this.scaleProgress(
               Math.min(99, Math.round((currentSec / audioDurationSec) * 100)),
-              progressRange,
+              progressRange
             )
             this.broadcastStatus(meetingId, 'transcribing', progress)
           }
@@ -1300,7 +1405,7 @@ export class TranscriptionService {
     const logicalProcessors = this.getLogicalProcessorCount()
     return Math.max(
       MIN_WHISPER_THREADS,
-      Math.min(MAX_WHISPER_THREADS, logicalProcessors - RESERVED_LOGICAL_CPUS),
+      Math.min(MAX_WHISPER_THREADS, logicalProcessors - RESERVED_LOGICAL_CPUS)
     )
   }
 
@@ -1340,8 +1445,10 @@ export class TranscriptionService {
       progressRange.start,
       Math.min(
         99,
-        Math.round(progressRange.start + ((progressRange.end - progressRange.start) * clamped) / 100),
-      ),
+        Math.round(
+          progressRange.start + ((progressRange.end - progressRange.start) * clamped) / 100
+        )
+      )
     )
   }
 
@@ -1353,7 +1460,7 @@ export class TranscriptionService {
       text: seg.text.trim(),
       startMs: seg.offsets.from,
       endMs: seg.offsets.to,
-      confidence: -1,
+      confidence: -1
     }))
 
     // Remove consecutive duplicate segments (Whisper hallucination loops)
@@ -1385,10 +1492,11 @@ export class TranscriptionService {
         counts.set(segment, (counts.get(segment) ?? 0) + 1)
       }
 
-      const repeatedCoverage = [...counts.values()]
-        .sort((a, b) => b - a)
-        .slice(0, 3)
-        .reduce((sum, count) => sum + count, 0) / normalized.length
+      const repeatedCoverage =
+        [...counts.values()]
+          .sort((a, b) => b - a)
+          .slice(0, 3)
+          .reduce((sum, count) => sum + count, 0) / normalized.length
       if (
         counts.size <= REPETITION_WINDOW_MAX_UNIQUE &&
         repeatedCoverage >= REPETITION_WINDOW_MIN_RATIO
@@ -1411,18 +1519,22 @@ export class TranscriptionService {
   private async markFailed(
     meetingId: string,
     error: Error | string,
-    context?: TranscriptionDirSnapshot,
+    context?: TranscriptionDirSnapshot
   ): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : error
     const errorPath = join(this.recordingsBaseDir, meetingId, 'transcript.error')
     const existing = await this.readErrorFile(errorPath)
     const errorCode = classifyError(errorMsg)
-    const isPermanentFailure = errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
+    const isPermanentFailure =
+      errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
     const retries = isPermanentFailure ? 3 : (existing?.retries ?? 0) + 1
     try {
       await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
     } catch (err) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : null
       if (code !== 'ENOENT') throw err
     }
     logAutodocFailure({
@@ -1430,12 +1542,14 @@ export class TranscriptionService {
       message: 'Transcription failed',
       error,
       meetingId,
-      context,
+      context
     })
     this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
   }
 
-  private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
+  private async readErrorFile(
+    errorPath: string
+  ): Promise<{ error: string; retries: number } | null> {
     try {
       const raw = await readFile(errorPath, 'utf-8')
       // Handle legacy plain-text error files
@@ -1453,13 +1567,18 @@ export class TranscriptionService {
     meetingId: string,
     status: TranscriptionStatus,
     progress?: number,
-    errorCode?: string,
+    errorCode?: string
   ): void {
     const nextProgress = this.getNextProgress(status, progress)
     this.activeStatus = status
     this.activeProgress = nextProgress
     const windows = BrowserWindow.getAllWindows()
-    const payload: TranscriptionStatusPayload = { meetingId, status, progress: nextProgress, errorCode }
+    const payload: TranscriptionStatusPayload = {
+      meetingId,
+      status,
+      progress: nextProgress,
+      errorCode
+    }
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', payload)
     }
@@ -1476,25 +1595,25 @@ export class TranscriptionService {
       this.fileExists(micWebm),
       this.fileExists(systemWebm),
       this.fileExists(legacyAudio),
-      this.readErrorFile(errorPath),
+      this.readErrorFile(errorPath)
     ])
 
     return {
       source: this.enqueueSource.get(meetingId) ?? 'unknown',
       files: {
         micExists: hasMic,
-        micEncrypted: hasMic && await isEncrypted(micWebm),
+        micEncrypted: hasMic && (await isEncrypted(micWebm)),
         systemExists: hasSystem,
-        systemEncrypted: hasSystem && await isEncrypted(systemWebm),
+        systemEncrypted: hasSystem && (await isEncrypted(systemWebm)),
         legacyExists: hasLegacy,
-        legacyEncrypted: hasLegacy && await isEncrypted(legacyAudio),
+        legacyEncrypted: hasLegacy && (await isEncrypted(legacyAudio)),
         screenExists: await this.fileExists(join(meetingDir, 'screen.webm')),
         transcriptExists: await this.fileExists(transcriptPath),
         segmentsExists: await this.fileExists(join(meetingDir, 'segments.json')),
         errorExists: await this.fileExists(errorPath),
-        metadataExists: await this.fileExists(join(meetingDir, 'metadata.json')),
+        metadataExists: await this.fileExists(join(meetingDir, 'metadata.json'))
       },
-      retryCount: existingError?.retries ?? 0,
+      retryCount: existingError?.retries ?? 0
     }
   }
 

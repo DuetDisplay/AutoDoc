@@ -1,4 +1,27 @@
-import type { AutoRecordMode, CalendarAccount, CalendarEvent, RecordingEntry, RecordingSource, RecordingState, RecordingPaths, RecordingMediaPlayerErrorReport, Transcript, TranscriptionStatus, MeetingSegments, SegmentationStatus, SpeakerMap, OllamaSetupStatus, WhisperSetupStatus, AppRuntimeInfo, AppStorageInfo, DetectionAutoRecordPayload, DetectionAutoStopPayload, DetectionAutoStopCancelledPayload, TranscriptionStatusPayload, SegmentationStatusPayload } from '../shared/types'
+import type {
+  AutoRecordMode,
+  CalendarAccount,
+  CalendarEvent,
+  RecordingEntry,
+  RecordingSource,
+  RecordingState,
+  RecordingPaths,
+  RecordingMediaPlayerErrorReport,
+  Transcript,
+  TranscriptionStatus,
+  MeetingSegments,
+  SegmentationStatus,
+  SpeakerMap,
+  OllamaSetupStatus,
+  WhisperSetupStatus,
+  AppRuntimeInfo,
+  AppStorageInfo,
+  DetectionAutoRecordPayload,
+  DetectionAutoStopPayload,
+  DetectionAutoStopCancelledPayload,
+  TranscriptionStatusPayload,
+  SegmentationStatusPayload
+} from '../shared/types'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -34,7 +57,11 @@ export interface IpcInvokeEvents {
   'calendar:get-accounts': []
   'calendar:get-events': []
   'calendar:sync': []
-  'calendar:set-auto-record': [eventId: string, recurringEventId: string | null, mode: AutoRecordMode]
+  'calendar:set-auto-record': [
+    eventId: string,
+    recurringEventId: string | null,
+    mode: AutoRecordMode
+  ]
   'permissions:check': []
   'permissions:open-settings': [panel: 'screen' | 'microphone']
   'recording:list': []
@@ -42,7 +69,12 @@ export interface IpcInvokeEvents {
   'recording:start': [sourceId: string, sourceName: string]
   'recording:stop': []
   'recording:get-state': []
-  'recording:save-chunk': [meetingId: string, type: 'video' | 'mic' | 'system', chunk: ArrayBuffer, segmentIndex?: number]
+  'recording:save-chunk': [
+    meetingId: string,
+    type: 'video' | 'mic' | 'system',
+    chunk: ArrayBuffer,
+    segmentIndex?: number
+  ]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
@@ -69,11 +101,16 @@ export interface IpcInvokeEvents {
   'prefs:get-onboarding-step': []
   'prefs:set-onboarding-step': [step: number]
   'prefs:get-onboarding-permission-settings-opened': [panel: 'microphone' | 'screen']
-  'prefs:set-onboarding-permission-settings-opened': [panel: 'microphone' | 'screen', opened: boolean]
+  'prefs:set-onboarding-permission-settings-opened': [
+    panel: 'microphone' | 'screen',
+    opened: boolean
+  ]
   'prefs:get-launch-at-login': []
   'prefs:set-launch-at-login': [enabled: boolean]
   'prefs:get-analytics-consent': []
   'prefs:set-analytics-consent': [enabled: boolean]
+  'prefs:get-experimental-speaker-diarization': []
+  'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -120,9 +157,19 @@ export interface IpcInvokeReturns {
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
-  'recording:get-media': { hasVideo: boolean; hasAudio: boolean; audioFile?: string; mediaBaseUrl?: string }
+  'recording:get-media': {
+    hasVideo: boolean
+    hasAudio: boolean
+    audioFile?: string
+    mediaBaseUrl?: string
+  }
   'recording:report-media-player-error': void
-  'recording:get-detail': { title: string; sourceName: string | null; date: number; durationSeconds: number | null }
+  'recording:get-detail': {
+    title: string
+    sourceName: string | null
+    date: number
+    durationSeconds: number | null
+  }
   'search:query': SearchResult[]
   'chat:send': string
   'detection:dismiss': void
@@ -138,6 +185,8 @@ export interface IpcInvokeReturns {
   'prefs:set-launch-at-login': void
   'prefs:get-analytics-consent': boolean | null
   'prefs:set-analytics-consent': void
+  'prefs:get-experimental-speaker-diarization': boolean
+  'prefs:set-experimental-speaker-diarization': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
@@ -164,4 +213,5 @@ export interface IpcOnEvents {
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]
   'prefs:analytics-consent-changed': [enabled: boolean]
+  'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
 }

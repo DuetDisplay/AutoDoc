@@ -8,7 +8,7 @@ import {
   createStorageInfo,
   createUpdateStatus,
   installMockElectronApi,
-  resetRendererStores,
+  resetRendererStores
 } from '../test/fixtures'
 
 describe('Settings', () => {
@@ -21,6 +21,7 @@ describe('Settings', () => {
       accounts: [createCalendarAccount()],
       events: [] as any[],
       analyticsConsent: false,
+      experimentalSpeakerDiarization: false
     }
 
     installMockElectronApi({
@@ -29,11 +30,12 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-experimental-speaker-diarization': () => state.experimentalSpeakerDiarization,
       'calendar:get-accounts': () => state.accounts,
       'calendar:get-events': () => state.events,
       'calendar:disconnect': (accountId: string) => {
         state.accounts = state.accounts.filter((account) => account.id !== accountId)
-      },
+      }
     })
 
     const user = userEvent.setup()
@@ -66,6 +68,7 @@ describe('Settings', () => {
       accounts: [] as ReturnType<typeof createCalendarAccount>[],
       events: [] as any[],
       analyticsConsent: false,
+      experimentalSpeakerDiarization: false
     }
 
     installMockElectronApi({
@@ -74,6 +77,7 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-experimental-speaker-diarization': () => state.experimentalSpeakerDiarization,
       'prefs:set-analytics-consent': (enabled: boolean) => {
         state.analyticsConsent = enabled
       },
@@ -82,7 +86,7 @@ describe('Settings', () => {
       'calendar:connect': () => {
         state.accounts = [account]
         return account
-      },
+      }
     })
 
     const user = userEvent.setup()
@@ -92,7 +96,7 @@ describe('Settings', () => {
     expect(await screen.findByText('team@example.com')).toBeInTheDocument()
 
     const analyticsToggle = screen.getByRole('button', {
-      name: /toggle analytics and crash reports/i,
+      name: /toggle analytics and crash reports/i
     })
     expect(analyticsToggle).toHaveAttribute('aria-pressed', 'false')
 
@@ -107,7 +111,52 @@ describe('Settings', () => {
 
     expect(await screen.findByText('team@example.com')).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /toggle analytics and crash reports/i }),
+      screen.getByRole('button', { name: /toggle analytics and crash reports/i })
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('persists experimental speaker diarization after reload', async () => {
+    const state = {
+      accounts: [] as ReturnType<typeof createCalendarAccount>[],
+      events: [] as any[],
+      analyticsConsent: false,
+      experimentalSpeakerDiarization: false
+    }
+
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-experimental-speaker-diarization': () => state.experimentalSpeakerDiarization,
+      'prefs:set-experimental-speaker-diarization': (enabled: boolean) => {
+        state.experimentalSpeakerDiarization = enabled
+      },
+      'calendar:get-accounts': () => state.accounts,
+      'calendar:get-events': () => state.events
+    })
+
+    const user = userEvent.setup()
+    const view = render(<Settings />)
+
+    const diarizationToggle = await screen.findByRole('button', {
+      name: /toggle experimental speaker diarization/i
+    })
+    expect(diarizationToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText(/speaker 1, speaker 2, speaker 3/i)).toBeInTheDocument()
+
+    await user.click(diarizationToggle)
+
+    await waitFor(() => {
+      expect(diarizationToggle).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    view.unmount()
+    render(<Settings />)
+
+    expect(
+      await screen.findByRole('button', { name: /toggle experimental speaker diarization/i })
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -122,13 +171,14 @@ describe('Settings', () => {
       'app:clear-downloaded-components': () => {
         storageInfo = createStorageInfo({
           downloadedComponentsBytes: 0,
-          totalBytes: storageInfo.totalBytes - storageInfo.downloadedComponentsBytes,
+          totalBytes: storageInfo.totalBytes - storageInfo.downloadedComponentsBytes
         })
         return storageInfo
       },
       'prefs:get-analytics-consent': false,
+      'prefs:get-experimental-speaker-diarization': false,
       'calendar:get-accounts': [],
-      'calendar:get-events': [],
+      'calendar:get-events': []
     })
 
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -152,8 +202,9 @@ describe('Settings', () => {
       'app:get-storage-info': createStorageInfo(),
       'app:reset-local-data': undefined,
       'prefs:get-analytics-consent': false,
+      'prefs:get-experimental-speaker-diarization': false,
       'calendar:get-accounts': [],
-      'calendar:get-events': [],
+      'calendar:get-events': []
     })
 
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)

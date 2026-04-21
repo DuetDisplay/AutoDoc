@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('electron', () => ({
   app: { setLoginItemSettings: vi.fn() },
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: vi.fn() }
 }))
 
 vi.mock('electron-store', () => {
@@ -16,9 +16,9 @@ vi.mock('electron-store', () => {
         }),
         set: vi.fn((key: string, value: unknown) => {
           data[key] = value
-        }),
+        })
       }
-    }),
+    })
   }
 })
 
@@ -61,5 +61,14 @@ describe('PrefsStore', () => {
 
     expect(store.getOnboardingPermissionSettingsOpened('microphone')).toBe(false)
     expect(store.getOnboardingPermissionSettingsOpened('screen')).toBe(false)
+  })
+
+  it('defaults experimental speaker diarization to false', () => {
+    expect(store.getExperimentalSpeakerDiarization()).toBe(false)
+  })
+
+  it('persists experimental speaker diarization', () => {
+    store.setExperimentalSpeakerDiarization(true)
+    expect(store.getExperimentalSpeakerDiarization()).toBe(true)
   })
 })

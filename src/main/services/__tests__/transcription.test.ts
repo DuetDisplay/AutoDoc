@@ -7,7 +7,7 @@ import { EventEmitter } from 'events'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
-  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+  BrowserWindow: { getAllWindows: vi.fn(() => []) }
 }))
 
 vi.mock('os', () => ({
@@ -17,9 +17,9 @@ vi.mock('os', () => ({
   setPriority: vi.fn(),
   constants: {
     priority: {
-      PRIORITY_BELOW_NORMAL: 10,
-    },
-  },
+      PRIORITY_BELOW_NORMAL: 10
+    }
+  }
 }))
 
 vi.mock('fs/promises', () => ({
@@ -28,11 +28,11 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   unlink: vi.fn(),
-  access: vi.fn(),
+  access: vi.fn()
 }))
 
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn()
 }))
 
 vi.mock('../crypto', () => ({
@@ -40,7 +40,7 @@ vi.mock('../crypto', () => ({
   decryptJSON: vi.fn(),
   decryptFileToTemp: vi.fn(),
   encryptJSON: vi.fn(),
-  encryptFileInPlace: vi.fn().mockResolvedValue(undefined),
+  encryptFileInPlace: vi.fn().mockResolvedValue(undefined)
 }))
 
 const fsMock = vi.mocked(await import('fs/promises'))
@@ -63,7 +63,7 @@ function createMockWhisperManager(ready = true): WhisperManager {
     getModelPath: vi.fn().mockReturnValue('/mock/model.bin'),
     getModelsDir: vi.fn().mockReturnValue('/mock/home/AutoDoc/models'),
     emit: vi.fn(),
-    on: vi.fn(),
+    on: vi.fn()
   } as unknown as WhisperManager
 }
 
@@ -73,20 +73,20 @@ function createMockAudioConverter(): AudioConverter {
     mergeAudio: vi.fn().mockResolvedValue(undefined),
     extractClip: vi.fn().mockResolvedValue(undefined),
     concatClips: vi.fn().mockResolvedValue(undefined),
-    getDuration: vi.fn().mockResolvedValue(60),
+    getDuration: vi.fn().mockResolvedValue(60)
   } as unknown as AudioConverter
 }
 
 function createMockCalendarManager(): CalendarManager {
   return {
     isConnected: vi.fn().mockReturnValue(false),
-    fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+    fetchAllRecentEvents: vi.fn().mockResolvedValue([])
   } as unknown as CalendarManager
 }
 
 function createMockDiarizationService() {
   return {
-    diarize: vi.fn(),
+    diarize: vi.fn()
   }
 }
 
@@ -100,7 +100,7 @@ describe('TranscriptionService', () => {
   const setPlatform = (platform: NodeJS.Platform) => {
     Object.defineProperty(process, 'platform', {
       value: platform,
-      configurable: true,
+      configurable: true
     })
   }
 
@@ -116,7 +116,7 @@ describe('TranscriptionService', () => {
       mockConverter,
       '/mock/home/AutoDoc/recordings',
       mockCalendar,
-      () => false,
+      () => false
     )
   })
 
@@ -146,13 +146,17 @@ describe('TranscriptionService', () => {
 
   it('returns failed status when transcript.error is newer than transcript.json', async () => {
     fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('transcript.json') || String(path).endsWith('transcript.error')) return undefined
+      if (String(path).endsWith('transcript.json') || String(path).endsWith('transcript.error'))
+        return undefined
       throw new Error('ENOENT')
     })
-    fsMock.stat.mockImplementation(async (path) => ({
-      isDirectory: () => false,
-      mtimeMs: String(path).endsWith('transcript.error') ? 200 : 100,
-    }) as any)
+    fsMock.stat.mockImplementation(
+      async (path) =>
+        ({
+          isDirectory: () => false,
+          mtimeMs: String(path).endsWith('transcript.error') ? 200 : 100
+        }) as any
+    )
 
     const status = await service.getStatus('reprocessed-meeting')
     expect(status).toBe('failed')
@@ -180,7 +184,7 @@ describe('TranscriptionService', () => {
       mockConverter,
       '/mock/home/AutoDoc/recordings',
       mockCalendar,
-      (meetingId) => meetingId === 'meeting-active',
+      (meetingId) => meetingId === 'meeting-active'
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
@@ -202,7 +206,9 @@ describe('TranscriptionService', () => {
     fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
     fsMock.writeFile.mockRejectedValue({ code: 'ENOENT' } as any)
 
-    await expect((service as any).markFailed('deleted-meeting', 'whisper.cpp timed out')).resolves.toBeUndefined()
+    await expect(
+      (service as any).markFailed('deleted-meeting', 'whisper.cpp timed out')
+    ).resolves.toBeUndefined()
   })
 
   it('is idempotent - enqueuing same meetingId twice does not duplicate', () => {
@@ -217,7 +223,15 @@ describe('TranscriptionService', () => {
 
   it('getTranscript returns parsed transcript.json', async () => {
     const transcriptData = [
-      { id: 'meeting-1-0', meetingId: 'meeting-1', speaker: 'Speaker', text: 'Hello', startMs: 0, endMs: 1000, confidence: -1 }
+      {
+        id: 'meeting-1-0',
+        meetingId: 'meeting-1',
+        speaker: 'Speaker',
+        text: 'Hello',
+        startMs: 0,
+        endMs: 1000,
+        confidence: -1
+      }
     ]
     fsMock.readFile.mockResolvedValue(JSON.stringify(transcriptData) as any)
 
@@ -254,7 +268,7 @@ describe('TranscriptionService', () => {
     })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
     ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
-      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }],
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }]
     })
     ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
       {
@@ -264,8 +278,8 @@ describe('TranscriptionService', () => {
         text: 'Hello from speakers',
         startMs: 0,
         endMs: 1000,
-        confidence: -1,
-      },
+        confidence: -1
+      }
     ])
 
     await expect((service as any).processJob('meeting-system-only')).resolves.toBeUndefined()
@@ -273,23 +287,24 @@ describe('TranscriptionService', () => {
     expect(mockConverter.convert).toHaveBeenCalledWith(
       '/mock/home/AutoDoc/recordings/meeting-system-only/system.webm',
       expect.stringContaining('/mock/tmp/autodoc-meeting-system-only-'),
-      '/mock/ffmpeg',
+      '/mock/ffmpeg'
     )
   })
 
   it('transcribes mic and system audio separately when both tracks exist', async () => {
     fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm'))
+        return undefined
       throw new Error('ENOENT')
     })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
     ;(service as any).transcribeWithFallback = vi
       .fn()
       .mockResolvedValueOnce({
-        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'My microphone words' }],
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'My microphone words' }]
       })
       .mockResolvedValueOnce({
-        transcription: [{ offsets: { from: 500, to: 1500 }, text: 'Remote speaker words' }],
+        transcription: [{ offsets: { from: 500, to: 1500 }, text: 'Remote speaker words' }]
       })
     ;(service as any).mapToTranscripts = vi
       .fn()
@@ -301,8 +316,8 @@ describe('TranscriptionService', () => {
           text: 'My microphone words',
           startMs: 0,
           endMs: 1000,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
       .mockReturnValueOnce([
         {
@@ -312,8 +327,8 @@ describe('TranscriptionService', () => {
           text: 'Remote speaker words',
           startMs: 500,
           endMs: 1500,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
 
     await expect((service as any).processJob('meeting-dual')).resolves.toBeUndefined()
@@ -327,8 +342,8 @@ describe('TranscriptionService', () => {
     mockDiarization.diarize.mockResolvedValue({
       speakers: [
         { id: 'SPEAKER_00', segments: [{ start: 0.4, end: 1.2 }] },
-        { id: 'SPEAKER_01', segments: [{ start: 1.2, end: 2.4 }] },
-      ],
+        { id: 'SPEAKER_01', segments: [{ start: 1.2, end: 2.4 }] }
+      ]
     })
 
     service = new TranscriptionService(
@@ -338,23 +353,25 @@ describe('TranscriptionService', () => {
       mockCalendar,
       () => false,
       mockDiarization as any,
+      () => true
     )
 
     fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm'))
+        return undefined
       throw new Error('ENOENT')
     })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 3 }])
     ;(service as any).transcribeWithFallback = vi
       .fn()
       .mockResolvedValueOnce({
-        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }],
+        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }]
       })
       .mockResolvedValueOnce({
         transcription: [
           { offsets: { from: 500, to: 1200 }, text: 'Remote speaker one' },
-          { offsets: { from: 1200, to: 2200 }, text: 'Remote speaker two' },
-        ],
+          { offsets: { from: 1200, to: 2200 }, text: 'Remote speaker two' }
+        ]
       })
     ;(service as any).mapToTranscripts = vi
       .fn()
@@ -366,8 +383,8 @@ describe('TranscriptionService', () => {
           text: 'My microphone words',
           startMs: 0,
           endMs: 900,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
       .mockReturnValueOnce([
         {
@@ -377,7 +394,7 @@ describe('TranscriptionService', () => {
           text: 'Remote speaker one',
           startMs: 500,
           endMs: 1200,
-          confidence: -1,
+          confidence: -1
         },
         {
           id: 'meeting-diarized-2',
@@ -386,29 +403,101 @@ describe('TranscriptionService', () => {
           text: 'Remote speaker two',
           startMs: 1200,
           endMs: 2200,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
 
     await expect((service as any).processJob('meeting-diarized')).resolves.toBeUndefined()
 
     const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
-      String(path).endsWith('transcript.json'),
+      String(path).endsWith('transcript.json')
     )
     const speakersWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
-      String(path).endsWith('speakers.json'),
+      String(path).endsWith('speakers.json')
     )
 
     expect(mockDiarization.diarize).toHaveBeenCalledTimes(1)
     expect(transcriptWrite?.[0]).toEqual([
       expect.objectContaining({ speaker: 'me', text: 'My microphone words' }),
       expect.objectContaining({ speaker: 'speaker_1', text: 'Remote speaker one' }),
-      expect.objectContaining({ speaker: 'speaker_2', text: 'Remote speaker two' }),
+      expect.objectContaining({ speaker: 'speaker_2', text: 'Remote speaker two' })
+    ])
+    expect(speakersWrite?.[0]).toEqual({
+      me: { label: 'Speaker 1' },
+      speaker_1: { label: 'Speaker 2' },
+      speaker_2: { label: 'Speaker 3' }
+    })
+  })
+
+  it('keeps default Me and Them labels when experimental diarization is disabled', async () => {
+    const mockDiarization = createMockDiarizationService()
+
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      mockDiarization as any,
+      () => false
+    )
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm'))
+        return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 3 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }]
+      })
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 500, to: 1200 }, text: 'Remote speaker words' }]
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-default-0',
+          meetingId: 'meeting-default',
+          speaker: 'Speaker',
+          text: 'My microphone words',
+          startMs: 0,
+          endMs: 900,
+          confidence: -1
+        }
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-default-1',
+          meetingId: 'meeting-default',
+          speaker: 'Speaker',
+          text: 'Remote speaker words',
+          startMs: 500,
+          endMs: 1200,
+          confidence: -1
+        }
+      ])
+
+    await expect((service as any).processJob('meeting-default')).resolves.toBeUndefined()
+
+    const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('transcript.json')
+    )
+    const speakersWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('speakers.json')
+    )
+
+    expect(mockDiarization.diarize).not.toHaveBeenCalled()
+    expect(transcriptWrite?.[0]).toEqual([
+      expect.objectContaining({ speaker: 'me', text: 'My microphone words' }),
+      expect.objectContaining({ speaker: 'them', text: 'Remote speaker words' })
     ])
     expect(speakersWrite?.[0]).toEqual({
       me: { label: 'Me' },
-      speaker_1: { label: 'Speaker 1' },
-      speaker_2: { label: 'Speaker 2' },
+      them: { label: 'Them' }
     })
   })
 
@@ -417,8 +506,8 @@ describe('TranscriptionService', () => {
     mockDiarization.diarize.mockResolvedValue({
       speakers: [
         { id: 'SPEAKER_00', segments: [{ start: 0.2, end: 4.2 }] },
-        { id: 'SPEAKER_01', segments: [{ start: 4.2, end: 9.5 }] },
-      ],
+        { id: 'SPEAKER_01', segments: [{ start: 4.2, end: 9.5 }] }
+      ]
     })
 
     service = new TranscriptionService(
@@ -428,6 +517,7 @@ describe('TranscriptionService', () => {
       mockCalendar,
       () => false,
       mockDiarization as any,
+      () => true
     )
 
     fsMock.access.mockImplementation(async (path) => {
@@ -439,8 +529,8 @@ describe('TranscriptionService', () => {
     ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
       transcription: [
         { offsets: { from: 120000, to: 123000 }, text: 'First remote speaker' },
-        { offsets: { from: 420000, to: 424000 }, text: 'Second remote speaker' },
-      ],
+        { offsets: { from: 420000, to: 424000 }, text: 'Second remote speaker' }
+      ]
     })
     ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
       {
@@ -450,7 +540,7 @@ describe('TranscriptionService', () => {
         text: 'First remote speaker',
         startMs: 120000,
         endMs: 123000,
-        confidence: -1,
+        confidence: -1
       },
       {
         id: 'meeting-compact-1',
@@ -459,25 +549,23 @@ describe('TranscriptionService', () => {
         text: 'Second remote speaker',
         startMs: 420000,
         endMs: 424000,
-        confidence: -1,
-      },
+        confidence: -1
+      }
     ])
 
     await expect((service as any).processJob('meeting-compact')).resolves.toBeUndefined()
 
     expect(mockConverter.extractClip).toHaveBeenCalledTimes(2)
     expect(mockConverter.concatClips).toHaveBeenCalledTimes(1)
-    expect(mockDiarization.diarize).toHaveBeenCalledWith(
-      expect.stringContaining('-compact.wav'),
-    )
+    expect(mockDiarization.diarize).toHaveBeenCalledWith(expect.stringContaining('-compact.wav'))
 
     const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
-      String(path).endsWith('transcript.json'),
+      String(path).endsWith('transcript.json')
     )
 
     expect(transcriptWrite?.[0]).toEqual([
       expect.objectContaining({ speaker: 'speaker_1', text: 'First remote speaker' }),
-      expect.objectContaining({ speaker: 'speaker_2', text: 'Second remote speaker' }),
+      expect.objectContaining({ speaker: 'speaker_2', text: 'Second remote speaker' })
     ])
   })
 
@@ -492,6 +580,7 @@ describe('TranscriptionService', () => {
       mockCalendar,
       () => false,
       mockDiarization as any,
+      () => true
     )
 
     fsMock.access.mockImplementation(async (path) => {
@@ -500,7 +589,7 @@ describe('TranscriptionService', () => {
     })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
     ;(service as any).transcribeWithFallback = vi.fn().mockResolvedValue({
-      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }],
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'Hello from speakers' }]
     })
     ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
       {
@@ -510,19 +599,21 @@ describe('TranscriptionService', () => {
         text: 'Hello from speakers',
         startMs: 0,
         endMs: 1000,
-        confidence: -1,
-      },
+        confidence: -1
+      }
     ])
 
-    await expect((service as any).processJob('meeting-diarization-fallback')).resolves.toBeUndefined()
+    await expect(
+      (service as any).processJob('meeting-diarization-fallback')
+    ).resolves.toBeUndefined()
 
     const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
-      String(path).endsWith('transcript.json'),
+      String(path).endsWith('transcript.json')
     )
 
     expect(mockDiarization.diarize).toHaveBeenCalledTimes(1)
     expect(transcriptWrite?.[0]).toEqual([
-      expect.objectContaining({ speaker: 'them', text: 'Hello from speakers' }),
+      expect.objectContaining({ speaker: 'them', text: 'Hello from speakers' })
     ])
   })
 
@@ -537,8 +628,8 @@ describe('TranscriptionService', () => {
           text: 'Do we want to run this through QA?',
           startMs: 1200,
           endMs: 3400,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ],
       [
         {
@@ -548,7 +639,7 @@ describe('TranscriptionService', () => {
           text: 'Do we want to run this through QA? I thought we had talked about that already.',
           startMs: 900,
           endMs: 4800,
-          confidence: -1,
+          confidence: -1
         },
         {
           id: 'them-2',
@@ -557,9 +648,9 @@ describe('TranscriptionService', () => {
           text: 'Let us make sure the release checklist is current.',
           startMs: 6000,
           endMs: 8600,
-          confidence: -1,
-        },
-      ],
+          confidence: -1
+        }
+      ]
     )
 
     expect(merged).toHaveLength(2)
@@ -578,7 +669,7 @@ describe('TranscriptionService', () => {
           text: 'Do we want to run this through QA? I thought we had talked about that already.',
           startMs: 7800,
           endMs: 11800,
-          confidence: -1,
+          confidence: -1
         },
         {
           id: 'me-2',
@@ -587,8 +678,8 @@ describe('TranscriptionService', () => {
           text: 'I can take the release checklist after lunch.',
           startMs: 15000,
           endMs: 18500,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ],
       [
         {
@@ -598,7 +689,7 @@ describe('TranscriptionService', () => {
           text: 'Do we want to run this through QA?',
           startMs: 7600,
           endMs: 9100,
-          confidence: -1,
+          confidence: -1
         },
         {
           id: 'them-2',
@@ -607,9 +698,9 @@ describe('TranscriptionService', () => {
           text: 'I thought we had talked about that already.',
           startMs: 9050,
           endMs: 11900,
-          confidence: -1,
-        },
-      ],
+          confidence: -1
+        }
+      ]
     )
 
     expect(filtered).toHaveLength(1)
@@ -626,8 +717,8 @@ describe('TranscriptionService', () => {
           text: 'I can own the Windows follow-up and send the email this afternoon.',
           startMs: 10000,
           endMs: 14200,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ],
       [
         {
@@ -637,9 +728,9 @@ describe('TranscriptionService', () => {
           text: 'Can you send an update once the launch checklist is ready?',
           startMs: 9200,
           endMs: 12900,
-          confidence: -1,
-        },
-      ],
+          confidence: -1
+        }
+      ]
     )
 
     expect(filtered).toHaveLength(1)
@@ -657,8 +748,8 @@ describe('TranscriptionService', () => {
           text: 'Should we run a smoke test before launch?',
           startMs: 1000,
           endMs: 3200,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ],
       [
         {
@@ -668,9 +759,9 @@ describe('TranscriptionService', () => {
           text: 'Yes, but I want QA involved as well.',
           startMs: 2600,
           endMs: 5100,
-          confidence: -1,
-        },
-      ],
+          confidence: -1
+        }
+      ]
     )
 
     expect(merged).toHaveLength(2)
@@ -686,7 +777,7 @@ describe('TranscriptionService', () => {
         text: 'I think the next step is',
         startMs: 1000,
         endMs: 2200,
-        confidence: -1,
+        confidence: -1
       },
       {
         id: 'meeting-fragments-1',
@@ -695,12 +786,14 @@ describe('TranscriptionService', () => {
         text: 'to send the design review this afternoon',
         startMs: 2350,
         endMs: 4200,
-        confidence: -1,
-      },
+        confidence: -1
+      }
     ])
 
     expect(stitched).toHaveLength(1)
-    expect(stitched[0].text).toBe('I think the next step is to send the design review this afternoon')
+    expect(stitched[0].text).toBe(
+      'I think the next step is to send the design review this afternoon'
+    )
   })
 
   it('does not stitch clearly separate sentences that already end cleanly', () => {
@@ -712,7 +805,7 @@ describe('TranscriptionService', () => {
         text: 'I sent the update already.',
         startMs: 1000,
         endMs: 2200,
-        confidence: -1,
+        confidence: -1
       },
       {
         id: 'meeting-sentences-1',
@@ -721,8 +814,8 @@ describe('TranscriptionService', () => {
         text: 'Can you take a look at the rollout plan?',
         startMs: 2350,
         endMs: 4300,
-        confidence: -1,
-      },
+        confidence: -1
+      }
     ])
 
     expect(stitched).toHaveLength(2)
@@ -746,7 +839,7 @@ describe('TranscriptionService', () => {
     await expect(promise).resolves.toBeUndefined()
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       '/mock/whisper',
-      expect.arrayContaining(['-t', '10']),
+      expect.arrayContaining(['-t', '10'])
     )
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
   })
@@ -760,14 +853,14 @@ describe('TranscriptionService', () => {
       'meeting-123',
       60,
       undefined,
-      ['-ml', '50', '-sow'],
+      ['-ml', '50', '-sow']
     )
     child.emit('close', 0)
 
     await expect(promise).resolves.toBeUndefined()
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       '/mock/whisper',
-      expect.arrayContaining(['-ml', '50', '-sow']),
+      expect.arrayContaining(['-ml', '50', '-sow'])
     )
   })
 
@@ -779,11 +872,11 @@ describe('TranscriptionService', () => {
       text: [
         'Yeah.',
         "So what your concern is, is that we're unfairly penalizing 4.x when the event applies to",
-        'both 4.x?',
+        'both 4.x?'
       ][index % 3],
       startMs: index * 1000,
       endMs: (index + 1) * 1000,
-      confidence: -1,
+      confidence: -1
     }))
 
     expect((service as any).hasSuspiciousRepetition(transcripts)).toBe(true)
@@ -797,7 +890,7 @@ describe('TranscriptionService', () => {
       text: `Unique segment ${index}`,
       startMs: index * 1000,
       endMs: (index + 1) * 1000,
-      confidence: -1,
+      confidence: -1
     }))
 
     expect((service as any).hasSuspiciousRepetition(transcripts)).toBe(false)
@@ -805,7 +898,9 @@ describe('TranscriptionService', () => {
 
   it('uses chunked transcription for long recordings', async () => {
     const chunkedOutput = { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'chunked' }] }
-    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked').mockResolvedValue(chunkedOutput)
+    const chunkedSpy = vi
+      .spyOn(service as any, 'runWhisperChunked')
+      .mockResolvedValue(chunkedOutput)
     const singlePassSpy = vi.spyOn(service as any, 'runWhisperPassAndRead')
 
     const result = await (service as any).transcribeWithFallback(
@@ -813,7 +908,7 @@ describe('TranscriptionService', () => {
       'meeting-123',
       240,
       '/mock/tmp/audio',
-      [],
+      []
     )
 
     expect(result).toEqual(chunkedOutput)
@@ -823,7 +918,6 @@ describe('TranscriptionService', () => {
 
   it('keeps transcription progress monotonic when concurrent sources report out of order', () => {
     ;(service as any).activeJobId = 'meeting-123'
-
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 50)
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 3)
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 57)
@@ -833,17 +927,18 @@ describe('TranscriptionService', () => {
 
   it('runs acoustic echo suppression before merging dual-channel transcripts', async () => {
     fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) return undefined
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm'))
+        return undefined
       throw new Error('ENOENT')
     })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
     ;(service as any).transcribeWithFallback = vi
       .fn()
       .mockResolvedValueOnce({
-        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }],
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }]
       })
       .mockResolvedValueOnce({
-        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }],
+        transcription: [{ offsets: { from: 0, to: 1000 }, text: 'echoed sentence' }]
       })
     ;(service as any).mapToTranscripts = vi
       .fn()
@@ -855,8 +950,8 @@ describe('TranscriptionService', () => {
           text: 'echoed sentence',
           startMs: 1000,
           endMs: 3000,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
       .mockReturnValueOnce([
         {
@@ -866,8 +961,8 @@ describe('TranscriptionService', () => {
           text: 'echoed sentence',
           startMs: 1000,
           endMs: 3000,
-          confidence: -1,
-        },
+          confidence: -1
+        }
       ])
 
     const suppressSpy = vi.spyOn(service as any, 'suppressAcousticEchoes')
@@ -879,7 +974,7 @@ describe('TranscriptionService', () => {
     expect(mergeSpy).toHaveBeenCalledWith(
       'meeting-dual-echo',
       suppressSpy.mock.results[0]?.value,
-      expect.any(Array),
+      expect.any(Array)
     )
   })
 })

@@ -47,6 +47,9 @@ export function Settings() {
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
+  const [experimentalSpeakerDiarization, setExperimentalSpeakerDiarization] = useState<
+    boolean | null
+  >(null)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -62,11 +65,22 @@ export function Settings() {
     window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
     void refreshStorageInfo()
     window.electronAPI.invoke('prefs:get-analytics-consent').then(setAnalyticsConsentState)
+    window.electronAPI
+      .invoke('prefs:get-experimental-speaker-diarization')
+      .then(setExperimentalSpeakerDiarization)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
-    const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', setAnalyticsConsentState)
+    const unsubConsent = window.electronAPI.on(
+      'prefs:analytics-consent-changed',
+      setAnalyticsConsentState
+    )
+    const unsubExperimental = window.electronAPI.on(
+      'prefs:experimental-speaker-diarization-changed',
+      setExperimentalSpeakerDiarization
+    )
     return () => {
       unsub()
       unsubConsent()
+      unsubExperimental()
     }
   }, [refreshStorageInfo])
 
@@ -79,7 +93,7 @@ export function Settings() {
     recordDiagnosticAction({
       category: 'settings',
       action: 'calendar_connect_requested',
-      details: { provider },
+      details: { provider }
     })
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
@@ -96,7 +110,7 @@ export function Settings() {
   const handleDisconnect = async (accountId: string) => {
     recordDiagnosticAction({
       category: 'settings',
-      action: 'calendar_disconnect_requested',
+      action: 'calendar_disconnect_requested'
     })
     await window.electronAPI.invoke('calendar:disconnect', accountId)
     removeAccount(accountId)
@@ -109,16 +123,27 @@ export function Settings() {
     recordDiagnosticAction({
       category: 'settings',
       action: 'analytics_consent_toggled',
-      details: { enabled: nextValue },
+      details: { enabled: nextValue }
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
     setAnalyticsConsentState(nextValue)
   }
 
+  const handleToggleExperimentalSpeakerDiarization = async () => {
+    const nextValue = !(experimentalSpeakerDiarization === true)
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'experimental_speaker_diarization_toggled',
+      details: { enabled: nextValue }
+    })
+    await window.electronAPI.invoke('prefs:set-experimental-speaker-diarization', nextValue)
+    setExperimentalSpeakerDiarization(nextValue)
+  }
+
   const handleRemoveDownloadedComponents = async () => {
     const confirmed = window.confirm(
-      'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.',
+      'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.'
     )
     if (!confirmed) return
 
@@ -128,9 +153,13 @@ export function Settings() {
     try {
       const nextStorageInfo = await window.electronAPI.invoke('app:clear-downloaded-components')
       setStorageInfo(nextStorageInfo)
-      setStorageNotice('Downloaded AI components removed. AutoDoc will re-download them when needed.')
+      setStorageNotice(
+        'Downloaded AI components removed. AutoDoc will re-download them when needed.'
+      )
     } catch (err) {
-      setStorageError(err instanceof Error ? err.message : 'Failed to remove downloaded AI components.')
+      setStorageError(
+        err instanceof Error ? err.message : 'Failed to remove downloaded AI components.'
+      )
     } finally {
       setIsRemovingDownloads(false)
     }
@@ -138,7 +167,7 @@ export function Settings() {
 
   const handleResetLocalData = async () => {
     const confirmed = window.confirm(
-      'Delete all local AutoDoc data and restart? This removes recordings, transcripts, settings, and downloaded AI components from this machine.',
+      'Delete all local AutoDoc data and restart? This removes recordings, transcripts, settings, and downloaded AI components from this machine.'
     )
     if (!confirmed) return
 
@@ -154,253 +183,278 @@ export function Settings() {
     }
   }
 
-  const uninstallGuidance = runtimeInfo?.platform === 'win32'
-    ? 'Windows uninstall can optionally remove AutoDoc local data. Use the controls here any time you want to reclaim space without uninstalling.'
-    : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
+  const uninstallGuidance =
+    runtimeInfo?.platform === 'win32'
+      ? 'Windows uninstall can optionally remove AutoDoc local data. Use the controls here any time you want to reclaim space without uninstalling.'
+      : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader title="Settings" />
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex flex-col gap-6 min-h-full">
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Calendars</h3>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Calendars</h3>
 
-          {accounts.length > 0 && (
-            <div className="flex flex-col gap-2 mb-3">
-              {accounts.map((account) => (
-                <div key={account.id} className="flex items-center gap-3">
-                  {account.provider === 'google' ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-                        fill="#4285F4"
-                      />
-                      <path
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                        fill="#34A853"
-                      />
-                      <path
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z"
-                        fill="#FBBC05"
-                      />
-                      <path
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                        fill="#EA4335"
-                      />
-                    </svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
-                      <rect x="1" y="1" width="10" height="10" fill="#F25022" />
-                      <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
-                      <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
-                      <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
-                    </svg>
-                  )}
-                  <span className="text-[12px] text-ink-muted">
-                    {getCalendarAccountLabel(account)}
-                  </span>
-                  <button
-                    onClick={() => handleDisconnect(account.id)}
-                    className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              ))}
+            {accounts.length > 0 && (
+              <div className="flex flex-col gap-2 mb-3">
+                {accounts.map((account) => (
+                  <div key={account.id} className="flex items-center gap-3">
+                    {account.provider === 'google' ? (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+                          fill="#4285F4"
+                        />
+                        <path
+                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          fill="#34A853"
+                        />
+                        <path
+                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z"
+                          fill="#FBBC05"
+                        />
+                        <path
+                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                          fill="#EA4335"
+                        />
+                      </svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
+                        <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+                        <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+                        <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+                        <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+                      </svg>
+                    )}
+                    <span className="text-[12px] text-ink-muted">
+                      {getCalendarAccountLabel(account)}
+                    </span>
+                    <button
+                      onClick={() => handleDisconnect(account.id)}
+                      className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleConnect('google')}
+                disabled={isConnecting}
+                className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+                    fill="#4285F4"
+                  />
+                  <path
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    fill="#34A853"
+                  />
+                  <path
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z"
+                    fill="#FBBC05"
+                  />
+                  <path
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                    fill="#EA4335"
+                  />
+                </svg>
+                {isConnecting ? 'Connecting...' : 'Add Google Calendar'}
+              </button>
+              <button
+                onClick={() => handleConnect('microsoft')}
+                disabled={isConnecting}
+                className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+              >
+                <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
+                  <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+                  <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+                  <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+                  <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+                </svg>
+                {isConnecting ? 'Connecting...' : 'Add Microsoft Outlook'}
+              </button>
             </div>
-          )}
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleConnect('google')}
-              disabled={isConnecting}
-              className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-                  fill="#4285F4"
-                />
-                <path
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  fill="#34A853"
-                />
-                <path
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z"
-                  fill="#FBBC05"
-                />
-                <path
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  fill="#EA4335"
-                />
-              </svg>
-              {isConnecting ? 'Connecting...' : 'Add Google Calendar'}
-            </button>
-            <button
-              onClick={() => handleConnect('microsoft')}
-              disabled={isConnecting}
-              className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
-            >
-              <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
-                <rect x="1" y="1" width="10" height="10" fill="#F25022" />
-                <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
-                <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
-                <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
-              </svg>
-              {isConnecting ? 'Connecting...' : 'Add Microsoft Outlook'}
-            </button>
           </div>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Analytics & Crash Reports</h3>
-          <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-            <div>
-              <p className="text-[12px] text-ink-muted">
-                Share anonymous usage data and crash reports to help improve AutoDoc. No meeting content or personal data is ever sent.
-              </p>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Experimental</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] font-medium text-ink">Speaker diarization</p>
+                <p className="text-[12px] text-ink-muted">
+                  Try automatic speaker separation for group conversations. When enabled, AutoDoc
+                  will label transcript speakers as Speaker 1, Speaker 2, Speaker 3, and so on
+                  instead of Me and Them. This is still experimental and may be less reliable on
+                  some recordings.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleToggleExperimentalSpeakerDiarization()}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${experimentalSpeakerDiarization ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                aria-pressed={experimentalSpeakerDiarization === true}
+                aria-label="Toggle experimental speaker diarization"
+              >
+                <span
+                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${experimentalSpeakerDiarization ? 'translate-x-5' : 'translate-x-0'}`}
+                />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void handleToggleAnalytics()}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
-              aria-pressed={analyticsConsent === true}
-              aria-label="Toggle analytics and crash reports"
-            >
-              <span
-                className={`block h-5 w-5 rounded-full bg-white transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
-              />
-            </button>
           </div>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
-          <p className="text-[12px] text-ink-muted">Default: off</p>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
-          <p className="text-[12px] text-ink-muted">{runtimeInfo?.whisperModel ?? 'Loading...'}</p>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Ollama Model</h3>
-          <p className="text-[12px] text-ink-muted">{runtimeInfo?.ollamaModel ?? 'Loading...'}</p>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Storage Path</h3>
-          <p className="text-[12px] text-ink-muted font-mono">
-            {runtimeInfo?.storagePath ?? 'Loading...'}
-          </p>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">Storage</h3>
-          <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-[12px] text-ink">Downloaded AI components</span>
-                <span className="text-[12px] font-medium text-ink">
-                  {formatBytes(storageInfo?.downloadedComponentsBytes)}
-                </span>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Analytics & Crash Reports</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] text-ink-muted">
+                  Share anonymous usage data and crash reports to help improve AutoDoc. No meeting
+                  content or personal data is ever sent.
+                </p>
               </div>
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-[12px] text-ink">Recordings and transcripts</span>
-                <span className="text-[12px] font-medium text-ink">
-                  {formatBytes(storageInfo?.recordingsBytes)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-[12px] text-ink">Logs</span>
-                <span className="text-[12px] font-medium text-ink">
-                  {formatBytes(storageInfo?.logsBytes)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-[12px] text-ink">Other local app data</span>
-                <span className="text-[12px] font-medium text-ink">
-                  {formatBytes(storageInfo?.otherLocalDataBytes)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-4 border-t border-border-subtle pt-2">
-                <span className="text-[12px] font-semibold text-ink">Total</span>
-                <span className="text-[12px] font-semibold text-ink">
-                  {formatBytes(storageInfo?.totalBytes)}
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => void handleToggleAnalytics()}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                aria-pressed={analyticsConsent === true}
+                aria-label="Toggle analytics and crash reports"
+              >
+                <span
+                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
+                />
+              </button>
             </div>
-
-            <p className="text-[12px] text-ink-muted mt-4">
-              {uninstallGuidance}
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
+            <p className="text-[12px] text-ink-muted">Default: off</p>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
+            <p className="text-[12px] text-ink-muted">
+              {runtimeInfo?.whisperModel ?? 'Loading...'}
             </p>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Ollama Model</h3>
+            <p className="text-[12px] text-ink-muted">{runtimeInfo?.ollamaModel ?? 'Loading...'}</p>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Storage Path</h3>
+            <p className="text-[12px] text-ink-muted font-mono">
+              {runtimeInfo?.storagePath ?? 'Loading...'}
+            </p>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Storage</h3>
+            <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[12px] text-ink">Downloaded AI components</span>
+                  <span className="text-[12px] font-medium text-ink">
+                    {formatBytes(storageInfo?.downloadedComponentsBytes)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[12px] text-ink">Recordings and transcripts</span>
+                  <span className="text-[12px] font-medium text-ink">
+                    {formatBytes(storageInfo?.recordingsBytes)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[12px] text-ink">Logs</span>
+                  <span className="text-[12px] font-medium text-ink">
+                    {formatBytes(storageInfo?.logsBytes)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[12px] text-ink">Other local app data</span>
+                  <span className="text-[12px] font-medium text-ink">
+                    {formatBytes(storageInfo?.otherLocalDataBytes)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-t border-border-subtle pt-2">
+                  <span className="text-[12px] font-semibold text-ink">Total</span>
+                  <span className="text-[12px] font-semibold text-ink">
+                    {formatBytes(storageInfo?.totalBytes)}
+                  </span>
+                </div>
+              </div>
 
-            <div className="flex flex-wrap gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => void handleRemoveDownloadedComponents()}
-                disabled={isRemovingDownloads || isResettingLocalData}
-                className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
-              >
-                {isRemovingDownloads ? 'Removing Downloaded AI...' : 'Remove Downloaded AI Components'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleResetLocalData()}
-                disabled={isResettingLocalData || isRemovingDownloads}
-                className="text-[12px] font-medium text-clay-dark bg-[#F8E7DE] px-4 py-2 rounded-lg hover:bg-[#F3D8CC] transition-colors disabled:opacity-50"
-              >
-                {isResettingLocalData ? 'Restarting AutoDoc...' : 'Delete All Local AutoDoc Data'}
-              </button>
+              <p className="text-[12px] text-ink-muted mt-4">{uninstallGuidance}</p>
+
+              <div className="flex flex-wrap gap-2 mt-4">
+                <button
+                  type="button"
+                  onClick={() => void handleRemoveDownloadedComponents()}
+                  disabled={isRemovingDownloads || isResettingLocalData}
+                  className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+                >
+                  {isRemovingDownloads
+                    ? 'Removing Downloaded AI...'
+                    : 'Remove Downloaded AI Components'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleResetLocalData()}
+                  disabled={isResettingLocalData || isRemovingDownloads}
+                  className="text-[12px] font-medium text-clay-dark bg-[#F8E7DE] px-4 py-2 rounded-lg hover:bg-[#F3D8CC] transition-colors disabled:opacity-50"
+                >
+                  {isResettingLocalData ? 'Restarting AutoDoc...' : 'Delete All Local AutoDoc Data'}
+                </button>
+              </div>
+
+              {storageNotice && <p className="text-[12px] text-sage mt-3">{storageNotice}</p>}
+              {storageError && <p className="text-[12px] text-clay mt-3">{storageError}</p>}
             </div>
-
-            {storageNotice && (
-              <p className="text-[12px] text-sage mt-3">{storageNotice}</p>
-            )}
-            {storageError && (
-              <p className="text-[12px] text-clay mt-3">{storageError}</p>
-            )}
           </div>
-        </div>
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
-          <div className="flex items-center gap-3">
-            <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
-            {updateStatus.state === 'idle' && (
-              <button
-                onClick={() => window.electronAPI.invoke('updater:check')}
-                className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors"
-              >
-                Check for updates
-              </button>
-            )}
-            {updateStatus.state === 'checking' && (
-              <span className="text-[11px] text-ink-faint animate-pulse">Checking...</span>
-            )}
-            {updateStatus.state === 'available' && (
-              <span className="text-[11px] text-sage font-medium">
-                v{updateStatus.version} downloading...
-              </span>
-            )}
-            {updateStatus.state === 'downloading' && (
-              <span className="text-[11px] text-sage font-medium">
-                Downloading update... {updateStatus.percent}%
-              </span>
-            )}
-            {updateStatus.state === 'downloaded' && (
-              <button
-                onClick={() => window.electronAPI.invoke('updater:install')}
-                className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
-              >
-                Restart to update to v{updateStatus.version}
-              </button>
-            )}
-            {updateStatus.state === 'error' && (
-              <button
-                onClick={() => window.electronAPI.invoke('updater:check')}
-                className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
-              >
-                Update Failed. Retry
-              </button>
-            )}
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
+            <div className="flex items-center gap-3">
+              <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
+              {updateStatus.state === 'idle' && (
+                <button
+                  onClick={() => window.electronAPI.invoke('updater:check')}
+                  className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors"
+                >
+                  Check for updates
+                </button>
+              )}
+              {updateStatus.state === 'checking' && (
+                <span className="text-[11px] text-ink-faint animate-pulse">Checking...</span>
+              )}
+              {updateStatus.state === 'available' && (
+                <span className="text-[11px] text-sage font-medium">
+                  v{updateStatus.version} downloading...
+                </span>
+              )}
+              {updateStatus.state === 'downloading' && (
+                <span className="text-[11px] text-sage font-medium">
+                  Downloading update... {updateStatus.percent}%
+                </span>
+              )}
+              {updateStatus.state === 'downloaded' && (
+                <button
+                  onClick={() => window.electronAPI.invoke('updater:install')}
+                  className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
+                >
+                  Restart to update to v{updateStatus.version}
+                </button>
+              )}
+              {updateStatus.state === 'error' && (
+                <button
+                  onClick={() => window.electronAPI.invoke('updater:check')}
+                  className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
+                >
+                  Update Failed. Retry
+                </button>
+              )}
+            </div>
           </div>
-        </div>
         </div>
       </div>
     </div>

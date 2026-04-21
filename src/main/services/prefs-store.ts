@@ -11,6 +11,7 @@ interface PrefsSchema {
   onboardingScreenSettingsOpened: boolean
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
+  experimentalSpeakerDiarization: boolean
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
@@ -23,7 +24,8 @@ function createPrefsStore(): Store<PrefsSchema> {
       onboardingScreenSettingsOpened: false,
       launchAtLogin: true,
       analyticsConsent: null,
-    },
+      experimentalSpeakerDiarization: false
+    }
   })
 }
 
@@ -94,6 +96,14 @@ export class PrefsStore {
 
   setAnalyticsConsent(enabled: boolean): void {
     this.store.set('analyticsConsent', enabled)
+  }
+
+  getExperimentalSpeakerDiarization(): boolean {
+    return this.store.get('experimentalSpeakerDiarization')
+  }
+
+  setExperimentalSpeakerDiarization(enabled: boolean): void {
+    this.store.set('experimentalSpeakerDiarization', enabled)
   }
 
   private applyLaunchAtLogin(): void {
