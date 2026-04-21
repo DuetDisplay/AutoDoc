@@ -55,7 +55,6 @@ export class DiarizationService extends EventEmitter {
   private async runSetup(): Promise<void> {
     try {
       await this.ensureReady(false)
-      this.setSetupStatus({ phase: 'ready', percent: 100 })
     } catch (err) {
       this.setSetupStatus({
         phase: 'error',
@@ -196,7 +195,10 @@ export class DiarizationService extends EventEmitter {
   }
 
   async ensureReady(awaitActiveSetup = true): Promise<void> {
-    if (await this.isReady()) return
+    if (await this.isReady()) {
+      this.markReady()
+      return
+    }
     if (awaitActiveSetup && this.setupPromise) return this.setupPromise
 
     const target = getManagedPythonTarget(process.platform, process.arch)
@@ -214,7 +216,7 @@ export class DiarizationService extends EventEmitter {
         throw new Error('Bundled speaker diarization runtime did not pass validation after packaging.')
       }
 
-      this.ready = true
+      this.markReady()
       return
     }
 
@@ -241,7 +243,7 @@ export class DiarizationService extends EventEmitter {
       throw new Error('Speaker diarization environment did not pass validation after setup.')
     }
 
-    this.ready = true
+    this.markReady()
   }
 
   private async resolveBootstrapPython(): Promise<string | null> {
@@ -488,6 +490,18 @@ export class DiarizationService extends EventEmitter {
         return 'downloading-speaker-model'
       default:
         return 'ready'
+    }
+  }
+
+  private markReady(): void {
+    this.ready = true
+    if (
+      this.setupStatus.phase !== 'ready' ||
+      this.setupStatus.percent !== 100 ||
+      this.setupStatus.error != null ||
+      this.setupStatus.failedStep != null
+    ) {
+      this.setSetupStatus({ phase: 'ready', percent: 100 })
     }
   }
 

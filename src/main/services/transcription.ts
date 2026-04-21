@@ -1141,10 +1141,25 @@ export class TranscriptionService {
             speakerId !== 'Speaker' && allSpeakerIds.indexOf(speakerId) === index
         )
 
-      orderedSpeakerIds.forEach((speakerId, index) => {
+      let speakerNum = 0
+      orderedSpeakerIds.forEach((speakerId) => {
+        if (speakerId === 'me') {
+          speakerMap[speakerId] = { label: 'Me' }
+          return
+        }
+
+        if (speakerId === 'them') {
+          speakerMap[speakerId] = {
+            label: 'Them',
+            ...(suggestions.length > 0 ? { suggestions } : {})
+          }
+          return
+        }
+
+        speakerNum++
         speakerMap[speakerId] = {
-          label: `Speaker ${index + 1}`,
-          ...(speakerId !== 'me' && suggestions.length > 0 ? { suggestions } : {})
+          label: `Speaker ${speakerNum}`,
+          ...(suggestions.length > 0 ? { suggestions } : {})
         }
       })
     } else {

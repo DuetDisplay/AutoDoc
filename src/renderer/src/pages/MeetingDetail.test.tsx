@@ -219,4 +219,82 @@ describe('MeetingDetail', () => {
       expect(screen.getAllByText('Avery').length).toBeGreaterThan(0)
     })
   })
+
+  it('keeps Me visible after reprocessing with diarization instead of renaming me to Speaker 2', async () => {
+    let transcriptData = [
+      createTranscript({
+        meetingId: 'test-123',
+        speaker: 'me',
+        text: 'Initial local transcript before speaker diarization.',
+      }),
+    ]
+    let speakerData = {
+      me: { label: 'Me' },
+    }
+
+    const api = installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': () => transcriptData,
+      'transcription:retry': undefined,
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': createMeetingSegments(),
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Entire screen',
+        date: Date.now(),
+        durationSeconds: 300,
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'speakers:get': () => speakerData,
+    })
+
+    await renderMeetingDetail()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Settings'))
+    await user.click(screen.getAllByRole('button', { name: 'Reprocess' })[0])
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
+
+    transcriptData = [
+      createTranscript({
+        meetingId: 'test-123',
+        speaker: 'me',
+        text: 'I am still the local speaker after diarization.',
+      }),
+      createTranscript({
+        id: 't-2',
+        meetingId: 'test-123',
+        speaker: 'speaker_1',
+        text: 'Remote teammate joins as the diarized speaker.',
+        startMs: 20_000,
+        endMs: 26_000,
+        confidence: 0.95,
+      }),
+    ]
+    speakerData = {
+      me: { label: 'Me' },
+      speaker_1: { label: 'Speaker 1' },
+    }
+
+    await act(async () => {
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        progress: 100,
+      })
+      await Promise.resolve()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Transcript' }))
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Me').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Speaker 1').length).toBeGreaterThan(0)
+      expect(screen.queryByText('Speaker 2')).not.toBeInTheDocument()
+      expect(screen.getByText('I am still the local speaker after diarization.')).toBeInTheDocument()
+    })
+  })
 })

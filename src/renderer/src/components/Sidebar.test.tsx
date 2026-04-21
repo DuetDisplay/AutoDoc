@@ -1,7 +1,8 @@
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Sidebar } from './Sidebar'
+import { createElectronApiMock } from '../test/fixtures'
 
 const defaultSetupStatus = { phase: 'ready', percent: 100 }
 
@@ -102,5 +103,27 @@ describe('Sidebar', () => {
 
     await renderSidebar()
     expect(screen.getByText('Downloading speech model... 42%')).toBeInTheDocument()
+  })
+
+  it('clears the speaker model download banner once setup reports ready', async () => {
+    const api = createElectronApiMock({
+      'ollama:check-status': true,
+      'ollama:get-setup-status': defaultSetupStatus,
+      'whisper:get-setup-status': { phase: 'downloading-speaker-model', percent: 75 },
+    })
+    window.electronAPI = api as any
+
+    await renderSidebar()
+    expect(screen.getByText('Downloading speaker model... 75%')).toBeInTheDocument()
+
+    await act(async () => {
+      api.emit('whisper:setup-progress', { phase: 'ready', percent: 100 })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('Downloading speaker model... 75%')).not.toBeInTheDocument()
+      expect(screen.queryByText('Downloading speaker model... 100%')).not.toBeInTheDocument()
+    })
   })
 })

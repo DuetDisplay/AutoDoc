@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiarizationService } from '../diarization'
 import { getManagedPythonTarget } from '../managed-python'
+import path from 'path'
 
 vi.mock('electron', () => ({
   app: {
@@ -65,7 +66,14 @@ describe('DiarizationService bootstrap resolution', () => {
     const target = getManagedPythonTarget(process.platform, process.arch)
     expect(target).not.toBeNull()
 
-    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
+    const bundledRuntimePython = path.join(
+      '/mock/resources',
+      'python-runtime',
+      target!.key,
+      'python',
+      'bin',
+      'python3',
+    )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
       throw new Error('ENOENT')
@@ -95,7 +103,14 @@ describe('DiarizationService bootstrap resolution', () => {
     const target = getManagedPythonTarget(process.platform, process.arch)
     expect(target).not.toBeNull()
 
-    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
+    const bundledRuntimePython = path.join(
+      '/mock/resources',
+      'python-runtime',
+      target!.key,
+      'python',
+      'bin',
+      'python3',
+    )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
       throw new Error('ENOENT')
@@ -111,11 +126,18 @@ describe('DiarizationService bootstrap resolution', () => {
     expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
   })
 
-  it('uses the packaged bundled runtime directly in packaged builds', async () => {
+  it('marks packaged setup ready after a direct ensureReady call succeeds', async () => {
     const target = getManagedPythonTarget(process.platform, process.arch)
     expect(target).not.toBeNull()
 
-    const bundledRuntimePython = `/mock/resources/python-runtime/${target!.key}/python/bin/python3`
+    const bundledRuntimePython = path.join(
+      '/mock/resources',
+      'python-runtime',
+      target!.key,
+      'python',
+      'bin',
+      'python3',
+    )
     fsMock.access.mockImplementation(async (path) => {
       if (String(path) === bundledRuntimePython) return undefined
       throw new Error('ENOENT')
@@ -131,7 +153,7 @@ describe('DiarizationService bootstrap resolution', () => {
     await expect(service.ensureReady()).resolves.toBeUndefined()
 
     expect(runCommandSpy).not.toHaveBeenCalled()
-    expect(service.getSetupStatus()).toEqual({ phase: 'downloading-speaker-model', percent: 75 })
+    expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
   })
 
   it('fails packaged setup when the bundled runtime is missing', async () => {

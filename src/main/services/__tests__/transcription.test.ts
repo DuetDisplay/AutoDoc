@@ -4,6 +4,7 @@ import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
 import type { CalendarManager } from '../calendar-manager'
 import { EventEmitter } from 'events'
+import path from 'path'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -285,8 +286,8 @@ describe('TranscriptionService', () => {
     await expect((service as any).processJob('meeting-system-only')).resolves.toBeUndefined()
 
     expect(mockConverter.convert).toHaveBeenCalledWith(
-      '/mock/home/AutoDoc/recordings/meeting-system-only/system.webm',
-      expect.stringContaining('/mock/tmp/autodoc-meeting-system-only-'),
+      path.join('/mock/home/AutoDoc/recordings', 'meeting-system-only', 'system.webm'),
+      expect.stringContaining(path.join('/mock/tmp', 'autodoc-meeting-system-only-')),
       '/mock/ffmpeg'
     )
   })
@@ -423,9 +424,9 @@ describe('TranscriptionService', () => {
       expect.objectContaining({ speaker: 'speaker_2', text: 'Remote speaker two' })
     ])
     expect(speakersWrite?.[0]).toEqual({
-      me: { label: 'Speaker 1' },
-      speaker_1: { label: 'Speaker 2' },
-      speaker_2: { label: 'Speaker 3' }
+      me: { label: 'Me' },
+      speaker_1: { label: 'Speaker 1' },
+      speaker_2: { label: 'Speaker 2' }
     })
   })
 
@@ -610,11 +611,17 @@ describe('TranscriptionService', () => {
     const transcriptWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
       String(path).endsWith('transcript.json')
     )
+    const speakersWrite = cryptoMock.encryptJSON.mock.calls.find(([, path]) =>
+      String(path).endsWith('speakers.json')
+    )
 
     expect(mockDiarization.diarize).toHaveBeenCalledTimes(1)
     expect(transcriptWrite?.[0]).toEqual([
       expect.objectContaining({ speaker: 'them', text: 'Hello from speakers' })
     ])
+    expect(speakersWrite?.[0]).toEqual({
+      them: { label: 'Them' }
+    })
   })
 
   it('collapses overlapping cross-speaker duplicates when dual-channel audio echoes the same utterance', () => {
