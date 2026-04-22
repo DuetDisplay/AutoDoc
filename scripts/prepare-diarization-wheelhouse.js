@@ -8,7 +8,7 @@ const REQUIREMENTS_PATH = join(process.cwd(), 'resources', 'diarization-requirem
 const OUTPUT_DIR = join(process.cwd(), 'vendor', 'python-runtime-bundle')
 const PYTHON_RELEASE_TAG = '20260414'
 const PYTHON_VERSION = '3.11.15'
-const BUNDLE_FORMAT = 'preinstalled-runtime-v2-pruned'
+const BUNDLE_FORMAT = 'preinstalled-runtime-v3-validated'
 
 const TARGETS = {
   'darwin-arm64': {
@@ -37,6 +37,10 @@ function getArchiveFilename(target) {
   return `cpython-${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}-${target.triplet}-install_only.tar.gz`
 }
 
+function getArchivePath(target) {
+  return join(process.cwd(), 'vendor', 'python-runtime', getArchiveFilename(target))
+}
+
 async function fileExists(filePath) {
   try {
     await access(filePath)
@@ -48,7 +52,11 @@ async function fileExists(filePath) {
 
 function run(command, args, env = process.env) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, { stdio: 'inherit', env, windowsHide: true })
+    const proc = spawn(command, args, {
+      stdio: 'inherit',
+      env: { ...env, COPYFILE_DISABLE: env.COPYFILE_DISABLE ?? '1' },
+      windowsHide: true
+    })
     proc.on('error', reject)
     proc.on('close', (code) => {
       if (code === 0) resolve()
@@ -62,6 +70,25 @@ async function ensureManagedPythonExtracted(targetKey, target) {
   if (!(await fileExists(pythonPath))) {
     throw new Error(`Managed Python runtime not found at ${pythonPath}. Run prepare-python-runtime first.`)
   }
+  return pythonPath
+}
+
+async function reseedManagedPythonRuntime(targetKey, target) {
+  const runtimeDir = join(OUTPUT_DIR, targetKey)
+  const archivePath = getArchivePath(target)
+  if (!(await fileExists(archivePath))) {
+    throw new Error(`Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`)
+  }
+
+  await rm(runtimeDir, { recursive: true, force: true })
+  await mkdir(runtimeDir, { recursive: true })
+  await run('tar', ['-xzf', archivePath, '-C', runtimeDir])
+
+  const pythonPath = join(runtimeDir, ...target.executable)
+  if (!(await fileExists(pythonPath))) {
+    throw new Error(`Managed Python runtime extracted without expected executable: ${pythonPath}`)
+  }
+
   return pythonPath
 }
 
@@ -105,7 +132,6 @@ async function pruneBundledRuntime(targetKey) {
 
   const removePaths = [
     join(sitePackagesDir, 'torch', 'include'),
-    join(sitePackagesDir, 'torch', 'testing'),
     join(sitePackagesDir, 'torch', 'share'),
   ]
 
@@ -116,6 +142,7 @@ async function pruneBundledRuntime(targetKey) {
   await walkAndPrune(runtimeDir, async (entryPath, entry) => {
     if (entry.isDirectory()) {
       return (
+        entry.name.startsWith('._') ||
         entry.name === '__pycache__' ||
         entry.name === 'tests' ||
         entry.name === 'test'
@@ -127,6 +154,8 @@ async function pruneBundledRuntime(targetKey) {
     }
 
     return (
+      entry.name.startsWith('._') ||
+      entry.name === '.DS_Store' ||
       entry.name.endsWith('.pyc') ||
       entry.name.endsWith('.pyo') ||
       entry.name.endsWith('.a') ||
@@ -161,7 +190,8 @@ async function ensureBundledRuntime(targetKey) {
     return
   }
 
-  const pythonPath = await ensureManagedPythonExtracted(targetKey, target)
+  await ensureManagedPythonExtracted(targetKey, target)
+  const pythonPath = await reseedManagedPythonRuntime(targetKey, target)
   const runtimeDir = join(OUTPUT_DIR, targetKey)
   await mkdir(runtimeDir, { recursive: true })
 
@@ -175,6 +205,11 @@ async function ensureBundledRuntime(targetKey) {
     REQUIREMENTS_PATH,
   ])
 
+  await pruneBundledRuntime(targetKey)
+  await run(pythonPath, [
+    '-c',
+    'import torch.testing; from pyannote.audio import Pipeline; print("ok")',
+  ], { ...process.env, PYTHONDONTWRITEBYTECODE: '1' })
   await pruneBundledRuntime(targetKey)
 
   await writeFile(

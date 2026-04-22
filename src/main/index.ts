@@ -786,11 +786,7 @@ app.whenReady().then(async () => {
       return { phase: 'ready', percent: 100 }
     }
 
-    if (isE2E) {
-      return { ...diarizationSetupState }
-    }
-
-    const status = diarizationService.getSetupStatus()
+    const status = { ...diarizationSetupState }
     if (status.phase === 'error') {
       return {
         ...status,
