@@ -27,11 +27,14 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   }
 
   useEffect(() => {
-    window.electronAPI.invoke('whisper:get-setup-status').then((status) => {
+    window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
       setPhase(status.phase)
       setPercent(status.percent)
       if (status.phase === 'ready') markReady()
       if (status.phase === 'error') setError(status.error ?? 'Unknown error')
+      if (status.phase === 'checking') {
+        await window.electronAPI.invoke('whisper:retry-setup')
+      }
     })
 
     const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
@@ -48,7 +51,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   }, [onNext])
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowSkip(true), 5000)
+    const timer = setTimeout(() => setShowSkip(true), 1500)
     return () => clearTimeout(timer)
   }, [])
 

@@ -82,16 +82,16 @@ async function ensureModelSnapshot() {
     return
   }
 
-  if (!HF_TOKEN) {
-    throw new Error(
-      'HF_TOKEN/HUGGINGFACE_TOKEN is required to bundle the speaker diarization model. Add it to your local environment or CI secrets before running the build.',
-    )
-  }
-
   const configPath = join(MODEL_DIR, 'config.yaml')
   if (await fileExists(configPath)) {
     console.log('[diarization-model] Reusing bundled community-1 snapshot')
     return
+  }
+
+  if (!HF_TOKEN) {
+    throw new Error(
+      'HF_TOKEN/HUGGINGFACE_TOKEN is required to bundle the speaker diarization model. Add it to your local environment or CI secrets before running the build.',
+    )
   }
 
   const pythonPath = await ensureManagedPythonExtracted(target)

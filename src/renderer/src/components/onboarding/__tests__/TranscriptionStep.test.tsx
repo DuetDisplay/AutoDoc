@@ -33,6 +33,27 @@ describe('TranscriptionStep', () => {
     expect(screen.queryByText(/brew install/i)).not.toBeInTheDocument()
   })
 
+  it('starts transcription setup when onboarding reaches the step', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'checking',
+          percent: 0,
+        })
+      }
+      if (channel === 'whisper:retry-setup') {
+        return Promise.resolve()
+      }
+      return Promise.resolve({})
+    })
+
+    render(<TranscriptionStep onNext={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+    })
+  })
+
   it('retries setup after a managed install failure', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {
@@ -82,7 +103,7 @@ describe('TranscriptionStep', () => {
       expect(screen.queryByText(/continue/i)).not.toBeInTheDocument()
 
       await act(async () => {
-        vi.advanceTimersByTime(5000)
+        vi.advanceTimersByTime(1500)
       })
 
       expect(screen.getByText(/continue - this will finish in the background/i)).toBeInTheDocument()

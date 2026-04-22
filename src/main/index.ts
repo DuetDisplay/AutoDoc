@@ -1050,55 +1050,6 @@ app.whenReady().then(async () => {
       detectionService.start()
     }
 
-    // Start whisper tools + model download in the background — don't block the window
-    whisperManager
-      .startSetup()
-      .then(() => {
-        lastSuccessfulWhisperPhase = 'ready'
-        whisperEngineSetupState.phase = 'ready'
-        whisperEngineSetupState.percent = 100
-        delete whisperEngineSetupState.error
-        delete whisperEngineSetupState.failedStep
-        broadcastTranscriptionSetupStatus()
-      })
-      .catch((err) => {
-        whisperEngineSetupState.phase = 'error'
-        whisperEngineSetupState.error = err instanceof Error ? err.message : String(err)
-        whisperEngineSetupState.failedStep = getWhisperFailedStep()
-        broadcastTranscriptionSetupStatus()
-        logAutodocFailure({
-          area: 'whisper',
-          message: 'Failed to set up whisper tools',
-          error: err
-        })
-        console.error('Failed to set up whisper tools:', err)
-      })
-
-    startDiarizationSetup()
-      .then(() => {
-        lastSuccessfulDiarizationPhase = 'ready'
-        diarizationSetupState.phase = 'ready'
-        diarizationSetupState.percent = 100
-        delete diarizationSetupState.error
-        delete diarizationSetupState.failedStep
-        broadcastTranscriptionSetupStatus()
-      })
-      .catch((err) => {
-        diarizationSetupState.phase = 'error'
-        diarizationSetupState.error = err instanceof Error ? err.message : String(err)
-        diarizationSetupState.failedStep = getDiarizationFailedStep()
-        broadcastTranscriptionSetupStatus()
-        logAutodocFailure({
-          area: 'diarization',
-          message: 'Failed to set up speaker diarization',
-          error: err
-        })
-        console.error('Failed to set up speaker diarization:', err)
-      })
-
-    // Start Ollama + pull model in the background — don't block the window
-    ensureOllamaRunning()
-
     if (!isRealSetupTest) {
       powerMonitor.on('resume', () => {
         ensureOllamaRunning()

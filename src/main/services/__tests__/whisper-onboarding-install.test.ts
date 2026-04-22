@@ -55,6 +55,7 @@ async function loadWhisperManager(
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
   vi.doUnmock('ffmpeg-static')
@@ -407,6 +408,122 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(join(manager.getModelsDir(), 'ggml.dll'))).resolves.toBeUndefined()
       expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('re-downloads a corrupt packaged macOS model after probe validation fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-model-recovery-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+      await writeFile(manager.getWhisperPath(), 'whisper')
+      await writeFile(manager.getFfmpegPath(), 'ffmpeg')
+      await writeFile(manager.getModelPath(), 'stale-model')
+
+      const usabilityChecks = vi
+        .spyOn(manager as never, 'isWhisperUsable')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'fresh-model')
+        })
+      const resolveWhisperSpy = vi.spyOn(manager as never, 'resolveWhisper')
+
+      await manager.ensureReady()
+
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      expect(resolveWhisperSpy).not.toHaveBeenCalled()
+      expect(usabilityChecks).toHaveBeenCalledTimes(2)
+      await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('fresh-model')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects incomplete model downloads and leaves no partial file behind', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-partial-download-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg
+      })
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: true,
+          headers: {
+            get: (name: string) => (name.toLowerCase() === 'content-length' ? '10' : null)
+          },
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]))
+              controller.close()
+            }
+          })
+        }))
+      )
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+
+      await expect((manager as any).downloadModel()).rejects.toThrow(/incomplete/i)
+      await expect(access(manager.getModelPath())).rejects.toThrow()
+      await expect(access(`${manager.getModelPath()}.tmp`)).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('silently recovers from a partial packaged macOS model left on disk', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-partial-recovery-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(manager.getModelsDir(), { recursive: true })
+      await writeFile(manager.getWhisperPath(), 'whisper')
+      await writeFile(manager.getFfmpegPath(), 'ffmpeg')
+      await writeFile(manager.getModelPath(), 'partial-model')
+
+      const resolveWhisperSpy = vi.spyOn(manager as never, 'resolveWhisper')
+      const usabilityChecks = vi
+        .spyOn(manager as never, 'isWhisperUsable')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'recovered-model')
+        })
+
+      await manager.ensureReady()
+
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      expect(resolveWhisperSpy).not.toHaveBeenCalled()
+      expect(usabilityChecks).toHaveBeenCalledTimes(2)
+      await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('recovered-model')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

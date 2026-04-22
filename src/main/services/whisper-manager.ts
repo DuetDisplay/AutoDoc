@@ -8,12 +8,13 @@ import {
   symlink,
   chmod,
   mkdtemp,
-  writeFile
+  writeFile,
+  rename
 } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { createWriteStream } from 'fs'
 import { execFile, execSync } from 'child_process'
-import { EventEmitter } from 'events'
+import { EventEmitter, once } from 'events'
 import { tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
@@ -178,6 +179,10 @@ export class WhisperManager extends EventEmitter {
       }
 
       if (!(await this.isWhisperUsable())) {
+        await this.recoverFromProbeValidationFailure()
+      }
+
+      if (!(await this.isWhisperUsable())) {
         this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveWhisper()
@@ -204,6 +209,14 @@ export class WhisperManager extends EventEmitter {
       this.emit('setup-status', this.getSetupStatus())
       throw err
     }
+  }
+
+  private async recoverFromProbeValidationFailure(): Promise<void> {
+    this.setupStatus = { phase: 'downloading-model', percent: 0 }
+    this.emit('setup-status', this.getSetupStatus())
+
+    await rm(this.getModelPath(), { force: true })
+    await this.downloadWithRetry(() => this.downloadModel(), 'model')
   }
 
   private async adoptInstalledAssetsIfAvailable(): Promise<void> {
@@ -896,6 +909,19 @@ export class WhisperManager extends EventEmitter {
     })
   }
 
+  private async closeFileStream(fileStream: ReturnType<typeof createWriteStream>): Promise<void> {
+    if (fileStream.writableFinished || fileStream.destroyed) {
+      return
+    }
+
+    const finished = new Promise<void>((resolve, reject) => {
+      fileStream.once('finish', resolve)
+      fileStream.once('error', reject)
+    })
+    fileStream.end()
+    await finished
+  }
+
   private async downloadFile(
     url: string,
     destPath: string,
@@ -910,8 +936,10 @@ export class WhisperManager extends EventEmitter {
 
     const totalBytes = Number(response.headers.get('content-length') ?? 0)
     let downloadedBytes = 0
+    const tempPath = `${destPath}.tmp`
 
-    const fileStream = createWriteStream(destPath)
+    await rm(tempPath, { force: true })
+    const fileStream = createWriteStream(tempPath)
     const reader = response.body?.getReader()
     if (!reader) throw new Error(`No response body for ${label}`)
 
@@ -919,7 +947,9 @@ export class WhisperManager extends EventEmitter {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        fileStream.write(value)
+        if (!fileStream.write(value)) {
+          await once(fileStream, 'drain')
+        }
         downloadedBytes += value.length
         const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
         onProgress?.(percent)
@@ -930,12 +960,25 @@ export class WhisperManager extends EventEmitter {
           bytesTotal: totalBytes
         } as DownloadProgress)
       }
-    } finally {
+
       fileStream.end()
       await new Promise<void>((resolve, reject) => {
         fileStream.on('finish', resolve)
         fileStream.on('error', reject)
       })
+
+      if (totalBytes > 0 && downloadedBytes !== totalBytes) {
+        throw new Error(
+          `Downloaded ${label} was incomplete: expected ${totalBytes} bytes, received ${downloadedBytes}.`
+        )
+      }
+
+      await rm(destPath, { force: true })
+      await rename(tempPath, destPath)
+    } catch (err) {
+      await this.closeFileStream(fileStream)
+      await rm(tempPath, { force: true })
+      throw err
     }
   }
 }
