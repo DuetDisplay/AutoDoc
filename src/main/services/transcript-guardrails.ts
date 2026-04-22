@@ -7,6 +7,13 @@ export interface SpeechSignalSummary {
   lowSignal: boolean
 }
 
+export interface TranscriptContentStats {
+  nonEmptySegments: number
+  meaningfulSegments: number
+  totalAlphaWords: number
+  meaningfulCharCount: number
+}
+
 const LOW_SIGNAL_PATTERNS = [
   /\bsubtitles by (the )?amara\.org community\b/i,
   /\bamara\.org community\b/i,
@@ -23,6 +30,21 @@ const LOW_SIGNAL_RATIO = 0.005
 function countAlphaWords(text: string): number {
   const matches = text.match(/[a-z]{2,}/gi)
   return matches?.length ?? 0
+}
+
+export function getTranscriptContentStats(transcripts: Transcript[]): TranscriptContentStats {
+  const nonEmpty = transcripts
+    .map((segment) => segment.text.trim())
+    .filter((text) => text.length > 0)
+
+  const meaningful = nonEmpty.filter((text) => !isKnownLowSignalPhrase(text))
+
+  return {
+    nonEmptySegments: nonEmpty.length,
+    meaningfulSegments: meaningful.length,
+    totalAlphaWords: meaningful.reduce((sum, text) => sum + countAlphaWords(text), 0),
+    meaningfulCharCount: meaningful.reduce((sum, text) => sum + text.length, 0),
+  }
 }
 
 export function summarizeSpeechSignal(
@@ -68,16 +90,29 @@ export function filterLowSignalHallucinations(
 }
 
 export function hasUsableTranscriptContent(transcripts: Transcript[]): boolean {
-  const nonEmpty = transcripts
-    .map((segment) => segment.text.trim())
-    .filter((text) => text.length > 0)
+  const stats = getTranscriptContentStats(transcripts)
+  return stats.nonEmptySegments > 0 && stats.meaningfulSegments > 0 && stats.totalAlphaWords >= 4
+}
 
-  if (nonEmpty.length === 0) return false
-  if (nonEmpty.every((text) => isKnownLowSignalPhrase(text))) return false
+export function shouldTreatEmptySegmentationAsFailure(
+  transcripts: Transcript[],
+  durationMinutes?: number,
+  renderedTranscriptLength = 0,
+): boolean {
+  const stats = getTranscriptContentStats(transcripts)
+  const duration = durationMinutes ?? 0
 
-  const meaningful = nonEmpty.filter((text) => !isKnownLowSignalPhrase(text))
-  if (meaningful.length === 0) return false
+  if (stats.totalAlphaWords >= 80 || renderedTranscriptLength >= 1200) {
+    return true
+  }
 
-  const totalAlphaWords = meaningful.reduce((sum, text) => sum + countAlphaWords(text), 0)
-  return totalAlphaWords >= 4
+  if (stats.totalAlphaWords >= 30 && duration >= 2) {
+    return true
+  }
+
+  if (stats.meaningfulSegments >= 8 && stats.totalAlphaWords >= 24) {
+    return true
+  }
+
+  return false
 }

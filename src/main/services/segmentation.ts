@@ -7,7 +7,7 @@ import type { OllamaManager } from './ollama-manager'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 import { classifyError } from './error-classification'
-import { hasUsableTranscriptContent } from './transcript-guardrails'
+import { hasUsableTranscriptContent, shouldTreatEmptySegmentationAsFailure } from './transcript-guardrails'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 
@@ -249,7 +249,7 @@ export class SegmentationService {
       segments.discussion.length +
       segments.statusUpdates.length
 
-    if (totalItems === 0 && fullText.length > 100) {
+    if (totalItems === 0 && shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)) {
       throw new Error('LLM returned empty segments for non-trivial transcript — likely context overflow or model issue')
     }
 

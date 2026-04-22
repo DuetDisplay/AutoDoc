@@ -120,6 +120,50 @@ describe('SegmentationService', () => {
     )
   })
 
+  it('accepts empty segmentation output for short low-information transcripts', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(JSON.stringify([
+      { id: 'm1-0', meetingId: 'm1', speaker: 'Chris', text: 'We should probably follow up with them next week.', startMs: 0, endMs: 15_000, confidence: 0.8 },
+      { id: 'm1-1', meetingId: 'm1', speaker: 'Pat', text: 'Okay, let us regroup after we hear back.', startMs: 20_000, endMs: 55_000, confidence: 0.8 },
+    ]) as any)
+
+    await expect((service as any).processJob('m1')).resolves.toBeUndefined()
+
+    expect(provider.summarize).toHaveBeenCalled()
+    expect(cryptoMock.encryptJSON).toHaveBeenCalledWith(
+      {
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: [],
+      },
+      '/mock/home/AutoDoc/recordings/m1/segments.json',
+    )
+  })
+
+  it('still fails empty segmentation output for substantive transcripts', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(JSON.stringify([
+      { id: 'm2-0', meetingId: 'm2', speaker: 'Chris', text: 'We reviewed the onboarding funnel metrics and conversion dropped from 42 percent to 31 percent after the pricing page update went live on Monday.', startMs: 0, endMs: 30_000, confidence: 0.8 },
+      { id: 'm2-1', meetingId: 'm2', speaker: 'Pat', text: 'The team agreed we need an experiment plan, a rollback option, and a written owner list for engineering, design, and growth before next Tuesday.', startMs: 45_000, endMs: 85_000, confidence: 0.8 },
+      { id: 'm2-2', meetingId: 'm2', speaker: 'Chris', text: 'Finance also confirmed the current acquisition budget is capped at fifty thousand dollars for the quarter, so any campaign changes need approval this week.', startMs: 95_000, endMs: 130_000, confidence: 0.8 },
+      { id: 'm2-3', meetingId: 'm2', speaker: 'Pat', text: 'We also discussed support volume, launch timing, customer messaging, and the dependency on the billing migration that is still in progress.', startMs: 135_000, endMs: 170_000, confidence: 0.8 },
+    ]) as any)
+
+    await expect((service as any).processJob('m2')).rejects.toThrow(
+      'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
+    )
+
+    expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
+  })
+
   it('prioritizes direct jobs ahead of recovery-scan jobs', () => {
     vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
 
