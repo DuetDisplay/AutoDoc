@@ -506,7 +506,8 @@ app.whenReady().then(async () => {
 
   const whisperManager = new WhisperManager()
   const audioConverter = new AudioConverter()
-  const diarizationService = new DiarizationService()
+  const diarizationService =
+    isE2E || isExperimentalSpeakerDiarizationEnabled() ? new DiarizationService() : null
   const transcriptionService = new TranscriptionService(
     whisperManager,
     audioConverter,
@@ -851,7 +852,7 @@ app.whenReady().then(async () => {
     broadcastTranscriptionSetupStatus()
   })
 
-  diarizationService.on('setup-status', (status: DiarizationSetupStatus) => {
+  diarizationService?.on('setup-status', (status: DiarizationSetupStatus) => {
     if (!isSpeakerDiarizationSetupEnabled()) {
       return
     }
@@ -867,7 +868,7 @@ app.whenReady().then(async () => {
   })
 
   const startDiarizationSetup = async (): Promise<void> => {
-    if (!isSpeakerDiarizationSetupEnabled()) {
+    if (!isSpeakerDiarizationSetupEnabled() || !diarizationService) {
       lastSuccessfulDiarizationPhase = 'ready'
       diarizationSetupState.phase = 'ready'
       diarizationSetupState.percent = 100

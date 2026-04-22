@@ -6,8 +6,6 @@ files:
   - 'package.json'
   - 'out/**/*'
   - 'node_modules/**/*'
-  - 'resources/diarize.py'
-  - 'resources/diarization-requirements.txt'
   - 'resources/icon.png'
   - 'resources/trayTemplate.png'
   - 'resources/trayTemplate@2x.png'
@@ -17,15 +15,6 @@ files:
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'
   - '!**/.DS_Store'
-extraResources:
-  - from: vendor/python-runtime-bundle
-    to: python-runtime
-    filter:
-      - '**/*'
-  - from: vendor/diarization-model
-    to: diarization-model
-    filter:
-      - '**/*'
 asarUnpack:
   - 'resources/**'
   - 'native/**'
