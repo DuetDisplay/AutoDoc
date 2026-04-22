@@ -154,26 +154,40 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         shell: pwsh
         run: |
+          $candidatePaths = @()
+
+          if ($env:LOCALAPPDATA) {
+            $candidatePaths += Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64\smctl.exe'
+          }
+
           $smctlCommand = Get-Command smctl.exe -ErrorAction SilentlyContinue
-          if (-not $smctlCommand) {
-            $candidatePaths = @()
+          if ($smctlCommand) {
+            $candidatePaths += $smctlCommand.Source
+          }
 
-            if ($env:LOCALAPPDATA) {
-              $candidatePaths += Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64\smctl.exe'
-            }
-            if ($env:ProgramFiles) {
-              $candidatePaths += Join-Path $env:ProgramFiles 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
-            }
-            if (${env:ProgramFiles(x86)}) {
-              $candidatePaths += Join-Path ${env:ProgramFiles(x86)} 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
-            }
+          if ($env:ProgramFiles) {
+            $candidatePaths += Join-Path $env:ProgramFiles 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+          }
+          if (${env:ProgramFiles(x86)}) {
+            $candidatePaths += Join-Path ${env:ProgramFiles(x86)} 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+          }
 
-            $smctlPath = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $smctlPath) {
-              throw 'smctl.exe was not found on PATH or in the standard DigiCert install locations.'
+          $smctlPath = $candidatePaths |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique -First 1
+
+          if (-not $smctlPath) {
+            throw 'smctl.exe was not found on PATH or in the standard DigiCert install locations.'
+          }
+
+          Write-Host "Resolved smctl.exe to $smctlPath"
+          try {
+            $versionInfo = (Get-Item $smctlPath).VersionInfo
+            if ($versionInfo.FileVersion) {
+              Write-Host "smctl.exe file version: $($versionInfo.FileVersion)"
             }
-          } else {
-            $smctlPath = $smctlCommand.Source
+          } catch {
+            Write-Warning "Unable to read smctl.exe file version: $($_.Exception.Message)"
           }
 
           $smToolsDir = Split-Path -Parent $smctlPath
@@ -189,6 +203,7 @@ jobs:
           SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
           SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
+          SM_LOG_LEVEL: TRACE
         run: |
           & $env:SMCTL_PATH healthcheck
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
@@ -202,6 +217,7 @@ jobs:
           SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
           SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
+          SM_LOG_LEVEL: TRACE
         run: npm run build:win
 
       - name: Verify Windows signatures
@@ -240,6 +256,43 @@ jobs:
           if ($failed) {
             throw 'One or more Windows artifacts are not Authenticode-signed.'
           }
+
+      - name: Capture DigiCert signing diagnostics
+        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && failure()
+        shell: pwsh
+        run: |
+          $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnosticDir | Out-Null
+
+          $candidateFiles = @(
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smctl.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smksp.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smcsp.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smpkcs11.log')
+            $env:SM_CLIENT_CERT_FILE
+          ) | Where-Object { $_ }
+
+          foreach ($candidate in $candidateFiles) {
+            if (Test-Path $candidate) {
+              Copy-Item -Path $candidate -Destination $diagnosticDir -Force
+            }
+          }
+
+          [pscustomobject]@{
+            SmctlPath = $env:SMCTL_PATH
+            SmctlExists = [bool]($env:SMCTL_PATH -and (Test-Path $env:SMCTL_PATH))
+            UserProfile = $env:USERPROFILE
+            SigningLogDir = Join-Path $env:USERPROFILE '.signingmanager\logs'
+          } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
+
+      - name: Upload DigiCert signing diagnostics
+        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digicert-signing-diagnostics-${{ github.run_number }}
+          path: ${{ runner.temp }}/digicert-signing-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build Windows artifacts
         if: github.event_name == 'push' && github.ref_type == 'branch'
