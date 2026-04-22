@@ -50,17 +50,25 @@ export function Sidebar() {
   }, [])
 
   useEffect(() => {
-    window.electronAPI.invoke('whisper:get-setup-status').then((status) => {
-      setWhisperPhase(status.phase)
-      setWhisperPercent(status.percent)
-    })
+    const refreshWhisperStatus = () => {
+      window.electronAPI.invoke('whisper:get-setup-status').then((status) => {
+        setWhisperPhase(status.phase)
+        setWhisperPercent(status.percent)
+      })
+    }
+
+    refreshWhisperStatus()
+    const startupRefreshTimeout = window.setTimeout(refreshWhisperStatus, 1500)
 
     const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
       setWhisperPhase(status.phase)
       setWhisperPercent(status.percent)
     })
 
-    return unsub
+    return () => {
+      window.clearTimeout(startupRefreshTimeout)
+      unsub()
+    }
   }, [])
 
   useEffect(() => {
@@ -129,10 +137,6 @@ export function Sidebar() {
                   style={{ width: `${whisperPercent}%` }}
                 />
               </div>
-            </div>
-          ) : whisperPhase === 'checking' ? (
-            <div className="px-2.5 py-2">
-              <span className="text-[11px] text-ink-faint">Checking transcription engine...</span>
             </div>
           ) : null}
 

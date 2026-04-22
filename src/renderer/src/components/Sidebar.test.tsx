@@ -126,4 +126,38 @@ describe('Sidebar', () => {
       expect(screen.queryByText('Downloading speaker model... 100%')).not.toBeInTheDocument()
     })
   })
+
+  it('does not show the launch-time checking banner for whisper setup', async () => {
+    vi.useFakeTimers()
+    try {
+      const whisperStatuses = [
+        { phase: 'checking', percent: 0 },
+        { phase: 'ready', percent: 100 },
+      ]
+
+      window.electronAPI = {
+        send: vi.fn(),
+        invoke: vi.fn((channel: string) => {
+          if (channel === 'ollama:check-status') return Promise.resolve(true)
+          if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+          if (channel === 'whisper:get-setup-status') {
+            return Promise.resolve(whisperStatuses.shift() ?? defaultSetupStatus)
+          }
+          return Promise.resolve(undefined)
+        }),
+        on: vi.fn(() => () => {}),
+      } as any
+
+      await renderSidebar()
+      expect(screen.queryByText('Checking transcription engine...')).not.toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+
+      expect(screen.queryByText('Checking transcription engine...')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

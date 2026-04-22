@@ -765,18 +765,57 @@ app.whenReady().then(async () => {
     failedStep: status.failedStep
   })
 
-  const getCombinedTranscriptionSetupStatus = (): WhisperSetupStatus => {
-    if (whisperEngineSetupState.phase === 'error') {
+  const getCurrentWhisperEngineSetupStatus = (): WhisperSetupStatus => {
+    if (isE2E) {
       return { ...whisperEngineSetupState }
     }
-    if (whisperEngineSetupState.phase !== 'ready') {
-      return { ...whisperEngineSetupState }
+
+    const status = whisperManager.getSetupStatus()
+    if (status.phase === 'error') {
+      return {
+        ...status,
+        failedStep: status.failedStep ?? getWhisperFailedStep()
+      }
+    }
+
+    return { ...status }
+  }
+
+  const getCurrentDiarizationSetupStatus = (): DiarizationSetupStatus => {
+    if (!isSpeakerDiarizationSetupEnabled()) {
+      return { phase: 'ready', percent: 100 }
+    }
+
+    if (isE2E) {
+      return { ...diarizationSetupState }
+    }
+
+    const status = diarizationService.getSetupStatus()
+    if (status.phase === 'error') {
+      return {
+        ...status,
+        failedStep: status.failedStep ?? getDiarizationFailedStep()
+      }
+    }
+
+    return { ...status }
+  }
+
+  const getCombinedTranscriptionSetupStatus = (): WhisperSetupStatus => {
+    const whisperStatus = getCurrentWhisperEngineSetupStatus()
+    if (whisperStatus.phase === 'error') {
+      return whisperStatus
+    }
+    if (whisperStatus.phase !== 'ready') {
+      return whisperStatus
     }
     if (!isSpeakerDiarizationSetupEnabled()) {
       return { phase: 'ready', percent: 100 }
     }
 
-    const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(diarizationSetupState)
+    const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(
+      getCurrentDiarizationSetupStatus()
+    )
     if (
       diarizationAsTranscription.phase === 'error' ||
       diarizationAsTranscription.phase !== 'ready'
