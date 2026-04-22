@@ -9,6 +9,20 @@ import { captureRecordingStartFailure } from '../services/renderer-sentry'
 import type { RecordingSelectionContext } from '../services/window-detection'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 
+function isWindowsRenderer(): boolean {
+  return (
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ===
+      'Windows' || navigator.platform.startsWith('Win')
+  )
+}
+
+function logRecordingRenderer(message: string, context?: Record<string, unknown>): void {
+  console.info('[recording-renderer]', message, {
+    at: new Date().toISOString(),
+    ...(context ?? {})
+  })
+}
+
 /**
  * Full recording hook — sets up IPC listener, timer, and actions.
  * Mount this ONCE at the App level to avoid duplicate timers.
@@ -132,8 +146,29 @@ export function useRecording() {
       }
     })
     try {
+      const stopStartedAt = performance.now()
+      const stopResult = isWindowsRenderer()
+        ? await window.electronAPI.invoke('recording:stop')
+        : null
+      logRecordingRenderer('recording:stop returned to renderer', {
+        meetingId: stopResult?.meetingId ?? null,
+        elapsedMs: Math.round(performance.now() - stopStartedAt),
+        isWindows: isWindowsRenderer()
+      })
       await stopCapture()
-      await window.electronAPI.invoke('recording:stop')
+      logRecordingRenderer('stopCapture finished in renderer', {
+        meetingId: stopResult?.meetingId ?? null,
+        elapsedMs: Math.round(performance.now() - stopStartedAt)
+      })
+      if (isWindowsRenderer() && stopResult) {
+        await window.electronAPI.invoke('recording:finalize-stop', stopResult.meetingId)
+        logRecordingRenderer('recording:finalize-stop completed in renderer', {
+          meetingId: stopResult.meetingId,
+          elapsedMs: Math.round(performance.now() - stopStartedAt)
+        })
+      } else {
+        await window.electronAPI.invoke('recording:stop')
+      }
       trackEvent('recording_stopped', {
         duration_seconds: useRecordingStore.getState().elapsedSeconds
       })
@@ -216,8 +251,27 @@ export function useRecordingActions() {
   )
 
   const handleStop = useCallback(async () => {
+    const stopStartedAt = performance.now()
+    const stopResult = isWindowsRenderer() ? await window.electronAPI.invoke('recording:stop') : null
+    logRecordingRenderer('recording:stop returned to renderer (actions hook)', {
+      meetingId: stopResult?.meetingId ?? null,
+      elapsedMs: Math.round(performance.now() - stopStartedAt),
+      isWindows: isWindowsRenderer()
+    })
     await stopCapture()
-    await window.electronAPI.invoke('recording:stop')
+    logRecordingRenderer('stopCapture finished in renderer (actions hook)', {
+      meetingId: stopResult?.meetingId ?? null,
+      elapsedMs: Math.round(performance.now() - stopStartedAt)
+    })
+    if (isWindowsRenderer() && stopResult) {
+      await window.electronAPI.invoke('recording:finalize-stop', stopResult.meetingId)
+      logRecordingRenderer('recording:finalize-stop completed in renderer (actions hook)', {
+        meetingId: stopResult.meetingId,
+        elapsedMs: Math.round(performance.now() - stopStartedAt)
+      })
+    } else {
+      await window.electronAPI.invoke('recording:stop')
+    }
     reset()
   }, [reset])
 

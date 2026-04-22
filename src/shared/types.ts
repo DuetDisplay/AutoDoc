@@ -89,6 +89,7 @@ export interface RecordingEntry {
   duration: number | null
   hasVideo: boolean
   hasAudio: boolean
+  isFinalizing?: boolean
   transcriptionStatus: TranscriptionStatus
 }
 
@@ -97,6 +98,8 @@ export interface MeetingMetadata {
   startedAt: number
   stoppedAt: number
   durationSeconds: number
+  isFinalizing?: boolean
+  calendarTitle?: string
   customTitle?: string
 }
 

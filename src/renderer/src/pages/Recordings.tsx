@@ -66,6 +66,7 @@ function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boo
       recording.duration === other.duration &&
       recording.hasVideo === other.hasVideo &&
       recording.hasAudio === other.hasAudio &&
+      recording.isFinalizing === other.isFinalizing &&
       recording.transcriptionStatus === other.transcriptionStatus
   })
 }
@@ -80,7 +81,14 @@ export function Recordings() {
   const knownMeetingIdsRef = useRef<Set<string>>(new Set())
 
   const refreshRecordings = useCallback(async () => {
+    const refreshStartedAt = performance.now()
     const entries = await window.electronAPI.invoke('recording:list')
+    console.info('[recordings-page] refreshRecordings resolved', {
+      at: new Date().toISOString(),
+      elapsedMs: Math.round(performance.now() - refreshStartedAt),
+      entryCount: entries.length,
+      finalizingMeetingIds: entries.filter((entry) => entry.isFinalizing).map((entry) => entry.meetingId),
+    })
 
     setRecordings((prev) => (areRecordingsEqual(prev, entries) ? prev : entries))
     knownMeetingIdsRef.current = new Set(entries.map((entry) => entry.meetingId))
@@ -156,6 +164,11 @@ export function Recordings() {
         console.error('Failed to refresh recordings after recording status change:', err)
       })
     })
+    const unsubRecordingEntryUpdated = window.electronAPI.on('recording:entry-updated', () => {
+      void refreshRecordings().catch((err) => {
+        console.error('Failed to refresh recordings after recording entry update:', err)
+      })
+    })
 
     const unsubTranscription = window.electronAPI.on(
       'transcription:status-changed',
@@ -198,6 +211,7 @@ export function Recordings() {
 
     return () => {
       unsubRecording()
+      unsubRecordingEntryUpdated()
       unsubTranscription()
       unsubSegmentation()
       clearInterval(interval)
@@ -350,17 +364,23 @@ export function Recordings() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <TranscriptionBadge
-                      status={rec.transcriptionStatus}
-                      progress={transcriptionProgress[rec.meetingId]}
-                      onRetry={() => handleRetryTranscription(rec.meetingId)}
-                    />
-                    {segmentationStatuses[rec.meetingId] && (
-                      <SegmentationBadge
-                        status={segmentationStatuses[rec.meetingId]}
-                        progress={segmentationProgress[rec.meetingId]}
-                        onRetry={() => handleRetrySegmentation(rec.meetingId)}
-                      />
+                    {rec.isFinalizing ? (
+                      <span className="text-[11px] text-ink-faint">Wrapping up recording...</span>
+                    ) : (
+                      <>
+                        <TranscriptionBadge
+                          status={rec.transcriptionStatus}
+                          progress={transcriptionProgress[rec.meetingId]}
+                          onRetry={() => handleRetryTranscription(rec.meetingId)}
+                        />
+                        {segmentationStatuses[rec.meetingId] && (
+                          <SegmentationBadge
+                            status={segmentationStatuses[rec.meetingId]}
+                            progress={segmentationProgress[rec.meetingId]}
+                            onRetry={() => handleRetrySegmentation(rec.meetingId)}
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

@@ -139,7 +139,7 @@ export function MeetingDetail() {
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
-  const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null } | null>(null)
+  const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null; isFinalizing?: boolean } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -468,7 +468,17 @@ export function MeetingDetail() {
   useEffect(() => {
     if (!id) return
 
-    window.electronAPI.invoke('recording:get-detail', id).then(setDetail)
+    const refreshDetail = () =>
+      window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
+        console.info('[meeting-detail] refreshDetail resolved', {
+          at: new Date().toISOString(),
+          meetingId: id,
+          isFinalizing: nextDetail?.isFinalizing ?? false,
+        })
+        setDetail(nextDetail)
+      })
+
+    refreshDetail()
     void Promise.all([
       window.electronAPI.invoke('transcription:get-status', id),
       window.electronAPI.invoke('transcription:get-progress', id),
@@ -510,7 +520,14 @@ export function MeetingDetail() {
       }
     )
 
+    const unsubRecordingEntryUpdated = window.electronAPI.on('recording:entry-updated', (payload) => {
+      if (payload.meetingId === id) {
+        refreshDetail()
+      }
+    })
+
     return () => {
+      unsubRecordingEntryUpdated()
       unsubTranscription()
       unsubSegmentation()
       clearTimeout(saveTimeoutRef.current)
@@ -751,6 +768,11 @@ export function MeetingDetail() {
 
       {/* Content */}
       <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-6" data-content-scroll>
+        {detail?.isFinalizing && (
+          <div className="mb-4 rounded-xl border border-border bg-bg-card px-4 py-3 text-[12px] text-ink-muted">
+            Wrapping up this recording. It should finish appearing in a moment.
+          </div>
+        )}
         {activeTab === 'notes' ? (
           <div ref={transcriptTopRef} className="flex flex-col gap-4">
             {CATEGORY_ORDER.map((category) => {

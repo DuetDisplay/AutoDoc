@@ -9,7 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
-import { logAutodocFailure } from '../services/autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import type {
@@ -23,6 +23,10 @@ import type {
 
 const SEGMENT_PAD_WIDTH = 4
 const isE2E = process.env.AUTODOC_E2E === '1'
+const isWindows = process.platform === 'win32'
+const CALENDAR_MATCH_LOOKBACK_DAYS = 30
+const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
+const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
   return type === 'video' ? 'screen' : type
@@ -34,6 +38,46 @@ function getFinalFilename(type: 'video' | 'mic' | 'system'): string {
 
 function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: number): string {
   return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
+}
+
+function buildRecordingTitle(
+  metadata: MeetingMetadata | null,
+  startedAt: number,
+  calendarTitle: string | null
+): string {
+  const createdAt = new Date(startedAt)
+  const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+
+  if (metadata?.customTitle) {
+    return metadata.customTitle
+  }
+
+  if (calendarTitle) {
+    return `${calendarTitle} — ${dateSuffix}`
+  }
+
+  if (metadata?.sourceName) {
+    return `${metadata.sourceName} — ${dateSuffix}`
+  }
+
+  return `Recording ${dateSuffix}`
+}
+
+function logRecordingDebug(
+  message: string,
+  meetingId?: string,
+  context?: Record<string, unknown>
+): void {
+  logAutodocEvent({
+    area: 'recording',
+    message,
+    meetingId,
+    context
+  })
+  console.log(RECORDING_DEBUG_PREFIX, message, {
+    meetingId: meetingId ?? null,
+    ...(context ?? {})
+  })
 }
 
 /** Merge two audio files into one using amix filter */
@@ -144,6 +188,19 @@ async function assembleRecordingSegments(
   await assembleSegmentedCaptureFile(meetingDir, 'system', ffmpegPath)
 }
 
+async function getSegmentedCapturePresence(
+  meetingDir: string
+): Promise<{ hasSegmentedAudio: boolean, hasSegmentedVideo: boolean }> {
+  const names = await readdir(meetingDir).catch(() => [])
+  return {
+    hasSegmentedAudio: names.some((name) =>
+      (name.startsWith('mic-') || name.startsWith('system-') || name.startsWith('audio-')) &&
+      name.endsWith('.webm')
+    ),
+    hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm'))
+  }
+}
+
 /** Mux audio track into video file so playback has both video and audio.
  *  Screen chunks already embed system audio; we must map video from input 0 and
  *  replacement audio from input 1 — otherwise ffmpeg keeps 0:a (system-only) and
@@ -212,6 +269,314 @@ export function registerRecordingIpc(
   whisperManager: WhisperManager,
   calendarManager: CalendarManager
 ): { stopActiveRecording: () => ReturnType<RecordingService['stopRecording']> } {
+  let cachedRecentEvents:
+    | {
+        fetchedAt: number
+        events: CalendarEvent[]
+      }
+    | null = null
+  let recentEventsPromise: Promise<CalendarEvent[]> | null = null
+  const windowsPendingFinalization = new Map<string, MeetingMetadata>()
+  const windowsCalendarRefreshInFlight = new Set<string>()
+
+  async function persistRecordingMetadata(
+    meetingDir: string,
+    metadata: MeetingMetadata
+  ): Promise<void> {
+    await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+  }
+
+  async function clearWindowsFinalizingState(
+    meetingId: string,
+    metadata: MeetingMetadata,
+    reason: 'post-processing-finished' | 'post-processing-failed'
+  ): Promise<MeetingMetadata> {
+    if (!isWindows || metadata.isFinalizing !== true) {
+      return metadata
+    }
+
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const finalizedMetadata: MeetingMetadata = {
+      ...metadata,
+      isFinalizing: false
+    }
+
+    windowsPendingFinalization.delete(meetingId)
+
+    try {
+      await persistRecordingMetadata(meetingDir, finalizedMetadata)
+      logRecordingDebug('windows finalizing state cleared', meetingId, {
+        reason,
+        pendingAfterCount: windowsPendingFinalization.size
+      })
+    } catch (err) {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to clear Windows recording finalizing state',
+        error: err,
+        meetingId,
+        context: { reason }
+      })
+    }
+
+    return finalizedMetadata
+  }
+
+  function runRecordingPostProcessing(meetingId: string, metadata: MeetingMetadata): void {
+    void (async () => {
+      const postProcessStartedAt = Date.now()
+      const baseDir = recordingService.getRecordingsBaseDir()
+      const meetingDir = join(baseDir, meetingId)
+      logRecordingDebug('post-processing started', meetingId, {
+        startedAt: metadata.startedAt,
+        stoppedAt: metadata.stoppedAt,
+        isFinalizing: metadata.isFinalizing ?? false
+      })
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const micPath = join(meetingDir, 'mic.webm')
+      const systemPath = join(meetingDir, 'system.webm')
+      const videoPath = join(meetingDir, 'screen.webm')
+      let ffmpegPath: string | null = null
+
+      try {
+        await whisperManager.ensureReady()
+        ffmpegPath = whisperManager.getFfmpegPath()
+      } catch (err) {
+        const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
+          .then(() => whisperManager.getFfmpegPath())
+          .catch(() => null)
+        ffmpegPath = existingFfmpeg
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to ensure whisper tools are ready during recording post-processing',
+          error: err,
+          meetingId,
+          context: { ffmpegPathAvailable: Boolean(existingFfmpeg) }
+        })
+        console.error('whisperManager.ensureReady() failed — skipping mux:', err)
+      }
+
+      try {
+        await assembleRecordingSegments(meetingDir, ffmpegPath)
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to assemble segmented recording media',
+          error: err,
+          meetingId
+        })
+        console.error('Failed to assemble segmented recording media:', err)
+      }
+
+      try {
+        const micStat = await stat(micPath).catch(() => null)
+        const systemStat = await stat(systemPath).catch(() => null)
+        const videoStat = await stat(videoPath).catch(() => null)
+        if (videoStat && (micStat || systemStat)) {
+          const muxedPath = join(meetingDir, 'screen-muxed.webm')
+          const audioInputs: string[] = []
+          if (micStat) audioInputs.push(micPath)
+          if (systemStat) audioInputs.push(systemPath)
+          if (audioInputs.length === 2) {
+            const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
+            if (!ffmpegPath) {
+              throw new Error('ffmpeg path unavailable for merged audio mux')
+            }
+            await mergeAudioFiles(ffmpegPath, micPath, systemPath, mergedAudioPath)
+            await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath)
+            await unlink(mergedAudioPath)
+          } else {
+            if (!ffmpegPath) {
+              throw new Error('ffmpeg path unavailable for audio mux')
+            }
+            await muxAudioIntoVideo(ffmpegPath, videoPath, audioInputs[0], muxedPath)
+          }
+          await unlink(videoPath)
+          await rename(muxedPath, videoPath)
+        }
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to mux audio into recorded video',
+          error: err,
+          meetingId
+        })
+        console.error('Failed to mux audio into video:', err)
+      }
+
+      try {
+        const videoExists = await stat(videoPath).catch(() => null)
+        if (videoExists) {
+          if (!ffmpegPath) {
+            throw new Error('ffmpeg path unavailable for remux')
+          }
+          const seekablePath = join(meetingDir, 'screen-seekable.webm')
+          await remuxForSeeking(ffmpegPath, videoPath, seekablePath)
+          await unlink(videoPath)
+          await rename(seekablePath, videoPath)
+          const finalStat = await stat(videoPath).catch(() => null)
+          console.log('[recording post-process] remux for seeking OK', {
+            meetingId,
+            bytes: finalStat?.size,
+            path: videoPath
+          })
+        }
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to remux recorded video for seeking',
+          error: err,
+          meetingId
+        })
+        console.error('Failed to remux for seeking (video will still play but may not seek):', err)
+      }
+
+      const finalizedMetadata = await clearWindowsFinalizingState(
+        meetingId,
+        metadata,
+        'post-processing-finished'
+      )
+      transcriptionService.enqueue(meetingId)
+      scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, finalizedMetadata)
+      broadcastEntryUpdated(meetingId)
+      logRecordingDebug('post-processing finished', meetingId, {
+        elapsedMs: Date.now() - postProcessStartedAt,
+        isFinalizing: finalizedMetadata.isFinalizing ?? false
+      })
+    })().catch((err) => {
+      void (async () => {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Recording post-processing failed',
+          error: err,
+          meetingId
+        })
+
+        const finalizedMetadata = await clearWindowsFinalizingState(
+          meetingId,
+          metadata,
+          'post-processing-failed'
+        )
+        scheduleWindowsCalendarTitleRefresh(
+          meetingId,
+          join(recordingService.getRecordingsBaseDir(), meetingId),
+          finalizedMetadata
+        )
+        broadcastEntryUpdated(meetingId)
+        console.error('Recording post-processing failed:', err)
+      })().catch((cleanupErr) => {
+        console.error('Recording post-processing cleanup failed:', cleanupErr)
+      })
+    })
+  }
+
+  function broadcastEntryUpdated(meetingId: string): void {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('recording:entry-updated', { meetingId })
+    }
+  }
+
+  async function getRecentEventsForMatching(): Promise<CalendarEvent[]> {
+    if (!calendarManager.isConnected()) {
+      return []
+    }
+
+    if (
+      cachedRecentEvents &&
+      Date.now() - cachedRecentEvents.fetchedAt < WINDOWS_CALENDAR_CACHE_TTL_MS
+    ) {
+      return cachedRecentEvents.events
+    }
+
+    if (recentEventsPromise) {
+      return recentEventsPromise
+    }
+
+    recentEventsPromise = calendarManager
+      .fetchAllRecentEvents(CALENDAR_MATCH_LOOKBACK_DAYS)
+      .then((events) => {
+        logRecordingDebug('calendar events fetched for title matching', undefined, {
+          count: events.length,
+          elapsedMs:
+            cachedRecentEvents == null ? undefined : Date.now() - cachedRecentEvents.fetchedAt
+        })
+        cachedRecentEvents = {
+          fetchedAt: Date.now(),
+          events
+        }
+        return events
+      })
+      .finally(() => {
+        recentEventsPromise = null
+      })
+
+    return recentEventsPromise
+  }
+
+  function scheduleWindowsCalendarTitleRefresh(
+    meetingId: string,
+    meetingDir: string,
+    metadataHint: MeetingMetadata | null = null
+  ): void {
+    // Windows users were waiting on a live calendar fetch before a freshly stopped
+    // recording appeared in AI Notes. We keep macOS behavior as-is and do the
+    // calendar match lazily on Windows so the item shows up immediately and stays clickable.
+    if (!isWindows || !calendarManager.isConnected() || windowsCalendarRefreshInFlight.has(meetingId)) {
+      return
+    }
+
+    windowsCalendarRefreshInFlight.add(meetingId)
+    logRecordingDebug('scheduled background calendar title refresh', meetingId, {
+      hasMetadataHint: metadataHint != null
+    })
+
+    void (async () => {
+      const refreshStartedAt = Date.now()
+      try {
+        const metadata = metadataHint ?? (await readMetadata(meetingDir))
+        if (!metadata?.startedAt || metadata.customTitle || metadata.calendarTitle) {
+          return
+        }
+
+        const events = await getRecentEventsForMatching()
+        const matched = matchCalendarEvent(events, metadata.startedAt)
+        const calendarTitle = matched?.title?.trim() || null
+        if (!calendarTitle) {
+          return
+        }
+
+        const latestMetadata = (await readMetadata(meetingDir)) ?? metadata
+        if (latestMetadata.customTitle || latestMetadata.calendarTitle === calendarTitle) {
+          return
+        }
+
+        await encryptJSON(
+          {
+            ...latestMetadata,
+            calendarTitle
+          },
+          join(meetingDir, 'metadata.json')
+        )
+        broadcastEntryUpdated(meetingId)
+        logRecordingDebug('background calendar title refresh finished', meetingId, {
+          calendarTitle,
+          elapsedMs: Date.now() - refreshStartedAt
+        })
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to resolve recording calendar title in background',
+          error: err,
+          meetingId
+        })
+      } finally {
+        windowsCalendarRefreshInFlight.delete(meetingId)
+      }
+    })()
+  }
+
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
     let dirs: string[]
@@ -224,8 +589,8 @@ export function registerRecordingIpc(
     // Fetch recent calendar events for matching recordings to event names
     let recentEvents: CalendarEvent[] = []
     try {
-      if (calendarManager.isConnected()) {
-        recentEvents = await calendarManager.fetchAllRecentEvents(30)
+      if (calendarManager.isConnected() && !isWindows) {
+        recentEvents = await calendarManager.fetchAllRecentEvents(CALENDAR_MATCH_LOOKBACK_DAYS)
       }
     } catch {
       // Calendar fetch failed — fall back to generic names
@@ -245,24 +610,27 @@ export function registerRecordingIpc(
       const legacyAudioStat = await stat(legacyAudioPath).catch(() => null)
       const systemStat = await stat(systemPath).catch(() => null)
       const videoStat = await stat(videoPath).catch(() => null)
+      const segmentedPresence = await getSegmentedCapturePresence(meetingDir)
 
-      const hasAudio = micStat !== null || systemStat !== null || legacyAudioStat !== null
-      if (!hasAudio && !videoStat) continue
+      const pendingMetadata = windowsPendingFinalization.get(meetingId) ?? null
+      const hasAudio =
+        micStat !== null ||
+        systemStat !== null ||
+        legacyAudioStat !== null ||
+        segmentedPresence.hasSegmentedAudio
+      const hasVideo = videoStat !== null || segmentedPresence.hasSegmentedVideo
+      const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
+      const isFinalizing = metadata?.isFinalizing === true
+      if (!hasAudio && !hasVideo && !isFinalizing) continue
+      const startedAt = metadata?.startedAt ?? dirStat.birthtime.getTime()
 
-      const metadata = await readMetadata(meetingDir)
-      const createdAt = metadata ? new Date(metadata.startedAt) : dirStat.birthtime
+      const calendarTitle =
+        matchCalendarEvent(recentEvents, startedAt)?.title ?? metadata?.calendarTitle ?? null
+      const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
 
-      const calendarEvent = matchCalendarEvent(recentEvents, createdAt.getTime())
-      const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-
-      const title = metadata?.customTitle
-        ? metadata.customTitle
-        : calendarEvent
-          ? `${calendarEvent.title} — ${dateSuffix}`
-          : metadata?.sourceName
-            ? `${metadata.sourceName} — ${dateSuffix}`
-            : `Recording ${dateSuffix}`
-
+      if (!metadata?.customTitle && !calendarTitle) {
+        scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, metadata)
+      }
       const transcriptionStatus = await transcriptionService.getStatus(meetingId)
 
       // Fallback duration: estimate from directory birthtime to last file mtime
@@ -279,11 +647,19 @@ export function registerRecordingIpc(
       entries.push({
         meetingId,
         title,
-        date: createdAt.getTime(),
+        date: startedAt,
         duration,
-        hasVideo: videoStat !== null,
+        hasVideo,
         hasAudio,
+        isFinalizing,
         transcriptionStatus
+      })
+    }
+
+    if (isWindows) {
+      logRecordingDebug('recording:list resolved', undefined, {
+        entryCount: entries.length,
+        finalizingMeetingIds: entries.filter((entry) => entry.isFinalizing).map((entry) => entry.meetingId)
       })
     }
 
@@ -308,6 +684,7 @@ export function registerRecordingIpc(
   })
 
   function stopActiveRecording(): ReturnType<RecordingService['stopRecording']> {
+    const stopRequestedAt = Date.now()
     let result: ReturnType<RecordingService['stopRecording']>
     try {
       result = recordingService.stopRecording()
@@ -327,7 +704,40 @@ export function registerRecordingIpc(
       sourceName: result.sourceName,
       startedAt: result.startedAt,
       stoppedAt,
-      durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000)
+      durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000),
+      isFinalizing: isWindows
+    }
+    logRecordingDebug('recording:stop completed in main process', result.meetingId, {
+      elapsedMs: Date.now() - stopRequestedAt,
+      isWindows,
+      metadataDurationSeconds: metadata.durationSeconds
+    })
+
+    if (isWindows) {
+      const baseDir = recordingService.getRecordingsBaseDir()
+      const meetingDir = join(baseDir, result.meetingId)
+      windowsPendingFinalization.set(result.meetingId, metadata)
+      logRecordingDebug('windows finalizing entry created', result.meetingId, {
+        pendingFinalizationCount: windowsPendingFinalization.size
+      })
+      void persistRecordingMetadata(meetingDir, metadata)
+        .then(() => {
+          logRecordingDebug('windows finalizing metadata persisted', result.meetingId, {
+            elapsedMs: Date.now() - stopRequestedAt
+          })
+          scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
+          broadcastEntryUpdated(result.meetingId)
+        })
+        .catch((err) => {
+          logAutodocFailure({
+            area: 'recording',
+            message: 'Failed to save recording metadata during Windows stop finalization',
+            error: err,
+            meetingId: result.meetingId
+          })
+        })
+      broadcastEntryUpdated(result.meetingId)
+      return result
     }
 
     // Fire-and-forget: mux audio into video, save metadata, then enqueue transcription
@@ -336,6 +746,7 @@ export function registerRecordingIpc(
       const meetingDir = join(baseDir, result.meetingId)
       try {
         await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+        scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
       } catch (err) {
         logAutodocFailure({
           area: 'recording',
@@ -492,6 +903,42 @@ export function registerRecordingIpc(
 
   ipcMain.handle('recording:stop', () => stopActiveRecording())
 
+  ipcMain.handle('recording:finalize-stop', async (_event, meetingId: string) => {
+    if (!isWindows) {
+      return
+    }
+
+    const finalizeStartedAt = Date.now()
+    logRecordingDebug('recording:finalize-stop received', meetingId, {
+      pendingBefore: windowsPendingFinalization.has(meetingId)
+    })
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const pendingMetadataFromMap = windowsPendingFinalization.get(meetingId) ?? null
+    const metadata = (await readMetadata(meetingDir)) ?? pendingMetadataFromMap
+    if (!metadata) {
+      windowsPendingFinalization.delete(meetingId)
+      return
+    }
+
+    // Windows can take noticeably longer than macOS to assemble chunked WebM output
+    // after the renderer has already flushed its final recorder data. Keep the entry in
+    // a temporary finalizing state until post-processing finishes so it stays visible.
+    const finalizingMetadata: MeetingMetadata = {
+      ...metadata,
+      isFinalizing: true
+    }
+
+    windowsPendingFinalization.set(meetingId, finalizingMetadata)
+    await persistRecordingMetadata(meetingDir, finalizingMetadata)
+    broadcastEntryUpdated(meetingId)
+    logRecordingDebug('recording:finalize-stop keeping finalizing state until post-processing completes', meetingId, {
+      elapsedMs: Date.now() - finalizeStartedAt,
+      pendingAfterCount: windowsPendingFinalization.size
+    })
+    runRecordingPostProcessing(meetingId, finalizingMetadata)
+  })
+
   ipcMain.handle('recording:get-state', () => {
     return recordingService.getState()
   })
@@ -499,11 +946,11 @@ export function registerRecordingIpc(
   ipcMain.handle('recording:get-detail', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
-    const metadata = await readMetadata(meetingDir)
+    const pendingMetadata = windowsPendingFinalization.get(meetingId) ?? null
+    const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
     const dirStat = await stat(meetingDir).catch(() => null)
     const startedAt = metadata?.startedAt ?? dirStat?.birthtime.getTime() ?? Date.now()
-    const createdAt = new Date(startedAt)
-
+    const isFinalizing = metadata?.isFinalizing === true
     // Fallback duration from directory timestamps
     let durationSeconds = metadata?.durationSeconds ?? null
     if (durationSeconds == null && dirStat) {
@@ -514,29 +961,32 @@ export function registerRecordingIpc(
     // Try to match a calendar event for a better title
     let calendarEvent: CalendarEvent | null = null
     try {
-      if (calendarManager.isConnected()) {
-        const events = await calendarManager.fetchAllRecentEvents(30)
+      if (calendarManager.isConnected() && !isWindows) {
+        const events = await calendarManager.fetchAllRecentEvents(CALENDAR_MATCH_LOOKBACK_DAYS)
         calendarEvent = matchCalendarEvent(events, startedAt)
       }
     } catch {
       // Calendar fetch failed
     }
 
-    const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+    const calendarTitle = calendarEvent?.title ?? metadata?.calendarTitle ?? null
 
-    const title = metadata?.customTitle
-      ? metadata.customTitle
-      : calendarEvent
-        ? `${calendarEvent.title} — ${dateSuffix}`
-        : metadata?.sourceName
-          ? `${metadata.sourceName} — ${dateSuffix}`
-          : `Recording ${dateSuffix}`
-
+    const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
+    if (!metadata?.customTitle && !calendarTitle) {
+      scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, metadata)
+    }
+    if (isWindows && isFinalizing) {
+      logRecordingDebug('recording:get-detail returned finalizing entry', meetingId, {
+        hasMetadata: metadata != null,
+        durationSeconds
+      })
+    }
     return {
       title,
-      sourceName: calendarEvent?.title ?? metadata?.sourceName ?? null,
+      sourceName: calendarTitle ?? metadata?.sourceName ?? null,
       date: startedAt,
-      durationSeconds
+      durationSeconds,
+      isFinalizing
     }
   })
 
@@ -550,7 +1000,8 @@ export function registerRecordingIpc(
       segmentIndex = 0
     ) => {
       const currentState = recordingService.getState()
-      if (!currentState.isRecording || currentState.meetingId !== meetingId) {
+      const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
+      if ((!currentState.isRecording || currentState.meetingId !== meetingId) && !allowFinalizingWrite) {
         return // Ignore chunks for stale or mismatched recordings
       }
       const baseDir = recordingService.getRecordingsBaseDir()
@@ -558,6 +1009,13 @@ export function registerRecordingIpc(
       const filePath = join(baseDir, meetingId, filename)
       try {
         await appendFile(filePath, Buffer.from(chunk))
+        if (allowFinalizingWrite) {
+          logRecordingDebug('accepted chunk write during finalization', meetingId, {
+            type,
+            segmentIndex,
+            bytes: chunk.byteLength
+          })
+        }
       } catch (err) {
         logAutodocFailure({
           area: 'recording',
@@ -582,9 +1040,15 @@ export function registerRecordingIpc(
         startedAt: metadata?.startedAt ?? Date.now(),
         stoppedAt: metadata?.stoppedAt ?? Date.now(),
         durationSeconds: metadata?.durationSeconds ?? 0,
+        isFinalizing: metadata?.isFinalizing,
+        calendarTitle: metadata?.calendarTitle,
         customTitle: customTitle.trim() || undefined
       }
       await encryptJSON(updated, join(meetingDir, 'metadata.json'))
+      if (windowsPendingFinalization.has(meetingId)) {
+        windowsPendingFinalization.set(meetingId, updated)
+      }
+      broadcastEntryUpdated(meetingId)
     }
   )
 

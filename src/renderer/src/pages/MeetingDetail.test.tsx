@@ -297,4 +297,28 @@ describe('MeetingDetail', () => {
       expect(screen.getByText('I am still the local speaker after diarization.')).toBeInTheDocument()
     })
   })
+
+  it('shows a finalizing notice before media has finished flushing', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'pending',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'pending',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        isFinalizing: true,
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: false },
+      'speakers:get': {},
+    })
+
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')).toBeInTheDocument()
+  })
 })

@@ -73,6 +73,7 @@ export interface IpcInvokeEvents {
     trackingContext?: RecordingTrackingContext | null
   ]
   'recording:stop': []
+  'recording:finalize-stop': [meetingId: string]
   'recording:get-state': []
   'recording:save-chunk': [
     meetingId: string,
@@ -147,6 +148,7 @@ export interface IpcInvokeReturns {
   'recording:get-sources': RecordingSource[]
   'recording:start': RecordingPaths
   'recording:stop': { meetingId: string; startedAt: number; sourceName: string | null }
+  'recording:finalize-stop': void
   'recording:get-state': RecordingState
   'recording:save-chunk': void
   'recording:update-title': void
@@ -174,6 +176,7 @@ export interface IpcInvokeReturns {
     sourceName: string | null
     date: number
     durationSeconds: number | null
+    isFinalizing?: boolean
   }
   'search:query': SearchResult[]
   'chat:send': string
@@ -205,6 +208,7 @@ export interface IpcInvokeReturns {
 
 export interface IpcOnEvents {
   'recording:status-changed': [state: RecordingState]
+  'recording:entry-updated': [payload: { meetingId: string }]
   'calendar:events-updated': [events: CalendarEvent[]]
   'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: TranscriptionStatusPayload]
