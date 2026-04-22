@@ -99,11 +99,11 @@ export class PrefsStore {
   }
 
   getExperimentalSpeakerDiarization(): boolean {
-    return this.store.get('experimentalSpeakerDiarization')
+    return false
   }
 
-  setExperimentalSpeakerDiarization(enabled: boolean): void {
-    this.store.set('experimentalSpeakerDiarization', enabled)
+  setExperimentalSpeakerDiarization(_enabled: boolean): void {
+    this.store.set('experimentalSpeakerDiarization', false)
   }
 
   private applyLaunchAtLogin(): void {

@@ -69,12 +69,12 @@ export function registerPrefsIpc(
   })
 
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {
-    return prefsStore.getExperimentalSpeakerDiarization()
+    return false
   })
 
   ipcMain.handle('prefs:set-experimental-speaker-diarization', (_event, enabled: boolean): void => {
     prefsStore.setExperimentalSpeakerDiarization(enabled)
-    onExperimentalSpeakerDiarizationChanged?.(enabled)
-    broadcastExperimentalSpeakerDiarization(enabled)
+    onExperimentalSpeakerDiarizationChanged?.(false)
+    broadcastExperimentalSpeakerDiarization(false)
   })
 }

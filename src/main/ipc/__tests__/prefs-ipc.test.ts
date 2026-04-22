@@ -67,8 +67,8 @@ describe('PrefsStore', () => {
     expect(store.getExperimentalSpeakerDiarization()).toBe(false)
   })
 
-  it('persists experimental speaker diarization', () => {
+  it('keeps experimental speaker diarization disabled', () => {
     store.setExperimentalSpeakerDiarization(true)
-    expect(store.getExperimentalSpeakerDiarization()).toBe(true)
+    expect(store.getExperimentalSpeakerDiarization()).toBe(false)
   })
 })

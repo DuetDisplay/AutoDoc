@@ -47,9 +47,6 @@ export function Settings() {
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
-  const [experimentalSpeakerDiarization, setExperimentalSpeakerDiarization] = useState<
-    boolean | null
-  >(null)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -65,22 +62,14 @@ export function Settings() {
     window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
     void refreshStorageInfo()
     window.electronAPI.invoke('prefs:get-analytics-consent').then(setAnalyticsConsentState)
-    window.electronAPI
-      .invoke('prefs:get-experimental-speaker-diarization')
-      .then(setExperimentalSpeakerDiarization)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on(
       'prefs:analytics-consent-changed',
       setAnalyticsConsentState
     )
-    const unsubExperimental = window.electronAPI.on(
-      'prefs:experimental-speaker-diarization-changed',
-      setExperimentalSpeakerDiarization
-    )
     return () => {
       unsub()
       unsubConsent()
-      unsubExperimental()
     }
   }, [refreshStorageInfo])
 
@@ -128,17 +117,6 @@ export function Settings() {
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
     setAnalyticsConsentState(nextValue)
-  }
-
-  const handleToggleExperimentalSpeakerDiarization = async () => {
-    const nextValue = !(experimentalSpeakerDiarization === true)
-    recordDiagnosticAction({
-      category: 'settings',
-      action: 'experimental_speaker_diarization_toggled',
-      details: { enabled: nextValue }
-    })
-    await window.electronAPI.invoke('prefs:set-experimental-speaker-diarization', nextValue)
-    setExperimentalSpeakerDiarization(nextValue)
   }
 
   const handleRemoveDownloadedComponents = async () => {
@@ -279,31 +257,6 @@ export function Settings() {
                   <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
                 </svg>
                 {isConnecting ? 'Connecting...' : 'Add Microsoft Outlook'}
-              </button>
-            </div>
-          </div>
-          <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Experimental</h3>
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-              <div>
-                <p className="text-[12px] font-medium text-ink">Speaker diarization</p>
-                <p className="text-[12px] text-ink-muted">
-                  Try automatic speaker separation for group conversations. When enabled, AutoDoc
-                  will label transcript speakers as Speaker 1, Speaker 2, Speaker 3, and so on
-                  instead of Me and Them. This is still experimental and may be less reliable on
-                  some recordings.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleToggleExperimentalSpeakerDiarization()}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${experimentalSpeakerDiarization ? 'bg-sage' : 'bg-ink-faint/30'}`}
-                aria-pressed={experimentalSpeakerDiarization === true}
-                aria-label="Toggle experimental speaker diarization"
-              >
-                <span
-                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${experimentalSpeakerDiarization ? 'translate-x-5' : 'translate-x-0'}`}
-                />
               </button>
             </div>
           </div>

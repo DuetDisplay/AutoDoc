@@ -129,11 +129,39 @@ async function walkAndPrune(rootPath, pruneFn) {
 async function pruneBundledRuntime(targetKey) {
   const runtimeDir = join(OUTPUT_DIR, targetKey)
   const sitePackagesDir = join(runtimeDir, 'python', 'lib', 'python3.11', 'site-packages')
+  const windowsSitePackagesDir = join(runtimeDir, 'python', 'Lib', 'site-packages')
 
   const removePaths = [
     join(sitePackagesDir, 'torch', 'include'),
     join(sitePackagesDir, 'torch', 'share'),
   ]
+
+  if (targetKey.startsWith('win32-')) {
+    removePaths.push(
+      // We only ever invoke the console interpreter in production.
+      join(runtimeDir, 'python', 'pythonw.exe'),
+      // CLI shims are only useful during installation/build time.
+      join(runtimeDir, 'python', 'Scripts'),
+      join(runtimeDir, 'python', 'Lib', 'venv', 'scripts', 'nt'),
+      // setuptools and distlib ship Windows launcher stubs we never execute in-app.
+      join(windowsSitePackagesDir, 'setuptools', 'cli-32.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'cli-64.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'cli-arm64.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'cli.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'gui-32.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'gui-64.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'gui-arm64.exe'),
+      join(windowsSitePackagesDir, 'setuptools', 'gui.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 't32.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 't64.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 't64-arm.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 'w32.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 'w64.exe'),
+      join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 'w64-arm.exe'),
+      // protobuf tooling is not needed at runtime.
+      join(windowsSitePackagesDir, 'torch', 'bin', 'protoc.exe'),
+    )
+  }
 
   for (const removePath of removePaths) {
     await rm(removePath, { recursive: true, force: true })

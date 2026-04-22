@@ -10,6 +10,10 @@ import { classifyError } from './error-classification'
 import { hasUsableTranscriptContent, shouldTreatEmptySegmentationAsFailure } from './transcript-guardrails'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
+type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
+
+const EMPTY_SEGMENTATION_ERROR =
+  'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
 
 interface SegmentationDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -20,6 +24,12 @@ interface SegmentationDirSnapshot extends Record<string, unknown> {
     errorExists: boolean
   }
   retryCount: number
+}
+
+interface PersistedSegmentationError {
+  error: string
+  retries: number
+  status?: PersistedSegmentationStatus
 }
 
 export class SegmentationService {
@@ -78,6 +88,7 @@ export class SegmentationService {
     const errorPath = join(meetingDir, 'segments.error')
     const hasSegments = await this.fileExists(segmentsPath)
     const hasError = await this.fileExists(errorPath)
+    const errorData = hasError ? await this.readErrorFile(errorPath) : null
 
     if (hasSegments && hasError) {
       const [segmentsStat, errorStat] = await Promise.all([
@@ -85,12 +96,12 @@ export class SegmentationService {
         stat(errorPath).catch(() => null),
       ])
       if (segmentsStat && errorStat && errorStat.mtimeMs > segmentsStat.mtimeMs) {
-        return 'failed'
+        return this.getPersistedStatus(errorData)
       }
     }
 
     if (hasSegments) return 'complete'
-    if (hasError) return 'failed'
+    if (hasError) return this.getPersistedStatus(errorData)
     return 'pending'
   }
 
@@ -135,7 +146,7 @@ export class SegmentationService {
           this.enqueue(meetingId, 'recovery-scan')
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
-          if (errorData && errorData.retries < 3) {
+          if (errorData && this.getPersistedStatus(errorData) !== 'no-notes' && errorData.retries < 3) {
             console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
             this.retry(meetingId, 'recovery-scan')
           }
@@ -250,7 +261,8 @@ export class SegmentationService {
       segments.statusUpdates.length
 
     if (totalItems === 0 && shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)) {
-      throw new Error('LLM returned empty segments for non-trivial transcript — likely context overflow or model issue')
+      await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
+      return
     }
 
     await encryptJSON(segments, segmentsPath)
@@ -272,7 +284,7 @@ export class SegmentationService {
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
-      await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
+      await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries, status: 'failed' }))
     } catch (err) {
       const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
       if (code !== 'ENOENT') throw err
@@ -287,17 +299,56 @@ export class SegmentationService {
     this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
   }
 
-  private async readErrorFile(errorPath: string): Promise<{ error: string; retries: number } | null> {
+  private async markNoNotes(
+    meetingId: string,
+    errorMessage: string,
+    context?: SegmentationDirSnapshot,
+  ): Promise<void> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    try {
+      await writeFile(
+        errorPath,
+        JSON.stringify({ error: errorMessage, retries: 0, status: 'no-notes' }),
+      )
+    } catch (err) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      if (code !== 'ENOENT') throw err
+    }
+    logAutodocFailure({
+      area: 'segmentation',
+      message: 'Meeting notes generation returned no structured output',
+      error: errorMessage,
+      meetingId,
+      context,
+    })
+    this.activeStatus = 'no-notes'
+    this.broadcastStatus(meetingId, 'no-notes')
+  }
+
+  private async readErrorFile(errorPath: string): Promise<PersistedSegmentationError | null> {
     try {
       const raw = await readFile(errorPath, 'utf-8')
       try {
-        return JSON.parse(raw)
+        const parsed = JSON.parse(raw) as Partial<PersistedSegmentationError>
+        return {
+          error: typeof parsed.error === 'string' ? parsed.error : raw,
+          retries: typeof parsed.retries === 'number' ? parsed.retries : 0,
+          status: parsed.status,
+        }
       } catch {
         return { error: raw, retries: 0 }
       }
     } catch {
       return null
     }
+  }
+
+  private getPersistedStatus(errorData: PersistedSegmentationError | null): PersistedSegmentationStatus {
+    if (errorData?.status === 'no-notes' || errorData?.error === EMPTY_SEGMENTATION_ERROR) {
+      return 'no-notes'
+    }
+
+    return 'failed'
   }
 
   private broadcastStatus(

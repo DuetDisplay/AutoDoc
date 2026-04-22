@@ -482,14 +482,20 @@ export function MeetingDetail() {
     void Promise.all([
       window.electronAPI.invoke('transcription:get-status', id),
       window.electronAPI.invoke('transcription:get-progress', id),
-    ]).then(([status, progress]) => {
+      window.electronAPI.invoke('segmentation:get-status', id),
+      window.electronAPI.invoke('segmentation:get-progress', id),
+    ]).then(([status, progress, nextSegmentationStatus, nextSegmentationProgress]) => {
       setTranscriptionStatus(status)
       setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+      setSegmentationStatus(nextSegmentationStatus)
+      setSegmentationProgress(nextSegmentationProgress)
+      if (nextSegmentationStatus === 'complete') {
+        window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+      } else {
+        setSegments(null)
+      }
     })
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
-    window.electronAPI.invoke('segmentation:get-status', id).then(setSegmentationStatus)
-    window.electronAPI.invoke('segmentation:get-progress', id).then(setSegmentationProgress)
-    window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
     window.electronAPI.invoke('recording:get-media', id).then(setMedia)
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
@@ -515,6 +521,8 @@ export function MeetingDetail() {
           setSegmentationProgress(payload.progress)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+          } else {
+            setSegments(null)
           }
         }
       }
@@ -634,6 +642,8 @@ export function MeetingDetail() {
           window.electronAPI.invoke('segmentation:get-segments', id).then((nextSegments) => {
             if (!cancelled) setSegments(nextSegments)
           })
+        } else {
+          setSegments(null)
         }
       } catch (err) {
         console.error('Failed to refresh processing state:', err)
@@ -807,6 +817,8 @@ export function MeetingDetail() {
                     <p className="text-[12px] text-ink-muted leading-relaxed">
                       {segmentationStatus === 'segmenting'
                         ? 'Analyzing transcript...'
+                        : segmentationStatus === 'no-notes'
+                          ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
                         : segmentationStatus === 'failed'
                           ? 'Segmentation failed. Try retrying above.'
                           : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}

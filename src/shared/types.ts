@@ -179,6 +179,7 @@ export type SegmentationStatus =
   | 'queued'
   | 'downloading-model'
   | 'segmenting'
+  | 'no-notes'
   | 'complete'
   | 'failed'
 

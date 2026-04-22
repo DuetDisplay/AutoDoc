@@ -59,6 +59,34 @@ describe('startup scan', () => {
     await expect(service.getStatus(meetingId)).resolves.toBe('failed')
   })
 
+  it('does not auto-retry transcript-only segmentation outcomes on startup', async () => {
+    const meetingId = 'meeting-seg-no-notes'
+    const meetingDir = join(baseDir, meetingId)
+    await mkdir(meetingDir, { recursive: true })
+    await writeFile(join(meetingDir, 'transcript.json'), '[]')
+    await writeFile(
+      join(meetingDir, 'segments.error'),
+      JSON.stringify({
+        error: 'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
+        retries: 0,
+        status: 'no-notes',
+      }),
+    )
+
+    const service = new SegmentationService(
+      { summarize: vi.fn(), checkConnection: vi.fn() } as any,
+      { waitUntilReady: vi.fn() } as any,
+      baseDir,
+    )
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+    await service.scanAndEnqueuePending()
+
+    expect(enqueueSpy).not.toHaveBeenCalled()
+    await expect(service.getStatus(meetingId)).resolves.toBe('no-notes')
+  })
+
   it('auto-retries failed transcription jobs on startup when retries remain', async () => {
     const meetingId = 'meeting-tr-failed'
     const meetingDir = join(baseDir, meetingId)

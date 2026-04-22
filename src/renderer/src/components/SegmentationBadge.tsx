@@ -19,6 +19,10 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: stri
     label: 'Generating notes...',
     className: 'text-ink-muted bg-bg-accent'
   },
+  'no-notes': {
+    label: 'Transcript only',
+    className: 'text-amber-800 bg-amber-50'
+  },
   complete: {
     label: 'Notes ready',
     className: 'text-green-700 bg-green-50'

@@ -182,6 +182,33 @@ describe('MeetingDetail', () => {
     expect(screen.getByText('Launch the PR regression suite.')).toBeInTheDocument()
   })
 
+  it('shows transcript-only messaging when notes could not be generated', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [
+        createTranscript({
+          meetingId: 'test-123',
+          speaker: 'Speaker 1',
+          text: 'This transcript is still available even though structured notes were not generated.',
+        }),
+      ],
+      'segmentation:get-status': 'no-notes',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'speakers:get': {},
+    })
+
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Transcript only')).toBeInTheDocument()
+    expect(
+      screen.getAllByText(/AutoDoc could not turn this transcript into structured notes/i).length,
+    ).toBeGreaterThan(0)
+  })
+
   it('renames a speaker and keeps the new label visible in transcript view', async () => {
     installMockElectronApi({
       'transcription:get-status': 'complete',

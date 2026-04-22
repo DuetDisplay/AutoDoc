@@ -145,7 +145,7 @@ describe('SegmentationService', () => {
     )
   })
 
-  it('still fails empty segmentation output for substantive transcripts', async () => {
+  it('marks substantive empty segmentation output as transcript-only instead of retry-failed', async () => {
     fsMock.access.mockImplementation(async (path) => {
       if (String(path).endsWith('transcript.json')) return undefined
       throw new Error('ENOENT')
@@ -157,11 +157,17 @@ describe('SegmentationService', () => {
       { id: 'm2-3', meetingId: 'm2', speaker: 'Pat', text: 'We also discussed support volume, launch timing, customer messaging, and the dependency on the billing migration that is still in progress.', startMs: 135_000, endMs: 170_000, confidence: 0.8 },
     ]) as any)
 
-    await expect((service as any).processJob('m2')).rejects.toThrow(
-      'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
-    )
+    await expect((service as any).processJob('m2')).resolves.toBeUndefined()
 
     expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
+    expect(fsMock.writeFile).toHaveBeenCalledWith(
+      '/mock/home/AutoDoc/recordings/m2/segments.error',
+      JSON.stringify({
+        error: 'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
+        retries: 0,
+        status: 'no-notes',
+      }),
+    )
   })
 
   it('prioritizes direct jobs ahead of recovery-scan jobs', () => {

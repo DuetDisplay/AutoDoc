@@ -380,7 +380,7 @@ app.whenReady().then(async () => {
   }
 
   const isExperimentalSpeakerDiarizationEnabled = (): boolean => {
-    return prefsStore.getExperimentalSpeakerDiarization()
+    return false
   }
 
   // Auto-updater
