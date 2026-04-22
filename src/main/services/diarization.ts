@@ -80,16 +80,6 @@ export class DiarizationService extends EventEmitter {
       : join(this.getEnvDir(), 'bin', 'python3')
   }
 
-  private getPipPath(): string {
-    const bundled = this.getPackagedBundledPipPath()
-    if (bundled) {
-      return bundled
-    }
-    return IS_WIN
-      ? join(this.getEnvDir(), 'Scripts', 'pip.exe')
-      : join(this.getEnvDir(), 'bin', 'pip')
-  }
-
   private getScriptPath(): string {
     const isDev = !app.isPackaged
     if (isDev) {
@@ -158,21 +148,6 @@ export class DiarizationService extends EventEmitter {
     }
 
     return this.getBundledRuntimePythonPath(target)
-  }
-
-  private getPackagedBundledPipPath(): string | null {
-    if (!app.isPackaged) {
-      return null
-    }
-
-    const target = getManagedPythonTarget(process.platform, process.arch)
-    if (!target) {
-      return null
-    }
-
-    return IS_WIN
-      ? join(this.getBundledRuntimeDir(target), 'python', 'Scripts', 'pip.exe')
-      : join(this.getBundledRuntimeDir(target), 'python', 'bin', 'pip3')
   }
 
   private setSetupStatus(status: DiarizationSetupStatus): void {

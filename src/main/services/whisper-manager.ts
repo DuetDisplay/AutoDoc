@@ -229,14 +229,10 @@ export class WhisperManager extends EventEmitter {
       return
     }
 
-    let entries: Awaited<ReturnType<typeof readdir>>
+    let entries
     try {
       entries = await readdir(installedModelsDir, { withFileTypes: true })
     } catch {
-      return
-    }
-
-    if (!Array.isArray(entries)) {
       return
     }
 
