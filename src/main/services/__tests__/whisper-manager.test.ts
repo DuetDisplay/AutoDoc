@@ -124,6 +124,11 @@ describe('WhisperManager', () => {
         callback(new Error('loader failure'))
         return {} as never
       })
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('still broken after model refresh'))
+        return {} as never
+      })
       .mockImplementation((...args: any[]) => {
         const callback = args[args.length - 1]
         callback(null)
@@ -133,6 +138,7 @@ describe('WhisperManager', () => {
     const resolveWhisperSpy = vi
       .spyOn(manager as never, 'resolveWhisper')
       .mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
 
     await manager.ensureReady()
 
@@ -198,6 +204,11 @@ describe('WhisperManager', () => {
         callback(new Error('missing binary'))
         return {} as never
       })
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('still broken after model refresh'))
+        return {} as never
+      })
       .mockImplementation((...args: any[]) => {
         const callback = args[args.length - 1]
         callback(null)
@@ -220,6 +231,11 @@ describe('WhisperManager', () => {
       .mockImplementationOnce((...args: any[]) => {
         const callback = args[args.length - 1]
         callback(new Error('missing binary'))
+        return {} as never
+      })
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('still broken after model refresh'))
         return {} as never
       })
       .mockImplementation((...args: any[]) => {
@@ -246,6 +262,11 @@ describe('WhisperManager', () => {
       .mockImplementationOnce((...args: any[]) => {
         const callback = args[args.length - 1]
         callback(new Error('missing binary'))
+        return {} as never
+      })
+      .mockImplementationOnce((...args: any[]) => {
+        const callback = args[args.length - 1]
+        callback(new Error('still broken after model refresh'))
         return {} as never
       })
       .mockImplementation((...args: any[]) => {
