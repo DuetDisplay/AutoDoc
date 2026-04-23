@@ -6,6 +6,7 @@ import * as os from 'os'
 import { Readable } from 'stream'
 import { execFileSync } from 'child_process'
 import { app, safeStorage } from 'electron'
+import { renameWithRetry } from './file-operation-retry'
 
 const STORE_KEY = 'encryption_key'
 const STORE_VERSION_KEY = 'encryption_key_version'
@@ -338,7 +339,7 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
   }
 
   // Atomic rename over original
-  await fsp.rename(encPath, plainPath)
+  await renameWithRetry(encPath, plainPath)
 }
 
 export async function decryptFileToTemp(encPath: string): Promise<string> {

@@ -1,6 +1,6 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, rename, rm, stat, unlink, writeFile } from 'fs/promises'
+import { appendFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
@@ -12,6 +12,7 @@ import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
+import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import type {
   CalendarEvent,
   RecordingEntry,
@@ -155,7 +156,7 @@ async function assembleSegmentedCaptureFile(
   await unlink(finalPath).catch(() => {})
 
   if (segmentNames.length === 1) {
-    await rename(join(meetingDir, segmentNames[0]), finalPath)
+    await renameWithRetry(join(meetingDir, segmentNames[0]), finalPath)
     return
   }
 
@@ -177,6 +178,23 @@ async function assembleSegmentedCaptureFile(
   } finally {
     await unlink(listPath).catch(() => {})
   }
+}
+
+function normalizeCaptureSourceError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const normalized = message.toLowerCase()
+
+  if (
+    normalized.includes('denied') ||
+    normalized.includes('not permitted') ||
+    normalized.includes('permission')
+  ) {
+    return new Error(
+      'AutoDoc could not list capture sources. Screen recording permission may be missing.'
+    )
+  }
+
+  return err instanceof Error ? err : new Error(message)
 }
 
 async function assembleRecordingSegments(
@@ -392,8 +410,7 @@ export function registerRecordingIpc(
             }
             await muxAudioIntoVideo(ffmpegPath, videoPath, audioInputs[0], muxedPath)
           }
-          await unlink(videoPath)
-          await rename(muxedPath, videoPath)
+          await replaceFileWithRetry(muxedPath, videoPath)
         }
       } catch (err) {
         logAutodocFailure({
@@ -413,8 +430,7 @@ export function registerRecordingIpc(
           }
           const seekablePath = join(meetingDir, 'screen-seekable.webm')
           await remuxForSeeking(ffmpegPath, videoPath, seekablePath)
-          await unlink(videoPath)
-          await rename(seekablePath, videoPath)
+          await replaceFileWithRetry(seekablePath, videoPath)
           const finalStat = await stat(videoPath).catch(() => null)
           console.log('[recording post-process] remux for seeking OK', {
             meetingId,
@@ -671,10 +687,15 @@ export function registerRecordingIpc(
       return getE2ERecordingSources()
     }
 
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 320, height: 180 }
-    })
+    let sources
+    try {
+      sources = await desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 320, height: 180 }
+      })
+    } catch (err) {
+      throw normalizeCaptureSourceError(err)
+    }
 
     return sources.map((source) => ({
       id: source.id,
@@ -817,8 +838,7 @@ export function registerRecordingIpc(
             }
             await muxAudioIntoVideo(ffmpegPath, videoPath, audioInputs[0], muxedPath)
           }
-          await unlink(videoPath)
-          await rename(muxedPath, videoPath)
+          await replaceFileWithRetry(muxedPath, videoPath)
         }
       } catch (err) {
         logAutodocFailure({
@@ -839,8 +859,7 @@ export function registerRecordingIpc(
           }
           const seekablePath = join(meetingDir, 'screen-seekable.webm')
           await remuxForSeeking(ffmpegPath, videoPath, seekablePath)
-          await unlink(videoPath)
-          await rename(seekablePath, videoPath)
+          await replaceFileWithRetry(seekablePath, videoPath)
           const finalStat = await stat(videoPath).catch(() => null)
           console.log('[recording post-process] remux for seeking OK', {
             meetingId: result.meetingId,

@@ -6,6 +6,12 @@ import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasT
 import type { CalendarEvent, CalendarAccount, OAuthTokens } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
+import {
+  CalendarTransientError,
+  UnsupportedCalendarAccountError,
+  isTransientCalendarError,
+  isUnsupportedMicrosoftMailboxError
+} from './calendar-error-classification'
 
 const OAUTH_PORT = 42813
 const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
@@ -206,7 +212,13 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
 
       if (!res.ok) {
         const text = await res.text()
-        throw new Error(`Microsoft Graph API error ${res.status}: ${text.slice(0, 200)}`)
+        const error = new Error(`Microsoft Graph API error ${res.status}: ${text.slice(0, 200)}`)
+        if (isUnsupportedMicrosoftMailboxError(error)) {
+          throw new UnsupportedCalendarAccountError(
+            'Microsoft mailbox is not supported by Microsoft Graph calendar APIs.'
+          )
+        }
+        throw error
       }
 
       const data = await res.json() as GraphEventsResponse
@@ -290,11 +302,20 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
 
       if (!response.ok) {
         const responseText = await response.text()
+        const error = new Error(
+          `Microsoft token refresh failed: ${response.status} ${responseText}`
+        )
+        if (isTransientCalendarError(error)) {
+          throw new CalendarTransientError(
+            'Microsoft token refresh failed due to transient network conditions',
+            { cause: error }
+          )
+        }
         console.error('Microsoft token refresh failed:', responseText)
         logAutodocFailure({
           area: 'calendar',
           message: 'Microsoft token refresh failed',
-          error: responseText,
+          error,
           context: {
             provider: 'microsoft',
             status: response.status,
@@ -313,6 +334,12 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       saveTokensForAccount(accountId, updated)
       this.tokenCache.set(accountId, updated)
     } catch (err) {
+      if (isTransientCalendarError(err)) {
+        throw new CalendarTransientError(
+          'Microsoft token refresh failed due to transient network conditions',
+          { cause: err }
+        )
+      }
       console.error('Microsoft token refresh error:', err)
       logAutodocFailure({
         area: 'calendar',

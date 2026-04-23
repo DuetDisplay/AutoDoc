@@ -36,6 +36,8 @@
     "test:run": "vitest run",
     "test:main": "vitest --config vitest.main.config.mts",
     "test:main:run": "vitest run --config vitest.main.config.mts",
+    "test:confirm:mac": "npm run test:main:run -- src/main/services/__tests__/calendar-validity.test.ts src/main/services/__tests__/auto-updater.test.ts src/main/services/__tests__/transcription-validity.test.ts",
+    "test:confirm:win": "npm run test:main:run -- src/main/services/__tests__/calendar-validity.test.ts src/main/services/__tests__/auto-updater.test.ts src/main/ipc/__tests__/recording-ipc.test.ts src/main/services/__tests__/transcription-validity.test.ts src/main/services/__tests__/crypto-validity.test.ts && npm run test:run -- src/renderer/src/services/__tests__/recording-capture.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:settings-storage": "playwright test e2e/settings-storage-cleanup.spec.ts",

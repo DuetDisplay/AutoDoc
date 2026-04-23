@@ -1402,11 +1402,12 @@ export class TranscriptionService {
         })
       }
 
-      proc.on('close', (code: number | null) => {
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         if (code === 0) {
           resolve()
         } else {
-          reject(new Error(`whisper.cpp exited with code ${code}: ${stderr.slice(-500)}`))
+          const signalSuffix = signal ? ` (signal ${signal})` : ''
+          reject(new Error(`whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`))
         }
       })
     })

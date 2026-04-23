@@ -8,6 +8,10 @@ export interface ErrorContext {
   extra?: Record<string, unknown>
 }
 
+export interface MessageContext extends ErrorContext {
+  level?: 'info' | 'warning' | 'error'
+}
+
 let Sentry: typeof SentryType | null = null
 
 export function initSentryReporter(sentry: typeof SentryType): void {
@@ -59,6 +63,35 @@ export function captureError(error: unknown, context: ErrorContext): void {
     }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))
+  })
+}
+
+export function captureMessage(message: string, context: MessageContext): void {
+  const currentSentry = Sentry
+  if (!currentSentry) return
+  const diagnosticTrail = getDiagnosticTrail()
+  const messageAwareSentry = currentSentry as typeof SentryType & {
+    captureMessage?: (message: string, level?: MessageContext['level']) => void
+  }
+
+  currentSentry.withScope((scope) => {
+    scope.setTag('area', context.area)
+    if (context.meetingId) scope.setTag('meetingId', context.meetingId)
+    if (context.tags) {
+      for (const [key, value] of Object.entries(context.tags)) {
+        scope.setTag(key, value)
+      }
+    }
+    if (context.extra) {
+      scope.setExtras({
+        ...context.extra,
+        diagnosticTrail,
+      })
+    } else {
+      scope.setExtras({ diagnosticTrail })
+    }
+
+    messageAwareSentry.captureMessage?.(message, context.level ?? 'info')
   })
 }
 

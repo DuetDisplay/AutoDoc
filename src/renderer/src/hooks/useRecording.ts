@@ -43,6 +43,7 @@ export function useRecording() {
   } = useRecordingStore()
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startPromiseRef = useRef<Promise<any> | null>(null)
 
   // Subscribe to recording state changes from main process
   useEffect(() => {
@@ -89,6 +90,10 @@ export function useRecording() {
       selectionContext?: RecordingSelectionContext,
       trackingContext?: RecordingTrackingContext | null
     ) => {
+      if (startPromiseRef.current) {
+        return startPromiseRef.current
+      }
+
       recordDiagnosticAction({
         category: 'recording',
         action: 'recording_start_requested',
@@ -96,43 +101,50 @@ export function useRecording() {
           sourceType: sourceId.split(':', 1)[0] ?? 'unknown'
         }
       })
-      try {
-        const paths = await window.electronAPI.invoke(
-          'recording:start',
-          sourceId,
-          sourceNameParam,
-          trackingContext ?? null
-        )
-        await startCapture(sourceId, paths.meetingId)
-        recordDiagnosticAction({
-          category: 'recording',
-          action: 'recording_started'
-        })
-        if (selectionContext) {
-          saveSourcePreference(selectionContext, {
-            id: sourceId,
-            name: sourceNameParam,
-            thumbnailDataUrl: ''
-          } satisfies RecordingSource)
+      const startPromise = (async () => {
+        try {
+          const paths = await window.electronAPI.invoke(
+            'recording:start',
+            sourceId,
+            sourceNameParam,
+            trackingContext ?? null
+          )
+          await startCapture(sourceId, paths.meetingId)
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'recording_started'
+          })
+          if (selectionContext) {
+            saveSourcePreference(selectionContext, {
+              id: sourceId,
+              name: sourceNameParam,
+              thumbnailDataUrl: ''
+            } satisfies RecordingSource)
+          }
+          trackEvent('recording_started')
+          return paths
+        } catch (err) {
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'recording_start_failed_in_renderer'
+          })
+          captureRecordingStartFailure(err, {
+            sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
+            sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
+          })
+          // Rollback main process state if capture fails (e.g. permission denied)
+          await stopCapture()
+          await window.electronAPI.invoke('recording:stop').catch(() => {})
+          reset()
+          trackEvent('recording_start_failed')
+          throw err
+        } finally {
+          startPromiseRef.current = null
         }
-        trackEvent('recording_started')
-        return paths
-      } catch (err) {
-        recordDiagnosticAction({
-          category: 'recording',
-          action: 'recording_start_failed_in_renderer'
-        })
-        captureRecordingStartFailure(err, {
-          sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
-          sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
-        })
-        // Rollback main process state if capture fails (e.g. permission denied)
-        await stopCapture()
-        await window.electronAPI.invoke('recording:stop').catch(() => {})
-        reset()
-        trackEvent('recording_start_failed')
-        throw err
-      }
+      })()
+
+      startPromiseRef.current = startPromise
+      return await startPromise
     },
     [reset]
   )
@@ -202,6 +214,7 @@ export function useRecordingActions() {
   const reset = useRecordingStore((s) => s.reset)
   const setSources = useRecordingStore((s) => s.setSources)
   const setLoadingSources = useRecordingStore((s) => s.setLoadingSources)
+  const startPromiseRef = useRef<Promise<any> | null>(null)
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true)
@@ -221,31 +234,43 @@ export function useRecordingActions() {
       selectionContext?: RecordingSelectionContext,
       trackingContext?: RecordingTrackingContext | null
     ) => {
-      const paths = await window.electronAPI.invoke(
-        'recording:start',
-        sourceId,
-        sourceNameParam,
-        trackingContext ?? null
-      )
-      try {
-        await startCapture(sourceId, paths.meetingId)
-        if (selectionContext) {
-          saveSourcePreference(selectionContext, {
-            id: sourceId,
-            name: sourceNameParam,
-            thumbnailDataUrl: ''
-          } satisfies RecordingSource)
-        }
-      } catch (err) {
-        captureRecordingStartFailure(err, {
-          sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
-          sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
-        })
-        await stopCapture()
-        await window.electronAPI.invoke('recording:stop')
-        reset()
-        throw err
+      if (startPromiseRef.current) {
+        return startPromiseRef.current
       }
+
+      const startPromise = (async () => {
+        const paths = await window.electronAPI.invoke(
+          'recording:start',
+          sourceId,
+          sourceNameParam,
+          trackingContext ?? null
+        )
+        try {
+          await startCapture(sourceId, paths.meetingId)
+          if (selectionContext) {
+            saveSourcePreference(selectionContext, {
+              id: sourceId,
+              name: sourceNameParam,
+              thumbnailDataUrl: ''
+            } satisfies RecordingSource)
+          }
+          return paths
+        } catch (err) {
+          captureRecordingStartFailure(err, {
+            sourceType: sourceId.split(':', 1)[0] ?? 'unknown',
+            sourceSelectionMode: selectionContext ? 'assisted' : 'manual'
+          })
+          await stopCapture()
+          await window.electronAPI.invoke('recording:stop')
+          reset()
+          throw err
+        } finally {
+          startPromiseRef.current = null
+        }
+      })()
+
+      startPromiseRef.current = startPromise
+      return await startPromise
     },
     [reset]
   )

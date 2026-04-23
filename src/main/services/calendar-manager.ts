@@ -6,6 +6,13 @@ import type { CalendarProvider } from './calendar-types'
 import { dedupeCalendarEvents, getCalendarAccountIdentity, isPlaceholderCalendarEmail, isSameCalendarAccount } from './calendar-dedupe'
 import type { CalendarAccount, CalendarEvent, OAuthTokens } from '../../shared/types'
 import { logAutodocFailure } from './autodoc-log'
+import { captureMessage } from './sentry-reporter'
+import {
+  isTransientCalendarError,
+  isUnsupportedMicrosoftMailboxError,
+  isCalendarTransientError,
+  isUnsupportedCalendarAccountError
+} from './calendar-error-classification'
 
 const accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
 
@@ -116,10 +123,11 @@ export class CalendarManager {
   }
 
   async fetchAllUpcomingEvents(): Promise<CalendarEvent[]> {
-    if (this.accounts.length === 0) return []
+    const syncableAccounts = this.accounts.filter((account) => account.syncIssue == null)
+    if (syncableAccounts.length === 0) return []
 
     const results = await Promise.allSettled(
-      this.accounts.map(async (account) => {
+      syncableAccounts.map(async (account) => {
         const provider = this.providers.get(account.provider)
         if (!provider) return []
         return provider.fetchUpcomingEvents(account.id)
@@ -132,7 +140,24 @@ export class CalendarManager {
       if (result.status === 'fulfilled') {
         events.push(...result.value)
       } else {
-        const account = this.accounts[i]
+        const account = syncableAccounts[i]
+        if (
+          isUnsupportedCalendarAccountError(result.reason) ||
+          isUnsupportedMicrosoftMailboxError(result.reason)
+        ) {
+          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox')
+          console.warn(
+            `Disabled calendar sync for unsupported account ${account?.email ?? account?.provider ?? 'unknown'}`
+          )
+          continue
+        }
+        if (isCalendarTransientError(result.reason) || isTransientCalendarError(result.reason)) {
+          console.warn(
+            `Transient calendar fetch failure for ${account?.email ?? account?.provider ?? 'unknown'}:`,
+            result.reason
+          )
+          continue
+        }
         console.error(`Failed to fetch events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
         logAutodocFailure({
           area: 'calendar',
@@ -150,10 +175,11 @@ export class CalendarManager {
   }
 
   async fetchAllRecentEvents(daysBack = 7): Promise<CalendarEvent[]> {
-    if (this.accounts.length === 0) return []
+    const syncableAccounts = this.accounts.filter((account) => account.syncIssue == null)
+    if (syncableAccounts.length === 0) return []
 
     const results = await Promise.allSettled(
-      this.accounts.map(async (account) => {
+      syncableAccounts.map(async (account) => {
         const provider = this.providers.get(account.provider)
         if (!provider) return []
         return provider.fetchRecentEvents(account.id, daysBack)
@@ -166,7 +192,24 @@ export class CalendarManager {
       if (result.status === 'fulfilled') {
         events.push(...result.value)
       } else {
-        const account = this.accounts[i]
+        const account = syncableAccounts[i]
+        if (
+          isUnsupportedCalendarAccountError(result.reason) ||
+          isUnsupportedMicrosoftMailboxError(result.reason)
+        ) {
+          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox')
+          console.warn(
+            `Disabled calendar sync for unsupported account ${account?.email ?? account?.provider ?? 'unknown'}`
+          )
+          continue
+        }
+        if (isCalendarTransientError(result.reason) || isTransientCalendarError(result.reason)) {
+          console.warn(
+            `Transient recent-calendar fetch failure for ${account?.email ?? account?.provider ?? 'unknown'}:`,
+            result.reason
+          )
+          continue
+        }
         console.error(`Failed to fetch recent events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
         logAutodocFailure({
           area: 'calendar',
@@ -227,6 +270,44 @@ export class CalendarManager {
 
   private saveAccounts(): void {
     accountStore.set('accounts', this.accounts)
+  }
+
+  private async markAccountSyncIssue(
+    accountId: string | undefined,
+    syncIssue: CalendarAccount['syncIssue']
+  ): Promise<void> {
+    if (!accountId) {
+      return
+    }
+
+    let changed = false
+    this.accounts = this.accounts.map((account) => {
+      if (account.id !== accountId || account.syncIssue === syncIssue) {
+        return account
+      }
+
+      changed = true
+      return {
+        ...account,
+        syncIssue
+      }
+    })
+
+    if (changed) {
+      this.saveAccounts()
+      captureMessage('Unsupported Microsoft mailbox disabled for calendar sync', {
+        area: 'calendar',
+        level: 'info',
+        tags: {
+          provider: 'microsoft',
+          calendar_sync_issue: syncIssue ?? 'none'
+        },
+        extra: {
+          accountId,
+          syncIssue
+        }
+      })
+    }
   }
 
   private getAccountTokens(accountId: string): Partial<OAuthTokens> | null {

@@ -102,7 +102,7 @@ describe('application-install', () => {
     expect(command).toBe('/usr/bin/open')
     expect(args[0]).toMatch(/[/\\]Applications[/\\]AutoDoc\.app$/)
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
-    expect(mockQuit).toHaveBeenCalled()
+    expect(mockExit).toHaveBeenCalledWith(0)
   })
 
   it('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
@@ -122,7 +122,7 @@ describe('application-install', () => {
     const [command, args] = mockSpawn.mock.calls[0]
     expect(command).toBe('/usr/bin/open')
     expect(args[0]).toMatch(/[/\\]Applications[/\\]AutoDoc\.app$/)
-    expect(mockQuit).toHaveBeenCalled()
+    expect(mockExit).toHaveBeenCalledWith(0)
   })
 
   it('prompts for an upgrade when the Applications copy is older', async () => {
@@ -142,7 +142,8 @@ describe('application-install', () => {
       detached: true,
       stdio: 'ignore',
     }))
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(0)
   })
 
   it('quits when the user declines replacing the Applications copy', async () => {
@@ -172,7 +173,8 @@ describe('application-install', () => {
       title: 'Upgrade Applications Copy',
       buttons: ['Upgrade in Applications', 'Quit'],
     }))
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(0)
     expect(mockSpawn).not.toHaveBeenCalled()
   })
 
@@ -374,7 +376,8 @@ describe('application-install', () => {
       detached: true,
       stdio: 'ignore',
     }))
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(0)
   })
 
   it('handles a second-instance launch from a different macOS version', async () => {
@@ -407,7 +410,8 @@ describe('application-install', () => {
       detached: true,
       stdio: 'ignore',
     }))
-    expect(mockQuit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(0)
   })
 
   it('compares dotted versions numerically', async () => {

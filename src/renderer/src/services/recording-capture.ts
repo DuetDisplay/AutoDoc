@@ -104,38 +104,79 @@ function pickSupportedMimeType(candidates: string[]): string | null {
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? null
 }
 
+function buildRecorderError(
+  err: unknown,
+  label: 'video' | 'mic' | 'system',
+  mimeType: string | null,
+  action: 'create' | 'start'
+): Error {
+  return new Error(
+    `Failed to ${action} ${label} recorder${mimeType ? ` (${mimeType})` : ''}: ${describeError(err)}`
+  )
+}
+
 function createRecorder(
   stream: MediaStream,
   label: 'video' | 'mic' | 'system',
-  mimeCandidates: string[],
+  mimeType: string | null,
   options: Omit<MediaRecorderOptions, 'mimeType'> = {}
 ): MediaRecorder {
   if (stream.getTracks().every((track) => track.readyState !== 'live')) {
     throw new Error(`Cannot create ${label} recorder because its capture stream is not live`)
   }
 
-  const mimeType = pickSupportedMimeType(mimeCandidates)
   const recorderOptions = mimeType ? { ...options, mimeType } : { ...options }
 
   try {
     return new MediaRecorder(stream, recorderOptions)
   } catch (err) {
-    throw new Error(
-      `Failed to create ${label} recorder${mimeType ? ` (${mimeType})` : ''}: ${describeError(err)}`
-    )
+    throw buildRecorderError(err, label, mimeType, 'create')
   }
 }
 
-function startRecorder(recorder: MediaRecorder | null, label: 'video' | 'mic' | 'system'): void {
-  if (!recorder) return
+function createStartedRecorder(
+  stream: MediaStream,
+  label: 'video' | 'mic' | 'system',
+  mimeCandidates: string[],
+  options: Omit<MediaRecorderOptions, 'mimeType'>,
+  onDataAvailable: ((event: { data: Blob }) => void) | null
+): MediaRecorder {
+  const attemptedMimeTypes = new Set<string | null>()
+  const candidateMimeTypes: Array<string | null> = mimeCandidates.filter((candidate) => {
+    if (attemptedMimeTypes.has(candidate)) {
+      return false
+    }
+    attemptedMimeTypes.add(candidate)
+    return pickSupportedMimeType([candidate]) === candidate
+  })
 
-  try {
-    recorder.start(5000)
-  } catch (err) {
-    throw new Error(
-      `Failed to start ${label} recorder${recorder.mimeType ? ` (${recorder.mimeType})` : ''}: ${describeError(err)}`
-    )
+  if (candidateMimeTypes.length === 0) {
+    candidateMimeTypes.push(null)
   }
+
+  let lastError: Error | null = null
+
+  for (const candidateMimeType of candidateMimeTypes) {
+    const mimeType = candidateMimeType || null
+    let recorder: MediaRecorder
+    try {
+      recorder = createRecorder(stream, label, mimeType, options)
+    } catch (err) {
+      lastError = err instanceof Error ? err : buildRecorderError(err, label, mimeType, 'create')
+      continue
+    }
+
+    recorder.ondataavailable = onDataAvailable
+
+    try {
+      recorder.start(5000)
+      return recorder
+    } catch (err) {
+      lastError = buildRecorderError(err, label, mimeType, 'start')
+    }
+  }
+
+  throw lastError ?? new Error(`Failed to start ${label} recorder`)
 }
 
 function stopStream(stream: MediaStream): void {
@@ -524,39 +565,48 @@ function buildCaptureHandles(
     ...videoStream.getVideoTracks(),
     ...(hasSystemAudio ? audioStream.getAudioTracks() : [])
   ])
-  const videoRecorder = createRecorder(
+  const videoRecorder = createStartedRecorder(
     videoWithAudio,
     'video',
     hasSystemAudio ? VIDEO_RECORDER_MIME_CANDIDATES_WITH_AUDIO : VIDEO_RECORDER_MIME_CANDIDATES,
     {
       videoBitsPerSecond: 1_500_000
+    },
+    async (e) => {
+      if (e.data.size > 0) {
+        trackChunkWrite(pendingChunkWrites, meetingId, 'video', segmentIndex, e.data)
+      }
     }
   )
 
-  videoRecorder.ondataavailable = async (e) => {
-    if (e.data.size > 0) {
-      trackChunkWrite(pendingChunkWrites, meetingId, 'video', segmentIndex, e.data)
-    }
-  }
-
   let micRecorder: MediaRecorder | null = null
   if (hasMic) {
-    micRecorder = createRecorder(micStream!, 'mic', AUDIO_RECORDER_MIME_CANDIDATES)
-    micRecorder.ondataavailable = async (e) => {
-      if (e.data.size > 0) {
-        trackChunkWrite(pendingChunkWrites, meetingId, 'mic', segmentIndex, e.data)
+    micRecorder = createStartedRecorder(
+      micStream!,
+      'mic',
+      AUDIO_RECORDER_MIME_CANDIDATES,
+      {},
+      async (e) => {
+        if (e.data.size > 0) {
+          trackChunkWrite(pendingChunkWrites, meetingId, 'mic', segmentIndex, e.data)
+        }
       }
-    }
+    )
   }
 
   let systemRecorder: MediaRecorder | null = null
   if (hasSystemAudio) {
-    systemRecorder = createRecorder(audioStream, 'system', AUDIO_RECORDER_MIME_CANDIDATES)
-    systemRecorder.ondataavailable = async (e) => {
-      if (e.data.size > 0) {
-        trackChunkWrite(pendingChunkWrites, meetingId, 'system', segmentIndex, e.data)
+    systemRecorder = createStartedRecorder(
+      audioStream,
+      'system',
+      AUDIO_RECORDER_MIME_CANDIDATES,
+      {},
+      async (e) => {
+        if (e.data.size > 0) {
+          trackChunkWrite(pendingChunkWrites, meetingId, 'system', segmentIndex, e.data)
+        }
       }
-    }
+    )
   }
 
   return {
@@ -593,9 +643,6 @@ async function createCaptureSegment(
     const deviceSnapshot = await getDefaultDeviceSnapshot()
     const capture = buildCaptureHandles(sourceId, meetingId, segmentIndex, deviceSnapshot, streams)
 
-    startRecorder(capture.videoRecorder, 'video')
-    startRecorder(capture.micRecorder, 'mic')
-    startRecorder(capture.systemRecorder, 'system')
     installCaptureMonitoring(capture)
 
     return capture

@@ -229,6 +229,7 @@ describe('crypto module', () => {
 
       await expect(decryptFileToTemp(filePath)).rejects.toThrow()
     })
+
   })
 
   describe('migrateRecordings', () => {

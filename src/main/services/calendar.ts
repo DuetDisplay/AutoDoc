@@ -8,6 +8,7 @@ import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasT
 import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
+import { CalendarTransientError, isTransientCalendarError } from './calendar-error-classification'
 
 const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
@@ -234,11 +235,17 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
       if (!response.ok) {
         const responseText = await response.text()
+        const error = new Error(`Google token refresh failed: ${response.status} ${responseText}`)
+        if (isTransientCalendarError(error)) {
+          throw new CalendarTransientError('Google token refresh failed due to transient network conditions', {
+            cause: error
+          })
+        }
         console.error('Google token refresh failed:', responseText)
         logAutodocFailure({
           area: 'calendar',
           message: 'Google token refresh failed',
-          error: responseText,
+          error,
           context: {
             provider: 'google',
             status: response.status,
@@ -257,6 +264,11 @@ export class GoogleCalendarProvider implements CalendarProvider {
       client.setCredentials(updated)
       saveTokensForAccount(accountId, updated)
     } catch (err) {
+      if (isTransientCalendarError(err)) {
+        throw new CalendarTransientError('Google token refresh failed due to transient network conditions', {
+          cause: err
+        })
+      }
       console.error('Google token refresh error:', err)
       logAutodocFailure({
         area: 'calendar',

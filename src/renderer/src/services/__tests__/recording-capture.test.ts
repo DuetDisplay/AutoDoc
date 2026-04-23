@@ -168,4 +168,48 @@ describe('recording-capture', () => {
 
     expect(useToastStore.getState().activeToast).toBeNull()
   })
+
+  it('still throws when capture start is requested while another capture is active', async () => {
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+    await expect(startCapture('window:2', 'meeting-2')).rejects.toThrow('Capture already active')
+
+    await stopCapture()
+  })
+
+  it('falls back to the next recorder MIME option when MediaRecorder.start throws', async () => {
+    const recorderMimeTypes: string[] = []
+
+    class StartFailMediaRecorder extends MockMediaRecorder {
+      static override isTypeSupported(_mimeType: string): boolean {
+        return true
+      }
+
+      constructor(stream: MockMediaStream, options?: MediaRecorderOptions) {
+        super(stream, options)
+        recorderMimeTypes.push(options?.mimeType ?? '')
+      }
+
+      override start(): void {
+        if (this.mimeType === 'video/webm;codecs=vp9,opus') {
+          throw new Error('encoder unavailable')
+        }
+        super.start()
+      }
+    }
+
+    vi.stubGlobal('MediaRecorder', StartFailMediaRecorder)
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await expect(startCapture('window:1', 'meeting-1')).resolves.toBeUndefined()
+    expect(recorderMimeTypes.filter((mimeType) => mimeType.startsWith('video/'))).toEqual([
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus'
+    ])
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
 })

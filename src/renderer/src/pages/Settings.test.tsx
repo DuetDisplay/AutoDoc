@@ -131,6 +131,32 @@ describe('Settings', () => {
     expect(screen.queryByText('Speaker diarization')).not.toBeInTheDocument()
   })
 
+  it('shows an inline message for unsupported Microsoft mailboxes', async () => {
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [
+        createCalendarAccount({
+          id: 'acct-microsoft',
+          provider: 'microsoft',
+          email: 'person@contoso.com',
+          syncIssue: 'unsupported-mailbox'
+        })
+      ],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    expect(await screen.findByText('person@contoso.com')).toBeInTheDocument()
+    expect(
+      screen.getByText('Calendar sync is unavailable for this Microsoft mailbox type.')
+    ).toBeInTheDocument()
+  })
+
   it('removes downloaded AI components from settings', async () => {
     let storageInfo = createStorageInfo()
 

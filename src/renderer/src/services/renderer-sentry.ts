@@ -40,8 +40,11 @@ function isExpectedRecordingStartFailure(error: unknown): boolean {
     name === 'NotAllowedError' ||
     name === 'PermissionDeniedError' ||
     name === 'SecurityError' ||
+    message.includes('already recording') ||
+    message.includes('capture already active') ||
     message.includes('screen capture stream is not live') ||
     message.includes('screen recording permission may be missing') ||
+    message.includes('could not list capture sources') ||
     message.includes('permission denied') ||
     message.includes('permission dismissed')
   )
