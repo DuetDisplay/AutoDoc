@@ -332,6 +332,36 @@ describe('DetectionService', () => {
     )
   })
 
+  it('does not auto-stop on Windows when the recorded meeting window disappears but the provider is still active', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    mocks.getSources.mockResolvedValue([] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Slack Huddle',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 8; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
+  })
+
   it('auto-stops on Windows screen capture when the tracked meeting window disappears after the provider goes away', async () => {
     setPlatform('win32')
 
@@ -398,6 +428,146 @@ describe('DetectionService', () => {
         meetingWindowVisible: true
       })
     )
+  })
+
+  it('auto-stops on Windows when a tracked Slack huddle window downgrades to a generic Slack window after the provider disappears', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:1', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Slack | Huddle',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
+  })
+
+  it('does not auto-stop on Windows when a tracked Slack huddle window downgrades to a generic Slack window but the provider is still active', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:1', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Slack | Huddle',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
+  })
+
+  it('auto-stops on Windows when a tracked Teams meeting window changes to a different Teams page after the provider disappears', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:1', name: 'Chat | Microsoft Teams' }] as any
+    )
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Roadmap Sync | Microsoft Teams',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Roadmap Sync | Microsoft Teams',
+          trackedMeetingProviderId: 'teams'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
+  })
+
+  it('does not auto-stop on Windows when a tracked Teams meeting window changes title but the provider is still active', async () => {
+    setPlatform('win32')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
+    mocks.getSources.mockImplementation(
+      async () => [{ id: 'window:1', name: 'Chat | Microsoft Teams' }] as any
+    )
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Roadmap Sync | Microsoft Teams',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Roadmap Sync | Microsoft Teams',
+          trackedMeetingProviderId: 'teams'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
   })
 
   it('does not auto-stop on Windows screen capture when the tracked meeting window disappears but the provider is still active', async () => {
@@ -529,6 +699,47 @@ describe('DetectionService', () => {
     }
 
     expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
+  })
+
+  it('currently auto-stops on macOS when the captured meeting window disappears even if provider activity and mic activity continue', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['com.tinyspeck.slackmacgap'])
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, 'audio-in', '')
+    })
+    mocks.getSources.mockResolvedValue([] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Slack Huddle',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Slack | Huddle',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'window_closed',
+        sourceType: 'window',
+        providerDetected: true,
+        meetingWindowVisible: false
+      })
+    )
   })
 
   it('still auto-stops on macOS when provider is gone and no meeting window remains', async () => {

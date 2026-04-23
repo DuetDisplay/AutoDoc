@@ -36,14 +36,27 @@ interface AutoStopSnapshot {
   micSilentPolls: number
 }
 
+interface MeetingWindowObservation {
+  visible: boolean
+  diagnostics?: Record<string, unknown>
+}
+
 interface MeetingProvider {
   id: string
   name: string
   identifiers: readonly string[]
+  titleTokens: readonly string[]
+  genericWindowTitles: readonly string[]
 }
 
 const MEETING_PROVIDERS: readonly MeetingProvider[] = [
-  { id: 'zoom', name: 'Zoom', identifiers: ['zoom', 'zoom.exe', 'us.zoom.xos'] },
+  {
+    id: 'zoom',
+    name: 'Zoom',
+    identifiers: ['zoom', 'zoom.exe', 'us.zoom.xos'],
+    titleTokens: ['zoom'],
+    genericWindowTitles: ['zoom', 'zoom workplace', 'zoom meetings']
+  },
   {
     id: 'teams',
     name: 'Microsoft Teams',
@@ -54,15 +67,31 @@ const MEETING_PROVIDERS: readonly MeetingProvider[] = [
       'ms-teams.exe',
       'com.microsoft.teams',
       'com.microsoft.teams2'
-    ]
+    ],
+    titleTokens: ['microsoft', 'teams'],
+    genericWindowTitles: ['teams', 'microsoft teams']
   },
-  { id: 'slack', name: 'Slack', identifiers: ['slack', 'slack.exe', 'com.tinyspeck.slackmacgap'] },
+  {
+    id: 'slack',
+    name: 'Slack',
+    identifiers: ['slack', 'slack.exe', 'com.tinyspeck.slackmacgap'],
+    titleTokens: ['slack'],
+    genericWindowTitles: ['slack']
+  },
   {
     id: 'webex',
     name: 'Webex',
-    identifiers: ['webex', 'webex.exe', 'ciscowebexstart', 'com.cisco.webexmeetingsapp']
+    identifiers: ['webex', 'webex.exe', 'ciscowebexstart', 'com.cisco.webexmeetingsapp'],
+    titleTokens: ['webex', 'cisco'],
+    genericWindowTitles: ['webex', 'webex meetings', 'cisco webex meetings']
   },
-  { id: 'discord', name: 'Discord', identifiers: ['discord', 'discord.exe', 'com.hnc.discord'] }
+  {
+    id: 'discord',
+    name: 'Discord',
+    identifiers: ['discord', 'discord.exe', 'com.hnc.discord'],
+    titleTokens: ['discord'],
+    genericWindowTitles: ['discord']
+  }
 ]
 
 function normalize(value: string): string {
@@ -81,6 +110,65 @@ function matchProviderFromIds(ids: string[]): MeetingProvider | null {
   return null
 }
 
+function getMeetingProviderById(providerId: string | null | undefined): MeetingProvider | null {
+  if (!providerId) return null
+  return MEETING_PROVIDERS.find((provider) => provider.id === providerId) ?? null
+}
+
+function tokenizeTitle(value: string): string[] {
+  return normalize(value).split(/[^a-z0-9]+/).filter(Boolean)
+}
+
+function isGenericProviderWindowTitle(
+  name: string | null | undefined,
+  providerId: string | null | undefined
+): boolean {
+  if (!name) return false
+  const provider = getMeetingProviderById(providerId)
+  if (!provider) return false
+
+  return provider.genericWindowTitles.includes(normalize(name))
+}
+
+function getMeaningfulTitleTokens(
+  name: string | null | undefined,
+  providerId: string | null | undefined
+): string[] {
+  if (!name) return []
+
+  const provider = getMeetingProviderById(providerId)
+  const providerTokens = new Set(provider?.titleTokens ?? [])
+  return tokenizeTitle(name).filter((token) => !providerTokens.has(token))
+}
+
+function hasTrackedMeetingTitleContinuity(
+  currentName: string | null | undefined,
+  trackedName: string | null | undefined,
+  providerId: string | null | undefined
+): boolean {
+  if (!currentName || !trackedName) return true
+
+  const normalizedCurrent = normalize(currentName)
+  const normalizedTracked = normalize(trackedName)
+  if (normalizedCurrent === normalizedTracked) {
+    return true
+  }
+
+  const trackedWasGeneric = isGenericProviderWindowTitle(trackedName, providerId)
+  const currentIsGeneric = isGenericProviderWindowTitle(currentName, providerId)
+  if (!trackedWasGeneric && currentIsGeneric) {
+    return false
+  }
+
+  const trackedTokens = getMeaningfulTitleTokens(trackedName, providerId)
+  if (trackedTokens.length === 0) {
+    return true
+  }
+
+  const currentTokens = new Set(getMeaningfulTitleTokens(currentName, providerId))
+  return trackedTokens.some((token) => currentTokens.has(token))
+}
+
 export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastProviderSignalKey = ''
@@ -94,6 +182,7 @@ export class DetectionService {
   private wasRecording = false
   private loggedFocusSwitchSuppression = false
   private loggedLingeringWindowBlock = false
+  private lastAutoStopSignalLogKey = ''
   private suppressedProviderSignalKey = ''
   private suppressedCalendarEventId: string | null = null
   private getCalendarEvents: () => CalendarEvent[]
@@ -131,7 +220,9 @@ export class DetectionService {
         const windowClosed = await this.isRecordedWindowClosed()
         const provider = await this.getActiveProvider()
         const providerDetected = provider !== null
-        const meetingWindowVisible = await this.getMeetingWindowVisibleForAutoStop()
+        const meetingWindowObservation =
+          await this.getMeetingWindowVisibleForAutoStop(providerDetected)
+        const meetingWindowVisible = meetingWindowObservation.visible
         const micActive = process.platform === 'darwin' ? await this.isMicInUseMac() : null
 
         this.updateAutoStopCounters({
@@ -144,6 +235,12 @@ export class DetectionService {
         const snapshot = this.getAutoStopSnapshot(providerDetected, meetingWindowVisible)
         this.recognizeAutoStopEdgeCases(snapshot)
         const reason = this.getAutoStopReason(snapshot)
+        this.logAutoStopSignalSnapshot(snapshot, reason, {
+          windowClosed,
+          providerId: provider?.id ?? null,
+          providerName: provider?.name ?? null,
+          ...(meetingWindowObservation.diagnostics ?? {})
+        })
         if (reason) {
           this.maybeBroadcastAutoStop(reason, snapshot)
         } else {
@@ -203,6 +300,7 @@ export class DetectionService {
     this.micSilentPolls = 0
     this.loggedFocusSwitchSuppression = false
     this.loggedLingeringWindowBlock = false
+    this.lastAutoStopSignalLogKey = ''
   }
 
   private updateAutoStopCounters(params: {
@@ -246,8 +344,10 @@ export class DetectionService {
     const windowGoneStrong =
       snapshot.sourceType === 'window' && this.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
     const browserLikeSource = this.isBrowserLikeSource()
+    const allowWindowClosedStop =
+      process.platform !== 'win32' || !snapshot.providerDetected || browserLikeSource
 
-    if (windowGoneStrong && meetingWindowGoneStrong) {
+    if (allowWindowClosedStop && windowGoneStrong && meetingWindowGoneStrong) {
       return 'window_closed'
     }
 
@@ -403,33 +503,24 @@ export class DetectionService {
     return AUTO_STOP_CONFIRM_MS
   }
 
-  private async isMeetingWindowOpen(): Promise<boolean> {
-    try {
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1, height: 1 }
-      })
-      return sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name)))
-    } catch {
-      return true
-    }
-  }
-
-  private async getMeetingWindowVisibleForAutoStop(): Promise<boolean> {
-    if (this.getRecordedSourceType() === 'screen') {
-      const trackedMeetingVisible = await this.isTrackedMeetingWindowVisible()
-      if (trackedMeetingVisible !== null) {
-        return trackedMeetingVisible
-      }
+  private async getMeetingWindowVisibleForAutoStop(
+    providerDetected: boolean
+  ): Promise<MeetingWindowObservation> {
+    const trackedMeetingObservation = await this.isTrackedMeetingWindowVisible(providerDetected)
+    if (trackedMeetingObservation !== null) {
+      return trackedMeetingObservation
     }
 
     return this.isMeetingWindowOpen()
   }
 
-  private async isTrackedMeetingWindowVisible(): Promise<boolean | null> {
+  private async isTrackedMeetingWindowVisible(
+    providerDetected: boolean
+  ): Promise<MeetingWindowObservation | null> {
     const state = this.recordingService.getState()
     const trackedSourceId = state.trackedMeetingSourceId ?? null
     const trackedSourceName = state.trackedMeetingSourceName ?? null
+    const trackedProviderId = state.trackedMeetingProviderId ?? null
 
     if (!trackedSourceId && !trackedSourceName) {
       return null
@@ -440,20 +531,169 @@ export class DetectionService {
         types: ['window'],
         thumbnailSize: { width: 1, height: 1 }
       })
+      const relevantWindowNames = this.getRelevantSourceNames(sources)
 
-      if (trackedSourceId && sources.some((source) => source.id === trackedSourceId)) {
-        return true
+      if (trackedSourceId) {
+        const trackedSource = sources.find((source) => source.id === trackedSourceId)
+        if (trackedSource) {
+          if (
+            !providerDetected &&
+            !hasTrackedMeetingTitleContinuity(
+              trackedSource.name,
+              trackedSourceName,
+              trackedProviderId
+            )
+          ) {
+            return {
+              visible: false,
+              diagnostics: {
+                trackedSourceId,
+                trackedSourceName,
+                trackedProviderId,
+                matchedTrackedSourceId: trackedSource.id,
+                matchedTrackedSourceName: trackedSource.name,
+                trackedWindowMatchedBy: 'id',
+                trackedWindowTitleContinuity: false,
+                totalWindowCount: sources.length,
+                relevantWindowNames
+              }
+            }
+          }
+
+          return {
+            visible: true,
+            diagnostics: {
+              trackedSourceId,
+              trackedSourceName,
+              trackedProviderId,
+              matchedTrackedSourceId: trackedSource.id,
+              matchedTrackedSourceName: trackedSource.name,
+              trackedWindowMatchedBy: 'id',
+              trackedWindowTitleContinuity: true,
+              totalWindowCount: sources.length,
+              relevantWindowNames
+            }
+          }
+        }
       }
 
       if (trackedSourceName) {
         const normalizedTrackedName = normalize(trackedSourceName)
-        return sources.some((source) => normalize(source.name) === normalizedTrackedName)
+        const trackedSource = sources.find((source) => normalize(source.name) === normalizedTrackedName)
+        return {
+          visible: Boolean(trackedSource),
+          diagnostics: {
+            trackedSourceId,
+            trackedSourceName,
+            trackedProviderId,
+            matchedTrackedSourceId: trackedSource?.id ?? null,
+            matchedTrackedSourceName: trackedSource?.name ?? null,
+            trackedWindowMatchedBy: trackedSource ? 'name' : 'none',
+            trackedWindowTitleContinuity: trackedSource ? true : null,
+            totalWindowCount: sources.length,
+            relevantWindowNames
+          }
+        }
       }
 
-      return false
+      return {
+        visible: false,
+        diagnostics: {
+          trackedSourceId,
+          trackedSourceName,
+          trackedProviderId,
+          matchedTrackedSourceId: null,
+          matchedTrackedSourceName: null,
+          trackedWindowMatchedBy: 'none',
+          trackedWindowTitleContinuity: null,
+          totalWindowCount: sources.length,
+          relevantWindowNames
+        }
+      }
     } catch {
       return null
     }
+  }
+
+  private async isMeetingWindowOpen(): Promise<MeetingWindowObservation> {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 1, height: 1 }
+      })
+      return {
+        visible: sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))),
+        diagnostics: {
+          trackedSourceId: null,
+          trackedSourceName: null,
+          trackedProviderId: null,
+          matchedTrackedSourceId: null,
+          matchedTrackedSourceName: null,
+          trackedWindowMatchedBy: 'fallback',
+          trackedWindowTitleContinuity: null,
+          totalWindowCount: sources.length,
+          relevantWindowNames: this.getRelevantSourceNames(sources)
+        }
+      }
+    } catch {
+      return {
+        visible: true,
+        diagnostics: {
+          trackedSourceId: null,
+          trackedSourceName: null,
+          trackedProviderId: null,
+          matchedTrackedSourceId: null,
+          matchedTrackedSourceName: null,
+          trackedWindowMatchedBy: 'fallback-error',
+          trackedWindowTitleContinuity: null,
+          totalWindowCount: null,
+          relevantWindowNames: []
+        }
+      }
+    }
+  }
+
+  private getRelevantSourceNames(sources: Array<{ name: string }>): string[] {
+    return sources
+      .map((source) => source.name)
+      .filter((name) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(name)))
+      .slice(0, 10)
+  }
+
+  private logAutoStopSignalSnapshot(
+    snapshot: AutoStopSnapshot,
+    reason: AutoStopReason | null,
+    diagnostics: Record<string, unknown>
+  ): void {
+    if (process.platform !== 'win32') return
+
+    const key = JSON.stringify({
+      reason,
+      ...snapshot,
+      trackedWindowMatchedBy: diagnostics.trackedWindowMatchedBy ?? null,
+      trackedWindowTitleContinuity: diagnostics.trackedWindowTitleContinuity ?? null,
+      matchedTrackedSourceId: diagnostics.matchedTrackedSourceId ?? null,
+      matchedTrackedSourceName: diagnostics.matchedTrackedSourceName ?? null,
+      providerId: diagnostics.providerId ?? null,
+      windowClosed: diagnostics.windowClosed ?? null
+    })
+
+    if (key === this.lastAutoStopSignalLogKey) {
+      return
+    }
+
+    this.lastAutoStopSignalLogKey = key
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Windows auto-stop signal snapshot',
+      meetingId: this.recordingService.getState().meetingId ?? undefined,
+      level: reason ? 'warn' : 'info',
+      context: {
+        reason,
+        ...snapshot,
+        ...diagnostics
+      }
+    })
   }
 
   private async isRecordedWindowClosed(): Promise<boolean> {
