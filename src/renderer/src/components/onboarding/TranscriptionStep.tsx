@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
+const AUTO_ADVANCE_DELAY_MS = 1500
+const AUTO_RETRY_DELAY_MS = 1500
+const SHOW_SKIP_DELAY_MS = 1500
+const MAX_AUTO_RETRY_ATTEMPTS = 2
+
 const phaseLabels: Record<string, (percent: number) => string> = {
   checking: () => 'Checking transcription setup...',
   'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
@@ -14,44 +19,106 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [isAutoRetrying, setIsAutoRetrying] = useState(false)
   const [showSkip, setShowSkip] = useState(false)
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoRetryAttempts = useRef(0)
+  const hasSeenMeaningfulSetupProgress = useRef(false)
+
+  const clearRetryTimer = () => {
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current)
+      retryTimer.current = null
+    }
+  }
 
   const markReady = () => {
     setPhase('ready')
     setPercent(100)
     setError(null)
+    setIsAutoRetrying(false)
+    autoRetryAttempts.current = 0
+    hasSeenMeaningfulSetupProgress.current = false
+    clearRetryTimer()
     if (!advanceTimer.current) {
-      advanceTimer.current = setTimeout(onNext, 1500)
+      advanceTimer.current = setTimeout(onNext, AUTO_ADVANCE_DELAY_MS)
+    }
+  }
+
+  const scheduleAutoRetry = () => {
+    if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS || retryTimer.current) {
+      return
+    }
+
+    setError(null)
+    setIsAutoRetrying(true)
+    setPhase('checking')
+    setPercent(0)
+
+    retryTimer.current = setTimeout(async () => {
+      retryTimer.current = null
+      autoRetryAttempts.current += 1
+      await window.electronAPI.invoke('whisper:retry-setup')
+    }, AUTO_RETRY_DELAY_MS)
+  }
+
+  const applyStatus = async (
+    status: { phase: string; percent: number; error?: string | null },
+    allowKickoff = false
+  ) => {
+    setPhase(status.phase)
+    setPercent(status.percent)
+
+    if (status.phase === 'ready') {
+      markReady()
+      return
+    }
+
+    if (status.phase === 'error') {
+      scheduleAutoRetry()
+      if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
+        setIsAutoRetrying(false)
+        setError(status.error ?? 'Unknown error')
+      }
+      return
+    }
+
+    if (status.phase !== 'checking' && (status.percent > 0 || status.phase === 'ready')) {
+      hasSeenMeaningfulSetupProgress.current = true
+    }
+
+    setError(null)
+    setIsAutoRetrying(false)
+    if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
+      autoRetryAttempts.current = 0
+      hasSeenMeaningfulSetupProgress.current = false
+    }
+    clearRetryTimer()
+
+    if (allowKickoff && status.phase === 'checking') {
+      await window.electronAPI.invoke('whisper:retry-setup')
     }
   }
 
   useEffect(() => {
     window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
-      setPhase(status.phase)
-      setPercent(status.percent)
-      if (status.phase === 'ready') markReady()
-      if (status.phase === 'error') setError(status.error ?? 'Unknown error')
-      if (status.phase === 'checking') {
-        await window.electronAPI.invoke('whisper:retry-setup')
-      }
+      await applyStatus(status, true)
     })
 
-    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
-      setPhase(status.phase)
-      setPercent(status.percent)
-      if (status.phase === 'ready') markReady()
-      if (status.phase === 'error') setError(status.error ?? 'Unknown error')
+    const unsub = window.electronAPI.on('whisper:setup-progress', async (status) => {
+      await applyStatus(status)
     })
 
     return () => {
       unsub()
       if (advanceTimer.current) clearTimeout(advanceTimer.current)
+      clearRetryTimer()
     }
   }, [onNext])
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowSkip(true), 1500)
+    const timer = setTimeout(() => setShowSkip(true), SHOW_SKIP_DELAY_MS)
     return () => clearTimeout(timer)
   }, [])
 
@@ -97,20 +164,30 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         {phaseLabels[phase]?.(percent) ?? (error ? `Setup failed: ${error}` : 'Preparing...')}
       </div>
 
-      {error && (
+      {isAutoRetrying && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
-          <h3 className="text-[14px] font-semibold text-ink mb-2">We hit a setup issue</h3>
+          <h3 className="text-[14px] font-semibold text-ink mb-2">Still finishing transcription setup</h3>
           <p className="text-[13px] text-ink-muted leading-relaxed">
-            AutoDoc could not finish installing transcription just yet. Retry to resume the managed setup.
+            AutoDoc is retrying automatically in the background so you can keep moving.
           </p>
         </div>
       )}
 
       {error && (
         <div className="flex flex-col items-center gap-3">
+          <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
+            <h3 className="text-[14px] font-semibold text-ink mb-2">Transcription setup is taking longer than expected</h3>
+            <p className="text-[13px] text-ink-muted leading-relaxed">
+              You can continue and AutoDoc will keep working on this in the background, or retry right now.
+            </p>
+          </div>
           <button
             onClick={async () => {
+              clearRetryTimer()
+              autoRetryAttempts.current = 0
+              hasSeenMeaningfulSetupProgress.current = false
               setError(null)
+              setIsAutoRetrying(false)
               setPhase('checking')
               setPercent(0)
               await window.electronAPI.invoke('whisper:retry-setup')
@@ -122,7 +199,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         </div>
       )}
 
-      {showSkip && !error && (
+      {showSkip && (
         <button
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"

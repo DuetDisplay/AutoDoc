@@ -118,27 +118,14 @@ describe('WhisperManager', () => {
   })
 
   it('reinstalls whisper when the existing binary fails validation', async () => {
-    mockExecFile
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('loader failure'))
-        return {} as never
-      })
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('still broken after model refresh'))
-        return {} as never
-      })
-      .mockImplementation((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(null)
-        return {} as never
-      })
-
     const resolveWhisperSpy = vi
       .spyOn(manager as never, 'resolveWhisper')
       .mockResolvedValue(undefined)
     vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'isWhisperUsableWithRetry')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('ready')
 
     await manager.ensureReady()
 
@@ -198,25 +185,13 @@ describe('WhisperManager', () => {
 
   it('uses system runtime fallback in dev mode when explicitly enabled', async () => {
     process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK = '1'
-    mockExecFile
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('missing binary'))
-        return {} as never
-      })
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('still broken after model refresh'))
-        return {} as never
-      })
-      .mockImplementation((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(null)
-        return {} as never
-      })
     mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
     const linkOrCopySpy = vi.spyOn(manager as never, 'linkOrCopy').mockResolvedValue(undefined)
     vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'isWhisperUsableWithRetry')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('ready')
 
     await manager.ensureReady()
 
@@ -227,27 +202,15 @@ describe('WhisperManager', () => {
   })
 
   it('prefers the managed runtime in dev mode by default', async () => {
-    mockExecFile
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('missing binary'))
-        return {} as never
-      })
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('still broken after model refresh'))
-        return {} as never
-      })
-      .mockImplementation((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(null)
-        return {} as never
-      })
     mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
     const resolveWhisperSpy = vi
       .spyOn(manager as never, 'resolveWhisper')
       .mockResolvedValue(undefined)
     vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'isWhisperUsableWithRetry')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('ready')
 
     await manager.ensureReady()
 
@@ -258,27 +221,15 @@ describe('WhisperManager', () => {
   it('ignores system runtime fallback in packaged builds', async () => {
     isPackaged = true
     manager = new WhisperManager()
-    mockExecFile
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('missing binary'))
-        return {} as never
-      })
-      .mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(new Error('still broken after model refresh'))
-        return {} as never
-      })
-      .mockImplementation((...args: any[]) => {
-        const callback = args[args.length - 1]
-        callback(null)
-        return {} as never
-      })
     mockExecSync.mockReturnValue('/usr/local/bin/whisper-cli')
     const resolveWhisperSpy = vi
       .spyOn(manager as never, 'resolveWhisper')
       .mockResolvedValue(undefined)
     vi.spyOn(manager as never, 'downloadModel').mockResolvedValue(undefined)
+    vi.spyOn(manager as never, 'isWhisperUsableWithRetry')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('ready')
 
     await manager.ensureReady()
 

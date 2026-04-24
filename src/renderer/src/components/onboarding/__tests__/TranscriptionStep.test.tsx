@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { TranscriptionStep } from '../TranscriptionStep'
 
 describe('TranscriptionStep', () => {
@@ -54,7 +53,7 @@ describe('TranscriptionStep', () => {
     })
   })
 
-  it('retries setup after a managed install failure', async () => {
+  it('auto-retries managed setup failures before surfacing a manual retry', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {
         return Promise.resolve({
@@ -71,16 +70,109 @@ describe('TranscriptionStep', () => {
 
     render(<TranscriptionStep onNext={vi.fn()} />)
 
-    expect(await screen.findByText('We hit a setup issue')).toBeInTheDocument()
-    expect(screen.getByText('Retry')).toBeInTheDocument()
+    expect(await screen.findByText('Still finishing transcription setup')).toBeInTheDocument()
+    expect(screen.queryByText('We hit a setup issue')).not.toBeInTheDocument()
+    expect(screen.queryByText('Retry')).not.toBeInTheDocument()
     expect(screen.queryByText(/Open Terminal/i)).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByText('Retry'))
+    await waitFor(
+      () => {
+        expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+      },
+      { timeout: 4000 }
+    )
 
-    await waitFor(() => {
-      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+    expect(
+      await screen.findByText(/continue - this will finish in the background/i, {}, { timeout: 4000 })
+    ).toBeInTheDocument()
+  }, 10000)
+
+  it('stops automatic retries after repeated zero-progress setup failures', async () => {
+    vi.useFakeTimers()
+
+    let whisperProgressHandler:
+      | ((status: { phase: string; percent: number; error?: string | null }) => Promise<void>)
+      | null = null
+
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') {
+        whisperProgressHandler = callback as typeof whisperProgressHandler
+      }
+      return vi.fn()
     })
-  })
+
+    let retrySetupCalls = 0
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'checking',
+          percent: 0,
+        })
+      }
+      if (channel === 'whisper:retry-setup') {
+        retrySetupCalls += 1
+        return Promise.resolve({})
+      }
+      return Promise.resolve({})
+    })
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+
+      expect(retrySetupCalls).toBe(1)
+      expect(whisperProgressHandler).not.toBeNull()
+
+      await act(async () => {
+        await whisperProgressHandler?.({
+          phase: 'error',
+          percent: 0,
+          error: 'Audio tools missing',
+        })
+      })
+
+      expect(screen.getByText('Still finishing transcription setup')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+      expect(retrySetupCalls).toBe(2)
+
+      await act(async () => {
+        await whisperProgressHandler?.({ phase: 'downloading-ffmpeg', percent: 0 })
+        await whisperProgressHandler?.({
+          phase: 'error',
+          percent: 0,
+          error: 'Audio tools missing',
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+      expect(retrySetupCalls).toBe(3)
+
+      await act(async () => {
+        await whisperProgressHandler?.({ phase: 'downloading-ffmpeg', percent: 0 })
+        await whisperProgressHandler?.({
+          phase: 'error',
+          percent: 0,
+          error: 'Audio tools missing',
+        })
+      })
+
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+      expect(retrySetupCalls).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
 
   it('keeps the background-continue affordance for in-progress setup', async () => {
     vi.useFakeTimers()

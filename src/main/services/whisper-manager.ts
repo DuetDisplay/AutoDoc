@@ -19,7 +19,7 @@ import { tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { getInstalledModelsDir } from './dev-runtime-paths'
 import {
   canUseSystemRuntimeFallback,
@@ -35,10 +35,13 @@ const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/downlo
 const FFMPEG_WIN_URL =
   'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
+const WHISPER_PROBE_RETRY_DELAYS_MS = IS_WIN ? [500, 1_500] : []
 const HOMEBREW_API_ROOT = 'https://formulae.brew.sh/api/formula'
 const MAC_WHISPER_FORMULA = 'whisper-cpp'
 const MAC_GGML_FORMULA = 'ggml'
 const MAC_LIBOMP_FORMULA = 'libomp'
+
+type WhisperUsabilityResult = 'ready' | 'missing-assets' | 'slow-validation' | 'failed'
 
 const DEFAULT_MODEL = IS_WIN
   ? {
@@ -178,15 +181,19 @@ export class WhisperManager extends EventEmitter {
         await this.downloadWithRetry(() => this.downloadModel(), 'model')
       }
 
-      if (!(await this.isWhisperUsable())) {
+      let usability = await this.isWhisperUsableWithRetry()
+
+      if (!this.isWhisperUsabilityAccepted(usability)) {
         await this.recoverFromProbeValidationFailure()
+        usability = await this.isWhisperUsableWithRetry()
       }
 
-      if (!(await this.isWhisperUsable())) {
+      if (!this.isWhisperUsabilityAccepted(usability)) {
         this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveWhisper()
-        if (!(await this.isWhisperUsable())) {
+        usability = await this.isWhisperUsableWithRetry()
+        if (!this.isWhisperUsabilityAccepted(usability)) {
           throw new Error(
             IS_WIN
               ? 'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.'
@@ -284,7 +291,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async resolveFfmpeg(): Promise<void> {
-    const packagedFfmpegPath = this.getPackagedFfmpegPath()
+    const packagedFfmpegPath = await this.resolvePackagedFfmpegPath()
     if (packagedFfmpegPath) {
       await this.installBundledBinary(packagedFfmpegPath, this.getFfmpegPath())
       return
@@ -299,7 +306,7 @@ export class WhisperManager extends EventEmitter {
       }
     }
 
-    if (IS_WIN && !usesManagedRuntimeOnly()) {
+    if (IS_WIN) {
       await this.downloadFfmpegWindows()
       return
     }
@@ -523,6 +530,35 @@ export class WhisperManager extends EventEmitter {
     return ffmpegStatic
   }
 
+  private async resolvePackagedFfmpegPath(): Promise<string | null> {
+    const packagedFfmpegPath = this.getPackagedFfmpegPath()
+    if (!packagedFfmpegPath) {
+      return null
+    }
+
+    if (await this.fileExists(packagedFfmpegPath)) {
+      return packagedFfmpegPath
+    }
+
+    if (!IS_WIN) {
+      return null
+    }
+
+    const unpackedFfmpegPath = packagedFfmpegPath.replace(
+      /([\\/])app\.asar([\\/])/i,
+      '$1app.asar.unpacked$2'
+    )
+
+    if (
+      unpackedFfmpegPath !== packagedFfmpegPath &&
+      (await this.fileExists(unpackedFfmpegPath))
+    ) {
+      return unpackedFfmpegPath
+    }
+
+    return null
+  }
+
   private async installBundledBinary(source: string, dest: string): Promise<void> {
     await rm(dest, { force: true })
     await copyFile(source, dest)
@@ -588,6 +624,17 @@ export class WhisperManager extends EventEmitter {
 
     const sourceDir = dirname(sourceBinary)
     const entries = await readdir(sourceDir, { withFileTypes: true })
+    const existingEntries = await readdir(this.getModelsDir(), { withFileTypes: true }).catch(
+      () => []
+    )
+
+    for (const entry of existingEntries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) {
+        continue
+      }
+
+      await rm(join(this.getModelsDir(), entry.name), { force: true })
+    }
 
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.dll')) {
@@ -794,12 +841,12 @@ export class WhisperManager extends EventEmitter {
     })
   }
 
-  private async isWhisperUsable(): Promise<boolean> {
+  private async isWhisperUsable(): Promise<boolean | WhisperUsabilityResult> {
     if (
       !(await this.fileExists(this.getWhisperPath())) ||
       !(await this.fileExists(this.getModelPath()))
     ) {
-      return false
+      return 'missing-assets'
     }
 
     const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-probe-'))
@@ -808,17 +855,105 @@ export class WhisperManager extends EventEmitter {
     try {
       await writeFile(probeWavPath, this.createSilentProbeWav())
 
-      return await new Promise<boolean>((resolve) => {
+      return await new Promise<WhisperUsabilityResult>((resolve) => {
         execFile(
           this.getWhisperPath(),
           ['-m', this.getModelPath(), '-f', probeWavPath, '-oj', '-l', 'en', '-pp'],
           { windowsHide: true, timeout: WHISPER_PROBE_TIMEOUT_MS },
-          (err) => resolve(!err)
+          (err, stdout, stderr) => {
+            const stdoutText = typeof stdout === 'string' ? stdout : ''
+            const stderrText = typeof stderr === 'string' ? stderr : ''
+            if (err) {
+              const usability = this.classifyWhisperProbeFailure(err, stdoutText, stderrText)
+              if (usability === 'slow-validation') {
+                logAutodocEvent({
+                  area: 'whisper',
+                  message: 'Whisper probe timed out after model load; accepting installed assets',
+                  level: 'warn',
+                  context: {
+                    whisperPath: this.getWhisperPath(),
+                    modelPath: this.getModelPath(),
+                    probeTimeoutMs: WHISPER_PROBE_TIMEOUT_MS,
+                    stderrTail: stderrText.slice(-1000)
+                  }
+                })
+              } else {
+                logAutodocFailure({
+                  area: 'whisper',
+                  message: 'Whisper probe validation failed',
+                  error: err,
+                  context: {
+                    whisperPath: this.getWhisperPath(),
+                    modelPath: this.getModelPath(),
+                    stdoutTail: stdoutText.slice(-1000),
+                    stderrTail: stderrText.slice(-1000),
+                    probeTimeoutMs: WHISPER_PROBE_TIMEOUT_MS,
+                    usability
+                  }
+                })
+              }
+              resolve(usability)
+              return
+            }
+
+            resolve('ready')
+          }
         )
       })
     } finally {
       await rm(probeDir, { recursive: true, force: true })
     }
+  }
+
+  private async isWhisperUsableWithRetry(): Promise<WhisperUsabilityResult> {
+    const initialResult = this.normalizeWhisperUsabilityResult(await this.isWhisperUsable())
+    if (this.isWhisperUsabilityAccepted(initialResult)) {
+      return initialResult
+    }
+
+    for (const delayMs of WHISPER_PROBE_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      const retryResult = this.normalizeWhisperUsabilityResult(await this.isWhisperUsable())
+      if (this.isWhisperUsabilityAccepted(retryResult)) {
+        return retryResult
+      }
+    }
+
+    return initialResult
+  }
+
+  private normalizeWhisperUsabilityResult(
+    result: boolean | WhisperUsabilityResult
+  ): WhisperUsabilityResult {
+    if (result === true) return 'ready'
+    if (result === false) return 'failed'
+    return result
+  }
+
+  private isWhisperUsabilityAccepted(result: WhisperUsabilityResult): boolean {
+    return result === 'ready' || result === 'slow-validation'
+  }
+
+  private classifyWhisperProbeFailure(
+    err: Error & { killed?: boolean; signal?: string | null; code?: string | number | null },
+    stdout: string,
+    stderr: string
+  ): WhisperUsabilityResult {
+    const combinedOutput = `${stdout}\n${stderr}`
+    const timedOut =
+      err.killed === true ||
+      err.code === 'ETIMEDOUT' ||
+      /timed out|timeout/i.test(err.message) ||
+      (err.signal === 'SIGTERM' && /processing|whisper_model_load/i.test(combinedOutput))
+    const modelLoaded =
+      /whisper_model_load:\s+model size/i.test(combinedOutput) ||
+      /main:\s+processing/i.test(combinedOutput)
+
+    if (timedOut && modelLoaded) {
+      return 'slow-validation'
+    }
+
+    return 'failed'
   }
 
   private createSilentProbeWav(): Buffer {
