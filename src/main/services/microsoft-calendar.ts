@@ -15,11 +15,7 @@ import {
 
 const OAUTH_PORT = 42813
 const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
-// TODO: Replace with actual Azure AD Application (client) ID after app registration
-const MICROSOFT_CLIENT_ID = 'YOUR_MICROSOFT_CLIENT_ID'
 
-const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
-const MICROSOFT_SCOPES = 'Calendars.Read User.Read offline_access'
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
@@ -78,42 +74,15 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   }
 
   async connect(): Promise<CalendarAccount> {
-    if (MICROSOFT_CLIENT_ID === 'YOUR_MICROSOFT_CLIENT_ID') {
-      throw new Error('Microsoft OAuth client ID is not configured. Register an Azure AD app and set MICROSOFT_CLIENT_ID.')
-    }
-
     const state = crypto.randomBytes(16).toString('hex')
     const statePayload = JSON.stringify({ provider: 'microsoft', nonce: state })
     const encodedState = Buffer.from(statePayload).toString('base64url')
+    const authUrl = `${AUTH_WORKER_URL}/auth/microsoft?state=${encodeURIComponent(encodedState)}`
+    const callbackPromise = this.waitForCallback(encodedState)
 
-    const params = new URLSearchParams({
-      client_id: MICROSOFT_CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: `http://localhost:${OAUTH_PORT}/callback`,
-      scope: MICROSOFT_SCOPES,
-      state: encodedState,
-      response_mode: 'query',
-    })
+    await shell.openExternal(authUrl)
 
-    await shell.openExternal(`${MICROSOFT_AUTH_URL}?${params}`)
-
-    const { code } = await this.waitForCallback(encodedState)
-
-    const tokenResponse = await fetch(`${AUTH_WORKER_URL}/microsoft/auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code,
-        redirect_uri: `http://localhost:${OAUTH_PORT}/callback`,
-      }),
-    })
-
-    if (!tokenResponse.ok) {
-      const text = await tokenResponse.text()
-      throw new Error(`Microsoft token exchange failed: ${text}`)
-    }
-
-    const tokens = await tokenResponse.json() as OAuthTokens & { expires_in?: number }
+    const { tokens } = await callbackPromise
     if (tokens.expires_in && !tokens.expiry_date) {
       tokens.expiry_date = Date.now() + tokens.expires_in * 1000
     }
@@ -132,13 +101,13 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     }
   }
 
-  private waitForCallback(expectedState: string): Promise<{ code: string }> {
+  private waitForCallback(expectedState: string): Promise<{ tokens: OAuthTokens & { expires_in?: number } }> {
     return new Promise((resolve, reject) => {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
         const error = url.searchParams.get('error')
-        const code = url.searchParams.get('code')
+        const tokenData = url.searchParams.get('tokens')
 
         if (returnedState !== expectedState) return
 
@@ -150,18 +119,29 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
           return
         }
 
-        if (!code) {
+        if (!tokenData) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end('<html><body><p>Missing authorization code. Please try again.</p></body></html>')
+          res.end('<html><body><p>Missing token data. Please try again.</p></body></html>')
           server.close()
-          reject(new Error('Missing authorization code'))
+          reject(new Error('Missing token data'))
+          return
+        }
+
+        let tokens: OAuthTokens & { expires_in?: number }
+        try {
+          tokens = JSON.parse(atob(tokenData)) as OAuthTokens & { expires_in?: number }
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'text/html' })
+          res.end('<html><body><p>Invalid token data. Please try again.</p></body></html>')
+          server.close()
+          reject(new Error('Invalid token data'))
           return
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><p>Connected to Microsoft Outlook! You may close this tab.</p></body></html>')
         server.close()
-        resolve({ code })
+        resolve({ tokens })
       })
 
       server.listen(OAUTH_PORT, '127.0.0.1')

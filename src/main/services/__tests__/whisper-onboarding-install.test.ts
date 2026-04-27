@@ -680,6 +680,8 @@ describe('Whisper onboarding dependency installation', () => {
       const usabilityChecks = vi
         .spyOn(manager as never, 'isWhisperUsable')
         .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true)
       const downloadModelSpy = vi
         .spyOn(manager as never, 'downloadModel')
@@ -692,7 +694,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       expect(downloadModelSpy).toHaveBeenCalledTimes(1)
       expect(resolveWhisperSpy).not.toHaveBeenCalled()
-      expect(usabilityChecks).toHaveBeenCalledTimes(2)
+      expect(usabilityChecks).toHaveBeenCalledTimes(4)
       await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('fresh-model')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
@@ -758,6 +760,8 @@ describe('Whisper onboarding dependency installation', () => {
       const usabilityChecks = vi
         .spyOn(manager as never, 'isWhisperUsable')
         .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true)
       const downloadModelSpy = vi
         .spyOn(manager as never, 'downloadModel')
@@ -769,7 +773,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       expect(downloadModelSpy).toHaveBeenCalledTimes(1)
       expect(resolveWhisperSpy).not.toHaveBeenCalled()
-      expect(usabilityChecks).toHaveBeenCalledTimes(2)
+      expect(usabilityChecks).toHaveBeenCalledTimes(4)
       await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('recovered-model')
     } finally {
       await rm(rootDir, { recursive: true, force: true })

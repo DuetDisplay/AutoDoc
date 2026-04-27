@@ -47,6 +47,30 @@ describe('Upcoming', () => {
     expect(screen.getByRole('button', { name: /sync/i })).toBeInTheDocument()
   })
 
+  it('shows a recoverable error when calendar connection fails', async () => {
+    installMockElectronApi({
+      'calendar:get-accounts': () => [],
+      'calendar:get-events': () => [],
+      'calendar:connect': () => {
+        throw new Error('OAuth denied')
+      },
+    })
+
+    render(
+      <MemoryRouter>
+        <Upcoming />
+      </MemoryRouter>,
+    )
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /connect microsoft outlook/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /we couldn't connect microsoft outlook/i
+    )
+    expect(screen.getByRole('button', { name: /connect microsoft outlook/i })).toBeEnabled()
+  })
+
   it('refreshes the visible meetings when the user syncs again', async () => {
     const account = createCalendarAccount()
     const state = {

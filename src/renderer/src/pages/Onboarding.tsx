@@ -196,16 +196,16 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   if (step === null) return null
 
   return (
-    <div className="h-screen bg-bg-primary flex flex-col items-center justify-center relative">
+    <div className="h-screen bg-bg-primary relative overflow-y-auto">
       {/* macOS drag region */}
       <div
-        className="absolute top-0 left-0 right-0 h-[52px]"
+        className="fixed top-0 left-0 right-0 h-[52px]"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
       {/* Step dots (hidden on All Set screen) */}
       {stepIndex !== null && stepIndex < totalDots && (
-        <div className="absolute top-7 left-1/2 -translate-x-1/2">
+        <div className="fixed top-7 left-1/2 -translate-x-1/2">
           <StepDots total={totalDots} current={stepIndex} />
         </div>
       )}
@@ -214,15 +214,17 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         <button
           type="button"
           onClick={back}
-          className="absolute top-6 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
+          className="fixed top-6 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
         >
           ← Back
         </button>
       )}
 
       {/* Content */}
-      <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
-        {renderStep()}
+      <div className="min-h-full flex flex-col items-center justify-start [@media(min-height:520px)]:justify-center pt-20 pb-8">
+        <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
+          {renderStep()}
+        </div>
       </div>
     </div>
   )

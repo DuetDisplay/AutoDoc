@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 export function CalendarStep({ onNext }: { onNext: () => void }) {
   const [connecting, setConnecting] = useState(false)
   const [connected, setConnected] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then((accounts) => {
@@ -12,11 +13,15 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
 
   const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
+    setConnectError(null)
     try {
       await window.electronAPI.invoke('calendar:connect', provider)
       setConnected(true)
     } catch {
-      // OAuth cancelled or failed
+      const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
+      setConnectError(
+        `We couldn't connect ${providerName}. Check the permission prompt and try again, or skip for now.`
+      )
     } finally {
       setConnecting(false)
     }
@@ -72,6 +77,14 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
               {connecting ? 'Connecting...' : 'Connect Microsoft Outlook'}
             </button>
           </div>
+          {connectError && (
+            <div
+              role="alert"
+              className="max-w-[320px] mx-auto mt-4 rounded-[12px] border border-border bg-mist-light/60 px-4 py-3 text-[13px] leading-relaxed text-ink-muted"
+            >
+              {connectError}
+            </div>
+          )}
           <button
             onClick={onNext}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"

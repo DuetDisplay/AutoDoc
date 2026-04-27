@@ -1,0 +1,150 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MicrosoftCalendarProvider } from '../microsoft-calendar'
+
+type RequestHandler = (
+  req: { url?: string },
+  res: {
+    writeHead: (status: number, headers?: Record<string, string>) => void
+    end: (body?: string) => void
+  }
+) => void
+
+const { openExternal, tokenStore, httpState } = vi.hoisted(() => ({
+  openExternal: vi.fn(),
+  tokenStore: new Map<string, Record<string, unknown>>(),
+  httpState: {
+    handler: null as RequestHandler | null,
+    listen: vi.fn(),
+    close: vi.fn(),
+    on: vi.fn()
+  }
+}))
+
+vi.mock('electron', () => ({
+  shell: {
+    openExternal
+  }
+}))
+
+vi.mock('http', () => ({
+  default: {
+    createServer: (handler: RequestHandler) => {
+      httpState.handler = handler
+      return {
+        listen: httpState.listen,
+        close: httpState.close,
+        on: httpState.on
+      }
+    }
+  }
+}))
+
+vi.mock('../token-store', () => ({
+  saveTokensForAccount: (accountId: string, tokens: Record<string, unknown>) => {
+    tokenStore.set(accountId, tokens)
+  },
+  loadTokensForAccount: (accountId: string) => tokenStore.get(accountId) ?? null,
+  clearTokensForAccount: (accountId: string) => {
+    tokenStore.delete(accountId)
+  },
+  hasTokensForAccount: (accountId: string) => tokenStore.has(accountId)
+}))
+
+vi.mock('../autodoc-log', () => ({
+  logAutodocFailure: vi.fn()
+}))
+
+function encodeTokenData(tokens: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(tokens), 'utf8').toString('base64')
+}
+
+function requestLocalCallback(url: string): string {
+  if (!httpState.handler) {
+    throw new Error('OAuth callback server was not started')
+  }
+
+  let responseBody = ''
+  httpState.handler(
+    { url },
+    {
+      writeHead: vi.fn(),
+      end: (body) => {
+        responseBody = body ?? ''
+      }
+    }
+  )
+  return responseBody
+}
+
+async function waitForOpenExternal(): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const openedUrl = openExternal.mock.calls[0]?.[0]
+    if (openedUrl) return openedUrl
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+
+  throw new Error('Timed out waiting for OAuth browser launch')
+}
+
+describe('Calendar OAuth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    tokenStore.clear()
+    httpState.handler = null
+    openExternal.mockResolvedValue(undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        if (String(url) === 'https://graph.microsoft.com/v1.0/me') {
+          return {
+            ok: true,
+            json: async () => ({ mail: 'qa@example.com' })
+          }
+        }
+
+        throw new Error(`Unexpected fetch: ${String(url)}`)
+      })
+    )
+  })
+
+  it('starts Microsoft OAuth through the auth worker and completes from returned tokens', async () => {
+    const provider = new MicrosoftCalendarProvider()
+
+    const connectPromise = provider.connect()
+    const openedUrl = await waitForOpenExternal()
+    const authUrl = new URL(openedUrl)
+    const state = authUrl.searchParams.get('state')
+
+    expect(authUrl.origin).toBe('https://autodoc-auth.duetdisplay.workers.dev')
+    expect(authUrl.pathname).toBe('/auth/microsoft')
+    expect(state).toBeTruthy()
+
+    expect(httpState.listen).toHaveBeenCalledWith(42813, '127.0.0.1')
+
+    const callbackBody = requestLocalCallback(
+      `/callback?tokens=${encodeURIComponent(
+        encodeTokenData({
+          access_token: 'microsoft-access-token',
+          refresh_token: 'microsoft-refresh-token',
+          expires_in: 3600
+        })
+      )}&state=${encodeURIComponent(state!)}`
+    )
+    const account = await connectPromise
+
+    expect(callbackBody).toContain('Connected to Microsoft Outlook')
+    expect(account).toEqual(
+      expect.objectContaining({
+        provider: 'microsoft',
+        email: 'qa@example.com'
+      })
+    )
+    expect(tokenStore.get(account.id)).toEqual(
+      expect.objectContaining({
+        access_token: 'microsoft-access-token',
+        refresh_token: 'microsoft-refresh-token',
+        expiry_date: expect.any(Number)
+      })
+    )
+  })
+})

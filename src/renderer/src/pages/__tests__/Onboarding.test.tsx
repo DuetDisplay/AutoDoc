@@ -88,6 +88,25 @@ describe('Onboarding', () => {
     expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
   })
 
+  it('surfaces onboarding calendar connection failures so users can recover', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(6)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'calendar:get-accounts') return Promise.resolve([])
+      if (channel === 'calendar:connect') return Promise.reject(new Error('OAuth denied'))
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /connect google calendar/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /we couldn't connect google calendar/i
+    )
+    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+  })
+
   it('persists the analytics opt-in choice and advances to the all-set step', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
       if (channel === 'prefs:get-onboarding-step') return Promise.resolve(9)

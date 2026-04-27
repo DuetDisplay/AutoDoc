@@ -7,7 +7,9 @@ interface Env {
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly email'
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly email'
+const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+const MICROSOFT_SCOPES = 'Calendars.Read User.Read offline_access'
 const LOCAL_REDIRECT = 'http://127.0.0.1:42813'
 
 export default {
@@ -24,6 +26,14 @@ export default {
 
     if (url.pathname === '/auth/refresh' && request.method === 'POST') {
       return handleRefresh(request, env)
+    }
+
+    if (url.pathname === '/auth/microsoft') {
+      return handleMicrosoftAuthStart(url, env)
+    }
+
+    if (url.pathname === '/auth/microsoft/callback') {
+      return handleMicrosoftCallback(url, env)
     }
 
     if (url.pathname === '/microsoft/auth' && request.method === 'POST') {
@@ -46,7 +56,7 @@ function handleAuthStart(url: URL, env: Env): Response {
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: workerCallback,
     response_type: 'code',
-    scope: SCOPES,
+    scope: GOOGLE_SCOPES,
     access_type: 'offline',
     prompt: 'consent',
     state,
@@ -124,6 +134,51 @@ async function handleRefresh(request: Request, env: Env): Promise<Response> {
 
 const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
+function handleMicrosoftAuthStart(url: URL, env: Env): Response {
+  const state = url.searchParams.get('state') ?? ''
+  const workerCallback = `${url.origin}/auth/microsoft/callback`
+
+  const params = new URLSearchParams({
+    client_id: env.MICROSOFT_CLIENT_ID,
+    redirect_uri: workerCallback,
+    response_type: 'code',
+    scope: MICROSOFT_SCOPES,
+    response_mode: 'query',
+    prompt: 'select_account',
+    state,
+  })
+
+  return Response.redirect(`${MICROSOFT_AUTH_URL}?${params.toString()}`, 302)
+}
+
+async function handleMicrosoftCallback(url: URL, env: Env): Promise<Response> {
+  const code = url.searchParams.get('code')
+  const state = url.searchParams.get('state') ?? ''
+  const error = url.searchParams.get('error')
+  const workerCallback = `${url.origin}/auth/microsoft/callback`
+
+  if (error) {
+    const redirect = `${LOCAL_REDIRECT}/callback?error=${encodeURIComponent(error)}&state=${encodeURIComponent(state)}`
+    return Response.redirect(redirect, 302)
+  }
+
+  if (!code) {
+    return new Response('Missing authorization code', { status: 400 })
+  }
+
+  const tokenResponse = await exchangeMicrosoftCode(env, code, workerCallback)
+  const tokens = await tokenResponse.json() as Record<string, unknown>
+
+  if (!tokenResponse.ok) {
+    const redirect = `${LOCAL_REDIRECT}/callback?error=${encodeURIComponent(JSON.stringify(tokens))}&state=${encodeURIComponent(state)}`
+    return Response.redirect(redirect, 302)
+  }
+
+  const tokenData = btoa(JSON.stringify(tokens))
+  const redirect = `${LOCAL_REDIRECT}/callback?tokens=${encodeURIComponent(tokenData)}&state=${encodeURIComponent(state)}`
+  return Response.redirect(redirect, 302)
+}
+
 async function handleMicrosoftAuth(request: Request, env: Env): Promise<Response> {
   const body = await request.json() as { code?: string; redirect_uri?: string }
 
@@ -131,23 +186,30 @@ async function handleMicrosoftAuth(request: Request, env: Env): Promise<Response
     return Response.json({ error: 'Missing code or redirect_uri' }, { status: 400 })
   }
 
-  const tokenResponse = await fetch(MICROSOFT_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code: body.code,
-      client_id: env.MICROSOFT_CLIENT_ID,
-      client_secret: env.MICROSOFT_CLIENT_SECRET,
-      redirect_uri: body.redirect_uri,
-      grant_type: 'authorization_code',
-    }),
-  })
-
+  const tokenResponse = await exchangeMicrosoftCode(env, body.code, body.redirect_uri)
   const tokens = await tokenResponse.json() as Record<string, unknown>
 
   return Response.json(tokens, {
     status: tokenResponse.ok ? 200 : 400,
     headers: { 'Access-Control-Allow-Origin': '*' },
+  })
+}
+
+async function exchangeMicrosoftCode(
+  env: Env,
+  code: string,
+  redirectUri: string
+): Promise<Response> {
+  return fetch(MICROSOFT_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: env.MICROSOFT_CLIENT_ID,
+      client_secret: env.MICROSOFT_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+    }),
   })
 }
 

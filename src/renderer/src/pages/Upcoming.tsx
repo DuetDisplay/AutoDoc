@@ -15,6 +15,7 @@ let calendarToastShown = false
 
 export function Upcoming() {
   const [calendarChecked, setCalendarChecked] = useState(false)
+  const [calendarConnectError, setCalendarConnectError] = useState<string | null>(null)
   const {
     isConnecting,
     events,
@@ -68,6 +69,7 @@ export function Upcoming() {
 
   const handleConnect = async (provider: 'google' | 'microsoft') => {
     setConnecting(true)
+    setCalendarConnectError(null)
     recordDiagnosticAction({
       category: 'calendar',
       action: 'calendar_connect_requested',
@@ -76,11 +78,16 @@ export function Upcoming() {
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
       addAccount(account)
+      setCalendarConnectError(null)
       trackEvent('calendar_connected', { provider })
       const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
       setEvents(fetchedEvents)
     } catch (err) {
       console.error('Failed to connect calendar:', err)
+      const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
+      setCalendarConnectError(
+        `We couldn't connect ${providerName}. Check the permission prompt and try again.`
+      )
     } finally {
       setConnecting(false)
     }
@@ -183,7 +190,11 @@ export function Upcoming() {
       />
 
       {!isConnected ? (
-        <ConnectCalendar isConnecting={isConnecting} onConnect={handleConnect} />
+        <ConnectCalendar
+          isConnecting={isConnecting}
+          error={calendarConnectError}
+          onConnect={handleConnect}
+        />
       ) : events.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <p className="text-ink-muted text-[13px]">No upcoming meetings</p>

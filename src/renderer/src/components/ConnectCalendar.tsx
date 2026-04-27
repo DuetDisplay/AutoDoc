@@ -1,9 +1,10 @@
 interface ConnectCalendarProps {
   isConnecting: boolean
+  error?: string | null
   onConnect: (provider: 'google' | 'microsoft') => void
 }
 
-export function ConnectCalendar({ isConnecting, onConnect }: ConnectCalendarProps) {
+export function ConnectCalendar({ isConnecting, error, onConnect }: ConnectCalendarProps) {
   return (
     <div className="flex-1 flex items-center justify-center p-6">
       <div className="text-center">
@@ -38,6 +39,14 @@ export function ConnectCalendar({ isConnecting, onConnect }: ConnectCalendarProp
             {isConnecting ? 'Connecting...' : 'Connect Microsoft Outlook'}
           </button>
         </div>
+        {error && (
+          <div
+            role="alert"
+            className="max-w-[300px] mt-4 rounded-[12px] border border-border bg-mist-light/60 px-4 py-3 text-[13px] leading-relaxed text-ink-muted"
+          >
+            {error}
+          </div>
+        )}
       </div>
     </div>
   )

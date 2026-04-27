@@ -60,9 +60,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
     const state = crypto.randomBytes(16).toString('hex')
 
     const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
+    const callbackPromise = this.waitForCallback(state)
     await shell.openExternal(authUrl)
 
-    const result = await this.waitForCallback(state)
+    const result = await callbackPromise
 
     const accountId = crypto.randomUUID()
     const client = new google.auth.OAuth2(CLIENT_ID)

@@ -35,7 +35,7 @@ const WHISPER_WIN_URL = `https://github.com/ggml-org/whisper.cpp/releases/downlo
 const FFMPEG_WIN_URL =
   'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
-const WHISPER_PROBE_RETRY_DELAYS_MS = IS_WIN ? [500, 1_500] : []
+const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
 const HOMEBREW_API_ROOT = 'https://formulae.brew.sh/api/formula'
 const MAC_WHISPER_FORMULA = 'whisper-cpp'
 const MAC_GGML_FORMULA = 'ggml'
@@ -949,7 +949,7 @@ export class WhisperManager extends EventEmitter {
       /whisper_model_load:\s+model size/i.test(combinedOutput) ||
       /main:\s+processing/i.test(combinedOutput)
 
-    if (timedOut && modelLoaded) {
+    if (timedOut && (modelLoaded || !IS_WIN)) {
       return 'slow-validation'
     }
 
