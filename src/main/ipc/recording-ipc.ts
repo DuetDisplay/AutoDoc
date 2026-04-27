@@ -137,6 +137,53 @@ function concatWebmFiles(ffmpegPath: string, listPath: string, outputPath: strin
   })
 }
 
+function concatVideoSegments(
+  ffmpegPath: string,
+  listPath: string,
+  outputPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-fflags',
+      '+genpts',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      listPath,
+      '-map',
+      '0:v:0',
+      '-an',
+      '-c:v',
+      'libvpx-vp9',
+      '-deadline',
+      'good',
+      '-cpu-used',
+      '6',
+      '-row-mt',
+      '1',
+      '-crf',
+      '36',
+      '-b:v',
+      '0',
+      '-y',
+      outputPath
+    ])
+    let stderr = ''
+    proc.on('error', (err) =>
+      reject(new Error(`ffmpeg video concat spawn failed: ${err.message}`))
+    )
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg video concat exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
 async function assembleSegmentedCaptureFile(
   meetingDir: string,
   type: 'video' | 'mic' | 'system',
@@ -173,7 +220,11 @@ async function assembleSegmentedCaptureFile(
   await writeFile(listPath, listFile, 'utf-8')
 
   try {
-    await concatWebmFiles(ffmpegPath, listPath, finalPath)
+    if (type === 'video') {
+      await concatVideoSegments(ffmpegPath, listPath, finalPath)
+    } else {
+      await concatWebmFiles(ffmpegPath, listPath, finalPath)
+    }
     await Promise.all(segmentPaths.map((segmentPath) => unlink(segmentPath).catch(() => {})))
   } finally {
     await unlink(listPath).catch(() => {})

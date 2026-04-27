@@ -45,6 +45,8 @@ interface CaptureHandles {
 let activeCapture: CaptureHandles | null = null
 const RECORDER_STOP_TIMEOUT_MS = 5_000
 const RECOVERY_DEBOUNCE_MS = 750
+const RECOVERY_RETRY_DELAY_MS = 1_500
+const MAX_RECOVERY_ATTEMPTS = 4
 const AUDIO_WATCHDOG_INTERVAL_MS = 5_000
 const AUDIO_WATCHDOG_SILENCE_MS = 20_000
 const AUDIO_WATCHDOG_STARTUP_GRACE_MS = 12_000
@@ -94,6 +96,10 @@ function getAudioContextCtor(): typeof AudioContext | undefined {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function pickSupportedMimeType(candidates: string[]): string | null {
@@ -181,6 +187,36 @@ function createStartedRecorder(
 
 function stopStream(stream: MediaStream): void {
   stream.getTracks().forEach((track) => track.stop())
+}
+
+function streamHasLiveAudio(stream: MediaStream | null): boolean {
+  return Boolean(stream?.getAudioTracks().some((track) => track.readyState === 'live'))
+}
+
+function getCaptureAudioAvailability(capture: Pick<CaptureHandles, 'audioStream' | 'micStream'>): {
+  hasMic: boolean
+  hasSystemAudio: boolean
+} {
+  return {
+    hasMic: streamHasLiveAudio(capture.micStream),
+    hasSystemAudio: streamHasLiveAudio(capture.audioStream)
+  }
+}
+
+function getMissingRecoverySources(
+  expected: { hasMic: boolean, hasSystemAudio: boolean },
+  actual: { hasMic: boolean, hasSystemAudio: boolean }
+): Array<'mic' | 'system'> {
+  const missing: Array<'mic' | 'system'> = []
+
+  if (expected.hasMic && !actual.hasMic) {
+    missing.push('mic')
+  }
+  if (expected.hasSystemAudio && !actual.hasSystemAudio) {
+    missing.push('system')
+  }
+
+  return missing
 }
 
 function createAudioWatchdog(
@@ -692,31 +728,75 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
 
   capture.recoveryPromise = (async () => {
     console.warn(`Capture source changed during recording, attempting recovery (${reason})`)
+    const expectedAudio = getCaptureAudioAvailability(capture)
     await finalizeCapture(capture)
 
     if (activeCapture !== capture || capture.stopping) {
       return
     }
 
-    let replacement: CaptureHandles | null = null
     try {
-      replacement = await createCaptureSegment(
-        capture.sourceId,
-        capture.meetingId,
-        capture.segmentIndex + 1
-      )
-      if (activeCapture !== capture || capture.stopping) {
-        await finalizeCapture(replacement)
-        return
+      for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
+        if (activeCapture !== capture || capture.stopping) {
+          return
+        }
+
+        let replacement: CaptureHandles | null = null
+        try {
+          replacement = await createCaptureSegment(
+            capture.sourceId,
+            capture.meetingId,
+            capture.segmentIndex + 1
+          )
+          const actualAudio = getCaptureAudioAvailability(replacement)
+          const missingSources = getMissingRecoverySources(expectedAudio, actualAudio)
+
+          if (missingSources.length > 0 && attempt < MAX_RECOVERY_ATTEMPTS) {
+            console.warn('Capture recovery is waiting for audio routes to settle', {
+              meetingId: capture.meetingId,
+              attempt,
+              reason,
+              missingSources,
+              expectedAudio,
+              actualAudio
+            })
+            await finalizeCapture(replacement)
+            await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+            continue
+          }
+
+          if (activeCapture !== capture || capture.stopping) {
+            await finalizeCapture(replacement)
+            return
+          }
+
+          activeCapture = replacement
+          console.log('Capture recovered after device change', {
+            meetingId: capture.meetingId,
+            nextSegmentIndex: replacement.segmentIndex,
+            reason,
+            attempt,
+            missingSources
+          })
+          return
+        } catch (err) {
+          const canRetry =
+            attempt < MAX_RECOVERY_ATTEMPTS && activeCapture === capture && !capture.stopping
+
+          if (!canRetry) {
+            console.error('Failed to recover capture after device change:', err)
+            return
+          }
+
+          console.warn('Capture recovery attempt failed, retrying', {
+            meetingId: capture.meetingId,
+            attempt,
+            reason,
+            error: describeError(err)
+          })
+          await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+        }
       }
-      activeCapture = replacement
-      console.log('Capture recovered after device change', {
-        meetingId: capture.meetingId,
-        nextSegmentIndex: replacement.segmentIndex,
-        reason
-      })
-    } catch (err) {
-      console.error('Failed to recover capture after device change:', err)
     } finally {
       capture.recoveryPromise = null
     }
