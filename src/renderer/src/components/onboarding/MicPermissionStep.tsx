@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { recordPersistentDiagnosticAction } from '../../services/diagnostic-trail'
 
 export function MicPermissionStep({
   onNext,
@@ -10,18 +11,40 @@ export function MicPermissionStep({
   const [granted, setGranted] = useState(false)
   const [openedSettings, setOpenedSettings] = useState(false)
 
+  const recordPermissionTrace = useCallback((action: string, details?: Record<string, unknown>) => {
+    recordPersistentDiagnosticAction({
+      category: 'system',
+      action,
+      details: {
+        panel: 'microphone',
+        ...details,
+      }
+    })
+  }, [])
+
   const clearOpenedState = useCallback(async () => {
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'microphone', false)
     setOpenedSettings(false)
-  }, [])
+    recordPermissionTrace('microphone_permission_opened_state_cleared')
+  }, [recordPermissionTrace])
 
   const handleContinue = useCallback(async () => {
+    recordPermissionTrace('microphone_permission_continue_clicked', {
+      granted,
+      openedSettings,
+    })
     await clearOpenedState()
     onNext()
-  }, [clearOpenedState, onNext])
+  }, [clearOpenedState, granted, onNext, openedSettings, recordPermissionTrace])
 
-  const checkPermission = useCallback(async (autoAdvance = false) => {
+  const checkPermission = useCallback(async (autoAdvance = false, reason = 'unspecified') => {
     const perms = await window.electronAPI.invoke('permissions:check')
+    recordPermissionTrace('microphone_permission_check_completed', {
+      autoAdvance,
+      reason,
+      microphoneGranted: perms.microphone,
+      screenGranted: perms.screen,
+    })
     if (perms.microphone) {
       if (autoAdvance) {
         await clearOpenedState()
@@ -32,7 +55,7 @@ export function MicPermissionStep({
       return
     }
     setGranted(false)
-  }, [clearOpenedState, onNext])
+  }, [clearOpenedState, onNext, recordPermissionTrace])
 
   useEffect(() => {
     let cancelled = false
@@ -45,34 +68,71 @@ export function MicPermissionStep({
       if (!cancelled) {
         setOpenedSettings(wasOpened)
       }
-      await checkPermission(allowAutoAdvance)
+      recordPermissionTrace('microphone_permission_step_restored', {
+        allowAutoAdvance,
+        openedSettings: wasOpened,
+      })
+      await checkPermission(allowAutoAdvance, 'restore')
     }
 
     void restoreStepState()
-    const handleFocus = () => checkPermission()
+    const handleFocus = () => {
+      recordPermissionTrace('microphone_permission_window_focused')
+      void checkPermission(false, 'focus')
+    }
     window.addEventListener('focus', handleFocus)
     return () => {
       cancelled = true
       window.removeEventListener('focus', handleFocus)
     }
-  }, [allowAutoAdvance, checkPermission])
+  }, [allowAutoAdvance, checkPermission, recordPermissionTrace])
 
   const handleEnable = async () => {
+    recordPermissionTrace('microphone_permission_enable_clicked', {
+      openedSettings,
+      granted,
+    })
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       stream.getTracks().forEach((t) => t.stop())
-    } catch {
+      recordPermissionTrace('microphone_permission_get_user_media_succeeded')
+    } catch (error) {
+      recordPermissionTrace('microphone_permission_get_user_media_failed', {
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message }
+            : String(error),
+      })
       // We'll fall through to the OS-level permission check below.
     }
 
     const perms = await window.electronAPI.invoke('permissions:check')
+    recordPermissionTrace('microphone_permission_post_get_user_media_check', {
+      microphoneGranted: perms.microphone,
+      screenGranted: perms.screen,
+    })
     if (perms.microphone) {
       setGranted(true)
       await clearOpenedState()
       return
     }
 
+    recordPermissionTrace('microphone_permission_app_request_started')
+    await window.electronAPI.invoke('permissions:request-microphone-access')
+
+    const requestedPerms = await window.electronAPI.invoke('permissions:check')
+    recordPermissionTrace('microphone_permission_post_app_request_check', {
+      microphoneGranted: requestedPerms.microphone,
+      screenGranted: requestedPerms.screen,
+    })
+    if (requestedPerms.microphone) {
+      setGranted(true)
+      await clearOpenedState()
+      return
+    }
+
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'microphone', true)
+    recordPermissionTrace('microphone_permission_settings_fallback_opened')
     await window.electronAPI.invoke('permissions:open-settings', 'microphone')
     setOpenedSettings(true)
   }

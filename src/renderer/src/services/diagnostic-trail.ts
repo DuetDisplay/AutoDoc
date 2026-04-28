@@ -29,6 +29,11 @@ export function recordDiagnosticAction(payload: DiagnosticActionPayload): void {
   void window.electronAPI.invoke('diagnostics:record-action', payload).catch(() => {})
 }
 
+export function recordPersistentDiagnosticAction(payload: DiagnosticActionPayload): void {
+  pushLocalEntry(payload)
+  void window.electronAPI.invoke('diagnostics:record-action', payload).catch(() => {})
+}
+
 export function getRendererDiagnosticTrail(): DiagnosticTrailEntry[] {
   return diagnosticTrail
 }

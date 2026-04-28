@@ -1,4 +1,8 @@
-import type { E2EDetectionState, E2EScenario } from '../../shared/e2e'
+import type {
+  E2EDetectionState,
+  E2EPermissionRequestState,
+  E2EScenario,
+} from '../../shared/e2e'
 import type {
   CalendarAccount,
   CalendarEvent,
@@ -50,6 +54,9 @@ const permissions = {
   microphone: scenario.permissions?.microphone ?? (platform === 'win32'),
   screen: scenario.permissions?.screen ?? (platform === 'win32'),
 }
+const permissionRequestResults = {
+  microphone: scenario.permissionRequests?.microphone,
+}
 const whisperRetryStatuses = [...(scenario.whisper?.retryStatuses ?? [])]
 const ollamaRetryStatuses = [...(scenario.ollama?.retryStatuses ?? [])]
 
@@ -73,9 +80,30 @@ let detectionState: E2EDetectionState = clone({
       .filter((source) => !source.id.startsWith('screen:'))
       .map((source) => ({ id: source.id, name: source.name })),
 })
+let permissionRequestState: E2EPermissionRequestState = {
+  microphoneRequests: 0,
+}
 
 export function getE2EPermissions(): { microphone: boolean; screen: boolean } {
   return { ...permissions }
+}
+
+export function requestE2EMicrophoneAccess(): boolean {
+  permissionRequestState = {
+    ...permissionRequestState,
+    microphoneRequests: permissionRequestState.microphoneRequests + 1,
+  }
+
+  const granted = permissionRequestResults.microphone ?? permissions.microphone
+  if (granted) {
+    permissions.microphone = true
+  }
+
+  return granted
+}
+
+export function getE2EPermissionRequestState(): E2EPermissionRequestState {
+  return clone(permissionRequestState)
 }
 
 export function getE2EPlatform(): NodeJS.Platform {

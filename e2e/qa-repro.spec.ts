@@ -270,12 +270,16 @@ test.describe('QA Linear repro pass', () => {
       const micRequests = await page.evaluate(
         () => (window as typeof window & { __qaMicRequests?: unknown[] }).__qaMicRequests ?? []
       )
+      const permissionRequestState = await page.evaluate(async () => {
+        return await window.electronAPI.invoke('e2e:get-permission-request-state')
+      })
 
       await attachReproNote(testInfo, {
         issue: 'AD-60',
         reproduced: 'not-verifiable',
         evidence: [
           `navigator.mediaDevices.getUserMedia calls: ${JSON.stringify(micRequests)}`,
+          `app-side microphone permission requests: ${permissionRequestState.microphoneRequests}`,
           'AutoDoc moved to the macOS-settings recovery state after the denied request.'
         ],
         limitation:

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, systemPreferences, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { spawn } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import { createRequire } from 'module'
 import { readdirSync, rmSync } from 'fs'
 import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
@@ -70,8 +70,10 @@ import { focusMainWindow, registerMainWindow } from './services/main-window'
 import {
   getE2EDetectionState,
   getE2EOllamaStatus,
+  getE2EPermissionRequestState,
   getE2EPermissions,
   getE2EPlatform,
+  requestE2EMicrophoneAccess,
   setE2EDetectionState,
   setE2EOllamaStatus,
   setE2EWhisperStatus
@@ -89,6 +91,55 @@ const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
+const EXPECTED_APP_ID = 'com.kairos.autodoc'
+
+interface MacBundleMetadata {
+  bundlePath: string | null
+  infoPlistPath: string | null
+  bundleIdentifier: string | null
+  bundleName: string | null
+  bundleDisplayName: string | null
+}
+
+let cachedMacBundleMetadata: MacBundleMetadata | null | undefined
+
+function readMacBundlePlistValue(infoPlistPath: string, key: string): string | null {
+  try {
+    const value = execFileSync('/usr/bin/defaults', ['read', infoPlistPath, key], {
+      encoding: 'utf8',
+    }).trim()
+    return value || null
+  } catch {
+    return null
+  }
+}
+
+function getMacBundleMetadata(): MacBundleMetadata | null {
+  if (process.platform !== 'darwin') return null
+  if (cachedMacBundleMetadata !== undefined) return cachedMacBundleMetadata
+
+  const executablePath = app.getPath('exe')
+  const contentsMarker = '/Contents/MacOS/'
+  const markerIndex = executablePath.indexOf(contentsMarker)
+
+  if (markerIndex === -1) {
+    cachedMacBundleMetadata = null
+    return cachedMacBundleMetadata
+  }
+
+  const bundlePath = executablePath.slice(0, markerIndex)
+  const infoPlistPath = join(bundlePath, 'Contents', 'Info.plist')
+
+  cachedMacBundleMetadata = {
+    bundlePath,
+    infoPlistPath,
+    bundleIdentifier: readMacBundlePlistValue(infoPlistPath, 'CFBundleIdentifier'),
+    bundleName: readMacBundlePlistValue(infoPlistPath, 'CFBundleName'),
+    bundleDisplayName: readMacBundlePlistValue(infoPlistPath, 'CFBundleDisplayName'),
+  }
+
+  return cachedMacBundleMetadata
+}
 
 if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
@@ -331,9 +382,52 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   if (!(await enforceInstalledApplicationPolicy())) return
 
+  const buildPermissionLogContext = (
+    context?: Record<string, unknown>
+  ): Record<string, unknown> => {
+    const macBundleMetadata = getMacBundleMetadata()
+
+    return {
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      appName: app.getName(),
+      appVersion: app.getVersion(),
+      expectedAppId: EXPECTED_APP_ID,
+      executablePath: app.getPath('exe'),
+      appPath: app.getAppPath(),
+      userDataPath: app.getPath('userData'),
+      pid: process.pid,
+      bundlePath: macBundleMetadata?.bundlePath ?? null,
+      infoPlistPath: macBundleMetadata?.infoPlistPath ?? null,
+      bundleIdentifier: macBundleMetadata?.bundleIdentifier ?? null,
+      bundleName: macBundleMetadata?.bundleName ?? null,
+      bundleDisplayName: macBundleMetadata?.bundleDisplayName ?? null,
+      ...context,
+    }
+  }
+
+  const logPermissionEvent = (message: string, context?: Record<string, unknown>): void => {
+    logAutodocEvent({
+      area: 'app',
+      message,
+      context: buildPermissionLogContext(context),
+    })
+  }
+
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
     recordRendererDiagnosticAction(payload)
+
+    if (payload.category === 'system' || payload.category === 'onboarding') {
+      logAutodocEvent({
+        area: 'app',
+        message: `renderer_diagnostic:${payload.action}`,
+        context: buildPermissionLogContext({
+          category: payload.category,
+          details: payload.details ?? null,
+        }),
+      })
+    }
   })
   ipcMain.handle('diagnostics:clear-trail', () => {
     clearDiagnosticTrail()
@@ -408,32 +502,81 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('permissions:check', async () => {
     if (isE2E) {
-      return getE2EPermissions()
+      const permissions = getE2EPermissions()
+      logPermissionEvent('permissions_check_e2e', permissions)
+      return permissions
     }
 
     if (process.platform === 'darwin') {
-      const microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
-      const screen = systemPreferences.getMediaAccessStatus('screen') === 'granted'
+      const microphoneStatus = systemPreferences.getMediaAccessStatus('microphone')
+      const screenStatus = systemPreferences.getMediaAccessStatus('screen')
+      const microphone = microphoneStatus === 'granted'
+      const screen = screenStatus === 'granted'
+      logPermissionEvent('permissions_check_completed', {
+        microphoneStatus,
+        screenStatus,
+        microphoneGranted: microphone,
+        screenGranted: screen,
+      })
       return { screen, microphone }
     }
     // On Windows/Linux, permissions are generally granted by default
+    logPermissionEvent('permissions_check_non_darwin_default_granted')
     return { screen: true, microphone: true }
+  })
+
+  ipcMain.handle('permissions:request-microphone-access', async () => {
+    if (isE2E) {
+      const granted = requestE2EMicrophoneAccess()
+      logPermissionEvent('microphone_access_request_e2e_completed', { granted })
+      return granted
+    }
+
+    if (process.platform === 'darwin') {
+      try {
+        const preRequestStatus = systemPreferences.getMediaAccessStatus('microphone')
+        logPermissionEvent('microphone_access_request_started', { preRequestStatus })
+        const granted = await systemPreferences.askForMediaAccess('microphone')
+        const postRequestStatus = systemPreferences.getMediaAccessStatus('microphone')
+        logPermissionEvent('microphone_access_request_completed', {
+          granted,
+          preRequestStatus,
+          postRequestStatus,
+        })
+        return granted
+      } catch (error) {
+        console.warn('Failed to request macOS microphone access:', error)
+        logAutodocFailure({
+          area: 'app',
+          message: 'microphone_access_request_failed',
+          error,
+          context: buildPermissionLogContext({
+            preRequestStatus: systemPreferences.getMediaAccessStatus('microphone'),
+          }),
+        })
+        return false
+      }
+    }
+
+    logPermissionEvent('microphone_access_request_non_darwin_default_granted')
+    return true
   })
 
   ipcMain.handle('permissions:open-settings', (_event, panel: 'screen' | 'microphone') => {
     if (isE2E) {
+      logPermissionEvent('permissions_open_settings_e2e_skipped', { panel })
       return
     }
 
     if (process.platform === 'darwin') {
+      const url = panel === 'screen'
+        ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+        : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+      logPermissionEvent('permissions_open_settings_requested', { panel, url })
       if (panel === 'screen') {
-        shell.openExternal(
-          'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
-        )
+        shell.openExternal(url)
       } else {
-        shell.openExternal(
-          'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
-        )
+        shell.openExternal(url)
       }
     }
   })
@@ -946,6 +1089,10 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('e2e:get-detection-state', () => {
       return getE2EDetectionState()
+    })
+
+    ipcMain.handle('e2e:get-permission-request-state', () => {
+      return getE2EPermissionRequestState()
     })
 
     ipcMain.handle('e2e:set-detection-state', (_event, state: Partial<E2EDetectionState>) => {

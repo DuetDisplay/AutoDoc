@@ -9,12 +9,36 @@ Recommended commands:
 ```bash
 npm run test:e2e -- e2e/qa-repro.spec.ts -g "AD-65 keeps onboarding moving through speech engine setup failures"
 npm run test:e2e -- e2e/onboarding-journey.spec.ts -g "Whisper"
+npm run test:smoke:mac:microphone
 ```
 
 If Electron launch fails before assertions:
 
 1. Re-run the same command with outside-sandbox / GUI approval enabled.
 2. Verify a minimal Electron app can launch before treating the failure as an AutoDoc regression.
+
+## AD-60 real macOS verification
+
+`npm run test:smoke:mac:microphone` is the host-machine repro for the Tahoe microphone-list bug.
+
+What it does:
+
+- launches a packaged `AutoDoc.app`
+- drives onboarding to `Enable Microphone` with macOS UI scripting
+- clicks the microphone CTA
+- reads the real per-user macOS TCC database for `com.kairos.autodoc`
+
+Why this exists:
+
+- the isolated Playwright/Electron QA spec can prove the app asked for permission
+- only a real macOS host can prove whether TCC actually registered AutoDoc in the microphone privacy state
+
+Useful environment variables:
+
+- `AUTODOC_TCC_APP_BUNDLE=/abs/path/to/AutoDoc.app`
+- `AUTODOC_TCC_RESET=1` to reset microphone permission first
+- `AUTODOC_TCC_RESET_APP_DATA=1` to start with clean onboarding state
+- `AUTODOC_TCC_OPEN_SETTINGS=1` to open `Privacy > Microphone` after the click
 
 ## AD-65 coverage
 

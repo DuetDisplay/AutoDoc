@@ -23,7 +23,7 @@ import type {
   TranscriptionStatusPayload,
   SegmentationStatusPayload
 } from '../shared/types'
-import type { E2EDetectionState } from '../shared/e2e'
+import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -65,6 +65,7 @@ export interface IpcInvokeEvents {
     mode: AutoRecordMode
   ]
   'permissions:check': []
+  'permissions:request-microphone-access': []
   'permissions:open-settings': [panel: 'screen' | 'microphone']
   'recording:list': []
   'recording:get-sources': []
@@ -125,6 +126,7 @@ export interface IpcInvokeEvents {
   'e2e:set-whisper-status': [status: WhisperSetupStatus]
   'e2e:set-ollama-status': [status: OllamaSetupStatus]
   'e2e:get-detection-state': []
+  'e2e:get-permission-request-state': []
   'e2e:set-detection-state': [state: Partial<E2EDetectionState>]
   'e2e:detection-poll': [advanceMs?: number]
   'updater:get-status': []
@@ -147,6 +149,7 @@ export interface IpcInvokeReturns {
   'calendar:sync': CalendarEvent[]
   'calendar:set-auto-record': void
   'permissions:check': { screen: boolean; microphone: boolean }
+  'permissions:request-microphone-access': boolean
   'permissions:open-settings': void
   'recording:list': RecordingEntry[]
   'recording:get-sources': RecordingSource[]
@@ -206,6 +209,7 @@ export interface IpcInvokeReturns {
   'e2e:set-whisper-status': void
   'e2e:set-ollama-status': void
   'e2e:get-detection-state': E2EDetectionState
+  'e2e:get-permission-request-state': E2EPermissionRequestState
   'e2e:set-detection-state': E2EDetectionState
   'e2e:detection-poll': void
   'updater:get-status': UpdateStatus

@@ -17,11 +17,18 @@ export interface E2EDetectionState {
   windowSources: E2EDetectionWindowSource[]
 }
 
+export interface E2EPermissionRequestState {
+  microphoneRequests: number
+}
+
 export interface E2EScenario {
   platform?: 'darwin' | 'win32'
   permissions?: {
     microphone?: boolean
     screen?: boolean
+  }
+  permissionRequests?: {
+    microphone?: boolean
   }
   whisper?: {
     status?: WhisperSetupStatus
