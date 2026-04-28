@@ -81,6 +81,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
     }
 
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', true)
+    await window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)
   }
 

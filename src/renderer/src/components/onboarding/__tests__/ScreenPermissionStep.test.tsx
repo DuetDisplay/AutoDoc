@@ -113,7 +113,7 @@ describe('ScreenPermissionStep', () => {
     })
   })
 
-  it('enters recovery mode without auto-opening settings when screen access is still not granted', async () => {
+  it('falls back to System Settings when desktop capture succeeds but OS screen access is still not granted', async () => {
     const getUserMedia = vi.fn().mockResolvedValue({
       getTracks: () => [{ stop: vi.fn() }],
     })
@@ -142,8 +142,38 @@ describe('ScreenPermissionStep', () => {
         true,
       )
     })
-    expect(window.electronAPI.invoke).not.toHaveBeenCalledWith('permissions:open-settings', 'screen')
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('permissions:open-settings', 'screen')
     expect(screen.getByText('Open Settings again')).toBeInTheDocument()
+  })
+
+  it('opens System Settings when desktop capture fails and screen access is still not granted', async () => {
+    const getUserMedia = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
+
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: false })
+      if (channel === 'recording:get-sources') return Promise.resolve([{ id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' }])
+      if (channel === 'prefs:set-onboarding-permission-settings-opened') return Promise.resolve()
+      if (channel === 'permissions:open-settings') return Promise.resolve()
+      return Promise.resolve({})
+    })
+
+    render(<ScreenPermissionStep onNext={vi.fn()} />)
+
+    await userEvent.click(screen.getByText('Enable Screen Recording'))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'prefs:set-onboarding-permission-settings-opened',
+        'screen',
+        true,
+      )
+    })
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('permissions:open-settings', 'screen')
   })
 
   it('opens System Settings only when the user clicks the recovery link', async () => {
