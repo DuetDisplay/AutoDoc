@@ -31,6 +31,7 @@ interface AutoStopSnapshot {
   sourceType: 'window' | 'screen'
   providerDetected: boolean
   meetingWindowVisible: boolean
+  strongMeetingWindowVisible: boolean
   windowMissingPolls: number
   providerMissingPolls: number
   micSilentPolls: number
@@ -38,7 +39,14 @@ interface AutoStopSnapshot {
 
 interface MeetingWindowObservation {
   visible: boolean
+  strongVisible: boolean
   diagnostics?: Record<string, unknown>
+}
+
+interface MeetingProviderObservation {
+  provider: MeetingProvider | null
+  activeIds: string[]
+  detector: 'mac_helper' | 'windows_helper' | 'unsupported'
 }
 
 interface MeetingProvider {
@@ -182,6 +190,8 @@ export class DetectionService {
   private wasRecording = false
   private loggedFocusSwitchSuppression = false
   private loggedLingeringWindowBlock = false
+  private loggedStrongMeetingProviderGuardBlock = false
+  private loggedStrongMeetingMicIdleGuardBlock = false
   private lastAutoStopSignalLogKey = ''
   private suppressedProviderSignalKey = ''
   private suppressedCalendarEventId: string | null = null
@@ -218,8 +228,8 @@ export class DetectionService {
         this.wasRecording = true
         this.clearAutoRecordPending()
         const windowClosed = await this.isRecordedWindowClosed()
-        const provider = await this.getActiveProvider()
-        const providerDetected = provider !== null
+        const providerObservation = await this.getActiveProvider()
+        const providerDetected = providerObservation.provider !== null
         const meetingWindowObservation =
           await this.getMeetingWindowVisibleForAutoStop(providerDetected)
         const meetingWindowVisible = meetingWindowObservation.visible
@@ -232,13 +242,16 @@ export class DetectionService {
           micActive
         })
 
-        const snapshot = this.getAutoStopSnapshot(providerDetected, meetingWindowVisible)
+        const snapshot = this.getAutoStopSnapshot(providerDetected, meetingWindowObservation)
         this.recognizeAutoStopEdgeCases(snapshot)
         const reason = this.getAutoStopReason(snapshot)
         this.logAutoStopSignalSnapshot(snapshot, reason, {
           windowClosed,
-          providerId: provider?.id ?? null,
-          providerName: provider?.name ?? null,
+          providerId: providerObservation.provider?.id ?? null,
+          providerName: providerObservation.provider?.name ?? null,
+          providerDetector: providerObservation.detector,
+          providerActiveIds: providerObservation.activeIds,
+          micActive,
           ...(meetingWindowObservation.diagnostics ?? {})
         })
         if (reason) {
@@ -259,8 +272,10 @@ export class DetectionService {
       }
 
       const matchingEvent = this.findInProgressEvent()
-      const provider = await this.getActiveProvider()
-      const providerSignalKey = provider ? `${provider.id}:mic` : ''
+      const providerObservation = await this.getActiveProvider()
+      const providerSignalKey = providerObservation.provider
+        ? `${providerObservation.provider.id}:mic`
+        : ''
       if (this.wasRecording) {
         this.suppressCurrentMeetingSignal(providerSignalKey, matchingEvent?.id ?? null)
         this.wasRecording = false
@@ -278,7 +293,7 @@ export class DetectionService {
       }
 
       this.promptedCalendarEventId = null
-      await this.handleAdHocDetection(provider, providerSignalKey)
+      await this.handleAdHocDetection(providerObservation.provider, providerSignalKey)
     } catch (err) {
       logAutodocFailure({
         area: 'detection',
@@ -300,6 +315,8 @@ export class DetectionService {
     this.micSilentPolls = 0
     this.loggedFocusSwitchSuppression = false
     this.loggedLingeringWindowBlock = false
+    this.loggedStrongMeetingProviderGuardBlock = false
+    this.loggedStrongMeetingMicIdleGuardBlock = false
     this.lastAutoStopSignalLogKey = ''
   }
 
@@ -324,12 +341,13 @@ export class DetectionService {
 
   private getAutoStopSnapshot(
     providerDetected: boolean,
-    meetingWindowVisible: boolean
+    meetingWindowObservation: MeetingWindowObservation
   ): AutoStopSnapshot {
     return {
       sourceType: this.getRecordedSourceType(),
       providerDetected,
-      meetingWindowVisible,
+      meetingWindowVisible: meetingWindowObservation.visible,
+      strongMeetingWindowVisible: meetingWindowObservation.strongVisible,
       windowMissingPolls: this.windowMissingPolls,
       providerMissingPolls: this.providerMissingPolls,
       micSilentPolls: this.micSilentPolls
@@ -344,11 +362,19 @@ export class DetectionService {
     const windowGoneStrong =
       snapshot.sourceType === 'window' && this.windowMissingPolls >= WINDOW_MISSING_POLLS_THRESHOLD
     const browserLikeSource = this.isBrowserLikeSource()
+    const blockWeakMacStop =
+      process.platform === 'darwin' &&
+      snapshot.strongMeetingWindowVisible &&
+      snapshot.windowMissingPolls === 0
     const allowWindowClosedStop =
       process.platform !== 'win32' || !snapshot.providerDetected || browserLikeSource
 
     if (allowWindowClosedStop && windowGoneStrong && meetingWindowGoneStrong) {
       return 'window_closed'
+    }
+
+    if (blockWeakMacStop) {
+      return null
     }
 
     if (micIdleStrong && (providerGoneStrong || meetingWindowGoneStrong)) {
@@ -375,6 +401,7 @@ export class DetectionService {
   private recognizeAutoStopEdgeCases(snapshot: AutoStopSnapshot): void {
     const meetingId = this.recordingService.getState().meetingId ?? undefined
     const micIdleStrong = this.micSilentPolls * POLL_INTERVAL_MS >= AUTO_STOP_GRACE_MS
+    const providerGoneStrong = snapshot.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD
 
     if (
       !this.loggedFocusSwitchSuppression &&
@@ -393,8 +420,43 @@ export class DetectionService {
     }
 
     if (
+      !this.loggedStrongMeetingProviderGuardBlock &&
+      process.platform === 'darwin' &&
+      snapshot.strongMeetingWindowVisible &&
+      snapshot.windowMissingPolls === 0 &&
+      providerGoneStrong
+    ) {
+      this.loggedStrongMeetingProviderGuardBlock = true
+      logAutodocEvent({
+        area: 'detection',
+        message:
+          'Auto-stop blocked — tracked meeting window still looks active on macOS despite missing provider signals',
+        meetingId,
+        context: { ...snapshot }
+      })
+    }
+
+    if (
+      !this.loggedStrongMeetingMicIdleGuardBlock &&
+      process.platform === 'darwin' &&
+      snapshot.strongMeetingWindowVisible &&
+      snapshot.windowMissingPolls === 0 &&
+      micIdleStrong
+    ) {
+      this.loggedStrongMeetingMicIdleGuardBlock = true
+      logAutodocEvent({
+        area: 'detection',
+        message:
+          'Auto-stop blocked — tracked meeting window still looks active on macOS despite idle mic/provider signals',
+        meetingId,
+        context: { ...snapshot }
+      })
+    }
+
+    if (
       !this.loggedLingeringWindowBlock &&
       snapshot.sourceType === 'window' &&
+      !snapshot.strongMeetingWindowVisible &&
       !snapshot.providerDetected &&
       snapshot.providerMissingPolls >= PROVIDER_MISSING_POLLS_THRESHOLD &&
       snapshot.meetingWindowVisible &&
@@ -546,6 +608,7 @@ export class DetectionService {
           ) {
             return {
               visible: false,
+              strongVisible: false,
               diagnostics: {
                 trackedSourceId,
                 trackedSourceName,
@@ -562,6 +625,7 @@ export class DetectionService {
 
           return {
             visible: true,
+            strongVisible: true,
             diagnostics: {
               trackedSourceId,
               trackedSourceName,
@@ -582,6 +646,7 @@ export class DetectionService {
         const trackedSource = sources.find((source) => normalize(source.name) === normalizedTrackedName)
         return {
           visible: Boolean(trackedSource),
+          strongVisible: Boolean(trackedSource),
           diagnostics: {
             trackedSourceId,
             trackedSourceName,
@@ -598,6 +663,7 @@ export class DetectionService {
 
       return {
         visible: false,
+        strongVisible: false,
         diagnostics: {
           trackedSourceId,
           trackedSourceName,
@@ -623,6 +689,7 @@ export class DetectionService {
       })
       return {
         visible: sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))),
+        strongVisible: false,
         diagnostics: {
           trackedSourceId: null,
           trackedSourceName: null,
@@ -638,6 +705,7 @@ export class DetectionService {
     } catch {
       return {
         visible: true,
+        strongVisible: false,
         diagnostics: {
           trackedSourceId: null,
           trackedSourceName: null,
@@ -665,9 +733,10 @@ export class DetectionService {
     reason: AutoStopReason | null,
     diagnostics: Record<string, unknown>
   ): void {
-    if (process.platform !== 'win32') return
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return
 
     const key = JSON.stringify({
+      platform: process.platform,
       reason,
       ...snapshot,
       trackedWindowMatchedBy: diagnostics.trackedWindowMatchedBy ?? null,
@@ -675,6 +744,9 @@ export class DetectionService {
       matchedTrackedSourceId: diagnostics.matchedTrackedSourceId ?? null,
       matchedTrackedSourceName: diagnostics.matchedTrackedSourceName ?? null,
       providerId: diagnostics.providerId ?? null,
+      providerDetector: diagnostics.providerDetector ?? null,
+      providerActiveIds: diagnostics.providerActiveIds ?? null,
+      micActive: diagnostics.micActive ?? null,
       windowClosed: diagnostics.windowClosed ?? null
     })
 
@@ -685,7 +757,10 @@ export class DetectionService {
     this.lastAutoStopSignalLogKey = key
     logAutodocEvent({
       area: 'detection',
-      message: 'Windows auto-stop signal snapshot',
+      message:
+        process.platform === 'darwin'
+          ? 'macOS auto-stop signal snapshot'
+          : 'Windows auto-stop signal snapshot',
       meetingId: this.recordingService.getState().meetingId ?? undefined,
       level: reason ? 'warn' : 'info',
       context: {
@@ -773,25 +848,37 @@ export class DetectionService {
     this.showPrompt(provider.name, provider.id)
   }
 
-  private async getActiveProvider(): Promise<MeetingProvider | null> {
+  private async getActiveProvider(): Promise<MeetingProviderObservation> {
     if (process.platform === 'darwin') {
       const activeIds = await getActiveCaptureProcessIdsMac()
-      return matchProviderFromIds(activeIds)
+      return {
+        provider: matchProviderFromIds(activeIds),
+        activeIds,
+        detector: 'mac_helper'
+      }
     }
 
     if (process.platform === 'win32') {
       const activeIds = await getActiveCaptureProcessIdsWindows()
-      return matchProviderFromIds(activeIds)
+      return {
+        provider: matchProviderFromIds(activeIds),
+        activeIds,
+        detector: 'windows_helper'
+      }
     }
 
-    return null
+    return {
+      provider: null,
+      activeIds: [],
+      detector: 'unsupported'
+    }
   }
 
-  private isMicInUseMac(): Promise<boolean> {
+  private isMicInUseMac(): Promise<boolean | null> {
     return new Promise((resolve) => {
       execFile('pmset', ['-g', 'assertions'], { timeout: 2_000 }, (err, stdout) => {
         if (err) {
-          resolve(false)
+          resolve(null)
           return
         }
         resolve(stdout.includes('audio-in'))

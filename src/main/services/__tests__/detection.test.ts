@@ -701,6 +701,92 @@ describe('DetectionService', () => {
     expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
   })
 
+  it('does not auto-stop on macOS when the tracked Slack huddle window still looks active but provider and mic signals disappear', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, '', '')
+    })
+    mocks.getSources.mockImplementation(
+      async () =>
+        [{ id: 'window:1', name: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack' }] as any
+    )
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          meetingId: 'meeting-guarded',
+          sourceId: 'window:1',
+          sourceName: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 12; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'detection',
+        meetingId: 'meeting-guarded',
+        message:
+          'Auto-stop blocked — tracked meeting window still looks active on macOS despite idle mic/provider signals'
+      })
+    )
+  })
+
+  it('still auto-stops on macOS when a tracked Slack huddle window downgrades back to generic Slack after the provider disappears', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, '', '')
+    })
+    mocks.getSources.mockImplementation(async () => [{ id: 'window:1', name: 'Slack' }] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'window:1',
+          sourceName: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack',
+          trackedMeetingSourceId: 'window:1',
+          trackedMeetingSourceName: 'Huddle: #all-autodoctest2 - AutodocTest2 - Slack',
+          trackedMeetingProviderId: 'slack'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 5; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-stop',
+      expect.objectContaining({
+        reason: 'provider_gone',
+        sourceType: 'window',
+        providerDetected: false,
+        meetingWindowVisible: false
+      })
+    )
+  })
+
   it('currently auto-stops on macOS when the captured meeting window disappears even if provider activity and mic activity continue', async () => {
     setPlatform('darwin')
 
