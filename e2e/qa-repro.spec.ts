@@ -175,31 +175,72 @@ test.describe('QA Linear repro pass', () => {
   })
 
   test('AD-59 checks whether onboarding Back returns to the previous persisted step', async ({}, testInfo) => {
-    const { app, page } = await launchQaApp()
+    const evidence: string[] = []
+    let reproduced = false
 
     try {
-      await advanceFeatureSteps(page)
-      await expect(page.getByRole('heading', { name: 'Microphone Access' })).toBeVisible()
+      const standardFlow = await launchQaApp()
 
-      const firstBackHeading = await clickBack(page)
-      const secondBackHeading = await clickBack(page)
-      await page.reload()
-      await expect(page.getByRole('heading', { name: 'How It Works' })).toBeVisible()
+      try {
+        await advanceFeatureSteps(standardFlow.page)
+        await expect(
+          standardFlow.page.getByRole('heading', { name: 'Microphone Access' })
+        ).toBeVisible()
 
-      const reproduced =
-        firstBackHeading !== 'Notes That Think' || secondBackHeading !== 'How It Works'
+        const firstBackHeading = await clickBack(standardFlow.page)
+        const secondBackHeading = await clickBack(standardFlow.page)
+        await standardFlow.page.reload()
+        await expect(
+          standardFlow.page.getByRole('heading', { name: 'How It Works' })
+        ).toBeVisible()
+
+        reproduced ||= firstBackHeading !== 'Notes That Think' || secondBackHeading !== 'How It Works'
+        evidence.push(`feature flow after first Back: ${firstBackHeading}`)
+        evidence.push(`feature flow after second Back: ${secondBackHeading}`)
+        evidence.push('feature flow after reload: How It Works')
+      } finally {
+        await standardFlow.app.cleanup()
+      }
+
+      const grantedPermissionsFlow = await launchQaApp({
+        permissions: {
+          microphone: true,
+          screen: true
+        }
+      })
+
+      try {
+        await advanceFeatureSteps(grantedPermissionsFlow.page)
+        await expect(
+          grantedPermissionsFlow.page.getByRole('heading', { name: 'Connect Calendar' })
+        ).toBeVisible()
+
+        const calendarBackHeading = await clickBack(grantedPermissionsFlow.page)
+        const permissionsBackHeading = await clickBack(grantedPermissionsFlow.page)
+
+        reproduced ||= calendarBackHeading !== 'Screen Recording'
+        reproduced ||= permissionsBackHeading !== 'Microphone Access'
+        evidence.push(`calendar flow after first Back: ${calendarBackHeading}`)
+        evidence.push(`calendar flow after second Back: ${permissionsBackHeading}`)
+      } finally {
+        await grantedPermissionsFlow.app.cleanup()
+      }
 
       await attachReproNote(testInfo, {
         issue: 'AD-59',
         reproduced,
-        evidence: [
-          `after first Back: ${firstBackHeading}`,
-          `after second Back: ${secondBackHeading}`,
-          'after reload: How It Works'
-        ]
+        evidence
       })
-    } finally {
-      await app.cleanup()
+
+      expect(reproduced, evidence.join('\n')).toBe(false)
+    } catch (error) {
+      await attachReproNote(testInfo, {
+        issue: 'AD-59',
+        reproduced: 'not-verifiable',
+        evidence,
+        limitation: error instanceof Error ? error.message : String(error)
+      })
+      throw error
     }
   })
 

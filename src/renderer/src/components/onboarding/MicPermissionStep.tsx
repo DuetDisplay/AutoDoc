@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function MicPermissionStep({ onNext }: { onNext: () => void }) {
+export function MicPermissionStep({
+  onNext,
+  allowAutoAdvance = true
+}: {
+  onNext: () => void
+  allowAutoAdvance?: boolean
+}) {
   const [granted, setGranted] = useState(false)
   const [openedSettings, setOpenedSettings] = useState(false)
 
@@ -39,7 +45,7 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       if (!cancelled) {
         setOpenedSettings(wasOpened)
       }
-      await checkPermission(true)
+      await checkPermission(allowAutoAdvance)
     }
 
     void restoreStepState()
@@ -49,7 +55,7 @@ export function MicPermissionStep({ onNext }: { onNext: () => void }) {
       cancelled = true
       window.removeEventListener('focus', handleFocus)
     }
-  }, [checkPermission])
+  }, [allowAutoAdvance, checkPermission])
 
   const handleEnable = async () => {
     try {

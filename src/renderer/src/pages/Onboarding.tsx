@@ -14,6 +14,7 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 7, 8, 9, 10] as const
+type NavigationMode = 'restore' | 'forward' | 'back'
 
 function getVisibleStepOrder(platform: string | null): readonly number[] {
   return platform === 'win32' ? WINDOWS_STEP_ORDER : DARWIN_STEP_ORDER
@@ -22,6 +23,7 @@ function getVisibleStepOrder(platform: string | null): readonly number[] {
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
+  const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
@@ -52,6 +54,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   }, [])
 
   const next = useCallback(() => {
+    setNavigationMode('forward')
     setStepIndex((currentIndex) => {
       const current = currentIndex ?? 0
       recordDiagnosticAction({
@@ -68,6 +71,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   }, [stepOrder])
 
   const back = useCallback(() => {
+    setNavigationMode('back')
     setStepIndex((currentIndex) => {
       const current = currentIndex ?? 0
       const previousIndex = Math.max(0, current - 1)
@@ -85,6 +89,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
     setAnalyticsConsent(consented)
+    setNavigationMode('forward')
     setStepIndex((currentIndex) => {
       const nextIndex = Math.min((currentIndex ?? 0) + 1, stepOrder.length - 1)
       const nextStep = stepOrder[nextIndex] ?? stepOrder[stepOrder.length - 1]
@@ -175,9 +180,11 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           />
         )
       case 4:
-        return <MicPermissionStep onNext={next} />
+        return <MicPermissionStep onNext={next} allowAutoAdvance={navigationMode === 'forward'} />
       case 5:
-        return <ScreenPermissionStep onNext={next} />
+        return (
+          <ScreenPermissionStep onNext={next} allowAutoAdvance={navigationMode === 'forward'} />
+        )
       case 6:
         return <CalendarStep onNext={next} />
       case 7:
@@ -199,7 +206,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     <div className="h-screen bg-bg-primary relative overflow-y-auto">
       {/* macOS drag region */}
       <div
-        className="fixed top-0 left-0 right-0 h-[52px]"
+        className="fixed top-0 left-24 right-24 h-5"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
@@ -214,7 +221,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         <button
           type="button"
           onClick={back}
-          className="fixed top-6 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
+          className="fixed top-12 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           ← Back
         </button>

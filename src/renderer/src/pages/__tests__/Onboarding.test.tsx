@@ -65,6 +65,46 @@ describe('Onboarding', () => {
     expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 0)
   })
 
+  it('does not auto-skip a granted permission step when navigating back from calendar', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(6)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(args[0])
+      if (channel === 'calendar:get-accounts') return Promise.resolve([])
+      if (channel === 'permissions:check')
+        return Promise.resolve({ microphone: true, screen: true })
+      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /back/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Screen Recording' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^continue/i })).toBeInTheDocument()
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 5)
+  })
+
+  it('does not auto-skip a granted permission step when resuming saved progress', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(5)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'permissions:check')
+        return Promise.resolve({ microphone: true, screen: true })
+      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: 'Screen Recording' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^continue/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Connect Calendar' })).not.toBeInTheDocument()
+  })
+
   it('renders step dots', async () => {
     render(<Onboarding onComplete={vi.fn()} />)
     await screen.findByText(/your meetings talk/i)

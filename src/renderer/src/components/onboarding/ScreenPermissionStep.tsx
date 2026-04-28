@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
+export function ScreenPermissionStep({
+  onNext,
+  allowAutoAdvance = true
+}: {
+  onNext: () => void
+  allowAutoAdvance?: boolean
+}) {
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
 
@@ -39,7 +45,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       if (!cancelled) {
         setOpened(wasOpened)
       }
-      await checkPermission(true)
+      await checkPermission(allowAutoAdvance)
     }
 
     void restoreStepState()
@@ -49,7 +55,7 @@ export function ScreenPermissionStep({ onNext }: { onNext: () => void }) {
       cancelled = true
       window.removeEventListener('focus', handleFocus)
     }
-  }, [checkPermission])
+  }, [allowAutoAdvance, checkPermission])
 
   const handleEnable = async () => {
     try {
