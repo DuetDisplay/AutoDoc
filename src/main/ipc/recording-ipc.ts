@@ -10,6 +10,7 @@ import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
+import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
@@ -353,6 +354,22 @@ export function registerRecordingIpc(
     metadata: MeetingMetadata
   ): Promise<void> {
     await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
+  }
+
+  async function getDeletionDiagnostics(meetingId: string): Promise<Record<string, unknown>> {
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const diagnostics = await getStorageDiagnostics({
+      meetingDir,
+      whisperBinaryPath: whisperManager.getWhisperPath(),
+      ffmpegPath: whisperManager.getFfmpegPath(),
+      whisperModelPath: whisperManager.getModelPath(),
+    })
+
+    return {
+      recordingsBaseDir: baseDir,
+      ...diagnostics,
+    }
   }
 
   async function clearWindowsFinalizingState(
@@ -1127,7 +1144,19 @@ export function registerRecordingIpc(
     const meetingDir = join(baseDir, meetingId)
     const dirStat = await stat(meetingDir).catch(() => null)
     if (!dirStat?.isDirectory()) return
+    logAutodocEvent({
+      area: 'recording',
+      message: 'recording:delete requested',
+      meetingId,
+      context: await getDeletionDiagnostics(meetingId),
+    })
     await rm(meetingDir, { recursive: true, force: true })
+    logAutodocEvent({
+      area: 'recording',
+      message: 'recording:delete completed',
+      meetingId,
+      context: await getDeletionDiagnostics(meetingId),
+    })
   })
 
   return { stopActiveRecording }

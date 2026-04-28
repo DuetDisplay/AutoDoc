@@ -32,7 +32,7 @@ import { PrefsStore, readInitialAnalyticsConsent } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import { logAutodocFailure } from './services/autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './services/autodoc-log'
 import type {
   AppRuntimeInfo,
   AppStorageInfo,
@@ -76,7 +76,11 @@ import {
   setE2EOllamaStatus,
   setE2EWhisperStatus
 } from './services/e2e-fixtures'
-import { clearDownloadedComponents, getAppStorageInfo } from './services/storage-manager'
+import {
+  clearDownloadedComponents,
+  getAppStorageInfo,
+  getStorageDiagnostics,
+} from './services/storage-manager'
 import { getResetLocalDataTargets } from './services/reset-local-data'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
@@ -666,9 +670,31 @@ app.whenReady().then(async () => {
     return await getAppStorageInfo()
   })
   ipcMain.handle('app:clear-downloaded-components', async (): Promise<AppStorageInfo> => {
+    logAutodocEvent({
+      area: 'app',
+      message: 'app:clear-downloaded-components requested',
+      context: {
+        diagnostics: await getStorageDiagnostics({
+          whisperBinaryPath: whisperManager.getWhisperPath(),
+          ffmpegPath: whisperManager.getFfmpegPath(),
+          whisperModelPath: whisperManager.getModelPath(),
+        }),
+      },
+    })
     managedOllamaManager.stop()
     managedOllamaManager.resetReady()
     await clearDownloadedComponents()
+    logAutodocEvent({
+      area: 'app',
+      message: 'app:clear-downloaded-components completed',
+      context: {
+        diagnostics: await getStorageDiagnostics({
+          whisperBinaryPath: whisperManager.getWhisperPath(),
+          ffmpegPath: whisperManager.getFfmpegPath(),
+          whisperModelPath: whisperManager.getModelPath(),
+        }),
+      },
+    })
     return await getAppStorageInfo()
   })
   ipcMain.handle('app:reset-local-data', (): void => {
@@ -678,6 +704,23 @@ app.whenReady().then(async () => {
 
     managedOllamaManager.stop()
     managedOllamaManager.resetReady()
+
+    void getStorageDiagnostics({
+      whisperBinaryPath: whisperManager.getWhisperPath(),
+      ffmpegPath: whisperManager.getFfmpegPath(),
+      whisperModelPath: whisperManager.getModelPath(),
+    }).then((diagnostics) => {
+      logAutodocEvent({
+        area: 'app',
+        message: 'app:reset-local-data requested',
+        context: {
+          diagnostics,
+          testUserDataDir: testUserDataDir ?? null,
+          isE2E,
+          isRealSetupTest,
+        },
+      })
+    }).catch(() => {})
 
     if (process.platform === 'win32' && isE2E && testUserDataDir) {
       const userDataPath = app.getPath('userData')
@@ -1138,6 +1181,15 @@ async function migrateDataDir(): Promise<void> {
 
   const newBase = app.getPath('userData')
   const subdirs = ['recordings', 'models', 'ollama-data']
+  logAutodocEvent({
+    area: 'app',
+    message: 'legacy data migration started',
+    context: {
+      legacyBase,
+      newBase,
+      subdirs,
+    },
+  })
 
   for (const subdir of subdirs) {
     const src = join(legacyBase, subdir)
@@ -1147,27 +1199,61 @@ async function migrateDataDir(): Promise<void> {
     } catch {
       continue // Subdir doesn't exist in legacy location
     }
+    logAutodocEvent({
+      area: 'app',
+      message: 'legacy data migration inspecting subdir',
+      context: {
+        subdir,
+        src,
+        dest,
+      },
+    })
     try {
       await access(dest)
       // Dest already exists — merge by moving individual entries
       const entries = await readdir(src)
+      const movedEntries: string[] = []
+      const skippedEntries: string[] = []
       for (const entry of entries) {
         const entrySrc = join(src, entry)
         const entryDest = join(dest, entry)
         try {
           await access(entryDest)
           // Already exists at dest, skip
+          skippedEntries.push(entry)
         } catch {
           await rename(entrySrc, entryDest)
+          movedEntries.push(entry)
         }
       }
       // Remove legacy subdir if now empty
       const remaining = await readdir(src)
       if (remaining.length === 0) await rmdir(src)
+      logAutodocEvent({
+        area: 'app',
+        message: 'legacy data migration merged subdir entries',
+        context: {
+          subdir,
+          src,
+          dest,
+          movedEntries,
+          skippedEntries,
+          remainingEntries: remaining,
+        },
+      })
     } catch {
       // Dest doesn't exist — simple rename
       await mkdir(newBase, { recursive: true })
       await rename(src, dest)
+      logAutodocEvent({
+        area: 'app',
+        message: 'legacy data migration moved whole subdir',
+        context: {
+          subdir,
+          src,
+          dest,
+        },
+      })
     }
   }
 

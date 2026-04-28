@@ -6,12 +6,18 @@ import { expect, type Page, _electron as electron } from '@playwright/test'
 import type { E2EDetectionState, E2EScenario } from '../../src/shared/e2e'
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../src/shared/types'
 
+function resolveMainEntry(appRoot: string): string {
+  return path.join(appRoot, 'out', 'main', 'index.js')
+}
+
 async function launchApp(options: {
+  appRoot?: string
   scenario?: E2EScenario
   userDataDir?: string
   realSetup?: boolean
 }) {
-  const mainEntry = path.join(process.cwd(), 'out', 'main', 'index.js')
+  const appRoot = options.appRoot ?? process.cwd()
+  const mainEntry = resolveMainEntry(appRoot)
   expect(existsSync(mainEntry)).toBeTruthy()
 
   return electron.launch({
@@ -28,6 +34,10 @@ async function launchApp(options: {
 
 export async function launchE2EApp(scenario?: E2EScenario) {
   return await launchApp({ scenario })
+}
+
+export async function launchExternalE2EApp(appRoot: string, scenario?: E2EScenario) {
+  return await launchApp({ appRoot, scenario })
 }
 
 function killProcessesForUserDataDir(userDataDir: string): void {
@@ -77,6 +87,27 @@ function killProcessesForUserDataDir(userDataDir: string): void {
 export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
   const electronApp = await launchApp({ scenario, userDataDir })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        killProcessesForUserDataDir(userDataDir)
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
+    },
+  }
+}
+
+export async function launchIsolatedExternalE2EApp(
+  appRoot: string,
+  scenario?: E2EScenario,
+) {
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
+  const electronApp = await launchApp({ appRoot, scenario, userDataDir })
 
   return {
     electronApp,

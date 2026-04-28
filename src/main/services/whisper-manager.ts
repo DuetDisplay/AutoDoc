@@ -21,6 +21,7 @@ import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { getInstalledModelsDir } from './dev-runtime-paths'
+import { getStorageDiagnostics } from './storage-manager'
 import {
   canUseSystemRuntimeFallback,
   canUseSystemWhisperFallback,
@@ -165,17 +166,40 @@ export class WhisperManager extends EventEmitter {
 
       await this.adoptInstalledAssetsIfAvailable()
 
-      if (!(await this.fileExists(this.getWhisperPath()))) {
+      const [hasWhisperBinary, hasFfmpegBinary, hasModelFile] = await Promise.all([
+        this.fileExists(this.getWhisperPath()),
+        this.fileExists(this.getFfmpegPath()),
+        this.fileExists(this.getModelPath()),
+      ])
+
+      if (!hasWhisperBinary || !hasFfmpegBinary || !hasModelFile) {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Whisper managed asset check detected missing files before setup',
+          context: {
+            hasWhisperBinary,
+            hasFfmpegBinary,
+            hasModelFile,
+            diagnostics: await getStorageDiagnostics({
+              whisperBinaryPath: this.getWhisperPath(),
+              ffmpegPath: this.getFfmpegPath(),
+              whisperModelPath: this.getModelPath(),
+            }),
+          },
+        })
+      }
+
+      if (!hasWhisperBinary) {
         this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveWhisper()
       }
-      if (!(await this.fileExists(this.getFfmpegPath()))) {
+      if (!hasFfmpegBinary) {
         this.setupStatus = { phase: 'downloading-ffmpeg', percent: 0 }
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveFfmpeg()
       }
-      if (!(await this.fileExists(this.getModelPath()))) {
+      if (!hasModelFile) {
         this.setupStatus = { phase: 'downloading-model', percent: 0 }
         this.emit('setup-status', this.getSetupStatus())
         await this.downloadWithRetry(() => this.downloadModel(), 'model')
@@ -222,6 +246,17 @@ export class WhisperManager extends EventEmitter {
     this.setupStatus = { phase: 'downloading-model', percent: 0 }
     this.emit('setup-status', this.getSetupStatus())
 
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Whisper probe validation failed; removing managed model before redownload',
+      context: {
+        diagnostics: await getStorageDiagnostics({
+          whisperModelPath: this.getModelPath(),
+          whisperBinaryPath: this.getWhisperPath(),
+          ffmpegPath: this.getFfmpegPath(),
+        }),
+      },
+    })
     await rm(this.getModelPath(), { force: true })
     await this.downloadWithRetry(() => this.downloadModel(), 'model')
   }

@@ -69,4 +69,44 @@ describe('storage-manager', () => {
     await expect(fsp.access(path.join(tempDir, 'ollama-data'))).rejects.toThrow()
     await expect(fsp.access(path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'))).resolves.toBeUndefined()
   })
+
+  it('captures path diagnostics for recordings, managed downloads, and extra paths', async () => {
+    await fsp.mkdir(path.join(tempDir, 'models'), { recursive: true })
+    await fsp.mkdir(path.join(tempDir, 'recordings', 'meeting-2'), { recursive: true })
+    await fsp.writeFile(path.join(tempDir, 'models', 'ggml-large-v3.bin'), Buffer.alloc(10))
+    await fsp.writeFile(path.join(tempDir, 'recordings', 'meeting-2', 'audio.webm'), Buffer.alloc(30))
+
+    const { getStorageDiagnostics } = await freshImport()
+    const diagnostics = await getStorageDiagnostics({
+      meetingDir: path.join(tempDir, 'recordings', 'meeting-2'),
+      whisperModelPath: path.join(tempDir, 'models', 'ggml-large-v3.bin'),
+      missingPath: path.join(tempDir, 'models', 'missing.bin'),
+    })
+
+    expect(diagnostics.recordings).toMatchObject({
+      kind: 'directory',
+      entryCount: 1,
+      entriesSample: ['meeting-2'],
+    })
+    expect(diagnostics.managedDownloads.models).toMatchObject({
+      kind: 'directory',
+      entryCount: 1,
+      entriesSample: ['ggml-large-v3.bin'],
+    })
+    expect(diagnostics.managedDownloads.ollamaData).toMatchObject({
+      kind: 'missing',
+    })
+    expect(diagnostics.extraPaths?.meetingDir).toMatchObject({
+      kind: 'directory',
+      entryCount: 1,
+      entriesSample: ['audio.webm'],
+    })
+    expect(diagnostics.extraPaths?.whisperModelPath).toMatchObject({
+      kind: 'file',
+      sizeBytes: 10,
+    })
+    expect(diagnostics.extraPaths?.missingPath).toMatchObject({
+      kind: 'missing',
+    })
+  })
 })
