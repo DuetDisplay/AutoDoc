@@ -1,4 +1,4 @@
-import type { E2EScenario } from '../../shared/e2e'
+import type { E2EDetectionState, E2EScenario } from '../../shared/e2e'
 import type {
   CalendarAccount,
   CalendarEvent,
@@ -64,6 +64,15 @@ const calendarEvents: CalendarEvent[] = clone(scenario.calendar?.events ?? [])
 const recordingSources: RecordingSource[] = clone(
   scenario.recording?.sources ?? DEFAULT_RECORDING_SOURCES,
 )
+let detectionState: E2EDetectionState = clone({
+  providerActiveIds: scenario.detection?.providerActiveIds ?? [],
+  micActive: scenario.detection?.micActive ?? null,
+  windowSources:
+    scenario.detection?.windowSources ??
+    recordingSources
+      .filter((source) => !source.id.startsWith('screen:'))
+      .map((source) => ({ id: source.id, name: source.name })),
+})
 
 export function getE2EPermissions(): { microphone: boolean; screen: boolean } {
   return { ...permissions }
@@ -138,4 +147,16 @@ export function getE2ECalendarEvents(): CalendarEvent[] {
 
 export function getE2ERecordingSources(): RecordingSource[] {
   return clone(recordingSources)
+}
+
+export function getE2EDetectionState(): E2EDetectionState {
+  return clone(detectionState)
+}
+
+export function setE2EDetectionState(nextState: Partial<E2EDetectionState>): E2EDetectionState {
+  detectionState = clone({
+    ...detectionState,
+    ...nextState,
+  })
+  return getE2EDetectionState()
 }

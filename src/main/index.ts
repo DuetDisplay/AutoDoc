@@ -41,6 +41,7 @@ import type {
   DiarizationSetupStatus,
   RecordingMediaPlayerErrorReport
 } from '../shared/types'
+import type { E2EDetectionState } from '../shared/e2e'
 import {
   initAutoUpdater,
   getUpdateStatus,
@@ -67,9 +68,11 @@ import {
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 import {
+  getE2EDetectionState,
   getE2EOllamaStatus,
   getE2EPermissions,
   getE2EPlatform,
+  setE2EDetectionState,
   setE2EOllamaStatus,
   setE2EWhisperStatus
 } from './services/e2e-fixtures'
@@ -896,6 +899,18 @@ app.whenReady().then(async () => {
       ollamaSetupState.error = nextStatus.error
       ollamaSetupState.failedStep = nextStatus.failedStep
       broadcastOllamaStatus()
+    })
+
+    ipcMain.handle('e2e:get-detection-state', () => {
+      return getE2EDetectionState()
+    })
+
+    ipcMain.handle('e2e:set-detection-state', (_event, state: Partial<E2EDetectionState>) => {
+      return setE2EDetectionState(state)
+    })
+
+    ipcMain.handle('e2e:detection-poll', async (_event, advanceMs?: number) => {
+      await detectionService.debugPollNow(advanceMs ?? 0)
     })
   }
 

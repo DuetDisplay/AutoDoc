@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
 import { expect, type Page, _electron as electron } from '@playwright/test'
-import type { E2EScenario } from '../../src/shared/e2e'
+import type { E2EDetectionState, E2EScenario } from '../../src/shared/e2e'
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../src/shared/types'
 
 async function launchApp(options: {
@@ -135,6 +135,153 @@ export async function setOllamaStatus(page: Page, status: OllamaSetupStatus): Pr
   await page.evaluate(async (nextStatus) => {
     await window.electronAPI.invoke('e2e:set-ollama-status', nextStatus)
   }, status)
+}
+
+export async function getDetectionState(page: Page): Promise<E2EDetectionState> {
+  return await page.evaluate(async () => {
+    return await window.electronAPI.invoke('e2e:get-detection-state')
+  })
+}
+
+export async function setDetectionState(
+  page: Page,
+  state: Partial<E2EDetectionState>
+): Promise<E2EDetectionState> {
+  return await page.evaluate(async (nextState) => {
+    return await window.electronAPI.invoke('e2e:set-detection-state', nextState)
+  }, state)
+}
+
+export async function pollDetection(page: Page, advanceMs = 0): Promise<void> {
+  await page.evaluate(async (nextAdvanceMs) => {
+    await window.electronAPI.invoke('e2e:detection-poll', nextAdvanceMs)
+  }, advanceMs)
+}
+
+export async function installFakeCaptureDevices(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const qaWindow = window as typeof window & {
+      __qaCaptureRequests: unknown[]
+      __qaSwitchDefaultMic: () => void
+      __qaAudioContexts: AudioContext[]
+    }
+    qaWindow.__qaCaptureRequests = []
+    qaWindow.__qaAudioContexts = []
+
+    let micVersion = 1
+    const listeners = new Set<EventListenerOrEventListenerObject>()
+
+    const makeVideoStream = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 160
+      canvas.height = 90
+      const context = canvas.getContext('2d')
+      context!.fillStyle = '#4A6B4E'
+      context!.fillRect(0, 0, canvas.width, canvas.height)
+      context!.fillStyle = '#ffffff'
+      context!.fillRect(16, 16, 48, 24)
+      return canvas.captureStream(5)
+    }
+
+    const makeAudioStream = () => {
+      const AudioContextCtor = window.AudioContext ?? window.webkitAudioContext
+      const audioContext = new AudioContextCtor()
+      qaWindow.__qaAudioContexts.push(audioContext)
+      const oscillator = audioContext.createOscillator()
+      oscillator.frequency.value = 440
+      const destination = audioContext.createMediaStreamDestination()
+      oscillator.connect(destination)
+      oscillator.start()
+      void audioContext.resume().catch(() => {})
+      return destination.stream
+    }
+
+    const mediaDevices = navigator.mediaDevices ?? ({} as MediaDevices)
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: mediaDevices
+    })
+
+    mediaDevices.getUserMedia = async (constraints) => {
+      qaWindow.__qaCaptureRequests.push(constraints)
+      const wantsVideo = Boolean((constraints as MediaStreamConstraints).video)
+      const wantsAudio = Boolean((constraints as MediaStreamConstraints).audio)
+      const tracks: MediaStreamTrack[] = []
+
+      if (wantsVideo) {
+        tracks.push(...makeVideoStream().getVideoTracks())
+      }
+      if (wantsAudio) {
+        tracks.push(...makeAudioStream().getAudioTracks())
+      }
+
+      return new MediaStream(tracks)
+    }
+    mediaDevices.enumerateDevices = async () =>
+      [
+        {
+          kind: 'audioinput',
+          deviceId: 'default',
+          groupId: `mic-${micVersion}`,
+          label: `Default Microphone ${micVersion}`
+        },
+        {
+          kind: 'audiooutput',
+          deviceId: 'default',
+          groupId: 'speaker-1',
+          label: 'Default Speaker'
+        }
+      ] as MediaDeviceInfo[]
+    mediaDevices.addEventListener = (_type, listener) => {
+      listeners.add(listener)
+    }
+    mediaDevices.removeEventListener = (_type, listener) => {
+      listeners.delete(listener)
+    }
+
+    qaWindow.__qaSwitchDefaultMic = () => {
+      micVersion += 1
+      const event = new Event('devicechange')
+      for (const listener of listeners) {
+        if (typeof listener === 'function') {
+          listener(event)
+        } else {
+          listener.handleEvent(event)
+        }
+      }
+    }
+
+    class FakeMediaRecorder extends EventTarget {
+      static isTypeSupported() {
+        return true
+      }
+
+      state: RecordingState = 'inactive'
+      ondataavailable: ((event: { data: Blob }) => void) | null = null
+
+      constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {
+        super()
+      }
+
+      start() {
+        this.state = 'recording'
+      }
+
+      requestData() {
+        this.ondataavailable?.({ data: new Blob(['qa'], { type: 'video/webm' }) })
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+
+    Object.defineProperty(window, 'MediaRecorder', {
+      configurable: true,
+      value: FakeMediaRecorder
+    })
+  })
 }
 
 export async function jumpToOnboardingStep(page: Page, step: number): Promise<void> {

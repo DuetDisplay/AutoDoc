@@ -8,6 +8,7 @@ import { isAutoRecordEnabled } from './auto-record-store'
 import { getActiveCaptureProcessIdsMac } from './mac-meeting-detector'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { getE2EDetectionState } from './e2e-fixtures'
 import { focusMainWindow } from './main-window'
 
 const POLL_INTERVAL_MS = 3_000
@@ -19,6 +20,7 @@ const AUTO_RECORD_START_GRACE_MS = 15_000 // Suppress duplicate prompts while st
 const WINDOW_MISSING_POLLS_THRESHOLD = 2
 const PROVIDER_MISSING_POLLS_THRESHOLD = 2
 const MEETING_WINDOW_MISSING_POLLS_THRESHOLD = 3
+const isE2E = process.env.AUTODOC_E2E === '1'
 
 type AutoStopReason = 'window_closed' | 'mic_idle' | 'provider_gone'
 
@@ -195,6 +197,7 @@ export class DetectionService {
   private lastAutoStopSignalLogKey = ''
   private suppressedProviderSignalKey = ''
   private suppressedCalendarEventId: string | null = null
+  private debugNowOffsetMs = 0
   private getCalendarEvents: () => CalendarEvent[]
 
   constructor(
@@ -220,6 +223,11 @@ export class DetectionService {
 
   dismissPrompt(): void {
     hideNotificationWindow()
+  }
+
+  async debugPollNow(advanceMs = 0): Promise<void> {
+    this.debugNowOffsetMs += advanceMs
+    await this.poll()
   }
 
   private async poll(): Promise<void> {
@@ -480,12 +488,12 @@ export class DetectionService {
     if (!this.pendingAutoStop || this.pendingAutoStop.reason !== reason) {
       this.pendingAutoStop = {
         reason,
-        startedAt: Date.now()
+        startedAt: this.getNow()
       }
       return
     }
 
-    if (Date.now() - this.pendingAutoStop.startedAt < this.getAutoStopConfirmMs(reason, snapshot)) {
+    if (this.getNow() - this.pendingAutoStop.startedAt < this.getAutoStopConfirmMs(reason, snapshot)) {
       return
     }
 
@@ -589,10 +597,7 @@ export class DetectionService {
     }
 
     try {
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1, height: 1 }
-      })
+      const sources = await this.getWindowSourcesForDetection()
       const relevantWindowNames = this.getRelevantSourceNames(sources)
 
       if (trackedSourceId) {
@@ -683,10 +688,7 @@ export class DetectionService {
 
   private async isMeetingWindowOpen(): Promise<MeetingWindowObservation> {
     try {
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1, height: 1 }
-      })
+      const sources = await this.getWindowSourcesForDetection()
       return {
         visible: sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))),
         strongVisible: false,
@@ -726,6 +728,17 @@ export class DetectionService {
       .map((source) => source.name)
       .filter((name) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(name)))
       .slice(0, 10)
+  }
+
+  private async getWindowSourcesForDetection(): Promise<Array<{ id: string; name: string }>> {
+    if (isE2E) {
+      return getE2EDetectionState().windowSources
+    }
+
+    return await desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 1, height: 1 }
+    })
   }
 
   private logAutoStopSignalSnapshot(
@@ -778,10 +791,7 @@ export class DetectionService {
     }
 
     try {
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1, height: 1 }
-      })
+      const sources = await this.getWindowSourcesForDetection()
       return !sources.some((s) => s.id === state.sourceId)
     } catch {
       return false
@@ -799,6 +809,10 @@ export class DetectionService {
       BROWSER_PATTERNS.some((pattern) => pattern.test(sourceName)) ||
       /\b(safari|chrome|firefox|edge|brave|arc|opera|vivaldi)\b/i.test(sourceName)
     )
+  }
+
+  private getNow(): number {
+    return Date.now() + this.debugNowOffsetMs
   }
 
   private async handleCalendarEvent(
@@ -849,6 +863,15 @@ export class DetectionService {
   }
 
   private async getActiveProvider(): Promise<MeetingProviderObservation> {
+    if (isE2E) {
+      const activeIds = getE2EDetectionState().providerActiveIds
+      return {
+        provider: matchProviderFromIds(activeIds),
+        activeIds,
+        detector: process.platform === 'win32' ? 'windows_helper' : 'mac_helper'
+      }
+    }
+
     if (process.platform === 'darwin') {
       const activeIds = await getActiveCaptureProcessIdsMac()
       return {
@@ -875,6 +898,10 @@ export class DetectionService {
   }
 
   private isMicInUseMac(): Promise<boolean | null> {
+    if (isE2E) {
+      return Promise.resolve(getE2EDetectionState().micActive)
+    }
+
     return new Promise((resolve) => {
       execFile('pmset', ['-g', 'assertions'], { timeout: 2_000 }, (err, stdout) => {
         if (err) {
@@ -915,7 +942,7 @@ export class DetectionService {
   }
 
   private findInProgressEvent(): CalendarEvent | null {
-    const now = Date.now()
+    const now = this.getNow()
     const events = this.getCalendarEvents()
 
     for (const event of events) {
@@ -929,7 +956,7 @@ export class DetectionService {
   }
 
   private hasUpcomingEventSoon(): boolean {
-    const now = Date.now()
+    const now = this.getNow()
     const events = this.getCalendarEvents()
 
     return events.some((event) => event.startTime > now && event.startTime - now < EVENT_WINDOW_MS)
@@ -979,7 +1006,7 @@ export class DetectionService {
   }
 
   private markAutoRecordPending(): void {
-    this.autoRecordPendingUntil = Date.now() + AUTO_RECORD_START_GRACE_MS
+    this.autoRecordPendingUntil = this.getNow() + AUTO_RECORD_START_GRACE_MS
   }
 
   private clearAutoRecordPending(): void {
@@ -988,7 +1015,7 @@ export class DetectionService {
 
   private isAutoRecordPending(): boolean {
     if (this.autoRecordPendingUntil === 0) return false
-    if (Date.now() < this.autoRecordPendingUntil) return true
+    if (this.getNow() < this.autoRecordPendingUntil) return true
     this.autoRecordPendingUntil = 0
     return false
   }

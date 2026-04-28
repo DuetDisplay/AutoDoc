@@ -23,6 +23,7 @@ import type {
   TranscriptionStatusPayload,
   SegmentationStatusPayload
 } from '../shared/types'
+import type { E2EDetectionState } from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -123,6 +124,9 @@ export interface IpcInvokeEvents {
   'whisper:retry-setup': []
   'e2e:set-whisper-status': [status: WhisperSetupStatus]
   'e2e:set-ollama-status': [status: OllamaSetupStatus]
+  'e2e:get-detection-state': []
+  'e2e:set-detection-state': [state: Partial<E2EDetectionState>]
+  'e2e:detection-poll': [advanceMs?: number]
   'updater:get-status': []
   'updater:check': []
   'updater:install': []
@@ -201,6 +205,9 @@ export interface IpcInvokeReturns {
   'whisper:retry-setup': void
   'e2e:set-whisper-status': void
   'e2e:set-ollama-status': void
+  'e2e:get-detection-state': E2EDetectionState
+  'e2e:set-detection-state': E2EDetectionState
+  'e2e:detection-poll': void
   'updater:get-status': UpdateStatus
   'updater:check': void
   'updater:install': void

@@ -6,6 +6,17 @@ import type {
   WhisperSetupStatus,
 } from './types'
 
+export interface E2EDetectionWindowSource {
+  id: string
+  name: string
+}
+
+export interface E2EDetectionState {
+  providerActiveIds: string[]
+  micActive: boolean | null
+  windowSources: E2EDetectionWindowSource[]
+}
+
 export interface E2EScenario {
   platform?: 'darwin' | 'win32'
   permissions?: {
@@ -30,4 +41,5 @@ export interface E2EScenario {
   recording?: {
     sources?: RecordingSource[]
   }
+  detection?: Partial<E2EDetectionState>
 }
