@@ -49,7 +49,7 @@ async function reachCalendarStep(page: Page): Promise<void> {
 async function reachTranscriptionStep(page: Page): Promise<void> {
   await reachCalendarStep(page)
   await page.getByRole('button', { name: /skip for now/i }).click()
-  await expect(page.getByRole('heading', { name: /transcription/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
 }
 
 async function reachOllamaStep(page: Page): Promise<void> {
@@ -167,10 +167,8 @@ test('shows managed Whisper setup failure and can recover after retry', async ()
   try {
     await reachTranscriptionStep(page)
     await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
-    await expect(page.getByText(/we hit a setup issue/i)).toBeVisible()
-    await expect(page.getByText(/managed setup/i)).toBeVisible()
+    await expect(page.getByText(/still finishing transcription setup/i)).toBeVisible()
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
-    await page.getByRole('button', { name: /^retry$/i }).click()
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
   } finally {
     await electronApp.close()
@@ -217,8 +215,10 @@ test('shows a managed transcription setup error when audio tools are missing', a
   try {
     await reachTranscriptionStep(page)
     await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
-    await expect(page.getByText(/we hit a setup issue/i)).toBeVisible()
-    await expect(page.getByText(/retry to resume the managed setup/i)).toBeVisible()
+    await expect(page.getByText(/still finishing transcription setup/i)).toBeVisible()
+    await expect(page.getByText(/transcription setup is taking longer than expected/i)).toBeVisible({
+      timeout: 7_000,
+    })
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await expect(page.getByRole('button', { name: /^retry$/i })).toBeVisible()
   } finally {
@@ -369,7 +369,7 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
     await page.getByRole('button', { name: /skip for now/i }).click()
 
-    await expect(page.getByRole('heading', { name: /transcription/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
     await expect(page.getByText(/downloading transcription engine\.\.\. 12%/i)).toBeVisible()
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await setWhisperStatus(page, {

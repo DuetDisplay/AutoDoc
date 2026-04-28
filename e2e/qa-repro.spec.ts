@@ -301,6 +301,10 @@ test.describe('QA Linear repro pass', () => {
   })
 
   test('AD-65 keeps onboarding moving through speech engine setup failures', async ({}, testInfo) => {
+    // This intentionally simulates the old v0.1.19-style onboarding failure mode:
+    // Whisper setup reports repeated errors at the transcription step. Before the
+    // recovery work, that state effectively trapped users on this screen with retry-only
+    // UI. The assertions below verify that the current branch keeps onboarding recoverable.
     const failureStatus: WhisperSetupStatus = {
       phase: 'error',
       percent: 0,
