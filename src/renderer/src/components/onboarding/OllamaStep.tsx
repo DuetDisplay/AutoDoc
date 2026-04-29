@@ -1,18 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 
 export function OllamaStep({ onNext }: { onNext: () => void }) {
   const [phase, setPhase] = useState<string>('starting')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
-  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const markReady = () => {
     setPhase('ready')
     setPercent(100)
-    if (!advanceTimer.current) {
-      advanceTimer.current = setTimeout(onNext, 1500)
-    }
   }
 
   useEffect(() => {
@@ -35,7 +31,6 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
 
     return () => {
       unsub()
-      if (advanceTimer.current) clearTimeout(advanceTimer.current)
     }
   }, [onNext])
 
@@ -48,7 +43,16 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     return (
       <div className="text-center">
         <div className="w-16 h-16 rounded-full bg-sage-light flex items-center justify-center mx-auto mb-5">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4A6B4E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#4A6B4E"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </div>
@@ -66,15 +70,16 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     )
   }
 
-  const statusLabel = phase === 'starting'
-    ? 'Starting local AI engine...'
-    : phase === 'downloading'
-      ? `Downloading local AI engine... ${percent}%`
-      : phase === 'pulling'
-        ? `Downloading AI model... ${percent}%`
-        : error
-          ? `Setup failed: ${error}`
-          : 'Preparing...'
+  const statusLabel =
+    phase === 'starting'
+      ? 'Starting local AI engine...'
+      : phase === 'downloading'
+        ? `Downloading local AI engine... ${percent}%`
+        : phase === 'pulling'
+          ? `Downloading AI model... ${percent}%`
+          : error
+            ? `Setup failed: ${error}`
+            : 'Preparing...'
 
   return (
     <div className="text-center">
@@ -83,7 +88,8 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc is downloading a one-time local AI setup so your transcripts can be analyzed on your machine.
+        AutoDoc is downloading a one-time local AI setup so your transcripts can be analyzed on your
+        machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 
-const AUTO_ADVANCE_DELAY_MS = 1500
 const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
 const MAX_AUTO_RETRY_ATTEMPTS = 2
@@ -12,7 +11,7 @@ const phaseLabels: Record<string, (percent: number) => string> = {
   'downloading-model': (p) => `Downloading speech model... ${p}%`,
   'preparing-speaker-runtime': (p) => `Preparing speaker identification runtime... ${p}%`,
   'installing-speaker-id': (p) => `Installing speaker identification... ${p}%`,
-  'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`,
+  'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`
 }
 
 export function TranscriptionStep({ onNext }: { onNext: () => void }) {
@@ -21,7 +20,6 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [isAutoRetrying, setIsAutoRetrying] = useState(false)
   const [showSkip, setShowSkip] = useState(false)
-  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoRetryAttempts = useRef(0)
   const hasSeenMeaningfulSetupProgress = useRef(false)
@@ -41,9 +39,6 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
     clearRetryTimer()
-    if (!advanceTimer.current) {
-      advanceTimer.current = setTimeout(onNext, AUTO_ADVANCE_DELAY_MS)
-    }
   }
 
   const scheduleAutoRetry = () => {
@@ -112,7 +107,6 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
 
     return () => {
       unsub()
-      if (advanceTimer.current) clearTimeout(advanceTimer.current)
       clearRetryTimer()
     }
   }, [onNext])
@@ -126,11 +120,22 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     return (
       <div className="text-center">
         <div className="w-16 h-16 rounded-full bg-sage-light flex items-center justify-center mx-auto mb-5">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4A6B4E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#4A6B4E"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </div>
-        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Transcription Ready</h2>
+        <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+          Transcription Ready
+        </h2>
         <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
           Your local transcription engine is installed and ready to go.
         </p>
@@ -149,9 +154,12 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       <div className="w-16 h-16 rounded-2xl bg-mist-light flex items-center justify-center text-[28px] mx-auto mb-5">
         📝
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up Transcription</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        Setting Up Transcription
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc uses a local speech engine and local speaker identification to process meetings on-device. This downloads once and runs entirely on your machine.
+        AutoDoc uses a local speech engine and local speaker identification to process meetings
+        on-device. This downloads once and runs entirely on your machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
@@ -166,7 +174,9 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
 
       {isAutoRetrying && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
-          <h3 className="text-[14px] font-semibold text-ink mb-2">Still finishing transcription setup</h3>
+          <h3 className="text-[14px] font-semibold text-ink mb-2">
+            Still finishing transcription setup
+          </h3>
           <p className="text-[13px] text-ink-muted leading-relaxed">
             AutoDoc is retrying automatically in the background so you can keep moving.
           </p>
@@ -176,9 +186,12 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       {error && (
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
-            <h3 className="text-[14px] font-semibold text-ink mb-2">Transcription setup is taking longer than expected</h3>
+            <h3 className="text-[14px] font-semibold text-ink mb-2">
+              Transcription setup is taking longer than expected
+            </h3>
             <p className="text-[13px] text-ink-muted leading-relaxed">
-              You can continue and AutoDoc will keep working on this in the background, or retry right now.
+              You can continue and AutoDoc will keep working on this in the background, or retry
+              right now.
             </p>
           </div>
           <button

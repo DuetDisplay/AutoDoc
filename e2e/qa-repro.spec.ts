@@ -4,6 +4,7 @@ import type { WhisperSetupStatus } from '../src/shared/types'
 import {
   completeOnboarding,
   launchIsolatedE2EApp,
+  setOllamaStatus,
   setWhisperStatus,
   stubMediaCapture
 } from './helpers/electron-app'
@@ -95,7 +96,11 @@ async function reachTranscriptionStep(page: Page): Promise<void> {
 }
 
 async function visibleText(page: Page, pattern: RegExp): Promise<boolean> {
-  return await page.getByText(pattern).first().isVisible().catch(() => false)
+  return await page
+    .getByText(pattern)
+    .first()
+    .isVisible()
+    .catch(() => false)
 }
 
 async function clickBack(page: Page): Promise<string | null> {
@@ -190,11 +195,10 @@ test.describe('QA Linear repro pass', () => {
         const firstBackHeading = await clickBack(standardFlow.page)
         const secondBackHeading = await clickBack(standardFlow.page)
         await standardFlow.page.reload()
-        await expect(
-          standardFlow.page.getByRole('heading', { name: 'How It Works' })
-        ).toBeVisible()
+        await expect(standardFlow.page.getByRole('heading', { name: 'How It Works' })).toBeVisible()
 
-        reproduced ||= firstBackHeading !== 'Notes That Think' || secondBackHeading !== 'How It Works'
+        reproduced ||=
+          firstBackHeading !== 'Notes That Think' || secondBackHeading !== 'How It Works'
         evidence.push(`feature flow after first Back: ${firstBackHeading}`)
         evidence.push(`feature flow after second Back: ${secondBackHeading}`)
         evidence.push('feature flow after reload: How It Works')
@@ -385,7 +389,9 @@ test.describe('QA Linear repro pass', () => {
       await page
         .getByRole('button', { name: /continue - this will finish in the background/i })
         .click()
-      await expect(page.getByRole('heading', { name: /ai model ready|setting up ai/i })).toBeVisible()
+      await expect(
+        page.getByRole('heading', { name: /ai model ready|setting up ai/i })
+      ).toBeVisible()
 
       await attachReproNote(testInfo, {
         issue: 'AD-65',
@@ -394,6 +400,68 @@ test.describe('QA Linear repro pass', () => {
           `recoverable setup message visible after auto retries: ${finalRecoverableError}`,
           `background continue visible: ${backgroundContinueVisible}`,
           'onboarding advanced to the AI setup step after continuing in the background'
+        ]
+      })
+    } finally {
+      await app.cleanup()
+    }
+  })
+
+  test('AD-74 waits for user confirmation after transcription and AI setup become ready', async ({}, testInfo) => {
+    const { app, page } = await launchQaApp({
+      platform: 'win32',
+      whisper: {
+        status: {
+          phase: 'downloading-whisper',
+          percent: 12
+        }
+      },
+      ollama: {
+        status: {
+          phase: 'starting',
+          percent: 0
+        }
+      }
+    })
+
+    try {
+      await advanceFeatureSteps(page)
+      await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
+      await page.getByRole('button', { name: /skip for now/i }).click()
+
+      await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
+      await setWhisperStatus(page, {
+        phase: 'ready',
+        percent: 100
+      })
+      await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
+      await page.waitForTimeout(2000)
+      await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
+      await expect(
+        page.getByRole('heading', { name: /Setting Up AI|AI Model Ready/i })
+      ).toBeHidden()
+
+      await page.getByRole('button', { name: /^continue$/i }).click()
+      await expect(page.getByRole('heading', { name: 'Setting Up AI' })).toBeVisible()
+      await setOllamaStatus(page, {
+        phase: 'ready',
+        percent: 100
+      })
+      await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
+      await page.waitForTimeout(2000)
+      await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeHidden()
+
+      await page.getByRole('button', { name: /^continue$/i }).click()
+      await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+
+      await attachReproNote(testInfo, {
+        issue: 'AD-74',
+        reproduced: false,
+        evidence: [
+          'Windows onboarding stayed on Transcription Ready for 2s after setup reached ready.',
+          'Windows onboarding stayed on AI Model Ready for 2s after setup reached ready.',
+          'Both steps advanced only after pressing Continue.'
         ]
       })
     } finally {
@@ -422,9 +490,9 @@ test.describe('QA Linear repro pass', () => {
       await page.evaluate(() =>
         (window as typeof window & { __qaSwitchDefaultMic?: () => void }).__qaSwitchDefaultMic?.()
       )
-      await expect.poll(() => getCaptureRequestCount(page), { timeout: 4_000 }).toBeGreaterThan(
-        beforeSwitchCalls
-      )
+      await expect
+        .poll(() => getCaptureRequestCount(page), { timeout: 4_000 })
+        .toBeGreaterThan(beforeSwitchCalls)
       const afterSwitchCalls = await getCaptureRequestCount(page)
       await page.getByRole('button', { name: /stop recording/i }).click()
 
@@ -447,7 +515,9 @@ test.describe('QA Linear repro pass', () => {
 
 async function getCaptureRequestCount(page: Page): Promise<number> {
   return await page.evaluate(
-    () => (window as typeof window & { __qaCaptureRequests?: unknown[] }).__qaCaptureRequests?.length ?? 0
+    () =>
+      (window as typeof window & { __qaCaptureRequests?: unknown[] }).__qaCaptureRequests?.length ??
+      0
   )
 }
 

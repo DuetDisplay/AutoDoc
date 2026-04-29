@@ -18,7 +18,7 @@ describe('TranscriptionStep', () => {
       if (channel === 'whisper:get-setup-status') {
         return Promise.resolve({
           phase: 'downloading-whisper',
-          percent: 42,
+          percent: 42
         })
       }
       return Promise.resolve({})
@@ -27,7 +27,9 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Setting Up Transcription')).toBeInTheDocument()
-    expect(screen.getByText(/local speech engine and local speaker identification/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/local speech engine and local speaker identification/i)
+    ).toBeInTheDocument()
     expect(screen.getByText(/downloading transcription engine\.\.\. 42%/i)).toBeInTheDocument()
     expect(screen.queryByText(/brew install/i)).not.toBeInTheDocument()
   })
@@ -37,7 +39,7 @@ describe('TranscriptionStep', () => {
       if (channel === 'whisper:get-setup-status') {
         return Promise.resolve({
           phase: 'checking',
-          percent: 0,
+          percent: 0
         })
       }
       if (channel === 'whisper:retry-setup') {
@@ -53,13 +55,51 @@ describe('TranscriptionStep', () => {
     })
   })
 
+  it('waits for confirmation when setup is already ready', async () => {
+    vi.useFakeTimers()
+    const onNext = vi.fn()
+
+    try {
+      vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+        if (channel === 'whisper:get-setup-status') {
+          return Promise.resolve({
+            phase: 'ready',
+            percent: 100
+          })
+        }
+        return Promise.resolve({})
+      })
+
+      await act(async () => {
+        render(<TranscriptionStep onNext={onNext} />)
+        await Promise.resolve()
+      })
+
+      expect(screen.getByRole('heading', { name: 'Transcription Ready' })).toBeInTheDocument()
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(onNext).not.toHaveBeenCalled()
+
+      await act(async () => {
+        screen.getByRole('button', { name: /^continue$/i }).click()
+      })
+
+      expect(onNext).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('auto-retries managed setup failures before surfacing a manual retry', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {
         return Promise.resolve({
           phase: 'error',
           percent: 0,
-          error: 'Download request failed',
+          error: 'Download request failed'
         })
       }
       if (channel === 'whisper:retry-setup') {
@@ -83,7 +123,11 @@ describe('TranscriptionStep', () => {
     )
 
     expect(
-      await screen.findByText(/continue - this will finish in the background/i, {}, { timeout: 4000 })
+      await screen.findByText(
+        /continue - this will finish in the background/i,
+        {},
+        { timeout: 4000 }
+      )
     ).toBeInTheDocument()
   }, 10000)
 
@@ -106,7 +150,7 @@ describe('TranscriptionStep', () => {
       if (channel === 'whisper:get-setup-status') {
         return Promise.resolve({
           phase: 'checking',
-          percent: 0,
+          percent: 0
         })
       }
       if (channel === 'whisper:retry-setup') {
@@ -129,7 +173,7 @@ describe('TranscriptionStep', () => {
         await whisperProgressHandler?.({
           phase: 'error',
           percent: 0,
-          error: 'Audio tools missing',
+          error: 'Audio tools missing'
         })
       })
 
@@ -145,7 +189,7 @@ describe('TranscriptionStep', () => {
         await whisperProgressHandler?.({
           phase: 'error',
           percent: 0,
-          error: 'Audio tools missing',
+          error: 'Audio tools missing'
         })
       })
 
@@ -159,7 +203,7 @@ describe('TranscriptionStep', () => {
         await whisperProgressHandler?.({
           phase: 'error',
           percent: 0,
-          error: 'Audio tools missing',
+          error: 'Audio tools missing'
         })
       })
 
@@ -181,7 +225,7 @@ describe('TranscriptionStep', () => {
         if (channel === 'whisper:get-setup-status') {
           return Promise.resolve({
             phase: 'downloading-model',
-            percent: 10,
+            percent: 10
           })
         }
         return Promise.resolve({})

@@ -27,7 +27,7 @@ describe('OllamaStep', () => {
     expect(screen.getByText('Setting Up AI')).toBeInTheDocument()
   })
 
-  it('auto-advances when already ready', async () => {
+  it('waits for confirmation when already ready', async () => {
     const onNext = vi.fn()
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'ollama:get-setup-status') {
@@ -41,11 +41,19 @@ describe('OllamaStep', () => {
       await Promise.resolve()
     })
 
+    expect(screen.getByRole('heading', { name: 'AI Model Ready' })).toBeInTheDocument()
+
     await act(async () => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(2000)
     })
 
-    expect(onNext).toHaveBeenCalled()
+    expect(onNext).not.toHaveBeenCalled()
+
+    await act(async () => {
+      screen.getByRole('button', { name: /^continue$/i }).click()
+    })
+
+    expect(onNext).toHaveBeenCalledTimes(1)
   })
 
   it('starts AI setup when onboarding reaches the step', async () => {
