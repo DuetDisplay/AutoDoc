@@ -59,3 +59,16 @@ Why this matters:
 
 - On the pre-fix `v0.1.19` transcription step, an error removed the background continue affordance (`showSkip && !error`) and only exposed a manual retry path.
 - On the current branch, the same injected failure condition is expected to remain recoverable.
+
+## AD-70 legacy comparison
+
+`e2e/ad-70-delete-repro.spec.ts` can compare the current branch against a prepared legacy app tree.
+
+Useful environment variables:
+
+- `AUTODOC_E2E_LEGACY_APP_ROOT=/abs/path/to/legacy/source-tree`
+
+Notes:
+
+- The legacy comparison is skipped unless `AUTODOC_E2E_LEGACY_APP_ROOT` is set.
+- The path should point at a source tree with `out/main/index.js` already built, not a packaged `.app` bundle.

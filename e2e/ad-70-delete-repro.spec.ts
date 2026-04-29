@@ -8,7 +8,7 @@ import {
   launchIsolatedExternalE2EApp,
 } from './helpers/electron-app'
 
-const V019_APP_ROOT = '/tmp/autodoc-v0.1.19-src'
+const LEGACY_APP_ROOT = process.env.AUTODOC_E2E_LEGACY_APP_ROOT
 const RECORDING_TITLE = 'AD-70 seeded recording'
 
 const MARKERS = {
@@ -84,8 +84,10 @@ test.describe('AD-70 delete repro', () => {
     }
   })
 
-  test('v0.1.19 delete flow preserves the speech model marker under the same mocked setup', async () => {
-    const app = await launchIsolatedExternalE2EApp(V019_APP_ROOT, {
+  test('legacy external delete flow preserves the speech model marker under the same mocked setup', async () => {
+    test.skip(!LEGACY_APP_ROOT, 'Set AUTODOC_E2E_LEGACY_APP_ROOT to compare against a prepared legacy build.')
+
+    const app = await launchIsolatedExternalE2EApp(LEGACY_APP_ROOT!, {
       platform: 'darwin',
     })
 
