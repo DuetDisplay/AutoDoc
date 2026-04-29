@@ -27,7 +27,13 @@ async function advanceFeatureSteps(page: Page): Promise<void> {
   await page.getByRole('button', { name: /next/i }).click()
 }
 
-async function completeDeniedPermissionSteps(page: Page): Promise<void> {
+async function completeHostPermissionSteps(page: Page): Promise<void> {
+  if (process.platform === 'win32') {
+    await expect(page.getByRole('heading', { name: 'Microphone Access' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Screen Recording' })).toHaveCount(0)
+    return
+  }
+
   await expect(page.getByRole('heading', { name: 'Microphone Access' })).toBeVisible()
   await stubMediaCapture(page)
   await page.getByRole('button', { name: /enable microphone/i }).click()
@@ -42,14 +48,16 @@ async function completeDeniedPermissionSteps(page: Page): Promise<void> {
 
 async function reachCalendarStep(page: Page): Promise<void> {
   await advanceFeatureSteps(page)
-  await completeDeniedPermissionSteps(page)
+  await completeHostPermissionSteps(page)
   await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
 }
 
 async function reachTranscriptionStep(page: Page): Promise<void> {
   await reachCalendarStep(page)
   await page.getByRole('button', { name: /skip for now/i }).click()
-  await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /^(Setting Up Transcription|Transcription Ready)$/i })
+  ).toBeVisible()
 }
 
 async function reachOllamaStep(page: Page): Promise<void> {
@@ -100,7 +108,7 @@ test('completes the onboarding journey and opens the app shell', async () => {
   }
 })
 
-test('auto-advances permission steps when access is already granted', async () => {
+test('advances past permission steps when access is already granted or not required', async () => {
   const { electronApp, page } = await launchOnboarding({
     permissions: {
       microphone: true,
@@ -278,10 +286,10 @@ test('shows Ollama download progress and allows skipping while setup continues',
 })
 
 test('completes a full macOS onboarding flow with managed dependency setup', async () => {
+  test.skip(process.platform !== 'darwin', 'macOS onboarding journey only runs on macOS hosts.')
   test.slow()
 
   const { electronApp, page } = await launchOnboarding({
-    platform: 'darwin',
     permissions: {
       microphone: false,
       screen: false,
@@ -346,10 +354,10 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
 })
 
 test('completes a full Windows onboarding flow with in-app dependency downloads', async () => {
+  test.skip(process.platform !== 'win32', 'Windows onboarding journey only runs on Windows hosts.')
   test.slow()
 
   const { electronApp, page } = await launchOnboarding({
-    platform: 'win32',
     whisper: {
       status: {
         phase: 'downloading-whisper',

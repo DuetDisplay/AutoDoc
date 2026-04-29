@@ -20,7 +20,6 @@ async function advanceToScreenRecording(page: Page) {
 }
 
 test('AD-72 primary screen CTA attempts to open System Settings when permission remains denied', async ({}, testInfo) => {
-  const expected = process.env.AD72_EXPECT_SETTINGS_CALL === '1'
   const app = await launchIsolatedE2EApp({
     platform: 'darwin',
     permissions: {
@@ -53,11 +52,11 @@ test('AD-72 primary screen CTA attempts to open System Settings when permission 
     const attemptedToOpenSettings = panels.includes('screen')
 
     await testInfo.attach('ad-72-open-settings-calls', {
-      body: JSON.stringify({ expected, attemptedToOpenSettings, panels }, null, 2),
+      body: JSON.stringify({ expected: true, attemptedToOpenSettings, panels }, null, 2),
       contentType: 'application/json',
     })
 
-    expect(attemptedToOpenSettings).toBe(expected)
+    expect(attemptedToOpenSettings).toBe(true)
   } finally {
     await app.cleanup()
   }
