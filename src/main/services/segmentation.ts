@@ -30,6 +30,7 @@ interface PersistedSegmentationError {
   error: string
   retries: number
   status?: PersistedSegmentationStatus
+  errorCode?: string
 }
 
 export class SegmentationService {
@@ -105,6 +106,12 @@ export class SegmentationService {
     return 'pending'
   }
 
+  async getErrorCode(meetingId: string): Promise<string | undefined> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    const errorData = await this.readErrorFile(errorPath)
+    return errorData?.errorCode
+  }
+
   async getSegments(meetingId: string): Promise<MeetingSegments | null> {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
     try {
@@ -146,7 +153,8 @@ export class SegmentationService {
           this.enqueue(meetingId, 'recovery-scan')
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
-          if (errorData && this.getPersistedStatus(errorData) !== 'no-notes' && errorData.retries < 3) {
+          const isPermanentFailure = errorData?.errorCode === 'ollama-insufficient-memory'
+          if (errorData && this.getPersistedStatus(errorData) !== 'no-notes' && errorData.retries < 3 && !isPermanentFailure) {
             console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
             this.retry(meetingId, 'recovery-scan')
           }
@@ -280,11 +288,12 @@ export class SegmentationService {
     context?: SegmentationDirSnapshot,
   ): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : error
+    const errorCode = classifyError(errorMsg)
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
-      await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries, status: 'failed' }))
+      await writeFile(errorPath, JSON.stringify({ error: errorMsg, errorCode, retries, status: 'failed' }))
     } catch (err) {
       const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
       if (code !== 'ENOENT') throw err
@@ -296,7 +305,7 @@ export class SegmentationService {
       meetingId,
       context,
     })
-    this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
+    this.broadcastStatus(meetingId, 'failed', undefined, errorCode)
   }
 
   private async markNoNotes(
@@ -334,9 +343,12 @@ export class SegmentationService {
           error: typeof parsed.error === 'string' ? parsed.error : raw,
           retries: typeof parsed.retries === 'number' ? parsed.retries : 0,
           status: parsed.status,
+          errorCode: typeof parsed.errorCode === 'string'
+            ? parsed.errorCode
+            : classifyError(typeof parsed.error === 'string' ? parsed.error : raw),
         }
       } catch {
-        return { error: raw, retries: 0 }
+        return { error: raw, retries: 0, errorCode: classifyError(raw) }
       }
     } catch {
       return null

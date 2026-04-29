@@ -19,6 +19,13 @@ export function classifyError(rawError: string): string {
   if (error.includes('enospc') || error.includes('no space')) {
     return 'disk-full'
   }
+  if (
+    error.includes('ollama') &&
+    error.includes('requires more system memory') &&
+    error.includes('than is available')
+  ) {
+    return 'ollama-insufficient-memory'
+  }
   if (error.includes('eacces') || error.includes('permission')) {
     return 'permission-denied'
   }

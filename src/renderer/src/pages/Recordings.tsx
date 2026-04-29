@@ -75,6 +75,7 @@ export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
   const [segmentationProgress, setSegmentationProgress] = useState<Record<string, number | undefined>>({})
+  const [segmentationErrorCodes, setSegmentationErrorCodes] = useState<Record<string, string | undefined>>({})
   const [transcriptionProgress, setTranscriptionProgress] = useState<Record<string, number | undefined>>({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -110,6 +111,10 @@ export function Recordings() {
           'segmentation:get-progress',
           entry.meetingId,
         ),
+        segmentationErrorCode: await window.electronAPI.invoke(
+          'segmentation:get-error-code',
+          entry.meetingId,
+        ),
       })),
     )
 
@@ -128,6 +133,12 @@ export function Recordings() {
     const segmentationProgressByMeetingId = Object.fromEntries(
       updates.map((update) => [update.meetingId, update.segmentationProgress]),
     )
+    const segmentationErrorCodesByMeetingId = Object.fromEntries(
+      updates.map((update) => [
+        update.meetingId,
+        update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined,
+      ]),
+    )
 
     setTranscriptionProgress((prev) =>
       mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
@@ -137,6 +148,9 @@ export function Recordings() {
     )
     setSegmentationProgress((prev) =>
       mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
+    )
+    setSegmentationErrorCodes((prev) =>
+      mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId),
     )
   }, [])
 
@@ -199,6 +213,10 @@ export function Recordings() {
           ...prev,
           [payload.meetingId]: payload.progress,
         }))
+        setSegmentationErrorCodes((prev) => ({
+          ...prev,
+          [payload.meetingId]: payload.status === 'failed' ? payload.errorCode : undefined,
+        }))
         refreshIfUnknownMeeting(payload.meetingId)
       }
     )
@@ -240,6 +258,7 @@ export function Recordings() {
             transcriptionProgress: await window.electronAPI.invoke('transcription:get-progress', meetingId),
             segmentationStatus: await window.electronAPI.invoke('segmentation:get-status', meetingId),
             segmentationProgress: await window.electronAPI.invoke('segmentation:get-progress', meetingId),
+            segmentationErrorCode: await window.electronAPI.invoke('segmentation:get-error-code', meetingId),
           })),
         )
 
@@ -277,6 +296,12 @@ export function Recordings() {
         const segmentationProgressByMeetingId = Object.fromEntries(
           updates.map((update) => [update.meetingId, update.segmentationProgress]),
         )
+        const segmentationErrorCodesByMeetingId = Object.fromEntries(
+          updates.map((update) => [
+            update.meetingId,
+            update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined,
+          ]),
+        )
 
         setTranscriptionProgress((prev) =>
           mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
@@ -288,6 +313,10 @@ export function Recordings() {
 
         setSegmentationProgress((prev) =>
           mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
+        )
+
+        setSegmentationErrorCodes((prev) =>
+          mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId),
         )
       } catch (err) {
         console.error('Failed to refresh recording processing state:', err)
@@ -310,6 +339,7 @@ export function Recordings() {
   }
 
   const handleRetrySegmentation = (meetingId: string) => {
+    setSegmentationErrorCodes((prev) => ({ ...prev, [meetingId]: undefined }))
     window.electronAPI.invoke('segmentation:retry', meetingId)
   }
 
@@ -377,6 +407,7 @@ export function Recordings() {
                           <SegmentationBadge
                             status={segmentationStatuses[rec.meetingId]}
                             progress={segmentationProgress[rec.meetingId]}
+                            errorCode={segmentationErrorCodes[rec.meetingId]}
                             onRetry={() => handleRetrySegmentation(rec.meetingId)}
                           />
                         )}

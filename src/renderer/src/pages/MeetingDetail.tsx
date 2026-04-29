@@ -139,6 +139,7 @@ export function MeetingDetail() {
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
+  const [segmentationErrorCode, setSegmentationErrorCode] = useState<string | undefined>()
   const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null; isFinalizing?: boolean } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
@@ -484,11 +485,13 @@ export function MeetingDetail() {
       window.electronAPI.invoke('transcription:get-progress', id),
       window.electronAPI.invoke('segmentation:get-status', id),
       window.electronAPI.invoke('segmentation:get-progress', id),
-    ]).then(([status, progress, nextSegmentationStatus, nextSegmentationProgress]) => {
+      window.electronAPI.invoke('segmentation:get-error-code', id),
+    ]).then(([status, progress, nextSegmentationStatus, nextSegmentationProgress, nextSegmentationErrorCode]) => {
       setTranscriptionStatus(status)
       setTranscriptionProgress((current) => mergeProgress(status, current, progress))
       setSegmentationStatus(nextSegmentationStatus)
       setSegmentationProgress(nextSegmentationProgress)
+      setSegmentationErrorCode(nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined)
       if (nextSegmentationStatus === 'complete') {
         window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
       } else {
@@ -519,6 +522,7 @@ export function MeetingDetail() {
         if (payload.meetingId === id) {
           setSegmentationStatus(payload.status)
           setSegmentationProgress(payload.progress)
+          setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
           if (payload.status === 'complete') {
             window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
           } else {
@@ -577,12 +581,14 @@ export function MeetingDetail() {
     setTranscript([])
     setSegments(null)
     setSegmentationStatus('pending')
+    setSegmentationErrorCode(undefined)
     window.electronAPI.invoke('transcription:retry', id)
   }
 
   const handleReprocessNotes = () => {
     if (!id) return
     setSegmentationStatus('queued')
+    setSegmentationErrorCode(undefined)
     setSegments(null)
     window.electronAPI.invoke('segmentation:retry', id)
   }
@@ -613,11 +619,13 @@ export function MeetingDetail() {
           latestTranscriptionProgress,
           latestSegmentationStatus,
           latestSegmentationProgress,
+          latestSegmentationErrorCode,
         ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
           window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
+          window.electronAPI.invoke('segmentation:get-error-code', id),
         ])
 
         if (cancelled) return
@@ -628,6 +636,7 @@ export function MeetingDetail() {
         )
         setSegmentationStatus(latestSegmentationStatus)
         setSegmentationProgress(latestSegmentationProgress)
+        setSegmentationErrorCode(latestSegmentationStatus === 'failed' ? latestSegmentationErrorCode : undefined)
 
         if (latestTranscriptionStatus === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then((nextTranscript) => {
@@ -755,7 +764,12 @@ export function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2">
           <TranscriptionBadge status={transcriptionStatus} progress={transcriptionProgress} onRetry={handleRetryTranscription} />
-          <SegmentationBadge status={segmentationStatus} progress={segmentationProgress} onRetry={handleRetrySegmentation} />
+          <SegmentationBadge
+            status={segmentationStatus}
+            progress={segmentationProgress}
+            errorCode={segmentationErrorCode}
+            onRetry={handleRetrySegmentation}
+          />
         </div>
       </div>
 
@@ -820,7 +834,9 @@ export function MeetingDetail() {
                         : segmentationStatus === 'no-notes'
                           ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
                         : segmentationStatus === 'failed'
-                          ? 'Segmentation failed. Try retrying above.'
+                          ? segmentationErrorCode === 'ollama-insufficient-memory'
+                            ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
+                            : 'Segmentation failed. Try retrying above.'
                           : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
                     </p>
                   ) : (

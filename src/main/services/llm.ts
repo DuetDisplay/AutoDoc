@@ -1,4 +1,6 @@
 import type { MeetingSegments, Segment, SegmentCategory } from '../../shared/types'
+import { logAutodocEvent } from './autodoc-log'
+import { captureMessage } from './sentry-reporter'
 
 export interface LLMProvider {
   summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments>
@@ -7,7 +9,8 @@ export interface LLMProvider {
 }
 
 const MAX_RETRIES = 2
-const TARGET_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
+export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
+export const LOW_MEMORY_CONTEXT_TOKENS = 8192
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
@@ -111,6 +114,23 @@ interface TopicGroup {
   labelCounts: Map<string, number>
 }
 
+type OllamaContextProfile = 'standard' | 'low-memory'
+
+export type OllamaProviderTelemetryEventName =
+  | 'ollama_low_memory_fallback_triggered'
+  | 'ollama_low_memory_fallback_succeeded'
+  | 'ollama_low_memory_fallback_failed'
+
+export interface OllamaProviderTelemetryEvent {
+  meetingId: string
+  event: OllamaProviderTelemetryEventName
+  properties: Record<string, unknown>
+}
+
+interface OllamaProviderOptions {
+  onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
+}
+
 const LOW_SIGNAL_NOTE_PATTERNS = [
   /\bsubtitles by (the )?amara\.org community\b/i,
   /\bamara\.org community\b/i,
@@ -133,10 +153,14 @@ export class OllamaProvider implements LLMProvider {
   private baseUrl: string
   private model: string
   private activeControllers = new Set<AbortController>()
+  private contextProfile: OllamaContextProfile = 'standard'
+  private contextTokens = STANDARD_CONTEXT_TOKENS
+  private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
 
-  constructor(baseUrl: string, model: string) {
+  constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
     this.baseUrl = baseUrl
     this.model = model
+    this.onTelemetry = options.onTelemetry
   }
 
   setModel(model: string): void {
@@ -179,7 +203,11 @@ export class OllamaProvider implements LLMProvider {
     const durationMs = estMinutes * 60 * 1000
     const transcriptTimestamps = this.extractTimestampsMs(transcript)
     const itemGuidance = this.estimateItemCount(estMinutes)
-    console.log(`Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total). ${itemGuidance}`)
+    let lowMemoryFallbackActivated = false
+    console.log(
+      `Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total) ` +
+      `with ${this.contextProfile} Ollama context (${this.contextTokens} tokens). ${itemGuidance}`,
+    )
 
     const merged: MeetingSegments = {
       decisions: [],
@@ -205,12 +233,16 @@ export class OllamaProvider implements LLMProvider {
       let chunkResult: MeetingSegments | null = null
       let chunkTokens = 0
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let attempt = 0
+      while (attempt <= MAX_RETRIES) {
         chunkTokens = 0
         try {
-          if (attempt > 0) console.log(`Chunk ${i + 1}/${chunks.length} retry ${attempt}/${MAX_RETRIES}`)
-          else console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)...`)
-          const raw = await this.callOllama(chunks[i] + chunkLabel, () => {
+          if (attempt > 0) {
+            console.log(`Chunk ${i + 1}/${chunks.length} retry ${attempt}/${MAX_RETRIES} (${this.contextProfile} context)`)
+          } else {
+            console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`)
+          }
+          const raw = await this.callOllama(chunks[i] + chunkLabel, this.contextTokens, () => {
             chunkTokens++
             // Asymptotic progress: approaches 0.99 but never reaches it, so it never appears stuck
             const ratio = chunkTokens / avgTokensPerChunk
@@ -227,11 +259,33 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (attempt < MAX_RETRIES) continue
+          if (this.isInsufficientSystemMemoryError(lastError.message) && this.contextProfile === 'standard') {
+            lowMemoryFallbackActivated = true
+            this.enableLowMemoryContext(meetingId, lastError, {
+              chunkIndex: i + 1,
+              chunkCount: chunks.length,
+              transcriptChars: transcript.length,
+              durationMinutes: estMinutes,
+            })
+            continue
+          }
+          if (attempt < MAX_RETRIES) {
+            attempt++
+            continue
+          }
+          attempt++
         }
       }
 
       if (!chunkResult) {
+        if (lowMemoryFallbackActivated) {
+          this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_failed', meetingId, lastError, {
+            chunkIndex: i + 1,
+            chunkCount: chunks.length,
+            transcriptChars: transcript.length,
+            durationMinutes: estMinutes,
+          })
+        }
         throw lastError ?? new Error(`LLM summarization failed on chunk ${i + 1}/${chunks.length}`)
       }
 
@@ -249,6 +303,13 @@ export class OllamaProvider implements LLMProvider {
     }
 
     this.normalizeMergedTopics(merged)
+    if (lowMemoryFallbackActivated) {
+      this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
+        chunkCount: chunks.length,
+        transcriptChars: transcript.length,
+        durationMinutes: estMinutes,
+      })
+    }
     return merged
   }
 
@@ -287,7 +348,7 @@ export class OllamaProvider implements LLMProvider {
     return chunks
   }
 
-  private async callOllama(transcript: string, onToken?: () => void): Promise<string> {
+  private async callOllama(transcript: string, contextTokens: number, onToken?: () => void): Promise<string> {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
@@ -306,7 +367,7 @@ export class OllamaProvider implements LLMProvider {
           stream: true,
           format: 'json',
           options: {
-            num_ctx: TARGET_CONTEXT_TOKENS,
+            num_ctx: contextTokens,
             num_predict: MAX_OUTPUT_TOKENS,
             temperature: 0,
             repeat_penalty: 1.3,
@@ -401,6 +462,91 @@ export class OllamaProvider implements LLMProvider {
     }
 
     return content
+  }
+
+  private enableLowMemoryContext(
+    meetingId: string,
+    error: Error,
+    context: Record<string, unknown>,
+  ): void {
+    this.contextProfile = 'low-memory'
+    this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
+    this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_triggered', meetingId, error, context)
+  }
+
+  private isInsufficientSystemMemoryError(message: string): boolean {
+    const normalized = message.toLowerCase()
+    return normalized.includes('ollama') &&
+      normalized.includes('requires more system memory') &&
+      normalized.includes('than is available')
+  }
+
+  private extractOllamaMemoryGiB(message: string): { requiredGiB: number | null; availableGiB: number | null } {
+    const match = message.match(/requires more system memory\s*\(([\d.]+)\s*GiB\)\s*than is available\s*\(([\d.]+)\s*GiB\)/i)
+    if (!match) {
+      return { requiredGiB: null, availableGiB: null }
+    }
+
+    return {
+      requiredGiB: Number.parseFloat(match[1]),
+      availableGiB: Number.parseFloat(match[2]),
+    }
+  }
+
+  private getHostMemorySnapshot(): { freeGiB: number | null; totalGiB: number | null } {
+    const processWithMemory = process as NodeJS.Process & {
+      getSystemMemoryInfo?: () => { free?: number; total?: number }
+    }
+    const info = processWithMemory.getSystemMemoryInfo?.()
+    if (!info) {
+      return { freeGiB: null, totalGiB: null }
+    }
+
+    return {
+      freeGiB: typeof info.free === 'number' ? Number((info.free / 1024 / 1024).toFixed(2)) : null,
+      totalGiB: typeof info.total === 'number' ? Number((info.total / 1024 / 1024).toFixed(2)) : null,
+    }
+  }
+
+  private recordLowMemoryFallbackEvent(
+    event: OllamaProviderTelemetryEventName,
+    meetingId: string,
+    error: Error | null,
+    context: Record<string, unknown>,
+  ): void {
+    const ollamaMemory = error ? this.extractOllamaMemoryGiB(error.message) : { requiredGiB: null, availableGiB: null }
+    const hostMemory = this.getHostMemorySnapshot()
+    const properties = {
+      model: this.model,
+      contextProfile: this.contextProfile,
+      standardContextTokens: STANDARD_CONTEXT_TOKENS,
+      lowMemoryContextTokens: LOW_MEMORY_CONTEXT_TOKENS,
+      ollamaRequiredSystemMemoryGiB: ollamaMemory.requiredGiB,
+      ollamaAvailableSystemMemoryGiB: ollamaMemory.availableGiB,
+      hostFreeMemoryGiB: hostMemory.freeGiB,
+      hostTotalMemoryGiB: hostMemory.totalGiB,
+      errorMessage: error?.message.slice(0, 300) ?? null,
+      ...context,
+    }
+
+    logAutodocEvent({
+      area: 'segmentation',
+      level: event === 'ollama_low_memory_fallback_triggered' ? 'warn' : 'info',
+      message: event,
+      meetingId,
+      context: properties,
+    })
+    captureMessage(event, {
+      area: 'segmentation',
+      meetingId,
+      level: event === 'ollama_low_memory_fallback_failed' ? 'error' : 'warning',
+      tags: {
+        errorCode: 'ollama-insufficient-memory',
+        contextProfile: this.contextProfile,
+      },
+      extra: properties,
+    })
+    this.onTelemetry?.({ meetingId, event, properties })
   }
 
   /**

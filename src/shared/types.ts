@@ -175,6 +175,15 @@ export interface SegmentationStatusPayload {
   errorCode?: string
 }
 
+export interface SegmentationDiagnosticPayload {
+  meetingId: string
+  event:
+    | 'ollama_low_memory_fallback_triggered'
+    | 'ollama_low_memory_fallback_succeeded'
+    | 'ollama_low_memory_fallback_failed'
+  properties: Record<string, unknown>
+}
+
 export type SegmentationStatus =
   | 'pending'
   | 'queued'

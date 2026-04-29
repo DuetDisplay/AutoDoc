@@ -36,10 +36,11 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: stri
 interface SegmentationBadgeProps {
   status: SegmentationStatus
   progress?: number
+  errorCode?: string
   onRetry?: () => void
 }
 
-export function SegmentationBadge({ status, progress, onRetry }: SegmentationBadgeProps) {
+export function SegmentationBadge({ status, progress, errorCode, onRetry }: SegmentationBadgeProps) {
   const config = STATUS_CONFIG[status]
   const [ollamaProgress, setOllamaProgress] = useState<OllamaSetupStatus | null>(null)
 
@@ -53,7 +54,8 @@ export function SegmentationBadge({ status, progress, onRetry }: SegmentationBad
     return unsub
   }, [status])
 
-  let label = config.label
+  const isInsufficientMemory = status === 'failed' && errorCode === 'ollama-insufficient-memory'
+  let label = isInsufficientMemory ? 'Not enough memory' : config.label
   if (status === 'segmenting' && progress != null) {
     label = `Generating notes... ${progress}%`
   }
@@ -62,11 +64,12 @@ export function SegmentationBadge({ status, progress, onRetry }: SegmentationBad
   }
 
   const showProgress = status === 'segmenting' && progress != null
+  const canRetry = status === 'failed' && !isInsufficientMemory
 
   return (
     <span
-      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${status === 'segmenting' && !showProgress ? 'animate-pulse' : ''}`}
-      onClick={status === 'failed' ? onRetry : undefined}
+      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${status === 'segmenting' && !showProgress ? 'animate-pulse' : ''} ${isInsufficientMemory ? 'cursor-default hover:bg-red-50' : ''}`}
+      onClick={canRetry ? onRetry : undefined}
     >
       {showProgress && (
         <span

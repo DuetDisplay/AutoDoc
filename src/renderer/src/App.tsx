@@ -171,11 +171,22 @@ export default function App() {
       trackEvent('ollama_setup_failed', { failed_step: failedStep })
     })
 
+    const unsubSegmentationDiagnostic = window.electronAPI.on(
+      'segmentation:diagnostic-event',
+      (payload) => {
+        trackEvent(`segmentation_${payload.event}`, {
+          meetingId: payload.meetingId,
+          ...payload.properties,
+        })
+      }
+    )
+
     return () => {
       unsubTranscription()
       unsubSegmentation()
       unsubWhisper()
       unsubOllama()
+      unsubSegmentationDiagnostic()
     }
   }, [])
 

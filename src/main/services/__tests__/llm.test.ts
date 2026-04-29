@@ -1,8 +1,26 @@
-import { describe, it, expect } from 'vitest'
-import { OllamaProvider } from '../llm'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { LOW_MEMORY_CONTEXT_TOKENS, OllamaProvider, STANDARD_CONTEXT_TOKENS } from '../llm'
+
+const mocks = vi.hoisted(() => ({
+  logAutodocEvent: vi.fn(),
+  captureMessage: vi.fn(),
+}))
+
+vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: mocks.logAutodocEvent,
+}))
+
+vi.mock('../sentry-reporter', () => ({
+  captureMessage: mocks.captureMessage,
+}))
 
 describe('OllamaProvider grounding', () => {
   const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
 
   it('drops hallucinated notes whose numbers are not supported by the cited transcript span', () => {
     const transcript = [
@@ -211,5 +229,77 @@ describe('OllamaProvider grounding', () => {
     expect(segments.information[3].topic).toBe(segments.information[4].topic)
     expect(segments.information[4].topic).toBe(segments.information[5].topic)
     expect(segments.information[6].topic).toBe('Open Source Packaging')
+  })
+
+  it('falls back to a smaller Ollama context after an insufficient RAM response', async () => {
+    const telemetry = vi.fn()
+    const adaptiveProvider = new OllamaProvider('http://localhost:11434', 'test-model', {
+      onTelemetry: telemetry,
+    })
+    const requestContextTokens: number[] = []
+
+    vi.stubGlobal('fetch', vi.fn(async (_url, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { options?: { num_ctx?: number } }
+      requestContextTokens.push(body.options?.num_ctx ?? 0)
+
+      if (requestContextTokens.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: 'model requires more system memory (8.3 GiB) than is available (5.5 GiB)',
+          }),
+          { status: 500 },
+        )
+      }
+
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder()
+            controller.enqueue(encoder.encode(`${JSON.stringify({
+              message: {
+                content: JSON.stringify({
+                  decisions: [],
+                  action_items: [],
+                  information: [
+                    {
+                      topic: 'Planning',
+                      title: 'Launch plan confirmed',
+                      content: 'The launch plan was confirmed for next week.',
+                      sourceStartMs: 0,
+                      sourceEndMs: 0,
+                    },
+                  ],
+                  discussion: [],
+                  status_updates: [],
+                }),
+              },
+            })}\n`))
+            controller.close()
+          },
+        }),
+        { status: 200 },
+      )
+    }))
+
+    const result = await adaptiveProvider.summarize(
+      'meeting-low-ram',
+      '[00:00] [Chris] The launch plan was confirmed for next week.',
+      undefined,
+      5,
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(requestContextTokens).toEqual([STANDARD_CONTEXT_TOKENS, LOW_MEMORY_CONTEXT_TOKENS])
+    expect(telemetry).toHaveBeenCalledWith(expect.objectContaining({
+      meetingId: 'meeting-low-ram',
+      event: 'ollama_low_memory_fallback_triggered',
+      properties: expect.objectContaining({
+        ollamaRequiredSystemMemoryGiB: 8.3,
+        ollamaAvailableSystemMemoryGiB: 5.5,
+      }),
+    }))
+    expect(telemetry).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'ollama_low_memory_fallback_succeeded',
+    }))
   })
 })

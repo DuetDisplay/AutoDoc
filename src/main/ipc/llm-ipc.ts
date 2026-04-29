@@ -42,6 +42,13 @@ export function registerLlmIpc(
   )
 
   ipcMain.handle(
+    'segmentation:get-error-code',
+    async (_event, meetingId: string): Promise<string | undefined> => {
+      return segmentationService.getErrorCode(meetingId)
+    }
+  )
+
+  ipcMain.handle(
     'segmentation:get-progress',
     (_event, meetingId: string): number | undefined => {
       return segmentationService.getProgress(meetingId)

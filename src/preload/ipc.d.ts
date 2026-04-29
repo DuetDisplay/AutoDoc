@@ -21,7 +21,8 @@ import type {
   DetectionAutoStopPayload,
   DetectionAutoStopCancelledPayload,
   TranscriptionStatusPayload,
-  SegmentationStatusPayload
+  SegmentationStatusPayload,
+  SegmentationDiagnosticPayload
 } from '../shared/types'
 import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
@@ -92,6 +93,7 @@ export interface IpcInvokeEvents {
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
+  'segmentation:get-error-code': [meetingId: string]
   'segmentation:get-progress': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
@@ -167,6 +169,7 @@ export interface IpcInvokeReturns {
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus
+  'segmentation:get-error-code': string | undefined
   'segmentation:get-progress': number | undefined
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
@@ -224,6 +227,7 @@ export interface IpcOnEvents {
   'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: TranscriptionStatusPayload]
   'segmentation:status-changed': [payload: SegmentationStatusPayload]
+  'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]
   'detection:mic-inactive': [payload: Record<string, never>]

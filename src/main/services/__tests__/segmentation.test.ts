@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { join } from 'path'
 import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
@@ -116,7 +117,7 @@ describe('SegmentationService', () => {
         discussion: [],
         statusUpdates: [],
       },
-      '/mock/home/AutoDoc/recordings/m1/segments.json',
+      join('/mock/home/AutoDoc/recordings', 'm1', 'segments.json'),
     )
   })
 
@@ -141,7 +142,7 @@ describe('SegmentationService', () => {
         discussion: [],
         statusUpdates: [],
       },
-      '/mock/home/AutoDoc/recordings/m1/segments.json',
+      join('/mock/home/AutoDoc/recordings', 'm1', 'segments.json'),
     )
   })
 
@@ -161,7 +162,7 @@ describe('SegmentationService', () => {
 
     expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
     expect(fsMock.writeFile).toHaveBeenCalledWith(
-      '/mock/home/AutoDoc/recordings/m2/segments.error',
+      join('/mock/home/AutoDoc/recordings', 'm2', 'segments.error'),
       JSON.stringify({
         error: 'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
         retries: 0,

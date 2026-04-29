@@ -39,7 +39,8 @@ import type {
   OllamaSetupStatus,
   WhisperSetupStatus,
   DiarizationSetupStatus,
-  RecordingMediaPlayerErrorReport
+  RecordingMediaPlayerErrorReport,
+  SegmentationDiagnosticPayload
 } from '../shared/types'
 import type { E2EDetectionState } from '../shared/e2e'
 import {
@@ -791,9 +792,17 @@ app.whenReady().then(async () => {
       })
   }
 
+  const broadcastSegmentationDiagnostic = (payload: SegmentationDiagnosticPayload): void => {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('segmentation:diagnostic-event', payload)
+    }
+  }
+
   const ollamaProvider = new OllamaProvider(
     managedOllamaManager.getBaseUrl(),
-    managedOllamaManager.getModel()
+    managedOllamaManager.getModel(),
+    { onTelemetry: broadcastSegmentationDiagnostic }
   )
   const segmentationService = new SegmentationService(
     ollamaProvider,
