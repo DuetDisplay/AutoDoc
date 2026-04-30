@@ -25,7 +25,11 @@ vi.mock('../sentry-click-breadcrumbs', () => ({
   installSemanticClickBreadcrumbs: vi.fn()
 }))
 
-import { captureRecordingStartFailure, updateRendererSentryConsent } from '../renderer-sentry'
+import {
+  captureRecordingRecoveryFailure,
+  captureRecordingStartFailure,
+  updateRendererSentryConsent
+} from '../renderer-sentry'
 
 describe('captureRecordingStartFailure', () => {
   beforeEach(() => {
@@ -68,5 +72,42 @@ describe('captureRecordingStartFailure', () => {
 
     expect(sentryModule.withScope).not.toHaveBeenCalled()
     expect(sentryModule.captureException).not.toHaveBeenCalled()
+  })
+})
+
+describe('captureRecordingRecoveryFailure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    updateRendererSentryConsent(false)
+  })
+
+  it('reports exhausted capture recovery failures when consent is enabled', () => {
+    updateRendererSentryConsent(true)
+
+    captureRecordingRecoveryFailure(new Error('route switch failed'), {
+      meetingId: 'meeting-1',
+      sourceType: 'window',
+      segmentIndex: 2,
+      reason: 'devicechange',
+      attemptCount: 4,
+      expectedAudio: { hasMic: true, hasSystemAudio: true },
+      failureKind: 'failed'
+    })
+
+    expect(sentryModule.withScope).toHaveBeenCalledTimes(1)
+    expect(sentryScope.setTag).toHaveBeenCalledWith('feature_area', 'recording')
+    expect(sentryScope.setTag).toHaveBeenCalledWith('recording_phase', 'recovery')
+    expect(sentryScope.setTag).toHaveBeenCalledWith('source_type', 'window')
+    expect(sentryScope.setTag).toHaveBeenCalledWith('recovery_failure_kind', 'failed')
+    expect(sentryScope.setExtras).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meetingId: 'meeting-1',
+        recoveryReason: 'devicechange',
+        recoveryAttemptCount: 4,
+        recoveryFailureKind: 'failed',
+        recoveryErrorMessage: 'route switch failed'
+      })
+    )
+    expect(sentryModule.captureException).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { captureRecordingRecoveryFailure, recordPersistentDiagnosticAction } = vi.hoisted(() => ({
+  captureRecordingRecoveryFailure: vi.fn(),
+  recordPersistentDiagnosticAction: vi.fn()
+}))
+
+vi.mock('../renderer-sentry', () => ({
+  captureRecordingRecoveryFailure
+}))
+
+vi.mock('../diagnostic-trail', () => ({
+  recordPersistentDiagnosticAction
+}))
+
 class MockTrack extends EventTarget {
   kind: 'audio' | 'video'
   readyState: 'live' | 'ended' = 'live'
@@ -100,14 +113,14 @@ describe('recording-capture', () => {
       getUserMedia: getUserMediaMock,
       enumerateDevices: vi.fn().mockResolvedValue([
         { kind: 'audioinput', deviceId: 'default', groupId: 'mic-default', label: 'Mic' },
-        { kind: 'audiooutput', deviceId: 'default', groupId: 'speaker-default', label: 'Speaker' },
+        { kind: 'audiooutput', deviceId: 'default', groupId: 'speaker-default', label: 'Speaker' }
       ]),
       addEventListener: vi.fn((_event: string, listener: () => void) => {
         deviceChangeListeners.push(listener)
       }),
       removeEventListener: vi.fn((_event: string, listener: () => void) => {
         deviceChangeListeners = deviceChangeListeners.filter((entry) => entry !== listener)
-      }),
+      })
     }
 
     vi.stubGlobal('navigator', { mediaDevices })
@@ -123,6 +136,7 @@ describe('recording-capture', () => {
     vi.unstubAllGlobals()
     consoleWarnSpy.mockRestore()
     consoleErrorSpy.mockRestore()
+    vi.clearAllMocks()
   })
 
   it('does not show a recovery failure toast when stopping during capture recovery', async () => {
@@ -187,6 +201,42 @@ describe('recording-capture', () => {
     expect(useToastStore.getState().activeToast).toBeNull()
   })
 
+  it('captures a terminal recovery failure after the final retry', async () => {
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const callNumber = getUserMediaMock.mock.calls.length + 1
+      if (callNumber <= 3) {
+        return Promise.resolve(createMockStreamForConstraints(constraints))
+      }
+
+      return Promise.reject(new Error('route switch failed'))
+    })
+
+    const { startCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(15_750)
+    await Promise.resolve()
+
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        meetingId: 'meeting-1',
+        sourceType: 'window',
+        attemptCount: 4,
+        failureKind: 'failed'
+      })
+    )
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_failed'
+      })
+    )
+  })
+
   it('retries capture recovery after a transient device-switch failure', async () => {
     let getUserMediaCallCount = 0
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
@@ -234,7 +284,9 @@ describe('recording-capture', () => {
           return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
         }
         if (constraints.audio && constraints.video) {
-          return Promise.resolve(new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]))
+          return Promise.resolve(
+            new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
+          )
         }
         return Promise.resolve(new MockMediaStream())
       }
@@ -258,6 +310,58 @@ describe('recording-capture', () => {
         attempt: 1,
         reason: 'devicechange',
         missingSources: ['mic']
+      })
+    )
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
+
+  it('reports degraded recovery when expected audio never returns', async () => {
+    let getUserMediaCallCount = 0
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      getUserMediaCallCount += 1
+
+      if (getUserMediaCallCount <= 3) {
+        return Promise.resolve(createMockStreamForConstraints(constraints))
+      }
+
+      if (constraints.audio === false) {
+        return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+      }
+      if (constraints.audio && constraints.video) {
+        return Promise.resolve(
+          new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
+        )
+      }
+      return Promise.resolve(new MockMediaStream())
+    })
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(9_750)
+    await Promise.resolve()
+
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Capture recovery completed with missing audio sources: mic'
+      }),
+      expect.objectContaining({
+        meetingId: 'meeting-1',
+        sourceType: 'window',
+        attemptCount: 4,
+        missingSources: ['mic'],
+        failureKind: 'degraded'
+      })
+    )
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_recovered_degraded'
       })
     )
     expect(isCapturing()).toBe(true)

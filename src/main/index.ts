@@ -82,7 +82,7 @@ import {
 import {
   clearDownloadedComponents,
   getAppStorageInfo,
-  getStorageDiagnostics,
+  getStorageDiagnostics
 } from './services/storage-manager'
 import { getResetLocalDataTargets } from './services/reset-local-data'
 
@@ -107,7 +107,7 @@ let cachedMacBundleMetadata: MacBundleMetadata | null | undefined
 function readMacBundlePlistValue(infoPlistPath: string, key: string): string | null {
   try {
     const value = execFileSync('/usr/bin/defaults', ['read', infoPlistPath, key], {
-      encoding: 'utf8',
+      encoding: 'utf8'
     }).trim()
     return value || null
   } catch {
@@ -136,7 +136,7 @@ function getMacBundleMetadata(): MacBundleMetadata | null {
     infoPlistPath,
     bundleIdentifier: readMacBundlePlistValue(infoPlistPath, 'CFBundleIdentifier'),
     bundleName: readMacBundlePlistValue(infoPlistPath, 'CFBundleName'),
-    bundleDisplayName: readMacBundlePlistValue(infoPlistPath, 'CFBundleDisplayName'),
+    bundleDisplayName: readMacBundlePlistValue(infoPlistPath, 'CFBundleDisplayName')
   }
 
   return cachedMacBundleMetadata
@@ -403,7 +403,7 @@ app.whenReady().then(async () => {
       bundleIdentifier: macBundleMetadata?.bundleIdentifier ?? null,
       bundleName: macBundleMetadata?.bundleName ?? null,
       bundleDisplayName: macBundleMetadata?.bundleDisplayName ?? null,
-      ...context,
+      ...context
     }
   }
 
@@ -411,7 +411,7 @@ app.whenReady().then(async () => {
     logAutodocEvent({
       area: 'app',
       message,
-      context: buildPermissionLogContext(context),
+      context: buildPermissionLogContext(context)
     })
   }
 
@@ -419,14 +419,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
     recordRendererDiagnosticAction(payload)
 
-    if (payload.category === 'system' || payload.category === 'onboarding') {
+    if (
+      payload.category === 'system' ||
+      payload.category === 'onboarding' ||
+      (payload.category === 'recording' && payload.action.startsWith('capture_recovery_'))
+    ) {
       logAutodocEvent({
-        area: 'app',
+        area: payload.category === 'recording' ? 'recording' : 'app',
         message: `renderer_diagnostic:${payload.action}`,
         context: buildPermissionLogContext({
           category: payload.category,
-          details: payload.details ?? null,
-        }),
+          details: payload.details ?? null
+        })
       })
     }
   })
@@ -517,7 +521,7 @@ app.whenReady().then(async () => {
         microphoneStatus,
         screenStatus,
         microphoneGranted: microphone,
-        screenGranted: screen,
+        screenGranted: screen
       })
       return { screen, microphone }
     }
@@ -542,7 +546,7 @@ app.whenReady().then(async () => {
         logPermissionEvent('microphone_access_request_completed', {
           granted,
           preRequestStatus,
-          postRequestStatus,
+          postRequestStatus
         })
         return granted
       } catch (error) {
@@ -552,8 +556,8 @@ app.whenReady().then(async () => {
           message: 'microphone_access_request_failed',
           error,
           context: buildPermissionLogContext({
-            preRequestStatus: systemPreferences.getMediaAccessStatus('microphone'),
-          }),
+            preRequestStatus: systemPreferences.getMediaAccessStatus('microphone')
+          })
         })
         return false
       }
@@ -570,9 +574,10 @@ app.whenReady().then(async () => {
     }
 
     if (process.platform === 'darwin') {
-      const url = panel === 'screen'
-        ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
-        : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+      const url =
+        panel === 'screen'
+          ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+          : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
       logPermissionEvent('permissions_open_settings_requested', { panel, url })
       if (panel === 'screen') {
         shell.openExternal(url)
@@ -829,9 +834,9 @@ app.whenReady().then(async () => {
         diagnostics: await getStorageDiagnostics({
           whisperBinaryPath: whisperManager.getWhisperPath(),
           ffmpegPath: whisperManager.getFfmpegPath(),
-          whisperModelPath: whisperManager.getModelPath(),
-        }),
-      },
+          whisperModelPath: whisperManager.getModelPath()
+        })
+      }
     })
     managedOllamaManager.stop()
     managedOllamaManager.resetReady()
@@ -843,9 +848,9 @@ app.whenReady().then(async () => {
         diagnostics: await getStorageDiagnostics({
           whisperBinaryPath: whisperManager.getWhisperPath(),
           ffmpegPath: whisperManager.getFfmpegPath(),
-          whisperModelPath: whisperManager.getModelPath(),
-        }),
-      },
+          whisperModelPath: whisperManager.getModelPath()
+        })
+      }
     })
     return await getAppStorageInfo()
   })
@@ -860,19 +865,21 @@ app.whenReady().then(async () => {
     void getStorageDiagnostics({
       whisperBinaryPath: whisperManager.getWhisperPath(),
       ffmpegPath: whisperManager.getFfmpegPath(),
-      whisperModelPath: whisperManager.getModelPath(),
-    }).then((diagnostics) => {
-      logAutodocEvent({
-        area: 'app',
-        message: 'app:reset-local-data requested',
-        context: {
-          diagnostics,
-          testUserDataDir: testUserDataDir ?? null,
-          isE2E,
-          isRealSetupTest,
-        },
+      whisperModelPath: whisperManager.getModelPath()
+    })
+      .then((diagnostics) => {
+        logAutodocEvent({
+          area: 'app',
+          message: 'app:reset-local-data requested',
+          context: {
+            diagnostics,
+            testUserDataDir: testUserDataDir ?? null,
+            isE2E,
+            isRealSetupTest
+          }
+        })
       })
-    }).catch(() => {})
+      .catch(() => {})
 
     if (process.platform === 'win32' && isE2E && testUserDataDir) {
       const userDataPath = app.getPath('userData')
@@ -1343,8 +1350,8 @@ async function migrateDataDir(): Promise<void> {
     context: {
       legacyBase,
       newBase,
-      subdirs,
-    },
+      subdirs
+    }
   })
 
   for (const subdir of subdirs) {
@@ -1361,8 +1368,8 @@ async function migrateDataDir(): Promise<void> {
       context: {
         subdir,
         src,
-        dest,
-      },
+        dest
+      }
     })
     try {
       await access(dest)
@@ -1394,8 +1401,8 @@ async function migrateDataDir(): Promise<void> {
           dest,
           movedEntries,
           skippedEntries,
-          remainingEntries: remaining,
-        },
+          remainingEntries: remaining
+        }
       })
     } catch {
       // Dest doesn't exist — simple rename
@@ -1407,8 +1414,8 @@ async function migrateDataDir(): Promise<void> {
         context: {
           subdir,
           src,
-          dest,
-        },
+          dest
+        }
       })
     }
   }

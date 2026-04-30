@@ -1,4 +1,6 @@
 import { useToastStore } from '../stores/toast'
+import { recordPersistentDiagnosticAction } from './diagnostic-trail'
+import { captureRecordingRecoveryFailure } from './renderer-sentry'
 
 interface CaptureStreams {
   videoStream: MediaStream
@@ -100,6 +102,20 @@ function describeError(err: unknown): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function serializeErrorForDiagnostics(error: unknown): Record<string, string> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message
+    }
+  }
+
+  return {
+    name: 'UnknownError',
+    message: String(error)
+  }
 }
 
 function pickSupportedMimeType(candidates: string[]): string | null {
@@ -204,8 +220,8 @@ function getCaptureAudioAvailability(capture: Pick<CaptureHandles, 'audioStream'
 }
 
 function getMissingRecoverySources(
-  expected: { hasMic: boolean, hasSystemAudio: boolean },
-  actual: { hasMic: boolean, hasSystemAudio: boolean }
+  expected: { hasMic: boolean; hasSystemAudio: boolean },
+  actual: { hasMic: boolean; hasSystemAudio: boolean }
 ): Array<'mic' | 'system'> {
   const missing: Array<'mic' | 'system'> = []
 
@@ -217,6 +233,27 @@ function getMissingRecoverySources(
   }
 
   return missing
+}
+
+function getSourceType(sourceId: string): string {
+  return sourceId.split(':', 1)[0] ?? 'unknown'
+}
+
+function recordCaptureRecoveryDiagnostic(
+  action:
+    | 'capture_recovery_started'
+    | 'capture_recovery_attempt_failed'
+    | 'capture_recovery_waiting_for_routes'
+    | 'capture_recovery_failed'
+    | 'capture_recovery_recovered'
+    | 'capture_recovery_recovered_degraded',
+  details: Record<string, unknown>
+): void {
+  recordPersistentDiagnosticAction({
+    category: 'recording',
+    action,
+    details
+  })
 }
 
 function createAudioWatchdog(
@@ -729,6 +766,13 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
   capture.recoveryPromise = (async () => {
     console.warn(`Capture source changed during recording, attempting recovery (${reason})`)
     const expectedAudio = getCaptureAudioAvailability(capture)
+    recordCaptureRecoveryDiagnostic('capture_recovery_started', {
+      meetingId: capture.meetingId,
+      sourceType: getSourceType(capture.sourceId),
+      segmentIndex: capture.segmentIndex,
+      reason,
+      expectedAudio
+    })
     await finalizeCapture(capture)
 
     if (activeCapture !== capture || capture.stopping) {
@@ -752,6 +796,16 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
           const missingSources = getMissingRecoverySources(expectedAudio, actualAudio)
 
           if (missingSources.length > 0 && attempt < MAX_RECOVERY_ATTEMPTS) {
+            recordCaptureRecoveryDiagnostic('capture_recovery_waiting_for_routes', {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: replacement.segmentIndex,
+              reason,
+              attempt,
+              expectedAudio,
+              actualAudio,
+              missingSources
+            })
             console.warn('Capture recovery is waiting for audio routes to settle', {
               meetingId: capture.meetingId,
               attempt,
@@ -770,6 +824,43 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
             return
           }
 
+          if (missingSources.length > 0) {
+            const degradationError = new Error(
+              `Capture recovery completed with missing audio sources: ${missingSources.join(', ')}`
+            )
+            recordCaptureRecoveryDiagnostic('capture_recovery_recovered_degraded', {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: replacement.segmentIndex,
+              reason,
+              attempt,
+              expectedAudio,
+              actualAudio,
+              missingSources
+            })
+            captureRecordingRecoveryFailure(degradationError, {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: replacement.segmentIndex,
+              reason,
+              attemptCount: attempt,
+              expectedAudio,
+              actualAudio,
+              missingSources,
+              failureKind: 'degraded'
+            })
+          } else {
+            recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: replacement.segmentIndex,
+              reason,
+              attempt,
+              expectedAudio,
+              actualAudio
+            })
+          }
+
           activeCapture = replacement
           console.log('Capture recovered after device change', {
             meetingId: capture.meetingId,
@@ -784,10 +875,37 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
             attempt < MAX_RECOVERY_ATTEMPTS && activeCapture === capture && !capture.stopping
 
           if (!canRetry) {
+            recordCaptureRecoveryDiagnostic('capture_recovery_failed', {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: capture.segmentIndex,
+              reason,
+              attempt,
+              expectedAudio,
+              error: serializeErrorForDiagnostics(err)
+            })
+            captureRecordingRecoveryFailure(err, {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: capture.segmentIndex,
+              reason,
+              attemptCount: attempt,
+              expectedAudio,
+              failureKind: 'failed'
+            })
             console.error('Failed to recover capture after device change:', err)
             return
           }
 
+          recordCaptureRecoveryDiagnostic('capture_recovery_attempt_failed', {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: capture.segmentIndex,
+            reason,
+            attempt,
+            expectedAudio,
+            error: serializeErrorForDiagnostics(err)
+          })
           console.warn('Capture recovery attempt failed, retrying', {
             meetingId: capture.meetingId,
             attempt,

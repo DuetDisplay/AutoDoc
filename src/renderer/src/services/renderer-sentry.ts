@@ -12,6 +12,24 @@ interface RecordingStartFailureContext {
   sourceSelectionMode: 'manual' | 'assisted'
 }
 
+interface RecordingRecoveryFailureContext {
+  meetingId: string
+  sourceType: string
+  segmentIndex: number
+  reason: string
+  attemptCount: number
+  expectedAudio: {
+    hasMic: boolean
+    hasSystemAudio: boolean
+  }
+  actualAudio?: {
+    hasMic: boolean
+    hasSystemAudio: boolean
+  }
+  missingSources?: Array<'mic' | 'system'>
+  failureKind: 'failed' | 'degraded'
+}
+
 function getErrorName(error: unknown): string {
   if (error instanceof Error && error.name) {
     return error.name
@@ -110,6 +128,38 @@ export function captureRecordingStartFailure(
       sourceSelectionMode: context.sourceSelectionMode,
       recordingStartErrorName: getErrorName(error),
       recordingStartErrorMessage: getErrorMessage(error)
+    })
+    Sentry.captureException(error instanceof Error ? error : new Error(getErrorMessage(error)))
+  })
+}
+
+export function captureRecordingRecoveryFailure(
+  error: unknown,
+  context: RecordingRecoveryFailureContext
+): void {
+  if (!consentEnabled) {
+    return
+  }
+
+  ensureInitialized()
+
+  Sentry.withScope((scope) => {
+    scope.setTag('feature_area', 'recording')
+    scope.setTag('recording_phase', 'recovery')
+    scope.setTag('source_type', context.sourceType)
+    scope.setTag('recovery_failure_kind', context.failureKind)
+    scope.setExtras({
+      meetingId: context.meetingId,
+      recordingSourceType: context.sourceType,
+      recoverySegmentIndex: context.segmentIndex,
+      recoveryReason: context.reason,
+      recoveryAttemptCount: context.attemptCount,
+      recoveryExpectedAudio: context.expectedAudio,
+      recoveryActualAudio: context.actualAudio ?? null,
+      recoveryMissingSources: context.missingSources ?? [],
+      recoveryFailureKind: context.failureKind,
+      recoveryErrorName: getErrorName(error),
+      recoveryErrorMessage: getErrorMessage(error)
     })
     Sentry.captureException(error instanceof Error ? error : new Error(getErrorMessage(error)))
   })
