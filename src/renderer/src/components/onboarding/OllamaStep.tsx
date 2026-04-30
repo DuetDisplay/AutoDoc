@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
+import type { OllamaSetupStatus } from '../../../../shared/types'
+import { OLLAMA_NOTES_MODEL_LABEL, OLLAMA_RUNTIME_LABEL } from '../../../../shared/constants'
+import { getOllamaSetupLabel } from '../../services/setup-status-labels'
 
 export function OllamaStep({ onNext }: { onNext: () => void }) {
-  const [phase, setPhase] = useState<string>('starting')
+  const [phase, setPhase] = useState<OllamaSetupStatus['phase']>('starting')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
@@ -58,7 +61,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
         </div>
         <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">AI Model Ready</h2>
         <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-          Your local AI model is set up and ready to go.
+          {OLLAMA_RUNTIME_LABEL} and the {OLLAMA_NOTES_MODEL_LABEL} are installed and ready to go.
         </p>
         <button
           onClick={onNext}
@@ -70,16 +73,9 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     )
   }
 
-  const statusLabel =
-    phase === 'starting'
-      ? 'Starting local AI engine...'
-      : phase === 'downloading'
-        ? `Downloading local AI engine... ${percent}%`
-        : phase === 'pulling'
-          ? `Downloading AI model... ${percent}%`
-          : error
-            ? `Setup failed: ${error}`
-            : 'Preparing...'
+  const statusLabel = error
+    ? `Setup failed: ${error}`
+    : getOllamaSetupLabel({ phase, percent }) ?? 'Preparing...'
 
   return (
     <div className="text-center">
@@ -88,8 +84,8 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Setting Up AI</h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc is downloading a one-time local AI setup so your transcripts can be analyzed on your
-        machine.
+        AutoDoc installs the {OLLAMA_RUNTIME_LABEL} and downloads the {OLLAMA_NOTES_MODEL_LABEL}{' '}
+        once so your notes can run entirely on your machine.
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">

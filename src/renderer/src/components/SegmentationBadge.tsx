@@ -12,7 +12,7 @@ const STATUS_CONFIG: Record<SegmentationStatus, { label: string; className: stri
     className: 'text-ink-faint bg-bg-accent'
   },
   'downloading-model': {
-    label: 'Downloading AI model...',
+    label: 'Setting up Ollama and notes model...',
     className: 'text-ink-muted bg-bg-accent animate-pulse'
   },
   segmenting: {

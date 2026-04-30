@@ -84,7 +84,7 @@ describe('Sidebar', () => {
     } as any
 
     await renderSidebar()
-    expect(screen.getByText('Starting local AI engine...')).toBeInTheDocument()
+    expect(screen.getByText('Starting Ollama runtime...')).toBeInTheDocument()
   })
 
   it('shows whisper download progress when downloading speech model', async () => {

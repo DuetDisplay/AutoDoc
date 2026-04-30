@@ -25,6 +25,7 @@ describe('OllamaStep', () => {
     })
 
     expect(screen.getByText('Setting Up AI')).toBeInTheDocument()
+    expect(screen.getByText(/downloading Ollama runtime\.\.\. 42%/i)).toBeInTheDocument()
   })
 
   it('waits for confirmation when already ready', async () => {
@@ -42,6 +43,9 @@ describe('OllamaStep', () => {
     })
 
     expect(screen.getByRole('heading', { name: 'AI Model Ready' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Ollama runtime and the Llama 3.1 notes model are installed and ready to go\./i)
+    ).toBeInTheDocument()
 
     await act(async () => {
       vi.advanceTimersByTime(2000)
@@ -95,5 +99,21 @@ describe('OllamaStep', () => {
     })
 
     expect(screen.getByText(/continue/i)).toBeInTheDocument()
+  })
+
+  it('shows the notes model download label during model pull', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'ollama:get-setup-status') {
+        return Promise.resolve({ phase: 'pulling', percent: 82 })
+      }
+      return Promise.resolve()
+    })
+
+    await act(async () => {
+      render(<OllamaStep onNext={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/downloading Llama 3.1 notes model\.\.\. 82%/i)).toBeInTheDocument()
   })
 })

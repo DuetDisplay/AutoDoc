@@ -33,6 +33,9 @@ export const MEETING_URL_PATTERNS = [
 export const RECORDING_SUBDIR = 'recordings'
 export const MODELS_SUBDIR = 'models'
 export const PYTHON_ENV_SUBDIR = 'python-env'
+export const DEFAULT_OLLAMA_MODEL = 'llama3.1'
+export const OLLAMA_RUNTIME_LABEL = 'Ollama runtime'
+export const OLLAMA_NOTES_MODEL_LABEL = 'Llama 3.1 notes model'
 
 export const SPEAKER_COLORS: { border: string; bg: string }[] = [
   { border: '#5B8C6A', bg: '#f6faf7' }, // Me — sage green
