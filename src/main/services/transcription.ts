@@ -19,7 +19,7 @@ import {
   isEncrypted,
   encryptFileInPlace
 } from './crypto'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
@@ -223,7 +223,8 @@ export class TranscriptionService {
           const errorCode = errorData ? classifyError(errorData.error) : 'unknown'
           const isPermanentFailure =
             errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
-          if (errorData && errorData.retries < 3 && !isPermanentFailure) {
+          const allowsRecoveryScanRetry = this.allowsRecoveryScanRetry(errorCode)
+          if (errorData && errorData.retries < 3 && !isPermanentFailure && allowsRecoveryScanRetry) {
             console.log(
               `Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`
             )
@@ -1340,76 +1341,99 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     extraArgs: string[] = []
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let stderr = ''
-      const threadCount = this.getWhisperThreadCount()
-      const args = [
-        '-m',
-        this.whisperManager.getModelPath(),
-        '-f',
-        audioWavPath,
-        '-oj',
-        '-l',
-        'en',
-        '-pp'
-      ]
+    const attempt = (disableGpu: boolean): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let stderr = ''
+        const threadCount = this.getWhisperThreadCount()
+        const args = [
+          '-m',
+          this.whisperManager.getModelPath(),
+          '-f',
+          audioWavPath,
+          '-oj',
+          '-l',
+          'en',
+          '-pp'
+        ]
 
-      if (threadCount !== null) {
-        args.splice(4, 0, '-t', String(threadCount))
-      }
-
-      args.push(...extraArgs)
-
-      const proc = spawn(this.whisperManager.getWhisperPath(), args)
-
-      if (threadCount !== null) {
-        console.log(`[perf] Whisper threads: ${threadCount} (${meetingId})`)
-      }
-      this.lowerWhisperPriority(proc.pid, meetingId)
-
-      proc.on('error', (err) => {
-        reject(new Error(`whisper spawn failed: ${err.message}`))
-      })
-
-      proc.stderr.on('data', (data: Buffer) => {
-        const chunk = data.toString()
-        stderr += chunk
-        // Parse whisper.cpp progress: "whisper_print_progress_callback: progress = 42%"
-        const match = chunk.match(/progress\s*=\s*(\d+)%/)
-        if (match) {
-          const progress = this.scaleProgress(parseInt(match[1], 10), progressRange)
-          this.broadcastStatus(meetingId, 'transcribing', progress)
+        if (threadCount !== null) {
+          args.splice(4, 0, '-t', String(threadCount))
         }
-      })
 
-      // Also parse stdout timestamps for more granular progress on short recordings
-      // Whisper outputs lines like: [00:01:30.000 --> 00:01:59.980]
-      if (audioDurationSec && audioDurationSec > 0) {
-        proc.stdout.on('data', (data: Buffer) => {
+        args.push(...extraArgs)
+        if (disableGpu && !args.includes('--no-gpu')) {
+          args.push('--no-gpu')
+        }
+
+        const proc = spawn(this.whisperManager.getWhisperPath(), args)
+
+        if (threadCount !== null) {
+          console.log(`[perf] Whisper threads: ${threadCount} (${meetingId})`)
+        }
+        this.lowerWhisperPriority(proc.pid, meetingId)
+
+        proc.on('error', (err) => {
+          reject(new Error(`whisper spawn failed: ${err.message}`))
+        })
+
+        proc.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString()
-          const tsMatch = chunk.match(/\[(\d+):(\d+):(\d+)\.\d+\s*-->/)
-          if (tsMatch) {
-            const h = parseInt(tsMatch[1], 10)
-            const m = parseInt(tsMatch[2], 10)
-            const s = parseInt(tsMatch[3], 10)
-            const currentSec = h * 3600 + m * 60 + s + 30 // +30 since this segment is being completed
-            const progress = this.scaleProgress(
-              Math.min(99, Math.round((currentSec / audioDurationSec) * 100)),
-              progressRange
-            )
+          stderr += chunk
+          // Parse whisper.cpp progress: "whisper_print_progress_callback: progress = 42%"
+          const match = chunk.match(/progress\s*=\s*(\d+)%/)
+          if (match) {
+            const progress = this.scaleProgress(parseInt(match[1], 10), progressRange)
             this.broadcastStatus(meetingId, 'transcribing', progress)
           }
         })
+
+        // Also parse stdout timestamps for more granular progress on short recordings
+        // Whisper outputs lines like: [00:01:30.000 --> 00:01:59.980]
+        if (audioDurationSec && audioDurationSec > 0) {
+          proc.stdout.on('data', (data: Buffer) => {
+            const chunk = data.toString()
+            const tsMatch = chunk.match(/\[(\d+):(\d+):(\d+)\.\d+\s*-->/)
+            if (tsMatch) {
+              const h = parseInt(tsMatch[1], 10)
+              const m = parseInt(tsMatch[2], 10)
+              const s = parseInt(tsMatch[3], 10)
+              const currentSec = h * 3600 + m * 60 + s + 30 // +30 since this segment is being completed
+              const progress = this.scaleProgress(
+                Math.min(99, Math.round((currentSec / audioDurationSec) * 100)),
+                progressRange
+              )
+              this.broadcastStatus(meetingId, 'transcribing', progress)
+            }
+          })
+        }
+
+        proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+          if (code === 0) {
+            resolve()
+          } else {
+            const signalSuffix = signal ? ` (signal ${signal})` : ''
+            reject(new Error(`whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`))
+          }
+        })
+      })
+
+    const gpuAlreadyDisabled = extraArgs.includes('--no-gpu')
+    return attempt(gpuAlreadyDisabled).catch(async (err) => {
+      if (!this.shouldRetryWhisperWithoutGpu(err, extraArgs)) {
+        throw err
       }
 
-      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-        if (code === 0) {
-          resolve()
-        } else {
-          const signalSuffix = signal ? ` (signal ${signal})` : ''
-          reject(new Error(`whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`))
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'Whisper Metal backend crashed; retrying transcription on CPU',
+        meetingId,
+        context: {
+          audioWavPath,
+          audioDurationSec: audioDurationSec ?? null
         }
       })
+
+      return attempt(true)
     })
   }
 
@@ -1452,6 +1476,18 @@ export class TranscriptionService {
     } catch (err) {
       console.warn(`Failed to lower whisper priority for ${meetingId}:`, err)
     }
+  }
+
+  private shouldRetryWhisperWithoutGpu(error: unknown, extraArgs: string[]): boolean {
+    if (process.platform !== 'darwin') return false
+    if (extraArgs.includes('--no-gpu')) return false
+
+    const message = error instanceof Error ? error.message : String(error)
+    return classifyError(message) === 'whisper-metal-crash'
+  }
+
+  private allowsRecoveryScanRetry(errorCode: string): boolean {
+    return errorCode !== 'whisper-metal-crash'
   }
 
   private scaleProgress(progress: number, progressRange?: { start: number; end: number }): number {

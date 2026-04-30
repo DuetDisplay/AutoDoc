@@ -227,7 +227,12 @@ export default function App() {
                 selection.source.id,
                 selection.source.name,
                 selectionContext,
-                buildRecordingTrackingContext(selection.source, selection.source, selectionContext)
+                buildRecordingTrackingContext(
+                  selection.source,
+                  selection.source,
+                  selectionContext,
+                  'auto_record'
+                )
               )
               return
             }

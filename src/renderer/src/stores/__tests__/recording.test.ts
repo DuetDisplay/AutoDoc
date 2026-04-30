@@ -9,6 +9,7 @@ describe('useRecordingStore', () => {
       startedAt: null,
       sourceId: null,
       sourceName: null,
+      recordingIntent: null,
       elapsedSeconds: 0,
       sources: [],
       isLoadingSources: false,
@@ -29,6 +30,7 @@ describe('useRecordingStore', () => {
       startedAt: Date.now(),
       sourceId: 'source-1',
       sourceName: 'Zoom',
+      recordingIntent: 'meeting',
     })
 
     const state = useRecordingStore.getState()
@@ -52,6 +54,7 @@ describe('useRecordingStore', () => {
       startedAt: Date.now(),
       sourceId: 's',
       sourceName: 'n',
+      recordingIntent: 'meeting',
     })
     expect(useRecordingStore.getState().elapsedSeconds).toBe(0)
   })

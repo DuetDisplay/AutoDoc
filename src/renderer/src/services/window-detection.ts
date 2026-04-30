@@ -1,6 +1,7 @@
 import { BROWSER_PATTERNS, MEETING_APP_PATTERNS } from '../../../shared/constants'
 import type {
   CalendarEvent,
+  RecordingIntent,
   RecordingSource,
   RecordingTrackingContext
 } from '../../../shared/types'
@@ -158,20 +159,21 @@ export function buildRecordingSelectionContext(
 export function buildRecordingTrackingContext(
   selectedSource: RecordingSource,
   detectedMeetingSource: RecordingSource | null,
-  selectionContext?: RecordingSelectionContext
-): RecordingTrackingContext | null {
-  const trackedSource = selectedSource.id.startsWith('screen:')
-    ? detectedMeetingSource
-    : selectedSource
-
-  if (!trackedSource) {
-    return null
-  }
+  selectionContext?: RecordingSelectionContext,
+  trigger: 'manual' | 'auto_record' = 'manual'
+): RecordingTrackingContext {
+  const recordingIntent = inferRecordingIntent(selectedSource, detectedMeetingSource, trigger)
+  const trackedSource =
+    recordingIntent === 'meeting'
+      ? (selectedSource.id.startsWith('screen:') ? detectedMeetingSource : selectedSource)
+      : null
 
   return {
-    meetingSourceId: trackedSource.id,
-    meetingSourceName: trackedSource.name,
-    providerId: selectionContext?.providerHint ?? null
+    meetingSourceId: trackedSource?.id ?? null,
+    meetingSourceName: trackedSource?.name ?? null,
+    providerId:
+      trackedSource ? selectionContext?.providerHint ?? inferProviderHintFromSourceName(trackedSource.name) : null,
+    recordingIntent
   }
 }
 
@@ -197,6 +199,38 @@ function matchesPreferredSource(
 
 function isMeetingPatternMatch(name: string): boolean {
   return MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(name))
+}
+
+function inferRecordingIntent(
+  selectedSource: RecordingSource,
+  detectedMeetingSource: RecordingSource | null,
+  trigger: 'manual' | 'auto_record'
+): RecordingIntent {
+  if (trigger === 'auto_record') {
+    return 'meeting'
+  }
+
+  if (isMeetingPatternMatch(selectedSource.name)) {
+    return 'meeting'
+  }
+
+  if (!detectedMeetingSource) {
+    return 'general'
+  }
+
+  if (selectedSource.id.startsWith('screen:')) {
+    return 'meeting'
+  }
+
+  if (selectedSource.id === detectedMeetingSource.id) {
+    return 'meeting'
+  }
+
+  if (normalizeWindowName(selectedSource.name) === normalizeWindowName(detectedMeetingSource.name)) {
+    return 'meeting'
+  }
+
+  return 'general'
 }
 
 function isBrowserWindowName(name: string): boolean {
@@ -229,6 +263,17 @@ function matchesProviderHint(name: string, providerHint: string): boolean {
     default:
       return false
   }
+}
+
+function inferProviderHintFromSourceName(name: string): string | null {
+  if (matchesProviderHint(name, 'zoom')) return 'zoom'
+  if (matchesProviderHint(name, 'teams')) return 'teams'
+  if (matchesProviderHint(name, 'google_meet')) return 'google_meet'
+  if (matchesProviderHint(name, 'webex')) return 'webex'
+  if (matchesProviderHint(name, 'slack')) return 'slack'
+  if (matchesProviderHint(name, 'discord')) return 'discord'
+
+  return null
 }
 
 function normalizeWindowName(name: string): string {

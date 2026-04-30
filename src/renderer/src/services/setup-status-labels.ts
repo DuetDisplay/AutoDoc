@@ -1,4 +1,5 @@
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../../shared/types'
+import { OLLAMA_NOTES_MODEL_LABEL, OLLAMA_RUNTIME_LABEL } from '../../../shared/constants'
 
 export function getWhisperSetupLabel(status: WhisperSetupStatus | null | undefined): string | null {
   if (!status) {
@@ -34,11 +35,11 @@ export function getOllamaSetupLabel(status: OllamaSetupStatus | null | undefined
 
   switch (status.phase) {
     case 'starting':
-      return 'Starting local AI engine...'
+      return `Starting ${OLLAMA_RUNTIME_LABEL}...`
     case 'downloading':
-      return `Downloading Ollama... ${status.percent}%`
+      return `Downloading ${OLLAMA_RUNTIME_LABEL}... ${status.percent}%`
     case 'pulling':
-      return `Downloading AI model... ${status.percent}%`
+      return `Downloading ${OLLAMA_NOTES_MODEL_LABEL}... ${status.percent}%`
     case 'error':
       return status.error ?? 'AI setup failed.'
     default:

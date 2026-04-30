@@ -235,6 +235,11 @@ export class DetectionService {
       if (this.recordingService.getState().isRecording) {
         this.wasRecording = true
         this.clearAutoRecordPending()
+        if (!this.shouldUseMeetingAutoStop()) {
+          this.resetAutoStopState()
+          hideNotificationWindow()
+          return
+        }
         const windowClosed = await this.isRecordedWindowClosed()
         const providerObservation = await this.getActiveProvider()
         const providerDetected = providerObservation.provider !== null
@@ -326,6 +331,10 @@ export class DetectionService {
     this.loggedStrongMeetingProviderGuardBlock = false
     this.loggedStrongMeetingMicIdleGuardBlock = false
     this.lastAutoStopSignalLogKey = ''
+  }
+
+  private shouldUseMeetingAutoStop(): boolean {
+    return (this.recordingService.getState().recordingIntent ?? 'meeting') === 'meeting'
   }
 
   private updateAutoStopCounters(params: {

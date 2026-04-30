@@ -89,6 +89,7 @@ export function resetRendererStores(): void {
     startedAt: null,
     sourceId: null,
     sourceName: null,
+    recordingIntent: null,
     trackedMeetingSourceId: null,
     trackedMeetingSourceName: null,
     trackedMeetingProviderId: null,

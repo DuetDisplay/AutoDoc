@@ -5,13 +5,12 @@ import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
-import { MODELS_SUBDIR } from '../../shared/constants'
+import { DEFAULT_OLLAMA_MODEL, MODELS_SUBDIR } from '../../shared/constants'
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 
 const IS_WIN = process.platform === 'win32'
 
-const DEFAULT_MODEL = 'llama3.1'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
@@ -23,7 +22,7 @@ export class OllamaManager extends EventEmitter {
 
   constructor(model?: string) {
     super()
-    this.model = model ?? DEFAULT_MODEL
+    this.model = model ?? DEFAULT_OLLAMA_MODEL
   }
 
   /** Call once at startup. Subsequent calls return the same promise. */

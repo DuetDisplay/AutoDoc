@@ -5,6 +5,7 @@ import type { AudioConverter } from '../audio-converter'
 import type { CalendarManager } from '../calendar-manager'
 import { EventEmitter } from 'events'
 import path from 'path'
+import { classifyError } from '../error-classification'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -868,6 +869,42 @@ describe('TranscriptionService', () => {
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       '/mock/whisper',
       expect.arrayContaining(['-ml', '50', '-sow'])
+    )
+  })
+
+  it('classifies Metal aborts as whisper-metal-crash', () => {
+    expect(
+      classifyError('whisper.cpp exited with code null (signal SIGABRT): ggml_metal_rsets_free')
+    ).toBe('whisper-metal-crash')
+  })
+
+  it('retries whisper on CPU after a macOS Metal abort', async () => {
+    setPlatform('darwin')
+    const first = new MockChildProcess()
+    const second = new MockChildProcess()
+    childProcessMock.spawn
+      .mockReturnValueOnce(first as any)
+      .mockReturnValueOnce(second as any)
+
+    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+
+    first.stderr.emit('data', Buffer.from('ggml_metal_rsets_free\n'))
+    first.emit('close', null, 'SIGABRT')
+    await vi.waitFor(() => {
+      expect(childProcessMock.spawn).toHaveBeenCalledTimes(2)
+    })
+    second.emit('close', 0)
+
+    await expect(promise).resolves.toBeUndefined()
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      1,
+      '/mock/whisper',
+      expect.not.arrayContaining(['--no-gpu'])
+    )
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      2,
+      '/mock/whisper',
+      expect.arrayContaining(['--no-gpu'])
     )
   })
 

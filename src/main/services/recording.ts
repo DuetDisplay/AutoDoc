@@ -12,6 +12,7 @@ export class RecordingService {
     startedAt: null,
     sourceId: null,
     sourceName: null,
+    recordingIntent: null,
     trackedMeetingSourceId: null,
     trackedMeetingSourceName: null,
     trackedMeetingProviderId: null
@@ -40,6 +41,7 @@ export class RecordingService {
       startedAt: Date.now(),
       sourceId,
       sourceName,
+      recordingIntent: trackingContext?.recordingIntent ?? 'general',
       trackedMeetingSourceId: trackingContext?.meetingSourceId ?? null,
       trackedMeetingSourceName: trackingContext?.meetingSourceName ?? null,
       trackedMeetingProviderId: trackingContext?.providerId ?? null
@@ -53,12 +55,18 @@ export class RecordingService {
     }
   }
 
-  stopRecording(): { meetingId: string; startedAt: number; sourceName: string | null } {
+  stopRecording(): {
+    meetingId: string
+    startedAt: number
+    sourceId: string | null
+    sourceName: string | null
+    recordingIntent: RecordingState['recordingIntent']
+  } {
     if (!this.state.isRecording || !this.state.meetingId || !this.state.startedAt) {
       throw new Error('Not recording')
     }
 
-    const { meetingId, startedAt, sourceName } = this.state
+    const { meetingId, startedAt, sourceId, sourceName, recordingIntent } = this.state
 
     this.state = {
       isRecording: false,
@@ -66,12 +74,13 @@ export class RecordingService {
       startedAt: null,
       sourceId: null,
       sourceName: null,
+      recordingIntent: null,
       trackedMeetingSourceId: null,
       trackedMeetingSourceName: null,
       trackedMeetingProviderId: null
     }
 
-    return { meetingId, startedAt, sourceName }
+    return { meetingId, startedAt, sourceId, sourceName, recordingIntent }
   }
 
   getRecordingsBaseDir(): string {

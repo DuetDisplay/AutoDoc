@@ -14,6 +14,7 @@ import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
+import { captureMessage } from '../services/sentry-reporter'
 import type {
   CalendarEvent,
   RecordingEntry,
@@ -29,6 +30,7 @@ const isWindows = process.platform === 'win32'
 const CALENDAR_MATCH_LOOKBACK_DAYS = 30
 const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
+const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
   return type === 'video' ? 'screen' : type
@@ -80,6 +82,18 @@ function logRecordingDebug(
     meetingId: meetingId ?? null,
     ...(context ?? {})
   })
+}
+
+function getSourceTypeFromId(sourceId: string | null | undefined): 'window' | 'screen' | 'unknown' {
+  if (!sourceId) return 'unknown'
+  return sourceId.startsWith('screen:') ? 'screen' : 'window'
+}
+
+function isRecordingMediaFilename(name: string): boolean {
+  return (
+    (/^(screen|mic|system)(-\d+)?\.webm$/).test(name) ||
+    name === 'audio.webm'
+  )
 }
 
 /** Merge two audio files into one using amix filter */
@@ -269,6 +283,57 @@ async function getSegmentedCapturePresence(
     ),
     hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm'))
   }
+}
+
+async function maybeReportRapidAbortWithoutMedia(params: {
+  meetingDir: string
+  meetingId: string
+  durationSeconds: number
+  sourceId: string | null
+  sourceName: string | null
+  recordingIntent: RecordingState['recordingIntent']
+}): Promise<void> {
+  if (params.durationSeconds > RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS) {
+    return
+  }
+
+  const names = await readdir(params.meetingDir).catch(() => [] as string[])
+  const mediaFiles = names.filter(isRecordingMediaFilename).sort()
+  if (mediaFiles.length > 0) {
+    return
+  }
+
+  const sourceType = getSourceTypeFromId(params.sourceId)
+  const context = {
+    durationSeconds: params.durationSeconds,
+    sourceId: params.sourceId,
+    sourceName: params.sourceName,
+    sourceType,
+    recordingIntent: params.recordingIntent ?? null,
+    meetingDir: params.meetingDir,
+    mediaFiles,
+  }
+
+  logAutodocEvent({
+    area: 'recording',
+    level: 'warn',
+    message: 'Recording stopped shortly after start with no captured media',
+    meetingId: params.meetingId,
+    context
+  })
+
+  captureMessage('Recording stopped shortly after start with no captured media', {
+    area: 'recording',
+    meetingId: params.meetingId,
+    level: 'warning',
+    tags: {
+      feature_area: 'recording',
+      recording_phase: 'start',
+      recording_intent: params.recordingIntent ?? 'unknown',
+      source_type: sourceType
+    },
+    extra: context
+  })
 }
 
 /** Mux audio track into video file so playback has both video and audio.
@@ -833,6 +898,14 @@ export function registerRecordingIpc(
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
+      await maybeReportRapidAbortWithoutMedia({
+        meetingDir,
+        meetingId: result.meetingId,
+        durationSeconds: metadata.durationSeconds,
+        sourceId: result.sourceId,
+        sourceName: result.sourceName,
+        recordingIntent: result.recordingIntent
+      })
       try {
         await encryptJSON(metadata, join(meetingDir, 'metadata.json'))
         scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)

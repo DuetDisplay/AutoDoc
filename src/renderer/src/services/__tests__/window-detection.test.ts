@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectMeetingWindow } from '../window-detection'
+import { buildRecordingTrackingContext, detectMeetingWindow } from '../window-detection'
 import type { RecordingSource } from '../../../../shared/types'
 
 describe('detectMeetingWindow', () => {
@@ -68,5 +68,27 @@ describe('detectMeetingWindow', () => {
     const result = detectMeetingWindow(browserOnly)
     expect(result).not.toBeNull()
     expect(result!.id).toBe('w:20')
+  })
+
+  it('marks manual screen recording without meeting context as general intent', () => {
+    const context = buildRecordingTrackingContext(
+      { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' },
+      null
+    )
+
+    expect(context.recordingIntent).toBe('general')
+    expect(context.meetingSourceId).toBeNull()
+    expect(context.providerId).toBeNull()
+  })
+
+  it('marks manual meeting window recording as meeting intent', () => {
+    const context = buildRecordingTrackingContext(
+      { id: 'w:5', name: 'Microsoft Teams - Meeting', thumbnailDataUrl: '' },
+      null
+    )
+
+    expect(context.recordingIntent).toBe('meeting')
+    expect(context.meetingSourceId).toBe('w:5')
+    expect(context.providerId).toBe('teams')
   })
 })
