@@ -486,6 +486,8 @@ app.whenReady().then(async () => {
   }
 
   const isExperimentalSpeakerDiarizationEnabled = (): boolean => {
+    // Speaker diarization is intentionally hard-disabled for now, so release
+    // builds skip bundling the pyannote/lightning runtime until we re-enable it.
     return false
   }
 

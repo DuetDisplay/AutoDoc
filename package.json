@@ -24,7 +24,7 @@
     "start": "npm run build:win-meeting-detector && npm run build:mac-meeting-detector && electron-vite preview",
     "dev": "npm run build:win-meeting-detector && npm run build:mac-meeting-detector && electron-vite dev",
     "generate-icons": "node scripts/generate-icons.js",
-    "build": "npm run prepare:python-runtime && npm run prepare:diarization-wheelhouse && npm run prepare:diarization-model && npm run generate-icons && npm run build:win-meeting-detector && npm run build:mac-meeting-detector && npm run typecheck && electron-vite build",
+    "build": "npm run generate-icons && npm run build:win-meeting-detector && npm run build:mac-meeting-detector && npm run typecheck && electron-vite build",
     "postinstall": "npm run build:win-meeting-detector && npm run build:mac-meeting-detector && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir --publish never",
     "build:win": "npm run build && electron-builder --win --publish never",
