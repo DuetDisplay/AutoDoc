@@ -4,13 +4,14 @@ set -euo pipefail
 
 BUNDLE_ID="${AUTODOC_QA_RESET_BUNDLE_ID:-com.kairos.autodoc}"
 INCLUDE_DEV=0
-MODE="check"
+MODE="run"
 
 usage() {
   cat <<'EOF'
 Usage:
+  bash scripts/macOSFullUninstall.sh
   bash scripts/macOSFullUninstall.sh --check
-  bash scripts/macOSFullUninstall.sh --run [--include-dev]
+  bash scripts/macOSFullUninstall.sh --run
 
 Options:
   --check        Report whether this macOS user account is clean for fresh AutoDoc QA.
