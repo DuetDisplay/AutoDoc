@@ -132,6 +132,35 @@ describe('startup scan', () => {
     await expect(service.getStatus(meetingId)).resolves.toBe('failed')
   })
 
+  it('does not auto-retry whisper Metal aborts on startup', async () => {
+    const meetingId = 'meeting-tr-metal-crash'
+    const meetingDir = join(baseDir, meetingId)
+    await mkdir(meetingDir, { recursive: true })
+    await writeFile(join(meetingDir, 'audio.webm'), 'audio')
+    await writeFile(
+      join(meetingDir, 'transcript.error'),
+      JSON.stringify({
+        error: 'whisper.cpp exited with code null (signal SIGABRT): ggml_metal_rsets_free',
+        retries: 0,
+      })
+    )
+
+    const service = new TranscriptionService(
+      { ensureReady: vi.fn(), getWhisperPath: vi.fn(), getFfmpegPath: vi.fn(), getModelPath: vi.fn() } as any,
+      { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
+      baseDir,
+      { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
+      () => false,
+    )
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+    await service.scanAndEnqueuePending()
+
+    expect(enqueueSpy).not.toHaveBeenCalled()
+    await expect(service.getStatus(meetingId)).resolves.toBe('failed')
+  })
+
   it('skips active meetings during transcription recovery scans', async () => {
     const meetingId = 'meeting-tr-active'
     const meetingDir = join(baseDir, meetingId)

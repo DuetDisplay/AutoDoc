@@ -301,6 +301,39 @@ describe('DetectionService', () => {
     expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
   })
 
+  it('does not auto-stop general recordings when meeting signals disappear', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
+    mocks.getSources.mockResolvedValue([] as any)
+
+    const service = new DetectionService(
+      {
+        getState: () => ({
+          isRecording: true,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          recordingIntent: 'general'
+        })
+      } as never,
+      () => []
+    )
+
+    for (let i = 0; i < 8; i += 1) {
+      await (service as any).poll()
+      await vi.advanceTimersByTimeAsync(3_000)
+    }
+
+    expect(webContentsSend).not.toHaveBeenCalledWith('detection:auto-stop', expect.anything())
+    expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Auto-stop confirmed after sustained missing meeting signals'
+      })
+    )
+  })
+
   it('still auto-stops on Windows when the meeting window actually disappears', async () => {
     setPlatform('win32')
 

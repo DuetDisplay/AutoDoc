@@ -36,7 +36,8 @@ describe('RecordingService', () => {
     const paths = await service.startRecording('source-123', 'Zoom Meeting', {
       meetingSourceId: 'window:zoom',
       meetingSourceName: 'Zoom Meeting',
-      providerId: 'zoom'
+      providerId: 'zoom',
+      recordingIntent: 'meeting'
     })
     const state = service.getState()
 
@@ -44,6 +45,7 @@ describe('RecordingService', () => {
     expect(state.meetingId).toBe('test-uuid-1234')
     expect(state.sourceId).toBe('source-123')
     expect(state.sourceName).toBe('Zoom Meeting')
+    expect(state.recordingIntent).toBe('meeting')
     expect(state.trackedMeetingSourceId).toBe('window:zoom')
     expect(state.trackedMeetingSourceName).toBe('Zoom Meeting')
     expect(state.trackedMeetingProviderId).toBe('zoom')
@@ -58,8 +60,10 @@ describe('RecordingService', () => {
     const result = service.stopRecording()
 
     expect(result.meetingId).toBe('test-uuid-1234')
+    expect(result.sourceId).toBe('source-123')
     expect(service.getState().isRecording).toBe(false)
     expect(service.getState().meetingId).toBeNull()
+    expect(service.getState().recordingIntent).toBeNull()
   })
 
   it('throws if starting while already recording', async () => {

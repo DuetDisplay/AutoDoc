@@ -1,6 +1,16 @@
 export function classifyError(rawError: string): string {
   const error = rawError.toLowerCase()
 
+  if (
+    error.includes('whisper') &&
+    (
+      error.includes('ggml_metal') ||
+      error.includes('signal sigabrt') ||
+      error.includes('abort trap: 6')
+    )
+  ) {
+    return 'whisper-metal-crash'
+  }
   if (error.includes('encryption key unavailable')) {
     return 'encryption-key-unavailable'
   }

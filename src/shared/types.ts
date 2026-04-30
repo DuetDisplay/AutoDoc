@@ -110,10 +110,13 @@ export interface RecordingSource {
   thumbnailDataUrl: string
 }
 
+export type RecordingIntent = 'meeting' | 'general'
+
 export interface RecordingTrackingContext {
   meetingSourceId: string | null
   meetingSourceName: string | null
   providerId: string | null
+  recordingIntent: RecordingIntent
 }
 
 export interface RecordingState {
@@ -122,6 +125,7 @@ export interface RecordingState {
   startedAt: number | null
   sourceId: string | null
   sourceName: string | null
+  recordingIntent?: RecordingIntent | null
   trackedMeetingSourceId?: string | null
   trackedMeetingSourceName?: string | null
   trackedMeetingProviderId?: string | null

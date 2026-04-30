@@ -4,12 +4,13 @@ import * as os from 'os'
 import * as path from 'path'
 import { registerRecordingIpc } from '../recording-ipc'
 
-const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure } = vi.hoisted(() => ({
+const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage } = vi.hoisted(() => ({
   handle: vi.fn(),
   getSources: vi.fn(),
   appGetPath: vi.fn(),
   logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn(),
+  captureMessage: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
@@ -31,6 +32,10 @@ vi.mock('../../services/calendar-matcher', () => ({
 vi.mock('../../services/autodoc-log', () => ({
   logAutodocEvent,
   logAutodocFailure
+}))
+
+vi.mock('../../services/sentry-reporter', () => ({
+  captureMessage
 }))
 
 vi.mock('../../services/tray', () => ({
@@ -151,6 +156,71 @@ describe('recording IPC source handling', () => {
           message: 'recording:delete completed',
           meetingId: 'meeting-1',
         }),
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports rapid recording aborts that produce no media files', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingDir = path.join(recordingsDir, 'meeting-rapid-abort')
+
+    try {
+      appGetPath.mockImplementation((name: string) => {
+        if (name === 'userData') return userDataDir
+        throw new Error(`unexpected app.getPath(${name})`)
+      })
+      await fsp.mkdir(meetingDir, { recursive: true })
+
+      const { stopActiveRecording } = registerRecordingIpc(
+        {
+          stopRecording: vi.fn(() => ({
+            meetingId: 'meeting-rapid-abort',
+            startedAt: Date.now() - 2_000,
+            sourceId: 'screen:0:0',
+            sourceName: 'Entire screen',
+            recordingIntent: 'general'
+          })),
+          getState: vi.fn(() => ({ isRecording: true })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
+          getWhisperPath: vi.fn(() => '/mock/whisper'),
+          getModelPath: vi.fn(() => '/mock/model')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      stopActiveRecording()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'recording',
+          level: 'warn',
+          message: 'Recording stopped shortly after start with no captured media',
+          meetingId: 'meeting-rapid-abort'
+        })
+      )
+      expect(captureMessage).toHaveBeenCalledWith(
+        'Recording stopped shortly after start with no captured media',
+        expect.objectContaining({
+          area: 'recording',
+          meetingId: 'meeting-rapid-abort',
+          level: 'warning'
+        })
       )
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
