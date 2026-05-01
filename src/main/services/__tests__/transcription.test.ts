@@ -836,6 +836,13 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount()).toBe(10)
   })
 
+  it('splits whisper threads across concurrent Windows sources', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(20)
+
+    expect((service as any).getWhisperThreadCount(2)).toBe(7)
+  })
+
   it('passes the computed thread count to whisper-cli', async () => {
     setPlatform('win32')
     const child = new MockChildProcess()
@@ -950,7 +957,7 @@ describe('TranscriptionService', () => {
     const result = await (service as any).transcribeWithFallback(
       '/mock/tmp/audio.wav',
       'meeting-123',
-      240,
+      1300,
       '/mock/tmp/audio',
       []
     )

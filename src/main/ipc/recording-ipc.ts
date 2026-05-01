@@ -110,7 +110,15 @@ function mergeAudioFiles(
       '-i',
       input2,
       '-filter_complex',
-      'amix=inputs=2:duration=longest',
+      'amix=inputs=2:duration=longest:normalize=0',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '48k',
+      '-compression_level',
+      '0',
+      '-application',
+      'audio',
       '-y',
       outputPath
     ])
@@ -186,15 +194,56 @@ function concatVideoSegments(
       outputPath
     ])
     let stderr = ''
-    proc.on('error', (err) =>
-      reject(new Error(`ffmpeg video concat spawn failed: ${err.message}`))
-    )
+    proc.on('error', (err) => reject(new Error(`ffmpeg video concat spawn failed: ${err.message}`)))
     proc.stderr.on('data', (data: Buffer) => {
       stderr += data.toString()
     })
     proc.on('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(`ffmpeg video concat exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
+function concatVideoSegmentsWithStreamCopy(
+  ffmpegPath: string,
+  listPath: string,
+  outputPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-fflags',
+      '+genpts',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      listPath,
+      '-map',
+      '0:v:0',
+      '-an',
+      '-c:v',
+      'copy',
+      '-y',
+      outputPath
+    ])
+    let stderr = ''
+    proc.on('error', (err) =>
+      reject(new Error(`ffmpeg video stream-copy concat spawn failed: ${err.message}`))
+    )
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else {
+        reject(
+          new Error(
+            `ffmpeg video stream-copy concat exited with code ${code}: ${stderr.slice(-500)}`
+          )
+        )
+      }
     })
   })
 }
@@ -236,7 +285,25 @@ async function assembleSegmentedCaptureFile(
 
   try {
     if (type === 'video') {
-      await concatVideoSegments(ffmpegPath, listPath, finalPath)
+      try {
+        await concatVideoSegmentsWithStreamCopy(ffmpegPath, listPath, finalPath)
+        logRecordingDebug('assembled segmented video with stream-copy concat', undefined, {
+          segmentCount: segmentNames.length,
+          finalFilename
+        })
+      } catch (copyError) {
+        logRecordingDebug(
+          'stream-copy video concat failed; falling back to VP9 re-encode',
+          undefined,
+          {
+            segmentCount: segmentNames.length,
+            finalFilename,
+            error: copyError instanceof Error ? copyError.message : String(copyError)
+          }
+        )
+        await unlink(finalPath).catch(() => {})
+        await concatVideoSegments(ffmpegPath, listPath, finalPath)
+      }
     } else {
       await concatWebmFiles(ffmpegPath, listPath, finalPath)
     }
@@ -274,12 +341,13 @@ async function assembleRecordingSegments(
 
 async function getSegmentedCapturePresence(
   meetingDir: string
-): Promise<{ hasSegmentedAudio: boolean, hasSegmentedVideo: boolean }> {
+): Promise<{ hasSegmentedAudio: boolean; hasSegmentedVideo: boolean }> {
   const names = await readdir(meetingDir).catch(() => [])
   return {
-    hasSegmentedAudio: names.some((name) =>
-      (name.startsWith('mic-') || name.startsWith('system-') || name.startsWith('audio-')) &&
-      name.endsWith('.webm')
+    hasSegmentedAudio: names.some(
+      (name) =>
+        (name.startsWith('mic-') || name.startsWith('system-') || name.startsWith('audio-')) &&
+        name.endsWith('.webm')
     ),
     hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm'))
   }
@@ -404,12 +472,10 @@ export function registerRecordingIpc(
   whisperManager: WhisperManager,
   calendarManager: CalendarManager
 ): { stopActiveRecording: () => ReturnType<RecordingService['stopRecording']> } {
-  let cachedRecentEvents:
-    | {
-        fetchedAt: number
-        events: CalendarEvent[]
-      }
-    | null = null
+  let cachedRecentEvents: {
+    fetchedAt: number
+    events: CalendarEvent[]
+  } | null = null
   let recentEventsPromise: Promise<CalendarEvent[]> | null = null
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
   const windowsCalendarRefreshInFlight = new Set<string>()
@@ -428,12 +494,12 @@ export function registerRecordingIpc(
       meetingDir,
       whisperBinaryPath: whisperManager.getWhisperPath(),
       ffmpegPath: whisperManager.getFfmpegPath(),
-      whisperModelPath: whisperManager.getModelPath(),
+      whisperModelPath: whisperManager.getModelPath()
     })
 
     return {
       recordingsBaseDir: baseDir,
-      ...diagnostics,
+      ...diagnostics
     }
   }
 
@@ -672,7 +738,11 @@ export function registerRecordingIpc(
     // Windows users were waiting on a live calendar fetch before a freshly stopped
     // recording appeared in AI Notes. We keep macOS behavior as-is and do the
     // calendar match lazily on Windows so the item shows up immediately and stays clickable.
-    if (!isWindows || !calendarManager.isConnected() || windowsCalendarRefreshInFlight.has(meetingId)) {
+    if (
+      !isWindows ||
+      !calendarManager.isConnected() ||
+      windowsCalendarRefreshInFlight.has(meetingId)
+    ) {
       return
     }
 
@@ -808,7 +878,9 @@ export function registerRecordingIpc(
     if (isWindows) {
       logRecordingDebug('recording:list resolved', undefined, {
         entryCount: entries.length,
-        finalizingMeetingIds: entries.filter((entry) => entry.isFinalizing).map((entry) => entry.meetingId)
+        finalizingMeetingIds: entries
+          .filter((entry) => entry.isFinalizing)
+          .map((entry) => entry.meetingId)
       })
     }
 
@@ -1092,10 +1164,14 @@ export function registerRecordingIpc(
     windowsPendingFinalization.set(meetingId, finalizingMetadata)
     await persistRecordingMetadata(meetingDir, finalizingMetadata)
     broadcastEntryUpdated(meetingId)
-    logRecordingDebug('recording:finalize-stop keeping finalizing state until post-processing completes', meetingId, {
-      elapsedMs: Date.now() - finalizeStartedAt,
-      pendingAfterCount: windowsPendingFinalization.size
-    })
+    logRecordingDebug(
+      'recording:finalize-stop keeping finalizing state until post-processing completes',
+      meetingId,
+      {
+        elapsedMs: Date.now() - finalizeStartedAt,
+        pendingAfterCount: windowsPendingFinalization.size
+      }
+    )
     runRecordingPostProcessing(meetingId, finalizingMetadata)
   })
 
@@ -1161,7 +1237,10 @@ export function registerRecordingIpc(
     ) => {
       const currentState = recordingService.getState()
       const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
-      if ((!currentState.isRecording || currentState.meetingId !== meetingId) && !allowFinalizingWrite) {
+      if (
+        (!currentState.isRecording || currentState.meetingId !== meetingId) &&
+        !allowFinalizingWrite
+      ) {
         return // Ignore chunks for stale or mismatched recordings
       }
       const baseDir = recordingService.getRecordingsBaseDir()
@@ -1221,14 +1300,14 @@ export function registerRecordingIpc(
       area: 'recording',
       message: 'recording:delete requested',
       meetingId,
-      context: await getDeletionDiagnostics(meetingId),
+      context: await getDeletionDiagnostics(meetingId)
     })
     await rm(meetingDir, { recursive: true, force: true })
     logAutodocEvent({
       area: 'recording',
       message: 'recording:delete completed',
       meetingId,
-      context: await getDeletionDiagnostics(meetingId),
+      context: await getDeletionDiagnostics(meetingId)
     })
   })
 
