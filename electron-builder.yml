@@ -11,6 +11,8 @@ files:
   - 'resources/trayTemplate@2x.png'
   - 'resources/trayRecording.png'
   - 'resources/trayRecording@2x.png'
+  - 'resources/faster-whisper-transcribe.py'
+  - 'resources/windows-transcription-manifest.json'
   - 'native/**/bin/**/*'
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'

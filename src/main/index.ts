@@ -822,6 +822,7 @@ app.whenReady().then(async () => {
       platform: isE2E ? getE2EPlatform() : process.platform,
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
+      transcriptionBackend: whisperManager.getTranscriptionBackend(),
       ollamaModel: managedOllamaManager.getModel()
     })
   )

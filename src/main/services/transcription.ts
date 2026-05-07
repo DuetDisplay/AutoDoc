@@ -224,7 +224,12 @@ export class TranscriptionService {
           const isPermanentFailure =
             errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
           const allowsRecoveryScanRetry = this.allowsRecoveryScanRetry(errorCode)
-          if (errorData && errorData.retries < 3 && !isPermanentFailure && allowsRecoveryScanRetry) {
+          if (
+            errorData &&
+            errorData.retries < 3 &&
+            !isPermanentFailure &&
+            allowsRecoveryScanRetry
+          ) {
             console.log(
               `Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`
             )
@@ -1392,6 +1397,19 @@ export class TranscriptionService {
     extraArgs: string[] = [],
     concurrentSources = 1
   ): Promise<void> {
+    if (
+      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
+      this.whisperManager.isFasterWhisperSelected()
+    ) {
+      return this.runFasterWhisperPass(
+        audioWavPath,
+        meetingId,
+        audioDurationSec,
+        progressRange,
+        concurrentSources
+      )
+    }
+
     const attempt = (disableGpu: boolean): Promise<void> =>
       new Promise((resolve, reject) => {
         let stderr = ''
@@ -1463,7 +1481,11 @@ export class TranscriptionService {
             resolve()
           } else {
             const signalSuffix = signal ? ` (signal ${signal})` : ''
-            reject(new Error(`whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`))
+            reject(
+              new Error(
+                `whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`
+              )
+            )
           }
         })
       })
@@ -1485,6 +1507,78 @@ export class TranscriptionService {
       })
 
       return attempt(true)
+    })
+  }
+
+  private runFasterWhisperPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+      const threadCount = this.getWhisperThreadCount(concurrentSources)
+      const jsonPath = `${audioWavPath}.json`
+      const args = [
+        this.whisperManager.getFasterWhisperScriptPath(),
+        '--model',
+        this.whisperManager.getFasterWhisperModelPath(),
+        '--audio',
+        audioWavPath,
+        '--output',
+        jsonPath,
+        '--device',
+        this.whisperManager.getFasterWhisperDevice(),
+        '--compute-type',
+        this.whisperManager.getFasterWhisperComputeType(),
+        '--language',
+        'en'
+      ]
+
+      if (threadCount !== null) {
+        args.push('--threads', String(threadCount))
+      }
+
+      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args)
+      if (threadCount !== null) {
+        console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
+      }
+      console.log(
+        `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+      )
+      this.lowerWhisperPriority(proc.pid, meetingId)
+
+      const progressTimer =
+        audioDurationSec && audioDurationSec > 0
+          ? setInterval(() => {
+              this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(50, progressRange))
+            }, 1500)
+          : null
+
+      proc.on('error', (err) => {
+        if (progressTimer) clearInterval(progressTimer)
+        reject(new Error(`faster-whisper spawn failed: ${err.message}`))
+      })
+
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (progressTimer) clearInterval(progressTimer)
+        if (code === 0) {
+          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+          resolve()
+          return
+        }
+
+        const signalSuffix = signal ? ` (signal ${signal})` : ''
+        reject(
+          new Error(`faster-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
+        )
+      })
     })
   }
 
