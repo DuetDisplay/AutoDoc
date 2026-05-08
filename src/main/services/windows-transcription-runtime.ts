@@ -77,7 +77,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'faster-whisper-runtime-cuda-win-x64.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip`,
-        sha256: '0000000000000000000000000000000000000000000000000000000000000000',
+        sha256: '31d7a5934192ab2e80dab182a8bd852c57997eff70f891c45b2781db9aa44aa7',
+        bytes: 1443501612,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -88,7 +89,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'model',
         filename: 'faster-whisper-distil-large-v3-ct2.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-distil-large-v3-ct2.zip`,
-        sha256: '0000000000000000000000000000000000000000000000000000000000000000',
+        sha256: '81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064',
+        bytes: 1397218990,
         expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
       }
     ]
@@ -105,7 +107,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'faster-whisper-runtime-cpu-win-x64.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip`,
-        sha256: '0000000000000000000000000000000000000000000000000000000000000000',
+        sha256: '2241208e10422a2cc3b5b47a33f1648110e3e0a46c51611aa430e31b0039ea75',
+        bytes: 126977202,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -116,7 +119,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'model',
         filename: 'faster-whisper-small-en-ct2-int8.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-small-en-ct2-int8.zip`,
-        sha256: '0000000000000000000000000000000000000000000000000000000000000000',
+        sha256: '1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8',
+        bytes: 445198952,
         expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
       }
     ]
