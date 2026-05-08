@@ -1,6 +1,14 @@
 name: Windows Transcription Assets
 
 on:
+  push:
+    branches:
+      - windowsPerformanceFix
+    paths:
+      - '.github/workflows/windows-transcription-assets.yml'
+      - 'scripts/prepare-windows-transcription-assets.js'
+      - 'resources/windows-transcription-manifest.json'
+      - 'package.json'
   workflow_dispatch:
     inputs:
       asset_tag:
@@ -20,7 +28,8 @@ jobs:
     permissions:
       contents: write
     env:
-      AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ inputs.asset_tag }}
+      ASSET_TAG: ${{ github.event.inputs.asset_tag || 'windows-transcription-v1' }}
+      AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ github.event.inputs.asset_tag || 'windows-transcription-v1' }}
       AUTODOC_PYTHON_BUNDLE_TARGETS: win32-x64
       PIP_CACHE_DIR: ${{ github.workspace }}\.benchmarks\pip-cache
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
@@ -41,11 +50,11 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content -LiteralPath resources/windows-transcription-manifest.json -Raw | ConvertFrom-Json
-          if ($manifest.releaseTag -ne '${{ inputs.asset_tag }}') {
-            throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow input '${{ inputs.asset_tag }}'."
+          if ($manifest.releaseTag -ne $env:ASSET_TAG) {
+            throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow asset tag '$env:ASSET_TAG'."
           }
-          if ($manifest.artifactBaseUrl -notmatch [regex]::Escape('/${{ inputs.asset_tag }}')) {
-            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not point at '${{ inputs.asset_tag }}'."
+          if ($manifest.artifactBaseUrl -notmatch [regex]::Escape("/$env:ASSET_TAG")) {
+            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not point at '$env:ASSET_TAG'."
           }
 
       - name: Restore Python archive cache
@@ -60,9 +69,9 @@ jobs:
           path: |
             .benchmarks/faster-whisper-models
             .benchmarks/pip-cache
-          key: windows-transcription-assets-${{ inputs.asset_tag }}-${{ hashFiles('scripts/prepare-windows-transcription-assets.js') }}
+          key: windows-transcription-assets-${{ env.ASSET_TAG }}-${{ hashFiles('scripts/prepare-windows-transcription-assets.js') }}
           restore-keys: |
-            windows-transcription-assets-${{ inputs.asset_tag }}-
+            windows-transcription-assets-${{ env.ASSET_TAG }}-
             windows-transcription-assets-
 
       - name: Prepare managed Python archive
@@ -79,20 +88,20 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-transcription-assets-${{ inputs.asset_tag }}
+          name: windows-transcription-assets-${{ env.ASSET_TAG }}
           path: |
-            .benchmarks/windows-transcription-assets/${{ inputs.asset_tag }}/*.zip
-            .benchmarks/windows-transcription-assets/${{ inputs.asset_tag }}/SHA256SUMS.md
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/SHA256SUMS.md
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish GitHub release assets
-        if: inputs.publish_assets
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_assets }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = '${{ inputs.asset_tag }}'
+          $tag = $env:ASSET_TAG
           $assetDir = Join-Path $PWD ".benchmarks/windows-transcription-assets/$tag"
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
