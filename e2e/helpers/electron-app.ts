@@ -12,6 +12,7 @@ function resolveMainEntry(appRoot: string): string {
 
 async function launchApp(options: {
   appRoot?: string
+  extraEnv?: Record<string, string>
   scenario?: E2EScenario
   userDataDir?: string
   realSetup?: boolean
@@ -28,7 +29,8 @@ async function launchApp(options: {
       ...(options.realSetup ? { AUTODOC_TEST_REAL_SETUP: '1' } : { AUTODOC_E2E: '1' }),
       ...(options.scenario ? { AUTODOC_E2E_SCENARIO: JSON.stringify(options.scenario) } : {}),
       ...(options.userDataDir ? { AUTODOC_TEST_USER_DATA_DIR: options.userDataDir } : {}),
-    },
+      ...(options.extraEnv ?? {})
+    }
   })
 }
 
@@ -58,20 +60,24 @@ function killProcessesForUserDataDir(userDataDir: string): void {
 
   try {
     if (process.platform === 'win32') {
-      execFileSync('powershell', [
-        '-NoProfile',
-        '-Command',
-        `$path = ${JSON.stringify(userDataDir)}; ` +
-          "Get-CimInstance Win32_Process -Filter \"Name = 'autodoc.exe'\" | " +
-          "Where-Object { $_.CommandLine -like ('*' + $path + '*') } | " +
-          'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
-      ], { stdio: 'ignore' })
+      execFileSync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `$path = ${JSON.stringify(userDataDir)}; ` +
+            'Get-CimInstance Win32_Process -Filter "Name = \'autodoc.exe\'" | ' +
+            "Where-Object { $_.CommandLine -like ('*' + $path + '*') } | " +
+            'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
+        ],
+        { stdio: 'ignore' }
+      )
       return
     }
 
     const output = execFileSync('ps', ['eww', '-ax', '-o', 'pid=,command='], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'pipe', 'ignore']
     })
 
     for (const pid of output
@@ -98,14 +104,11 @@ export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
         killProcessesForUserDataDir(userDataDir)
         rmSync(userDataDir, { recursive: true, force: true })
       }
-    },
+    }
   }
 }
 
-export async function launchIsolatedExternalE2EApp(
-  appRoot: string,
-  scenario?: E2EScenario,
-) {
+export async function launchIsolatedExternalE2EApp(appRoot: string, scenario?: E2EScenario) {
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
   const electronApp = await launchApp({ appRoot, scenario, userDataDir })
 
@@ -119,13 +122,13 @@ export async function launchIsolatedExternalE2EApp(
         killProcessesForUserDataDir(userDataDir)
         rmSync(userDataDir, { recursive: true, force: true })
       }
-    },
+    }
   }
 }
 
-export async function launchRealSetupApp() {
+export async function launchRealSetupApp(extraEnv?: Record<string, string>) {
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
-  const electronApp = await launchApp({ realSetup: true, userDataDir })
+  const electronApp = await launchApp({ realSetup: true, userDataDir, extraEnv })
 
   return {
     electronApp,
@@ -137,7 +140,7 @@ export async function launchRealSetupApp() {
         killProcessesForUserDataDir(userDataDir)
         rmSync(userDataDir, { recursive: true, force: true })
       }
-    },
+    }
   }
 }
 
@@ -146,7 +149,7 @@ export async function stubMediaCapture(page: Page): Promise<void> {
     if (!navigator.mediaDevices) {
       Object.defineProperty(navigator, 'mediaDevices', {
         configurable: true,
-        value: {},
+        value: {}
       })
     }
 

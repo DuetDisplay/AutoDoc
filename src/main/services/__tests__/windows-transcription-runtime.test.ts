@@ -19,6 +19,7 @@ const baseHardware: WindowsHardwareProfile = {
 }
 
 afterEach(() => {
+  delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
 })
 
@@ -146,6 +147,52 @@ describe('Windows transcription runtime selection', () => {
         ]
       })
     } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('can rewrite manifest asset URLs to a local validation server', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-win-manifest-base-url-'))
+    const manifestPath = join(rootDir, 'manifest.json')
+
+    try {
+      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = 'http://127.0.0.1:8765/assets/'
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          version: 1,
+          releaseTag: 'test-release',
+          artifactBaseUrl: 'https://example.test/release',
+          profiles: [
+            {
+              id: 'faster-whisper-cpu',
+              label: 'Test CPU backend',
+              modelName: 'tiny.en',
+              device: 'cpu',
+              computeType: 'int8',
+              minSystemMemoryGiB: 4,
+              assets: [
+                {
+                  id: 'runtime',
+                  filename: 'test-runtime.zip',
+                  url: 'https://example.test/test-runtime.zip',
+                  sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  expectedFiles: ['python.exe'],
+                  sources: ['test source'],
+                  licenses: ['MIT']
+                }
+              ]
+            }
+          ]
+        })
+      )
+
+      const profiles = await loadWindowsTranscriptionProfiles(manifestPath)
+      expect(profiles['faster-whisper-cpu'].assets[0].url).toBe(
+        'http://127.0.0.1:8765/assets/test-runtime.zip'
+      )
+    } finally {
+      delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
       await rm(rootDir, { recursive: true, force: true })
     }
   })

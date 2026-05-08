@@ -32,6 +32,7 @@ export interface WindowsTranscriptionAsset {
   filename: string
   url: string
   sha256: string
+  bytes?: number
   expectedFiles: string[]
   sources?: string[]
   licenses?: string[]
@@ -147,6 +148,8 @@ export function normalizeWindowsTranscriptionProfiles(
   manifest: WindowsTranscriptionManifest
 ): Record<WindowsTranscriptionBackendId, WindowsTranscriptionProfile> {
   const profiles = { ...WINDOWS_TRANSCRIPTION_PROFILES }
+  const artifactBaseUrl =
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL ?? manifest.artifactBaseUrl
 
   for (const profile of manifest.profiles) {
     if (
@@ -157,7 +160,13 @@ export function normalizeWindowsTranscriptionProfiles(
       continue
     }
 
-    profiles[profile.id] = profile
+    profiles[profile.id] = {
+      ...profile,
+      assets: profile.assets.map((asset) => ({
+        ...asset,
+        url: artifactBaseUrl ? `${artifactBaseUrl.replace(/\/$/, '')}/${asset.filename}` : asset.url
+      }))
+    }
   }
 
   return profiles

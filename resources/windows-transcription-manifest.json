@@ -16,7 +16,7 @@
           "id": "runtime",
           "filename": "faster-whisper-runtime-cuda-win-x64.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "sha256": "ca8240019bba663f05f78db699c270a9dcec65e8836564f89c7fd1915862eb55",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/faster_whisper",
@@ -27,16 +27,30 @@
             "faster-whisper",
             "CTranslate2 CUDA runtime"
           ],
-          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"]
+          "licenses": [
+            "MIT",
+            "Apache-2.0",
+            "BSD-3-Clause"
+          ],
+          "bytes": 1443501893
         },
         {
           "id": "model",
           "filename": "faster-whisper-distil-large-v3-ct2.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-distil-large-v3-ct2.zip",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
-          "sources": ["distil-whisper/distil-large-v3 converted to CTranslate2"],
-          "licenses": ["MIT"]
+          "sha256": "bd4f130813c7007d21fe2be22202a8ce5aeb1794c6dec8003c7bf7531fe6cc0c",
+          "expectedFiles": [
+            "config.json",
+            "model.bin",
+            "tokenizer.json"
+          ],
+          "sources": [
+            "distil-whisper/distil-large-v3 converted to CTranslate2"
+          ],
+          "licenses": [
+            "MIT"
+          ],
+          "bytes": 1397217883
         }
       ]
     },
@@ -52,7 +66,7 @@
           "id": "runtime",
           "filename": "faster-whisper-runtime-cpu-win-x64.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "sha256": "b5b2cbceb84dd2c3e509214130519e269f49e54abf668b3de2418edc7a4b694d",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/faster_whisper",
@@ -63,16 +77,30 @@
             "faster-whisper",
             "CTranslate2 CPU runtime"
           ],
-          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"]
+          "licenses": [
+            "MIT",
+            "Apache-2.0",
+            "BSD-3-Clause"
+          ],
+          "bytes": 126977482
         },
         {
           "id": "model",
           "filename": "faster-whisper-small-en-ct2-int8.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-small-en-ct2-int8.zip",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
-          "sources": ["openai/whisper-small.en converted to CTranslate2 int8"],
-          "licenses": ["MIT"]
+          "sha256": "a5bf9b709cb87fb051ba4a7f1627eb35e216a15723d75b828a332ee1c70a0f3d",
+          "expectedFiles": [
+            "config.json",
+            "model.bin",
+            "tokenizer.json"
+          ],
+          "sources": [
+            "openai/whisper-small.en converted to CTranslate2 int8"
+          ],
+          "licenses": [
+            "MIT"
+          ],
+          "bytes": 445197906
         }
       ]
     },

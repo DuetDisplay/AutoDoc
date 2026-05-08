@@ -13,7 +13,7 @@ import {
   rename
 } from 'fs/promises'
 import { basename, dirname, join } from 'path'
-import { createReadStream, createWriteStream } from 'fs'
+import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
 import { tmpdir } from 'os'
@@ -164,7 +164,7 @@ export class WhisperManager extends EventEmitter {
     if (app.isPackaged) {
       return join(process.resourcesPath, 'faster-whisper-transcribe.py')
     }
-    return join(app.getAppPath(), 'resources', 'faster-whisper-transcribe.py')
+    return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
   }
 
   getFasterWhisperDevice(): 'cuda' | 'cpu' {
@@ -247,11 +247,20 @@ export class WhisperManager extends EventEmitter {
       )
     }
 
-    return join(this.getDevelopmentAppPath(), 'resources', 'windows-transcription-manifest.json')
+    return this.getDevelopmentResourcePath('windows-transcription-manifest.json')
   }
 
   private getDevelopmentAppPath(): string {
     return typeof app.getAppPath === 'function' ? app.getAppPath() : process.cwd()
+  }
+
+  private getDevelopmentResourcePath(filename: string): string {
+    const appResourcePath = join(this.getDevelopmentAppPath(), 'resources', filename)
+    if (existsSync(appResourcePath)) {
+      return appResourcePath
+    }
+
+    return join(process.cwd(), 'resources', filename)
   }
 
   async isReady(): Promise<boolean> {
