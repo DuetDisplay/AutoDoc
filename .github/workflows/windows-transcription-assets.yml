@@ -28,8 +28,8 @@ jobs:
     permissions:
       contents: write
     env:
-      ASSET_TAG: ${{ github.event.inputs.asset_tag || 'windows-transcription-v1' }}
-      AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ github.event.inputs.asset_tag || 'windows-transcription-v1' }}
+      ASSET_TAG: ${{ github.event_name == 'push' && 'windows-transcription-v1-branch-test' || github.event.inputs.asset_tag || 'windows-transcription-v1' }}
+      AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ github.event_name == 'push' && 'windows-transcription-v1-branch-test' || github.event.inputs.asset_tag || 'windows-transcription-v1' }}
       AUTODOC_PYTHON_BUNDLE_TARGETS: win32-x64
       PIP_CACHE_DIR: ${{ github.workspace }}\.benchmarks\pip-cache
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
@@ -47,6 +47,7 @@ jobs:
         run: npm ci
 
       - name: Verify manifest tag
+        if: ${{ github.event_name != 'push' }}
         shell: pwsh
         run: |
           $manifest = Get-Content -LiteralPath resources/windows-transcription-manifest.json -Raw | ConvertFrom-Json
@@ -81,6 +82,7 @@ jobs:
         run: npm run prepare:windows-transcription-assets
 
       - name: Verify committed manifest matches generated assets
+        if: ${{ github.event_name != 'push' }}
         shell: pwsh
         run: |
           git diff --exit-code -- resources/windows-transcription-manifest.json
@@ -96,20 +98,31 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub release assets
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_assets }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_assets) }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:ASSET_TAG
           $assetDir = Join-Path $PWD ".benchmarks/windows-transcription-assets/$tag"
+          $releaseTitle = if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            "Windows transcription assets branch upload test"
+          } else {
+            "Windows transcription assets $tag"
+          }
+          $releaseNotes = if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            "Temporary branch test upload for the Windows transcription asset workflow. Do not use as a production asset bundle."
+          } else {
+            "Versioned faster-whisper runtime and model assets for Windows onboarding."
+          }
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag `
               --repo $env:GITHUB_REPOSITORY `
-              --title "Windows transcription assets $tag" `
-              --notes "Versioned faster-whisper runtime and model assets for Windows onboarding." `
+              --title $releaseTitle `
+              --notes $releaseNotes `
+              --prerelease `
               --target $env:GITHUB_SHA
           }
 
