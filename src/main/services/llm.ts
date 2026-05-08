@@ -3,26 +3,70 @@ import { logAutodocEvent } from './autodoc-log'
 import { captureMessage } from './sentry-reporter'
 
 export interface LLMProvider {
-  summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments>
+  summarize(
+    meetingId: string,
+    transcript: string,
+    onProgress?: (percent: number) => void,
+    durationMinutes?: number
+  ): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
   abortActiveRequests?(reason?: string): void
 }
 
 const MAX_RETRIES = 2
 export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
-export const LOW_MEMORY_CONTEXT_TOKENS = 8192
+export const WINDOWS_CONTEXT_TOKENS = 8192
+export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
+const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
 const TOPIC_STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'current', 'discussion', 'for', 'from',
-  'how', 'in', 'is', 'it', 'its', 'of', 'on', 'or', 'reported', 'review', 'shared', 'status',
-  'team', 'that', 'the', 'their', 'them', 'there', 'these', 'this', 'to', 'update', 'updates',
-  'was', 'were', 'what', 'with',
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'but',
+  'by',
+  'current',
+  'discussion',
+  'for',
+  'from',
+  'how',
+  'in',
+  'is',
+  'it',
+  'its',
+  'of',
+  'on',
+  'or',
+  'reported',
+  'review',
+  'shared',
+  'status',
+  'team',
+  'that',
+  'the',
+  'their',
+  'them',
+  'there',
+  'these',
+  'this',
+  'to',
+  'update',
+  'updates',
+  'was',
+  'were',
+  'what',
+  'with'
 ])
 
 const SYSTEM_PROMPT = `You are a thorough meeting notes assistant. Your job is to capture everything of value from the transcript. People rely on these notes to remember what happened.
@@ -114,7 +158,7 @@ interface TopicGroup {
   labelCounts: Map<string, number>
 }
 
-type OllamaContextProfile = 'standard' | 'low-memory'
+type OllamaContextProfile = 'standard' | 'windows-balanced' | 'low-memory'
 
 export type OllamaProviderTelemetryEventName =
   | 'ollama_low_memory_fallback_triggered'
@@ -134,7 +178,7 @@ interface OllamaProviderOptions {
 const LOW_SIGNAL_NOTE_PATTERNS = [
   /\bsubtitles by (the )?amara\.org community\b/i,
   /\bamara\.org community\b/i,
-  /\bthank you\b/i,
+  /\bthank you\b/i
 ]
 
 function capitalize(s: string): string {
@@ -146,7 +190,7 @@ const CATEGORY_MAP: Record<string, SegmentCategory> = {
   action_items: 'action_item',
   information: 'information',
   discussion: 'discussion',
-  status_updates: 'status_update',
+  status_updates: 'status_update'
 }
 
 export class OllamaProvider implements LLMProvider {
@@ -161,6 +205,7 @@ export class OllamaProvider implements LLMProvider {
     this.baseUrl = baseUrl
     this.model = model
     this.onTelemetry = options.onTelemetry
+    this.setInitialContextProfile()
   }
 
   setModel(model: string): void {
@@ -174,7 +219,7 @@ export class OllamaProvider implements LLMProvider {
   async checkConnection(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(3000)
       })
       return res.ok
     } catch {
@@ -189,6 +234,26 @@ export class OllamaProvider implements LLMProvider {
     this.activeControllers.clear()
   }
 
+  private setInitialContextProfile(): void {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const memory = this.getHostMemorySnapshot()
+    const shouldStartLowMemory =
+      (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+      (memory.totalGiB != null && memory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
+
+    if (shouldStartLowMemory) {
+      this.contextProfile = 'low-memory'
+      this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
+      return
+    }
+
+    this.contextProfile = 'windows-balanced'
+    this.contextTokens = WINDOWS_CONTEXT_TOKENS
+  }
+
   private estimateItemCount(durationMinutes: number): string {
     const estMinutes = Math.max(5, Math.round(durationMinutes))
     // Scale: ~1 item per minute, min 5, no max
@@ -197,7 +262,12 @@ export class OllamaProvider implements LLMProvider {
     return `This is roughly a ${estMinutes}-minute meeting. Aim for ${minItems}-${maxItems} items total across all categories — approximately 1 item per minute of meeting.`
   }
 
-  async summarize(meetingId: string, transcript: string, onProgress?: (percent: number) => void, durationMinutes?: number): Promise<MeetingSegments> {
+  async summarize(
+    meetingId: string,
+    transcript: string,
+    onProgress?: (percent: number) => void,
+    durationMinutes?: number
+  ): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
     const estMinutes = durationMinutes ?? Math.max(5, Math.round(transcript.length / 750))
     const durationMs = estMinutes * 60 * 1000
@@ -206,7 +276,7 @@ export class OllamaProvider implements LLMProvider {
     let lowMemoryFallbackActivated = false
     console.log(
       `Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total) ` +
-      `with ${this.contextProfile} Ollama context (${this.contextTokens} tokens). ${itemGuidance}`,
+        `with ${this.contextProfile} Ollama context (${this.contextTokens} tokens). ${itemGuidance}`
     )
 
     const merged: MeetingSegments = {
@@ -214,7 +284,7 @@ export class OllamaProvider implements LLMProvider {
       actionItems: [],
       information: [],
       discussion: [],
-      statusUpdates: [],
+      statusUpdates: []
     }
 
     let avgTokensPerChunk = 2000
@@ -222,12 +292,13 @@ export class OllamaProvider implements LLMProvider {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
-      const chunkItemMin = Math.max(2, Math.round(estMinutes * 0.8 / chunks.length))
-      const chunkItemMax = Math.max(5, Math.round(estMinutes * 1.5 / chunks.length))
+      const chunkItemMin = Math.max(2, Math.round((estMinutes * 0.8) / chunks.length))
+      const chunkItemMax = Math.max(5, Math.round((estMinutes * 1.5) / chunks.length))
       const knownTopics = this.extractKnownTopics(merged)
-      const chunkLabel = chunks.length > 1
-        ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
-        : `\n\n${itemGuidance}`
+      const chunkLabel =
+        chunks.length > 1
+          ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
+          : `\n\n${itemGuidance}`
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -238,20 +309,32 @@ export class OllamaProvider implements LLMProvider {
         chunkTokens = 0
         try {
           if (attempt > 0) {
-            console.log(`Chunk ${i + 1}/${chunks.length} retry ${attempt}/${MAX_RETRIES} (${this.contextProfile} context)`)
+            console.log(
+              `Chunk ${i + 1}/${chunks.length} retry ${attempt}/${MAX_RETRIES} (${this.contextProfile} context)`
+            )
           } else {
-            console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`)
+            console.log(
+              `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`
+            )
           }
           const raw = await this.callOllama(chunks[i] + chunkLabel, this.contextTokens, () => {
             chunkTokens++
             // Asymptotic progress: approaches 0.99 but never reaches it, so it never appears stuck
             const ratio = chunkTokens / avgTokensPerChunk
-            const chunkFraction = ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
+            const chunkFraction =
+              ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
             const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
             onProgress?.(percent)
           })
           console.log(`Chunk ${i + 1}/${chunks.length} complete (${chunkTokens} tokens)`)
-          chunkResult = this.parseResponse(meetingId, raw, merged, durationMs, transcriptTimestamps, chunkTranscriptLines)
+          chunkResult = this.parseResponse(
+            meetingId,
+            raw,
+            merged,
+            durationMs,
+            transcriptTimestamps,
+            chunkTranscriptLines
+          )
           break
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -259,13 +342,16 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (this.isInsufficientSystemMemoryError(lastError.message) && this.contextProfile === 'standard') {
+          if (
+            this.isInsufficientSystemMemoryError(lastError.message) &&
+            this.contextTokens > LOW_MEMORY_CONTEXT_TOKENS
+          ) {
             lowMemoryFallbackActivated = true
             this.enableLowMemoryContext(meetingId, lastError, {
               chunkIndex: i + 1,
               chunkCount: chunks.length,
               transcriptChars: transcript.length,
-              durationMinutes: estMinutes,
+              durationMinutes: estMinutes
             })
             continue
           }
@@ -279,12 +365,17 @@ export class OllamaProvider implements LLMProvider {
 
       if (!chunkResult) {
         if (lowMemoryFallbackActivated) {
-          this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_failed', meetingId, lastError, {
-            chunkIndex: i + 1,
-            chunkCount: chunks.length,
-            transcriptChars: transcript.length,
-            durationMinutes: estMinutes,
-          })
+          this.recordLowMemoryFallbackEvent(
+            'ollama_low_memory_fallback_failed',
+            meetingId,
+            lastError,
+            {
+              chunkIndex: i + 1,
+              chunkCount: chunks.length,
+              transcriptChars: transcript.length,
+              durationMinutes: estMinutes
+            }
+          )
         }
         throw lastError ?? new Error(`LLM summarization failed on chunk ${i + 1}/${chunks.length}`)
       }
@@ -307,7 +398,7 @@ export class OllamaProvider implements LLMProvider {
       this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
         chunkCount: chunks.length,
         transcriptChars: transcript.length,
-        durationMinutes: estMinutes,
+        durationMinutes: estMinutes
       })
     }
     return merged
@@ -348,7 +439,11 @@ export class OllamaProvider implements LLMProvider {
     return chunks
   }
 
-  private async callOllama(transcript: string, contextTokens: number, onToken?: () => void): Promise<string> {
+  private async callOllama(
+    transcript: string,
+    contextTokens: number,
+    onToken?: () => void
+  ): Promise<string> {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
@@ -362,7 +457,7 @@ export class OllamaProvider implements LLMProvider {
           model: this.model,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
+            { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` }
           ],
           stream: true,
           format: 'json',
@@ -370,10 +465,10 @@ export class OllamaProvider implements LLMProvider {
             num_ctx: contextTokens,
             num_predict: MAX_OUTPUT_TOKENS,
             temperature: 0,
-            repeat_penalty: 1.3,
-          },
+            repeat_penalty: 1.3
+          }
         }),
-        signal: controller.signal,
+        signal: controller.signal
       })
     } catch (err) {
       clearTimeout(requestTimer)
@@ -406,7 +501,13 @@ export class OllamaProvider implements LLMProvider {
       while (true) {
         let streamTimer: ReturnType<typeof setTimeout> | undefined
         const streamTimeout = new Promise<never>((_, reject) => {
-          streamTimer = setTimeout(() => reject(new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)), STREAM_TIMEOUT_MS)
+          streamTimer = setTimeout(
+            () =>
+              reject(
+                new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)
+              ),
+            STREAM_TIMEOUT_MS
+          )
         })
         let readResult: ReadableStreamReadResult<Uint8Array>
         try {
@@ -424,7 +525,11 @@ export class OllamaProvider implements LLMProvider {
         for (const line of lines) {
           if (!line.trim()) continue
           try {
-            const data = JSON.parse(line) as { message?: { content?: string }; error?: string; done?: boolean }
+            const data = JSON.parse(line) as {
+              message?: { content?: string }
+              error?: string
+              done?: boolean
+            }
             if (data.error) throw new Error(`Ollama error: ${data.error}`)
             if (data.message?.content) {
               content += data.message.content
@@ -467,29 +572,41 @@ export class OllamaProvider implements LLMProvider {
   private enableLowMemoryContext(
     meetingId: string,
     error: Error,
-    context: Record<string, unknown>,
+    context: Record<string, unknown>
   ): void {
     this.contextProfile = 'low-memory'
     this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
-    this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_triggered', meetingId, error, context)
+    this.recordLowMemoryFallbackEvent(
+      'ollama_low_memory_fallback_triggered',
+      meetingId,
+      error,
+      context
+    )
   }
 
   private isInsufficientSystemMemoryError(message: string): boolean {
     const normalized = message.toLowerCase()
-    return normalized.includes('ollama') &&
+    return (
+      normalized.includes('ollama') &&
       normalized.includes('requires more system memory') &&
       normalized.includes('than is available')
+    )
   }
 
-  private extractOllamaMemoryGiB(message: string): { requiredGiB: number | null; availableGiB: number | null } {
-    const match = message.match(/requires more system memory\s*\(([\d.]+)\s*GiB\)\s*than is available\s*\(([\d.]+)\s*GiB\)/i)
+  private extractOllamaMemoryGiB(message: string): {
+    requiredGiB: number | null
+    availableGiB: number | null
+  } {
+    const match = message.match(
+      /requires more system memory\s*\(([\d.]+)\s*GiB\)\s*than is available\s*\(([\d.]+)\s*GiB\)/i
+    )
     if (!match) {
       return { requiredGiB: null, availableGiB: null }
     }
 
     return {
       requiredGiB: Number.parseFloat(match[1]),
-      availableGiB: Number.parseFloat(match[2]),
+      availableGiB: Number.parseFloat(match[2])
     }
   }
 
@@ -504,7 +621,8 @@ export class OllamaProvider implements LLMProvider {
 
     return {
       freeGiB: typeof info.free === 'number' ? Number((info.free / 1024 / 1024).toFixed(2)) : null,
-      totalGiB: typeof info.total === 'number' ? Number((info.total / 1024 / 1024).toFixed(2)) : null,
+      totalGiB:
+        typeof info.total === 'number' ? Number((info.total / 1024 / 1024).toFixed(2)) : null
     }
   }
 
@@ -512,9 +630,11 @@ export class OllamaProvider implements LLMProvider {
     event: OllamaProviderTelemetryEventName,
     meetingId: string,
     error: Error | null,
-    context: Record<string, unknown>,
+    context: Record<string, unknown>
   ): void {
-    const ollamaMemory = error ? this.extractOllamaMemoryGiB(error.message) : { requiredGiB: null, availableGiB: null }
+    const ollamaMemory = error
+      ? this.extractOllamaMemoryGiB(error.message)
+      : { requiredGiB: null, availableGiB: null }
     const hostMemory = this.getHostMemorySnapshot()
     const properties = {
       model: this.model,
@@ -526,7 +646,7 @@ export class OllamaProvider implements LLMProvider {
       hostFreeMemoryGiB: hostMemory.freeGiB,
       hostTotalMemoryGiB: hostMemory.totalGiB,
       errorMessage: error?.message.slice(0, 300) ?? null,
-      ...context,
+      ...context
     }
 
     logAutodocEvent({
@@ -534,7 +654,7 @@ export class OllamaProvider implements LLMProvider {
       level: event === 'ollama_low_memory_fallback_triggered' ? 'warn' : 'info',
       message: event,
       meetingId,
-      context: properties,
+      context: properties
     })
     captureMessage(event, {
       area: 'segmentation',
@@ -542,9 +662,9 @@ export class OllamaProvider implements LLMProvider {
       level: event === 'ollama_low_memory_fallback_failed' ? 'error' : 'warning',
       tags: {
         errorCode: 'ollama-insufficient-memory',
-        contextProfile: this.contextProfile,
+        contextProfile: this.contextProfile
       },
-      extra: properties,
+      extra: properties
     })
     this.onTelemetry?.({ meetingId, event, properties })
   }
@@ -572,7 +692,7 @@ export class OllamaProvider implements LLMProvider {
         const idx = raw.lastIndexOf('[]')
         if (idx === -1) return null
         return this.closeJSON(raw.slice(0, idx + 2))
-      },
+      }
     ]
 
     for (const strategy of strategies) {
@@ -595,9 +715,18 @@ export class OllamaProvider implements LLMProvider {
     let inString = false
     let escape = false
     for (const ch of partial) {
-      if (escape) { escape = false; continue }
-      if (ch === '\\' && inString) { escape = true; continue }
-      if (ch === '"') { inString = !inString; continue }
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (ch === '\\' && inString) {
+        escape = true
+        continue
+      }
+      if (ch === '"') {
+        inString = !inString
+        continue
+      }
       if (inString) continue
       if (ch === '{') openBraces++
       else if (ch === '}') openBraces--
@@ -616,7 +745,7 @@ export class OllamaProvider implements LLMProvider {
     existing?: MeetingSegments,
     durationMs?: number,
     transcriptTimestamps?: number[],
-    transcriptLines: TranscriptLine[] = [],
+    transcriptLines: TranscriptLine[] = []
   ): MeetingSegments {
     let parsed: Record<string, RawSegment[]>
     try {
@@ -637,7 +766,7 @@ export class OllamaProvider implements LLMProvider {
       actionItems: [],
       information: [],
       discussion: [],
-      statusUpdates: [],
+      statusUpdates: []
     }
 
     const fieldMap: Record<string, keyof MeetingSegments> = {
@@ -645,7 +774,7 @@ export class OllamaProvider implements LLMProvider {
       action_items: 'actionItems',
       information: 'information',
       discussion: 'discussion',
-      status_updates: 'statusUpdates',
+      status_updates: 'statusUpdates'
     }
     const scopedTranscriptTimestamps =
       transcriptLines.length > 0
@@ -669,8 +798,16 @@ export class OllamaProvider implements LLMProvider {
         const titleKey = String(item.title).toLowerCase().trim()
         // Skip duplicates (same title within this chunk or across chunks)
         if (seenTitles.has(titleKey) || existingTitles.has(titleKey)) continue
-        const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, scopedTranscriptTimestamps)
-        const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, scopedTranscriptTimestamps)
+        const sourceStartMs = this.snapTimestamp(
+          item.sourceStartMs,
+          durationMs,
+          scopedTranscriptTimestamps
+        )
+        const sourceEndMs = this.snapTimestamp(
+          item.sourceEndMs,
+          durationMs,
+          scopedTranscriptTimestamps
+        )
         if (!this.isGroundedItem(item, sourceStartMs, sourceEndMs, transcriptLines)) continue
         seenTitles.add(titleKey)
 
@@ -684,7 +821,7 @@ export class OllamaProvider implements LLMProvider {
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
           sourceStartMs,
-          sourceEndMs,
+          sourceEndMs
         })
         index++
       }
@@ -715,7 +852,7 @@ export class OllamaProvider implements LLMProvider {
       ...segments.actionItems,
       ...segments.information,
       ...segments.discussion,
-      ...segments.statusUpdates,
+      ...segments.statusUpdates
     ]
   }
 
@@ -737,7 +874,7 @@ export class OllamaProvider implements LLMProvider {
 
       const group: TopicGroup = {
         segments: [item],
-        labelCounts: new Map([[topic, 1]]),
+        labelCounts: new Map([[topic, 1]])
       }
       topicMap.set(key, group)
       groups.push(group)
@@ -769,7 +906,10 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private reduceTopicGroups(groups: TopicGroup[]): TopicGroup[] {
-    while (groups.length > MAX_UNIQUE_TOPICS || groups.some((group) => group.segments.length === 1 && groups.length > 1)) {
+    while (
+      groups.length > MAX_UNIQUE_TOPICS ||
+      groups.some((group) => group.segments.length === 1 && groups.length > 1)
+    ) {
       let sourceIndex = -1
 
       if (groups.length > MAX_UNIQUE_TOPICS) {
@@ -827,7 +967,7 @@ export class OllamaProvider implements LLMProvider {
 
     return {
       segments: [...primary.segments, ...secondary.segments],
-      labelCounts,
+      labelCounts
     }
   }
 
@@ -851,8 +991,10 @@ export class OllamaProvider implements LLMProvider {
     const aTopics = [...a.labelCounts.keys()]
     const bTopics = [...b.labelCounts.keys()]
     const directTopicSimilarity = Math.max(
-      ...aTopics.flatMap((left) => bTopics.map((right) => this.getTopicTextSimilarity(left, right))),
-      0,
+      ...aTopics.flatMap((left) =>
+        bTopics.map((right) => this.getTopicTextSimilarity(left, right))
+      ),
+      0
     )
 
     const aHeadlineTokens = this.getGroupTokens(a, false)
@@ -866,7 +1008,7 @@ export class OllamaProvider implements LLMProvider {
     return Math.max(
       directTopicSimilarity,
       headlineSimilarity,
-      (headlineSimilarity * 0.65) + (contextSimilarity * 0.35),
+      headlineSimilarity * 0.65 + contextSimilarity * 0.35
     )
   }
 
@@ -874,7 +1016,9 @@ export class OllamaProvider implements LLMProvider {
     const tokens = new Set<string>()
 
     for (const segment of group.segments) {
-      for (const token of this.tokenizeTopic(`${segment.topic ?? ''} ${segment.title}${includeContent ? ` ${segment.content}` : ''}`)) {
+      for (const token of this.tokenizeTopic(
+        `${segment.topic ?? ''} ${segment.title}${includeContent ? ` ${segment.content}` : ''}`
+      )) {
         tokens.add(token)
       }
     }
@@ -893,7 +1037,7 @@ export class OllamaProvider implements LLMProvider {
 
     return this.getTokenSetSimilarity(
       new Set(this.tokenizeTopic(left)),
-      new Set(this.tokenizeTopic(right)),
+      new Set(this.tokenizeTopic(right))
     )
   }
 
@@ -937,8 +1081,8 @@ export class OllamaProvider implements LLMProvider {
         const minutes = match[3] !== undefined ? parseInt(match[2], 10) : parseInt(match[1], 10)
         const seconds = match[3] !== undefined ? parseInt(match[3], 10) : parseInt(match[2], 10)
         return {
-          startMs: ((hours * 3600) + (minutes * 60) + seconds) * 1000,
-          text: match[4].trim(),
+          startMs: (hours * 3600 + minutes * 60 + seconds) * 1000,
+          text: match[4].trim()
         }
       })
       .filter((line): line is TranscriptLine => line !== null)
@@ -948,7 +1092,7 @@ export class OllamaProvider implements LLMProvider {
     item: RawSegment,
     sourceStartMs: number,
     sourceEndMs: number,
-    transcriptLines: TranscriptLine[],
+    transcriptLines: TranscriptLine[]
   ): boolean {
     if (transcriptLines.length === 0) return true
 
@@ -972,7 +1116,7 @@ export class OllamaProvider implements LLMProvider {
   private collectEvidenceText(
     sourceStartMs: number,
     sourceEndMs: number,
-    transcriptLines: TranscriptLine[],
+    transcriptLines: TranscriptLine[]
   ): string {
     if (transcriptLines.length === 0) return ''
 
@@ -1022,9 +1166,7 @@ export class OllamaProvider implements LLMProvider {
         )
       } else {
         // MM:SS
-        timestamps.push(
-          (parseInt(match[1]) * 60 + parseInt(match[2])) * 1000
-        )
+        timestamps.push((parseInt(match[1]) * 60 + parseInt(match[2])) * 1000)
       }
     }
     return timestamps

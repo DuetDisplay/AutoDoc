@@ -38,7 +38,7 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
-const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 180
+const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
 const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 120
@@ -224,7 +224,12 @@ export class TranscriptionService {
           const isPermanentFailure =
             errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
           const allowsRecoveryScanRetry = this.allowsRecoveryScanRetry(errorCode)
-          if (errorData && errorData.retries < 3 && !isPermanentFailure && allowsRecoveryScanRetry) {
+          if (
+            errorData &&
+            errorData.retries < 3 &&
+            !isPermanentFailure &&
+            allowsRecoveryScanRetry
+          ) {
             console.log(
               `Auto-retrying transcription for ${meetingId} (attempt ${errorData.retries + 1}/3)`
             )
@@ -307,12 +312,45 @@ export class TranscriptionService {
       let transcripts: Transcript[] = []
       if (hasMic && hasSystem) {
         const shouldDiarizeSystem = shouldUseExperimentalDiarization
-        const [micTranscripts, rawSystemTranscripts] = await Promise.all([
-          this.transcribeAudioSource(meetingId, micWebm, 'me', `${tempPrefix}-mic`, tempFiles, {
-            start: 0,
-            end: 50
-          }),
-          this.transcribeAudioSource(
+        let micTranscripts: Transcript[]
+        let rawSystemTranscripts: Transcript[]
+        if (this.shouldTranscribeDualSourcesConcurrently()) {
+          ;[micTranscripts, rawSystemTranscripts] = await Promise.all([
+            this.transcribeAudioSource(
+              meetingId,
+              micWebm,
+              'me',
+              `${tempPrefix}-mic`,
+              tempFiles,
+              {
+                start: 0,
+                end: 50
+              },
+              true,
+              2
+            ),
+            this.transcribeAudioSource(
+              meetingId,
+              systemWebm,
+              'them',
+              `${tempPrefix}-system`,
+              tempFiles,
+              { start: 50, end: 100 },
+              !shouldDiarizeSystem,
+              2
+            )
+          ])
+        } else {
+          console.log(`[transcription] Sequential dual-source transcription (${meetingId})`)
+          micTranscripts = await this.transcribeAudioSource(
+            meetingId,
+            micWebm,
+            'me',
+            `${tempPrefix}-mic`,
+            tempFiles,
+            { start: 0, end: 50 }
+          )
+          rawSystemTranscripts = await this.transcribeAudioSource(
             meetingId,
             systemWebm,
             'them',
@@ -321,7 +359,7 @@ export class TranscriptionService {
             { start: 50, end: 100 },
             !shouldDiarizeSystem
           )
-        ])
+        }
         const systemTranscripts = shouldDiarizeSystem
           ? await this.diarizeTranscriptsForSource(
               meetingId,
@@ -419,7 +457,8 @@ export class TranscriptionService {
     tempPrefix: string,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    stitch = true
+    stitch = true,
+    concurrentSources = 1
   ): Promise<Transcript[]> {
     const tempAudioWav = `${tempPrefix}.wav`
     tempFiles.push(tempAudioWav)
@@ -454,7 +493,8 @@ export class TranscriptionService {
       audioDuration,
       tempPrefix,
       tempFiles,
-      progressRange
+      progressRange,
+      concurrentSources
     )
     console.log(
       `[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
@@ -1195,7 +1235,8 @@ export class TranscriptionService {
     audioDurationSec: number | undefined,
     tempPrefix: string,
     tempFiles: string[],
-    progressRange?: { start: number; end: number }
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1
   ): Promise<WhisperOutput> {
     if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
       console.log(
@@ -1207,7 +1248,8 @@ export class TranscriptionService {
         audioDurationSec,
         tempPrefix,
         tempFiles,
-        progressRange
+        progressRange,
+        concurrentSources
       )
     }
 
@@ -1216,7 +1258,9 @@ export class TranscriptionService {
       meetingId,
       audioDurationSec,
       tempFiles,
-      progressRange
+      progressRange,
+      [],
+      concurrentSources
     )
     const mapped = this.mapToTranscripts(meetingId, output)
     if (audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
@@ -1227,7 +1271,8 @@ export class TranscriptionService {
         audioDurationSec,
         tempPrefix,
         tempFiles,
-        progressRange
+        progressRange,
+        concurrentSources
       )
     }
 
@@ -1240,7 +1285,8 @@ export class TranscriptionService {
     audioDurationSec: number,
     tempPrefix: string,
     tempFiles: string[],
-    progressRange?: { start: number; end: number }
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1
   ): Promise<WhisperOutput> {
     const stepSec = Math.max(
       1,
@@ -1283,7 +1329,8 @@ export class TranscriptionService {
               end: this.scaleProgress(chunkProgressRange.end, progressRange)
             }
           : chunkProgressRange,
-        ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow']
+        ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
+        concurrentSources
       )
 
       const adjustedSegments = chunkOutput.transcription
@@ -1325,11 +1372,19 @@ export class TranscriptionService {
     audioDurationSec: number | undefined,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    extraArgs: string[] = []
+    extraArgs: string[] = [],
+    concurrentSources = 1
   ): Promise<WhisperOutput> {
     const jsonPath = `${audioWavPath}.json`
     tempFiles.push(jsonPath)
-    await this.runWhisperPass(audioWavPath, meetingId, audioDurationSec, progressRange, extraArgs)
+    await this.runWhisperPass(
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange,
+      extraArgs,
+      concurrentSources
+    )
     const whisperJson = await readFile(jsonPath, 'utf-8')
     return JSON.parse(whisperJson) as WhisperOutput
   }
@@ -1339,12 +1394,26 @@ export class TranscriptionService {
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
-    extraArgs: string[] = []
+    extraArgs: string[] = [],
+    concurrentSources = 1
   ): Promise<void> {
+    if (
+      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
+      this.whisperManager.isFasterWhisperSelected()
+    ) {
+      return this.runFasterWhisperPass(
+        audioWavPath,
+        meetingId,
+        audioDurationSec,
+        progressRange,
+        concurrentSources
+      )
+    }
+
     const attempt = (disableGpu: boolean): Promise<void> =>
       new Promise((resolve, reject) => {
         let stderr = ''
-        const threadCount = this.getWhisperThreadCount()
+        const threadCount = this.getWhisperThreadCount(concurrentSources)
         const args = [
           '-m',
           this.whisperManager.getModelPath(),
@@ -1412,7 +1481,11 @@ export class TranscriptionService {
             resolve()
           } else {
             const signalSuffix = signal ? ` (signal ${signal})` : ''
-            reject(new Error(`whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`))
+            reject(
+              new Error(
+                `whisper.cpp exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`
+              )
+            )
           }
         })
       })
@@ -1437,16 +1510,122 @@ export class TranscriptionService {
     })
   }
 
-  private getWhisperThreadCount(): number | null {
+  private runFasterWhisperPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+      const threadCount = this.getWhisperThreadCount(concurrentSources)
+      const jsonPath = `${audioWavPath}.json`
+      const args = [
+        this.whisperManager.getFasterWhisperScriptPath(),
+        '--model',
+        this.whisperManager.getFasterWhisperModelPath(),
+        '--audio',
+        audioWavPath,
+        '--output',
+        jsonPath,
+        '--device',
+        this.whisperManager.getFasterWhisperDevice(),
+        '--compute-type',
+        this.whisperManager.getFasterWhisperComputeType(),
+        '--language',
+        'en'
+      ]
+
+      if (threadCount !== null) {
+        args.push('--threads', String(threadCount))
+      }
+
+      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args)
+      if (threadCount !== null) {
+        console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
+      }
+      console.log(
+        `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+      )
+      this.lowerWhisperPriority(proc.pid, meetingId)
+
+      const progressTimer =
+        audioDurationSec && audioDurationSec > 0
+          ? setInterval(() => {
+              this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(50, progressRange))
+            }, 1500)
+          : null
+
+      proc.on('error', (err) => {
+        if (progressTimer) clearInterval(progressTimer)
+        reject(new Error(`faster-whisper spawn failed: ${err.message}`))
+      })
+
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (progressTimer) clearInterval(progressTimer)
+        if (code === 0) {
+          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+          resolve()
+          return
+        }
+
+        const signalSuffix = signal ? ` (signal ${signal})` : ''
+        reject(
+          new Error(`faster-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
+        )
+      })
+    })
+  }
+
+  private getWhisperThreadCount(concurrentSources = 1): number | null {
     if (process.platform !== 'win32') {
       return null
     }
 
     const logicalProcessors = this.getLogicalProcessorCount()
-    return Math.max(
-      MIN_WHISPER_THREADS,
-      Math.min(MAX_WHISPER_THREADS, logicalProcessors - RESERVED_LOGICAL_CPUS)
-    )
+    const reservedProcessors = Math.min(RESERVED_LOGICAL_CPUS, Math.max(2, logicalProcessors - 2))
+    const availableProcessors = Math.max(1, logicalProcessors - reservedProcessors)
+    const perSourceProcessors = Math.max(1, Math.floor(availableProcessors / concurrentSources))
+    return Math.max(MIN_WHISPER_THREADS, Math.min(MAX_WHISPER_THREADS, perSourceProcessors))
+  }
+
+  private shouldTranscribeDualSourcesConcurrently(): boolean {
+    if (process.platform !== 'win32') {
+      return true
+    }
+
+    const logicalProcessors = this.getLogicalProcessorCount()
+    if (logicalProcessors < 12) {
+      return false
+    }
+
+    const memoryInfo = this.getSystemMemoryInfo()
+    if (memoryInfo.freeGiB != null && memoryInfo.freeGiB < 6) {
+      return false
+    }
+
+    return true
+  }
+
+  private getSystemMemoryInfo(): { freeGiB: number | null; totalGiB: number | null } {
+    const processWithMemory = process as NodeJS.Process & {
+      getSystemMemoryInfo?: () => { free?: number; total?: number }
+    }
+    const info = processWithMemory.getSystemMemoryInfo?.()
+    if (!info) {
+      return { freeGiB: null, totalGiB: null }
+    }
+
+    return {
+      freeGiB: typeof info.free === 'number' ? Number((info.free / 1024 / 1024).toFixed(2)) : null,
+      totalGiB:
+        typeof info.total === 'number' ? Number((info.total / 1024 / 1024).toFixed(2)) : null
+    }
   }
 
   private getLogicalProcessorCount(): number {

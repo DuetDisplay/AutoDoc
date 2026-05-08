@@ -8,13 +8,19 @@ export function getWhisperSetupLabel(status: WhisperSetupStatus | null | undefin
 
   switch (status.phase) {
     case 'checking':
-      return 'Checking transcription engine...'
+      return status.backendLabel
+        ? `Checking ${status.backendLabel}...`
+        : 'Checking transcription engine...'
     case 'downloading-whisper':
-      return `Downloading transcription engine... ${status.percent}%`
+      return status.backendLabel
+        ? `Downloading ${status.backendLabel}... ${status.percent}%`
+        : `Downloading transcription engine... ${status.percent}%`
     case 'downloading-ffmpeg':
       return `Installing audio tools... ${status.percent}%`
     case 'downloading-model':
-      return `Downloading speech model... ${status.percent}%`
+      return status.backendLabel
+        ? `Downloading speech model for ${status.backendLabel}... ${status.percent}%`
+        : `Downloading speech model... ${status.percent}%`
     case 'preparing-speaker-runtime':
       return `Preparing speaker ID runtime... ${status.percent}%`
     case 'installing-speaker-id':

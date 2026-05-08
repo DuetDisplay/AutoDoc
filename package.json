@@ -12,6 +12,7 @@
     "prepare:python-runtime": "node scripts/prepare-python-runtime.js",
     "prepare:diarization-wheelhouse": "node scripts/prepare-diarization-wheelhouse.js",
     "prepare:diarization-model": "node scripts/prepare-diarization-model.js",
+    "prepare:windows-transcription-assets": "node scripts/prepare-windows-transcription-assets.js",
     "dev:start:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/manage-dev-session.ps1 start",
     "dev:status:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/manage-dev-session.ps1 status",
     "dev:stop:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/manage-dev-session.ps1 stop",

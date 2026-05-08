@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { createHash } from 'crypto'
 import {
   access,
   mkdir,
@@ -12,7 +13,7 @@ import {
   rename
 } from 'fs/promises'
 import { basename, dirname, join } from 'path'
-import { createWriteStream } from 'fs'
+import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
 import { tmpdir } from 'os'
@@ -27,6 +28,14 @@ import {
   canUseSystemWhisperFallback,
   usesManagedRuntimeOnly
 } from './runtime-policy'
+import {
+  detectWindowsHardwareProfile,
+  loadWindowsTranscriptionProfiles,
+  selectWindowsTranscriptionProfile,
+  WINDOWS_TRANSCRIPTION_PROFILES,
+  type WindowsTranscriptionBackendId,
+  type WindowsTranscriptionProfile
+} from './windows-transcription-runtime'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -37,6 +46,7 @@ const FFMPEG_WIN_URL =
   'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
 const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
+const FASTER_WHISPER_PROBE_TIMEOUT_MS = 45_000
 const HOMEBREW_API_ROOT = 'https://formulae.brew.sh/api/formula'
 const MAC_WHISPER_FORMULA = 'whisper-cpp'
 const MAC_GGML_FORMULA = 'ggml'
@@ -86,6 +96,11 @@ export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private runtimeValidated = false
+  private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
+  private windowsTranscriptionProfiles: Record<
+    WindowsTranscriptionBackendId,
+    WindowsTranscriptionProfile
+  > = WINDOWS_TRANSCRIPTION_PROFILES
 
   constructor() {
     super()
@@ -112,17 +127,151 @@ export class WhisperManager extends EventEmitter {
   }
 
   getModelName(): string {
+    const profile = this.selectedWindowsProfile
+    if (profile && profile.id !== 'whisper-cpp') {
+      return profile.modelName
+    }
+
     return this.getModelInfo()
       .filename.replace(/^ggml-/, '')
       .replace(/\.bin$/i, '')
+  }
+
+  getTranscriptionBackend(): WindowsTranscriptionBackendId {
+    return this.selectedWindowsProfile?.id ?? 'whisper-cpp'
+  }
+
+  getTranscriptionBackendLabel(): string {
+    return (
+      this.selectedWindowsProfile?.label ?? this.windowsTranscriptionProfiles['whisper-cpp'].label
+    )
+  }
+
+  isFasterWhisperSelected(): boolean {
+    return IS_WIN && this.getTranscriptionBackend() !== 'whisper-cpp'
+  }
+
+  getFasterWhisperPythonPath(): string {
+    return join(this.getFasterWhisperRuntimeDir(), 'python.exe')
+  }
+
+  getFasterWhisperModelPath(): string {
+    const profile = this.getSelectedWindowsProfile()
+    return join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
+  }
+
+  getFasterWhisperScriptPath(): string {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'faster-whisper-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
+  }
+
+  getFasterWhisperDevice(): 'cuda' | 'cpu' {
+    return this.getSelectedWindowsProfile().device
+  }
+
+  getFasterWhisperComputeType(): 'float16' | 'int8' {
+    return this.getSelectedWindowsProfile().computeType
   }
 
   getSetupStatus(): WhisperSetupStatus {
     return { ...this.setupStatus }
   }
 
+  private getSelectedWindowsProfile(): WindowsTranscriptionProfile {
+    if (!this.selectedWindowsProfile) {
+      this.selectedWindowsProfile = this.windowsTranscriptionProfiles['whisper-cpp']
+    }
+
+    return this.selectedWindowsProfile
+  }
+
+  private getFasterWhisperRuntimeDir(profile = this.getSelectedWindowsProfile()): string {
+    return join(this.getModelsDir(), 'transcription-runtimes', profile.id)
+  }
+
+  private getFasterWhisperAssetRoot(
+    profile: WindowsTranscriptionProfile,
+    assetId: 'runtime' | 'model'
+  ): string {
+    return assetId === 'runtime'
+      ? this.getFasterWhisperRuntimeDir(profile)
+      : join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
+  }
+
+  private withBackendStatus(status: WhisperSetupStatus): WhisperSetupStatus {
+    if (!IS_WIN) {
+      return status
+    }
+
+    const profile = this.getSelectedWindowsProfile()
+    return {
+      ...status,
+      backend: profile.id,
+      backendLabel: profile.label
+    }
+  }
+
+  private async selectWindowsProfile(): Promise<void> {
+    if (!IS_WIN) {
+      this.selectedWindowsProfile = null
+      return
+    }
+
+    const hardware = await detectWindowsHardwareProfile()
+    this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(
+      this.getWindowsTranscriptionManifestPath()
+    )
+    this.selectedWindowsProfile = selectWindowsTranscriptionProfile(
+      hardware,
+      this.windowsTranscriptionProfiles
+    )
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Selected Windows transcription backend',
+      context: {
+        backend: this.selectedWindowsProfile.id,
+        backendLabel: this.selectedWindowsProfile.label,
+        modelName: this.selectedWindowsProfile.modelName,
+        hardware
+      }
+    })
+  }
+
+  private getWindowsTranscriptionManifestPath(): string {
+    if (app.isPackaged) {
+      return join(
+        process.resourcesPath ?? this.getDevelopmentAppPath(),
+        'windows-transcription-manifest.json'
+      )
+    }
+
+    return this.getDevelopmentResourcePath('windows-transcription-manifest.json')
+  }
+
+  private getDevelopmentAppPath(): string {
+    return typeof app.getAppPath === 'function' ? app.getAppPath() : process.cwd()
+  }
+
+  private getDevelopmentResourcePath(filename: string): string {
+    const appResourcePath = join(this.getDevelopmentAppPath(), 'resources', filename)
+    if (existsSync(appResourcePath)) {
+      return appResourcePath
+    }
+
+    return join(process.cwd(), 'resources', filename)
+  }
+
   async isReady(): Promise<boolean> {
     try {
+      if (this.isFasterWhisperSelected()) {
+        await access(this.getFasterWhisperPythonPath())
+        await access(this.getFasterWhisperModelPath())
+        await access(this.getFfmpegPath())
+        return this.runtimeValidated
+      }
+
       await access(this.getWhisperPath())
       await access(this.getModelPath())
       await access(this.getFfmpegPath())
@@ -145,14 +294,14 @@ export class WhisperManager extends EventEmitter {
   private async runSetup(): Promise<void> {
     try {
       await this.ensureReady()
-      this.setupStatus = { phase: 'ready', percent: 100 }
+      this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
       this.emit('setup-status', this.getSetupStatus())
     } catch (err) {
-      this.setupStatus = {
+      this.setupStatus = this.withBackendStatus({
         phase: 'error',
         percent: 0,
         error: err instanceof Error ? err.message : String(err)
-      }
+      })
       this.emit('setup-status', this.getSetupStatus())
       throw err
     }
@@ -161,15 +310,37 @@ export class WhisperManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     try {
       await mkdir(this.getModelsDir(), { recursive: true })
-      this.setupStatus = { phase: 'checking', percent: 0 }
+      await this.selectWindowsProfile()
+      this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
       this.emit('setup-status', this.getSetupStatus())
 
       await this.adoptInstalledAssetsIfAvailable()
 
+      if (this.isFasterWhisperSelected()) {
+        try {
+          await this.ensureFasterWhisperReady()
+          return
+        } catch (err) {
+          logAutodocFailure({
+            area: 'whisper',
+            message: 'Faster Whisper setup failed; falling back to whisper.cpp',
+            error: err,
+            context: {
+              backend: this.getTranscriptionBackend(),
+              backendLabel: this.getTranscriptionBackendLabel()
+            }
+          })
+          this.selectedWindowsProfile = this.windowsTranscriptionProfiles['whisper-cpp']
+          this.runtimeValidated = false
+          this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
+          this.emit('setup-status', this.getSetupStatus())
+        }
+      }
+
       const [hasWhisperBinary, hasFfmpegBinary, hasModelFile] = await Promise.all([
         this.fileExists(this.getWhisperPath()),
         this.fileExists(this.getFfmpegPath()),
-        this.fileExists(this.getModelPath()),
+        this.fileExists(this.getModelPath())
       ])
 
       if (!hasWhisperBinary || !hasFfmpegBinary || !hasModelFile) {
@@ -183,24 +354,24 @@ export class WhisperManager extends EventEmitter {
             diagnostics: await getStorageDiagnostics({
               whisperBinaryPath: this.getWhisperPath(),
               ffmpegPath: this.getFfmpegPath(),
-              whisperModelPath: this.getModelPath(),
-            }),
-          },
+              whisperModelPath: this.getModelPath()
+            })
+          }
         })
       }
 
       if (!hasWhisperBinary) {
-        this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: 0 })
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveWhisper()
       }
       if (!hasFfmpegBinary) {
-        this.setupStatus = { phase: 'downloading-ffmpeg', percent: 0 }
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-ffmpeg', percent: 0 })
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveFfmpeg()
       }
       if (!hasModelFile) {
-        this.setupStatus = { phase: 'downloading-model', percent: 0 }
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: 0 })
         this.emit('setup-status', this.getSetupStatus())
         await this.downloadWithRetry(() => this.downloadModel(), 'model')
       }
@@ -213,7 +384,7 @@ export class WhisperManager extends EventEmitter {
       }
 
       if (!this.isWhisperUsabilityAccepted(usability)) {
-        this.setupStatus = { phase: 'downloading-whisper', percent: 0 }
+        this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: 0 })
         this.emit('setup-status', this.getSetupStatus())
         await this.resolveWhisper()
         usability = await this.isWhisperUsableWithRetry()
@@ -228,22 +399,141 @@ export class WhisperManager extends EventEmitter {
 
       this.runtimeValidated = true
 
-      this.setupStatus = { phase: 'ready', percent: 100 }
+      this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
       this.emit('setup-status', this.getSetupStatus())
     } catch (err) {
-      this.setupStatus = {
+      this.setupStatus = this.withBackendStatus({
         phase: 'error',
         percent: 0,
         error: err instanceof Error ? err.message : String(err),
         failedStep: this.getFailedStep()
-      }
+      })
       this.emit('setup-status', this.getSetupStatus())
       throw err
     }
   }
 
+  private async ensureFasterWhisperReady(): Promise<void> {
+    const profile = this.getSelectedWindowsProfile()
+    await this.ensureFfmpegForSelectedRuntime()
+
+    for (const asset of profile.assets) {
+      const assetRoot = this.getFasterWhisperAssetRoot(profile, asset.id)
+      const hasAsset = await this.hasExpectedFiles(assetRoot, asset.expectedFiles)
+      if (hasAsset) {
+        continue
+      }
+
+      this.setupStatus = this.withBackendStatus({
+        phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
+        percent: 0
+      })
+      this.emit('setup-status', this.getSetupStatus())
+      await this.downloadWithRetry(
+        () => this.downloadAndExtractWindowsTranscriptionAsset(profile, asset),
+        asset.id
+      )
+    }
+
+    if (!(await this.isFasterWhisperUsableWithRetry())) {
+      throw new Error(`${profile.label} failed startup validation after setup.`)
+    }
+
+    this.runtimeValidated = true
+    this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
+    this.emit('setup-status', this.getSetupStatus())
+  }
+
+  private async ensureFfmpegForSelectedRuntime(): Promise<void> {
+    if (await this.fileExists(this.getFfmpegPath())) {
+      return
+    }
+
+    this.setupStatus = this.withBackendStatus({ phase: 'downloading-ffmpeg', percent: 0 })
+    this.emit('setup-status', this.getSetupStatus())
+    await this.resolveFfmpeg()
+  }
+
+  private async downloadAndExtractWindowsTranscriptionAsset(
+    profile: WindowsTranscriptionProfile,
+    asset: WindowsTranscriptionProfile['assets'][number]
+  ): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const archivePath = join(modelsDir, asset.filename)
+    const targetDir = this.getFasterWhisperAssetRoot(profile, asset.id)
+
+    await mkdir(targetDir, { recursive: true })
+    await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
+      this.setupStatus = this.withBackendStatus({
+        phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
+        percent: p
+      })
+      this.emit('setup-status', this.getSetupStatus())
+    })
+    await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+
+    await rm(targetDir, { recursive: true, force: true })
+    await mkdir(targetDir, { recursive: true })
+
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `Expand-Archive -Force -Path '${archivePath}' -DestinationPath '${targetDir}'`
+        ],
+        (err) => {
+          if (err) reject(new Error(`Failed to extract ${asset.filename}: ${err.message}`))
+          else resolve()
+        }
+      )
+    })
+
+    await rm(archivePath, { force: true })
+  }
+
+  private async hasExpectedFiles(rootDir: string, expectedFiles: string[]): Promise<boolean> {
+    for (const expectedFile of expectedFiles) {
+      if (!(await this.fileExists(join(rootDir, ...expectedFile.split('/'))))) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private async verifyFileSha256(
+    filePath: string,
+    expectedSha256: string,
+    label: string
+  ): Promise<void> {
+    if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) {
+      throw new Error(`Missing or invalid SHA256 for ${label}.`)
+    }
+
+    const actualSha256 = await this.hashFileSha256(filePath)
+    if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+      await rm(filePath, { force: true })
+      throw new Error(
+        `Downloaded ${label} failed SHA256 verification: expected ${expectedSha256}, received ${actualSha256}.`
+      )
+    }
+  }
+
+  private hashFileSha256(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = createHash('sha256')
+      const stream = createReadStream(filePath)
+
+      stream.on('data', (chunk) => hash.update(chunk))
+      stream.on('error', reject)
+      stream.on('end', () => resolve(hash.digest('hex')))
+    })
+  }
+
   private async recoverFromProbeValidationFailure(): Promise<void> {
-    this.setupStatus = { phase: 'downloading-model', percent: 0 }
+    this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: 0 })
     this.emit('setup-status', this.getSetupStatus())
 
     logAutodocEvent({
@@ -253,9 +543,9 @@ export class WhisperManager extends EventEmitter {
         diagnostics: await getStorageDiagnostics({
           whisperModelPath: this.getModelPath(),
           whisperBinaryPath: this.getWhisperPath(),
-          ffmpegPath: this.getFfmpegPath(),
-        }),
-      },
+          ffmpegPath: this.getFfmpegPath()
+        })
+      }
     })
     await rm(this.getModelPath(), { force: true })
     await this.downloadWithRetry(() => this.downloadModel(), 'model')
@@ -356,7 +646,7 @@ export class WhisperManager extends EventEmitter {
     const zipPath = join(modelsDir, 'whisper.zip')
 
     await this.downloadFile(WHISPER_WIN_URL, zipPath, 'whisper-cli', (p) => {
-      this.setupStatus = { phase: 'downloading-whisper', percent: p }
+      this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: p })
       this.emit('setup-status', this.getSetupStatus())
     })
 
@@ -397,7 +687,7 @@ export class WhisperManager extends EventEmitter {
     const zipPath = join(modelsDir, 'ffmpeg.zip')
 
     await this.downloadFile(FFMPEG_WIN_URL, zipPath, 'ffmpeg', (p) => {
-      this.setupStatus = { phase: 'downloading-ffmpeg', percent: p }
+      this.setupStatus = this.withBackendStatus({ phase: 'downloading-ffmpeg', percent: p })
       this.emit('setup-status', this.getSetupStatus())
     })
 
@@ -449,13 +739,19 @@ export class WhisperManager extends EventEmitter {
     const libompArchivePath = join(extractDir, 'libomp.tar.gz')
 
     await this.downloadGhcrBottle(whisperUrl, MAC_WHISPER_FORMULA, whisperArchivePath, (p) => {
-      this.setupStatus = { phase: 'downloading-whisper', percent: Math.round(p / 2) }
+      this.setupStatus = this.withBackendStatus({
+        phase: 'downloading-whisper',
+        percent: Math.round(p / 2)
+      })
       this.emit('setup-status', this.getSetupStatus())
     })
     await this.extractTarGz(whisperArchivePath, extractDir)
 
     await this.downloadGhcrBottle(ggmlUrl, MAC_GGML_FORMULA, ggmlArchivePath, (p) => {
-      this.setupStatus = { phase: 'downloading-whisper', percent: 50 + Math.round(p / 2) }
+      this.setupStatus = this.withBackendStatus({
+        phase: 'downloading-whisper',
+        percent: 50 + Math.round(p / 2)
+      })
       this.emit('setup-status', this.getSetupStatus())
     })
     await this.extractTarGz(ggmlArchivePath, extractDir)
@@ -584,10 +880,7 @@ export class WhisperManager extends EventEmitter {
       '$1app.asar.unpacked$2'
     )
 
-    if (
-      unpackedFfmpegPath !== packagedFfmpegPath &&
-      (await this.fileExists(unpackedFfmpegPath))
-    ) {
+    if (unpackedFfmpegPath !== packagedFfmpegPath && (await this.fileExists(unpackedFfmpegPath))) {
       return unpackedFfmpegPath
     }
 
@@ -940,6 +1233,88 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
+  private async isFasterWhisperUsable(): Promise<boolean> {
+    if (!(await this.fileExists(this.getFasterWhisperPythonPath()))) {
+      return false
+    }
+    if (!(await this.fileExists(this.getFasterWhisperModelPath()))) {
+      return false
+    }
+    if (!(await this.fileExists(this.getFasterWhisperScriptPath()))) {
+      return false
+    }
+
+    const profile = this.getSelectedWindowsProfile()
+    const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-faster-whisper-probe-'))
+    const probeWavPath = join(probeDir, 'probe.wav')
+    const probeJsonPath = join(probeDir, 'probe.json')
+
+    try {
+      await writeFile(probeWavPath, this.createSilentProbeWav())
+      return await new Promise<boolean>((resolve) => {
+        execFile(
+          this.getFasterWhisperPythonPath(),
+          [
+            this.getFasterWhisperScriptPath(),
+            '--model',
+            this.getFasterWhisperModelPath(),
+            '--audio',
+            probeWavPath,
+            '--output',
+            probeJsonPath,
+            '--device',
+            profile.device,
+            '--compute-type',
+            profile.computeType,
+            '--language',
+            'en',
+            '--threads',
+            '2'
+          ],
+          { windowsHide: true, timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS },
+          (err, stdout, stderr) => {
+            if (err) {
+              logAutodocFailure({
+                area: 'whisper',
+                message: 'Faster Whisper probe validation failed',
+                error: err,
+                context: {
+                  backend: profile.id,
+                  backendLabel: profile.label,
+                  pythonPath: this.getFasterWhisperPythonPath(),
+                  modelPath: this.getFasterWhisperModelPath(),
+                  stdoutTail: String(stdout ?? '').slice(-1000),
+                  stderrTail: String(stderr ?? '').slice(-1000)
+                }
+              })
+              resolve(false)
+              return
+            }
+
+            resolve(true)
+          }
+        )
+      })
+    } finally {
+      await rm(probeDir, { recursive: true, force: true })
+    }
+  }
+
+  private async isFasterWhisperUsableWithRetry(): Promise<boolean> {
+    if (await this.isFasterWhisperUsable()) {
+      return true
+    }
+
+    for (const delayMs of WHISPER_PROBE_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      if (await this.isFasterWhisperUsable()) {
+        return true
+      }
+    }
+
+    return false
+  }
+
   private async isWhisperUsableWithRetry(): Promise<WhisperUsabilityResult> {
     const initialResult = this.normalizeWhisperUsabilityResult(await this.isWhisperUsable())
     if (this.isWhisperUsabilityAccepted(initialResult)) {
@@ -1074,7 +1449,7 @@ export class WhisperManager extends EventEmitter {
   private async downloadModel(): Promise<void> {
     const model = this.getModelInfo()
     await this.downloadFile(model.downloadUrl, this.getModelPath(), model.filename, (p) => {
-      this.setupStatus = { phase: 'downloading-model', percent: p }
+      this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: p })
       this.emit('setup-status', this.getSetupStatus())
     })
   }

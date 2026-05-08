@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { WhisperSetupStatus } from '../../../../shared/types'
+import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 
 const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
@@ -6,9 +8,6 @@ const MAX_AUTO_RETRY_ATTEMPTS = 2
 
 const phaseLabels: Record<string, (percent: number) => string> = {
   checking: () => 'Checking transcription setup...',
-  'downloading-whisper': (p) => `Downloading transcription engine... ${p}%`,
-  'downloading-ffmpeg': (p) => `Installing audio tools... ${p}%`,
-  'downloading-model': (p) => `Downloading speech model... ${p}%`,
   'preparing-speaker-runtime': (p) => `Preparing speaker identification runtime... ${p}%`,
   'installing-speaker-id': (p) => `Installing speaker identification... ${p}%`,
   'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`
@@ -18,6 +17,10 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus>({
+    phase: 'checking',
+    percent: 0
+  })
   const [isAutoRetrying, setIsAutoRetrying] = useState(false)
   const [showSkip, setShowSkip] = useState(false)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -34,6 +37,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const markReady = () => {
     setPhase('ready')
     setPercent(100)
+    setSetupStatus({ phase: 'ready', percent: 100 })
     setError(null)
     setIsAutoRetrying(false)
     autoRetryAttempts.current = 0
@@ -50,6 +54,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     setIsAutoRetrying(true)
     setPhase('checking')
     setPercent(0)
+    setSetupStatus({ phase: 'checking', percent: 0 })
 
     retryTimer.current = setTimeout(async () => {
       retryTimer.current = null
@@ -58,10 +63,8 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     }, AUTO_RETRY_DELAY_MS)
   }
 
-  const applyStatus = async (
-    status: { phase: string; percent: number; error?: string | null },
-    allowKickoff = false
-  ) => {
+  const applyStatus = async (status: WhisperSetupStatus, allowKickoff = false) => {
+    setSetupStatus(status)
     setPhase(status.phase)
     setPercent(status.percent)
 
@@ -79,7 +82,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       return
     }
 
-    if (status.phase !== 'checking' && (status.percent > 0 || status.phase === 'ready')) {
+    if (status.phase !== 'checking' && status.percent > 0) {
       hasSeenMeaningfulSetupProgress.current = true
     }
 
@@ -169,7 +172,9 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         />
       </div>
       <div className="text-[12px] text-ink-faint mb-5">
-        {phaseLabels[phase]?.(percent) ?? (error ? `Setup failed: ${error}` : 'Preparing...')}
+        {getWhisperSetupLabel(setupStatus) ??
+          phaseLabels[phase]?.(percent) ??
+          (error ? `Setup failed: ${error}` : 'Preparing...')}
       </div>
 
       {isAutoRetrying && (
@@ -203,6 +208,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
               setIsAutoRetrying(false)
               setPhase('checking')
               setPercent(0)
+              setSetupStatus({ phase: 'checking', percent: 0 })
               await window.electronAPI.invoke('whisper:retry-setup')
             }}
             className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"

@@ -822,6 +822,7 @@ app.whenReady().then(async () => {
       platform: isE2E ? getE2EPlatform() : process.platform,
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
+      transcriptionBackend: whisperManager.getTranscriptionBackend(),
       ollamaModel: managedOllamaManager.getModel()
     })
   )
@@ -965,11 +966,14 @@ app.whenReady().then(async () => {
       : 'preparing-speaker-runtime'
 
   const mapDiarizationToTranscriptionStatus = (
-    status: DiarizationSetupStatus
+    status: DiarizationSetupStatus,
+    whisperStatus: WhisperSetupStatus
   ): WhisperSetupStatus => ({
     phase: status.phase,
     percent: status.percent,
     error: status.error,
+    backend: whisperStatus.backend,
+    backendLabel: whisperStatus.backendLabel,
     failedStep: status.failedStep
   })
 
@@ -1014,11 +1018,12 @@ app.whenReady().then(async () => {
       return whisperStatus
     }
     if (!isSpeakerDiarizationSetupEnabled()) {
-      return { phase: 'ready', percent: 100 }
+      return { ...whisperStatus, phase: 'ready', percent: 100 }
     }
 
     const diarizationAsTranscription = mapDiarizationToTranscriptionStatus(
-      getCurrentDiarizationSetupStatus()
+      getCurrentDiarizationSetupStatus(),
+      whisperStatus
     )
     if (
       diarizationAsTranscription.phase === 'error' ||
@@ -1027,7 +1032,7 @@ app.whenReady().then(async () => {
       return diarizationAsTranscription
     }
 
-    return { phase: 'ready', percent: 100 }
+    return { ...whisperStatus, phase: 'ready', percent: 100 }
   }
 
   const broadcastTranscriptionSetupStatus = (): void => {
@@ -1054,6 +1059,8 @@ app.whenReady().then(async () => {
     whisperEngineSetupState.phase = status.phase
     whisperEngineSetupState.percent = status.percent
     whisperEngineSetupState.error = status.error
+    whisperEngineSetupState.backend = status.backend
+    whisperEngineSetupState.backendLabel = status.backendLabel
     whisperEngineSetupState.failedStep =
       status.phase === 'error' ? getWhisperFailedStep() : undefined
     broadcastTranscriptionSetupStatus()

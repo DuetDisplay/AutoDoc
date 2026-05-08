@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
 import { constants } from 'fs'
@@ -16,9 +17,16 @@ function setPlatform(platform: NodeJS.Platform) {
 async function loadWhisperManager(
   platform: 'darwin' | 'win32',
   rootDir: string,
-  options?: { isPackaged?: boolean; ffmpegStaticPath?: string | null }
+  options?: {
+    isPackaged?: boolean
+    ffmpegStaticPath?: string | null
+    windowsBackend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp' | 'auto'
+  }
 ) {
   setPlatform(platform)
+  if (platform === 'win32' && options?.windowsBackend !== 'auto') {
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = options?.windowsBackend ?? 'whisper-cpp'
+  }
   vi.resetModules()
 
   const execSyncMock = vi.fn()
@@ -60,6 +68,7 @@ afterEach(async () => {
   vi.doUnmock('child_process')
   vi.doUnmock('ffmpeg-static')
   delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
+  delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
   vi.resetModules()
   setPlatform(originalPlatform)
 })
@@ -286,6 +295,212 @@ describe('Whisper onboarding dependency installation', () => {
       ])
       expect(execSyncMock).not.toHaveBeenCalled()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs the CUDA faster-whisper profile on supported Windows NVIDIA hardware', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-cuda-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'faster-whisper-cuda'
+      })
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new WhisperManager()
+      const statuses: Array<{ phase: string; backend?: string; backendLabel?: string }> = []
+      manager.on('setup-status', (status) => {
+        statuses.push({
+          phase: status.phase,
+          backend: status.backend,
+          backendLabel: status.backendLabel
+        })
+      })
+
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+      const resolveWhisperSpy = vi.spyOn(manager as any, 'resolveWhisper')
+      const downloadModelSpy = vi.spyOn(manager as any, 'downloadModel')
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cuda')
+      expect(manager.getModelName()).toBe('distil-large-v3')
+      expect(assetDownloads).toEqual([
+        'faster-whisper-runtime-cuda-win-x64.zip',
+        'faster-whisper-distil-large-v3-ct2.zip'
+      ])
+      expect(resolveWhisperSpy).not.toHaveBeenCalled()
+      expect(downloadModelSpy).not.toHaveBeenCalled()
+      await expect(access(manager.getFasterWhisperPythonPath())).resolves.toBeUndefined()
+      await expect(
+        access(join(manager.getFasterWhisperModelPath(), 'model.bin'))
+      ).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      expect(statuses).toContainEqual({
+        phase: 'downloading-whisper',
+        backend: 'faster-whisper-cuda',
+        backendLabel: 'NVIDIA accelerated transcription'
+      })
+      expect(statuses.at(-1)).toMatchObject({
+        phase: 'ready',
+        backend: 'faster-whisper-cuda'
+      })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs the CPU faster-whisper profile on Windows without CUDA', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-fw-cpu-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'faster-whisper-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
+      expect(manager.getModelName()).toBe('small.en')
+      expect(assetDownloads).toEqual([
+        'faster-whisper-runtime-cpu-win-x64.zip',
+        'faster-whisper-small-en-ct2-int8.zip'
+      ])
+      await expect(access(manager.getFasterWhisperPythonPath())).resolves.toBeUndefined()
+      await expect(
+        access(join(manager.getFasterWhisperModelPath(), 'tokenizer.json'))
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to whisper.cpp when the selected faster-whisper profile fails validation', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-fw-fallback-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'faster-whisper-cuda'
+      })
+
+      const manager = new WhisperManager()
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(false)
+      const resolveWhisperSpy = vi
+        .spyOn(manager as any, 'resolveWhisper')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'whisper exe')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as any, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'model')
+        })
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('whisper-cpp')
+      expect(resolveWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
+      await expect(access(manager.getModelPath())).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies downloaded Windows faster-whisper assets with SHA256', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-sha-'))
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+      const assetPath = join(rootDir, 'asset.zip')
+      await writeFile(assetPath, 'known payload')
+      const expectedSha256 = createHash('sha256').update('known payload').digest('hex')
+
+      await expect(
+        (manager as any).verifyFileSha256(assetPath, expectedSha256, 'asset.zip')
+      ).resolves.toBeUndefined()
+      await expect(access(assetPath)).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes downloaded Windows faster-whisper assets when SHA256 verification fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-sha-fail-'))
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+      const assetPath = join(rootDir, 'asset.zip')
+      await writeFile(assetPath, 'known payload')
+
+      await expect(
+        (manager as any).verifyFileSha256(
+          assetPath,
+          'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          'asset.zip'
+        )
+      ).rejects.toThrow(/SHA256 verification/i)
+      await expect(access(assetPath)).rejects.toThrow()
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -527,8 +742,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback =
-          typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean
@@ -604,8 +818,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback =
-          typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean
@@ -645,7 +858,8 @@ describe('Whisper onboarding dependency installation', () => {
       ;(manager as any).setupStatus = {
         phase: 'error',
         percent: 0,
-        error: 'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.',
+        error:
+          'whisper-cli failed startup validation after setup. Required Windows runtime files may be missing.',
         failedStep: 'downloading-whisper'
       }
 

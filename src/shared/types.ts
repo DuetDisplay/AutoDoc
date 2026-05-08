@@ -217,6 +217,8 @@ export interface WhisperSetupStatus {
     | 'error'
   percent: number
   error?: string
+  backend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp'
+  backendLabel?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'
@@ -267,6 +269,7 @@ export interface AppRuntimeInfo {
   platform: NodeJS.Platform
   storagePath: string
   whisperModel: string
+  transcriptionBackend?: string
   ollamaModel: string
 }
 
