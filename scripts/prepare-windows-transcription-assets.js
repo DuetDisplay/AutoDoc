@@ -17,6 +17,12 @@ const PYTHON_ARCHIVE = path.join(
   'cpython-3.11.15+20260414-x86_64-pc-windows-msvc-install_only.tar.gz'
 )
 const MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'faster-whisper-models')
+const BUILD_ENV = {
+  ...process.env,
+  PYTHONDONTWRITEBYTECODE: '1',
+  PIP_NO_COMPILE: '1',
+  SOURCE_DATE_EPOCH: '1767225600'
+}
 
 const BOOTSTRAP_PACKAGES = ['pip==26.1.1', 'setuptools==82.0.1', 'wheel==0.47.0']
 const CPU_RUNTIME_PACKAGES = [
@@ -128,8 +134,8 @@ async function prepareRuntime(kind, zipName, packages) {
   await cp(path.join(extractDir, 'python'), runtimeDir, { recursive: true })
 
   const pythonPath = path.join(runtimeDir, 'python.exe')
-  run(pythonPath, ['-m', 'pip', 'install', '--upgrade', ...BOOTSTRAP_PACKAGES])
-  run(pythonPath, ['-m', 'pip', 'install', ...packages])
+  run(pythonPath, ['-m', 'pip', 'install', '--no-compile', '--upgrade', ...BOOTSTRAP_PACKAGES])
+  run(pythonPath, ['-m', 'pip', 'install', '--no-compile', ...packages])
   run(pythonPath, ['-m', 'pip', 'check'])
 
   await pruneRuntime(runtimeDir)
@@ -215,12 +221,27 @@ async function pruneRuntime(runtimeDir) {
     'tests',
     'test',
     '.pytest_cache',
-    'pip/_vendor/cachecontrol/caches'
+    'pip/_vendor/cachecontrol/caches',
+    'Scripts',
+    'pip',
+    'setuptools',
+    'wheel'
   ]
 
   await removeMatching(runtimeDir, (fullPath, name) => {
     if (patterns.includes(name)) return true
-    return name.endsWith('.pyc') || name.endsWith('.pyo')
+    const normalizedPath = fullPath.replaceAll(path.sep, '/')
+    return (
+      name.endsWith('.pyc') ||
+      name.endsWith('.pyo') ||
+      name === 'RECORD' ||
+      name === 'RECORD.jws' ||
+      name === 'RECORD.p7s' ||
+      name === 'direct_url.json' ||
+      normalizedPath.endsWith('.dist-info/REQUESTED') ||
+      normalizedPath.endsWith('.dist-info/entry_points.txt') ||
+      /\/(pip|setuptools|wheel)-[^/]+\.dist-info$/.test(normalizedPath)
+    )
   })
 }
 
@@ -312,7 +333,7 @@ function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: ROOT,
     stdio: 'inherit',
-    env: process.env
+    env: BUILD_ENV
   })
   if (result.error) {
     throw result.error
