@@ -475,7 +475,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       await expect(
         (manager as any).verifyFileSha256(assetPath, expectedSha256, 'asset.zip')
-      ).resolves.toBeUndefined()
+      ).resolves.toBe(expectedSha256)
       await expect(access(assetPath)).resolves.toBeUndefined()
     } finally {
       await rm(rootDir, { recursive: true, force: true })

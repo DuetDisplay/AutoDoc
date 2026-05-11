@@ -10,7 +10,8 @@ import {
   chmod,
   mkdtemp,
   writeFile,
-  rename
+  rename,
+  stat
 } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
@@ -220,9 +221,8 @@ export class WhisperManager extends EventEmitter {
     }
 
     const hardware = await detectWindowsHardwareProfile()
-    this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(
-      this.getWindowsTranscriptionManifestPath()
-    )
+    const manifestPath = this.getWindowsTranscriptionManifestPath()
+    this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(manifestPath)
     this.selectedWindowsProfile = selectWindowsTranscriptionProfile(
       hardware,
       this.windowsTranscriptionProfiles
@@ -234,6 +234,16 @@ export class WhisperManager extends EventEmitter {
         backend: this.selectedWindowsProfile.id,
         backendLabel: this.selectedWindowsProfile.label,
         modelName: this.selectedWindowsProfile.modelName,
+        manifestPath,
+        manifestPresent: await this.fileExists(manifestPath),
+        assets: this.selectedWindowsProfile.assets.map((asset) => ({
+          id: asset.id,
+          filename: asset.filename,
+          url: asset.url,
+          expectedBytes: asset.bytes,
+          expectedSha256: asset.sha256,
+          expectedFiles: asset.expectedFiles
+        })),
         hardware
       }
     })
@@ -419,11 +429,35 @@ export class WhisperManager extends EventEmitter {
 
     for (const asset of profile.assets) {
       const assetRoot = this.getFasterWhisperAssetRoot(profile, asset.id)
-      const hasAsset = await this.hasExpectedFiles(assetRoot, asset.expectedFiles)
-      if (hasAsset) {
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length === 0) {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset already present',
+          context: {
+            backend: profile.id,
+            assetId: asset.id,
+            filename: asset.filename,
+            targetDir: assetRoot
+          }
+        })
         continue
       }
 
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset missing expected files before download',
+        context: {
+          backend: profile.id,
+          assetId: asset.id,
+          filename: asset.filename,
+          targetDir: assetRoot,
+          missingExpectedFiles
+        }
+      })
       this.setupStatus = this.withBackendStatus({
         phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
         percent: 0
@@ -462,6 +496,20 @@ export class WhisperManager extends EventEmitter {
     const archivePath = join(modelsDir, asset.filename)
     const targetDir = this.getFasterWhisperAssetRoot(profile, asset.id)
 
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Windows transcription asset download started',
+      context: {
+        backend: profile.id,
+        assetId: asset.id,
+        filename: asset.filename,
+        url: asset.url,
+        expectedBytes: asset.bytes,
+        expectedSha256: asset.sha256,
+        archivePath,
+        targetDir
+      }
+    })
     await mkdir(targetDir, { recursive: true })
     await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
       this.setupStatus = this.withBackendStatus({
@@ -470,7 +518,21 @@ export class WhisperManager extends EventEmitter {
       })
       this.emit('setup-status', this.getSetupStatus())
     })
-    await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+    const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+    const archiveStats = await stat(archivePath)
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Windows transcription asset download verified',
+      context: {
+        backend: profile.id,
+        assetId: asset.id,
+        filename: asset.filename,
+        expectedBytes: asset.bytes,
+        actualBytes: archiveStats.size,
+        expectedSha256: asset.sha256,
+        actualSha256
+      }
+    })
 
     await rm(targetDir, { recursive: true, force: true })
     await mkdir(targetDir, { recursive: true })
@@ -491,23 +553,40 @@ export class WhisperManager extends EventEmitter {
     })
 
     await rm(archivePath, { force: true })
+    const missingExpectedFiles = await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Windows transcription asset extracted',
+      context: {
+        backend: profile.id,
+        assetId: asset.id,
+        filename: asset.filename,
+        targetDir,
+        expectedFiles: asset.expectedFiles,
+        missingExpectedFiles
+      }
+    })
   }
 
-  private async hasExpectedFiles(rootDir: string, expectedFiles: string[]): Promise<boolean> {
+  private async getMissingExpectedFiles(
+    rootDir: string,
+    expectedFiles: string[]
+  ): Promise<string[]> {
+    const missingExpectedFiles: string[] = []
     for (const expectedFile of expectedFiles) {
       if (!(await this.fileExists(join(rootDir, ...expectedFile.split('/'))))) {
-        return false
+        missingExpectedFiles.push(expectedFile)
       }
     }
 
-    return true
+    return missingExpectedFiles
   }
 
   private async verifyFileSha256(
     filePath: string,
     expectedSha256: string,
     label: string
-  ): Promise<void> {
+  ): Promise<string> {
     if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) {
       throw new Error(`Missing or invalid SHA256 for ${label}.`)
     }
@@ -519,6 +598,7 @@ export class WhisperManager extends EventEmitter {
         `Downloaded ${label} failed SHA256 verification: expected ${expectedSha256}, received ${actualSha256}.`
       )
     }
+    return actualSha256
   }
 
   private hashFileSha256(filePath: string): Promise<string> {

@@ -77,8 +77,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'faster-whisper-runtime-cuda-win-x64.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip`,
-        sha256: '31d7a5934192ab2e80dab182a8bd852c57997eff70f891c45b2781db9aa44aa7',
-        bytes: 1443501612,
+        sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
+        bytes: 1439431425,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -107,8 +107,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'faster-whisper-runtime-cpu-win-x64.zip',
         url: `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip`,
-        sha256: '2241208e10422a2cc3b5b47a33f1648110e3e0a46c51611aa430e31b0039ea75',
-        bytes: 126977202,
+        sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
+        bytes: 122910760,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
