@@ -3,7 +3,6 @@ name: Socket Security
 on:
   pull_request:
     paths:
-      - .github/workflows/socket.yml
       - package.json
       - package-lock.json
       - worker/package.json
@@ -16,6 +15,9 @@ on:
       - package-lock.json
       - worker/package.json
       - worker/package-lock.json
+  schedule:
+    # 03:00 UTC is 11:00 PM in America/New_York during daylight saving time.
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 concurrency:
