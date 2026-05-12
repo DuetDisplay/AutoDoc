@@ -3,6 +3,7 @@ name: Socket Security
 on:
   pull_request:
     paths:
+      - .github/workflows/socket.yml
       - package.json
       - package-lock.json
       - worker/package.json
