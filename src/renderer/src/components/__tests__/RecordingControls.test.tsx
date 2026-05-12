@@ -112,7 +112,8 @@ describe('RecordingControls', () => {
       {
         meetingSourceId: 'window:1',
         meetingSourceName: 'Zoom Meeting',
-        providerId: null
+        providerId: 'zoom',
+        recordingIntent: 'meeting'
       }
     )
   })
@@ -147,7 +148,8 @@ describe('RecordingControls', () => {
       {
         meetingSourceId: 'window:1',
         meetingSourceName: 'Zoom Meeting',
-        providerId: null
+        providerId: 'zoom',
+        recordingIntent: 'meeting'
       }
     )
   })
