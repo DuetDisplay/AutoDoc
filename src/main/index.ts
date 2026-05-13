@@ -91,6 +91,7 @@ import { getResetLocalDataTargets } from './services/reset-local-data'
 app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
 const EXPECTED_APP_ID = 'com.kairos.autodoc'
@@ -217,8 +218,7 @@ traceInstallPolicy('index: single-instance lock result', {
 })
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
 const WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS =
-  process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
-  process.env.AUTODOC_TEST_OLLAMA_SETUP_RETRY_DELAYS_MS
+  isTestRuntime && isRealSetupTest && process.env.AUTODOC_TEST_OLLAMA_SETUP_RETRY_DELAYS_MS
     ? process.env.AUTODOC_TEST_OLLAMA_SETUP_RETRY_DELAYS_MS.split(',')
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isFinite(value) && value >= 0)
@@ -799,6 +799,8 @@ app.whenReady().then(async () => {
 
   let ollamaRecoveryPromise: Promise<void> | null = null
 
+  // `force` is honored only by the Windows setup coordinator; the non-Windows
+  // path keeps its existing single recovery flow unchanged.
   const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
     if (windowsOllamaSetupCoordinator) {
       void windowsOllamaSetupCoordinator.ensureRunning(options).catch(() => {})

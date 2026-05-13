@@ -14,8 +14,9 @@ const IS_WIN = process.platform === 'win32'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
+const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const TEST_OLLAMA_SETUP_SEQUENCE =
-  IS_WIN && process.env.AUTODOC_TEST_REAL_SETUP === '1'
+  IS_WIN && IS_TEST_RUNTIME && process.env.AUTODOC_TEST_REAL_SETUP === '1'
     ? (process.env.AUTODOC_TEST_OLLAMA_SETUP_SEQUENCE ?? '')
         .split(',')
         .map((entry) => entry.trim())

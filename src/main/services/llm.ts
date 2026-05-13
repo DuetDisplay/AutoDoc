@@ -26,6 +26,7 @@ const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
+const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -446,6 +447,7 @@ export class OllamaProvider implements LLMProvider {
   ): Promise<string> {
     if (
       process.platform === 'win32' &&
+      IS_TEST_RUNTIME &&
       process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
       process.env.AUTODOC_TEST_OLLAMA_SUMMARY_MODE === 'fixed-success'
     ) {
