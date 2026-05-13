@@ -1,4 +1,4 @@
-const { readdir, stat } = require('fs/promises')
+const { readdir, rm, stat } = require('fs/promises')
 const { existsSync } = require('fs')
 const { join } = require('path')
 const { execFileSync } = require('child_process')
@@ -57,6 +57,29 @@ async function walk(dirPath) {
   return files
 }
 
+async function removeAppleDoubleFiles(dirPath) {
+  if (!existsSync(dirPath)) {
+    return 0
+  }
+
+  let removed = 0
+  const entries = await readdir(dirPath, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const entryPath = join(dirPath, entry.name)
+    if (entry.name.startsWith('._')) {
+      await rm(entryPath, { recursive: entry.isDirectory(), force: true })
+      removed += 1
+      continue
+    }
+    if (entry.isDirectory()) {
+      removed += await removeAppleDoubleFiles(entryPath)
+    }
+  }
+
+  return removed
+}
+
 function isMachOBinary(filePath) {
   try {
     const output = execFileSync('file', ['-b', filePath], {
@@ -71,6 +94,15 @@ function isMachOBinary(filePath) {
 
 async function signBundledPythonRuntime(appBundlePath) {
   const runtimeRoot = join(appBundlePath, 'Contents', 'Resources', 'python-runtime')
+  return await signMachOBinariesUnder(runtimeRoot, 'bundled macOS Python binaries')
+}
+
+async function signBundledWhisperRuntime(appBundlePath) {
+  const runtimeRoot = join(appBundlePath, 'Contents', 'Resources', 'macos-whisper-runtime')
+  return await signMachOBinariesUnder(runtimeRoot, 'bundled macOS Whisper runtime')
+}
+
+async function signMachOBinariesUnder(runtimeRoot, label) {
   if (!existsSync(runtimeRoot)) {
     return 0
   }
@@ -78,7 +110,7 @@ async function signBundledPythonRuntime(appBundlePath) {
   const identity = tryGetSigningIdentity()
   if (!identity) {
     console.log(
-      '[afterPack] Skipped signing bundled macOS Python binaries because no Developer ID identity is available'
+      `[afterPack] Skipped signing ${label} because no Developer ID identity is available`
     )
     return 0
   }
@@ -150,17 +182,31 @@ module.exports.default = async function afterPack(context) {
     ? expectedAppBundlePath
     : context.appOutDir
 
+  const removedWhisperAppleDoubleFiles = await removeAppleDoubleFiles(
+    join(appBundlePath, 'Contents', 'Resources', 'macos-whisper-runtime')
+  )
   const patchedPlists = await patchNestedAppPrivacyStrings(appBundlePath)
   const signedPythonBinaries = await signBundledPythonRuntime(appBundlePath)
+  const signedWhisperBinaries = await signBundledWhisperRuntime(appBundlePath)
 
   if (patchedPlists.length > 0) {
     console.log(
       `[afterPack] Patched privacy usage strings in ${patchedPlists.length} helper app plists`
     )
   }
+  if (removedWhisperAppleDoubleFiles > 0) {
+    console.log(
+      `[afterPack] Removed ${removedWhisperAppleDoubleFiles} AppleDouble files from bundled macOS Whisper runtime`
+    )
+  }
   if (signedPythonBinaries > 0) {
     console.log(
       `[afterPack] Signed ${signedPythonBinaries} bundled macOS Python binaries before final app signing`
+    )
+  }
+  if (signedWhisperBinaries > 0) {
+    console.log(
+      `[afterPack] Signed ${signedWhisperBinaries} bundled macOS Whisper runtime binaries before final app signing`
     )
   }
 }

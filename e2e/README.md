@@ -10,6 +10,7 @@ Recommended commands:
 npm run test:e2e -- e2e/qa-repro.spec.ts -g "AD-65 keeps onboarding moving through speech engine setup failures"
 npm run test:e2e -- e2e/onboarding-journey.spec.ts -g "Whisper"
 npm run test:smoke:mac:microphone
+AUTODOC_RUN_PACKAGED_MACOS_WHISPER_RUNTIME_TEST=1 AUTODOC_PACKAGED_APP_PATH=/abs/path/to/AutoDoc.app npm run test:e2e -- e2e/macos-packaged-whisper-runtime.spec.ts
 ```
 
 If Electron launch fails before assertions:

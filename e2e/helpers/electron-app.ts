@@ -144,6 +144,43 @@ export async function launchRealSetupApp(extraEnv?: Record<string, string>) {
   }
 }
 
+export async function launchPackagedRealSetupApp(
+  appBundlePath: string,
+  extraEnv?: Record<string, string>
+) {
+  const executablePath =
+    process.platform === 'darwin'
+      ? path.join(appBundlePath, 'Contents', 'MacOS', 'AutoDoc')
+      : appBundlePath
+  expect(existsSync(executablePath)).toBeTruthy()
+
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-packaged-real-setup-'))
+  const electronApp = await electron.launch({
+    executablePath,
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      AUTODOC_TEST_REAL_SETUP: '1',
+      AUTODOC_TEST_USER_DATA_DIR: userDataDir,
+      AUTODOC_SKIP_INSTALL_POLICY: '1',
+      ...(extraEnv ?? {})
+    }
+  })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        killProcessesForUserDataDir(userDataDir)
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
+    }
+  }
+}
+
 export async function stubMediaCapture(page: Page): Promise<void> {
   await page.evaluate(() => {
     if (!navigator.mediaDevices) {

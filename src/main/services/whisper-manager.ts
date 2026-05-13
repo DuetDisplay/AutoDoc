@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import {
   access,
   mkdir,
+  cp,
   copyFile,
   rm,
   readdir,
@@ -48,12 +49,24 @@ const FFMPEG_WIN_URL =
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
 const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
 const FASTER_WHISPER_PROBE_TIMEOUT_MS = 45_000
-const HOMEBREW_API_ROOT = 'https://formulae.brew.sh/api/formula'
-const MAC_WHISPER_FORMULA = 'whisper-cpp'
-const MAC_GGML_FORMULA = 'ggml'
-const MAC_LIBOMP_FORMULA = 'libomp'
+const MAC_WHISPER_RUNTIME_RELEASE_TAG =
+  process.env.AUTODOC_MACOS_WHISPER_RUNTIME_RELEASE_TAG ?? 'macos-whisper-runtime-v1'
+const MAC_WHISPER_RUNTIME_ASSET_BASE_URL =
+  process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL ??
+  `https://github.com/DuetDisplay/AutoDoc-Local/releases/download/${MAC_WHISPER_RUNTIME_RELEASE_TAG}`
+const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
+  'whisper-cpp',
+  'libwhisper.1.dylib',
+  'libggml.0.dylib',
+  'libggml-base.0.dylib'
+]
 
-type WhisperUsabilityResult = 'ready' | 'missing-assets' | 'slow-validation' | 'failed'
+type WhisperUsabilityResult =
+  | 'ready'
+  | 'missing-assets'
+  | 'slow-validation'
+  | 'runtime-link-failure'
+  | 'failed'
 
 const DEFAULT_MODEL = IS_WIN
   ? {
@@ -78,19 +91,12 @@ export interface DownloadProgress {
   bytesTotal: number
 }
 
-interface HomebrewBottleFile {
-  url?: string
-}
-
-interface HomebrewFormulaResponse {
-  versions?: {
-    stable?: string
-  }
-  bottle?: {
-    stable?: {
-      files?: Record<string, HomebrewBottleFile>
-    }
-  }
+interface MacWhisperRuntimeAsset {
+  filename: string
+  url: string
+  sha256: string
+  bytes?: number
+  expectedFiles: string[]
 }
 
 export class WhisperManager extends EventEmitter {
@@ -178,6 +184,19 @@ export class WhisperManager extends EventEmitter {
 
   getSetupStatus(): WhisperSetupStatus {
     return { ...this.setupStatus }
+  }
+
+  async installBundledMacWhisperRuntimeOnly(): Promise<void> {
+    if (IS_WIN) {
+      throw new Error('Bundled macOS Whisper runtime install is not available on Windows.')
+    }
+
+    const bundledRuntimeDir = await this.resolveBundledMacWhisperRuntimeDir()
+    if (!bundledRuntimeDir) {
+      throw new Error('Bundled macOS Whisper runtime is missing from this app package.')
+    }
+
+    await this.installMacWhisperRuntimeFromDir(bundledRuntimeDir)
   }
 
   private getSelectedWindowsProfile(): WindowsTranscriptionProfile {
@@ -388,8 +407,18 @@ export class WhisperManager extends EventEmitter {
 
       let usability = await this.isWhisperUsableWithRetry()
 
-      if (!this.isWhisperUsabilityAccepted(usability)) {
+      if (usability === 'runtime-link-failure') {
+        await this.recoverFromRuntimeValidationFailure()
+        usability = await this.isWhisperUsableWithRetry()
+      }
+
+      if (!this.isWhisperUsabilityAccepted(usability) && usability !== 'runtime-link-failure') {
         await this.recoverFromProbeValidationFailure()
+        usability = await this.isWhisperUsableWithRetry()
+      }
+
+      if (usability === 'runtime-link-failure') {
+        await this.recoverFromRuntimeValidationFailure()
         usability = await this.isWhisperUsableWithRetry()
       }
 
@@ -631,6 +660,31 @@ export class WhisperManager extends EventEmitter {
     await this.downloadWithRetry(() => this.downloadModel(), 'model')
   }
 
+  private async recoverFromRuntimeValidationFailure(): Promise<void> {
+    this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: 0 })
+    this.emit('setup-status', this.getSetupStatus())
+
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Whisper runtime validation failed; reinstalling managed runtime',
+      context: {
+        diagnostics: await getStorageDiagnostics({
+          whisperModelPath: this.getModelPath(),
+          whisperBinaryPath: this.getWhisperPath(),
+          ffmpegPath: this.getFfmpegPath()
+        })
+      }
+    })
+
+    if (!IS_WIN) {
+      await this.removeMacWhisperRuntimeFiles()
+    } else {
+      await rm(this.getWhisperPath(), { force: true })
+    }
+
+    await this.resolveWhisper()
+  }
+
   private async adoptInstalledAssetsIfAvailable(): Promise<void> {
     const installedModelsDir = getInstalledModelsDir()
     if (!installedModelsDir || installedModelsDir === this.getModelsDir()) {
@@ -802,110 +856,204 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async downloadWhisperMac(): Promise<void> {
-    const modelsDir = this.getModelsDir()
-    const extractDir = join(modelsDir, '_whisper_extract')
-    await rm(extractDir, { recursive: true, force: true })
-    await mkdir(extractDir, { recursive: true })
-
-    const bottleTag = this.getMacHomebrewBottleTag()
-    const whisperFormula = await this.fetchHomebrewFormula(MAC_WHISPER_FORMULA)
-    const ggmlFormula = await this.fetchHomebrewFormula(MAC_GGML_FORMULA)
-    const libompFormula = await this.fetchHomebrewFormula(MAC_LIBOMP_FORMULA)
-    const whisperUrl = this.getHomebrewBottleUrl(whisperFormula, bottleTag, MAC_WHISPER_FORMULA)
-    const ggmlUrl = this.getHomebrewBottleUrl(ggmlFormula, bottleTag, MAC_GGML_FORMULA)
-    const libompUrl = this.getHomebrewBottleUrl(libompFormula, bottleTag, MAC_LIBOMP_FORMULA)
-    const whisperArchivePath = join(extractDir, 'whisper-cpp.tar.gz')
-    const ggmlArchivePath = join(extractDir, 'ggml.tar.gz')
-    const libompArchivePath = join(extractDir, 'libomp.tar.gz')
-
-    await this.downloadGhcrBottle(whisperUrl, MAC_WHISPER_FORMULA, whisperArchivePath, (p) => {
-      this.setupStatus = this.withBackendStatus({
-        phase: 'downloading-whisper',
-        percent: Math.round(p / 2)
-      })
-      this.emit('setup-status', this.getSetupStatus())
-    })
-    await this.extractTarGz(whisperArchivePath, extractDir)
-
-    await this.downloadGhcrBottle(ggmlUrl, MAC_GGML_FORMULA, ggmlArchivePath, (p) => {
-      this.setupStatus = this.withBackendStatus({
-        phase: 'downloading-whisper',
-        percent: 50 + Math.round(p / 2)
-      })
-      this.emit('setup-status', this.getSetupStatus())
-    })
-    await this.extractTarGz(ggmlArchivePath, extractDir)
-
-    await this.downloadGhcrBottle(libompUrl, MAC_LIBOMP_FORMULA, libompArchivePath)
-    await this.extractTarGz(libompArchivePath, extractDir)
-
-    const whisperCli = await this.findFileRecursive(extractDir, 'whisper-cli')
-    if (!whisperCli) {
-      throw new Error('AutoDoc could not unpack the transcription runtime for macOS.')
+    const bundledRuntimeDir = await this.resolveBundledMacWhisperRuntimeDir()
+    if (bundledRuntimeDir) {
+      await this.installMacWhisperRuntimeFromDir(bundledRuntimeDir)
+      return
     }
 
-    await copyFile(whisperCli, this.getWhisperPath())
-    await chmod(this.getWhisperPath(), 0o755)
-
-    await this.copyMatchingFiles(
-      join(
-        extractDir,
-        MAC_WHISPER_FORMULA,
-        whisperFormula.versions?.stable ?? WHISPER_VERSION.replace(/^v/, ''),
-        'lib'
-      ),
-      /^libwhisper.*\.dylib$/i,
-      modelsDir
-    )
-    await this.copyMatchingFiles(
-      join(extractDir, MAC_GGML_FORMULA, ggmlFormula.versions?.stable ?? '', 'lib'),
-      /^libggml.*\.dylib$/i,
-      modelsDir
-    )
-    await this.copyMatchingFiles(
-      join(extractDir, MAC_GGML_FORMULA, ggmlFormula.versions?.stable ?? '', 'libexec'),
-      /^libggml.*\.so$/i,
-      modelsDir
-    )
-    await this.copyMatchingFiles(
-      join(extractDir, MAC_LIBOMP_FORMULA, libompFormula.versions?.stable ?? '', 'lib'),
-      /^libomp.*\.dylib$/i,
-      modelsDir
-    )
-
-    await this.ensureMacCompatibilitySymlinks()
-    await this.rewriteMacWhisperDependencies()
-    await this.resignMacWhisperRuntime()
-    await rm(extractDir, { recursive: true, force: true })
+    await this.downloadAndExtractMacWhisperRuntimeAsset(this.getMacWhisperRuntimeAsset())
   }
 
-  private async ensureMacCompatibilitySymlinks(): Promise<void> {
-    const modelsDir = this.getModelsDir()
-    const entries = await readdir(modelsDir, { withFileTypes: true })
+  private getMacWhisperRuntimeAsset(): MacWhisperRuntimeAsset {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+    const filename = `macos-whisper-runtime-${arch}.tar.gz`
+    const shaEnvName =
+      arch === 'arm64'
+        ? 'AUTODOC_MACOS_WHISPER_RUNTIME_ARM64_SHA256'
+        : 'AUTODOC_MACOS_WHISPER_RUNTIME_X64_SHA256'
+    const bytesEnvName =
+      arch === 'arm64'
+        ? 'AUTODOC_MACOS_WHISPER_RUNTIME_ARM64_BYTES'
+        : 'AUTODOC_MACOS_WHISPER_RUNTIME_X64_BYTES'
+    const bytes = Number(process.env[bytesEnvName] ?? 0)
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.dylib')) {
-        continue
-      }
-
-      const compatibilityName = this.getMacCompatibilityDylibName(entry.name)
-      if (!compatibilityName || compatibilityName === entry.name) {
-        continue
-      }
-
-      await rm(join(modelsDir, compatibilityName), { force: true })
-      await symlink(entry.name, join(modelsDir, compatibilityName))
+    return {
+      filename,
+      url: `${MAC_WHISPER_RUNTIME_ASSET_BASE_URL.replace(/\/$/, '')}/${filename}`,
+      sha256: process.env[shaEnvName] ?? '',
+      bytes: Number.isFinite(bytes) && bytes > 0 ? bytes : undefined,
+      expectedFiles: MAC_WHISPER_RUNTIME_EXPECTED_FILES
     }
   }
 
-  private getMacCompatibilityDylibName(filename: string): string | null {
-    const match = /^(lib(?:whisper|ggml(?:-base)?))\.(\d+)(?:\.\d+)*\.dylib$/i.exec(filename)
-    if (!match) {
+  private async resolveBundledMacWhisperRuntimeDir(): Promise<string | null> {
+    if (!app.isPackaged) {
       return null
     }
 
-    const [, libraryName, majorVersion] = match
-    return `${libraryName}.${majorVersion}.dylib`
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+    const candidates = [
+      process.resourcesPath ? join(process.resourcesPath, 'macos-whisper-runtime', arch) : null,
+      join(this.getDevelopmentAppPath(), 'resources', 'macos-whisper-runtime', arch)
+    ].filter((candidate): candidate is string => Boolean(candidate))
+
+    for (const candidate of candidates) {
+      if (
+        (await this.getMissingExpectedFiles(candidate, MAC_WHISPER_RUNTIME_EXPECTED_FILES))
+          .length === 0
+      ) {
+        return candidate
+      }
+    }
+
+    return null
+  }
+
+  private async downloadAndExtractMacWhisperRuntimeAsset(
+    asset: MacWhisperRuntimeAsset
+  ): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const archivePath = join(modelsDir, asset.filename)
+    const extractDir = join(modelsDir, '_whisper_extract')
+
+    if (!/^[a-f0-9]{64}$/i.test(asset.sha256)) {
+      throw new Error(
+        'AutoDoc is missing the checksum for its macOS local speech engine runtime package.'
+      )
+    }
+
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'macOS Whisper runtime download started',
+      context: {
+        filename: asset.filename,
+        url: asset.url,
+        expectedBytes: asset.bytes,
+        expectedSha256: asset.sha256,
+        archivePath,
+        extractDir
+      }
+    })
+
+    await mkdir(modelsDir, { recursive: true })
+    await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
+      this.setupStatus = this.withBackendStatus({ phase: 'downloading-whisper', percent: p })
+      this.emit('setup-status', this.getSetupStatus())
+    })
+    const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+    const archiveStats = await stat(archivePath)
+
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'macOS Whisper runtime download verified',
+      context: {
+        filename: asset.filename,
+        expectedBytes: asset.bytes,
+        actualBytes: archiveStats.size,
+        expectedSha256: asset.sha256,
+        actualSha256
+      }
+    })
+
+    await rm(extractDir, { recursive: true, force: true })
+    await mkdir(extractDir, { recursive: true })
+    await this.extractTarGz(archivePath, extractDir)
+
+    const runtimeRoot = await this.findMacWhisperRuntimeRoot(extractDir, asset.expectedFiles)
+    if (!runtimeRoot) {
+      await rm(archivePath, { force: true })
+      await rm(extractDir, { recursive: true, force: true })
+      throw new Error('AutoDoc could not unpack the macOS local speech engine runtime package.')
+    }
+
+    await this.installMacWhisperRuntimeFromDir(runtimeRoot)
+    await rm(archivePath, { force: true })
+    await rm(extractDir, { recursive: true, force: true })
+  }
+
+  private async findMacWhisperRuntimeRoot(
+    extractDir: string,
+    expectedFiles: string[]
+  ): Promise<string | null> {
+    if ((await this.getMissingExpectedFiles(extractDir, expectedFiles)).length === 0) {
+      return extractDir
+    }
+
+    const entries = await readdir(extractDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue
+      }
+      const candidate = join(extractDir, entry.name)
+      if ((await this.getMissingExpectedFiles(candidate, expectedFiles)).length === 0) {
+        return candidate
+      }
+    }
+
+    return null
+  }
+
+  private async installMacWhisperRuntimeFromDir(sourceDir: string): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const extractDir = join(modelsDir, '_whisper_extract')
+    const preserveExtractDir = sourceDir === extractDir || sourceDir.startsWith(`${extractDir}/`)
+    await mkdir(modelsDir, { recursive: true })
+    await this.removeMacWhisperRuntimeFiles({ preserveExtractDir })
+
+    const entries = await readdir(sourceDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.name.startsWith('._')) {
+        continue
+      }
+
+      const sourcePath = join(sourceDir, entry.name)
+      const destPath = join(modelsDir, entry.name)
+      await cp(sourcePath, destPath, { recursive: true, force: true })
+    }
+
+    await this.chmodMacWhisperRuntimeFiles()
+  }
+
+  private async chmodMacWhisperRuntimeFiles(): Promise<void> {
+    const entries = await readdir(this.getModelsDir(), { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !this.isMacWhisperRuntimeFile(entry.name)) {
+        continue
+      }
+      await chmod(join(this.getModelsDir(), entry.name), 0o755)
+    }
+  }
+
+  private async removeMacWhisperRuntimeFiles(options?: {
+    preserveExtractDir?: boolean
+  }): Promise<void> {
+    const modelsDir = this.getModelsDir()
+    const entries = await readdir(modelsDir, { withFileTypes: true }).catch(() => [])
+
+    if (!options?.preserveExtractDir) {
+      await rm(join(modelsDir, '_whisper_extract'), { recursive: true, force: true })
+    }
+
+    for (const entry of entries) {
+      if (!this.isMacWhisperRuntimeFile(entry.name)) {
+        continue
+      }
+
+      await rm(join(modelsDir, entry.name), {
+        recursive: entry.isDirectory(),
+        force: true
+      })
+    }
+  }
+
+  private isMacWhisperRuntimeFile(filename: string): boolean {
+    return (
+      filename === basename(this.getWhisperPath()) ||
+      /^libwhisper.*\.(?:dylib|so)$/i.test(filename) ||
+      /^libggml.*\.(?:dylib|so)$/i.test(filename) ||
+      /^libomp.*\.(?:dylib|so)$/i.test(filename)
+    )
   }
 
   private async findFileRecursive(dir: string, filename: string): Promise<string | null> {
@@ -1055,195 +1203,10 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  private async copyMatchingFiles(
-    sourceDir: string,
-    pattern: RegExp,
-    destDir: string
-  ): Promise<void> {
-    const entries = await readdir(sourceDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isFile() || !pattern.test(entry.name)) {
-        continue
-      }
-
-      const sourcePath = join(sourceDir, entry.name)
-      const destPath = join(destDir, entry.name)
-
-      await rm(destPath, { force: true })
-      await copyFile(sourcePath, destPath)
-      await chmod(destPath, 0o755)
-    }
-  }
-
-  private getMacHomebrewBottleTag(): string {
-    const systemVersion =
-      typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : '14.0.0'
-    const majorVersion = Number(systemVersion.split('.')[0] ?? 0)
-    const archPrefix = process.arch === 'arm64' ? 'arm64_' : ''
-
-    if (majorVersion >= 16) return `${archPrefix}tahoe`
-    if (majorVersion >= 15) return `${archPrefix}sequoia`
-    return `${archPrefix}sonoma`
-  }
-
-  private async fetchHomebrewFormula(name: string): Promise<HomebrewFormulaResponse> {
-    const response = await fetch(`${HOMEBREW_API_ROOT}/${name}.json`)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${name} metadata: ${response.status} ${response.statusText}`)
-    }
-
-    return (await response.json()) as HomebrewFormulaResponse
-  }
-
-  private getHomebrewBottleUrl(
-    formula: HomebrewFormulaResponse,
-    bottleTag: string,
-    formulaName: string
-  ): string {
-    const url = formula.bottle?.stable?.files?.[bottleTag]?.url
-    if (!url) {
-      throw new Error(
-        `AutoDoc does not have a supported ${formulaName} runtime package for this Mac.`
-      )
-    }
-
-    return url
-  }
-
-  private async downloadGhcrBottle(
-    url: string,
-    packageName: string,
-    destPath: string,
-    onProgress?: (percent: number) => void
-  ): Promise<void> {
-    const scope = `repository:homebrew/core/${packageName}:pull`
-    const tokenUrl = `https://ghcr.io/token?scope=${encodeURIComponent(scope)}`
-    const tokenResponse = await fetch(tokenUrl)
-    if (!tokenResponse.ok) {
-      throw new Error(
-        `Failed to authorize ${packageName} download: ${tokenResponse.status} ${tokenResponse.statusText}`
-      )
-    }
-
-    const tokenPayload = (await tokenResponse.json()) as { token?: string }
-    if (!tokenPayload.token) {
-      throw new Error(`Failed to authorize ${packageName} download: missing token.`)
-    }
-
-    await this.downloadFile(url, destPath, packageName, onProgress, {
-      headers: {
-        Authorization: `Bearer ${tokenPayload.token}`
-      }
-    })
-  }
-
   private async extractTarGz(archivePath: string, destDir: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       execFile('tar', ['xzf', archivePath, '-C', destDir], (err) => {
         if (err) reject(new Error(`Failed to extract archive: ${err.message}`))
-        else resolve()
-      })
-    })
-  }
-
-  private async rewriteMacWhisperDependencies(): Promise<void> {
-    const modelsDir = this.getModelsDir()
-    const binaryPath = this.getWhisperPath()
-    const entries = await readdir(modelsDir, { withFileTypes: true })
-    const dylibPaths = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.dylib'))
-      .map((entry) => join(modelsDir, entry.name))
-    const bundlePaths = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.so'))
-      .map((entry) => join(modelsDir, entry.name))
-
-    for (const dylibPath of dylibPaths) {
-      await this.setMacInstallName(dylibPath, `@loader_path/${basename(dylibPath)}`)
-      await this.rewriteMacLoadCommands(dylibPath, '@loader_path')
-    }
-
-    for (const bundlePath of bundlePaths) {
-      await this.rewriteMacLoadCommands(bundlePath, '@loader_path')
-    }
-
-    await this.rewriteMacLoadCommands(binaryPath, '@executable_path')
-  }
-
-  private async resignMacWhisperRuntime(): Promise<void> {
-    const modelsDir = this.getModelsDir()
-    const entries = await readdir(modelsDir, { withFileTypes: true })
-    const runtimePaths = [
-      ...entries
-        .filter(
-          (entry) => entry.isFile() && (entry.name.endsWith('.dylib') || entry.name.endsWith('.so'))
-        )
-        .map((entry) => join(modelsDir, entry.name)),
-      this.getWhisperPath()
-    ]
-
-    for (const runtimePath of runtimePaths) {
-      await new Promise<void>((resolve, reject) => {
-        execFile('codesign', ['--sign', '-', '--force', runtimePath], (err) => {
-          if (err)
-            reject(new Error(`Failed to re-sign macOS transcription runtime: ${err.message}`))
-          else resolve()
-        })
-      })
-    }
-  }
-
-  private async rewriteMacLoadCommands(
-    filePath: string,
-    localPrefix: '@loader_path' | '@executable_path'
-  ): Promise<void> {
-    const dependencies = await this.listMacDependencies(filePath)
-
-    for (const dependency of dependencies) {
-      const dependencyName = basename(dependency)
-      if (
-        !dependencyName.startsWith('libwhisper') &&
-        !dependencyName.startsWith('libggml') &&
-        !dependencyName.startsWith('libomp')
-      ) {
-        continue
-      }
-
-      await this.changeMacDependency(filePath, dependency, `${localPrefix}/${dependencyName}`)
-    }
-  }
-
-  private async listMacDependencies(filePath: string): Promise<string[]> {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      execFile('otool', ['-L', filePath], { encoding: 'utf8' }, (err, resultStdout) => {
-        if (err) reject(new Error(`Failed to inspect macOS runtime links: ${err.message}`))
-        else resolve(resultStdout)
-      })
-    })
-
-    return stdout
-      .split('\n')
-      .slice(1)
-      .map((line) => line.trim().split(' ')[0])
-      .filter(Boolean)
-  }
-
-  private async setMacInstallName(filePath: string, installName: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      execFile('install_name_tool', ['-id', installName, filePath], (err) => {
-        if (err) reject(new Error(`Failed to rewrite macOS runtime id: ${err.message}`))
-        else resolve()
-      })
-    })
-  }
-
-  private async changeMacDependency(
-    filePath: string,
-    oldPath: string,
-    newPath: string
-  ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      execFile('install_name_tool', ['-change', oldPath, newPath, filePath], (err) => {
-        if (err) reject(new Error(`Failed to rewrite macOS runtime dependency: ${err.message}`))
         else resolve()
       })
     })
@@ -1430,6 +1393,20 @@ export class WhisperManager extends EventEmitter {
     stderr: string
   ): WhisperUsabilityResult {
     const combinedOutput = `${stdout}\n${stderr}`
+    const macRuntimeLinkFailure =
+      !IS_WIN &&
+      (/dyld\[\d+\]:\s+Library not loaded:\s+@rpath\/lib(?:whisper|ggml|omp)/i.test(
+        combinedOutput
+      ) ||
+        /Library not loaded:\s+@rpath\/lib(?:whisper|ggml|omp)/i.test(combinedOutput) ||
+        /install_name_tool|Failed to rewrite macOS runtime|No developer tools were found/i.test(
+          `${err.message}\n${combinedOutput}`
+        ))
+
+    if (macRuntimeLinkFailure) {
+      return 'runtime-link-failure'
+    }
+
     const timedOut =
       err.killed === true ||
       err.code === 'ETIMEDOUT' ||

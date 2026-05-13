@@ -17,6 +17,12 @@ files:
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'
   - '!**/.DS_Store'
+extraResources:
+  - from: resources/macos-whisper-runtime
+    to: macos-whisper-runtime
+    filter:
+      - '**/*'
+      - '!**/._*'
 asarUnpack:
   - 'resources/**'
   - 'native/**'
