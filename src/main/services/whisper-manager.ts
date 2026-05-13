@@ -58,7 +58,11 @@ const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
   'whisper-cpp',
   'libwhisper.1.dylib',
   'libggml.0.dylib',
-  'libggml-base.0.dylib'
+  'libggml-base.0.dylib',
+  'libomp.dylib'
+]
+const MAC_WHISPER_RUNTIME_REQUIRED_FILE_PATTERNS = [
+  { label: 'libggml backend plugin', pattern: /^libggml.*\.so$/i }
 ]
 
 type WhisperUsabilityResult =
@@ -611,6 +615,23 @@ export class WhisperManager extends EventEmitter {
     return missingExpectedFiles
   }
 
+  private async getMissingMacWhisperRuntimeFiles(rootDir: string): Promise<string[]> {
+    const missingFiles = await this.getMissingExpectedFiles(
+      rootDir,
+      MAC_WHISPER_RUNTIME_EXPECTED_FILES
+    )
+    const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => [])
+    const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+
+    for (const requiredPattern of MAC_WHISPER_RUNTIME_REQUIRED_FILE_PATTERNS) {
+      if (!fileNames.some((fileName) => requiredPattern.pattern.test(fileName))) {
+        missingFiles.push(requiredPattern.label)
+      }
+    }
+
+    return missingFiles
+  }
+
   private async verifyFileSha256(
     filePath: string,
     expectedSha256: string,
@@ -899,10 +920,7 @@ export class WhisperManager extends EventEmitter {
     ].filter((candidate): candidate is string => Boolean(candidate))
 
     for (const candidate of candidates) {
-      if (
-        (await this.getMissingExpectedFiles(candidate, MAC_WHISPER_RUNTIME_EXPECTED_FILES))
-          .length === 0
-      ) {
+      if ((await this.getMissingMacWhisperRuntimeFiles(candidate)).length === 0) {
         return candidate
       }
     }
@@ -960,7 +978,7 @@ export class WhisperManager extends EventEmitter {
     await mkdir(extractDir, { recursive: true })
     await this.extractTarGz(archivePath, extractDir)
 
-    const runtimeRoot = await this.findMacWhisperRuntimeRoot(extractDir, asset.expectedFiles)
+    const runtimeRoot = await this.findMacWhisperRuntimeRoot(extractDir)
     if (!runtimeRoot) {
       await rm(archivePath, { force: true })
       await rm(extractDir, { recursive: true, force: true })
@@ -972,11 +990,8 @@ export class WhisperManager extends EventEmitter {
     await rm(extractDir, { recursive: true, force: true })
   }
 
-  private async findMacWhisperRuntimeRoot(
-    extractDir: string,
-    expectedFiles: string[]
-  ): Promise<string | null> {
-    if ((await this.getMissingExpectedFiles(extractDir, expectedFiles)).length === 0) {
+  private async findMacWhisperRuntimeRoot(extractDir: string): Promise<string | null> {
+    if ((await this.getMissingMacWhisperRuntimeFiles(extractDir)).length === 0) {
       return extractDir
     }
 
@@ -986,7 +1001,7 @@ export class WhisperManager extends EventEmitter {
         continue
       }
       const candidate = join(extractDir, entry.name)
-      if ((await this.getMissingExpectedFiles(candidate, expectedFiles)).length === 0) {
+      if ((await this.getMissingMacWhisperRuntimeFiles(candidate)).length === 0) {
         return candidate
       }
     }
@@ -1395,10 +1410,9 @@ export class WhisperManager extends EventEmitter {
     const combinedOutput = `${stdout}\n${stderr}`
     const macRuntimeLinkFailure =
       process.platform === 'darwin' &&
-      (/dyld\[\d+\]:\s+Library not loaded:\s+@rpath\/lib(?:whisper|ggml|omp)/i.test(
+      (/(?:dyld\[\d+\]:\s+)?Library not loaded:\s+@(?:rpath|loader_path|executable_path)\/lib(?:whisper|ggml|omp)/i.test(
         combinedOutput
       ) ||
-        /Library not loaded:\s+@rpath\/lib(?:whisper|ggml|omp)/i.test(combinedOutput) ||
         /install_name_tool|Failed to rewrite macOS runtime|No developer tools were found/i.test(
           `${err.message}\n${combinedOutput}`
         ))

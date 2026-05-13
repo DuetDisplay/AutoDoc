@@ -91,7 +91,8 @@ app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
-const skipInstalledApplicationPolicy = process.env.AUTODOC_SKIP_INSTALL_POLICY === '1'
+const skipInstalledApplicationPolicy =
+  process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest)
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
 const EXPECTED_APP_ID = 'com.kairos.autodoc'
 
@@ -362,7 +363,7 @@ function createWindow(): void {
 
   // Hide to tray instead of closing (unless user is quitting)
   mainWindow.on('close', (e) => {
-    if (!isQuitting && !isE2E) {
+    if (!isQuitting && !isE2E && !isRealSetupTest) {
       e.preventDefault()
       mainWindow.hide()
     }

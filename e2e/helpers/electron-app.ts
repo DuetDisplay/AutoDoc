@@ -160,6 +160,7 @@ export async function launchPackagedRealSetupApp(
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      AUTODOC_E2E: '0',
       AUTODOC_TEST_REAL_SETUP: '1',
       AUTODOC_TEST_USER_DATA_DIR: userDataDir,
       AUTODOC_SKIP_INSTALL_POLICY: '1',

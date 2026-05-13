@@ -133,7 +133,7 @@ describe('WhisperManager', () => {
   })
 
   it('classifies macOS dyld library load failures as runtime link failures', () => {
-    const result = (manager as any).classifyWhisperProbeFailure(
+    const rpathResult = (manager as any).classifyWhisperProbeFailure(
       new Error('Command failed: whisper-cpp probe'),
       '',
       [
@@ -142,11 +142,25 @@ describe('WhisperManager', () => {
         "Reason: tried: '/Users/test/Library/Application Support/autodoc/models/../lib/libwhisper.1.dylib' (no such file)"
       ].join('\n')
     )
+    const executablePathResult = (manager as any).classifyWhisperProbeFailure(
+      new Error('Command failed: whisper-cpp probe'),
+      '',
+      'Library not loaded: @executable_path/libggml-metal.so'
+    )
+    const loaderPathResult = (manager as any).classifyWhisperProbeFailure(
+      new Error('Command failed: whisper-cpp probe'),
+      '',
+      'Library not loaded: @loader_path/libomp.dylib'
+    )
 
     if (process.platform === 'darwin') {
-      expect(result).toBe('runtime-link-failure')
+      expect(rpathResult).toBe('runtime-link-failure')
+      expect(executablePathResult).toBe('runtime-link-failure')
+      expect(loaderPathResult).toBe('runtime-link-failure')
     } else {
-      expect(result).toBe('failed')
+      expect(rpathResult).toBe('failed')
+      expect(executablePathResult).toBe('failed')
+      expect(loaderPathResult).toBe('failed')
     }
   })
 

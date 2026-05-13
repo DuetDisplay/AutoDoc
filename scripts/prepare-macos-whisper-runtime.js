@@ -225,6 +225,14 @@ async function main() {
   await rm(OUT_DIR, { recursive: true, force: true })
   await mkdir(OUT_DIR, { recursive: true })
 
+  const ggmlBackendPlugins = await copyMatchingFiles(
+    path.join(ggmlPrefix, 'libexec'),
+    /^libggml.*\.so$/i
+  )
+  if (ggmlBackendPlugins.length === 0) {
+    throw new Error(`No GGML backend plugins were found in ${path.join(ggmlPrefix, 'libexec')}.`)
+  }
+
   const runtimeFiles = [
     await copyRuntimeFile(path.join(whisperPrefix, 'bin', 'whisper-cli'), 'whisper-cpp'),
     await copyRuntimeFile(
@@ -237,7 +245,7 @@ async function main() {
       'libggml-base.0.dylib'
     ),
     await copyRuntimeFile(path.join(libompPrefix, 'lib', 'libomp.dylib'), 'libomp.dylib'),
-    ...(await copyMatchingFiles(path.join(ggmlPrefix, 'libexec'), /^libggml.*\.so$/i))
+    ...ggmlBackendPlugins
   ]
 
   for (const requiredFile of REQUIRED_FILES) {

@@ -243,6 +243,8 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(bundledRuntimeDir, 'libwhisper.1.dylib'), 'bundled-lib')
       await writeFile(join(bundledRuntimeDir, 'libggml-base.0.dylib'), 'bundled-lib')
       await writeFile(join(bundledRuntimeDir, 'libggml.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libomp.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml-metal.so'), 'bundled-lib')
 
       const { WhisperManager, execFileMock } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true
@@ -266,6 +268,33 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('rejects incomplete packaged macOS whisper runtimes before installing them', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-incomplete-runtime-'))
+    const bundledRuntimeDir = join(rootDir, 'resources', 'macos-whisper-runtime', process.arch)
+
+    try {
+      await mkdir(bundledRuntimeDir, { recursive: true })
+      await writeFile(join(bundledRuntimeDir, 'whisper-cpp'), 'bundled-whisper')
+      await writeFile(join(bundledRuntimeDir, 'libwhisper.1.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml-base.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libomp.dylib'), 'bundled-lib')
+
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true
+      })
+
+      const manager = new WhisperManager()
+
+      await expect((manager as any).downloadWhisperMac()).rejects.toThrow(
+        'AutoDoc is missing the checksum'
+      )
+      await expect(access(manager.getWhisperPath())).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('installs an extracted macOS whisper runtime without deleting the extraction source first', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-extracted-runtime-'))
 
@@ -283,6 +312,8 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(runtimeDir, 'libwhisper.1.dylib'), 'extracted-lib')
       await writeFile(join(runtimeDir, 'libggml-base.0.dylib'), 'extracted-lib')
       await writeFile(join(runtimeDir, 'libggml.0.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libomp.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libggml-metal.so'), 'extracted-lib')
 
       await (manager as any).installMacWhisperRuntimeFromDir(runtimeDir)
 
