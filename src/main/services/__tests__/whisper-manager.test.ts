@@ -132,6 +132,38 @@ describe('WhisperManager', () => {
     expect(resolveWhisperSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('classifies macOS dyld library load failures as runtime link failures', () => {
+    const rpathResult = (manager as any).classifyWhisperProbeFailure(
+      new Error('Command failed: whisper-cpp probe'),
+      '',
+      [
+        'dyld[5371]: Library not loaded: @rpath/libwhisper.1.dylib',
+        'Referenced from: /Users/test/Library/Application Support/autodoc/models/whisper-cpp',
+        "Reason: tried: '/Users/test/Library/Application Support/autodoc/models/../lib/libwhisper.1.dylib' (no such file)"
+      ].join('\n')
+    )
+    const executablePathResult = (manager as any).classifyWhisperProbeFailure(
+      new Error('Command failed: whisper-cpp probe'),
+      '',
+      'Library not loaded: @executable_path/libggml-metal.so'
+    )
+    const loaderPathResult = (manager as any).classifyWhisperProbeFailure(
+      new Error('Command failed: whisper-cpp probe'),
+      '',
+      'Library not loaded: @loader_path/libomp.dylib'
+    )
+
+    if (process.platform === 'darwin') {
+      expect(rpathResult).toBe('runtime-link-failure')
+      expect(executablePathResult).toBe('runtime-link-failure')
+      expect(loaderPathResult).toBe('runtime-link-failure')
+    } else {
+      expect(rpathResult).toBe('failed')
+      expect(executablePathResult).toBe('failed')
+      expect(loaderPathResult).toBe('failed')
+    }
+  })
+
   it('allows setup to run again after a successful startSetup call', async () => {
     const ensureReadySpy = vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
 
@@ -235,157 +267,5 @@ describe('WhisperManager', () => {
 
     expect(resolveWhisperSpy).toHaveBeenCalled()
     expect(mockExecSync).not.toHaveBeenCalled()
-  })
-
-  it('re-signs the rewritten macOS whisper runtime after patching load commands', async () => {
-    if (process.platform === 'win32') {
-      return
-    }
-
-    mockReaddir.mockResolvedValue([
-      {
-        name: 'libwhisper.1.8.4.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml.0.10.0.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml-base.0.10.0.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libomp.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml-metal.so',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libwhisper.1.dylib',
-        isFile: () => false,
-        isDirectory: () => false
-      }
-    ] as never)
-
-    await (manager as any).resignMacWhisperRuntime()
-
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', join('/mock/home', 'models', 'libwhisper.1.8.4.dylib')],
-      expect.any(Function)
-    )
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml.0.10.0.dylib')],
-      expect.any(Function)
-    )
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml-base.0.10.0.dylib')],
-      expect.any(Function)
-    )
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', join('/mock/home', 'models', 'libomp.dylib')],
-      expect.any(Function)
-    )
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', join('/mock/home', 'models', 'libggml-metal.so')],
-      expect.any(Function)
-    )
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'codesign',
-      ['--sign', '-', '--force', manager.getWhisperPath()],
-      expect.any(Function)
-    )
-  })
-
-  it('rewrites copied ggml backend bundles to load local runtime dependencies', async () => {
-    if (process.platform === 'win32') {
-      return
-    }
-
-    mockReaddir.mockResolvedValue([
-      {
-        name: 'libwhisper.1.8.4.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml.0.10.0.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml-base.0.10.0.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libomp.dylib',
-        isFile: () => true,
-        isDirectory: () => false
-      },
-      {
-        name: 'libggml-metal.so',
-        isFile: () => true,
-        isDirectory: () => false
-      }
-    ] as never)
-
-    const listDepsSpy = vi
-      .spyOn(manager as never, 'listMacDependencies')
-      .mockResolvedValue(['@rpath/libggml-base.0.dylib', '/usr/lib/libSystem.B.dylib'])
-    const setInstallNameSpy = vi
-      .spyOn(manager as never, 'setMacInstallName')
-      .mockResolvedValue(undefined)
-    const rewriteSpy = vi
-      .spyOn(manager as never, 'rewriteMacLoadCommands')
-      .mockResolvedValue(undefined)
-
-    await (manager as any).rewriteMacWhisperDependencies()
-
-    expect(setInstallNameSpy).toHaveBeenCalledTimes(4)
-    expect(rewriteSpy).toHaveBeenCalledWith(
-      join('/mock/home', 'models', 'libggml-metal.so'),
-      '@loader_path'
-    )
-    expect(rewriteSpy).toHaveBeenCalledWith(manager.getWhisperPath(), '@executable_path')
-    expect(listDepsSpy).not.toHaveBeenCalled()
-  })
-
-  it('rewrites local libomp references inside copied ggml backend bundles', async () => {
-    if (process.platform === 'win32') {
-      return
-    }
-
-    const changeDependencySpy = vi
-      .spyOn(manager as never, 'changeMacDependency')
-      .mockResolvedValue(undefined)
-    vi.spyOn(manager as never, 'listMacDependencies').mockResolvedValue([
-      '@@HOMEBREW_PREFIX@@/opt/libomp/lib/libomp.dylib',
-      '@rpath/libggml-base.0.dylib',
-      '/usr/lib/libSystem.B.dylib'
-    ])
-
-    await (manager as any).rewriteMacLoadCommands(
-      '/mock/home/models/libggml-cpu-apple_m4.so',
-      '@loader_path'
-    )
-
-    expect(changeDependencySpy).toHaveBeenCalledWith(
-      '/mock/home/models/libggml-cpu-apple_m4.so',
-      '@@HOMEBREW_PREFIX@@/opt/libomp/lib/libomp.dylib',
-      '@loader_path/libomp.dylib'
-    )
   })
 })

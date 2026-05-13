@@ -1,7 +1,6 @@
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
-import { constants } from 'fs'
+import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 
@@ -38,6 +37,7 @@ async function loadWhisperManager(
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn((name: string) => (name === 'appData' ? join(rootDir, 'app-data') : rootDir)),
+      getAppPath: vi.fn(() => rootDir),
       isPackaged: options?.isPackaged ?? false
     }
   }))
@@ -185,38 +185,118 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('creates macOS compatibility symlinks for packaged whisper dylibs', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-links-'))
+  it('repairs packaged macOS runtime linker failures without redownloading the speech model', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-runtime-repair-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
 
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg
       })
 
       const manager = new WhisperManager()
       await mkdir(manager.getModelsDir(), { recursive: true })
-      await writeFile(join(manager.getModelsDir(), 'libwhisper.1.8.4.dylib'), 'whisper dylib')
-      await writeFile(join(manager.getModelsDir(), 'libggml.0.10.0.dylib'), 'ggml dylib')
-      await writeFile(join(manager.getModelsDir(), 'libggml-base.0.10.0.dylib'), 'ggml base dylib')
+      await writeFile(manager.getWhisperPath(), 'broken-whisper')
+      await writeFile(manager.getFfmpegPath(), 'ffmpeg')
+      await writeFile(manager.getModelPath(), 'existing-model')
+      await writeFile(join(manager.getModelsDir(), 'libwhisper.1.dylib'), 'broken-lib')
 
-      await (manager as any).ensureMacCompatibilitySymlinks()
+      const usabilityChecks = vi
+        .spyOn(manager as never, 'isWhisperUsable')
+        .mockResolvedValueOnce('runtime-link-failure')
+        .mockResolvedValueOnce('runtime-link-failure')
+        .mockResolvedValueOnce('runtime-link-failure')
+        .mockResolvedValueOnce('ready')
+      const resolveWhisperSpy = vi
+        .spyOn(manager as never, 'resolveWhisper')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'fixed-whisper')
+          await writeFile(join(manager.getModelsDir(), 'libwhisper.1.dylib'), 'fixed-lib')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'redownloaded-model')
+        })
 
-      await expect(readlink(join(manager.getModelsDir(), 'libwhisper.1.dylib'))).resolves.toBe(
-        'libwhisper.1.8.4.dylib'
-      )
-      await expect(readlink(join(manager.getModelsDir(), 'libggml.0.dylib'))).resolves.toBe(
-        'libggml.0.10.0.dylib'
-      )
-      await expect(readlink(join(manager.getModelsDir(), 'libggml-base.0.dylib'))).resolves.toBe(
-        'libggml-base.0.10.0.dylib'
-      )
+      await manager.ensureReady()
+
+      expect(resolveWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).not.toHaveBeenCalled()
+      expect(usabilityChecks).toHaveBeenCalledTimes(4)
+      await expect(readFile(manager.getWhisperPath(), 'utf8')).resolves.toBe('fixed-whisper')
+      await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('existing-model')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
 
-  it('overwrites read-only macOS dylibs during setup retries', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-retry-'))
+  it('installs bundled packaged macOS whisper runtime without rewriting binaries on the customer machine', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-bundled-runtime-'))
+    const bundledRuntimeDir = join(rootDir, 'resources', 'macos-whisper-runtime', process.arch)
+
+    try {
+      await mkdir(bundledRuntimeDir, { recursive: true })
+      await writeFile(join(bundledRuntimeDir, 'whisper-cpp'), 'bundled-whisper')
+      await writeFile(join(bundledRuntimeDir, 'libwhisper.1.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml-base.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libomp.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml-metal.so'), 'bundled-lib')
+
+      const { WhisperManager, execFileMock } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true
+      })
+
+      const manager = new WhisperManager()
+
+      await (manager as any).downloadWhisperMac()
+
+      expect(
+        execFileMock.mock.calls.some(([command]) =>
+          ['install_name_tool', 'codesign'].includes(String(command))
+        )
+      ).toBe(false)
+      await expect(readFile(manager.getWhisperPath(), 'utf8')).resolves.toBe('bundled-whisper')
+      await expect(
+        readFile(join(manager.getModelsDir(), 'libwhisper.1.dylib'), 'utf8')
+      ).resolves.toBe('bundled-lib')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects incomplete packaged macOS whisper runtimes before installing them', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-incomplete-runtime-'))
+    const bundledRuntimeDir = join(rootDir, 'resources', 'macos-whisper-runtime', process.arch)
+
+    try {
+      await mkdir(bundledRuntimeDir, { recursive: true })
+      await writeFile(join(bundledRuntimeDir, 'whisper-cpp'), 'bundled-whisper')
+      await writeFile(join(bundledRuntimeDir, 'libwhisper.1.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml-base.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libggml.0.dylib'), 'bundled-lib')
+      await writeFile(join(bundledRuntimeDir, 'libomp.dylib'), 'bundled-lib')
+
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        isPackaged: true
+      })
+
+      const manager = new WhisperManager()
+
+      await expect((manager as any).downloadWhisperMac()).rejects.toThrow(
+        'AutoDoc is missing the checksum'
+      )
+      await expect(access(manager.getWhisperPath())).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs an extracted macOS whisper runtime without deleting the extraction source first', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-extracted-runtime-'))
 
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
@@ -224,26 +304,24 @@ describe('Whisper onboarding dependency installation', () => {
       })
 
       const manager = new WhisperManager()
-      const sourceDir = join(rootDir, 'source-libs')
-      await mkdir(sourceDir, { recursive: true })
-      await mkdir(manager.getModelsDir(), { recursive: true })
+      const runtimeDir = join(manager.getModelsDir(), '_whisper_extract', 'runtime')
+      await mkdir(runtimeDir, { recursive: true })
+      await writeFile(manager.getModelPath(), 'existing-model')
+      await writeFile(manager.getWhisperPath(), 'stale-whisper')
+      await writeFile(join(runtimeDir, 'whisper-cpp'), 'extracted-whisper')
+      await writeFile(join(runtimeDir, 'libwhisper.1.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libggml-base.0.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libggml.0.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libomp.dylib'), 'extracted-lib')
+      await writeFile(join(runtimeDir, 'libggml-metal.so'), 'extracted-lib')
 
-      const sourcePath = join(sourceDir, 'libwhisper.1.8.4.dylib')
-      const destPath = join(manager.getModelsDir(), 'libwhisper.1.8.4.dylib')
+      await (manager as any).installMacWhisperRuntimeFromDir(runtimeDir)
 
-      await writeFile(sourcePath, 'fresh dylib')
-      await chmod(sourcePath, 0o444)
-      await writeFile(destPath, 'stale dylib')
-      await chmod(destPath, 0o444)
-
-      await (manager as any).copyMatchingFiles(
-        sourceDir,
-        /^libwhisper.*\.dylib$/i,
-        manager.getModelsDir()
-      )
-
-      await expect(readFile(destPath, 'utf8')).resolves.toBe('fresh dylib')
-      await expect(access(destPath, constants.W_OK)).resolves.toBeUndefined()
+      await expect(readFile(manager.getWhisperPath(), 'utf8')).resolves.toBe('extracted-whisper')
+      await expect(readFile(manager.getModelPath(), 'utf8')).resolves.toBe('existing-model')
+      await expect(
+        readFile(join(manager.getModelsDir(), 'libwhisper.1.dylib'), 'utf8')
+      ).resolves.toBe('extracted-lib')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

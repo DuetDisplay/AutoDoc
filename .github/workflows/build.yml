@@ -48,6 +48,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install macOS Whisper runtime build packages
+        run: |
+          brew list whisper-cpp >/dev/null 2>&1 || brew install whisper-cpp
+          brew list ggml >/dev/null 2>&1 || brew install ggml
+          brew list libomp >/dev/null 2>&1 || brew install libomp
+
       - name: Run bootstrap tests
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
@@ -80,7 +86,7 @@ jobs:
 
       - name: Build macOS artifacts (signed, no notarization)
         if: github.event_name == 'push' && github.ref_type == 'branch'
-        run: npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
+        run: npm run prepare:macos-whisper-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
       - name: Upload macOS artifacts
         if: github.event_name == 'push' && github.ref_type == 'branch' && success()
