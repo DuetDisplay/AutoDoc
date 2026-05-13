@@ -22,6 +22,7 @@ import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
+import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
@@ -215,6 +216,13 @@ traceInstallPolicy('index: single-instance lock result', {
   pid: process.pid
 })
 const PENDING_RECOVERY_INTERVAL_MS = 2 * 60 * 1000
+const WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS =
+  process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+  process.env.AUTODOC_TEST_OLLAMA_SETUP_RETRY_DELAYS_MS
+    ? process.env.AUTODOC_TEST_OLLAMA_SETUP_RETRY_DELAYS_MS.split(',')
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+    : [0, 5_000, 30_000, 120_000]
 const require = createRequire(import.meta.url)
 
 function scheduleWindowsE2ETestResetCleanup(targetPaths: string[]): void {
@@ -756,19 +764,51 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
-  let ollamaRecoveryPromise: Promise<void> | null = null
-
-  const ensureOllamaRunning = (): void => {
-    if (ollamaRecoveryPromise) return
-
-    managedOllamaManager.resetReady()
-
+  const markOllamaSetupStarting = (): void => {
     lastSuccessfulOllamaPhase = 'starting'
     ollamaSetupState.phase = 'starting'
     ollamaSetupState.percent = 0
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
+  }
+
+  const markOllamaSetupFailed = (err: unknown): void => {
+    ollamaSetupState.phase = 'error'
+    ollamaSetupState.percent = 0
+    ollamaSetupState.error = err instanceof Error ? err.message : String(err)
+    ollamaSetupState.failedStep =
+      lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
+    broadcastOllamaStatus()
+    logAutodocFailure({
+      area: 'ollama',
+      message: 'Failed to start managed Ollama server',
+      error: err
+    })
+    console.error('Failed to start Ollama:', err)
+  }
+
+  const windowsOllamaSetupCoordinator =
+    process.platform === 'win32'
+      ? new OllamaSetupCoordinator(managedOllamaManager, {
+          retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
+          onAttemptStart: markOllamaSetupStarting,
+          onFinalError: markOllamaSetupFailed
+        })
+      : null
+
+  let ollamaRecoveryPromise: Promise<void> | null = null
+
+  const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
+    if (windowsOllamaSetupCoordinator) {
+      void windowsOllamaSetupCoordinator.ensureRunning(options).catch(() => {})
+      return
+    }
+
+    if (ollamaRecoveryPromise) return
+
+    managedOllamaManager.resetReady()
+    markOllamaSetupStarting()
 
     ollamaRecoveryPromise = managedOllamaManager
       .startAndPull()
@@ -781,18 +821,7 @@ app.whenReady().then(async () => {
         broadcastOllamaStatus()
       })
       .catch((err) => {
-        ollamaSetupState.phase = 'error'
-        ollamaSetupState.percent = 0
-        ollamaSetupState.error = err instanceof Error ? err.message : String(err)
-        ollamaSetupState.failedStep =
-          lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
-        broadcastOllamaStatus()
-        logAutodocFailure({
-          area: 'ollama',
-          message: 'Failed to start managed Ollama server',
-          error: err
-        })
-        console.error('Failed to start Ollama:', err)
+        markOllamaSetupFailed(err)
       })
       .finally(() => {
         ollamaRecoveryPromise = null
@@ -811,9 +840,15 @@ app.whenReady().then(async () => {
     managedOllamaManager.getModel(),
     { onTelemetry: broadcastSegmentationDiagnostic }
   )
+  const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
+  const ollamaRuntime = {
+    waitUntilReady: () => ollamaReadiness.waitUntilReady(),
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
+    getBaseUrl: () => managedOllamaManager.getBaseUrl()
+  }
   const segmentationService = new SegmentationService(
     ollamaProvider,
-    ollamaManager,
+    ollamaReadiness,
     recordingService.getRecordingsBaseDir()
   )
   ipcMain.handle(
@@ -1141,7 +1176,8 @@ app.whenReady().then(async () => {
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
-    ensureOllamaRunning
+    ensureOllamaRunning,
+    !windowsOllamaSetupCoordinator
   )
   registerWhisperIpc(
     whisperManager,
@@ -1153,7 +1189,7 @@ app.whenReady().then(async () => {
   registerSearchIpc(recordingService.getRecordingsBaseDir())
   registerChatIpc(
     recordingService.getRecordingsBaseDir(),
-    managedOllamaManager,
+    ollamaRuntime,
     ollamaProvider,
     calendarManager
   )

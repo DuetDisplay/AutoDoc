@@ -14,6 +14,17 @@ const IS_WIN = process.platform === 'win32'
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
+const TEST_OLLAMA_SETUP_SEQUENCE =
+  IS_WIN && process.env.AUTODOC_TEST_REAL_SETUP === '1'
+    ? (process.env.AUTODOC_TEST_OLLAMA_SETUP_SEQUENCE ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : []
+
+function consumeTestOllamaSetupStep(): string | null {
+  return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
+}
 
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
@@ -28,15 +39,37 @@ export class OllamaManager extends EventEmitter {
   /** Call once at startup. Subsequent calls return the same promise. */
   startAndPull(): Promise<void> {
     if (!this.readyPromise) {
-      this.readyPromise = this.start()
-        .then(() => this.pullModel())
-        .catch((err) => {
-          // Reset so the next call retries instead of permanently failing
-          this.readyPromise = null
-          throw err
-        })
+      const testStep = consumeTestOllamaSetupStep()
+      this.readyPromise = (
+        testStep ? this.runTestSetupStep(testStep) : this.start().then(() => this.pullModel())
+      ).catch((err) => {
+        // Reset so the next call retries instead of permanently failing
+        this.readyPromise = null
+        throw err
+      })
     }
     return this.readyPromise
+  }
+
+  private async runTestSetupStep(step: string): Promise<void> {
+    if (step === 'download-fail') {
+      this.emit('download-start', 'ollama')
+      await Promise.resolve()
+      throw new TypeError('terminated')
+    }
+
+    if (step === 'ready') {
+      this.emit('download-start', 'ollama')
+      this.emit('download-progress', { file: 'ollama', percent: 100 })
+      this.emit('download-complete', 'ollama')
+      this.emit('pull-start', this.model)
+      this.emit('pull-progress', { model: this.model, percent: 100, status: 'success' })
+      this.emit('pull-complete', this.model)
+      return
+    }
+
+    await this.start()
+    await this.pullModel()
   }
 
   /** Wait for startup + model pull to complete. */

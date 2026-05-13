@@ -1,16 +1,26 @@
 import { BrowserWindow } from 'electron'
 import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
-import type { MeetingSegments, Transcript, SegmentationStatus, SegmentationStatusPayload } from '../../shared/types'
+import type {
+  MeetingSegments,
+  Transcript,
+  SegmentationStatus,
+  SegmentationStatusPayload
+} from '../../shared/types'
 import type { LLMProvider } from './llm'
-import type { OllamaManager } from './ollama-manager'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 import { classifyError } from './error-classification'
-import { hasUsableTranscriptContent, shouldTreatEmptySegmentationAsFailure } from './transcript-guardrails'
+import {
+  hasUsableTranscriptContent,
+  shouldTreatEmptySegmentationAsFailure
+} from './transcript-guardrails'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
+interface OllamaReadiness {
+  waitUntilReady(): Promise<void>
+}
 
 const EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
@@ -44,8 +54,8 @@ export class SegmentationService {
 
   constructor(
     private llmProvider: LLMProvider,
-    private ollamaManager: OllamaManager,
-    private recordingsBaseDir: string,
+    private ollamaManager: OllamaReadiness,
+    private recordingsBaseDir: string
   ) {}
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
@@ -94,7 +104,7 @@ export class SegmentationService {
     if (hasSegments && hasError) {
       const [segmentsStat, errorStat] = await Promise.all([
         stat(segmentsPath).catch(() => null),
-        stat(errorPath).catch(() => null),
+        stat(errorPath).catch(() => null)
       ])
       if (segmentsStat && errorStat && errorStat.mtimeMs > segmentsStat.mtimeMs) {
         return this.getPersistedStatus(errorData)
@@ -154,8 +164,15 @@ export class SegmentationService {
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
           const isPermanentFailure = errorData?.errorCode === 'ollama-insufficient-memory'
-          if (errorData && this.getPersistedStatus(errorData) !== 'no-notes' && errorData.retries < 3 && !isPermanentFailure) {
-            console.log(`Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`)
+          if (
+            errorData &&
+            this.getPersistedStatus(errorData) !== 'no-notes' &&
+            errorData.retries < 3 &&
+            !isPermanentFailure
+          ) {
+            console.log(
+              `Auto-retrying segmentation for ${meetingId} (attempt ${errorData.retries + 1}/3)`
+            )
             this.retry(meetingId, 'recovery-scan')
           }
         }
@@ -165,7 +182,7 @@ export class SegmentationService {
           area: 'segmentation',
           message: 'Failed to inspect segmentation state during pending scan',
           error: err,
-          meetingId,
+          meetingId
         })
       }
     }
@@ -207,18 +224,21 @@ export class SegmentationService {
       return
     }
 
-    const transcripts: Transcript[] = await isEncrypted(transcriptPath)
+    const transcripts: Transcript[] = (await isEncrypted(transcriptPath))
       ? await decryptJSON<Transcript[]>(transcriptPath)
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     if (!hasUsableTranscriptContent(transcripts)) {
-      await encryptJSON({
-        decisions: [],
-        actionItems: [],
-        information: [],
-        discussion: [],
-        statusUpdates: [],
-      }, segmentsPath)
+      await encryptJSON(
+        {
+          decisions: [],
+          actionItems: [],
+          information: [],
+          discussion: [],
+          statusUpdates: []
+        },
+        segmentsPath
+      )
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -240,9 +260,10 @@ export class SegmentationService {
         const h = Math.floor(totalSec / 3600)
         const m = Math.floor((totalSec % 3600) / 60)
         const s = totalSec % 60
-        const ts = h > 0
-          ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-          : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        const ts =
+          h > 0
+            ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+            : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
         return `[${ts}] [${t.speaker}] ${t.text}`
       })
       .join('\n')
@@ -251,24 +272,35 @@ export class SegmentationService {
 
     // Compute actual duration from transcript timestamps
     const lastEntry = transcripts[transcripts.length - 1]
-    const durationMinutes = lastEntry ? Math.round((lastEntry.endMs || lastEntry.startMs) / 60000) : undefined
+    const durationMinutes = lastEntry
+      ? Math.round((lastEntry.endMs || lastEntry.startMs) / 60000)
+      : undefined
 
     let lastBroadcastedPercent = -1
-    const segments = await this.llmProvider.summarize(meetingId, fullText, (percent) => {
-      if (percent !== lastBroadcastedPercent) {
-        lastBroadcastedPercent = percent
-        this.broadcastStatus(meetingId, 'segmenting', percent)
-      }
-    }, durationMinutes)
+    const segments = await this.llmProvider.summarize(
+      meetingId,
+      fullText,
+      (percent) => {
+        if (percent !== lastBroadcastedPercent) {
+          lastBroadcastedPercent = percent
+          this.broadcastStatus(meetingId, 'segmenting', percent)
+        }
+      },
+      durationMinutes
+    )
 
     // Verify the LLM actually produced content — empty results mean it failed silently
-    const totalItems = segments.decisions.length +
+    const totalItems =
+      segments.decisions.length +
       segments.actionItems.length +
       segments.information.length +
       segments.discussion.length +
       segments.statusUpdates.length
 
-    if (totalItems === 0 && shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)) {
+    if (
+      totalItems === 0 &&
+      shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
+    ) {
       await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
       return
     }
@@ -276,7 +308,9 @@ export class SegmentationService {
     await encryptJSON(segments, segmentsPath)
     await unlink(join(meetingDir, 'segments.error')).catch(() => {})
 
-    console.log(`[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`)
+    console.log(
+      `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
+    )
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
@@ -285,7 +319,7 @@ export class SegmentationService {
   private async markFailed(
     meetingId: string,
     error: Error | string,
-    context?: SegmentationDirSnapshot,
+    context?: SegmentationDirSnapshot
   ): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : error
     const errorCode = classifyError(errorMsg)
@@ -293,9 +327,15 @@ export class SegmentationService {
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
-      await writeFile(errorPath, JSON.stringify({ error: errorMsg, errorCode, retries, status: 'failed' }))
+      await writeFile(
+        errorPath,
+        JSON.stringify({ error: errorMsg, errorCode, retries, status: 'failed' })
+      )
     } catch (err) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : null
       if (code !== 'ENOENT') throw err
     }
     logAutodocFailure({
@@ -303,7 +343,7 @@ export class SegmentationService {
       message: 'Meeting notes generation failed',
       error,
       meetingId,
-      context,
+      context
     })
     this.broadcastStatus(meetingId, 'failed', undefined, errorCode)
   }
@@ -311,16 +351,19 @@ export class SegmentationService {
   private async markNoNotes(
     meetingId: string,
     errorMessage: string,
-    context?: SegmentationDirSnapshot,
+    context?: SegmentationDirSnapshot
   ): Promise<void> {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     try {
       await writeFile(
         errorPath,
-        JSON.stringify({ error: errorMessage, retries: 0, status: 'no-notes' }),
+        JSON.stringify({ error: errorMessage, retries: 0, status: 'no-notes' })
       )
     } catch (err) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : null
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : null
       if (code !== 'ENOENT') throw err
     }
     logAutodocFailure({
@@ -328,7 +371,7 @@ export class SegmentationService {
       message: 'Meeting notes generation returned no structured output',
       error: errorMessage,
       meetingId,
-      context,
+      context
     })
     this.activeStatus = 'no-notes'
     this.broadcastStatus(meetingId, 'no-notes')
@@ -343,9 +386,10 @@ export class SegmentationService {
           error: typeof parsed.error === 'string' ? parsed.error : raw,
           retries: typeof parsed.retries === 'number' ? parsed.retries : 0,
           status: parsed.status,
-          errorCode: typeof parsed.errorCode === 'string'
-            ? parsed.errorCode
-            : classifyError(typeof parsed.error === 'string' ? parsed.error : raw),
+          errorCode:
+            typeof parsed.errorCode === 'string'
+              ? parsed.errorCode
+              : classifyError(typeof parsed.error === 'string' ? parsed.error : raw)
         }
       } catch {
         return { error: raw, retries: 0, errorCode: classifyError(raw) }
@@ -355,7 +399,9 @@ export class SegmentationService {
     }
   }
 
-  private getPersistedStatus(errorData: PersistedSegmentationError | null): PersistedSegmentationStatus {
+  private getPersistedStatus(
+    errorData: PersistedSegmentationError | null
+  ): PersistedSegmentationStatus {
     if (errorData?.status === 'no-notes' || errorData?.error === EMPTY_SEGMENTATION_ERROR) {
       return 'no-notes'
     }
@@ -367,7 +413,7 @@ export class SegmentationService {
     meetingId: string,
     status: SegmentationStatus,
     progress?: number,
-    errorCode?: string,
+    errorCode?: string
   ): void {
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
@@ -385,18 +431,18 @@ export class SegmentationService {
       this.fileExists(transcriptPath),
       this.fileExists(join(meetingDir, 'segments.json')),
       this.fileExists(errorPath),
-      this.readErrorFile(errorPath),
+      this.readErrorFile(errorPath)
     ])
 
     return {
       source: this.enqueueSource.get(meetingId) ?? 'unknown',
       files: {
         transcriptExists,
-        transcriptEncrypted: transcriptExists && await isEncrypted(transcriptPath),
+        transcriptEncrypted: transcriptExists && (await isEncrypted(transcriptPath)),
         segmentsExists,
-        errorExists,
+        errorExists
       },
-      retryCount: existingError?.retries ?? 0,
+      retryCount: existingError?.retries ?? 0
     }
   }
 

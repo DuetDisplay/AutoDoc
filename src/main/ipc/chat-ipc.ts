@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
-import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
 import type { Transcript, MeetingSegments, CalendarEvent } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
@@ -70,7 +69,7 @@ const QUESTION_STOP_WORDS = new Set([
   'where',
   'which',
   'who',
-  'with',
+  'with'
 ])
 
 interface MeetingCandidate {
@@ -86,11 +85,17 @@ interface MeetingSummary {
   searchText: string
 }
 
+interface OllamaRuntime {
+  waitUntilReady(): Promise<void>
+  isServerRunning(): Promise<boolean>
+  getBaseUrl(): string
+}
+
 export function registerChatIpc(
   recordingsBaseDir: string,
-  ollamaManager: OllamaManager,
+  ollamaManager: OllamaRuntime,
   ollamaProvider: OllamaProvider,
-  calendarManager: CalendarManager,
+  calendarManager: CalendarManager
 ): void {
   ipcMain.handle('chat:send', async (_event, question: string): Promise<string> => {
     // Try waiting for managed Ollama; fall back if server is already running externally
@@ -106,7 +111,7 @@ export function registerChatIpc(
     // Gather context from relevant meetings and calendar
     const [meetingContext, calendarContext] = await Promise.all([
       gatherMeetingContext(recordingsBaseDir, question, recentEvents),
-      Promise.resolve(formatCalendarContext(recentEvents, upcomingEvents, question)),
+      Promise.resolve(formatCalendarContext(recentEvents, upcomingEvents, question))
     ])
 
     const context = [meetingContext, calendarContext].filter(Boolean).join('\n\n---\n\n')
@@ -120,11 +125,11 @@ export function registerChatIpc(
           { role: 'system', content: CHAT_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Here is context from the user's calendar and recent meetings:\n\n${context}\n\n---\n\nUser question: ${question}`,
-          },
+            content: `Here is context from the user's calendar and recent meetings:\n\n${context}\n\n---\n\nUser question: ${question}`
+          }
         ],
-        stream: false,
-      }),
+        stream: false
+      })
     })
 
     if (!res.ok) {
@@ -139,7 +144,7 @@ export function registerChatIpc(
 async function gatherMeetingContext(
   recordingsBaseDir: string,
   question: string,
-  recentEvents: CalendarEvent[],
+  recentEvents: CalendarEvent[]
 ): Promise<string> {
   let dirs: string[]
   try {
@@ -155,11 +160,11 @@ async function gatherMeetingContext(
     if (!dirStat?.isDirectory()) continue
 
     const primaryStat =
-      await stat(join(meetingDir, 'mic.webm')).catch(() => null) ??
-      await stat(join(meetingDir, 'system.webm')).catch(() => null) ??
-      await stat(join(meetingDir, 'audio.webm')).catch(() => null) ??
-      await stat(join(meetingDir, 'transcript.json')).catch(() => null) ??
-      await stat(join(meetingDir, 'segments.json')).catch(() => null)
+      (await stat(join(meetingDir, 'mic.webm')).catch(() => null)) ??
+      (await stat(join(meetingDir, 'system.webm')).catch(() => null)) ??
+      (await stat(join(meetingDir, 'audio.webm')).catch(() => null)) ??
+      (await stat(join(meetingDir, 'transcript.json')).catch(() => null)) ??
+      (await stat(join(meetingDir, 'segments.json')).catch(() => null))
 
     if (!primaryStat) continue
 
@@ -195,7 +200,7 @@ async function gatherMeetingContext(
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
-      minute: '2-digit',
+      minute: '2-digit'
     })
 
     const summary = await loadMeetingSummary(meeting.dir)
@@ -222,7 +227,7 @@ async function loadCalendarContextData(calendarManager: CalendarManager): Promis
   try {
     const [recentEvents, upcomingEvents] = await Promise.all([
       calendarManager.fetchAllRecentEvents(CALENDAR_TITLE_LOOKBACK_DAYS),
-      calendarManager.fetchAllUpcomingEvents(),
+      calendarManager.fetchAllUpcomingEvents()
     ])
     return { recentEvents, upcomingEvents }
   } catch {
@@ -233,13 +238,13 @@ async function loadCalendarContextData(calendarManager: CalendarManager): Promis
 function formatCalendarContext(
   recentEvents: CalendarEvent[],
   upcomingEvents: CalendarEvent[],
-  question: string,
+  question: string
 ): string {
   const now = new Date()
   const recentCutoff = now.getTime() - RECENT_CALENDAR_DAYS * 24 * 60 * 60 * 1000
   const recentEventsForContext = filterCalendarEventsForQuestionWindow(
     recentEvents.filter((event) => event.startTime >= recentCutoff),
-    question,
+    question
   )
   const upcomingEventsForContext = filterCalendarEventsByQuestionRelevance(upcomingEvents, question)
 
@@ -249,7 +254,7 @@ function formatCalendarContext(
     const dateStr = start.toLocaleDateString('en-US', {
       weekday: 'short',
       month: 'short',
-      day: 'numeric',
+      day: 'numeric'
     })
     const timeStr = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
     const attendeeStr = event.attendees.length > 0 ? ` (with ${event.attendees.join(', ')})` : ''
@@ -258,10 +263,14 @@ function formatCalendarContext(
 
   const sections: string[] = []
   if (recentEventsForContext.length > 0) {
-    sections.push(`## Recent Calendar Events\n${recentEventsForContext.map(formatEventLine).join('\n')}`)
+    sections.push(
+      `## Recent Calendar Events\n${recentEventsForContext.map(formatEventLine).join('\n')}`
+    )
   }
   if (upcomingEventsForContext.length > 0) {
-    sections.push(`## Upcoming Calendar Events\n${upcomingEventsForContext.map(formatEventLine).join('\n')}`)
+    sections.push(
+      `## Upcoming Calendar Events\n${upcomingEventsForContext.map(formatEventLine).join('\n')}`
+    )
   }
 
   if (sections.length === 0) return ''
@@ -271,7 +280,7 @@ function formatCalendarContext(
 
 async function selectMeetingsForQuestion(
   meetings: MeetingCandidate[],
-  question: string,
+  question: string
 ): Promise<MeetingCandidate[]> {
   const windowedMeetings = filterMeetingsForQuestionWindow(meetings, question)
   const poolSource = windowedMeetings.length > 0 ? windowedMeetings : meetings
@@ -282,7 +291,7 @@ async function selectMeetingsForQuestion(
     candidatePool.map(async (meeting) => {
       const summary = await loadMeetingSummary(meeting.dir)
       return { ...meeting, summary }
-    }),
+    })
   )
 
   const fullyRanked = [...meetingsWithSummaries].sort((a, b) => {
@@ -293,12 +302,12 @@ async function selectMeetingsForQuestion(
   })
 
   const relevantMeetings = fullyRanked.filter(
-    (meeting) => scoreMeetingRelevance(meeting.title, question, meeting.summary.searchText) > 0,
+    (meeting) => scoreMeetingRelevance(meeting.title, question, meeting.summary.searchText) > 0
   )
 
   const selected = (relevantMeetings.length > 0 ? relevantMeetings : fullyRanked).slice(
     0,
-    MAX_CHAT_MEETINGS,
+    MAX_CHAT_MEETINGS
   )
 
   return selected.map(({ summary: _summary, ...meeting }) => meeting)
@@ -307,7 +316,7 @@ async function selectMeetingsForQuestion(
 async function loadMeetingSummary(meetingDir: string): Promise<MeetingSummary> {
   try {
     const sPath = join(meetingDir, 'segments.json')
-    const segments: MeetingSegments = await isEncrypted(sPath)
+    const segments: MeetingSegments = (await isEncrypted(sPath))
       ? await decryptJSON<MeetingSegments>(sPath)
       : JSON.parse(await readFile(sPath, 'utf-8'))
 
@@ -331,13 +340,13 @@ async function loadMeetingSummary(meetingDir: string): Promise<MeetingSummary> {
 
   try {
     const tPath = join(meetingDir, 'transcript.json')
-    const transcripts: Transcript[] = await isEncrypted(tPath)
+    const transcripts: Transcript[] = (await isEncrypted(tPath))
       ? await decryptJSON<Transcript[]>(tPath)
       : JSON.parse(await readFile(tPath, 'utf-8'))
     const text = transcripts.map((t) => t.text).join(' ')
     return {
       body: text.slice(0, 2000) + (text.length > 2000 ? '...' : ''),
-      searchText: text,
+      searchText: text
     }
   } catch {
     return { body: null, searchText: '' }
@@ -346,7 +355,7 @@ async function loadMeetingSummary(meetingDir: string): Promise<MeetingSummary> {
 
 function filterMeetingsForQuestionWindow(
   meetings: MeetingCandidate[],
-  question: string,
+  question: string
 ): MeetingCandidate[] {
   const normalizedQuestion = normalizeSearchText(question)
   if (!normalizedQuestion) return meetings
@@ -383,7 +392,7 @@ function filterMeetingsForQuestionWindow(
 
 function filterCalendarEventsForQuestionWindow(
   events: CalendarEvent[],
-  question: string,
+  question: string
 ): CalendarEvent[] {
   const normalizedQuestion = normalizeSearchText(question)
   if (!normalizedQuestion) return filterCalendarEventsByQuestionRelevance(events, question)
@@ -399,7 +408,7 @@ function filterCalendarEventsForQuestionWindow(
     yesterday.setDate(now.getDate() - 1)
     const yesterdayKey = yesterday.toDateString()
     windowedEvents = events.filter(
-      (event) => new Date(event.startTime).toDateString() === yesterdayKey,
+      (event) => new Date(event.startTime).toDateString() === yesterdayKey
     )
   } else if (normalizedQuestion.includes('this week')) {
     const startOfWeek = new Date(now)
@@ -418,7 +427,7 @@ function filterCalendarEventsForQuestionWindow(
 
 function filterCalendarEventsByQuestionRelevance(
   events: CalendarEvent[],
-  question: string,
+  question: string
 ): CalendarEvent[] {
   const ranked = [...events].sort((a, b) => {
     const aScore = scoreTextRelevance(`${a.title} ${a.attendees.join(' ')}`, question)
@@ -428,7 +437,7 @@ function filterCalendarEventsByQuestionRelevance(
   })
 
   const relevant = ranked.filter(
-    (event) => scoreTextRelevance(`${event.title} ${event.attendees.join(' ')}`, question) > 0,
+    (event) => scoreTextRelevance(`${event.title} ${event.attendees.join(' ')}`, question) > 0
   )
 
   return relevant.length > 0 ? relevant : ranked
@@ -444,15 +453,18 @@ function normalizeSearchText(text: string): string {
 
 function hasMeaningfulSourceName(sourceName: string): boolean {
   const normalized = normalizeSearchText(sourceName)
-  return normalized !== '' && ![
-    'entire screen',
-    'screen 1',
-    'screen 2',
-    'best quality current',
-    'fast',
-    'balanced',
-    'quality',
-  ].includes(normalized)
+  return (
+    normalized !== '' &&
+    ![
+      'entire screen',
+      'screen 1',
+      'screen 2',
+      'best quality current',
+      'fast',
+      'balanced',
+      'quality'
+    ].includes(normalized)
+  )
 }
 
 function extractQuestionPhrases(question: string): string[] {
@@ -480,11 +492,13 @@ export function extractQuestionTerms(question: string): string[] {
   const normalizedQuestion = normalizeSearchText(question)
   if (!normalizedQuestion) return []
 
-  return [...new Set(
-    normalizedQuestion
-      .split(' ')
-      .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term)),
-  )]
+  return [
+    ...new Set(
+      normalizedQuestion
+        .split(' ')
+        .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term))
+    )
+  ]
 }
 
 export function scoreTextRelevance(text: string, question: string): number {
@@ -510,10 +524,9 @@ export function scoreMeetingRelevance(title: string, question: string, content =
   return scoreTextRelevance(title, question) * 4 + scoreTextRelevance(content, question)
 }
 
-export function sortMeetingsByQuestion<T extends { title: string; date: number; searchText?: string | null }>(
-  meetings: T[],
-  question: string,
-): T[] {
+export function sortMeetingsByQuestion<
+  T extends { title: string; date: number; searchText?: string | null }
+>(meetings: T[], question: string): T[] {
   return [...meetings].sort((a, b) => {
     const aScore = scoreMeetingRelevance(a.title, question, a.searchText ?? '')
     const bScore = scoreMeetingRelevance(b.title, question, b.searchText ?? '')

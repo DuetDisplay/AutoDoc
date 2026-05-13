@@ -12,27 +12,22 @@ export function registerLlmIpc(
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
   getOllamaSetupStatus: () => OllamaSetupStatus,
-  ensureOllamaRunning: () => void,
+  ensureOllamaRunning: (options?: { force?: boolean }) => void,
+  startSetupFromStatusCheck = true
 ): void {
-  ipcMain.handle(
-    'ollama:check-status',
-    async (): Promise<boolean> => {
-      if (isE2E) {
-        return getE2EOllamaStatus().phase === 'ready'
-      }
-
-      const running = await ollamaManager.isServerRunning()
-      if (!running) ensureOllamaRunning()
-      return running
+  ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
+    if (isE2E) {
+      return getE2EOllamaStatus().phase === 'ready'
     }
-  )
 
-  ipcMain.handle(
-    'ollama:get-model',
-    (): string => {
-      return ollamaProvider.getModel()
-    }
-  )
+    const running = await ollamaManager.isServerRunning()
+    if (!running && startSetupFromStatusCheck) ensureOllamaRunning()
+    return running
+  })
+
+  ipcMain.handle('ollama:get-model', (): string => {
+    return ollamaProvider.getModel()
+  })
 
   ipcMain.handle(
     'segmentation:get-status',
@@ -48,12 +43,9 @@ export function registerLlmIpc(
     }
   )
 
-  ipcMain.handle(
-    'segmentation:get-progress',
-    (_event, meetingId: string): number | undefined => {
-      return segmentationService.getProgress(meetingId)
-    }
-  )
+  ipcMain.handle('segmentation:get-progress', (_event, meetingId: string): number | undefined => {
+    return segmentationService.getProgress(meetingId)
+  })
 
   ipcMain.handle(
     'segmentation:get-segments',
@@ -62,12 +54,9 @@ export function registerLlmIpc(
     }
   )
 
-  ipcMain.handle(
-    'segmentation:retry',
-    async (_event, meetingId: string): Promise<void> => {
-      segmentationService.retry(meetingId)
-    }
-  )
+  ipcMain.handle('segmentation:retry', async (_event, meetingId: string): Promise<void> => {
+    segmentationService.retry(meetingId)
+  })
 
   ipcMain.handle(
     'segmentation:save-segments',
@@ -76,30 +65,24 @@ export function registerLlmIpc(
     }
   )
 
-  ipcMain.handle(
-    'ollama:get-setup-status',
-    (): OllamaSetupStatus => {
-      if (isE2E) {
-        return getE2EOllamaStatus()
-      }
-
-      return getOllamaSetupStatus()
+  ipcMain.handle('ollama:get-setup-status', (): OllamaSetupStatus => {
+    if (isE2E) {
+      return getE2EOllamaStatus()
     }
-  )
 
-  ipcMain.handle(
-    'ollama:retry-setup',
-    async (): Promise<void> => {
-      if (isE2E) {
-        const nextStatus = retryE2EOllamaSetup()
-        const windows = BrowserWindow.getAllWindows()
-        for (const win of windows) {
-          win.webContents.send('ollama:setup-progress', nextStatus)
-        }
-        return
+    return getOllamaSetupStatus()
+  })
+
+  ipcMain.handle('ollama:retry-setup', async (): Promise<void> => {
+    if (isE2E) {
+      const nextStatus = retryE2EOllamaSetup()
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('ollama:setup-progress', nextStatus)
       }
-
-      ensureOllamaRunning()
+      return
     }
-  )
+
+    ensureOllamaRunning({ force: true })
+  })
 }
