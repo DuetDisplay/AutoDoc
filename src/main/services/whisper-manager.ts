@@ -1394,7 +1394,7 @@ export class WhisperManager extends EventEmitter {
   ): WhisperUsabilityResult {
     const combinedOutput = `${stdout}\n${stderr}`
     const macRuntimeLinkFailure =
-      !IS_WIN &&
+      process.platform === 'darwin' &&
       (/dyld\[\d+\]:\s+Library not loaded:\s+@rpath\/lib(?:whisper|ggml|omp)/i.test(
         combinedOutput
       ) ||
