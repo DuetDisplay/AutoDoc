@@ -77,6 +77,19 @@ describe('ScreenPermissionStep', () => {
     )
   })
 
+  it('does not briefly show the enable CTA while restoring a granted permission state', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'permissions:check') return Promise.resolve({ microphone: false, screen: true })
+      return Promise.resolve({})
+    })
+
+    render(<ScreenPermissionStep onNext={vi.fn()} allowAutoAdvance={false} />)
+
+    expect(screen.queryByText('Enable Screen Recording')).not.toBeInTheDocument()
+    expect(await screen.findByText('Continue →')).toBeInTheDocument()
+  })
+
   it('marks screen access granted after desktop capture succeeds and OS screen access is reported granted', async () => {
     const getUserMedia = vi.fn().mockResolvedValue({
       getTracks: () => [{ stop: vi.fn() }],
@@ -96,7 +109,7 @@ describe('ScreenPermissionStep', () => {
 
     render(<ScreenPermissionStep onNext={vi.fn()} />)
 
-    await userEvent.click(screen.getByText('Enable Screen Recording'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Enable Screen Recording' }))
 
     await waitFor(() => {
       expect(screen.getByText('Continue →')).toBeInTheDocument()
@@ -133,7 +146,7 @@ describe('ScreenPermissionStep', () => {
 
     render(<ScreenPermissionStep onNext={vi.fn()} />)
 
-    await userEvent.click(screen.getByText('Enable Screen Recording'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Enable Screen Recording' }))
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith(
@@ -164,7 +177,7 @@ describe('ScreenPermissionStep', () => {
 
     render(<ScreenPermissionStep onNext={vi.fn()} />)
 
-    await userEvent.click(screen.getByText('Enable Screen Recording'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Enable Screen Recording' }))
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith(

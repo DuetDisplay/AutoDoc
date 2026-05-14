@@ -101,7 +101,7 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     expect(await screen.findByRole('heading', { name: 'Screen Recording' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^continue/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^continue/i })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Connect Calendar' })).not.toBeInTheDocument()
   })
 

@@ -9,6 +9,7 @@ export function ScreenPermissionStep({
 }) {
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
+  const [isRestoring, setIsRestoring] = useState(true)
 
   const clearOpenedState = useCallback(async () => {
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', false)
@@ -38,14 +39,20 @@ export function ScreenPermissionStep({
     let cancelled = false
 
     const restoreStepState = async () => {
-      const wasOpened = await window.electronAPI.invoke(
-        'prefs:get-onboarding-permission-settings-opened',
-        'screen',
-      )
-      if (!cancelled) {
-        setOpened(wasOpened)
+      try {
+        const wasOpened = await window.electronAPI.invoke(
+          'prefs:get-onboarding-permission-settings-opened',
+          'screen',
+        )
+        if (!cancelled) {
+          setOpened(wasOpened)
+        }
+        await checkPermission(allowAutoAdvance)
+      } finally {
+        if (!cancelled) {
+          setIsRestoring(false)
+        }
       }
-      await checkPermission(allowAutoAdvance)
     }
 
     void restoreStepState()
@@ -110,7 +117,7 @@ export function ScreenPermissionStep({
           : 'AutoDoc uses screen recording permission to capture meeting visuals. macOS verifies system audio separately when a recording starts, so you can continue even if you skip this for now.'}
       </p>
 
-      {granted ? (
+      {isRestoring ? null : granted ? (
         <button
           onClick={() => void handleContinue()}
           className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"

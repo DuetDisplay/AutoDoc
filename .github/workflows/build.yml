@@ -45,6 +45,19 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Resolve release metadata
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        id: release_meta
+        shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+        run: |
+          raw_tag="$RAW_TAG"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         run: npm ci
 
@@ -82,7 +95,10 @@ jobs:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
-        run: npm run build:mac
+        run: |
+          npm run prepare:macos-whisper-runtime
+          npm run build
+          npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Build macOS artifacts (signed, no notarization)
         if: github.event_name == 'push' && github.ref_type == 'branch'
@@ -103,7 +119,7 @@ jobs:
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -130,6 +146,19 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Resolve release metadata
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        id: release_meta
+        shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+        run: |
+          raw_tag="$RAW_TAG"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -224,7 +253,9 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
           SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
           SM_LOG_LEVEL: TRACE
-        run: npm run build:win
+        run: |
+          npm run build
+          npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Verify Windows signatures
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
@@ -318,7 +349,7 @@ jobs:
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: |
             dist/*-setup.exe
             dist/latest.yml
@@ -348,25 +379,37 @@ jobs:
       contents: write
 
     steps:
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+        run: |
+          raw_tag="$RAW_TAG"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Download macOS release assets
         if: needs.build-mac.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-macos-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/mac
 
       - name: Download Windows release assets
         if: (startsWith(github.ref, 'refs/tags/') || inputs.release_platform == 'all') && needs.build-win.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-windows-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/win
 
       - name: Publish curated GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
           assets=(release-assets/mac/*)
           if [ -d release-assets/win ]; then
@@ -383,7 +426,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
           release_json="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}")"
           blockmap_ids="$(jq -r '.assets[] | select(.name | endswith(".blockmap")) | .id' <<<"$release_json")"
