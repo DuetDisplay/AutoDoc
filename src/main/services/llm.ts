@@ -26,6 +26,7 @@ const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
+const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -444,6 +445,32 @@ export class OllamaProvider implements LLMProvider {
     contextTokens: number,
     onToken?: () => void
   ): Promise<string> {
+    if (
+      process.platform === 'win32' &&
+      IS_TEST_RUNTIME &&
+      process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+      process.env.AUTODOC_TEST_OLLAMA_SUMMARY_MODE === 'fixed-success'
+    ) {
+      onToken?.()
+      return JSON.stringify({
+        decisions: [],
+        action_items: [
+          {
+            topic: 'Windows setup',
+            title: 'Coordinate Ollama setup',
+            content: 'AutoDoc should keep notes waiting while shared Ollama setup completes.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 20_000
+          }
+        ],
+        information: [],
+        discussion: [],
+        status_updates: []
+      })
+    }
+
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)

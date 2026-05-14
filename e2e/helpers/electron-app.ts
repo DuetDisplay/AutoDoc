@@ -26,6 +26,7 @@ async function launchApp(options: {
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      AUTODOC_TEST_MODE: '1',
       ...(options.realSetup ? { AUTODOC_TEST_REAL_SETUP: '1' } : { AUTODOC_E2E: '1' }),
       ...(options.scenario ? { AUTODOC_E2E_SCENARIO: JSON.stringify(options.scenario) } : {}),
       ...(options.userDataDir ? { AUTODOC_TEST_USER_DATA_DIR: options.userDataDir } : {}),
@@ -126,8 +127,13 @@ export async function launchIsolatedExternalE2EApp(appRoot: string, scenario?: E
   }
 }
 
-export async function launchRealSetupApp(extraEnv?: Record<string, string>) {
-  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
+export async function launchRealSetupApp(
+  extraEnv?: Record<string, string>,
+  options: { userDataDir?: string; cleanupUserDataDir?: boolean } = {}
+) {
+  const userDataDir =
+    options.userDataDir ?? mkdtempSync(path.join(os.tmpdir(), 'autodoc-real-setup-'))
+  const cleanupUserDataDir = options.cleanupUserDataDir ?? !options.userDataDir
   const electronApp = await launchApp({ realSetup: true, userDataDir, extraEnv })
 
   return {
@@ -138,7 +144,9 @@ export async function launchRealSetupApp(extraEnv?: Record<string, string>) {
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        if (cleanupUserDataDir) {
+          rmSync(userDataDir, { recursive: true, force: true })
+        }
       }
     }
   }
