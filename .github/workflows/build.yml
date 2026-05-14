@@ -49,8 +49,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         id: release_meta
         shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
         run: |
-          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
           release_version="${release_tag#v}"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -149,8 +151,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         id: release_meta
         shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
         run: |
-          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
           release_version="${release_tag#v}"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -378,8 +382,10 @@ jobs:
       - name: Resolve release metadata
         id: release_meta
         shell: bash
+        env:
+          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
         run: |
-          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
           release_version="${release_tag#v}"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
