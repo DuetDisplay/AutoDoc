@@ -345,7 +345,7 @@ jobs:
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: |
             dist/*-setup.exe
             dist/latest.yml
@@ -375,25 +375,35 @@ jobs:
       contents: write
 
     steps:
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Download macOS release assets
         if: needs.build-mac.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-macos-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/mac
 
       - name: Download Windows release assets
         if: (startsWith(github.ref, 'refs/tags/') || inputs.release_platform == 'all') && needs.build-win.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: release-windows-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/win
 
       - name: Publish curated GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
           assets=(release-assets/mac/*)
           if [ -d release-assets/win ]; then
@@ -410,7 +420,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
           release_json="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}")"
           blockmap_ids="$(jq -r '.assets[] | select(.name | endswith(".blockmap")) | .id' <<<"$release_json")"
