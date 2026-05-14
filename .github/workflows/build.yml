@@ -45,6 +45,17 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Resolve release metadata
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        id: release_meta
+        shell: bash
+        run: |
+          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         run: npm ci
 
@@ -82,7 +93,10 @@ jobs:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
-        run: npm run build:mac
+        run: |
+          npm run prepare:macos-whisper-runtime
+          npm run build
+          npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Build macOS artifacts (signed, no notarization)
         if: github.event_name == 'push' && github.ref_type == 'branch'
@@ -103,7 +117,7 @@ jobs:
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos-${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -130,6 +144,17 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Resolve release metadata
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        id: release_meta
+        shell: bash
+        run: |
+          raw_tag="${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          release_tag="${raw_tag#refs/tags/}"
+          release_version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -224,7 +249,9 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
           SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
           SM_LOG_LEVEL: TRACE
-        run: npm run build:win
+        run: |
+          npm run build
+          npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Verify Windows signatures
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
