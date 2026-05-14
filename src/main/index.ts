@@ -93,6 +93,8 @@ const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
+const skipInstalledApplicationPolicy =
+  process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest)
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
 const EXPECTED_APP_ID = 'com.kairos.autodoc'
 
@@ -369,7 +371,7 @@ function createWindow(): void {
 
   // Hide to tray instead of closing (unless user is quitting)
   mainWindow.on('close', (e) => {
-    if (!isQuitting && !isE2E) {
+    if (!isQuitting && !isE2E && !isRealSetupTest) {
       e.preventDefault()
       mainWindow.hide()
     }
@@ -389,7 +391,7 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
-  if (!(await enforceInstalledApplicationPolicy())) return
+  if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
 
   const buildPermissionLogContext = (
     context?: Record<string, unknown>
@@ -1163,6 +1165,17 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('e2e:detection-poll', async (_event, advanceMs?: number) => {
       await detectionService.debugPollNow(advanceMs ?? 0)
+    })
+  }
+
+  if (isRealSetupTest) {
+    ipcMain.handle('e2e:install-bundled-mac-whisper-runtime', async () => {
+      await whisperManager.installBundledMacWhisperRuntimeOnly()
+      return {
+        storagePath: app.getPath('userData'),
+        whisperPath: whisperManager.getWhisperPath(),
+        modelsDir: whisperManager.getModelsDir()
+      }
     })
   }
 
