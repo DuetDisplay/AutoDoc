@@ -24,6 +24,9 @@ on:
         default: ''
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build-mac:
     if: github.event_name == 'push' || inputs.release_platform == 'mac' || inputs.release_platform == 'all'
@@ -38,11 +41,11 @@ jobs:
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Resolve release metadata
@@ -106,7 +109,7 @@ jobs:
 
       - name: Upload macOS artifacts
         if: github.event_name == 'push' && github.ref_type == 'branch' && success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: autodoc-macos-${{ github.run_number }}
           path: |
@@ -117,7 +120,7 @@ jobs:
 
       - name: Upload macOS release assets
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: |
@@ -140,11 +143,11 @@ jobs:
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Resolve release metadata
@@ -164,7 +167,12 @@ jobs:
         run: npm ci
 
       - name: Run bootstrap tests
-        run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
+        shell: pwsh
+        run: |
+          npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Materialize DigiCert client certificate
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
@@ -178,7 +186,9 @@ jobs:
 
       - name: Setup DigiCert signing tools
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-        uses: digicert/ssm-code-signing@v1.0.0
+        uses: digicert/code-signing-software-trust-action@v1.2.1
+        with:
+          use-github-caching-service: true
         env:
           SM_HOST: https://clientauth.one.digicert.com
           SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
@@ -324,7 +334,7 @@ jobs:
 
       - name: Upload DigiCert signing diagnostics
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: digicert-signing-diagnostics-${{ github.run_number }}
           path: ${{ runner.temp }}/digicert-signing-diagnostics
@@ -337,7 +347,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: github.event_name == 'push' && github.ref_type == 'branch' && success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: autodoc-windows-${{ github.run_number }}
           path: |
@@ -347,7 +357,7 @@ jobs:
 
       - name: Upload Windows release assets
         if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: |
@@ -393,14 +403,14 @@ jobs:
 
       - name: Download macOS release assets
         if: needs.build-mac.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/mac
 
       - name: Download Windows release assets
         if: (startsWith(github.ref, 'refs/tags/') || inputs.release_platform == 'all') && needs.build-win.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           name: release-windows-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/win
