@@ -239,6 +239,47 @@ jobs:
           $smToolsDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+          $signToolCandidates = @()
+
+          $signToolCommand = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          if ($signToolCommand) {
+            $signToolCandidates += $signToolCommand.Source
+          }
+
+          if (${env:ProgramFiles(x86)}) {
+            $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+            $signToolCandidates += Join-Path $windowsKitsRoot 'App Certification Kit\signtool.exe'
+
+            $windowsKitsBin = Join-Path $windowsKitsRoot 'bin'
+            if (Test-Path $windowsKitsBin) {
+              $signToolCandidates += Get-ChildItem -Path $windowsKitsBin -Filter signtool.exe -File -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -ExpandProperty FullName
+            }
+          }
+
+          $signToolPath = $signToolCandidates |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique -First 1
+
+          if (-not $signToolPath) {
+            throw 'signtool.exe was not found on PATH or in the standard Windows SDK locations.'
+          }
+
+          Write-Host "Resolved signtool.exe to $signToolPath"
+          try {
+            $versionInfo = (Get-Item $signToolPath).VersionInfo
+            if ($versionInfo.FileVersion) {
+              Write-Host "signtool.exe file version: $($versionInfo.FileVersion)"
+            }
+          } catch {
+            Write-Warning "Unable to read signtool.exe file version: $($_.Exception.Message)"
+          }
+
+          $signToolDir = Split-Path -Parent $signToolPath
+          $signToolDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Check DigiCert signing health
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         shell: pwsh
