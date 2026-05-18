@@ -30,8 +30,12 @@ async function loadWhisperManager(
   vi.resetModules()
 
   const execSyncMock = vi.fn()
-  const execFileMock = vi.fn((_file, _args, _options, callback) => {
-    callback(null)
+  const execFileMock = vi.fn((_file, _args, optionsOrCallback, callback) => {
+    const resolvedCallback = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback
+    if (!resolvedCallback) {
+      throw new Error('execFile callback is required')
+    }
+    resolvedCallback(null)
     return {} as never
   })
 
@@ -616,6 +620,53 @@ describe('Whisper onboarding dependency installation', () => {
         )
       ).rejects.toThrow(/SHA256 verification/i)
       await expect(access(assetPath)).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails Windows faster-whisper extraction when expected files are missing after archive extraction', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-missing-extract-'))
+
+    try {
+      const { WhisperManager, execFileMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'faster-whisper-cpu'
+      })
+      const manager = new WhisperManager()
+      const payload = 'known payload'
+      const expectedSha256 = createHash('sha256').update(payload).digest('hex')
+      vi.spyOn(manager as any, 'downloadFile').mockImplementation(
+        async (_url: string, destPath: string) => {
+          await mkdir(dirname(destPath), { recursive: true })
+          await writeFile(destPath, payload)
+        }
+      )
+
+      await expect(
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          {
+            id: 'faster-whisper-cpu',
+            label: 'CPU optimized transcription',
+            modelName: 'small.en',
+            device: 'cpu',
+            computeType: 'int8',
+            minSystemMemoryGiB: 8,
+            assets: []
+          },
+          {
+            id: 'runtime',
+            filename: 'faster-whisper-runtime-cpu-win-x64.zip',
+            url: 'https://example.invalid/faster-whisper-runtime-cpu-win-x64.zip',
+            sha256: expectedSha256,
+            expectedFiles: ['python.exe']
+          }
+        )
+      ).rejects.toThrow(/missing expected files/i)
+      expect(execFileMock).toHaveBeenCalledWith(
+        'tar',
+        expect.arrayContaining(['-xf', '-C']),
+        expect.any(Function)
+      )
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

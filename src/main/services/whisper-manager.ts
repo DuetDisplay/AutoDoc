@@ -579,20 +579,7 @@ export class WhisperManager extends EventEmitter {
     await rm(targetDir, { recursive: true, force: true })
     await mkdir(targetDir, { recursive: true })
 
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          `Expand-Archive -Force -Path '${archivePath}' -DestinationPath '${targetDir}'`
-        ],
-        (err) => {
-          if (err) reject(new Error(`Failed to extract ${asset.filename}: ${err.message}`))
-          else resolve()
-        }
-      )
-    })
+    await this.extractWindowsTranscriptionAsset(archivePath, targetDir, asset.filename)
 
     await rm(archivePath, { force: true })
     const missingExpectedFiles = await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)
@@ -607,6 +594,24 @@ export class WhisperManager extends EventEmitter {
         expectedFiles: asset.expectedFiles,
         missingExpectedFiles
       }
+    })
+    if (missingExpectedFiles.length > 0) {
+      throw new Error(
+        `Extracted ${asset.filename} is missing expected files: ${missingExpectedFiles.join(', ')}.`
+      )
+    }
+  }
+
+  private async extractWindowsTranscriptionAsset(
+    archivePath: string,
+    targetDir: string,
+    filename: string
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      execFile('tar', ['-xf', archivePath, '-C', targetDir], (err) => {
+        if (err) reject(new Error(`Failed to extract ${filename}: ${err.message}`))
+        else resolve()
+      })
     })
   }
 
