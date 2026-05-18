@@ -77,7 +77,7 @@ afterEach(async () => {
   if (originalResourcesPathDescriptor) {
     Object.defineProperty(process, 'resourcesPath', originalResourcesPathDescriptor)
   } else {
-    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    Reflect.deleteProperty(process, 'resourcesPath')
   }
   vi.resetModules()
   setPlatform(originalPlatform)
@@ -643,12 +643,11 @@ describe('Whisper onboarding dependency installation', () => {
       )
       await mkdir(dirname(existingRuntimeFile), { recursive: true })
       await writeFile(existingRuntimeFile, 'existing runtime')
-      vi.spyOn(manager as any, 'downloadFile').mockImplementation(
-        async (_url: string, destPath: string) => {
-          await mkdir(dirname(destPath), { recursive: true })
-          await writeFile(destPath, payload)
-        }
-      )
+      vi.spyOn(manager as any, 'downloadFile').mockImplementation(async (...args: unknown[]) => {
+        const destPath = String(args[1])
+        await mkdir(dirname(destPath), { recursive: true })
+        await writeFile(destPath, payload)
+      })
 
       await expect(
         (manager as any).downloadAndExtractWindowsTranscriptionAsset(

@@ -51,6 +51,7 @@ describe('WhisperManager', () => {
     vi.clearAllMocks()
     isPackaged = false
     delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'whisper-cpp'
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
     mockMkdtemp.mockResolvedValue('/mock/probe-dir')
