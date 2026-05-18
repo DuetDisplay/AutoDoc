@@ -55,7 +55,7 @@ describe('Windows transcription runtime selection', () => {
     })
 
     expect(profile.id).toBe('faster-whisper-cuda')
-    expect(profile.computeType).toBe('int8_float16')
+    expect(profile.computeType).toBe('int8_float32')
     expect(profile.assets.map((asset) => asset.filename)).toEqual([
       'faster-whisper-runtime-cuda-win-x64.zip',
       'faster-whisper-distil-large-v3-ct2.zip'

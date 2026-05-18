@@ -879,6 +879,37 @@ describe('TranscriptionService', () => {
     )
   })
 
+  it('accepts valid faster-whisper output after a Windows CUDA native crash', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getFasterWhisperDevice: vi.fn().mockReturnValue('cuda'),
+      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8_float32'),
+      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cuda')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    child.emit('close', 3221226505)
+
+    await expect(promise).resolves.toBeUndefined()
+    expect(fsMock.readFile).toHaveBeenCalledWith('/mock/tmp/audio.wav.json', 'utf-8')
+  })
+
   it('classifies Metal aborts as whisper-metal-crash', () => {
     expect(
       classifyError('whisper.cpp exited with code null (signal SIGABRT): ggml_metal_rsets_free')

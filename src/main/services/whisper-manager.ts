@@ -182,7 +182,7 @@ export class WhisperManager extends EventEmitter {
     return this.getSelectedWindowsProfile().device
   }
 
-  getFasterWhisperComputeType(): 'float16' | 'int8_float16' | 'int8' {
+  getFasterWhisperComputeType(): 'float16' | 'int8_float16' | 'int8_float32' | 'int8' {
     return this.getSelectedWindowsProfile().computeType
   }
 
