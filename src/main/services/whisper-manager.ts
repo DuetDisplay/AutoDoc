@@ -173,7 +173,7 @@ export class WhisperManager extends EventEmitter {
 
   getFasterWhisperScriptPath(): string {
     if (app.isPackaged) {
-      return join(process.resourcesPath, 'faster-whisper-transcribe.py')
+      return this.getPackagedResourcePath('faster-whisper-transcribe.py')
     }
     return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
   }
@@ -274,13 +274,22 @@ export class WhisperManager extends EventEmitter {
 
   private getWindowsTranscriptionManifestPath(): string {
     if (app.isPackaged) {
-      return join(
-        process.resourcesPath ?? this.getDevelopmentAppPath(),
-        'windows-transcription-manifest.json'
-      )
+      return this.getPackagedResourcePath('windows-transcription-manifest.json')
     }
 
     return this.getDevelopmentResourcePath('windows-transcription-manifest.json')
+  }
+
+  private getPackagedResourcePath(filename: string): string {
+    const resourcesPath = process.resourcesPath ?? this.getDevelopmentAppPath()
+    const candidates = [
+      join(resourcesPath, 'app.asar.unpacked', 'resources', filename),
+      join(resourcesPath, 'resources', filename),
+      join(resourcesPath, filename),
+      join(this.getDevelopmentAppPath(), 'resources', filename)
+    ]
+
+    return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
   }
 
   private getDevelopmentAppPath(): string {

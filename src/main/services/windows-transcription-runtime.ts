@@ -58,7 +58,7 @@ export interface WindowsTranscriptionManifest {
 
 const ASSET_BASE_URL =
   process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL ??
-  'https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1'
+  'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1'
 
 export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
   WindowsTranscriptionBackendId,
@@ -269,8 +269,8 @@ function getSystemMemorySnapshot(): Pick<
   }
 
   return {
-    freeMemoryGiB: typeof info.free === 'number' ? bytesToGiB(info.free) : null,
-    totalMemoryGiB: typeof info.total === 'number' ? bytesToGiB(info.total) : null
+    freeMemoryGiB: typeof info.free === 'number' ? electronMemoryKbToGiB(info.free) : null,
+    totalMemoryGiB: typeof info.total === 'number' ? electronMemoryKbToGiB(info.total) : null
   }
 }
 
@@ -316,4 +316,8 @@ function parseWindowsGpuRow(row: unknown): WindowsGpuInfo | null {
 
 function bytesToGiB(bytes: number): number {
   return Number((bytes / 1024 / 1024 / 1024).toFixed(2))
+}
+
+export function electronMemoryKbToGiB(kilobytes: number): number {
+  return Number((kilobytes / 1024 / 1024).toFixed(2))
 }

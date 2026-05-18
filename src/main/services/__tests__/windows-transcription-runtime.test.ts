@@ -4,8 +4,10 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import {
   classifyWindowsGpuVendor,
+  electronMemoryKbToGiB,
   loadWindowsTranscriptionProfiles,
   selectWindowsTranscriptionProfile,
+  WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile
 } from '../windows-transcription-runtime'
 
@@ -24,6 +26,20 @@ afterEach(() => {
 })
 
 describe('Windows transcription runtime selection', () => {
+  it('uses the public asset-only repository for fallback asset URLs', () => {
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip'
+    )
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip'
+    )
+  })
+
+  it('converts Electron memory snapshots from kilobytes to GiB', () => {
+    expect(electronMemoryKbToGiB(33_554_432)).toBe(32)
+    expect(electronMemoryKbToGiB(1_048_576)).toBe(1)
+  })
+
   it('selects CUDA faster-whisper for supported NVIDIA systems', () => {
     const profile = selectWindowsTranscriptionProfile({
       ...baseHardware,

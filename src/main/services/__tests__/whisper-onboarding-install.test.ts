@@ -5,6 +5,7 @@ import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
+const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
 
 function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', {
@@ -37,7 +38,7 @@ async function loadWhisperManager(
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn((name: string) => (name === 'appData' ? join(rootDir, 'app-data') : rootDir)),
-      getAppPath: vi.fn(() => rootDir),
+      getAppPath: vi.fn(() => join(rootDir, 'app')),
       isPackaged: options?.isPackaged ?? false
     }
   }))
@@ -69,6 +70,11 @@ afterEach(async () => {
   vi.doUnmock('ffmpeg-static')
   delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
+  if (originalResourcesPathDescriptor) {
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPathDescriptor)
+  } else {
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  }
   vi.resetModules()
   setPlatform(originalPlatform)
 })
@@ -180,6 +186,37 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves packaged Windows transcription resources from app.asar.unpacked', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-packaged-resources-'))
+    const resourcesPath = join(rootDir, 'resources')
+    const unpackedResourcesPath = join(resourcesPath, 'app.asar.unpacked', 'resources')
+
+    try {
+      await mkdir(unpackedResourcesPath, { recursive: true })
+      await writeFile(join(unpackedResourcesPath, 'windows-transcription-manifest.json'), '{}')
+      await writeFile(join(unpackedResourcesPath, 'faster-whisper-transcribe.py'), 'print("ok")')
+      Object.defineProperty(process, 'resourcesPath', {
+        configurable: true,
+        value: resourcesPath
+      })
+
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+
+      expect((manager as any).getWindowsTranscriptionManifestPath()).toBe(
+        join(unpackedResourcesPath, 'windows-transcription-manifest.json')
+      )
+      expect(manager.getFasterWhisperScriptPath()).toBe(
+        join(unpackedResourcesPath, 'faster-whisper-transcribe.py')
+      )
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
