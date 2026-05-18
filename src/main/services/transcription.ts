@@ -1239,7 +1239,12 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     concurrentSources = 1
   ): Promise<WhisperOutput> {
-    if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
+    const shouldPreChunk =
+      audioDurationSec &&
+      audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC &&
+      !this.shouldTrySinglePassForLongRecording()
+
+    if (shouldPreChunk) {
       console.log(
         `[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`
       )
@@ -1278,6 +1283,15 @@ export class TranscriptionService {
     }
 
     return output
+  }
+
+  private shouldTrySinglePassForLongRecording(): boolean {
+    if (process.platform !== 'win32') return false
+    if (typeof this.whisperManager.isFasterWhisperSelected !== 'function') return false
+    if (!this.whisperManager.isFasterWhisperSelected()) return false
+    if (typeof this.whisperManager.getFasterWhisperDevice !== 'function') return false
+
+    return this.whisperManager.getFasterWhisperDevice() === 'cuda'
   }
 
   private async runWhisperChunked(

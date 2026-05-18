@@ -920,9 +920,7 @@ describe('TranscriptionService', () => {
     setPlatform('darwin')
     const first = new MockChildProcess()
     const second = new MockChildProcess()
-    childProcessMock.spawn
-      .mockReturnValueOnce(first as any)
-      .mockReturnValueOnce(second as any)
+    childProcessMock.spawn.mockReturnValueOnce(first as any).mockReturnValueOnce(second as any)
 
     const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
 
@@ -996,6 +994,42 @@ describe('TranscriptionService', () => {
     expect(result).toEqual(chunkedOutput)
     expect(chunkedSpy).toHaveBeenCalled()
     expect(singlePassSpy).not.toHaveBeenCalled()
+  })
+
+  it('tries a single CUDA faster-whisper pass before chunking long Windows recordings', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getFasterWhisperDevice: vi.fn().mockReturnValue('cuda')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+
+    const singlePassOutput = {
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'single pass' }]
+    }
+    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked')
+    const singlePassSpy = vi
+      .spyOn(service as any, 'runWhisperPassAndRead')
+      .mockResolvedValue(singlePassOutput)
+
+    const result = await (service as any).transcribeWithFallback(
+      '/mock/tmp/audio.wav',
+      'meeting-cuda',
+      30 * 60,
+      '/mock/tmp/audio',
+      []
+    )
+
+    expect(result).toEqual(singlePassOutput)
+    expect(singlePassSpy).toHaveBeenCalled()
+    expect(chunkedSpy).not.toHaveBeenCalled()
   })
 
   it('keeps transcription progress monotonic when concurrent sources report out of order', () => {

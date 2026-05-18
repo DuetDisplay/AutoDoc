@@ -3,6 +3,7 @@ import {
   LOW_MEMORY_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
+  WINDOWS_CHUNK_CHARS,
   WINDOWS_MAX_OUTPUT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
 } from '../llm'
@@ -400,5 +401,15 @@ describe('OllamaProvider grounding', () => {
     expect(requestBodies[0].messages?.[1]?.content).toContain(
       'It is okay for action_items or status_updates to be empty'
     )
+  })
+
+  it('uses larger transcript chunks on Windows to reduce notes calls', () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
   })
 })

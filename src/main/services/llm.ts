@@ -17,7 +17,8 @@ const MAX_RETRIES = 2
 export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
-const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
+const CHUNK_CHARS = 4000 // ~1K tokens per chunk, keeps output quality high with 8B models
+export const WINDOWS_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
@@ -452,14 +453,15 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private chunkTranscript(transcript: string): string[] {
-    if (transcript.length <= CHUNK_CHARS) return [transcript]
+    const chunkChars = this.getChunkChars()
+    if (transcript.length <= chunkChars) return [transcript]
 
     const lines = transcript.split('\n')
     const chunks: string[] = []
     let current = ''
 
     for (const line of lines) {
-      if (current.length + line.length + 1 > CHUNK_CHARS && current.length > 0) {
+      if (current.length + line.length + 1 > chunkChars && current.length > 0) {
         chunks.push(current)
         current = ''
       }
@@ -468,6 +470,10 @@ export class OllamaProvider implements LLMProvider {
     if (current) chunks.push(current)
 
     return chunks
+  }
+
+  private getChunkChars(): number {
+    return process.platform === 'win32' ? WINDOWS_CHUNK_CHARS : CHUNK_CHARS
   }
 
   private async callOllama(
