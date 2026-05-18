@@ -14,7 +14,7 @@ import {
   rename,
   stat
 } from 'fs/promises'
-import { basename, delimiter, dirname, join } from 'path'
+import { basename, delimiter, dirname, join, sep } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
@@ -1058,7 +1058,7 @@ export class WhisperManager extends EventEmitter {
   private async installMacWhisperRuntimeFromDir(sourceDir: string): Promise<void> {
     const modelsDir = this.getModelsDir()
     const extractDir = join(modelsDir, '_whisper_extract')
-    const preserveExtractDir = sourceDir === extractDir || sourceDir.startsWith(`${extractDir}/`)
+    const preserveExtractDir = sourceDir === extractDir || sourceDir.startsWith(`${extractDir}${sep}`)
     await mkdir(modelsDir, { recursive: true })
     await this.removeMacWhisperRuntimeFiles({ preserveExtractDir })
 

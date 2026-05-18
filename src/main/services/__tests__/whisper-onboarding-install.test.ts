@@ -43,7 +43,7 @@ async function loadWhisperManager(
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn((name: string) => (name === 'appData' ? join(rootDir, 'app-data') : rootDir)),
-      getAppPath: vi.fn(() => join(rootDir, 'app')),
+      getAppPath: vi.fn(() => rootDir),
       isPackaged: options?.isPackaged ?? false
     }
   }))
