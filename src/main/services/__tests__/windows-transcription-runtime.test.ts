@@ -3,9 +3,11 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
+  applyNvidiaSmiMemory,
   classifyWindowsGpuVendor,
   electronMemoryKbToGiB,
   loadWindowsTranscriptionProfiles,
+  parseNvidiaSmiGpuRows,
   selectWindowsTranscriptionProfile,
   WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile
@@ -91,6 +93,28 @@ describe('Windows transcription runtime selection', () => {
     })
 
     expect(profile.id).toBe('faster-whisper-cpu')
+  })
+
+  it('uses nvidia-smi VRAM when WMI underreports NVIDIA laptop GPU memory', () => {
+    const gpus = applyNvidiaSmiMemory(
+      [
+        {
+          name: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+          vendor: 'nvidia',
+          adapterRamGiB: 4
+        }
+      ],
+      parseNvidiaSmiGpuRows('NVIDIA GeForce RTX 4060 Laptop GPU, 8188 MiB, 581.95')
+    )
+
+    expect(gpus[0].adapterRamGiB).toBe(8)
+
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      gpus
+    })
+
+    expect(profile.id).toBe('faster-whisper-cuda')
   })
 
   it('allows an explicit whisper.cpp override for compatibility and tests', () => {
