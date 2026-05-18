@@ -537,6 +537,7 @@ export class WhisperManager extends EventEmitter {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
     const targetDir = this.getFasterWhisperAssetRoot(profile, asset.id)
+    let extractDir: string | null = null
 
     logAutodocEvent({
       area: 'whisper',
@@ -552,7 +553,7 @@ export class WhisperManager extends EventEmitter {
         targetDir
       }
     })
-    await mkdir(targetDir, { recursive: true })
+    await mkdir(dirname(targetDir), { recursive: true })
     await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
       this.setupStatus = this.withBackendStatus({
         phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
@@ -576,29 +577,41 @@ export class WhisperManager extends EventEmitter {
       }
     })
 
-    await rm(targetDir, { recursive: true, force: true })
-    await mkdir(targetDir, { recursive: true })
+    try {
+      extractDir = await mkdtemp(join(dirname(targetDir), '_extract-'))
+      await this.extractWindowsTranscriptionAsset(archivePath, extractDir, asset.filename)
 
-    await this.extractWindowsTranscriptionAsset(archivePath, targetDir, asset.filename)
-
-    await rm(archivePath, { force: true })
-    const missingExpectedFiles = await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)
-    logAutodocEvent({
-      area: 'whisper',
-      message: 'Windows transcription asset extracted',
-      context: {
-        backend: profile.id,
-        assetId: asset.id,
-        filename: asset.filename,
-        targetDir,
-        expectedFiles: asset.expectedFiles,
-        missingExpectedFiles
-      }
-    })
-    if (missingExpectedFiles.length > 0) {
-      throw new Error(
-        `Extracted ${asset.filename} is missing expected files: ${missingExpectedFiles.join(', ')}.`
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        extractDir,
+        asset.expectedFiles
       )
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset extracted',
+        context: {
+          backend: profile.id,
+          assetId: asset.id,
+          filename: asset.filename,
+          extractDir,
+          targetDir,
+          expectedFiles: asset.expectedFiles,
+          missingExpectedFiles
+        }
+      })
+      if (missingExpectedFiles.length > 0) {
+        throw new Error(
+          `Extracted ${asset.filename} is missing expected files: ${missingExpectedFiles.join(', ')}.`
+        )
+      }
+
+      await rm(targetDir, { recursive: true, force: true })
+      await rename(extractDir, targetDir)
+      extractDir = null
+    } finally {
+      await rm(archivePath, { force: true })
+      if (extractDir) {
+        await rm(extractDir, { recursive: true, force: true })
+      }
     }
   }
 

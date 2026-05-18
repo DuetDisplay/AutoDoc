@@ -635,6 +635,14 @@ describe('Whisper onboarding dependency installation', () => {
       const manager = new WhisperManager()
       const payload = 'known payload'
       const expectedSha256 = createHash('sha256').update(payload).digest('hex')
+      const existingRuntimeFile = join(
+        manager.getModelsDir(),
+        'transcription-runtimes',
+        'faster-whisper-cpu',
+        'existing.txt'
+      )
+      await mkdir(dirname(existingRuntimeFile), { recursive: true })
+      await writeFile(existingRuntimeFile, 'existing runtime')
       vi.spyOn(manager as any, 'downloadFile').mockImplementation(
         async (_url: string, destPath: string) => {
           await mkdir(dirname(destPath), { recursive: true })
@@ -667,6 +675,7 @@ describe('Whisper onboarding dependency installation', () => {
         expect.arrayContaining(['-xf', '-C']),
         expect.any(Function)
       )
+      await expect(readFile(existingRuntimeFile, 'utf8')).resolves.toBe('existing runtime')
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
