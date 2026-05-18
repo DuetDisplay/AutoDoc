@@ -343,10 +343,7 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (
-            this.isInsufficientSystemMemoryError(lastError.message) &&
-            this.contextTokens > LOW_MEMORY_CONTEXT_TOKENS
-          ) {
+          if (this.shouldEnableLowMemoryFallback(lastError.message) && this.contextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
             lowMemoryFallbackActivated = true
             this.enableLowMemoryContext(meetingId, lastError, {
               chunkIndex: i + 1,
@@ -617,6 +614,28 @@ export class OllamaProvider implements LLMProvider {
       normalized.includes('ollama') &&
       normalized.includes('requires more system memory') &&
       normalized.includes('than is available')
+    )
+  }
+
+  private isLowMemoryRunnerStopError(message: string): boolean {
+    const normalized = message.toLowerCase()
+    if (
+      !normalized.includes('ollama returned 500') ||
+      !normalized.includes('model runner has unexpectedly stopped')
+    ) {
+      return false
+    }
+
+    const hostMemory = this.getHostMemorySnapshot()
+    return (
+      (hostMemory.freeGiB != null && hostMemory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+      (hostMemory.totalGiB != null && hostMemory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
+    )
+  }
+
+  private shouldEnableLowMemoryFallback(message: string): boolean {
+    return (
+      this.isInsufficientSystemMemoryError(message) || this.isLowMemoryRunnerStopError(message)
     )
   }
 

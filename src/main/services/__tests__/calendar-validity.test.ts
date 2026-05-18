@@ -114,4 +114,52 @@ describe('Calendar sync hardening', () => {
       })
     )
   })
+
+  it('marks Microsoft accounts as reconnect-required after a non-transient auth failure', async () => {
+    const manager = new CalendarManager()
+    const microsoftProvider = createProvider({
+      fetchUpcomingEvents: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Microsoft token refresh failed: 400 {"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided."}'
+          )
+        )
+    })
+
+    ;(manager as any).accounts = [
+      {
+        id: 'microsoft-account-1',
+        provider: 'microsoft',
+        email: 'user@contoso.com',
+        connectedAt: Date.now()
+      }
+    ]
+    ;(manager as any).providers = new Map([['microsoft', microsoftProvider]])
+
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+    expect(microsoftProvider.fetchUpcomingEvents).toHaveBeenCalledTimes(1)
+    expect((manager as any).accounts).toHaveLength(1)
+    expect((manager as any).accounts[0]).toEqual(
+      expect.objectContaining({
+        id: 'microsoft-account-1',
+        syncIssue: 'reconnect-required'
+      })
+    )
+    expect(logAutodocFailure).not.toHaveBeenCalled()
+    expect(captureMessage).toHaveBeenCalledTimes(1)
+    expect(captureMessage).toHaveBeenCalledWith(
+      'Calendar account requires reconnect',
+      expect.objectContaining({
+        area: 'calendar',
+        level: 'info',
+        tags: expect.objectContaining({
+          provider: 'microsoft',
+          calendar_sync_issue: 'reconnect-required'
+        })
+      })
+    )
+  })
 })
