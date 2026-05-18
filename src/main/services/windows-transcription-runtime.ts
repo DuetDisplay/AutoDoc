@@ -49,7 +49,7 @@ export interface WindowsTranscriptionProfile {
   label: string
   modelName: string
   device: 'cuda' | 'cpu'
-  computeType: 'float16' | 'int8'
+  computeType: 'float16' | 'int8_float16' | 'int8'
   minSystemMemoryGiB: number
   minVramGiB?: number
   assets: WindowsTranscriptionAsset[]
@@ -75,7 +75,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     label: 'NVIDIA accelerated transcription',
     modelName: 'distil-large-v3',
     device: 'cuda',
-    computeType: 'float16',
+    computeType: 'int8_float16',
     minSystemMemoryGiB: 12,
     minVramGiB: 6,
     assets: [
