@@ -1,17 +1,26 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
 import type { E2EScenario } from '../src/shared/e2e'
-import { launchE2EApp, setOllamaStatus, setWhisperStatus, stubMediaCapture } from './helpers/electron-app'
+import {
+  launchE2EApp,
+  launchIsolatedE2EApp,
+  relaunchIsolatedE2EApp,
+  setOllamaStatus,
+  setWhisperStatus,
+  stubMediaCapture
+} from './helpers/electron-app'
 
 async function launchOnboarding(scenario?: E2EScenario): Promise<{
   electronApp: ElectronApplication
   page: Page
+  cleanup: () => Promise<void>
 }> {
-  const electronApp = await launchE2EApp(scenario)
+  const session = await launchIsolatedE2EApp(scenario)
+  const { electronApp } = session
   const page = await electronApp.firstWindow()
 
   await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
-  return { electronApp, page }
+  return { electronApp, page, cleanup: session.cleanup }
 }
 
 async function advanceFeatureSteps(page: Page): Promise<void> {
@@ -95,21 +104,135 @@ async function finishAnalyticsAndOpenApp(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
 }
 
+async function completeDependencySetup(page: Page): Promise<void> {
+  await reachTranscriptionStep(page)
+  await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
+  await page.getByRole('button', { name: /^continue$/i }).click()
+
+  await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
+  await page.getByRole('button', { name: /^continue$/i }).click()
+  await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+}
+
+async function openSettings(page: Page): Promise<void> {
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+}
+
 test('completes the onboarding journey and opens the app shell', async () => {
   test.slow()
 
-  const { electronApp, page } = await launchOnboarding()
+  const { page, cleanup } = await launchOnboarding()
 
   try {
     await reachTranscriptionStep(page)
     await finishOnboardingIntoApp(page)
   } finally {
+    await cleanup()
+  }
+})
+
+test('preserves the diagnostic log upload draft when navigating back and forward in onboarding', async () => {
+  const session = await launchIsolatedE2EApp()
+  const { electronApp } = session
+  const page = await electronApp.firstWindow()
+
+  try {
+    await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
+    await completeDependencySetup(page)
+
+    const logUploadCheckbox = page.getByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    await expect(logUploadCheckbox).toBeChecked()
+    await logUploadCheckbox.uncheck()
+    await expect(logUploadCheckbox).not.toBeChecked()
+
+    await page.getByRole('button', { name: /back/i }).click()
+    await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
+    await page.getByRole('button', { name: /^continue$/i }).click()
+    await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+    await expect(logUploadCheckbox).not.toBeChecked()
+  } finally {
+    await session.cleanup()
+  }
+})
+
+test('persists analytics opt-in with diagnostic log upload disabled across relaunch', async () => {
+  const session = await launchIsolatedE2EApp()
+  let { electronApp, userDataDir } = session
+  let page = await electronApp.firstWindow()
+
+  try {
+    await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
+    await completeDependencySetup(page)
+
+    const logUploadCheckbox = page.getByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    await logUploadCheckbox.uncheck()
+    await expect(logUploadCheckbox).not.toBeChecked()
+
+    await page.getByRole('button', { name: /share anonymous data/i }).click()
+    await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
+    await page.getByRole('button', { name: /open autodoc/i }).click()
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+
+    await openSettings(page)
+    await expect(
+      page.getByRole('button', { name: /toggle analytics and crash reports/i })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(logUploadCheckbox).not.toBeChecked()
+
     await electronApp.close()
+    const relaunched = await relaunchIsolatedE2EApp(userDataDir)
+    electronApp = relaunched.electronApp
+    page = await electronApp.firstWindow()
+
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+    await openSettings(page)
+    await expect(
+      page.getByRole('button', { name: /toggle analytics and crash reports/i })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      page.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
+    ).not.toBeChecked()
+  } finally {
+    await session.cleanup()
+  }
+})
+
+test('persists analytics opt-in with diagnostic log upload enabled after onboarding', async () => {
+  const session = await launchIsolatedE2EApp()
+  const { electronApp } = session
+  const page = await electronApp.firstWindow()
+
+  try {
+    await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
+    await completeDependencySetup(page)
+
+    const logUploadCheckbox = page.getByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    await expect(logUploadCheckbox).toBeChecked()
+
+    await page.getByRole('button', { name: /share anonymous data/i }).click()
+    await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
+    await page.getByRole('button', { name: /open autodoc/i }).click()
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+
+    await openSettings(page)
+    await expect(
+      page.getByRole('button', { name: /toggle analytics and crash reports/i })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(logUploadCheckbox).toBeChecked()
+  } finally {
+    await session.cleanup()
   }
 })
 
 test('advances past permission steps when access is already granted or not required', async () => {
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     permissions: {
       microphone: true,
       screen: true,
@@ -120,12 +243,12 @@ test('advances past permission steps when access is already granted or not requi
     await advanceFeatureSteps(page)
     await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('allows onboarding to connect a calendar account in e2e mode', async () => {
-  const { electronApp, page } = await launchOnboarding()
+  const { page, cleanup } = await launchOnboarding()
 
   try {
     await reachCalendarStep(page)
@@ -134,12 +257,12 @@ test('allows onboarding to connect a calendar account in e2e mode', async () => 
     await page.getByRole('button', { name: /continue/i }).click()
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('stays on the calendar step when connection fails', async () => {
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     calendar: {
       connectSucceeds: false,
     },
@@ -152,12 +275,12 @@ test('stays on the calendar step when connection fails', async () => {
     await expect(page.getByRole('button', { name: /skip for now/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /connect google calendar/i })).toBeEnabled()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('shows managed Whisper setup failure and can recover after retry', async () => {
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     whisper: {
       status: {
         phase: 'error',
@@ -179,14 +302,14 @@ test('shows managed Whisper setup failure and can recover after retry', async ()
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('shows Whisper download progress and allows skipping while setup continues', async () => {
   test.slow()
 
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     whisper: {
       status: {
         phase: 'downloading-model',
@@ -204,12 +327,12 @@ test('shows Whisper download progress and allows skipping while setup continues'
     await page.getByRole('button', { name: /continue - this will finish in the background/i }).click()
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('shows a managed transcription setup error when audio tools are missing', async () => {
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     whisper: {
       status: {
         phase: 'error',
@@ -230,12 +353,12 @@ test('shows a managed transcription setup error when audio tools are missing', a
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await expect(page.getByRole('button', { name: /^retry$/i })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('shows Ollama setup failure and can recover after retry', async () => {
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     ollama: {
       status: {
         phase: 'error',
@@ -256,14 +379,14 @@ test('shows Ollama setup failure and can recover after retry', async () => {
     await page.getByRole('button', { name: /^retry$/i }).click()
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
 test('shows Ollama download progress and allows skipping while setup continues', async () => {
   test.slow()
 
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     ollama: {
       status: {
         phase: 'downloading',
@@ -281,7 +404,7 @@ test('shows Ollama download progress and allows skipping while setup continues',
     await page.getByRole('button', { name: /continue - this will finish in the background/i }).click()
     await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
@@ -289,7 +412,7 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
   test.skip(process.platform !== 'darwin', 'macOS onboarding journey only runs on macOS hosts.')
   test.slow()
 
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     permissions: {
       microphone: false,
       screen: false,
@@ -349,7 +472,7 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
     await page.getByRole('button', { name: /^continue$/i }).click()
     await finishAnalyticsAndOpenApp(page)
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })
 
@@ -357,7 +480,7 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
   test.skip(process.platform !== 'win32', 'Windows onboarding journey only runs on Windows hosts.')
   test.slow()
 
-  const { electronApp, page } = await launchOnboarding({
+  const { page, cleanup } = await launchOnboarding({
     whisper: {
       status: {
         phase: 'downloading-whisper',
@@ -417,6 +540,6 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await page.getByRole('button', { name: /^continue$/i }).click()
     await finishAnalyticsAndOpenApp(page)
   } finally {
-    await electronApp.close()
+    await cleanup()
   }
 })

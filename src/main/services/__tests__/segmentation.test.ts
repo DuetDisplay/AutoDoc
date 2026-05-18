@@ -198,6 +198,78 @@ describe('SegmentationService', () => {
     )
   })
 
+  it('invokes onComplete when segmentation finishes successfully', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      information: [
+        {
+          id: 'seg-1',
+          meetingId: 'm1',
+          category: 'information',
+          topic: 'Rollout',
+          title: 'Plan confirmed',
+          content: 'The rollout plan was confirmed.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 65_000
+        }
+      ],
+      discussion: [],
+      statusUpdates: []
+    })
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+
+    await (service as any).processJob('m1')
+
+    expect(onComplete).toHaveBeenCalledWith('m1')
+  })
+
+  it('does not invoke onComplete when segmentation fails', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockRejectedValue(new Error('Ollama unavailable'))
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+
+    await expect((service as any).processJob('m1')).rejects.toThrow('Ollama unavailable')
+    expect(onComplete).not.toHaveBeenCalled()
+  })
+
   it('marks substantive empty segmentation output as transcript-only instead of retry-failed', async () => {
     fsMock.access.mockImplementation(async (path) => {
       if (String(path).endsWith('transcript.json')) return undefined

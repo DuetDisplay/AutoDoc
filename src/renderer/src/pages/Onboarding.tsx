@@ -24,6 +24,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
+  const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(true)
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
@@ -81,13 +82,23 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     })
   }, [stepOrder])
 
-  const handleAnalyticsChoice = async (consented: boolean) => {
+  const handleAnalyticsChoice = async (
+    consented: boolean,
+    diagnosticLogUploadConsented: boolean
+  ) => {
     recordDiagnosticAction({
       category: 'onboarding',
       action: 'analytics_choice_made',
-      details: { consented }
+      details: {
+        consented,
+        diagnosticLogUploadConsented: consented ? diagnosticLogUploadConsented : false
+      }
     })
     await window.electronAPI.invoke('prefs:set-analytics-consent', consented)
+    await window.electronAPI.invoke(
+      'prefs:set-diagnostic-log-upload-consent',
+      consented ? diagnosticLogUploadConsented : false
+    )
     setAnalyticsConsent(consented)
     setNavigationMode('forward')
     setStepIndex((currentIndex) => {
@@ -192,7 +203,13 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       case 8:
         return <OllamaStep onNext={next} />
       case 9:
-        return <AnalyticsStep onNext={handleAnalyticsChoice} />
+        return (
+          <AnalyticsStep
+            diagnosticLogUploadConsented={diagnosticLogUploadDraft}
+            onDiagnosticLogUploadConsentedChange={setDiagnosticLogUploadDraft}
+            onNext={handleAnalyticsChoice}
+          />
+        )
       case 10:
         return <AllSetStep onFinish={handleFinish} />
       default:

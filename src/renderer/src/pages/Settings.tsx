@@ -55,6 +55,7 @@ export function Settings() {
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
+  const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -70,14 +71,22 @@ export function Settings() {
     window.electronAPI.invoke('app:get-runtime-info').then(setRuntimeInfo)
     void refreshStorageInfo()
     window.electronAPI.invoke('prefs:get-analytics-consent').then(setAnalyticsConsentState)
+    window.electronAPI
+      .invoke('prefs:get-diagnostic-log-upload-consent')
+      .then(setDiagnosticLogUploadConsentState)
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on(
       'prefs:analytics-consent-changed',
       setAnalyticsConsentState
     )
+    const unsubDiagnosticLogConsent = window.electronAPI.on(
+      'prefs:diagnostic-log-upload-consent-changed',
+      setDiagnosticLogUploadConsentState
+    )
     return () => {
       unsub()
       unsubConsent()
+      unsubDiagnosticLogConsent()
     }
   }, [refreshStorageInfo])
 
@@ -125,6 +134,17 @@ export function Settings() {
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
     setAnalyticsConsentState(nextValue)
+  }
+
+  const handleToggleDiagnosticLogUpload = async () => {
+    const nextValue = !diagnosticLogUploadConsent
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'diagnostic_log_upload_consent_toggled',
+      details: { enabled: nextValue }
+    })
+    await window.electronAPI.invoke('prefs:set-diagnostic-log-upload-consent', nextValue)
+    setDiagnosticLogUploadConsentState(nextValue)
   }
 
   const handleRemoveDownloadedComponents = async () => {
@@ -280,8 +300,8 @@ export function Settings() {
             <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
               <div>
                 <p className="text-[12px] text-ink-muted">
-                  Share anonymous usage data and crash reports to help improve AutoDoc. No meeting
-                  content or personal data is ever sent.
+                  Share anonymous usage data and crash reports to help improve AutoDoc. Meeting
+                  content stays local, and technical logs are optional.
                 </p>
               </div>
               <button
@@ -295,6 +315,23 @@ export function Settings() {
                   className={`block h-5 w-5 rounded-full bg-white transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
                 />
               </button>
+            </div>
+            <div className="mt-3 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={diagnosticLogUploadConsent}
+                  onChange={() => void handleToggleDiagnosticLogUpload()}
+                  disabled={analyticsConsent !== true}
+                  className="mt-0.5 h-4 w-4 rounded border-border-subtle text-sage focus:ring-sage disabled:opacity-50"
+                  aria-label="Attach technical app logs to error reports"
+                />
+                <span className="text-[12px] text-ink-muted leading-relaxed">
+                  <strong className="text-ink font-semibold">Attach technical app logs to error reports</strong>
+                  {' '}
+                  when diagnostics are enabled. This can be off while analytics and crash reports stay on.
+                </span>
+              </label>
             </div>
           </div>
           <div>

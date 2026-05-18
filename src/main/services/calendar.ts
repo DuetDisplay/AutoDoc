@@ -9,11 +9,10 @@ import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
 import { CalendarTransientError, isTransientCalendarError } from './calendar-error-classification'
+import { requireConfiguredAuthWorkerUrl } from './distribution-config'
 
 const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
-const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
-
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
   if (!idToken) return null
 
@@ -58,8 +57,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
   async connect(): Promise<CalendarAccount> {
     const state = crypto.randomBytes(16).toString('hex')
-
-    const authUrl = `${AUTH_WORKER_URL}/auth/google?state=${encodeURIComponent(state)}`
+    const authWorkerUrl = requireConfiguredAuthWorkerUrl()
+    const authUrl = `${authWorkerUrl}/auth/google?state=${encodeURIComponent(state)}`
     const callbackPromise = this.waitForCallback(state)
     await shell.openExternal(authUrl)
 
@@ -228,7 +227,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (creds.expiry_date && creds.expiry_date > Date.now() + 5 * 60_000) return
 
     try {
-      const response = await fetch(`${AUTH_WORKER_URL}/auth/refresh`, {
+      const authWorkerUrl = requireConfiguredAuthWorkerUrl()
+      const response = await fetch(`${authWorkerUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: creds.refresh_token }),

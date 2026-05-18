@@ -4,8 +4,13 @@ import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { createRequire } from 'module'
 import { readdirSync, rmSync } from 'fs'
-import { stat, readdir, rename, mkdir, access, rmdir } from 'fs/promises'
-import { migrateRecordings, cleanupTempFiles, initializeEncryption } from './services/crypto'
+import { stat, readdir, rename, mkdir, access, rmdir, writeFile } from 'fs/promises'
+import {
+  migrateRecordings,
+  cleanupTempFiles,
+  initializeEncryption,
+  encryptJSON
+} from './services/crypto'
 import {
   startRecordingMediaHttpServer,
   stopRecordingMediaHttpServer
@@ -29,11 +34,20 @@ import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
 import { registerChatIpc } from './ipc/chat-ipc'
 import { registerSpeakersIpc } from './ipc/speakers-ipc'
-import { PrefsStore, readInitialAnalyticsConsent } from './services/prefs-store'
+import {
+  PrefsStore,
+  readInitialAnalyticsConsent,
+  readInitialDiagnosticLogUploadConsent
+} from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
-import { logAutodocEvent, logAutodocFailure } from './services/autodoc-log'
+import {
+  logAutodocEvent,
+  logAutodocFailure,
+  setDiagnosticLogUploadForErrorsEnabled,
+  flushAutodocLogWrites
+} from './services/autodoc-log'
 import type {
   AppRuntimeInfo,
   AppStorageInfo,
@@ -86,6 +100,9 @@ import {
   getStorageDiagnostics
 } from './services/storage-manager'
 import { getResetLocalDataTargets } from './services/reset-local-data'
+import { createSentryStubRuntime } from './services/sentry-stub'
+import { notifyNotesReady } from './services/notes-ready-notifier'
+import { readMetadata } from './services/calendar-matcher'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -181,7 +198,9 @@ if (process.platform === 'darwin' && is.dev) {
 }
 
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
-const shouldAllowSentryInEnv = !isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV)
+const SENTRY_STUB_PATH = process.env.AUTODOC_SENTRY_STUB_PATH
+const shouldAllowSentryInEnv =
+  !!SENTRY_STUB_PATH || (!isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
 const homeDir = homedir()
 
 function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
@@ -208,10 +227,18 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 
 let ollamaManager: OllamaManager | null = null
 let isQuitting = false
-let mainSentry: typeof import('@sentry/electron/main') | null = null
+let mainSentry: MainSentryRuntimeModule | null = null
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
+let diagnosticLogUploadConsentEnabled = false
+
+function syncDiagnosticLogUploadForErrors(): void {
+  setDiagnosticLogUploadForErrorsEnabled(
+    analyticsConsentEnabled && diagnosticLogUploadConsentEnabled
+  )
+}
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock(buildSingleInstanceLaunchData())
 traceInstallPolicy('index: single-instance lock result', {
   gotLock: gotSingleInstanceLock,
@@ -266,26 +293,39 @@ function clearWindowsE2ETestUserDataContents(userDataPath: string): void {
   }
 }
 
-type MainSentryRuntimeModule = typeof import('@sentry/electron/main') & {
-  getDefaultIntegrations(options: Record<string, unknown>): Array<{ name: string }>
+type MainSentryRuntimeModule = {
+  init(options: Record<string, unknown>): void
+  withScope(callback: (scope: unknown) => void): void
+  captureException(error: Error): void
+  captureMessage?: (message: string, level?: 'info' | 'warning' | 'error') => void
+  setContext(key: string, data: Record<string, unknown>): void
+  setTag(key: string, value: string): void
+  getIsolationScope(): { clear(): void }
+  getCurrentScope(): { clear(): void }
+  getDefaultIntegrations?: (options: Record<string, unknown>) => Array<{ name: string }>
 }
 
 function initializeMainSentry(): void {
-  if (!SENTRY_DSN || !shouldAllowSentryInEnv || mainSentryEnabled) return
+  if ((!SENTRY_DSN && !SENTRY_STUB_PATH) || !shouldAllowSentryInEnv || mainSentryEnabled) return
 
   try {
     if (!mainSentry) {
-      mainSentry = require('@sentry/electron/main') as typeof import('@sentry/electron/main')
+      if (SENTRY_STUB_PATH) {
+        mainSentry = createSentryStubRuntime(SENTRY_STUB_PATH) as MainSentryRuntimeModule
+      } else {
+        mainSentry = require('@sentry/electron/main') as MainSentryRuntimeModule
+      }
     }
 
-    const sentryRuntime = mainSentry as MainSentryRuntimeModule
+    const sentryRuntime = mainSentry
     const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
-    const integrations = sentryRuntime
-      .getDefaultIntegrations({ sendDefaultPii: false })
-      .filter((integration) => integration.name !== 'MainProcessSession')
+    const integrations =
+      sentryRuntime.getDefaultIntegrations?.({ sendDefaultPii: false }).filter(
+        (integration) => integration.name !== 'MainProcessSession'
+      ) ?? []
 
     const initOptions = {
-      dsn: SENTRY_DSN,
+      dsn: SENTRY_DSN ?? 'stub://autodoc',
       environment: is.dev ? 'development' : 'production',
       release: `autodoc@${app.getVersion()}`,
       enabled: true,
@@ -301,8 +341,8 @@ function initializeMainSentry(): void {
       }
     }
 
-    sentryRuntime.init(initOptions as Parameters<typeof sentryRuntime.init>[0])
-    initSentryReporter(mainSentry)
+    sentryRuntime.init(initOptions)
+    initSentryReporter(mainSentry as unknown as typeof import('@sentry/electron/main'))
     mainSentryEnabled = true
     onMainSentryReady?.()
   } catch (err) {
@@ -318,8 +358,10 @@ if (!gotSingleInstanceLock) {
 } else {
   try {
     analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
+    syncDiagnosticLogUploadForErrors()
   } catch (err) {
-    console.warn('Failed to read initial analytics consent for Sentry:', err)
+    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
   }
 
   initializeMainSentry()
@@ -470,10 +512,18 @@ app.whenReady().then(async () => {
     setGlobalTag('arch', process.arch)
     setGlobalTag('app_version', app.getVersion())
     setGlobalTag('electron_version', process.versions.electron)
+    setGlobalTag(
+      'diagnostic_log_upload_consent',
+      diagnosticLogUploadConsentEnabled ? 'enabled' : 'disabled'
+    )
     setGlobalContext('runtime', runtimeContext)
     setGlobalContext('whisper', whisperContext)
     setGlobalContext('ollama', ollamaContext)
     setGlobalContext('calendar', calendarContext)
+    setGlobalContext('privacy', {
+      analyticsConsentEnabled,
+      diagnosticLogUploadConsentEnabled
+    })
   }
   onMainSentryReady = applyCurrentSentryContext
   if (mainSentryEnabled) {
@@ -970,6 +1020,16 @@ app.whenReady().then(async () => {
   transcriptionService.onComplete((meetingId) => {
     segmentationService.enqueue(meetingId)
   })
+  segmentationService.onComplete((meetingId) => {
+    void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId).catch((err) => {
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'Failed to show notes ready notification',
+        error: err,
+        meetingId
+      })
+    })
+  })
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
@@ -1166,6 +1226,100 @@ app.whenReady().then(async () => {
     ipcMain.handle('e2e:detection-poll', async (_event, advanceMs?: number) => {
       await detectionService.debugPollNow(advanceMs ?? 0)
     })
+
+    ipcMain.handle('e2e:trigger-main-error', async () => {
+      logAutodocFailure({
+        area: 'app',
+        message: 'E2E controlled failure',
+        error: new Error('E2E controlled failure'),
+        context: {
+          sourceName: 'Quarterly Planning with jane@example.com',
+          trackedSourceName: 'Zoom Meeting - Product Review',
+          relevantWindowNames: ['Zoom Meeting - Product Review', 'Slack | Team Channel'],
+          access_token: 'secret-token-value',
+          path: '/Users/tester/Documents/meeting-notes.txt'
+        }
+      })
+      await flushAutodocLogWrites()
+    })
+
+    ipcMain.handle(
+      'e2e:trigger-notes-ready-notification',
+      async (
+        _event,
+        options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+      ) => {
+        const meetingId = options?.meetingId ?? `e2e-notes-ready-${Date.now()}`
+        const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
+        const existingMetadata = await readMetadata(meetingDir)
+        if (!existingMetadata) {
+          await mkdir(meetingDir, { recursive: true })
+          await encryptJSON(
+            {
+              sourceName: options?.title ?? 'Weekly Sync',
+              startedAt: Date.now() - 60_000,
+              stoppedAt: Date.now(),
+              durationSeconds: 60
+            },
+            join(meetingDir, 'metadata.json')
+          )
+          await encryptJSON(
+            [
+              {
+                id: `${meetingId}-transcript-1`,
+                meetingId,
+                speaker: 'Speaker 1',
+                text: 'AutoDoc finished the transcript and notes.',
+                startMs: 0,
+                endMs: 5_000,
+                confidence: 0.99
+              }
+            ],
+            join(meetingDir, 'transcript.json')
+          )
+          if (options?.status === 'failed') {
+            await writeFile(
+              join(meetingDir, 'segments.error'),
+              JSON.stringify({
+                error: 'E2E segmentation failure',
+                retries: 1,
+                status: 'failed'
+              }),
+              'utf-8'
+            )
+          } else {
+            await encryptJSON(
+              {
+                decisions: [],
+                actionItems: [],
+                information: [
+                  {
+                    id: `${meetingId}-segment-1`,
+                    meetingId,
+                    category: 'information',
+                    topic: 'Follow-up',
+                    title: 'Summary ready',
+                    content: 'The transcript and notes are ready to review.',
+                    assignee: null,
+                    deadline: null,
+                    sourceStartMs: 0,
+                    sourceEndMs: 5_000
+                  }
+                ],
+                discussion: [],
+                statusUpdates: []
+              },
+              join(meetingDir, 'segments.json')
+            )
+          }
+        }
+
+        if (options?.status !== 'failed') {
+          await notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId)
+        }
+        return meetingId
+      }
+    )
   }
 
   if (isRealSetupTest) {
@@ -1265,8 +1419,16 @@ app.whenReady().then(async () => {
     prefsStore,
     (enabled) => {
       analyticsConsentEnabled = enabled
+      syncDiagnosticLogUploadForErrors()
       if (mainSentryEnabled) {
         resetSentryScopes()
+        applyCurrentSentryContext()
+      }
+    },
+    (enabled) => {
+      diagnosticLogUploadConsentEnabled = enabled
+      syncDiagnosticLogUploadForErrors()
+      if (mainSentryEnabled) {
         applyCurrentSentryContext()
       }
     },

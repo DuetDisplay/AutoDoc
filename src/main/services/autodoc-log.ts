@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { appendFile, mkdir, rename, rm, stat } from 'fs/promises'
 import { join } from 'path'
 import { captureError } from './sentry-reporter'
+import { buildDiagnosticLogAttachment, sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 
 const LOG_DIR_NAME = 'logs'
 const LOG_BASENAME = 'autodocLog'
@@ -35,6 +36,7 @@ interface SerializedError {
 }
 
 let writeQueue = Promise.resolve()
+let diagnosticLogUploadForErrorsEnabled = false
 
 export function getAutodocLogPath(): string {
   return join(getLogsDir(), `${LOG_BASENAME}${LOG_EXTENSION}`)
@@ -51,19 +53,35 @@ export function logAutodocFailure(entry: LogEntryInput): void {
     context: entry.context,
   })
 
-  captureError(entry.error ?? entry.message, {
-    area: entry.area,
-    meetingId: entry.meetingId,
-    extra: {
-      message: entry.message,
-      error: serializedError,
-      context: entry.context ?? null,
-    },
-  })
-
   writeQueue = writeQueue
-    .then(() => appendLogLine(line))
-    .catch(() => {})
+    .then(async () => {
+      await appendLogLine(line)
+      const diagnosticLogAttachment = await buildDiagnosticLogAttachment(
+        diagnosticLogUploadForErrorsEnabled,
+        getAutodocLogPath()
+      )
+      captureError(entry.error ?? entry.message, {
+        area: entry.area,
+        meetingId: entry.meetingId,
+        extra: {
+          message: entry.message,
+          error: serializedError,
+          context: entry.context ?? null,
+        },
+        diagnosticLogAttachment
+      })
+    })
+    .catch(() => {
+      captureError(entry.error ?? entry.message, {
+        area: entry.area,
+        meetingId: entry.meetingId,
+        extra: {
+          message: entry.message,
+          error: serializedError,
+          context: entry.context ?? null,
+        }
+      })
+    })
 }
 
 export function logAutodocEvent(entry: Omit<LogEntryInput, 'error'> & { level?: 'info' | 'warn' }): void {
@@ -81,6 +99,14 @@ export function logAutodocEvent(entry: Omit<LogEntryInput, 'error'> & { level?: 
     .catch(() => {})
 }
 
+export async function flushAutodocLogWrites(): Promise<void> {
+  await writeQueue
+}
+
+export function setDiagnosticLogUploadForErrorsEnabled(enabled: boolean): void {
+  diagnosticLogUploadForErrorsEnabled = enabled
+}
+
 async function appendLogLine(line: string): Promise<void> {
   const logDir = getLogsDir()
   const logPath = getAutodocLogPath()
@@ -92,7 +118,7 @@ async function appendLogLine(line: string): Promise<void> {
     await rotateLogs(logPath)
   }
 
-  await appendFile(logPath, line, 'utf-8')
+  await appendFile(logPath, sanitizeDiagnosticLogTail(line), 'utf-8')
 }
 
 function buildLogLine(entry: {

@@ -102,6 +102,7 @@ export interface MeetingMetadata {
   isFinalizing?: boolean
   calendarTitle?: string
   customTitle?: string
+  notesReadyNotificationSentAt?: number
 }
 
 export interface RecordingSource {

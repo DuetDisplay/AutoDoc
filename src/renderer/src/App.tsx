@@ -295,6 +295,12 @@ export default function App() {
     return unsub
   }, [events, isRecording, fetchSources, handleStart])
 
+  useEffect(() => {
+    return window.electronAPI.on('notes:open-meeting', ({ meetingId }) => {
+      window.location.hash = `#${ROUTES.recordings}/${meetingId}`
+    })
+  }, [])
+
   // Auto-stop recording when meeting-end signals stay gone long enough to be convincing.
   useEffect(() => {
     const unsub = window.electronAPI.on('detection:auto-stop', (payload) => {

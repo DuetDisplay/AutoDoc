@@ -212,7 +212,7 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
 
     const promptConfig = mocks.showNotificationWindow.mock.calls[0][0]
-    promptConfig.onRecord()
+    promptConfig.onPrimaryAction()
 
     await (service as any).poll()
 

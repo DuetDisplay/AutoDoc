@@ -51,6 +51,7 @@ export class SegmentationService {
   private activeProgress: number | undefined = undefined
   private processing = false
   private enqueueSource = new Map<string, EnqueueSource>()
+  private onCompleteCallback: ((meetingId: string) => void) | null = null
 
   constructor(
     private llmProvider: LLMProvider,
@@ -80,6 +81,10 @@ export class SegmentationService {
 
   retry(meetingId: string, source: EnqueueSource = 'direct'): void {
     this.enqueue(meetingId, source)
+  }
+
+  onComplete(callback: (meetingId: string) => void): void {
+    this.onCompleteCallback = callback
   }
 
   getProgress(meetingId: string): number | undefined {
@@ -242,6 +247,7 @@ export class SegmentationService {
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
+      this.onCompleteCallback?.(meetingId)
       return
     }
 
@@ -314,6 +320,7 @@ export class SegmentationService {
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
+    this.onCompleteCallback?.(meetingId)
   }
 
   private async markFailed(
