@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || inputs.release_platform == 'mac' || inputs.release_platform == 'all'
     runs-on: macos-latest
     permissions:
-      contents: write
+      contents: read
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
@@ -134,7 +134,7 @@ jobs:
     if: github.event_name == 'push' || inputs.release_platform == 'all'
     runs-on: windows-2022
     permissions:
-      contents: write
+      contents: read
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
