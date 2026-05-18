@@ -14,7 +14,7 @@ import {
   rename,
   stat
 } from 'fs/promises'
-import { basename, dirname, join } from 'path'
+import { basename, delimiter, dirname, join } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
@@ -184,6 +184,25 @@ export class WhisperManager extends EventEmitter {
 
   getFasterWhisperComputeType(): 'float16' | 'int8' {
     return this.getSelectedWindowsProfile().computeType
+  }
+
+  getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
+    const runtimeDir = this.getFasterWhisperRuntimeDir()
+    const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
+    const pathAdditions = [
+      runtimeDir,
+      join(runtimeDir, 'DLLs'),
+      join(sitePackagesDir, 'ctranslate2'),
+      join(sitePackagesDir, 'nvidia', 'cublas', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cuda_runtime', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cuda_nvrtc', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cudnn', 'bin')
+    ].filter((candidate) => existsSync(candidate))
+
+    return {
+      ...process.env,
+      PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+    }
   }
 
   getSetupStatus(): WhisperSetupStatus {
@@ -1356,7 +1375,11 @@ export class WhisperManager extends EventEmitter {
             '--threads',
             '2'
           ],
-          { windowsHide: true, timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS },
+          {
+            windowsHide: true,
+            timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS,
+            env: this.getFasterWhisperProcessEnv()
+          },
           (err, stdout, stderr) => {
             if (err) {
               logAutodocFailure({

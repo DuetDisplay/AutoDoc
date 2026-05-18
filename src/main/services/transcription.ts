@@ -1541,7 +1541,10 @@ export class TranscriptionService {
         args.push('--threads', String(threadCount))
       }
 
-      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args)
+      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args, {
+        env: this.whisperManager.getFasterWhisperProcessEnv(),
+        windowsHide: true
+      })
       if (threadCount !== null) {
         console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
       }

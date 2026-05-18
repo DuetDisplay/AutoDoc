@@ -1,7 +1,8 @@
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
-import { dirname, join } from 'path'
+import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
+import { constants } from 'fs'
+import { delimiter, dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
@@ -454,6 +455,15 @@ describe('Whisper onboarding dependency installation', () => {
             await mkdir(dirname(target), { recursive: true })
             await writeFile(target, `${asset.id} file`)
           }
+          if (profile.id === 'faster-whisper-cuda' && asset.id === 'runtime') {
+            await mkdir(join(assetRoot, 'DLLs'), { recursive: true })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cublas', 'bin'), {
+              recursive: true
+            })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cudnn', 'bin'), {
+              recursive: true
+            })
+          }
         }
       )
       vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
@@ -475,6 +485,27 @@ describe('Whisper onboarding dependency installation', () => {
         access(join(manager.getFasterWhisperModelPath(), 'model.bin'))
       ).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      const fasterWhisperEnvPath = manager.getFasterWhisperProcessEnv().PATH?.split(delimiter)
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cublas',
+          'bin'
+        )
+      )
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cudnn',
+          'bin'
+        )
+      )
       expect(statuses).toContainEqual({
         phase: 'downloading-whisper',
         backend: 'faster-whisper-cuda',
