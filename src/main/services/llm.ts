@@ -21,12 +21,41 @@ const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high w
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+export const WINDOWS_MAX_OUTPUT_TOKENS = 4096
 const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
 const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
+const WINDOWS_CATEGORY_GUIDANCE =
+  'It is okay for action_items or status_updates to be empty. Put factual details, product capabilities, costs, timelines, and explanations under information unless the transcript explicitly assigns work or makes a decision.'
+
+const NOTES_RESPONSE_ITEM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    topic: { type: 'string' },
+    title: { type: 'string' },
+    content: { type: 'string' },
+    sourceStartMs: { type: 'number' },
+    sourceEndMs: { type: 'number' }
+  },
+  required: ['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs']
+} as const
+
+const NOTES_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    decisions: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    action_items: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    information: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    discussion: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    status_updates: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA }
+  },
+  required: ['decisions', 'action_items', 'information', 'discussion', 'status_updates']
+} as const
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -296,10 +325,11 @@ export class OllamaProvider implements LLMProvider {
       const chunkItemMin = Math.max(2, Math.round((estMinutes * 0.8) / chunks.length))
       const chunkItemMax = Math.max(5, Math.round((estMinutes * 1.5) / chunks.length))
       const knownTopics = this.extractKnownTopics(merged)
+      const windowsCategoryGuidance = this.getWindowsCategoryGuidance()
       const chunkLabel =
         chunks.length > 1
-          ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
-          : `\n\n${itemGuidance}`
+          ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
+          : `\n\n${itemGuidance}${windowsCategoryGuidance}`
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -487,10 +517,10 @@ export class OllamaProvider implements LLMProvider {
             { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` }
           ],
           stream: true,
-          format: 'json',
+          format: this.getNotesResponseFormat(),
           options: {
             num_ctx: contextTokens,
-            num_predict: MAX_OUTPUT_TOKENS,
+            num_predict: this.getMaxOutputTokens(),
             temperature: 0,
             repeat_penalty: 1.3
           }
@@ -594,6 +624,18 @@ export class OllamaProvider implements LLMProvider {
     }
 
     return content
+  }
+
+  private getNotesResponseFormat(): 'json' | typeof NOTES_RESPONSE_SCHEMA {
+    return process.platform === 'win32' ? NOTES_RESPONSE_SCHEMA : 'json'
+  }
+
+  private getMaxOutputTokens(): number {
+    return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
+  }
+
+  private getWindowsCategoryGuidance(): string {
+    return process.platform === 'win32' ? ` ${WINDOWS_CATEGORY_GUIDANCE}` : ''
   }
 
   private enableLowMemoryContext(
