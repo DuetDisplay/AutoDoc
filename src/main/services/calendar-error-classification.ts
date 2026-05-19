@@ -18,6 +18,16 @@ export class UnsupportedCalendarAccountError extends Error {
   }
 }
 
+export class ReconnectRequiredCalendarAuthError extends Error {
+  readonly reason: 'reconnect-required'
+
+  constructor(message: string, reason: 'reconnect-required' = 'reconnect-required') {
+    super(message)
+    this.name = 'ReconnectRequiredCalendarAuthError'
+    this.reason = reason
+  }
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
@@ -55,10 +65,33 @@ export function isUnsupportedMicrosoftMailboxError(error: unknown): boolean {
   return message.includes('mailboxnotenabledforrestapi')
 }
 
+export function isReconnectRequiredMicrosoftAuthError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+
+  return [
+    'invalid_grant',
+    'interaction_required',
+    'insufficient scopes',
+    'insufficient scope',
+    'insufficient privileges',
+    'insufficient privileges to complete the operation',
+    'token is expired',
+    'access token has expired',
+    'invalidauthenticationtoken',
+    'error_access_denied'
+  ].some((pattern) => message.includes(pattern))
+}
+
 export function isUnsupportedCalendarAccountError(
   error: unknown
 ): error is UnsupportedCalendarAccountError {
   return error instanceof UnsupportedCalendarAccountError
+}
+
+export function isReconnectRequiredCalendarAuthError(
+  error: unknown
+): error is ReconnectRequiredCalendarAuthError {
+  return error instanceof ReconnectRequiredCalendarAuthError
 }
 
 export function isCalendarTransientError(error: unknown): error is CalendarTransientError {

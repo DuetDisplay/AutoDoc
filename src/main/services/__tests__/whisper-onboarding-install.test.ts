@@ -5,6 +5,20 @@ import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
+const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
+
+function getExecFileCallback(
+  optionsOrCallback: unknown,
+  maybeCallback?: unknown
+): ExecFileCallback {
+  const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+  if (typeof callback !== 'function') {
+    throw new Error('Expected execFile callback in test')
+  }
+
+  return callback as ExecFileCallback
+}
 
 function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', {
@@ -29,8 +43,11 @@ async function loadWhisperManager(
   vi.resetModules()
 
   const execSyncMock = vi.fn()
-  const execFileMock = vi.fn((_file, _args, _options, callback) => {
-    callback(null)
+  const execFileMock = vi.fn((...args: unknown[]) => {
+    const callback = args.at(-1)
+    if (typeof callback === 'function') {
+      callback(null)
+    }
     return {} as never
   })
 
@@ -69,6 +86,11 @@ afterEach(async () => {
   vi.doUnmock('ffmpeg-static')
   delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
+  if (originalTestUserDataDir == null) {
+    delete process.env.AUTODOC_TEST_USER_DATA_DIR
+  } else {
+    process.env.AUTODOC_TEST_USER_DATA_DIR = originalTestUserDataDir
+  }
   vi.resetModules()
   setPlatform(originalPlatform)
 })
@@ -158,6 +180,7 @@ describe('Whisper onboarding dependency installation', () => {
     const installedModelsDir = join(rootDir, 'app-data', 'AutoDoc', 'models')
 
     try {
+      delete process.env.AUTODOC_TEST_USER_DATA_DIR
       await mkdir(installedModelsDir, { recursive: true })
       await writeFile(join(installedModelsDir, 'whisper-cli.exe'), 'whisper')
       await writeFile(join(installedModelsDir, 'ffmpeg.exe'), 'ffmpeg')
@@ -820,7 +843,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = getExecFileCallback(optionsOrCallback, maybeCallback)
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean
@@ -896,7 +919,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = getExecFileCallback(optionsOrCallback, maybeCallback)
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean

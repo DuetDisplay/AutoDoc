@@ -180,6 +180,32 @@ describe('Settings', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows an inline message when a Microsoft account needs to be reconnected', async () => {
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [
+        createCalendarAccount({
+          id: 'acct-microsoft',
+          provider: 'microsoft',
+          email: 'person@contoso.com',
+          syncIssue: 'reconnect-required'
+        })
+      ],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    expect(await screen.findByText('person@contoso.com')).toBeInTheDocument()
+    expect(
+      screen.getByText('Microsoft Outlook needs to be reconnected to resume calendar sync.')
+    ).toBeInTheDocument()
+  })
+
   it('removes downloaded AI components from settings', async () => {
     let storageInfo = createStorageInfo()
 

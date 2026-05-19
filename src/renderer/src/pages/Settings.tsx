@@ -19,6 +19,9 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
   if (account.syncIssue === 'unsupported-mailbox') {
     return 'Calendar sync is unavailable for this Microsoft mailbox type.'
   }
+  if (account.syncIssue === 'reconnect-required') {
+    return 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+  }
 
   return null
 }

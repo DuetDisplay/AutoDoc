@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarManager } from '../calendar-manager'
+import {
+  ReconnectRequiredCalendarAuthError,
+  isReconnectRequiredMicrosoftAuthError
+} from '../calendar-error-classification'
 
 const { logAutodocFailure, captureMessage } = vi.hoisted(() => ({
   logAutodocFailure: vi.fn(),
@@ -38,6 +42,17 @@ function createProvider(overrides: Record<string, unknown> = {}) {
     ...overrides
   }
 }
+
+const fetchScenarios = [
+  {
+    label: 'upcoming events',
+    invoke: (manager: CalendarManager) => manager.fetchAllUpcomingEvents()
+  },
+  {
+    label: 'recent events',
+    invoke: (manager: CalendarManager) => manager.fetchAllRecentEvents()
+  }
+] as const
 
 describe('Calendar sync hardening', () => {
   beforeEach(() => {
@@ -103,7 +118,7 @@ describe('Calendar sync hardening', () => {
     expect(logAutodocFailure).not.toHaveBeenCalled()
     expect(captureMessage).toHaveBeenCalledTimes(1)
     expect(captureMessage).toHaveBeenCalledWith(
-      'Unsupported Microsoft mailbox disabled for calendar sync',
+      'Unsupported calendar account disabled for calendar sync',
       expect.objectContaining({
         area: 'calendar',
         level: 'info',
@@ -114,4 +129,108 @@ describe('Calendar sync hardening', () => {
       })
     )
   })
+
+  it('does not classify invalid_client as a reconnect-required Microsoft auth failure', () => {
+    expect(
+      isReconnectRequiredMicrosoftAuthError(
+        new Error(
+          'Microsoft token refresh failed: 400 {"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided."}'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it.each(fetchScenarios)(
+    'marks Microsoft accounts as reconnect-required after a recoverable auth failure while fetching $label',
+    async ({ invoke }) => {
+      const manager = new CalendarManager()
+      const fetchFailure = vi
+        .fn()
+        .mockRejectedValue(
+          new ReconnectRequiredCalendarAuthError(
+            'Microsoft token refresh failed: 400 {"error":"interaction_required","error_description":"AADSTS50078: User interaction is required to renew consent."}'
+          )
+        )
+      const microsoftProvider = createProvider({
+        fetchUpcomingEvents: fetchFailure,
+        fetchRecentEvents: fetchFailure
+      })
+
+      ;(manager as any).accounts = [
+        {
+          id: 'microsoft-account-1',
+          provider: 'microsoft',
+          email: 'user@contoso.com',
+          connectedAt: Date.now()
+        }
+      ]
+      ;(manager as any).providers = new Map([['microsoft', microsoftProvider]])
+
+      await expect(invoke(manager)).resolves.toEqual([])
+      await expect(invoke(manager)).resolves.toEqual([])
+
+      expect(fetchFailure).toHaveBeenCalledTimes(1)
+      expect((manager as any).accounts).toHaveLength(1)
+      expect((manager as any).accounts[0]).toEqual(
+        expect.objectContaining({
+          id: 'microsoft-account-1',
+          syncIssue: 'reconnect-required'
+        })
+      )
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+      expect(captureMessage).toHaveBeenCalledTimes(1)
+      expect(captureMessage).toHaveBeenCalledWith(
+        'Calendar account requires reconnect',
+        expect.objectContaining({
+          area: 'calendar',
+          level: 'info',
+          tags: expect.objectContaining({
+            provider: 'microsoft',
+            calendar_sync_issue: 'reconnect-required'
+          })
+        })
+      )
+    }
+  )
+
+  it.each(fetchScenarios)(
+    'does not mark Google accounts as reconnect-required for generic auth error strings while fetching $label',
+    async ({ invoke }) => {
+      const manager = new CalendarManager()
+      const fetchFailure = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Google token refresh failed: 400 {"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+          )
+        )
+      const googleProvider = createProvider({
+        fetchUpcomingEvents: fetchFailure,
+        fetchRecentEvents: fetchFailure
+      })
+
+      ;(manager as any).accounts = [
+        {
+          id: 'google-account-1',
+          provider: 'google',
+          email: 'user@gmail.com',
+          connectedAt: Date.now()
+        }
+      ]
+      ;(manager as any).providers = new Map([['google', googleProvider]])
+
+      await expect(invoke(manager)).resolves.toEqual([])
+      await expect(invoke(manager)).resolves.toEqual([])
+
+      expect(fetchFailure).toHaveBeenCalledTimes(2)
+      expect((manager as any).accounts).toHaveLength(1)
+      expect((manager as any).accounts[0]).toEqual(
+        expect.not.objectContaining({
+          syncIssue: 'reconnect-required'
+        })
+      )
+      expect(captureMessage).not.toHaveBeenCalled()
+      expect(logAutodocFailure).toHaveBeenCalledTimes(2)
+    }
+  )
 })

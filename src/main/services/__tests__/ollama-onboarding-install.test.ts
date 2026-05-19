@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
+const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 
 function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', {
@@ -52,6 +53,11 @@ afterEach(() => {
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
   vi.resetModules()
+  if (originalTestUserDataDir == null) {
+    delete process.env.AUTODOC_TEST_USER_DATA_DIR
+  } else {
+    process.env.AUTODOC_TEST_USER_DATA_DIR = originalTestUserDataDir
+  }
   setPlatform(originalPlatform)
 })
 
@@ -145,6 +151,7 @@ describe('Ollama onboarding dependency installation', () => {
     const installedDataDir = join(rootDir, 'app-data', 'AutoDoc', 'ollama-data')
 
     try {
+      delete process.env.AUTODOC_TEST_USER_DATA_DIR
       await mkdir(installedRuntimeDir, { recursive: true })
       await mkdir(installedDataDir, { recursive: true })
       await writeFile(join(installedRuntimeDir, 'ollama.exe'), 'binary')
