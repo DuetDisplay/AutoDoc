@@ -8,8 +8,10 @@ import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
 import {
   CalendarTransientError,
+  ReconnectRequiredCalendarAuthError,
   UnsupportedCalendarAccountError,
   isTransientCalendarError,
+  isReconnectRequiredMicrosoftAuthError,
   isUnsupportedMicrosoftMailboxError
 } from './calendar-error-classification'
 
@@ -198,6 +200,11 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
             'Microsoft mailbox is not supported by Microsoft Graph calendar APIs.'
           )
         }
+        if (isReconnectRequiredMicrosoftAuthError(error)) {
+          throw new ReconnectRequiredCalendarAuthError(
+            'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+          )
+        }
         throw error
       }
 
@@ -291,6 +298,11 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
             { cause: error }
           )
         }
+        if (isReconnectRequiredMicrosoftAuthError(error)) {
+          throw new ReconnectRequiredCalendarAuthError(
+            'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+          )
+        }
         console.error('Microsoft token refresh failed:', responseText)
         logAutodocFailure({
           area: 'calendar',
@@ -319,6 +331,9 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
           'Microsoft token refresh failed due to transient network conditions',
           { cause: err }
         )
+      }
+      if (err instanceof ReconnectRequiredCalendarAuthError) {
+        throw err
       }
       console.error('Microsoft token refresh error:', err)
       logAutodocFailure({

@@ -49,7 +49,7 @@ export interface CalendarAccount {
   provider: 'google' | 'microsoft'
   email: string
   connectedAt: number
-  syncIssue?: 'unsupported-mailbox' | null
+  syncIssue?: 'unsupported-mailbox' | 'reconnect-required' | null
 }
 
 export interface CalendarEvent {

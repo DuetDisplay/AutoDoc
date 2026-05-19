@@ -9,6 +9,7 @@ import { logAutodocFailure } from './autodoc-log'
 import { captureMessage } from './sentry-reporter'
 import {
   isTransientCalendarError,
+  isReconnectRequiredCalendarAuthError,
   isUnsupportedMicrosoftMailboxError,
   isCalendarTransientError,
   isUnsupportedCalendarAccountError
@@ -145,9 +146,16 @@ export class CalendarManager {
           isUnsupportedCalendarAccountError(result.reason) ||
           isUnsupportedMicrosoftMailboxError(result.reason)
         ) {
-          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox')
+          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox', account?.provider)
           console.warn(
             `Disabled calendar sync for unsupported account ${account?.email ?? account?.provider ?? 'unknown'}`
+          )
+          continue
+        }
+        if (isReconnectRequiredCalendarAuthError(result.reason)) {
+          await this.markAccountSyncIssue(account?.id, 'reconnect-required', account?.provider)
+          console.warn(
+            `Calendar reconnect required for ${account?.email ?? account?.provider ?? 'unknown'}`
           )
           continue
         }
@@ -197,9 +205,16 @@ export class CalendarManager {
           isUnsupportedCalendarAccountError(result.reason) ||
           isUnsupportedMicrosoftMailboxError(result.reason)
         ) {
-          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox')
+          await this.markAccountSyncIssue(account?.id, 'unsupported-mailbox', account?.provider)
           console.warn(
             `Disabled calendar sync for unsupported account ${account?.email ?? account?.provider ?? 'unknown'}`
+          )
+          continue
+        }
+        if (isReconnectRequiredCalendarAuthError(result.reason)) {
+          await this.markAccountSyncIssue(account?.id, 'reconnect-required', account?.provider)
+          console.warn(
+            `Calendar reconnect required for ${account?.email ?? account?.provider ?? 'unknown'}`
           )
           continue
         }
@@ -274,7 +289,8 @@ export class CalendarManager {
 
   private async markAccountSyncIssue(
     accountId: string | undefined,
-    syncIssue: CalendarAccount['syncIssue']
+    syncIssue: CalendarAccount['syncIssue'],
+    provider: CalendarAccount['provider'] | undefined
   ): Promise<void> {
     if (!accountId) {
       return
@@ -295,11 +311,15 @@ export class CalendarManager {
 
     if (changed) {
       this.saveAccounts()
-      captureMessage('Unsupported Microsoft mailbox disabled for calendar sync', {
+      const message =
+        syncIssue === 'reconnect-required'
+          ? 'Calendar account requires reconnect'
+          : 'Unsupported calendar account disabled for calendar sync'
+      captureMessage(message, {
         area: 'calendar',
         level: 'info',
         tags: {
-          provider: 'microsoft',
+          provider: provider ?? 'unknown',
           calendar_sync_issue: syncIssue ?? 'none'
         },
         extra: {

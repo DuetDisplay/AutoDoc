@@ -323,4 +323,124 @@ describe('OllamaProvider grounding', () => {
       })
     )
   })
+
+  it('falls back to a smaller Ollama context after a runner-stop 500 on a low-memory host', async () => {
+    const telemetry = vi.fn()
+    const adaptiveProvider = new OllamaProvider('http://localhost:11434', 'test-model', {
+      onTelemetry: telemetry
+    })
+    const requestContextTokens: number[] = []
+    ;(adaptiveProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 0.66, totalGiB: 8 })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { options?: { num_ctx?: number } }
+        requestContextTokens.push(body.options?.num_ctx ?? 0)
+
+        if (requestContextTokens.length === 1) {
+          return new Response('{"error":"model runner has unexpectedly stopped"}', { status: 500 })
+        }
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder()
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    message: {
+                      content: JSON.stringify({
+                        decisions: [],
+                        action_items: [],
+                        information: [
+                          {
+                            topic: 'Planning',
+                            title: 'Launch plan confirmed',
+                            content: 'The launch plan was confirmed for next week.',
+                            sourceStartMs: 0,
+                            sourceEndMs: 0
+                          }
+                        ],
+                        discussion: [],
+                        status_updates: []
+                      })
+                    }
+                  })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    const result = await adaptiveProvider.summarize(
+      'meeting-low-ram-generic-500',
+      '[00:00] [Chris] The launch plan was confirmed for next week.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(requestContextTokens).toEqual([
+      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
+      LOW_MEMORY_CONTEXT_TOKENS
+    ])
+    expect(telemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meetingId: 'meeting-low-ram-generic-500',
+        event: 'ollama_low_memory_fallback_triggered',
+        properties: expect.objectContaining({
+          hostFreeMemoryGiB: 0.66,
+          hostTotalMemoryGiB: 8
+        })
+      })
+    )
+    expect(telemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ollama_low_memory_fallback_succeeded'
+      })
+    )
+  })
+
+  it('does not force low-memory fallback for a runner-stop 500 on a healthy host', async () => {
+    const telemetry = vi.fn()
+    const adaptiveProvider = new OllamaProvider('http://localhost:11434', 'test-model', {
+      onTelemetry: telemetry
+    })
+    const requestContextTokens: number[] = []
+    ;(adaptiveProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 12, totalGiB: 32 })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { options?: { num_ctx?: number } }
+        requestContextTokens.push(body.options?.num_ctx ?? 0)
+        return new Response('{"error":"model runner has unexpectedly stopped"}', { status: 500 })
+      })
+    )
+
+    await expect(
+      adaptiveProvider.summarize(
+        'meeting-healthy-host-generic-500',
+        '[00:00] [Chris] The launch plan was confirmed for next week.',
+        undefined,
+        5
+      )
+    ).rejects.toThrow('model runner has unexpectedly stopped')
+
+    expect(requestContextTokens).toEqual([
+      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS
+    ])
+    expect(telemetry).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ollama_low_memory_fallback_triggered'
+      })
+    )
+  })
 })
