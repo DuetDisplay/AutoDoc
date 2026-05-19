@@ -10,7 +10,6 @@ import { captureMessage } from './sentry-reporter'
 import {
   isTransientCalendarError,
   isReconnectRequiredCalendarAuthError,
-  isReconnectRequiredMicrosoftAuthError,
   isUnsupportedMicrosoftMailboxError,
   isCalendarTransientError,
   isUnsupportedCalendarAccountError
@@ -153,10 +152,7 @@ export class CalendarManager {
           )
           continue
         }
-        if (
-          isReconnectRequiredCalendarAuthError(result.reason) ||
-          isReconnectRequiredMicrosoftAuthError(result.reason)
-        ) {
+        if (isReconnectRequiredCalendarAuthError(result.reason)) {
           await this.markAccountSyncIssue(account?.id, 'reconnect-required', account?.provider)
           console.warn(
             `Calendar reconnect required for ${account?.email ?? account?.provider ?? 'unknown'}`
@@ -215,10 +211,7 @@ export class CalendarManager {
           )
           continue
         }
-        if (
-          isReconnectRequiredCalendarAuthError(result.reason) ||
-          isReconnectRequiredMicrosoftAuthError(result.reason)
-        ) {
+        if (isReconnectRequiredCalendarAuthError(result.reason)) {
           await this.markAccountSyncIssue(account?.id, 'reconnect-required', account?.provider)
           console.warn(
             `Calendar reconnect required for ${account?.email ?? account?.provider ?? 'unknown'}`

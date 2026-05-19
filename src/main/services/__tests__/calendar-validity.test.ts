@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarManager } from '../calendar-manager'
+import { ReconnectRequiredCalendarAuthError } from '../calendar-error-classification'
 
 const { logAutodocFailure, captureMessage } = vi.hoisted(() => ({
   logAutodocFailure: vi.fn(),
@@ -121,7 +122,7 @@ describe('Calendar sync hardening', () => {
       fetchUpcomingEvents: vi
         .fn()
         .mockRejectedValue(
-          new Error(
+          new ReconnectRequiredCalendarAuthError(
             'Microsoft token refresh failed: 400 {"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided."}'
           )
         )
@@ -161,5 +162,41 @@ describe('Calendar sync hardening', () => {
         })
       })
     )
+  })
+
+  it('does not mark Google accounts as reconnect-required for generic auth error strings', async () => {
+    const manager = new CalendarManager()
+    const googleProvider = createProvider({
+      fetchUpcomingEvents: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Google token refresh failed: 400 {"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+          )
+        )
+    })
+
+    ;(manager as any).accounts = [
+      {
+        id: 'google-account-1',
+        provider: 'google',
+        email: 'user@gmail.com',
+        connectedAt: Date.now()
+      }
+    ]
+    ;(manager as any).providers = new Map([['google', googleProvider]])
+
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+    expect(googleProvider.fetchUpcomingEvents).toHaveBeenCalledTimes(2)
+    expect((manager as any).accounts).toHaveLength(1)
+    expect((manager as any).accounts[0]).toEqual(
+      expect.not.objectContaining({
+        syncIssue: 'reconnect-required'
+      })
+    )
+    expect(captureMessage).not.toHaveBeenCalled()
+    expect(logAutodocFailure).toHaveBeenCalledTimes(2)
   })
 })
