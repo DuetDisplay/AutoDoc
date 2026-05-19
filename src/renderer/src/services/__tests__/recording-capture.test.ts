@@ -31,9 +31,11 @@ class MockTrack extends EventTarget {
 
 class MockMediaStream {
   private readonly tracks: MockTrack[]
+  readonly signalLevel: number
 
-  constructor(tracks: MockTrack[] = []) {
+  constructor(tracks: MockTrack[] = [], options?: { signalLevel?: number }) {
     this.tracks = tracks
+    this.signalLevel = options?.signalLevel ?? 0
   }
 
   getTracks(): MockTrack[] {
@@ -77,6 +79,39 @@ class MockMediaRecorder extends EventTarget {
   }
 }
 
+class MockAnalyser {
+  fftSize = 2048
+  smoothingTimeConstant = 0.2
+  readonly frequencyBinCount = 32
+  stream: MockMediaStream | null = null
+
+  getByteFrequencyData(data: Uint8Array): void {
+    data.fill(this.stream?.signalLevel ?? 0)
+  }
+}
+
+class MockAudioContext {
+  createMediaStreamSource(stream: MockMediaStream): { connect: (analyser: MockAnalyser) => void } {
+    return {
+      connect: (analyser: MockAnalyser) => {
+        analyser.stream = stream
+      }
+    }
+  }
+
+  createAnalyser(): MockAnalyser {
+    return new MockAnalyser()
+  }
+
+  resume(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
 function createMockStreamForConstraints(
   constraints: MediaStreamConstraints | undefined
 ): MockMediaStream {
@@ -85,10 +120,12 @@ function createMockStreamForConstraints(
   }
 
   if (constraints?.audio && constraints?.video) {
-    return new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
+    return new MockMediaStream([new MockTrack('audio'), new MockTrack('video')], {
+      signalLevel: 12
+    })
   }
 
-  return new MockMediaStream([new MockTrack('audio')])
+  return new MockMediaStream([new MockTrack('audio')], { signalLevel: 12 })
 }
 
 describe('recording-capture', () => {
@@ -126,6 +163,7 @@ describe('recording-capture', () => {
     vi.stubGlobal('navigator', { mediaDevices })
     vi.stubGlobal('MediaStream', MockMediaStream)
     vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    vi.stubGlobal('AudioContext', MockAudioContext)
 
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -365,6 +403,70 @@ describe('recording-capture', () => {
       })
     )
     expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
+
+  it('does not treat a silent replacement microphone as fully recovered after devicechange', async () => {
+    let currentMicGroupId = 'mic-default'
+
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      enumerateDevices: ReturnType<typeof vi.fn>
+    }
+    mediaDevices.enumerateDevices = vi.fn().mockImplementation(async () => [
+      {
+        kind: 'audioinput',
+        deviceId: 'default',
+        groupId: currentMicGroupId,
+        label: `Mic ${currentMicGroupId}`
+      },
+      {
+        kind: 'audiooutput',
+        deviceId: 'default',
+        groupId: 'speaker-default',
+        label: 'Speaker'
+      }
+    ])
+
+    let getUserMediaCallCount = 0
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      getUserMediaCallCount += 1
+
+      if (getUserMediaCallCount <= 3) {
+        return Promise.resolve(createMockStreamForConstraints(constraints))
+      }
+
+      if (constraints.audio === false) {
+        return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+      }
+
+      if (constraints.audio && constraints.video) {
+        return Promise.resolve(
+          new MockMediaStream([new MockTrack('audio'), new MockTrack('video')], {
+            signalLevel: 12
+          })
+        )
+      }
+
+      return Promise.resolve(new MockMediaStream([new MockTrack('audio')], { signalLevel: 0 }))
+    })
+
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    currentMicGroupId = 'mic-switched'
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(750)
+    await Promise.resolve()
+
+    expect(recordPersistentDiagnosticAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_recovered'
+      })
+    )
 
     await stopCapture()
   })

@@ -22,12 +22,24 @@ interface AudioWatchdog {
   lastSignalAt: number
 }
 
+interface RecoveryValidationState {
+  reason: string
+  attempt: number
+  expectedAudio: {
+    hasMic: boolean
+    hasSystemAudio: boolean
+  }
+  pendingSources: Array<'mic' | 'system'>
+  startedAt: number
+}
+
 interface CaptureHandles {
   sourceId: string
   meetingId: string
   segmentIndex: number
   createdAt: number
   stopping: boolean
+  recoverySequence: number
   deviceSnapshot: DeviceSnapshot | null
   videoRecorder: MediaRecorder
   micRecorder: MediaRecorder | null
@@ -35,11 +47,14 @@ interface CaptureHandles {
   videoStream: MediaStream
   audioStream: MediaStream
   micStream: MediaStream | null
+  micWatchdog: AudioWatchdog | null
+  systemWatchdog: AudioWatchdog | null
   pendingChunkWrites: Set<Promise<void>>
   cleanupMonitoring: (() => void) | null
   recoveryTimer: ReturnType<typeof setTimeout> | null
   monitorLoopPromise: Promise<void> | null
   recoveryPromise: Promise<void> | null
+  recoveryValidation: RecoveryValidationState | null
   finalizePromise: Promise<void> | null
   finalized: boolean
 }
@@ -239,6 +254,13 @@ function getSourceType(sourceId: string): string {
   return sourceId.split(':', 1)[0] ?? 'unknown'
 }
 
+function didDefaultRouteChange(
+  previousKey: string | null | undefined,
+  nextKey: string | null | undefined
+): boolean {
+  return Boolean(previousKey) && Boolean(nextKey) && previousKey !== nextKey
+}
+
 function recordCaptureRecoveryDiagnostic(
   action:
     | 'capture_recovery_started'
@@ -314,6 +336,53 @@ async function closeAudioWatchdog(watchdog: AudioWatchdog | null): Promise<void>
   } catch {
     // Ignore audio context close failures during teardown.
   }
+}
+
+function getPendingRecoveryValidationSources(
+  reason: string,
+  previousSnapshot: DeviceSnapshot | null,
+  nextSnapshot: DeviceSnapshot | null,
+  expectedAudio: { hasMic: boolean; hasSystemAudio: boolean },
+  actualAudio: { hasMic: boolean; hasSystemAudio: boolean },
+  capture: Pick<CaptureHandles, 'micWatchdog' | 'systemWatchdog'>
+): Array<'mic' | 'system'> {
+  const pendingSources: Array<'mic' | 'system'> = []
+  const inputRouteChanged = didDefaultRouteChange(
+    previousSnapshot?.defaultAudioInputKey,
+    nextSnapshot?.defaultAudioInputKey
+  )
+  const outputRouteChanged = didDefaultRouteChange(
+    previousSnapshot?.defaultAudioOutputKey,
+    nextSnapshot?.defaultAudioOutputKey
+  )
+
+  if (
+    (reason === 'devicechange' || reason.startsWith('watchdog:mic') || reason.startsWith('mic:')) &&
+    inputRouteChanged &&
+    expectedAudio.hasMic &&
+    actualAudio.hasMic &&
+    capture.micWatchdog
+  ) {
+    sampleAudioWatchdog(capture.micWatchdog)
+    if (!capture.micWatchdog.hasObservedSignal) {
+      pendingSources.push('mic')
+    }
+  }
+
+  if (
+    reason.startsWith('watchdog:output') &&
+    outputRouteChanged &&
+    expectedAudio.hasSystemAudio &&
+    actualAudio.hasSystemAudio &&
+    capture.systemWatchdog
+  ) {
+    sampleAudioWatchdog(capture.systemWatchdog)
+    if (!capture.systemWatchdog.hasObservedSignal) {
+      pendingSources.push('system')
+    }
+  }
+
+  return pendingSources
 }
 
 function trackChunkWrite(
@@ -506,6 +575,8 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
   const cleanupFns: Array<() => void> = []
   const micWatchdog = createAudioWatchdog(capture.micStream, 'mic')
   const systemWatchdog = createAudioWatchdog(capture.audioStream, 'system')
+  capture.micWatchdog = micWatchdog
+  capture.systemWatchdog = systemWatchdog
   let watchdogTimer: ReturnType<typeof setInterval> | null = null
   let closed = false
 
@@ -543,6 +614,83 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
 
     micWatchdog && sampleAudioWatchdog(micWatchdog)
     systemWatchdog && sampleAudioWatchdog(systemWatchdog)
+
+    if (capture.recoveryValidation) {
+      const pendingSources = capture.recoveryValidation.pendingSources.filter((source) => {
+        if (source === 'mic') {
+          return !micWatchdog?.hasObservedSignal
+        }
+        return !systemWatchdog?.hasObservedSignal
+      })
+
+      if (pendingSources.length === 0) {
+        const completedValidation = capture.recoveryValidation
+        capture.recoveryValidation = null
+        recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex: capture.segmentIndex,
+          reason: completedValidation.reason,
+          attempt: completedValidation.attempt,
+          expectedAudio: completedValidation.expectedAudio,
+          actualAudio: getCaptureAudioAvailability(capture)
+        })
+        return
+      }
+
+      capture.recoveryValidation.pendingSources = pendingSources
+
+      if (
+        Date.now() - capture.recoveryValidation.startedAt >= AUDIO_WATCHDOG_STARTUP_GRACE_MS &&
+        activeCapture === capture &&
+        !capture.stopping
+      ) {
+        const completedValidation = capture.recoveryValidation
+        capture.recoveryValidation = null
+
+        if (capture.recoverySequence < MAX_RECOVERY_ATTEMPTS) {
+          console.warn('Recovered capture remained silent after route change, retrying', {
+            meetingId: capture.meetingId,
+            reason: completedValidation.reason,
+            pendingSources
+          })
+          queueCaptureRecovery(
+            capture,
+            pendingSources.includes('mic')
+              ? 'watchdog:mic-route-changed'
+              : 'watchdog:output-route-changed'
+          )
+          return
+        }
+
+        const degradationError = new Error(
+          `Capture recovery completed with missing audio signal: ${pendingSources.join(', ')}`
+        )
+        const actualAudio = getCaptureAudioAvailability(capture)
+        recordCaptureRecoveryDiagnostic('capture_recovery_recovered_degraded', {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex: capture.segmentIndex,
+          reason: completedValidation.reason,
+          attempt: completedValidation.attempt,
+          expectedAudio: completedValidation.expectedAudio,
+          actualAudio,
+          missingSources: pendingSources
+        })
+        captureRecordingRecoveryFailure(degradationError, {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex: capture.segmentIndex,
+          reason: completedValidation.reason,
+          attemptCount: capture.recoverySequence,
+          expectedAudio: completedValidation.expectedAudio,
+          actualAudio,
+          missingSources: pendingSources,
+          failureKind: 'degraded'
+        })
+        return
+      }
+    }
 
     if (!micWatchdog && !systemWatchdog) {
       return
@@ -617,6 +765,9 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
     for (const cleanup of cleanupFns) {
       cleanup()
     }
+    capture.micWatchdog = null
+    capture.systemWatchdog = null
+    capture.recoveryValidation = null
     void closeAudioWatchdog(micWatchdog)
     void closeAudioWatchdog(systemWatchdog)
   }
@@ -626,6 +777,7 @@ function buildCaptureHandles(
   sourceId: string,
   meetingId: string,
   segmentIndex: number,
+  recoverySequence: number,
   deviceSnapshot: DeviceSnapshot | null,
   streams: CaptureStreams
 ): CaptureHandles {
@@ -688,6 +840,7 @@ function buildCaptureHandles(
     segmentIndex,
     createdAt: Date.now(),
     stopping: false,
+    recoverySequence,
     deviceSnapshot,
     videoRecorder,
     micRecorder,
@@ -695,11 +848,14 @@ function buildCaptureHandles(
     videoStream,
     audioStream,
     micStream,
+    micWatchdog: null,
+    systemWatchdog: null,
     pendingChunkWrites,
     cleanupMonitoring: null,
     recoveryTimer: null,
     monitorLoopPromise: null,
     recoveryPromise: null,
+    recoveryValidation: null,
     finalizePromise: null,
     finalized: false
   }
@@ -708,13 +864,21 @@ function buildCaptureHandles(
 async function createCaptureSegment(
   sourceId: string,
   meetingId: string,
-  segmentIndex: number
+  segmentIndex: number,
+  recoverySequence = 0
 ): Promise<CaptureHandles> {
   const streams = await createCaptureStreams(sourceId)
 
   try {
     const deviceSnapshot = await getDefaultDeviceSnapshot()
-    const capture = buildCaptureHandles(sourceId, meetingId, segmentIndex, deviceSnapshot, streams)
+    const capture = buildCaptureHandles(
+      sourceId,
+      meetingId,
+      segmentIndex,
+      recoverySequence,
+      deviceSnapshot,
+      streams
+    )
 
     installCaptureMonitoring(capture)
 
@@ -790,7 +954,8 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
           replacement = await createCaptureSegment(
             capture.sourceId,
             capture.meetingId,
-            capture.segmentIndex + 1
+            capture.segmentIndex + 1,
+            capture.recoverySequence + 1
           )
           const actualAudio = getCaptureAudioAvailability(replacement)
           const missingSources = getMissingRecoverySources(expectedAudio, actualAudio)
@@ -850,25 +1015,49 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
               failureKind: 'degraded'
             })
           } else {
-            recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
-              meetingId: capture.meetingId,
-              sourceType: getSourceType(capture.sourceId),
-              segmentIndex: replacement.segmentIndex,
+            const pendingValidationSources = getPendingRecoveryValidationSources(
               reason,
-              attempt,
+              capture.deviceSnapshot,
+              replacement.deviceSnapshot,
               expectedAudio,
-              actualAudio
-            })
+              actualAudio,
+              replacement
+            )
+
+            if (pendingValidationSources.length > 0) {
+              replacement.recoveryValidation = {
+                reason,
+                attempt,
+                expectedAudio,
+                pendingSources: pendingValidationSources,
+                startedAt: Date.now()
+              }
+            } else {
+              recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
+                meetingId: capture.meetingId,
+                sourceType: getSourceType(capture.sourceId),
+                segmentIndex: replacement.segmentIndex,
+                reason,
+                attempt,
+                expectedAudio,
+                actualAudio
+              })
+            }
           }
 
           activeCapture = replacement
-          console.log('Capture recovered after device change', {
+          console.log(
+            replacement.recoveryValidation
+              ? 'Capture resumed after device change; awaiting audio signal validation'
+              : 'Capture recovered after device change',
+            {
             meetingId: capture.meetingId,
             nextSegmentIndex: replacement.segmentIndex,
             reason,
             attempt,
             missingSources
-          })
+            }
+          )
           return
         } catch (err) {
           const canRetry =
