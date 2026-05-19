@@ -69,7 +69,6 @@ export function isReconnectRequiredMicrosoftAuthError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase()
 
   return [
-    'invalid_client',
     'invalid_grant',
     'interaction_required',
     'insufficient scopes',

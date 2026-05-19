@@ -6,6 +6,19 @@ import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
+
+function getExecFileCallback(
+  optionsOrCallback: unknown,
+  maybeCallback?: unknown
+): ExecFileCallback {
+  const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+  if (typeof callback !== 'function') {
+    throw new Error('Expected execFile callback in test')
+  }
+
+  return callback as ExecFileCallback
+}
 
 function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', {
@@ -830,7 +843,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = getExecFileCallback(optionsOrCallback, maybeCallback)
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean
@@ -906,7 +919,7 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(manager.getModelsDir(), 'ggml.dll'), 'dll')
 
       execFileMock.mockImplementation((file, _args, optionsOrCallback, maybeCallback) => {
-        const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+        const callback = getExecFileCallback(optionsOrCallback, maybeCallback)
         if (file === manager.getWhisperPath()) {
           const err = new Error('Command failed: whisper probe timed out') as Error & {
             killed?: boolean

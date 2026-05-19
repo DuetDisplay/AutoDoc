@@ -314,7 +314,7 @@ export class CalendarManager {
       const message =
         syncIssue === 'reconnect-required'
           ? 'Calendar account requires reconnect'
-          : 'Unsupported Microsoft mailbox disabled for calendar sync'
+          : 'Unsupported calendar account disabled for calendar sync'
       captureMessage(message, {
         area: 'calendar',
         level: 'info',
