@@ -3,7 +3,7 @@ import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { basename, join, resolve, sep } from 'path'
 import { tmpdir } from 'os'
-import { isEncrypted, getDecryptedTempPathForMedia } from './crypto'
+import { isEncrypted, getDecryptedTempPathForMedia, clearMediaDecryptCache } from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 
 const ALLOWED_FILENAMES = new Set(['screen.webm', 'system.webm', 'audio.webm', 'mic.webm'])
@@ -279,4 +279,5 @@ export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => 
 export function stopRecordingMediaHttpServer(): void {
   mediaServer?.close()
   mediaServer = null
+  void clearMediaDecryptCache()
 }

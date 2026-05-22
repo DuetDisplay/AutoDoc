@@ -16,6 +16,8 @@ const CANONICAL_APP_DIR = 'AutoDoc'
 const MAGIC = Buffer.from('ADOC', 'ascii')
 const BLOCK_SIZE = 65536 // 64KB plaintext per block
 const CHUNKED_VERSION = 0x01
+const MEDIA_DECRYPT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+const MEDIA_DECRYPT_CACHE_MAX_ENTRIES = 6
 const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
   'AutoDoc Safe Storage',
   'autodoc Safe Storage',
@@ -401,7 +403,10 @@ export async function decryptFileToTemp(encPath: string): Promise<string> {
 }
 
 /** Cached decrypted paths for custom-protocol media (one decrypt per recording file, not per HTTP range). */
-const mediaDecryptCache = new Map<string, { tempPath: string; mtimeMs: number; size: number }>()
+const mediaDecryptCache = new Map<
+  string,
+  { tempPath: string; mtimeMs: number; size: number; lastAccessedMs: number }
+>()
 const mediaDecryptInflight = new Map<string, Promise<string>>()
 
 export async function clearMediaDecryptCache(): Promise<void> {
@@ -410,6 +415,36 @@ export async function clearMediaDecryptCache(): Promise<void> {
   }
   mediaDecryptCache.clear()
   mediaDecryptInflight.clear()
+}
+
+async function pruneMediaDecryptCache(): Promise<void> {
+  let totalBytes = 0
+  for (const entry of mediaDecryptCache.values()) {
+    totalBytes += entry.size
+  }
+
+  if (
+    mediaDecryptCache.size <= MEDIA_DECRYPT_CACHE_MAX_ENTRIES &&
+    totalBytes <= MEDIA_DECRYPT_CACHE_MAX_BYTES
+  ) {
+    return
+  }
+
+  const entries = [...mediaDecryptCache.entries()].sort(
+    ([, a], [, b]) => a.lastAccessedMs - b.lastAccessedMs
+  )
+  for (const [encPath, entry] of entries) {
+    if (
+      mediaDecryptCache.size <= MEDIA_DECRYPT_CACHE_MAX_ENTRIES &&
+      totalBytes <= MEDIA_DECRYPT_CACHE_MAX_BYTES
+    ) {
+      break
+    }
+
+    mediaDecryptCache.delete(encPath)
+    totalBytes -= entry.size
+    await fsp.unlink(entry.tempPath).catch(() => {})
+  }
 }
 
 /**
@@ -423,6 +458,7 @@ export async function getDecryptedTempPathForMedia(encPath: string): Promise<str
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
     try {
       await fsp.access(cached.tempPath)
+      cached.lastAccessedMs = Date.now()
       return cached.tempPath
     } catch {
       mediaDecryptCache.delete(encPath)
@@ -438,7 +474,13 @@ export async function getDecryptedTempPathForMedia(encPath: string): Promise<str
     inflight = (async () => {
       const tmp = await decryptFileToTemp(encPath)
       const stFresh = await fsp.stat(encPath)
-      mediaDecryptCache.set(encPath, { tempPath: tmp, mtimeMs: stFresh.mtimeMs, size: stFresh.size })
+      mediaDecryptCache.set(encPath, {
+        tempPath: tmp,
+        mtimeMs: stFresh.mtimeMs,
+        size: stFresh.size,
+        lastAccessedMs: Date.now(),
+      })
+      await pruneMediaDecryptCache()
       return tmp
     })().finally(() => {
       mediaDecryptInflight.delete(encPath)

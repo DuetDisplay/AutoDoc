@@ -11,6 +11,8 @@ export interface LLMProvider {
   ): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
   abortActiveRequests?(reason?: string): void
+  setLowMemoryMode?(enabled: boolean): void
+  releaseResources?(meetingId?: string): Promise<void>
 }
 
 const MAX_RETRIES = 2
@@ -18,6 +20,7 @@ export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
+const MAC_STANDARD_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
@@ -27,6 +30,45 @@ const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
+const PRICING_TOPIC_SIGNAL =
+  /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$)\b/i
+const MAC_TOPIC_FAMILIES: Array<{ topic: string; pattern: RegExp }> = [
+  {
+    topic: 'Pricing & Costs',
+    pattern:
+      /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$|ad|ads|campaign|conversion|tracking|attribution|user value|metric|analytics|data|rate|rates|split|baseline|vlp|encoder|cancellations?)\b/i
+  },
+  {
+    topic: 'Release Planning',
+    pattern:
+      /\b(release|qa|test|testing|build|rollout|ship|timing|today|tomorrow|panic|ready|readiness)\b/i
+  },
+  {
+    topic: 'Technical Deployment',
+    pattern:
+      /\b(deploy|deployment|config|periscope|service|services|integration|integrate|channel|editor|intercom)\b/i
+  },
+  {
+    topic: 'Technical Architecture',
+    pattern:
+      /\b(api|virtual display|native|interface|platform|capabilities|architecture|windows|mac|ios|desktop|hover|stylus|mouse|touch|scaling|viewer|device)\b/i
+  },
+  {
+    topic: 'Technical Behavior',
+    pattern:
+      /\b(scroll|scrolling|behavior|behaviour|local computer|remote|mirror|reversed|natural|complaint|complaints|latency|performance|android|apple)\b/i
+  },
+  {
+    topic: 'Technical Changes',
+    pattern:
+      /\b(retina|resolution|setting|settings|feature flag|feature flags|local discovery|feature|bug|bugs|issue|issues|implementation|implement|modify|modification|down.?sampling|pixelation|code|pr)\b/i
+  },
+  {
+    topic: 'Project Planning',
+    pattern:
+      /\b(documentation|docs|prioritize|priority|plan|planning|follow.?up|estimate|ownership|assign|task|refactor|discussion)\b/i
+  }
+]
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -139,6 +181,23 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 
 If a category has no items, use an empty array. Every item MUST have topic, title, and content fields.`
 
+const MAC_NOTES_PROMPT_SUFFIX = `
+
+MAC QUALITY TUNING OVERRIDE:
+- Match the baseline AutoDoc note style: useful, complete, and scan-friendly, but not exhaustive.
+- Target roughly 40-55 total final items for a normal-length product or engineering huddle.
+- A topic is a broad chapter heading for the meeting, not a restatement of one item title.
+- Reuse broad topic labels across chunks and categories whenever they fit.
+- Do not create a new topic for a single feature, status update, person update, bug, customer complaint, or implementation detail unless it is truly a major new subject.
+- Avoid near-duplicate topic labels. For example, do not split release-related notes across both "Release Timing" and "Release Plan".
+- Do not use "Pricing & Costs" unless the underlying item is actually about price, cost, revenue, billing, currency, or monetization.
+- Decisions require an explicit choice, approval, rejection, or agreed direction. Do not classify general discussion, concern, or preference as a decision.
+- Action items require a clear next step, owner, request, or follow-up. Do not turn vague possibilities into tasks.
+- Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
+- If a point is already captured as a decision, only add context as information when it includes a distinct durable fact someone would search for later.
+- Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
+- Prefer empty arrays over weak, repeated, speculative, or low-signal notes.`
+
 interface RawSegment {
   topic?: string
   title?: string
@@ -152,6 +211,11 @@ interface RawSegment {
 interface TranscriptLine {
   startMs: number
   text: string
+}
+
+interface SourceRange {
+  startMs: number
+  endMs: number
 }
 
 interface TopicGroup {
@@ -213,6 +277,23 @@ export class OllamaProvider implements LLMProvider {
     this.model = model
   }
 
+  setLowMemoryMode(enabled: boolean): void {
+    if (enabled) {
+      this.contextProfile = 'low-memory'
+      this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
+      return
+    }
+
+    if (process.platform === 'win32') {
+      this.contextProfile = 'windows-balanced'
+      this.contextTokens = WINDOWS_CONTEXT_TOKENS
+      return
+    }
+
+    this.contextProfile = 'standard'
+    this.contextTokens = STANDARD_CONTEXT_TOKENS
+  }
+
   getModel(): string {
     return this.model
   }
@@ -233,6 +314,42 @@ export class OllamaProvider implements LLMProvider {
       controller.abort(reason)
     }
     this.activeControllers.clear()
+  }
+
+  async releaseResources(meetingId?: string): Promise<void> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          keep_alive: 0
+        }),
+        signal: AbortSignal.timeout(5_000)
+      })
+
+      logAutodocEvent({
+        area: 'segmentation',
+        message: res.ok ? 'ollama model unload requested' : 'ollama model unload request failed',
+        meetingId,
+        context: {
+          model: this.model,
+          status: res.status
+        },
+        level: res.ok ? 'info' : 'warn'
+      })
+    } catch (error) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'ollama model unload request failed',
+        meetingId,
+        context: {
+          model: this.model,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        level: 'warn'
+      })
+    }
   }
 
   private setInitialContextProfile(): void {
@@ -257,6 +374,10 @@ export class OllamaProvider implements LLMProvider {
 
   private estimateItemCount(durationMinutes: number): string {
     const estMinutes = Math.max(5, Math.round(durationMinutes))
+    if (process.platform === 'darwin') {
+      return `This is roughly a ${estMinutes}-minute meeting. Target a focused final note set around 40-55 total items across all categories. Prefer fewer, higher-signal notes over exhaustive extraction.`
+    }
+
     // Scale: ~1 item per minute, min 5, no max
     const minItems = Math.max(5, Math.round(estMinutes * 0.8))
     const maxItems = Math.round(estMinutes * 1.5)
@@ -279,6 +400,19 @@ export class OllamaProvider implements LLMProvider {
       `Processing transcript in ${chunks.length} chunk(s) (${transcript.length} chars total) ` +
         `with ${this.contextProfile} Ollama context (${this.contextTokens} tokens). ${itemGuidance}`
     )
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes llm summarize started',
+      meetingId,
+      context: {
+        model: this.model,
+        contextProfile: this.contextProfile,
+        contextTokens: this.contextTokens,
+        chunkCount: chunks.length,
+        transcriptChars: transcript.length,
+        durationMinutes: estMinutes
+      }
+    })
 
     const merged: MeetingSegments = {
       decisions: [],
@@ -293,13 +427,8 @@ export class OllamaProvider implements LLMProvider {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
-      const chunkItemMin = Math.max(2, Math.round((estMinutes * 0.8) / chunks.length))
-      const chunkItemMax = Math.max(5, Math.round((estMinutes * 1.5) / chunks.length))
       const knownTopics = this.extractKnownTopics(merged)
-      const chunkLabel =
-        chunks.length > 1
-          ? `\n\nThis is part ${i + 1} of ${chunks.length} of the meeting. Extract only the noteworthy items from THIS section (expect ${chunkItemMin}-${chunkItemMax} items from this part). Be concise. ${itemGuidance}${knownTopics.length > 0 ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.` : ''}`
-          : `\n\n${itemGuidance}`
+      const chunkLabel = this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics)
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -308,6 +437,7 @@ export class OllamaProvider implements LLMProvider {
       let attempt = 0
       while (attempt <= MAX_RETRIES) {
         chunkTokens = 0
+        const attemptStartedAt = Date.now()
         try {
           if (attempt > 0) {
             console.log(
@@ -336,14 +466,51 @@ export class OllamaProvider implements LLMProvider {
             transcriptTimestamps,
             chunkTranscriptLines
           )
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes llm chunk completed',
+            meetingId,
+            context: {
+              model: this.model,
+              contextProfile: this.contextProfile,
+              contextTokens: this.contextTokens,
+              chunkIndex: i + 1,
+              chunkCount: chunks.length,
+              chunkChars: chunks[i].length,
+              attempt,
+              elapsedMs: Date.now() - attemptStartedAt,
+              tokenCount: chunkTokens
+            }
+          })
           break
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
           console.error(`Chunk ${i + 1}/${chunks.length} failed:`, lastError.message)
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes llm chunk failed',
+            meetingId,
+            level: 'warn',
+            context: {
+              model: this.model,
+              contextProfile: this.contextProfile,
+              contextTokens: this.contextTokens,
+              chunkIndex: i + 1,
+              chunkCount: chunks.length,
+              chunkChars: chunks[i].length,
+              attempt,
+              elapsedMs: Date.now() - attemptStartedAt,
+              tokenCount: chunkTokens,
+              error: lastError.message
+            }
+          })
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (this.shouldEnableLowMemoryFallback(lastError.message) && this.contextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
+          if (
+            this.shouldEnableLowMemoryFallback(lastError.message) &&
+            this.contextTokens > LOW_MEMORY_CONTEXT_TOKENS
+          ) {
             lowMemoryFallbackActivated = true
             this.enableLowMemoryContext(meetingId, lastError, {
               chunkIndex: i + 1,
@@ -392,6 +559,7 @@ export class OllamaProvider implements LLMProvider {
     }
 
     this.normalizeMergedTopics(merged)
+    this.consolidateMacTopicFamilies(merged)
     if (lowMemoryFallbackActivated) {
       this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
         chunkCount: chunks.length,
@@ -399,6 +567,20 @@ export class OllamaProvider implements LLMProvider {
         durationMinutes: estMinutes
       })
     }
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes llm summarize completed',
+      meetingId,
+      context: {
+        model: this.model,
+        contextProfile: this.contextProfile,
+        contextTokens: this.contextTokens,
+        chunkCount: chunks.length,
+        transcriptChars: transcript.length,
+        durationMinutes: estMinutes,
+        itemCount: this.flattenSegments(merged).length
+      }
+    })
     return merged
   }
 
@@ -419,14 +601,15 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private chunkTranscript(transcript: string): string[] {
-    if (transcript.length <= CHUNK_CHARS) return [transcript]
+    const chunkChars = this.getChunkChars()
+    if (transcript.length <= chunkChars) return [transcript]
 
     const lines = transcript.split('\n')
     const chunks: string[] = []
     let current = ''
 
     for (const line of lines) {
-      if (current.length + line.length + 1 > CHUNK_CHARS && current.length > 0) {
+      if (current.length + line.length + 1 > chunkChars && current.length > 0) {
         chunks.push(current)
         current = ''
       }
@@ -435,6 +618,44 @@ export class OllamaProvider implements LLMProvider {
     if (current) chunks.push(current)
 
     return chunks
+  }
+
+  private getChunkChars(): number {
+    if (process.platform === 'darwin' && this.contextProfile !== 'low-memory') {
+      return MAC_STANDARD_CHUNK_CHARS
+    }
+
+    return CHUNK_CHARS
+  }
+
+  private getSystemPrompt(): string {
+    if (process.platform === 'darwin') {
+      return `${SYSTEM_PROMPT}${MAC_NOTES_PROMPT_SUFFIX}`
+    }
+
+    return SYSTEM_PROMPT
+  }
+
+  private buildChunkLabel(
+    chunkIndex: number,
+    chunkCount: number,
+    itemGuidance: string,
+    knownTopics: string[]
+  ): string {
+    const knownTopicGuidance =
+      knownTopics.length > 0
+        ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
+        : ''
+
+    if (chunkCount <= 1) {
+      return `\n\n${itemGuidance}${knownTopicGuidance}`
+    }
+
+    if (process.platform === 'darwin') {
+      return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
+    }
+
+    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${knownTopicGuidance}`
   }
 
   private async callOllama(
@@ -480,7 +701,7 @@ export class OllamaProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.model,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: this.getSystemPrompt() },
             { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` }
           ],
           stream: true,
@@ -634,9 +855,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private shouldEnableLowMemoryFallback(message: string): boolean {
-    return (
-      this.isInsufficientSystemMemoryError(message) || this.isLowMemoryRunnerStopError(message)
-    )
+    return this.isInsufficientSystemMemoryError(message) || this.isLowMemoryRunnerStopError(message)
   }
 
   private extractOllamaMemoryGiB(message: string): {
@@ -844,17 +1063,15 @@ export class OllamaProvider implements LLMProvider {
         const titleKey = String(item.title).toLowerCase().trim()
         // Skip duplicates (same title within this chunk or across chunks)
         if (seenTitles.has(titleKey) || existingTitles.has(titleKey)) continue
-        const sourceStartMs = this.snapTimestamp(
-          item.sourceStartMs,
+        const sourceRange = this.resolveSourceRange(
+          item,
           durationMs,
-          scopedTranscriptTimestamps
+          scopedTranscriptTimestamps,
+          transcriptLines
         )
-        const sourceEndMs = this.snapTimestamp(
-          item.sourceEndMs,
-          durationMs,
-          scopedTranscriptTimestamps
-        )
-        if (!this.isGroundedItem(item, sourceStartMs, sourceEndMs, transcriptLines)) continue
+        if (!this.isGroundedItem(item, sourceRange.startMs, sourceRange.endMs, transcriptLines)) {
+          continue
+        }
         seenTitles.add(titleKey)
 
         result[resultKey].push({
@@ -866,8 +1083,8 @@ export class OllamaProvider implements LLMProvider {
           content: capitalize(String(item.content)),
           assignee: item.assignee ? String(item.assignee) : null,
           deadline: item.deadline ? String(item.deadline) : null,
-          sourceStartMs,
-          sourceEndMs
+          sourceStartMs: sourceRange.startMs,
+          sourceEndMs: sourceRange.endMs
         })
         index++
       }
@@ -890,6 +1107,28 @@ export class OllamaProvider implements LLMProvider {
         segment.topic = canonical
       }
     }
+  }
+
+  private consolidateMacTopicFamilies(segments: MeetingSegments): void {
+    if (process.platform !== 'darwin') return
+
+    for (const segment of this.flattenSegments(segments)) {
+      const topic = this.inferMacTopicFamily(segment)
+      if (topic) {
+        segment.topic = topic
+      }
+    }
+  }
+
+  private inferMacTopicFamily(segment: Segment): string | null {
+    const text = `${segment.title} ${segment.content}`
+    for (const family of MAC_TOPIC_FAMILIES) {
+      if (family.pattern.test(text)) {
+        return family.topic
+      }
+    }
+
+    return segment.topic
   }
 
   private flattenSegments(segments: MeetingSegments): Segment[] {
@@ -1020,6 +1259,12 @@ export class OllamaProvider implements LLMProvider {
   private pickCanonicalTopic(group: TopicGroup): string {
     const candidates = [...group.labelCounts.entries()]
     candidates.sort((a, b) => {
+      if (process.platform === 'darwin') {
+        const aUnsupported = this.isUnsupportedMacTopicCandidate(a[0], group)
+        const bUnsupported = this.isUnsupportedMacTopicCandidate(b[0], group)
+        if (aUnsupported !== bUnsupported) return aUnsupported ? 1 : -1
+      }
+
       if (b[1] !== a[1]) return b[1] - a[1]
 
       const aWords = this.tokenizeTopic(a[0]).length
@@ -1031,6 +1276,18 @@ export class OllamaProvider implements LLMProvider {
     })
 
     return candidates[0]?.[0] ?? 'General'
+  }
+
+  private isUnsupportedMacTopicCandidate(topic: string, group: TopicGroup): boolean {
+    if (this.normalizeTopicText(topic) !== 'pricing costs') {
+      return false
+    }
+
+    const supportedItems = group.segments.filter((segment) =>
+      PRICING_TOPIC_SIGNAL.test(`${segment.title} ${segment.content}`)
+    ).length
+    const supportRatio = supportedItems / Math.max(1, group.segments.length)
+    return supportRatio < 0.35
   }
 
   private getTopicGroupSimilarity(a: TopicGroup, b: TopicGroup): number {
@@ -1132,6 +1389,195 @@ export class OllamaProvider implements LLMProvider {
         }
       })
       .filter((line): line is TranscriptLine => line !== null)
+  }
+
+  private resolveSourceRange(
+    item: RawSegment,
+    durationMs?: number,
+    transcriptTimestamps?: number[],
+    transcriptLines: TranscriptLine[] = []
+  ): SourceRange {
+    const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps)
+    const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps)
+    const fallbackRange =
+      process.platform === 'darwin'
+        ? {
+            startMs: Math.min(sourceStartMs, sourceEndMs),
+            endMs: Math.max(sourceStartMs, sourceEndMs)
+          }
+        : { startMs: sourceStartMs, endMs: sourceEndMs }
+
+    if (process.platform !== 'darwin' || transcriptLines.length === 0) return fallbackRange
+
+    return this.findBestEvidenceRange(item, fallbackRange, transcriptLines) ?? fallbackRange
+  }
+
+  private findBestEvidenceRange(
+    item: RawSegment,
+    fallbackRange: SourceRange,
+    transcriptLines: TranscriptLine[]
+  ): SourceRange | null {
+    const queryTokens = this.extractEvidenceTokens(
+      `${item.title ?? ''} ${item.content ?? ''} ${item.assignee ?? ''} ${item.deadline ?? ''}`
+    )
+    if (queryTokens.size < 2) return null
+
+    const fallbackScore = this.scoreEvidenceWindow(
+      item,
+      queryTokens,
+      this.getTranscriptLinesForRange(fallbackRange, transcriptLines),
+      fallbackRange,
+      fallbackRange
+    )
+    let bestScore = 0
+    let bestRange: SourceRange | null = null
+    const maxWindowLines = Math.min(3, transcriptLines.length)
+
+    for (let startIndex = 0; startIndex < transcriptLines.length; startIndex++) {
+      for (let windowSize = 1; windowSize <= maxWindowLines; windowSize++) {
+        const endIndex = startIndex + windowSize - 1
+        if (endIndex >= transcriptLines.length) break
+
+        const candidateRange = {
+          startMs: transcriptLines[startIndex].startMs,
+          endMs: transcriptLines[endIndex].startMs
+        }
+        const score = this.scoreEvidenceWindow(
+          item,
+          queryTokens,
+          transcriptLines.slice(startIndex, endIndex + 1),
+          candidateRange,
+          fallbackRange
+        )
+
+        if (score > bestScore) {
+          bestScore = score
+          bestRange = candidateRange
+        }
+      }
+    }
+
+    if (!bestRange || bestScore < 2.8) return null
+    if (fallbackScore > 0 && bestScore < fallbackScore * 1.08) return fallbackRange
+
+    return bestRange
+  }
+
+  private getTranscriptLinesForRange(
+    range: SourceRange,
+    transcriptLines: TranscriptLine[]
+  ): TranscriptLine[] {
+    const startMs = Math.min(range.startMs, range.endMs)
+    const endMs = Math.max(range.startMs, range.endMs)
+    const matchingLines = transcriptLines.filter(
+      (line) => line.startMs >= startMs && line.startMs <= endMs
+    )
+    if (matchingLines.length > 0) return matchingLines
+
+    let closestLine = transcriptLines[0]
+    let minDiff = Math.abs(transcriptLines[0].startMs - startMs)
+    for (let index = 1; index < transcriptLines.length; index++) {
+      const diff = Math.abs(transcriptLines[index].startMs - startMs)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestLine = transcriptLines[index]
+      }
+    }
+    return [closestLine]
+  }
+
+  private scoreEvidenceWindow(
+    item: RawSegment,
+    queryTokens: Set<string>,
+    transcriptLines: TranscriptLine[],
+    candidateRange: SourceRange,
+    fallbackRange: SourceRange
+  ): number {
+    if (transcriptLines.length === 0) return 0
+
+    const windowText = transcriptLines.map((line) => line.text).join(' ')
+    const windowTokens = this.extractEvidenceTokens(windowText)
+    let shared = 0
+    for (const token of queryTokens) {
+      if (windowTokens.has(token)) shared++
+    }
+    if (shared === 0) return 0
+
+    const queryCoverage = shared / queryTokens.size
+    const density = windowTokens.size === 0 ? 0 : shared / windowTokens.size
+    const quantityBonus = this.countSharedQuantities(
+      `${item.title ?? ''} ${item.content ?? ''}`,
+      windowText
+    )
+    const phraseBonus = this.getEvidencePhraseBonus(item, windowText)
+    const candidateMidpoint = (candidateRange.startMs + candidateRange.endMs) / 2
+    const fallbackMidpoint = (fallbackRange.startMs + fallbackRange.endMs) / 2
+    const distancePenalty = Math.min(1.25, Math.abs(candidateMidpoint - fallbackMidpoint) / 240_000)
+    const windowLengthPenalty = Math.max(0, transcriptLines.length - 1) * 0.45
+
+    return (
+      shared * 0.8 +
+      queryCoverage * 4 +
+      density * 2 +
+      quantityBonus * 1.5 +
+      phraseBonus -
+      distancePenalty -
+      windowLengthPenalty
+    )
+  }
+
+  private extractEvidenceTokens(text: string): Set<string> {
+    return new Set(
+      text
+        .toLowerCase()
+        .replace(/[^a-z0-9$%.\s]/g, ' ')
+        .split(/\s+/)
+        .map((token) => this.normalizeEvidenceToken(token))
+        .filter((token) => token.length >= 4 && !TOPIC_STOP_WORDS.has(token))
+    )
+  }
+
+  private normalizeEvidenceToken(token: string): string {
+    const normalized = token.trim().replace(/^[^a-z0-9$]+|[^a-z0-9%]+$/g, '')
+    if (/^\$?\d/.test(normalized)) return normalized
+    if (normalized.endsWith('ing') && normalized.length > 6) return normalized.slice(0, -3)
+    if (normalized.endsWith('ed') && normalized.length > 5) return normalized.slice(0, -2)
+    if (normalized.endsWith('es') && normalized.length > 5) return normalized.slice(0, -2)
+    if (normalized.endsWith('s') && normalized.length > 5) return normalized.slice(0, -1)
+    return normalized
+  }
+
+  private countSharedQuantities(summaryText: string, windowText: string): number {
+    const windowQuantities = new Set(this.extractQuantityTokens(windowText))
+    return this.extractQuantityTokens(summaryText).filter((token) => windowQuantities.has(token))
+      .length
+  }
+
+  private getEvidencePhraseBonus(item: RawSegment, windowText: string): number {
+    const normalizedWindow = this.normalizeEvidencePhrase(windowText)
+    const phrases = [item.title, item.content]
+      .map((text) => this.normalizeEvidencePhrase(String(text ?? '')))
+      .filter((text) => text.length >= 18)
+
+    let bonus = 0
+    for (const phrase of phrases) {
+      const phraseTokens = phrase.split(/\s+/).filter(Boolean)
+      for (let size = Math.min(5, phraseTokens.length); size >= 3; size--) {
+        const matching = phraseTokens.some((_token, index) => {
+          const candidate = phraseTokens.slice(index, index + size).join(' ')
+          return candidate.split(/\s+/).length === size && normalizedWindow.includes(candidate)
+        })
+        if (matching) {
+          bonus += size * 0.35
+          break
+        }
+      }
+    }
+    return bonus
+  }
+
+  private normalizeEvidencePhrase(text: string): string {
+    return Array.from(this.extractEvidenceTokens(text)).join(' ')
   }
 
   private isGroundedItem(

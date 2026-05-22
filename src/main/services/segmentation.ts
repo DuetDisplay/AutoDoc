@@ -9,12 +9,18 @@ import type {
 } from '../../shared/types'
 import type { LLMProvider } from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
-import { logAutodocFailure } from './autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { classifyError } from './error-classification'
 import {
   hasUsableTranscriptContent,
   shouldTreatEmptySegmentationAsFailure
 } from './transcript-guardrails'
+import type { LocalProcessingCoordinator } from './local-processing-coordinator'
+import {
+  detectMacHardwareSnapshot,
+  isMemoryHealthyForConcurrentProcessing,
+  type MacProcessingProfile
+} from './mac-processing-profile'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
@@ -56,7 +62,12 @@ export class SegmentationService {
   constructor(
     private llmProvider: LLMProvider,
     private ollamaManager: OllamaReadiness,
-    private recordingsBaseDir: string
+    private recordingsBaseDir: string,
+    private localProcessingCoordinator: LocalProcessingCoordinator | null = null,
+    private getMacProcessingProfile: (() => MacProcessingProfile | null) | null = null,
+    private getEffectiveMacProcessingProfile:
+      | (() => Promise<MacProcessingProfile | null>)
+      | null = null
   ) {}
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
@@ -221,6 +232,18 @@ export class SegmentationService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    const localProcessingCoordinator = this.localProcessingCoordinator
+    if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
+      return await localProcessingCoordinator.runExclusive('segmentation', meetingId, () =>
+        this.processJobExclusive(meetingId)
+      )
+    }
+
+    return await this.processJobExclusive(meetingId)
+  }
+
+  private async processJobExclusive(meetingId: string): Promise<void> {
+    const jobStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
     const segmentsPath = join(meetingDir, 'segments.json')
@@ -253,12 +276,53 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes generation waiting for model',
+      meetingId,
+      context: {
+        transcriptCount: transcripts.length,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
     this.broadcastStatus(meetingId, 'segmenting', 0)
+    const macProcessingProfile =
+      (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
+    if (macProcessingProfile) {
+      this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes effective processing profile selected',
+        meetingId,
+        context: {
+          profileId: macProcessingProfile.id,
+          reason: macProcessingProfile.reason,
+          hardware: macProcessingProfile.hardware,
+          settings: {
+            transcriptionBackend: macProcessingProfile.transcriptionBackend,
+            transcriptionModel: macProcessingProfile.transcriptionModel,
+            dualSourceMode: macProcessingProfile.dualSourceMode,
+            notesAfterTranscriptionOnly: macProcessingProfile.notesAfterTranscriptionOnly,
+            serializeLocalProcessing: macProcessingProfile.serializeLocalProcessing
+          }
+        }
+      })
+    }
 
     const t0 = Date.now()
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes generation started',
+      meetingId,
+      context: {
+        transcriptCount: transcripts.length,
+        waitForModelMs: t0 - jobStartedAt,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
 
     const fullText = transcripts
       .map((t) => {
@@ -283,17 +347,36 @@ export class SegmentationService {
       : undefined
 
     let lastBroadcastedPercent = -1
-    const segments = await this.llmProvider.summarize(
-      meetingId,
-      fullText,
-      (percent) => {
-        if (percent !== lastBroadcastedPercent) {
-          lastBroadcastedPercent = percent
-          this.broadcastStatus(meetingId, 'segmenting', percent)
-        }
-      },
-      durationMinutes
-    )
+    let segments: MeetingSegments
+    try {
+      segments = await this.llmProvider.summarize(
+        meetingId,
+        fullText,
+        (percent) => {
+          if (percent !== lastBroadcastedPercent) {
+            lastBroadcastedPercent = percent
+            this.broadcastStatus(meetingId, 'segmenting', percent)
+          }
+        },
+        durationMinutes
+      )
+    } finally {
+      if (process.platform === 'darwin') {
+        await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'llm resource release failed',
+            meetingId,
+            level: 'warn',
+            context: {
+              error: error instanceof Error ? error.message : String(error),
+              processingProfile: this.getProcessingProfileLogContext()
+            }
+          })
+        })
+        await this.logMacResourceSnapshot('notes resources released', meetingId)
+      }
+    }
 
     // Verify the LLM actually produced content — empty results mean it failed silently
     const totalItems =
@@ -317,6 +400,17 @@ export class SegmentationService {
     console.log(
       `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
     )
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes generation completed',
+      meetingId,
+      context: {
+        elapsedMs: Date.now() - t0,
+        totalProcessingElapsedMs: Date.now() - jobStartedAt,
+        itemCount: totalItems,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
@@ -336,6 +430,21 @@ export class SegmentationService {
         meetingId
       })
     }
+  }
+
+  private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
+    const hardware = await detectMacHardwareSnapshot()
+    logAutodocEvent({
+      area: 'segmentation',
+      message,
+      meetingId,
+      context: {
+        hardware,
+        memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware),
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
   }
 
   private async markFailed(
@@ -365,7 +474,10 @@ export class SegmentationService {
       message: 'Meeting notes generation failed',
       error,
       meetingId,
-      context
+      context: {
+        ...context,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
     })
     this.broadcastStatus(meetingId, 'failed', undefined, errorCode)
   }
@@ -393,7 +505,10 @@ export class SegmentationService {
       message: 'Meeting notes generation returned no structured output',
       error: errorMessage,
       meetingId,
-      context
+      context: {
+        ...context,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
     })
     this.activeStatus = 'no-notes'
     this.broadcastStatus(meetingId, 'no-notes')
@@ -429,6 +544,26 @@ export class SegmentationService {
     }
 
     return 'failed'
+  }
+
+  private getProcessingProfileLogContext(): Record<string, unknown> | null {
+    const profile = this.getMacProcessingProfile?.()
+    if (!profile) {
+      return null
+    }
+
+    return {
+      profileId: profile.id,
+      reason: profile.reason,
+      hardware: profile.hardware,
+      settings: {
+        transcriptionBackend: profile.transcriptionBackend,
+        transcriptionModel: profile.transcriptionModel,
+        dualSourceMode: profile.dualSourceMode,
+        notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
+        serializeLocalProcessing: profile.serializeLocalProcessing
+      }
+    }
   }
 
   private broadcastStatus(

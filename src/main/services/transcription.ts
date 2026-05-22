@@ -25,6 +25,11 @@ import { classifyError } from './error-classification'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
 import { alignSpeakers } from './speaker-alignment'
 import type { DiarizationResult, DiarizationService } from './diarization'
+import type { LocalProcessingCoordinator } from './local-processing-coordinator'
+import {
+  detectMacHardwareSnapshot,
+  isMemoryHealthyForConcurrentProcessing
+} from './mac-processing-profile'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -107,7 +112,8 @@ export class TranscriptionService {
     private calendarManager: CalendarManager,
     private isMeetingActive: (meetingId: string) => boolean = () => false,
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
-    private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false
+    private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false,
+    private localProcessingCoordinator: LocalProcessingCoordinator | null = null
   ) {}
 
   onComplete(callback: (meetingId: string) => void): void {
@@ -272,11 +278,23 @@ export class TranscriptionService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    const localProcessingCoordinator = this.localProcessingCoordinator
+    if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
+      return await localProcessingCoordinator.runExclusive('transcription', meetingId, () =>
+        this.processJobExclusive(meetingId)
+      )
+    }
+
+    return await this.processJobExclusive(meetingId)
+  }
+
+  private async processJobExclusive(meetingId: string): Promise<void> {
     if (this.isMeetingActive(meetingId)) {
       console.log(`Skipping transcription for active recording: ${meetingId}`)
       return
     }
 
+    const transcriptionStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
 
@@ -296,7 +314,19 @@ export class TranscriptionService {
     const tempFiles: string[] = []
 
     try {
-      const benchmarkStart = Date.now()
+      const source = this.enqueueSource.get(meetingId) ?? 'direct'
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'transcription started',
+        meetingId,
+        context: {
+          source,
+          hasMic,
+          hasSystem,
+          hasLegacy,
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
 
       if (!(await this.whisperManager.isReady())) {
         this.activeStatus = 'downloading'
@@ -314,7 +344,17 @@ export class TranscriptionService {
         const shouldDiarizeSystem = shouldUseExperimentalDiarization
         let micTranscripts: Transcript[]
         let rawSystemTranscripts: Transcript[]
-        if (this.shouldTranscribeDualSourcesConcurrently()) {
+        const dualSourceMode = await this.getDualSourceMode()
+        logAutodocEvent({
+          area: 'transcription',
+          message: 'dual-source transcription mode selected',
+          meetingId,
+          context: {
+            mode: dualSourceMode,
+            processingProfile: this.getProcessingProfileLogContext()
+          }
+        })
+        if (dualSourceMode === 'concurrent') {
           ;[micTranscripts, rawSystemTranscripts] = await Promise.all([
             this.transcribeAudioSource(
               meetingId,
@@ -428,8 +468,18 @@ export class TranscriptionService {
       }
 
       console.log(
-        `[perf] Transcription total: ${((Date.now() - benchmarkStart) / 1000).toFixed(1)}s (${meetingId})`
+        `[perf] Transcription total: ${((Date.now() - transcriptionStartedAt) / 1000).toFixed(1)}s (${meetingId})`
       )
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'transcription completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - transcriptionStartedAt,
+          transcriptCount: transcripts.length,
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -438,7 +488,30 @@ export class TranscriptionService {
       for (const f of tempFiles) {
         await unlink(f).catch(() => {})
       }
+      await this.logMacResourceSnapshot('transcription resources released', meetingId, {
+        tempFileCount: tempFiles.length
+      })
     }
+  }
+
+  private async logMacResourceSnapshot(
+    message: string,
+    meetingId: string,
+    context: Record<string, unknown> = {}
+  ): Promise<void> {
+    if (process.platform !== 'darwin') return
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
+    const hardware = await detectMacHardwareSnapshot()
+    logAutodocEvent({
+      area: 'transcription',
+      message,
+      meetingId,
+      context: {
+        ...context,
+        hardware,
+        memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware)
+      }
+    })
   }
 
   private async decryptIfNeeded(filePath: string, tempFiles: string[]): Promise<string> {
@@ -478,6 +551,19 @@ export class TranscriptionService {
     console.log(
       `[perf] Audio conversion: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
     )
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'transcription source prepared',
+      meetingId,
+      context: {
+        speaker,
+        sourcePath,
+        audioDurationSec: audioDuration ?? null,
+        audioConversionElapsedMs: Date.now() - t0,
+        speechSignal,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
 
     if (speechSignal.likelySilent) {
       console.log(
@@ -487,6 +573,20 @@ export class TranscriptionService {
     }
 
     const whisperStart = Date.now()
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'transcription source started',
+      meetingId,
+      context: {
+        speaker,
+        backend: this.whisperManager.getTranscriptionBackend(),
+        backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+        model: this.whisperManager.getModelName(),
+        audioDurationSec: audioDuration ?? null,
+        concurrentSources,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
     const whisperOutput = await this.transcribeWithFallback(
       tempAudioWav,
       meetingId,
@@ -499,6 +599,19 @@ export class TranscriptionService {
     console.log(
       `[perf] Transcription (whisper): ${((Date.now() - whisperStart) / 1000).toFixed(1)}s (${meetingId}, speaker=${speaker})`
     )
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'transcription source completed',
+      meetingId,
+      context: {
+        speaker,
+        backend: this.whisperManager.getTranscriptionBackend(),
+        model: this.whisperManager.getModelName(),
+        elapsedMs: Date.now() - whisperStart,
+        rawSegmentCount: whisperOutput.transcription.length,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
+    })
 
     const transcripts = filterLowSignalHallucinations(
       this.mapToTranscripts(meetingId, whisperOutput),
@@ -1295,8 +1408,11 @@ export class TranscriptionService {
     const transcription: WhisperSegment[] = []
     let lastAcceptedTo = 0
     let chunkIndex = 0
+    const chunkCount = Math.ceil(audioDurationSec / stepSec)
+    const sourceLabel = this.inferSourceLabelFromTempPrefix(tempPrefix)
 
     for (let chunkStart = 0; chunkStart < audioDurationSec; chunkStart += stepSec) {
+      const chunkStartedAt = Date.now()
       const chunkDuration = Math.min(
         CHUNKED_TRANSCRIPTION_WINDOW_SEC,
         audioDurationSec - chunkStart
@@ -1311,7 +1427,9 @@ export class TranscriptionService {
         chunkStart,
         chunkDuration
       )
+      const extractElapsedMs = Date.now() - chunkStartedAt
 
+      const whisperStartedAt = Date.now()
       const chunkProgressRange = {
         start: Math.round((chunkStart / audioDurationSec) * 100),
         end: Math.round(
@@ -1332,6 +1450,26 @@ export class TranscriptionService {
         ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
         concurrentSources
       )
+      const whisperElapsedMs = Date.now() - whisperStartedAt
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'transcription chunk completed',
+        meetingId,
+        context: {
+          sourceLabel,
+          chunkIndex: chunkIndex + 1,
+          chunkCount,
+          chunkStartSec: Number(chunkStart.toFixed(1)),
+          chunkDurationSec: Number(chunkDuration.toFixed(1)),
+          extractElapsedMs,
+          whisperElapsedMs,
+          elapsedMs: Date.now() - chunkStartedAt,
+          rawSegmentCount: chunkOutput.transcription.length,
+          backend: this.whisperManager.getTranscriptionBackend(),
+          model: this.whisperManager.getModelName(),
+          concurrentSources
+        }
+      })
 
       const adjustedSegments = chunkOutput.transcription
         .map((segment) => ({
@@ -1366,6 +1504,12 @@ export class TranscriptionService {
     return { transcription }
   }
 
+  private inferSourceLabelFromTempPrefix(tempPrefix: string): string {
+    if (tempPrefix.includes('-mic')) return 'mic'
+    if (tempPrefix.includes('-system')) return 'system'
+    return 'single'
+  }
+
   private async runWhisperPassAndRead(
     audioWavPath: string,
     meetingId: string,
@@ -1397,6 +1541,13 @@ export class TranscriptionService {
     extraArgs: string[] = [],
     concurrentSources = 1
   ): Promise<void> {
+    if (
+      typeof this.whisperManager.isMlxWhisperSelected === 'function' &&
+      this.whisperManager.isMlxWhisperSelected()
+    ) {
+      return this.runMlxWhisperPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+    }
+
     if (
       typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
       this.whisperManager.isFasterWhisperSelected()
@@ -1510,6 +1661,76 @@ export class TranscriptionService {
     })
   }
 
+  private runMlxWhisperPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number }
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+      const jsonPath = `${audioWavPath}.json`
+      const args = [
+        this.whisperManager.getMlxWhisperScriptPath(),
+        '--model',
+        this.whisperManager.getMlxWhisperModelRef(),
+        '--audio',
+        audioWavPath,
+        '--output',
+        jsonPath,
+        '--language',
+        'en'
+      ]
+
+      const proc = spawn(this.whisperManager.getMlxWhisperPythonPath(), args, {
+        env: this.whisperManager.getMlxWhisperProcessEnv()
+      })
+      console.log(
+        `[perf] MLX Whisper backend: ${this.whisperManager.getModelName()} (${meetingId})`
+      )
+
+      const startedAt = Date.now()
+      const progressTimer =
+        audioDurationSec && audioDurationSec > 0
+          ? setInterval(() => {
+              const elapsedSec = (Date.now() - startedAt) / 1000
+              const estimatedRatio = Math.min(
+                0.95,
+                elapsedSec / Math.max(audioDurationSec * 0.3, 30)
+              )
+              this.broadcastStatus(
+                meetingId,
+                'transcribing',
+                this.scaleProgress(Math.round(estimatedRatio * 100), progressRange)
+              )
+            }, 1500)
+          : null
+
+      proc.on('error', (err) => {
+        if (progressTimer) clearInterval(progressTimer)
+        reject(new Error(`mlx-whisper spawn failed: ${err.message}`))
+      })
+
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (progressTimer) clearInterval(progressTimer)
+        if (code === 0) {
+          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+          resolve()
+          return
+        }
+
+        const signalSuffix = signal ? ` (signal ${signal})` : ''
+        reject(
+          new Error(`mlx-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
+        )
+      })
+    })
+  }
+
   private runFasterWhisperPass(
     audioWavPath: string,
     meetingId: string,
@@ -1594,7 +1815,30 @@ export class TranscriptionService {
     return Math.max(MIN_WHISPER_THREADS, Math.min(MAX_WHISPER_THREADS, perSourceProcessors))
   }
 
-  private shouldTranscribeDualSourcesConcurrently(): boolean {
+  private async getDualSourceMode(): Promise<'concurrent' | 'sequential'> {
+    return (await this.shouldTranscribeDualSourcesConcurrently()) ? 'concurrent' : 'sequential'
+  }
+
+  private async shouldTranscribeDualSourcesConcurrently(): Promise<boolean> {
+    if (
+      process.platform === 'darwin' &&
+      typeof this.whisperManager.isMlxWhisperSelected === 'function' &&
+      this.whisperManager.isMlxWhisperSelected()
+    ) {
+      const effectiveProfile = await this.whisperManager.getEffectiveMacProcessingProfile?.()
+      if (effectiveProfile) {
+        return effectiveProfile.dualSourceMode === 'concurrent'
+      }
+
+      const profile = this.whisperManager.getMacProcessingProfile?.()
+      if (profile?.dualSourceMode === 'sequential') {
+        return false
+      }
+
+      const hardware = await detectMacHardwareSnapshot()
+      return isMemoryHealthyForConcurrentProcessing(hardware)
+    }
+
     if (process.platform !== 'win32') {
       return true
     }
@@ -1610,6 +1854,26 @@ export class TranscriptionService {
     }
 
     return true
+  }
+
+  private getProcessingProfileLogContext(): Record<string, unknown> | null {
+    const profile = this.whisperManager.getMacProcessingProfile?.()
+    if (!profile) {
+      return null
+    }
+
+    return {
+      profileId: profile.id,
+      reason: profile.reason,
+      hardware: profile.hardware,
+      settings: {
+        transcriptionBackend: profile.transcriptionBackend,
+        transcriptionModel: profile.transcriptionModel,
+        dualSourceMode: profile.dualSourceMode,
+        notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
+        serializeLocalProcessing: profile.serializeLocalProcessing
+      }
+    }
   }
 
   private getSystemMemoryInfo(): { freeGiB: number | null; totalGiB: number | null } {
@@ -1773,7 +2037,10 @@ export class TranscriptionService {
       message: 'Transcription failed',
       error,
       meetingId,
-      context
+      context: {
+        ...context,
+        processingProfile: this.getProcessingProfileLogContext()
+      }
     })
     this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
   }

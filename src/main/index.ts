@@ -29,6 +29,7 @@ import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
+import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
@@ -103,11 +104,12 @@ import { getResetLocalDataTargets } from './services/reset-local-data'
 import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
+import { getScopedTestUserDataDir } from './services/test-runtime'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
-const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const testUserDataDir = getScopedTestUserDataDir()
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const skipInstalledApplicationPolicy =
@@ -178,7 +180,7 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
   for (const targetPath of getResetLocalDataTargets({
     userDataPath,
     appDataPath,
-    testUserDataDir,
+    testUserDataDir: testUserDataDir ?? undefined,
     isE2E,
     isRealSetupTest
   })) {
@@ -723,6 +725,10 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
+  const localProcessingCoordinator = new LocalProcessingCoordinator(
+    async () =>
+      (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
+  )
   const audioConverter = new AudioConverter()
   const diarizationService =
     isE2E || isExperimentalSpeakerDiarizationEnabled() ? new DiarizationService() : null
@@ -736,7 +742,8 @@ app.whenReady().then(async () => {
       return state.isRecording && state.meetingId === meetingId
     },
     diarizationService,
-    isExperimentalSpeakerDiarizationEnabled
+    isExperimentalSpeakerDiarizationEnabled,
+    localProcessingCoordinator
   )
   ollamaManager = new OllamaManager()
   const managedOllamaManager = ollamaManager
@@ -903,7 +910,10 @@ app.whenReady().then(async () => {
   const segmentationService = new SegmentationService(
     ollamaProvider,
     ollamaReadiness,
-    recordingService.getRecordingsBaseDir()
+    recordingService.getRecordingsBaseDir(),
+    localProcessingCoordinator,
+    () => whisperManager.getMacProcessingProfile(),
+    () => whisperManager.getEffectiveMacProcessingProfile()
   )
   ipcMain.handle(
     'app:get-runtime-info',

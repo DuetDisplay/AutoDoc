@@ -38,3 +38,4 @@ build-output-*/
 test-builds/
 playwright-report/
 test-results/
+.benchmarks/
