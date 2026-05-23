@@ -19,8 +19,8 @@ const MAX_RETRIES = 2
 export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
+export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
-const MAC_STANDARD_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
@@ -223,7 +223,16 @@ interface TopicGroup {
   labelCounts: Map<string, number>
 }
 
-type OllamaContextProfile = 'standard' | 'windows-balanced' | 'low-memory'
+type OllamaContextProfile = 'standard' | 'windows-balanced' | 'mac-balanced' | 'low-memory'
+
+interface OllamaCallMetrics {
+  totalDurationMs?: number
+  loadDurationMs?: number
+  promptEvalCount?: number
+  promptEvalDurationMs?: number
+  evalCount?: number
+  evalDurationMs?: number
+}
 
 export type OllamaProviderTelemetryEventName =
   | 'ollama_low_memory_fallback_triggered'
@@ -265,6 +274,7 @@ export class OllamaProvider implements LLMProvider {
   private contextProfile: OllamaContextProfile = 'standard'
   private contextTokens = STANDARD_CONTEXT_TOKENS
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
+  private lastOllamaCallMetrics: OllamaCallMetrics | null = null
 
   constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
     this.baseUrl = baseUrl
@@ -287,6 +297,12 @@ export class OllamaProvider implements LLMProvider {
     if (process.platform === 'win32') {
       this.contextProfile = 'windows-balanced'
       this.contextTokens = WINDOWS_CONTEXT_TOKENS
+      return
+    }
+
+    if (process.platform === 'darwin') {
+      this.contextProfile = 'mac-balanced'
+      this.contextTokens = MAC_CONTEXT_TOKENS
       return
     }
 
@@ -353,6 +369,12 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private setInitialContextProfile(): void {
+    if (process.platform === 'darwin') {
+      this.contextProfile = 'mac-balanced'
+      this.contextTokens = MAC_CONTEXT_TOKENS
+      return
+    }
+
     if (process.platform !== 'win32') {
       return
     }
@@ -479,7 +501,8 @@ export class OllamaProvider implements LLMProvider {
               chunkChars: chunks[i].length,
               attempt,
               elapsedMs: Date.now() - attemptStartedAt,
-              tokenCount: chunkTokens
+              tokenCount: chunkTokens,
+              ollamaMetrics: this.lastOllamaCallMetrics
             }
           })
           break
@@ -621,10 +644,6 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    if (process.platform === 'darwin' && this.contextProfile !== 'low-memory') {
-      return MAC_STANDARD_CHUNK_CHARS
-    }
-
     return CHUNK_CHARS
   }
 
@@ -692,6 +711,9 @@ export class OllamaProvider implements LLMProvider {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
+
+    const requestStartedAt = Date.now()
+    this.lastOllamaCallMetrics = null
 
     let res: Response
     try {
@@ -774,11 +796,20 @@ export class OllamaProvider implements LLMProvider {
               message?: { content?: string }
               error?: string
               done?: boolean
+              total_duration?: number
+              load_duration?: number
+              prompt_eval_count?: number
+              prompt_eval_duration?: number
+              eval_count?: number
+              eval_duration?: number
             }
             if (data.error) throw new Error(`Ollama error: ${data.error}`)
             if (data.message?.content) {
               content += data.message.content
               onToken?.()
+            }
+            if (data.done) {
+              this.lastOllamaCallMetrics = this.normalizeOllamaMetrics(data, requestStartedAt)
             }
           } catch (e) {
             if (e instanceof SyntaxError) {
@@ -793,10 +824,23 @@ export class OllamaProvider implements LLMProvider {
       // Flush remaining buffer
       if (buffer.trim()) {
         try {
-          const data = JSON.parse(buffer) as { message?: { content?: string }; error?: string }
+          const data = JSON.parse(buffer) as {
+            message?: { content?: string }
+            error?: string
+            done?: boolean
+            total_duration?: number
+            load_duration?: number
+            prompt_eval_count?: number
+            prompt_eval_duration?: number
+            eval_count?: number
+            eval_duration?: number
+          }
           if (data.error) throw new Error(`Ollama error: ${data.error}`)
           if (data.message?.content) {
             content += data.message.content
+          }
+          if (data.done) {
+            this.lastOllamaCallMetrics = this.normalizeOllamaMetrics(data, requestStartedAt)
           }
         } catch (e) {
           if (!(e instanceof SyntaxError)) throw e
@@ -812,6 +856,30 @@ export class OllamaProvider implements LLMProvider {
     }
 
     return content
+  }
+
+  private normalizeOllamaMetrics(
+    data: {
+      total_duration?: number
+      load_duration?: number
+      prompt_eval_count?: number
+      prompt_eval_duration?: number
+      eval_count?: number
+      eval_duration?: number
+    },
+    requestStartedAt: number
+  ): OllamaCallMetrics {
+    const nsToMs = (value?: number): number | undefined =>
+      typeof value === 'number' ? Math.round(value / 1_000_000) : undefined
+
+    return {
+      totalDurationMs: nsToMs(data.total_duration) ?? Date.now() - requestStartedAt,
+      loadDurationMs: nsToMs(data.load_duration),
+      promptEvalCount: data.prompt_eval_count,
+      promptEvalDurationMs: nsToMs(data.prompt_eval_duration),
+      evalCount: data.eval_count,
+      evalDurationMs: nsToMs(data.eval_duration)
+    }
   }
 
   private enableLowMemoryContext(

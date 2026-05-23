@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   LOW_MEMORY_CONTEXT_TOKENS,
+  MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
@@ -278,7 +279,7 @@ describe('OllamaProvider grounding', () => {
     expect(segments.information[6].topic).toBe('Open Source Packaging')
   })
 
-  it('uses macOS notes tuning without changing non-mac chunking', () => {
+  it('uses macOS notes tuning with quality-preserving chunking', () => {
     const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const longTranscript = Array.from(
       { length: 9 },
@@ -289,7 +290,7 @@ describe('OllamaProvider grounding', () => {
     const systemPrompt = (tunedProvider as any).getSystemPrompt() as string
 
     if (process.platform === 'darwin') {
-      expect(chunks).toHaveLength(2)
+      expect(chunks).toHaveLength(3)
       expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
 
       tunedProvider.setLowMemoryMode(true)
@@ -493,25 +494,33 @@ describe('OllamaProvider grounding', () => {
     )
 
     expect(result.information).toHaveLength(1)
-    expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      LOW_MEMORY_CONTEXT_TOKENS
-    ])
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        meetingId: 'meeting-low-ram',
-        event: 'ollama_low_memory_fallback_triggered',
-        properties: expect.objectContaining({
-          ollamaRequiredSystemMemoryGiB: 8.3,
-          ollamaAvailableSystemMemoryGiB: 5.5
+    const initialContextTokens =
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
+    if (initialContextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
+      expect(requestContextTokens).toEqual([initialContextTokens, LOW_MEMORY_CONTEXT_TOKENS])
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meetingId: 'meeting-low-ram',
+          event: 'ollama_low_memory_fallback_triggered',
+          properties: expect.objectContaining({
+            ollamaRequiredSystemMemoryGiB: 8.3,
+            ollamaAvailableSystemMemoryGiB: 5.5
+          })
         })
-      })
-    )
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'ollama_low_memory_fallback_succeeded'
-      })
-    )
+      )
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'ollama_low_memory_fallback_succeeded'
+        })
+      )
+    } else {
+      expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
+      expect(telemetry).not.toHaveBeenCalled()
+    }
   })
 
   it('falls back to a smaller Ollama context after a runner-stop 500 on a low-memory host', async () => {
@@ -575,25 +584,33 @@ describe('OllamaProvider grounding', () => {
     )
 
     expect(result.information).toHaveLength(1)
-    expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      LOW_MEMORY_CONTEXT_TOKENS
-    ])
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        meetingId: 'meeting-low-ram-generic-500',
-        event: 'ollama_low_memory_fallback_triggered',
-        properties: expect.objectContaining({
-          hostFreeMemoryGiB: 0.66,
-          hostTotalMemoryGiB: 8
+    const initialContextTokens =
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
+    if (initialContextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
+      expect(requestContextTokens).toEqual([initialContextTokens, LOW_MEMORY_CONTEXT_TOKENS])
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meetingId: 'meeting-low-ram-generic-500',
+          event: 'ollama_low_memory_fallback_triggered',
+          properties: expect.objectContaining({
+            hostFreeMemoryGiB: 0.66,
+            hostTotalMemoryGiB: 8
+          })
         })
-      })
-    )
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'ollama_low_memory_fallback_succeeded'
-      })
-    )
+      )
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'ollama_low_memory_fallback_succeeded'
+        })
+      )
+    } else {
+      expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
+      expect(telemetry).not.toHaveBeenCalled()
+    }
   })
 
   it('does not force low-memory fallback for a runner-stop 500 on a healthy host', async () => {
@@ -623,9 +640,21 @@ describe('OllamaProvider grounding', () => {
     ).rejects.toThrow('model runner has unexpectedly stopped')
 
     expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
     ])
     expect(telemetry).not.toHaveBeenCalledWith(
       expect.objectContaining({
