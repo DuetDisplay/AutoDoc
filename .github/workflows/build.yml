@@ -107,7 +107,7 @@ jobs:
           npm run build
           npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
-      - name: Build macOS test release v0.1.27a (signed + notarized)
+      - name: Build macOS test release v0.1.27b (signed + notarized)
         if: github.event_name == 'push' && github.ref_name == 'bugFixes0.1.27'
         env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
@@ -116,7 +116,7 @@ jobs:
         run: |
           npm run prepare:macos-mlx-runtime
           npm run build
-          npx electron-builder --mac --publish never "-c.extraMetadata.version=0.1.27a"
+          npx electron-builder --mac --publish never "-c.extraMetadata.version=0.1.27b"
 
       - name: Build macOS artifacts (signed, no notarization)
         if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'bugFixes0.1.27'

@@ -252,7 +252,9 @@ describe('WhisperManager', () => {
     expect(mockExecSync).not.toHaveBeenCalled()
   })
 
-  it('uses the bundled ffmpeg binary in dev mode', async () => {
+  it('uses the bundled ffmpeg binary in packaged builds', async () => {
+    isPackaged = true
+    manager = new WhisperManager()
     const installBundledBinarySpy = vi
       .spyOn(manager as never, 'installBundledBinary')
       .mockResolvedValue(undefined)
