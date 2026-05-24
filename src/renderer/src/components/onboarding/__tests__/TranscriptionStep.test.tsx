@@ -34,6 +34,28 @@ describe('TranscriptionStep', () => {
     expect(screen.queryByText(/brew install/i)).not.toBeInTheDocument()
   })
 
+  it('sets expectations when a low-memory Mac profile is selected', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'downloading-model',
+          percent: 38,
+          backend: 'mlx-whisper',
+          backendLabel: 'Apple Silicon optimized transcription',
+          macProcessingProfileId: 'mac-low-spec',
+          macProcessingProfileReason: 'Apple Silicon Mac has 8 GB memory'
+        })
+      }
+      return Promise.resolve({})
+    })
+
+    render(<TranscriptionStep onNext={vi.fn()} />)
+
+    expect(await screen.findByText('Optimized for this Mac')).toBeInTheDocument()
+    expect(screen.getByText(/this Mac has limited memory/i)).toBeInTheDocument()
+    expect(screen.getByText(/process mic and system audio one at a time/i)).toBeInTheDocument()
+  })
+
   it('starts transcription setup when onboarding reaches the step', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {

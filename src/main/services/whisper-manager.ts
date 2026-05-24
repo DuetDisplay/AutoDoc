@@ -345,7 +345,9 @@ export class WhisperManager extends EventEmitter {
       return {
         ...status,
         backend: 'mlx-whisper',
-        backendLabel: MLX_WHISPER_LABEL
+        backendLabel: MLX_WHISPER_LABEL,
+        macProcessingProfileId: this.selectedMacProfile?.id,
+        macProcessingProfileReason: this.selectedMacProfile?.reason
       }
     }
 

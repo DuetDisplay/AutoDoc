@@ -2,7 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { SEGMENT_LABELS } from '../../../shared/constants'
-import type { SegmentCategory, Segment, MeetingSegments, Transcript, TranscriptionStatus, SegmentationStatus, SpeakerMap } from '../../../shared/types'
+import type {
+  SegmentCategory,
+  Segment,
+  MeetingSegments,
+  Transcript,
+  TranscriptionStatus,
+  SegmentationStatus,
+  SpeakerMap
+} from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
@@ -24,7 +32,7 @@ function formatDuration(seconds: number): string {
 function mergeProgress(
   status: TranscriptionStatus,
   current: number | undefined,
-  next: number | undefined,
+  next: number | undefined
 ): number | undefined {
   if (status !== 'transcribing') return undefined
   if (next == null) return current
@@ -37,7 +45,7 @@ const CATEGORY_ORDER: SegmentCategory[] = [
   'decision',
   'action_item',
   'discussion',
-  'status_update',
+  'status_update'
 ]
 
 const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
@@ -45,14 +53,14 @@ const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
   action_item: 'actionItems',
   information: 'information',
   discussion: 'discussion',
-  status_update: 'statusUpdates',
+  status_update: 'statusUpdates'
 }
 
 function EditableText({
   value,
   onSave,
   className,
-  as: Tag = 'span',
+  as: Tag = 'span'
 }: {
   value: string
   onSave: (newValue: string) => void
@@ -140,7 +148,13 @@ export function MeetingDetail() {
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [segmentationErrorCode, setSegmentationErrorCode] = useState<string | undefined>()
-  const [detail, setDetail] = useState<{ title: string; sourceName: string | null; date: number; durationSeconds: number | null; isFinalizing?: boolean } | null>(null)
+  const [detail, setDetail] = useState<{
+    title: string
+    sourceName: string | null
+    date: number
+    durationSeconds: number | null
+    isFinalizing?: boolean
+  } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
@@ -189,40 +203,46 @@ export function MeetingDetail() {
         mediaErrorMessage: me?.message ?? null,
         currentSrc: el.currentSrc,
         networkState: el.networkState,
-        readyState: el.readyState,
+        readyState: el.readyState
       })
     },
-    [id],
+    [id]
   )
 
-  const handleSeek = useCallback((ms: number) => {
-    const el = mediaRef.current
-    const seconds = ms / 1000
-    console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:requested', {
-      meetingId: id,
-      activeTab: activeTabRef.current,
-      targetMs: ms,
-      targetSec: seconds,
-      mediaMissing: !el,
-      ...(el ? snapshotMediaElement(el) : {}),
-    })
-    if (!el) {
-      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:aborted — no media element (wrong tab or not mounted?)')
-      return
-    }
-    try {
-      el.currentTime = seconds
-      console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime', {
-        afterAssign: el.currentTime,
-        seekableEmpty: el.seekable.length === 0,
+  const handleSeek = useCallback(
+    (ms: number) => {
+      const el = mediaRef.current
+      const seconds = ms / 1000
+      console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:requested', {
+        meetingId: id,
+        activeTab: activeTabRef.current,
+        targetMs: ms,
+        targetSec: seconds,
+        mediaMissing: !el,
+        ...(el ? snapshotMediaElement(el) : {})
       })
-    } catch (e) {
-      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime threw', e)
-    }
-    void el.play().catch((err) => {
-      console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:play() rejected', err)
-    })
-  }, [id])
+      if (!el) {
+        console.warn(
+          MEDIA_DEBUG_PREFIX,
+          'handleSeek:aborted — no media element (wrong tab or not mounted?)'
+        )
+        return
+      }
+      try {
+        el.currentTime = seconds
+        console.log(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime', {
+          afterAssign: el.currentTime,
+          seekableEmpty: el.seekable.length === 0
+        })
+      } catch (e) {
+        console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:setCurrentTime threw', e)
+      }
+      void el.play().catch((err) => {
+        console.warn(MEDIA_DEBUG_PREFIX, 'handleSeek:play() rejected', err)
+      })
+    },
+    [id]
+  )
 
   const scrollTranscriptIntoView = useCallback(() => {
     if (contentScrollRef.current) {
@@ -231,51 +251,55 @@ export function MeetingDetail() {
     transcriptTopRef.current?.scrollIntoView({ block: 'start' })
   }, [])
 
-  const seekToSegment = useCallback((ms: number) => {
-    const seconds = ms / 1000
-    const fromTab = activeTabRef.current
-    console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:requested', {
-      meetingId: id,
-      fromTab,
-      targetMs: ms,
-      targetSec: seconds,
-      note:
-        fromTab !== 'transcript'
-          ? 'switching to transcript tab — media may not exist until after React commit'
-          : undefined,
-    })
-    setActiveTab('transcript')
-    requestAnimationFrame(() => {
+  const seekToSegment = useCallback(
+    (ms: number) => {
+      const seconds = ms / 1000
+      const fromTab = activeTabRef.current
+      console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:requested', {
+        meetingId: id,
+        fromTab,
+        targetMs: ms,
+        targetSec: seconds,
+        note:
+          fromTab !== 'transcript'
+            ? 'switching to transcript tab — media may not exist until after React commit'
+            : undefined
+      })
+      setActiveTab('transcript')
       requestAnimationFrame(() => {
-        scrollTranscriptIntoView()
-        const el = mediaRef.current
-        if (!el) {
-          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF — media ref still null', {
+        requestAnimationFrame(() => {
+          scrollTranscriptIntoView()
+          const el = mediaRef.current
+          if (!el) {
+            console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF — media ref still null', {
+              meetingId: id,
+              fromTab,
+              likelyCause:
+                'video/audio not mounted yet (tab switch race) or no media for this recording'
+            })
+            return
+          }
+          console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF', {
             meetingId: id,
-            fromTab,
-            likelyCause: 'video/audio not mounted yet (tab switch race) or no media for this recording',
+            ...snapshotMediaElement(el)
           })
-          return
-        }
-        console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:post-rAF', {
-          meetingId: id,
-          ...snapshotMediaElement(el),
-        })
-        try {
-          el.currentTime = seconds
-          console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime', {
-            afterAssign: el.currentTime,
-            seekableEmpty: el.seekable.length === 0,
+          try {
+            el.currentTime = seconds
+            console.log(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime', {
+              afterAssign: el.currentTime,
+              seekableEmpty: el.seekable.length === 0
+            })
+          } catch (e) {
+            console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime threw', e)
+          }
+          void el.play().catch((err) => {
+            console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:play() rejected', err)
           })
-        } catch (e) {
-          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:setCurrentTime threw', e)
-        }
-        void el.play().catch((err) => {
-          console.warn(MEDIA_DEBUG_PREFIX, 'seekToSegment:play() rejected', err)
         })
       })
-    })
-  }, [id, scrollTranscriptIntoView])
+    },
+    [id, scrollTranscriptIntoView]
+  )
 
   const cyclePlaybackRate = useCallback(() => {
     const el = mediaRef.current
@@ -302,7 +326,7 @@ export function MeetingDetail() {
         meetingId: id,
         activeTab,
         ...extra,
-        ...(el.isConnected ? snapshotMediaElement(el) : { detached: true }),
+        ...(el.isConnected ? snapshotMediaElement(el) : { detached: true })
       })
     }
 
@@ -321,7 +345,7 @@ export function MeetingDetail() {
     const onEnded = () => log('ended')
     const onError = () => {
       log('error', {
-        error: el.error ? { code: el.error.code, message: el.error.message } : null,
+        error: el.error ? { code: el.error.code, message: el.error.message } : null
       })
     }
     const onSeeking = () => log('seeking')
@@ -363,7 +387,7 @@ export function MeetingDetail() {
     console.log(MEDIA_DEBUG_PREFIX, 'media:lifecycle listeners attached', {
       meetingId: id,
       tag: el.tagName,
-      src: (el as HTMLMediaElement).currentSrc?.slice(0, 160),
+      src: (el as HTMLMediaElement).currentSrc?.slice(0, 160)
     })
 
     return () => {
@@ -390,14 +414,17 @@ export function MeetingDetail() {
     }
   }, [activeTab, id, media])
 
-  const handleRenameSpeaker = useCallback(async (speakerId: string, newLabel: string) => {
-    if (!id) return
-    await window.electronAPI.invoke('speakers:rename', id, speakerId, newLabel)
-    setSpeakers((prev) => ({
-      ...prev,
-      [speakerId]: { ...prev[speakerId], label: newLabel },
-    }))
-  }, [id])
+  const handleRenameSpeaker = useCallback(
+    async (speakerId: string, newLabel: string) => {
+      if (!id) return
+      await window.electronAPI.invoke('speakers:rename', id, speakerId, newLabel)
+      setSpeakers((prev) => ({
+        ...prev,
+        [speakerId]: { ...prev[speakerId], label: newLabel }
+      }))
+    },
+    [id]
+  )
 
   const saveSegments = useCallback(
     (updated: MeetingSegments) => {
@@ -410,7 +437,7 @@ export function MeetingDetail() {
         }
       }, 500)
     },
-    [id],
+    [id]
   )
 
   const updateSegmentField = useCallback(
@@ -419,13 +446,11 @@ export function MeetingDetail() {
       const key = CATEGORY_TO_KEY[category]
       const updated = {
         ...segments,
-        [key]: segments[key].map((item, i) =>
-          i === index ? { ...item, [field]: value } : item,
-        ),
+        [key]: segments[key].map((item, i) => (i === index ? { ...item, [field]: value } : item))
       }
       saveSegments(updated)
     },
-    [segments, saveSegments],
+    [segments, saveSegments]
   )
 
   const deleteSegment = useCallback(
@@ -434,11 +459,11 @@ export function MeetingDetail() {
       const key = CATEGORY_TO_KEY[category]
       const updated = {
         ...segments,
-        [key]: segments[key].filter((_, i) => i !== index),
+        [key]: segments[key].filter((_, i) => i !== index)
       }
       saveSegments(updated)
     },
-    [segments, saveSegments],
+    [segments, saveSegments]
   )
 
   const addSegment = useCallback(
@@ -455,15 +480,15 @@ export function MeetingDetail() {
         assignee: null,
         deadline: null,
         sourceStartMs: 0,
-        sourceEndMs: 0,
+        sourceEndMs: 0
       }
       const updated = {
         ...segments,
-        [key]: [...segments[key], newItem],
+        [key]: [...segments[key], newItem]
       }
       saveSegments(updated)
     },
-    [segments, id, saveSegments],
+    [segments, id, saveSegments]
   )
 
   useEffect(() => {
@@ -474,7 +499,7 @@ export function MeetingDetail() {
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
-          isFinalizing: nextDetail?.isFinalizing ?? false,
+          isFinalizing: nextDetail?.isFinalizing ?? false
         })
         setDetail(nextDetail)
       })
@@ -485,58 +510,67 @@ export function MeetingDetail() {
       window.electronAPI.invoke('transcription:get-progress', id),
       window.electronAPI.invoke('segmentation:get-status', id),
       window.electronAPI.invoke('segmentation:get-progress', id),
-      window.electronAPI.invoke('segmentation:get-error-code', id),
-    ]).then(([status, progress, nextSegmentationStatus, nextSegmentationProgress, nextSegmentationErrorCode]) => {
-      setTranscriptionStatus(status)
-      setTranscriptionProgress((current) => mergeProgress(status, current, progress))
-      setSegmentationStatus(nextSegmentationStatus)
-      setSegmentationProgress(nextSegmentationProgress)
-      setSegmentationErrorCode(nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined)
-      if (nextSegmentationStatus === 'complete') {
-        window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
-      } else {
-        setSegments(null)
+      window.electronAPI.invoke('segmentation:get-error-code', id)
+    ]).then(
+      ([
+        status,
+        progress,
+        nextSegmentationStatus,
+        nextSegmentationProgress,
+        nextSegmentationErrorCode
+      ]) => {
+        setTranscriptionStatus(status)
+        setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+        setSegmentationStatus(nextSegmentationStatus)
+        setSegmentationProgress(nextSegmentationProgress)
+        setSegmentationErrorCode(
+          nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined
+        )
+        if (nextSegmentationStatus === 'complete') {
+          window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+        } else {
+          setSegments(null)
+        }
       }
-    })
+    )
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
     window.electronAPI.invoke('recording:get-media', id).then(setMedia)
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
-    const unsubTranscription = window.electronAPI.on(
-      'transcription:status-changed',
-      (payload) => {
-        if (payload.meetingId === id) {
-          setTranscriptionStatus(payload.status)
-          setTranscriptionProgress((current) => mergeProgress(payload.status, current, payload.progress))
-          if (payload.status === 'complete') {
-            window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
-            window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
-          }
-        }
-      }
-    )
-
-    const unsubSegmentation = window.electronAPI.on(
-      'segmentation:status-changed',
-      (payload) => {
-        if (payload.meetingId === id) {
-          setSegmentationStatus(payload.status)
-          setSegmentationProgress(payload.progress)
-          setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
-          if (payload.status === 'complete') {
-            window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
-          } else {
-            setSegments(null)
-          }
-        }
-      }
-    )
-
-    const unsubRecordingEntryUpdated = window.electronAPI.on('recording:entry-updated', (payload) => {
+    const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
       if (payload.meetingId === id) {
-        refreshDetail()
+        setTranscriptionStatus(payload.status)
+        setTranscriptionProgress((current) =>
+          mergeProgress(payload.status, current, payload.progress)
+        )
+        if (payload.status === 'complete') {
+          window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+          window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
+        }
       }
     })
+
+    const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
+      if (payload.meetingId === id) {
+        setSegmentationStatus(payload.status)
+        setSegmentationProgress(payload.progress)
+        setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        if (payload.status === 'complete') {
+          window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+        } else {
+          setSegments(null)
+        }
+      }
+    })
+
+    const unsubRecordingEntryUpdated = window.electronAPI.on(
+      'recording:entry-updated',
+      (payload) => {
+        if (payload.meetingId === id) {
+          refreshDetail()
+        }
+      }
+    )
 
     return () => {
       unsubRecordingEntryUpdated()
@@ -619,24 +653,26 @@ export function MeetingDetail() {
           latestTranscriptionProgress,
           latestSegmentationStatus,
           latestSegmentationProgress,
-          latestSegmentationErrorCode,
+          latestSegmentationErrorCode
         ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
           window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
-          window.electronAPI.invoke('segmentation:get-error-code', id),
+          window.electronAPI.invoke('segmentation:get-error-code', id)
         ])
 
         if (cancelled) return
 
         setTranscriptionStatus(latestTranscriptionStatus)
         setTranscriptionProgress((current) =>
-          mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress),
+          mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
         )
         setSegmentationStatus(latestSegmentationStatus)
         setSegmentationProgress(latestSegmentationProgress)
-        setSegmentationErrorCode(latestSegmentationStatus === 'failed' ? latestSegmentationErrorCode : undefined)
+        setSegmentationErrorCode(
+          latestSegmentationStatus === 'failed' ? latestSegmentationErrorCode : undefined
+        )
 
         if (latestTranscriptionStatus === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then((nextTranscript) => {
@@ -736,7 +772,7 @@ export function MeetingDetail() {
               onSave={(newTitle) => {
                 if (!id) return
                 window.electronAPI.invoke('recording:update-title', id, newTitle).then(() => {
-                  setDetail((prev) => prev ? { ...prev, title: newTitle } : prev)
+                  setDetail((prev) => (prev ? { ...prev, title: newTitle } : prev))
                 })
               }}
               className="text-ink font-semibold flex-1 min-w-0"
@@ -750,7 +786,7 @@ export function MeetingDetail() {
                   month: 'short',
                   day: 'numeric',
                   hour: 'numeric',
-                  minute: '2-digit',
+                  minute: '2-digit'
                 })}
               </span>
               {detail.durationSeconds != null && (
@@ -763,7 +799,11 @@ export function MeetingDetail() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <TranscriptionBadge status={transcriptionStatus} progress={transcriptionProgress} onRetry={handleRetryTranscription} />
+          <TranscriptionBadge
+            status={transcriptionStatus}
+            progress={transcriptionProgress}
+            onRetry={handleRetryTranscription}
+          />
           <SegmentationBadge
             status={segmentationStatus}
             progress={segmentationProgress}
@@ -802,10 +842,7 @@ export function MeetingDetail() {
             {CATEGORY_ORDER.map((category) => {
               const items = getSegmentsForCategory(category)
               return (
-                <div
-                  key={category}
-                  className="bg-bg-card border border-border rounded-xl p-4"
-                >
+                <div key={category} className="bg-bg-card border border-border rounded-xl p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-ink" />
@@ -813,9 +850,7 @@ export function MeetingDetail() {
                         {SEGMENT_LABELS[category]}
                       </span>
                       {items.length > 0 && (
-                        <span className="text-[10px] text-ink-faint ml-1">
-                          ({items.length})
-                        </span>
+                        <span className="text-[10px] text-ink-faint ml-1">({items.length})</span>
                       )}
                     </div>
                     {segmentationStatus === 'complete' && (
@@ -833,11 +868,11 @@ export function MeetingDetail() {
                         ? 'Analyzing transcript...'
                         : segmentationStatus === 'no-notes'
                           ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
-                        : segmentationStatus === 'failed'
-                          ? segmentationErrorCode === 'ollama-insufficient-memory'
-                            ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
-                            : 'Segmentation failed. Try retrying above.'
-                          : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
+                          : segmentationStatus === 'failed'
+                            ? segmentationErrorCode === 'ollama-insufficient-memory'
+                              ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
+                              : 'Segmentation failed. Try retrying above.'
+                            : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
                     </p>
                   ) : (
                     <div className="flex flex-col gap-3">
@@ -855,23 +890,30 @@ export function MeetingDetail() {
                             {group.items.map((item) => {
                               const globalIndex = items.indexOf(item)
                               return (
-                                <div key={item.id} className="group flex flex-col gap-0.5 pl-2" data-searchable>
+                                <div
+                                  key={item.id}
+                                  className="group flex flex-col gap-0.5 pl-2"
+                                  data-searchable
+                                >
                                   <div className="flex items-start justify-between gap-2">
                                     <EditableText
                                       value={item.title}
-                                      onSave={(v) => updateSegmentField(category, globalIndex, 'title', v)}
+                                      onSave={(v) =>
+                                        updateSegmentField(category, globalIndex, 'title', v)
+                                      }
                                       className="text-[12.5px] font-semibold text-ink flex-1"
                                     />
                                     <div className="flex items-center gap-1 shrink-0">
-                                      {(media?.hasVideo || media?.hasAudio) && item.sourceStartMs > 0 && (
-                                        <button
-                                          onClick={() => seekToSegment(item.sourceStartMs)}
-                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
-                                          title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
-                                        >
-                                          ▶ {formatTimestamp(item.sourceStartMs)}
-                                        </button>
-                                      )}
+                                      {(media?.hasVideo || media?.hasAudio) &&
+                                        item.sourceStartMs > 0 && (
+                                          <button
+                                            onClick={() => seekToSegment(item.sourceStartMs)}
+                                            className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                            title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                          >
+                                            ▶ {formatTimestamp(item.sourceStartMs)}
+                                          </button>
+                                        )}
                                       <button
                                         onClick={() => deleteSegment(category, globalIndex)}
                                         className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
@@ -883,7 +925,9 @@ export function MeetingDetail() {
                                   </div>
                                   <EditableText
                                     value={item.content}
-                                    onSave={(v) => updateSegmentField(category, globalIndex, 'content', v)}
+                                    onSave={(v) =>
+                                      updateSegmentField(category, globalIndex, 'content', v)
+                                    }
                                     className="text-[12px] text-ink-muted leading-relaxed"
                                     as="div"
                                   />
@@ -964,7 +1008,7 @@ export function MeetingDetail() {
               segments={transcript}
               status={transcriptionStatus}
               speakers={speakers}
-              onSeek={(media?.hasVideo || media?.hasAudio) ? handleSeek : undefined}
+              onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
             />
           </div>
         ) : (
@@ -987,7 +1031,12 @@ export function MeetingDetail() {
                   </div>
                   <button
                     onClick={handleReprocessTranscript}
-                    disabled={transcriptionStatus === 'transcribing' || transcriptionStatus === 'queued' || transcriptionStatus === 'downloading' || transcriptionStatus === 'diarizing'}
+                    disabled={
+                      transcriptionStatus === 'transcribing' ||
+                      transcriptionStatus === 'queued' ||
+                      transcriptionStatus === 'downloading' ||
+                      transcriptionStatus === 'diarizing'
+                    }
                     className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
@@ -1017,7 +1066,8 @@ export function MeetingDetail() {
                   >
                     {segmentationStatus === 'segmenting'
                       ? 'Processing...'
-                      : segmentationStatus === 'queued' || segmentationStatus === 'downloading-model'
+                      : segmentationStatus === 'queued' ||
+                          segmentationStatus === 'downloading-model'
                         ? 'Queued...'
                         : 'Reprocess'}
                   </button>
@@ -1030,9 +1080,7 @@ export function MeetingDetail() {
               <h3 className="text-[12px] font-bold text-clay tracking-[0.03em] uppercase mb-1">
                 Danger Zone
               </h3>
-              <p className="text-[11.5px] text-ink-muted mb-4">
-                This action cannot be undone.
-              </p>
+              <p className="text-[11.5px] text-ink-muted mb-4">This action cannot be undone.</p>
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[12.5px] font-semibold text-ink">Delete recording</div>

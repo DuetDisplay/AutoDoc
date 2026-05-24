@@ -123,6 +123,8 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
+  'prefs:get-low-spec-mac-processing-banner-dismissed': []
+  'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -213,6 +215,8 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
+  'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
+  'prefs:set-low-spec-mac-processing-banner-dismissed': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
