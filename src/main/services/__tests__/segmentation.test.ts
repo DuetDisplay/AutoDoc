@@ -212,17 +212,19 @@ describe('SegmentationService', () => {
       throw new Error('ENOENT')
     })
     fsMock.readFile.mockResolvedValue(
-      JSON.stringify([
-        {
-          id: 'm1-0',
-          meetingId: 'm1',
-          speaker: 'Chris',
-          text: 'We confirmed the rollout plan.',
-          startMs: 0,
-          endMs: 65_000,
-          confidence: 0.9
-        }
-      ]) as any
+      Buffer.from(
+        JSON.stringify([
+          {
+            id: 'm1-0',
+            meetingId: 'm1',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ])
+      )
     )
     vi.mocked(provider.summarize).mockResolvedValue({
       decisions: [],
@@ -295,7 +297,11 @@ describe('SegmentationService', () => {
       throw error
     })
 
-    await expect((service as any).processJob('m1')).resolves.toBeUndefined()
+    const serviceTestApi = service as unknown as {
+      processJob(meetingId: string): Promise<void>
+    }
+
+    await expect(serviceTestApi.processJob('m1')).resolves.toBeUndefined()
 
     expect(mocks.logAutodocFailure).toHaveBeenCalledWith({
       area: 'segmentation',
