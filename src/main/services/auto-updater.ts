@@ -59,6 +59,31 @@ function broadcast(status: UpdateStatus): void {
   }
 }
 
+function reportUpdaterError(message: string, err: unknown): void {
+  const error = normalizeUpdaterError(err)
+  console.error(`${message}:`, err)
+  logAutodocFailure({
+    area: 'app',
+    message,
+    error,
+    context: {
+      channel: 'stable',
+      currentVersion: app.getVersion()
+    }
+  })
+  broadcast({ state: 'error', error: formatUpdaterError(error) })
+  // Reset to idle after 30s so it doesn't stay stuck on error
+  setTimeout(() => broadcast({ state: 'idle' }), 30_000)
+}
+
+function safeCheckForUpdates(): void {
+  try {
+    autoUpdater.checkForUpdates()
+  } catch (err) {
+    reportUpdaterError('Auto-updater failed to check for updates', err)
+  }
+}
+
 export function getUpdateStatus(): UpdateStatus {
   return currentStatus
 }
@@ -69,59 +94,54 @@ export function initAutoUpdater(): void {
     return
   }
 
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.disableDifferentialDownload = true
+  try {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.disableDifferentialDownload = true
 
-  autoUpdater.on('checking-for-update', () => {
-    broadcast({ state: 'checking' })
-  })
-
-  autoUpdater.on('update-available', (info) => {
-    broadcast({ state: 'available', version: getUpdaterVersion(info) })
-  })
-
-  autoUpdater.on('update-not-available', () => {
-    broadcast({ state: 'idle' })
-  })
-
-  autoUpdater.on('download-progress', (progress) => {
-    const percent = getDownloadPercent(progress)
-    broadcast({ state: 'downloading', percent: percent == null ? undefined : Math.round(percent) })
-  })
-
-  autoUpdater.on('update-downloaded', (info) => {
-    broadcast({ state: 'downloaded', version: getUpdaterVersion(info) })
-  })
-
-  autoUpdater.on('error', (err) => {
-    const error = normalizeUpdaterError(err)
-    console.error('Auto-updater error:', err)
-    logAutodocFailure({
-      area: 'app',
-      message: 'Auto-updater failed',
-      error,
-      context: {
-        channel: 'stable',
-        currentVersion: app.getVersion()
-      }
+    autoUpdater.on('checking-for-update', () => {
+      broadcast({ state: 'checking' })
     })
-    broadcast({ state: 'error', error: formatUpdaterError(error) })
-    // Reset to idle after 30s so it doesn't stay stuck on error
-    setTimeout(() => broadcast({ state: 'idle' }), 30_000)
-  })
 
-  // Check on launch after a short delay
-  setTimeout(() => autoUpdater.checkForUpdates(), 5_000)
+    autoUpdater.on('update-available', (info) => {
+      broadcast({ state: 'available', version: getUpdaterVersion(info) })
+    })
 
-  // Then check every 4 hours
-  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000)
+    autoUpdater.on('update-not-available', () => {
+      broadcast({ state: 'idle' })
+    })
+
+    autoUpdater.on('download-progress', (progress) => {
+      const percent = getDownloadPercent(progress)
+      broadcast({ state: 'downloading', percent: percent == null ? undefined : Math.round(percent) })
+    })
+
+    autoUpdater.on('update-downloaded', (info) => {
+      broadcast({ state: 'downloaded', version: getUpdaterVersion(info) })
+    })
+
+    autoUpdater.on('error', (err) => {
+      reportUpdaterError('Auto-updater failed', err)
+    })
+
+    // Check on launch after a short delay
+    setTimeout(() => safeCheckForUpdates(), 5_000)
+
+    // Then check every 4 hours
+    setInterval(() => safeCheckForUpdates(), 4 * 60 * 60 * 1000)
+  } catch (err) {
+    reportUpdaterError('Auto-updater failed to initialize', err)
+  }
 }
 
 export function checkForUpdates(): void {
-  autoUpdater.checkForUpdates()
+  safeCheckForUpdates()
 }
 
 export function installUpdate(): void {
-  autoUpdater.quitAndInstall()
+  try {
+    autoUpdater.quitAndInstall()
+  } catch (err) {
+    reportUpdaterError('Auto-updater failed to install update', err)
+  }
 }
