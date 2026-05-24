@@ -115,4 +115,20 @@ describe('Auto-updater validity characterization', () => {
       })
     )
   })
+
+  it('handles rejected update checks without unhandled rejections', async () => {
+    checkForUpdates.mockRejectedValueOnce(new Error('404 Not Found'))
+
+    initAutoUpdater()
+    vi.advanceTimersByTime(5_000)
+    await Promise.resolve()
+
+    expect(logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'app',
+        message: 'Auto-updater failed to check for updates',
+        error: expect.any(Error)
+      })
+    )
+  })
 })

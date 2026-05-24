@@ -78,7 +78,9 @@ function reportUpdaterError(message: string, err: unknown): void {
 
 function safeCheckForUpdates(): void {
   try {
-    autoUpdater.checkForUpdates()
+    void Promise.resolve(autoUpdater.checkForUpdates()).catch((err) => {
+      reportUpdaterError('Auto-updater failed to check for updates', err)
+    })
   } catch (err) {
     reportUpdaterError('Auto-updater failed to check for updates', err)
   }
