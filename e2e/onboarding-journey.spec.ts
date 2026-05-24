@@ -144,15 +144,15 @@ test('preserves the diagnostic log upload draft when navigating back and forward
     const logUploadCheckbox = page.getByRole('checkbox', {
       name: /attach technical app logs to error reports/i
     })
-    await expect(logUploadCheckbox).toBeChecked()
-    await logUploadCheckbox.uncheck()
     await expect(logUploadCheckbox).not.toBeChecked()
+    await logUploadCheckbox.check()
+    await expect(logUploadCheckbox).toBeChecked()
 
     await page.getByRole('button', { name: /back/i }).click()
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
     await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
-    await expect(logUploadCheckbox).not.toBeChecked()
+    await expect(logUploadCheckbox).toBeChecked()
   } finally {
     await session.cleanup()
   }
@@ -214,6 +214,8 @@ test('persists analytics opt-in with diagnostic log upload enabled after onboard
     const logUploadCheckbox = page.getByRole('checkbox', {
       name: /attach technical app logs to error reports/i
     })
+    await expect(logUploadCheckbox).not.toBeChecked()
+    await logUploadCheckbox.check()
     await expect(logUploadCheckbox).toBeChecked()
 
     await page.getByRole('button', { name: /share anonymous data/i }).click()
@@ -235,8 +237,8 @@ test('advances past permission steps when access is already granted or not requi
   const { page, cleanup } = await launchOnboarding({
     permissions: {
       microphone: true,
-      screen: true,
-    },
+      screen: true
+    }
   })
 
   try {
@@ -264,8 +266,8 @@ test('allows onboarding to connect a calendar account in e2e mode', async () => 
 test('stays on the calendar step when connection fails', async () => {
   const { page, cleanup } = await launchOnboarding({
     calendar: {
-      connectSucceeds: false,
-    },
+      connectSucceeds: false
+    }
   })
 
   try {
@@ -286,13 +288,13 @@ test('shows managed Whisper setup failure and can recover after retry', async ()
         phase: 'error',
         percent: 0,
         error: 'AutoDoc could not finish setting up transcription.',
-        failedStep: 'downloading-whisper',
+        failedStep: 'downloading-whisper'
       },
       retryStatus: {
         phase: 'ready',
-        percent: 100,
-      },
-    },
+        percent: 100
+      }
+    }
   })
 
   try {
@@ -313,18 +315,22 @@ test('shows Whisper download progress and allows skipping while setup continues'
     whisper: {
       status: {
         phase: 'downloading-model',
-        percent: 42,
-      },
-    },
+        percent: 42
+      }
+    }
   })
 
   try {
     await reachTranscriptionStep(page)
     await expect(page.getByText(/downloading speech model\.\.\. 42%/i)).toBeVisible()
-    await expect(page.getByRole('button', { name: /continue - this will finish in the background/i })).toBeVisible({
-      timeout: 7_000,
+    await expect(
+      page.getByRole('button', { name: /continue - this will finish in the background/i })
+    ).toBeVisible({
+      timeout: 7_000
     })
-    await page.getByRole('button', { name: /continue - this will finish in the background/i }).click()
+    await page
+      .getByRole('button', { name: /continue - this will finish in the background/i })
+      .click()
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
   } finally {
     await cleanup()
@@ -337,19 +343,22 @@ test('shows a managed transcription setup error when audio tools are missing', a
       status: {
         phase: 'error',
         percent: 0,
-        error: 'AutoDoc could not finish setting up its audio tools. Please reinstall AutoDoc and try again.',
-        failedStep: 'downloading-ffmpeg',
-      },
-    },
+        error:
+          'AutoDoc could not finish setting up its audio tools. Please reinstall AutoDoc and try again.',
+        failedStep: 'downloading-ffmpeg'
+      }
+    }
   })
 
   try {
     await reachTranscriptionStep(page)
     await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
     await expect(page.getByText(/still finishing transcription setup/i)).toBeVisible()
-    await expect(page.getByText(/transcription setup is taking longer than expected/i)).toBeVisible({
-      timeout: 7_000,
-    })
+    await expect(page.getByText(/transcription setup is taking longer than expected/i)).toBeVisible(
+      {
+        timeout: 7_000
+      }
+    )
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await expect(page.getByRole('button', { name: /^retry$/i })).toBeVisible()
   } finally {
@@ -364,13 +373,13 @@ test('shows Ollama setup failure and can recover after retry', async () => {
         phase: 'error',
         percent: 0,
         error: 'Managed Ollama failed to start',
-        failedStep: 'starting',
+        failedStep: 'starting'
       },
       retryStatus: {
         phase: 'ready',
-        percent: 100,
-      },
-    },
+        percent: 100
+      }
+    }
   })
 
   try {
@@ -390,18 +399,22 @@ test('shows Ollama download progress and allows skipping while setup continues',
     ollama: {
       status: {
         phase: 'downloading',
-        percent: 67,
-      },
-    },
+        percent: 67
+      }
+    }
   })
 
   try {
     await reachOllamaStep(page)
     await expect(page.getByText(/downloading Ollama runtime\.\.\. 67%/i)).toBeVisible()
-    await expect(page.getByRole('button', { name: /continue - this will finish in the background/i })).toBeVisible({
-      timeout: 7_000,
+    await expect(
+      page.getByRole('button', { name: /continue - this will finish in the background/i })
+    ).toBeVisible({
+      timeout: 7_000
     })
-    await page.getByRole('button', { name: /continue - this will finish in the background/i }).click()
+    await page
+      .getByRole('button', { name: /continue - this will finish in the background/i })
+      .click()
     await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
   } finally {
     await cleanup()
@@ -415,20 +428,20 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
   const { page, cleanup } = await launchOnboarding({
     permissions: {
       microphone: false,
-      screen: false,
+      screen: false
     },
     whisper: {
       status: {
         phase: 'downloading-whisper',
-        percent: 16,
-      },
+        percent: 16
+      }
     },
     ollama: {
       status: {
         phase: 'starting',
-        percent: 0,
-      },
-    },
+        percent: 0
+      }
+    }
   })
 
   try {
@@ -437,17 +450,17 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await setWhisperStatus(page, {
       phase: 'downloading-ffmpeg',
-      percent: 48,
+      percent: 48
     })
     await expect(page.getByText(/installing audio tools\.\.\. 48%/i)).toBeVisible()
     await setWhisperStatus(page, {
       phase: 'downloading-model',
-      percent: 79,
+      percent: 79
     })
     await expect(page.getByText(/downloading speech model\.\.\. 79%/i)).toBeVisible()
     await setWhisperStatus(page, {
       phase: 'ready',
-      percent: 100,
+      percent: 100
     })
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
@@ -456,17 +469,17 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
     await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
-      percent: 38,
+      percent: 38
     })
     await expect(page.getByText(/downloading Ollama runtime\.\.\. 38%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
-      percent: 82,
+      percent: 82
     })
     await expect(page.getByText(/downloading Llama 3\.1 notes model\.\.\. 82%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'ready',
-      percent: 100,
+      percent: 100
     })
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
@@ -484,15 +497,15 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     whisper: {
       status: {
         phase: 'downloading-whisper',
-        percent: 12,
-      },
+        percent: 12
+      }
     },
     ollama: {
       status: {
         phase: 'starting',
-        percent: 0,
-      },
-    },
+        percent: 0
+      }
+    }
   })
 
   try {
@@ -505,17 +518,17 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await expect(page.getByText(/brew install/i)).not.toBeVisible()
     await setWhisperStatus(page, {
       phase: 'downloading-ffmpeg',
-      percent: 48,
+      percent: 48
     })
     await expect(page.getByText(/installing audio tools\.\.\. 48%/i)).toBeVisible()
     await setWhisperStatus(page, {
       phase: 'downloading-model',
-      percent: 76,
+      percent: 76
     })
     await expect(page.getByText(/downloading speech model\.\.\. 76%/i)).toBeVisible()
     await setWhisperStatus(page, {
       phase: 'ready',
-      percent: 100,
+      percent: 100
     })
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
@@ -524,17 +537,17 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
-      percent: 44,
+      percent: 44
     })
     await expect(page.getByText(/downloading Ollama runtime\.\.\. 44%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
-      percent: 91,
+      percent: 91
     })
     await expect(page.getByText(/downloading Llama 3\.1 notes model\.\.\. 91%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'ready',
-      percent: 100,
+      percent: 100
     })
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
