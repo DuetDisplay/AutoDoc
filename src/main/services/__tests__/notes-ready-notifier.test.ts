@@ -49,12 +49,21 @@ describe('notes ready notifier', () => {
     const shown = await notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')
 
     expect(shown).toBe(true)
-    expect(mocks.encryptJSON).toHaveBeenCalled()
     expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Notes Ready',
         primaryActionLabel: 'Open Notes'
       })
+    )
+    expect(mocks.encryptJSON).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceName: 'Weekly Sync',
+        notesReadyNotificationSentAt: expect.any(Number)
+      }),
+      '/tmp/autodoc-tests/meeting-123/metadata.json'
+    )
+    expect(mocks.showNotificationWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.encryptJSON.mock.invocationCallOrder[0]
     )
 
     const options = mocks.showNotificationWindow.mock.calls[0]?.[0]
@@ -78,5 +87,23 @@ describe('notes ready notifier', () => {
     expect(shown).toBe(false)
     expect(mocks.encryptJSON).not.toHaveBeenCalled()
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+  })
+
+  it('does not persist the dedupe marker when showing the notification fails', async () => {
+    mocks.readMetadata.mockResolvedValue({
+      sourceName: 'Weekly Sync',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 60
+    })
+    mocks.showNotificationWindow.mockImplementation(() => {
+      throw new Error('display failed')
+    })
+
+    await expect(notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')).rejects.toThrow(
+      'display failed'
+    )
+
+    expect(mocks.encryptJSON).not.toHaveBeenCalled()
   })
 })

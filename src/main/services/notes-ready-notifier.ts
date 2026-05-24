@@ -6,7 +6,12 @@ import { focusMainWindow, getMainWindow } from './main-window'
 import type { MeetingMetadata } from '../../shared/types'
 
 function getMeetingDisplayTitle(metadata: MeetingMetadata | null): string | null {
-  return metadata?.customTitle?.trim() || metadata?.calendarTitle?.trim() || metadata?.sourceName?.trim() || null
+  return (
+    metadata?.customTitle?.trim() ||
+    metadata?.calendarTitle?.trim() ||
+    metadata?.sourceName?.trim() ||
+    null
+  )
 }
 
 export function buildNotesReadyBody(displayTitle: string | null): string {
@@ -27,15 +32,9 @@ export async function notifyNotesReady(
     return false
   }
 
-  const updatedMetadata: MeetingMetadata = {
-    ...metadata,
-    notesReadyNotificationSentAt: Date.now()
-  }
-  await encryptJSON(updatedMetadata, join(meetingDir, 'metadata.json'))
-
   showNotificationWindow({
     title: 'Notes Ready',
-    body: buildNotesReadyBody(getMeetingDisplayTitle(updatedMetadata)),
+    body: buildNotesReadyBody(getMeetingDisplayTitle(metadata)),
     primaryActionLabel: 'Open Notes',
     onPrimaryAction: () => {
       focusMainWindow()
@@ -43,6 +42,12 @@ export async function notifyNotesReady(
     },
     onDismiss: () => {}
   })
+
+  const updatedMetadata: MeetingMetadata = {
+    ...metadata,
+    notesReadyNotificationSentAt: Date.now()
+  }
+  await encryptJSON(updatedMetadata, join(meetingDir, 'metadata.json'))
 
   return true
 }

@@ -4,11 +4,13 @@ import { basename } from 'path'
 const MAX_ATTACHMENT_BYTES = 64 * 1024
 const REDACTION = '[redacted]'
 
-const SECRET_PATTERNS = [
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi,
-  /\b(access|refresh|id)_token["'=:\s]+[A-Za-z0-9._~+/=-]+/gi,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-  /https?:\/\/[^\s"'<>]*autodoc-auth\.duetdisplay\.workers\.dev[^\s"'<>]*/gi
+const SECRET_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, REDACTION],
+  [/("(?:(?:access|refresh|id)_token)"\s*:\s*)"[^"]*"/gi, `$1"${REDACTION}"`],
+  [/\b((?:access|refresh|id)_token\s*=\s*['"]?)[A-Za-z0-9._~+/=-]+(['"]?)/gi, `$1${REDACTION}$2`],
+  [/\b((?:access|refresh|id)_token\s*:\s*)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTION}`],
+  [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, REDACTION],
+  [/https?:\/\/[^\s"'<>]*autodoc-auth\.duetdisplay\.workers\.dev[^\s"'<>]*/gi, REDACTION]
 ]
 
 const PATH_PATTERNS = [/\/Users\/[^/\s]+/g, /[A-Za-z]:\\Users\\[^\\\s]+/g]
@@ -27,12 +29,16 @@ export async function buildDiagnosticLogAttachment(
     return null
   }
 
-  const raw = await readFile(logPath, 'utf-8').catch(() => null)
+  const raw = await readFile(logPath).catch(() => null)
   if (!raw) {
     return null
   }
 
-  const tail = raw.length > MAX_ATTACHMENT_BYTES ? raw.slice(-MAX_ATTACHMENT_BYTES) : raw
+  const tailBuffer =
+    raw.byteLength > MAX_ATTACHMENT_BYTES
+      ? raw.subarray(raw.byteLength - MAX_ATTACHMENT_BYTES)
+      : raw
+  const tail = tailBuffer.toString('utf-8')
   const sanitized = sanitizeDiagnosticLogTail(tail).trim()
   if (!sanitized) {
     return null
@@ -48,8 +54,8 @@ export async function buildDiagnosticLogAttachment(
 export function sanitizeDiagnosticLogTail(value: string): string {
   let sanitized = value
 
-  for (const pattern of SECRET_PATTERNS) {
-    sanitized = sanitized.replace(pattern, REDACTION)
+  for (const [pattern, replacement] of SECRET_REPLACEMENTS) {
+    sanitized = sanitized.replace(pattern, replacement)
   }
 
   for (const pattern of PATH_PATTERNS) {

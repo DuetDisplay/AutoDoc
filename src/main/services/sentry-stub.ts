@@ -159,7 +159,7 @@ export function createSentryStubRuntime(stubPath: string) {
       return isolationScope
     },
     getCurrentScope() {
-      return isolationScope
+      return activeScope ?? isolationScope
     }
   }
 }

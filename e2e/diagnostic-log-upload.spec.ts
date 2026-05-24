@@ -4,13 +4,43 @@ import path from 'path'
 import { expect, test, type Page } from '@playwright/test'
 import { launchIsolatedE2EAppWithEnv } from './helpers/electron-app'
 
+const STUB_ENVELOPE_TIMEOUT_MS = 5_000
+const STUB_ENVELOPE_POLL_MS = 50
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function readStubEnvelopes(stubPath: string) {
-  const raw = await readFile(stubPath, 'utf-8')
-  return raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, any>)
+  const deadline = Date.now() + STUB_ENVELOPE_TIMEOUT_MS
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      const raw = await readFile(stubPath, 'utf-8')
+      const envelopes = raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, any>)
+
+      if (envelopes.length > 0) {
+        return envelopes
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        lastError = error
+      }
+    }
+
+    await sleep(STUB_ENVELOPE_POLL_MS)
+  }
+
+  throw new Error(
+    `Timed out waiting for Sentry stub envelopes at ${stubPath}${
+      lastError instanceof Error ? `: ${lastError.message}` : ''
+    }`
+  )
 }
 
 async function configureDiagnosticsConsent(
@@ -19,12 +49,12 @@ async function configureDiagnosticsConsent(
   diagnosticLogUploadEnabled: boolean
 ) {
   await page.evaluate(
-    async ({ analyticsEnabled: nextAnalyticsEnabled, diagnosticLogUploadEnabled: nextLogUpload }) => {
+    async ({
+      analyticsEnabled: nextAnalyticsEnabled,
+      diagnosticLogUploadEnabled: nextLogUpload
+    }) => {
       await window.electronAPI.invoke('prefs:set-analytics-consent', nextAnalyticsEnabled)
-      await window.electronAPI.invoke(
-        'prefs:set-diagnostic-log-upload-consent',
-        nextLogUpload
-      )
+      await window.electronAPI.invoke('prefs:set-diagnostic-log-upload-consent', nextLogUpload)
     },
     { analyticsEnabled, diagnosticLogUploadEnabled }
   )

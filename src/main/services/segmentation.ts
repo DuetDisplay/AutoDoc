@@ -247,7 +247,7 @@ export class SegmentationService {
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
-      this.onCompleteCallback?.(meetingId)
+      this.safeInvokeOnComplete(meetingId)
       return
     }
 
@@ -320,7 +320,22 @@ export class SegmentationService {
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
-    this.onCompleteCallback?.(meetingId)
+    this.safeInvokeOnComplete(meetingId)
+  }
+
+  private safeInvokeOnComplete(meetingId: string): void {
+    if (!this.onCompleteCallback) return
+
+    try {
+      this.onCompleteCallback(meetingId)
+    } catch (err) {
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'Segmentation completion callback failed',
+        error: err,
+        meetingId
+      })
+    }
   }
 
   private async markFailed(

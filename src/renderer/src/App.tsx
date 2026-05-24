@@ -176,7 +176,7 @@ export default function App() {
       (payload) => {
         trackEvent(`segmentation_${payload.event}`, {
           meetingId: payload.meetingId,
-          ...payload.properties,
+          ...payload.properties
         })
       }
     )
@@ -297,7 +297,7 @@ export default function App() {
 
   useEffect(() => {
     return window.electronAPI.on('notes:open-meeting', ({ meetingId }) => {
-      window.location.hash = `#${ROUTES.recordings}/${meetingId}`
+      window.location.hash = `#${ROUTES.recordings}/${encodeURIComponent(meetingId)}`
     })
   }, [])
 

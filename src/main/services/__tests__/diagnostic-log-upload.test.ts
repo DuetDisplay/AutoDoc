@@ -45,7 +45,7 @@ describe('diagnostic log upload', () => {
 
     expect(attachment).not.toBeNull()
     expect(attachment?.filename).toBe('autodoc-diagnostic-tail.log')
-    expect(attachment?.data.length ?? 0).toBeLessThanOrEqual(64 * 1024)
+    expect(Buffer.byteLength(attachment?.data ?? '', 'utf-8')).toBeLessThanOrEqual(64 * 1024)
     expect(attachment?.data).not.toContain('my-secret-token')
     expect(attachment?.data).not.toContain('abc123')
     expect(attachment?.data).not.toContain('jane@example.com')
@@ -59,6 +59,17 @@ describe('diagnostic log upload', () => {
     expect(attachment?.data).toContain('"relevantWindowNames":[]')
   })
 
+  it('limits the diagnostic tail by UTF-8 byte length', async () => {
+    const dir = createTempDir()
+    const logPath = path.join(dir, 'autodoc.log')
+    writeFileSync(logPath, 'é'.repeat(40 * 1024), 'utf-8')
+
+    const attachment = await buildDiagnosticLogAttachment(true, logPath)
+
+    expect(attachment).not.toBeNull()
+    expect(Buffer.byteLength(attachment?.data ?? '', 'utf-8')).toBeLessThanOrEqual(64 * 1024)
+  })
+
   it('sanitizes sensitive inline values in log lines', () => {
     const sanitized = sanitizeDiagnosticLogTail(
       '{"title":"Confidential","sourceName":"Planning","path":"/Users/tester/work","email":"qa@example.com","access_token":"abc"}'
@@ -66,8 +77,10 @@ describe('diagnostic log upload', () => {
 
     expect(sanitized).toContain('"title":null')
     expect(sanitized).toContain('"sourceName":null')
+    expect(sanitized).toContain('"access_token":"[redacted]"')
     expect(sanitized).toContain('[home]')
     expect(sanitized).toContain('[redacted]')
     expect(sanitized).not.toContain('qa@example.com')
+    expect(() => JSON.parse(sanitized)).not.toThrow()
   })
 })

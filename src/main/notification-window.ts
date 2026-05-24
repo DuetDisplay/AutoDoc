@@ -3,6 +3,15 @@ import { BrowserWindow, screen, ipcMain } from 'electron'
 let notificationWindow: BrowserWindow | null = null
 let cleanupListeners: (() => void) | null = null
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 interface NotificationOptions {
   title: string
   body: string
@@ -39,17 +48,23 @@ export function showNotificationWindow(options: NotificationOptions): void {
     show: false,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false,
-    },
+      contextIsolation: false
+    }
   })
 
   const handlePrimaryAction = () => {
-    options.onPrimaryAction()
-    animateOut()
+    try {
+      options.onPrimaryAction()
+    } finally {
+      animateOut()
+    }
   }
   const handleDismiss = () => {
-    options.onDismiss()
-    animateOut()
+    try {
+      options.onDismiss()
+    } finally {
+      animateOut()
+    }
   }
 
   ipcMain.once('notification:primary-action', handlePrimaryAction)
@@ -66,11 +81,9 @@ export function showNotificationWindow(options: NotificationOptions): void {
     notificationWindow = null
   })
 
-  const title = options.title.replace(/'/g, '&#39;').replace(/"/g, '&quot;')
-  const body = options.body.replace(/'/g, '&#39;').replace(/"/g, '&quot;')
-  const primaryActionLabel = options.primaryActionLabel
-    .replace(/'/g, '&#39;')
-    .replace(/"/g, '&quot;')
+  const title = escapeHtml(options.title)
+  const body = escapeHtml(options.body)
+  const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
   const html = `<!DOCTYPE html>
 <html>
@@ -231,8 +244,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   // Auto-dismiss after 30 seconds
   setTimeout(() => {
     if (notificationWindow) {
-      options.onDismiss()
-      animateOut()
+      handleDismiss()
     }
   }, 30_000)
 }
@@ -240,18 +252,23 @@ export function showNotificationWindow(options: NotificationOptions): void {
 function animateOut(): void {
   if (!notificationWindow) return
   const win = notificationWindow
-  win.webContents.executeJavaScript(`
+  win.webContents
+    .executeJavaScript(
+      `
     new Promise(resolve => {
       const toast = document.querySelector('.toast');
       if (!toast || toast.classList.contains('dismissing')) { resolve(); return; }
       toast.classList.add('dismissing');
       toast.addEventListener('animationend', resolve, { once: true });
     })
-  `).then(() => {
-    if (!win.isDestroyed()) win.close()
-  }).catch(() => {
-    if (!win.isDestroyed()) win.close()
-  })
+  `
+    )
+    .then(() => {
+      if (!win.isDestroyed()) win.close()
+    })
+    .catch(() => {
+      if (!win.isDestroyed()) win.close()
+    })
 }
 
 export function hideNotificationWindow(): void {

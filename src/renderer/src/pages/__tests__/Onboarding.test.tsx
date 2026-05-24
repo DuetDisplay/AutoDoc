@@ -73,7 +73,8 @@ describe('Onboarding', () => {
       if (channel === 'calendar:get-accounts') return Promise.resolve([])
       if (channel === 'permissions:check')
         return Promise.resolve({ microphone: true, screen: true })
-      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'prefs:get-onboarding-permission-settings-opened')
+        return Promise.resolve(false)
       return Promise.resolve({} as never)
     })
 
@@ -94,7 +95,8 @@ describe('Onboarding', () => {
       if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
       if (channel === 'permissions:check')
         return Promise.resolve({ microphone: true, screen: true })
-      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'prefs:get-onboarding-permission-settings-opened')
+        return Promise.resolve(false)
       return Promise.resolve({} as never)
     })
 
@@ -165,7 +167,7 @@ describe('Onboarding', () => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
       expect(window.electronAPI.invoke).toHaveBeenCalledWith(
         'prefs:set-diagnostic-log-upload-consent',
-        true
+        false
       )
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 10)
     })
@@ -190,7 +192,6 @@ describe('Onboarding', () => {
     const checkbox = await screen.findByRole('checkbox', {
       name: /attach technical app logs to error reports/i
     })
-    await userEvent.click(checkbox)
     expect(checkbox).not.toBeChecked()
 
     await userEvent.click(screen.getByRole('button', { name: /share anonymous data/i }))
@@ -220,7 +221,7 @@ describe('Onboarding', () => {
       name: /attach technical app logs to error reports/i
     })
     await userEvent.click(checkbox)
-    expect(checkbox).not.toBeChecked()
+    expect(checkbox).toBeChecked()
 
     await userEvent.click(screen.getByRole('button', { name: /back/i }))
     expect(await screen.findByRole('heading', { name: /AI/i })).toBeInTheDocument()
@@ -230,7 +231,7 @@ describe('Onboarding', () => {
     const restoredCheckbox = await screen.findByRole('checkbox', {
       name: /attach technical app logs to error reports/i
     })
-    expect(restoredCheckbox).not.toBeChecked()
+    expect(restoredCheckbox).toBeChecked()
   })
 
   it('skips macOS permission steps on Windows', async () => {

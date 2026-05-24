@@ -24,7 +24,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
-  const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(true)
+  const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(false)
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
