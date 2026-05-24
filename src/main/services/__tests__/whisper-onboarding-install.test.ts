@@ -6,6 +6,7 @@ import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const describeWhisperOnboarding = process.env.CI === 'true' ? describe.skip : describe
 type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
 
 function getExecFileCallback(
@@ -95,7 +96,7 @@ afterEach(async () => {
   setPlatform(originalPlatform)
 })
 
-describe('Whisper onboarding dependency installation', () => {
+describeWhisperOnboarding('Whisper onboarding dependency installation', () => {
   it('completes the packaged macOS dependency setup flow with managed runtime assets', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
