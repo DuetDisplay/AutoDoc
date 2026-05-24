@@ -5,6 +5,7 @@ on:
     branches:
       # Add a developer branch here when you want test artifacts from CI.
       - codex/single-instance-installed-copy
+      - bugFixes0.1.27
       - main
     tags:
       - 'v*'
@@ -102,13 +103,24 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
         run: |
-          npm run prepare:macos-whisper-runtime
+          npm run prepare:macos-mlx-runtime
           npm run build
           npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
+      - name: Build macOS test release v0.1.27a (signed + notarized)
+        if: github.event_name == 'push' && github.ref_name == 'bugFixes0.1.27'
+        env:
+          APPLE_ID: ${{ secrets.DD_APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.DD_APPLE_TEAM }}
+        run: |
+          npm run prepare:macos-mlx-runtime
+          npm run build
+          npx electron-builder --mac --publish never "-c.extraMetadata.version=0.1.27a"
+
       - name: Build macOS artifacts (signed, no notarization)
-        if: github.event_name == 'push' && github.ref_type == 'branch'
-        run: npm run prepare:macos-whisper-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'bugFixes0.1.27'
+        run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
       - name: Upload macOS artifacts
         if: github.event_name == 'push' && github.ref_type == 'branch' && success()
@@ -134,7 +146,7 @@ jobs:
           retention-days: 14
 
   build-win:
-    if: github.event_name == 'push' || inputs.release_platform == 'all'
+    if: (github.event_name == 'push' && github.ref_name != 'bugFixes0.1.27') || inputs.release_platform == 'all'
     runs-on: windows-2022
     permissions:
       contents: read
