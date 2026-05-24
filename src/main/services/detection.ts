@@ -928,7 +928,8 @@ export class DetectionService {
     showNotificationWindow({
       title,
       body,
-      onRecord: () => {
+      primaryActionLabel: 'Start AI Notes',
+      onPrimaryAction: () => {
         this.markAutoRecordPending()
         focusMainWindow()
         this.broadcast('detection:auto-record', { providerId, hasCalendarEvent: false })

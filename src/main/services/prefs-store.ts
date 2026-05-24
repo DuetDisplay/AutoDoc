@@ -11,6 +11,7 @@ interface PrefsSchema {
   onboardingScreenSettingsOpened: boolean
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
+  diagnosticLogUploadConsent: boolean
   experimentalSpeakerDiarization: boolean
 }
 
@@ -24,6 +25,7 @@ function createPrefsStore(): Store<PrefsSchema> {
       onboardingScreenSettingsOpened: false,
       launchAtLogin: true,
       analyticsConsent: null,
+      diagnosticLogUploadConsent: false,
       experimentalSpeakerDiarization: false
     }
   })
@@ -31,6 +33,10 @@ function createPrefsStore(): Store<PrefsSchema> {
 
 export function readInitialAnalyticsConsent(): boolean | null {
   return createPrefsStore().get('analyticsConsent')
+}
+
+export function readInitialDiagnosticLogUploadConsent(): boolean {
+  return createPrefsStore().get('diagnosticLogUploadConsent')
 }
 
 export class PrefsStore {
@@ -96,6 +102,14 @@ export class PrefsStore {
 
   setAnalyticsConsent(enabled: boolean): void {
     this.store.set('analyticsConsent', enabled)
+  }
+
+  getDiagnosticLogUploadConsent(): boolean {
+    return this.store.get('diagnosticLogUploadConsent')
+  }
+
+  setDiagnosticLogUploadConsent(enabled: boolean): void {
+    this.store.set('diagnosticLogUploadConsent', enabled)
   }
 
   getExperimentalSpeakerDiarization(): boolean {

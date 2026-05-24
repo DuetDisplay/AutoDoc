@@ -3,10 +3,20 @@ import { BrowserWindow, screen, ipcMain } from 'electron'
 let notificationWindow: BrowserWindow | null = null
 let cleanupListeners: (() => void) | null = null
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 interface NotificationOptions {
   title: string
   body: string
-  onRecord: () => void
+  primaryActionLabel: string
+  onPrimaryAction: () => void
   onDismiss: () => void
 }
 
@@ -38,24 +48,30 @@ export function showNotificationWindow(options: NotificationOptions): void {
     show: false,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false,
-    },
+      contextIsolation: false
+    }
   })
 
-  const handleRecord = () => {
-    options.onRecord()
-    animateOut()
+  const handlePrimaryAction = () => {
+    try {
+      options.onPrimaryAction()
+    } finally {
+      animateOut()
+    }
   }
   const handleDismiss = () => {
-    options.onDismiss()
-    animateOut()
+    try {
+      options.onDismiss()
+    } finally {
+      animateOut()
+    }
   }
 
-  ipcMain.once('notification:record', handleRecord)
+  ipcMain.once('notification:primary-action', handlePrimaryAction)
   ipcMain.once('notification:dismiss', handleDismiss)
 
   cleanupListeners = () => {
-    ipcMain.removeListener('notification:record', handleRecord)
+    ipcMain.removeListener('notification:primary-action', handlePrimaryAction)
     ipcMain.removeListener('notification:dismiss', handleDismiss)
   }
 
@@ -65,8 +81,9 @@ export function showNotificationWindow(options: NotificationOptions): void {
     notificationWindow = null
   })
 
-  const title = options.title.replace(/'/g, '&#39;').replace(/"/g, '&quot;')
-  const body = options.body.replace(/'/g, '&#39;').replace(/"/g, '&quot;')
+  const title = escapeHtml(options.title)
+  const body = escapeHtml(options.body)
+  const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
   const html = `<!DOCTYPE html>
 <html>
@@ -197,7 +214,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
       <div class="subtitle">${body}</div>
     </div>
     <div class="actions">
-      <button class="btn-record" id="record">Start AI Notes</button>
+      <button class="btn-record" id="primary-action">${primaryActionLabel}</button>
       <button class="btn-x" id="dismiss">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
           <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
@@ -212,7 +229,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
       toast.classList.add('dismissing');
       toast.addEventListener('animationend', () => ipcRenderer.send(channel), { once: true });
     }
-    document.getElementById('record').onclick = () => dismiss('notification:record');
+    document.getElementById('primary-action').onclick = () => dismiss('notification:primary-action');
     document.getElementById('dismiss').onclick = () => dismiss('notification:dismiss');
   </script>
 </body>
@@ -227,8 +244,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   // Auto-dismiss after 30 seconds
   setTimeout(() => {
     if (notificationWindow) {
-      options.onDismiss()
-      animateOut()
+      handleDismiss()
     }
   }, 30_000)
 }
@@ -236,18 +252,23 @@ export function showNotificationWindow(options: NotificationOptions): void {
 function animateOut(): void {
   if (!notificationWindow) return
   const win = notificationWindow
-  win.webContents.executeJavaScript(`
+  win.webContents
+    .executeJavaScript(
+      `
     new Promise(resolve => {
       const toast = document.querySelector('.toast');
       if (!toast || toast.classList.contains('dismissing')) { resolve(); return; }
       toast.classList.add('dismissing');
       toast.addEventListener('animationend', resolve, { once: true });
     })
-  `).then(() => {
-    if (!win.isDestroyed()) win.close()
-  }).catch(() => {
-    if (!win.isDestroyed()) win.close()
-  })
+  `
+    )
+    .then(() => {
+      if (!win.isDestroyed()) win.close()
+    })
+    .catch(() => {
+      if (!win.isDestroyed()) win.close()
+    })
 }
 
 export function hideNotificationWindow(): void {

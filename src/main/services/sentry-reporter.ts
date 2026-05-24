@@ -1,11 +1,13 @@
 import type * as SentryType from '@sentry/electron/main'
 import { getDiagnosticTrail } from './diagnostic-trail'
+import type { DiagnosticLogAttachment } from './diagnostic-log-upload'
 
 export interface ErrorContext {
   area: string
   meetingId?: string
   tags?: Record<string, string>
   extra?: Record<string, unknown>
+  diagnosticLogAttachment?: DiagnosticLogAttachment | null
 }
 
 export interface MessageContext extends ErrorContext {
@@ -46,6 +48,13 @@ export function captureError(error: unknown, context: ErrorContext): void {
   const diagnosticTrail = getDiagnosticTrail()
 
   currentSentry.withScope((scope) => {
+    const attachmentAwareScope = scope as typeof scope & {
+      addAttachment?: (attachment: {
+        filename: string
+        contentType?: string
+        data: string
+      }) => void
+    }
     scope.setTag('area', context.area)
     if (context.meetingId) scope.setTag('meetingId', context.meetingId)
     if (context.tags) {
@@ -60,6 +69,9 @@ export function captureError(error: unknown, context: ErrorContext): void {
       })
     } else {
       scope.setExtras({ diagnosticTrail })
+    }
+    if (context.diagnosticLogAttachment) {
+      attachmentAwareScope.addAttachment?.(context.diagnosticLogAttachment)
     }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))

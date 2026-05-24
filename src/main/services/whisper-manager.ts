@@ -38,6 +38,7 @@ import {
   type WindowsTranscriptionBackendId,
   type WindowsTranscriptionProfile
 } from './windows-transcription-runtime'
+import { getConfiguredMacWhisperRuntimeAssetBaseUrl } from './distribution-config'
 
 const IS_WIN = process.platform === 'win32'
 
@@ -49,11 +50,6 @@ const FFMPEG_WIN_URL =
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
 const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
 const FASTER_WHISPER_PROBE_TIMEOUT_MS = 45_000
-const MAC_WHISPER_RUNTIME_RELEASE_TAG =
-  process.env.AUTODOC_MACOS_WHISPER_RUNTIME_RELEASE_TAG ?? 'macos-whisper-runtime-v1'
-const MAC_WHISPER_RUNTIME_ASSET_BASE_URL =
-  process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL ??
-  `https://github.com/DuetDisplay/AutoDoc-Local/releases/download/${MAC_WHISPER_RUNTIME_RELEASE_TAG}`
 const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
   'whisper-cpp',
   'libwhisper.1.dylib',
@@ -459,6 +455,12 @@ export class WhisperManager extends EventEmitter {
   private async ensureFasterWhisperReady(): Promise<void> {
     const profile = this.getSelectedWindowsProfile()
     await this.ensureFfmpegForSelectedRuntime()
+
+    if (profile.assets.some((asset) => !asset.url)) {
+      throw new Error(
+        'Managed Windows transcription assets are not configured for this build. Set AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL or use an official AutoDoc build.'
+      )
+    }
 
     for (const asset of profile.assets) {
       const assetRoot = this.getFasterWhisperAssetRoot(profile, asset.id)
@@ -887,6 +889,13 @@ export class WhisperManager extends EventEmitter {
   }
 
   private getMacWhisperRuntimeAsset(): MacWhisperRuntimeAsset {
+    const assetBaseUrl = getConfiguredMacWhisperRuntimeAssetBaseUrl()
+    if (!assetBaseUrl) {
+      throw new Error(
+        'Managed macOS whisper runtime assets are not configured for this build. Set AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL or use an official AutoDoc build.'
+      )
+    }
+
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
     const filename = `macos-whisper-runtime-${arch}.tar.gz`
     const shaEnvName =
@@ -901,7 +910,7 @@ export class WhisperManager extends EventEmitter {
 
     return {
       filename,
-      url: `${MAC_WHISPER_RUNTIME_ASSET_BASE_URL.replace(/\/$/, '')}/${filename}`,
+      url: `${assetBaseUrl.replace(/\/$/, '')}/${filename}`,
       sha256: process.env[shaEnvName] ?? '',
       bytes: Number.isFinite(bytes) && bytes > 0 ? bytes : undefined,
       expectedFiles: MAC_WHISPER_RUNTIME_EXPECTED_FILES

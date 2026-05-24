@@ -109,6 +109,44 @@ export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
   }
 }
 
+export async function launchIsolatedE2EAppWithEnv(
+  extraEnv: Record<string, string>,
+  scenario?: E2EScenario
+) {
+  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
+  const electronApp = await launchApp({ scenario, userDataDir, extraEnv })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        killProcessesForUserDataDir(userDataDir)
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
+    }
+  }
+}
+
+export async function relaunchIsolatedE2EApp(userDataDir: string, scenario?: E2EScenario) {
+  const electronApp = await launchApp({ scenario, userDataDir })
+
+  return {
+    electronApp,
+    userDataDir,
+    async cleanup(): Promise<void> {
+      try {
+        await electronApp.close()
+      } finally {
+        killProcessesForUserDataDir(userDataDir)
+        rmSync(userDataDir, { recursive: true, force: true })
+      }
+    }
+  }
+}
+
 export async function launchIsolatedExternalE2EApp(appRoot: string, scenario?: E2EScenario) {
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-e2e-isolated-'))
   const electronApp = await launchApp({ appRoot, scenario, userDataDir })

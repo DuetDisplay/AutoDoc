@@ -119,6 +119,8 @@ export interface IpcInvokeEvents {
   'prefs:set-launch-at-login': [enabled: boolean]
   'prefs:get-analytics-consent': []
   'prefs:set-analytics-consent': [enabled: boolean]
+  'prefs:get-diagnostic-log-upload-consent': []
+  'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'ollama:get-setup-status': []
@@ -131,6 +133,10 @@ export interface IpcInvokeEvents {
   'e2e:get-permission-request-state': []
   'e2e:set-detection-state': [state: Partial<E2EDetectionState>]
   'e2e:detection-poll': [advanceMs?: number]
+  'e2e:trigger-main-error': []
+  'e2e:trigger-notes-ready-notification': [
+    options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+  ]
   'updater:get-status': []
   'updater:check': []
   'updater:install': []
@@ -203,6 +209,8 @@ export interface IpcInvokeReturns {
   'prefs:set-launch-at-login': void
   'prefs:get-analytics-consent': boolean | null
   'prefs:set-analytics-consent': void
+  'prefs:get-diagnostic-log-upload-consent': boolean
+  'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
   'ollama:get-setup-status': OllamaSetupStatus
@@ -215,6 +223,8 @@ export interface IpcInvokeReturns {
   'e2e:get-permission-request-state': E2EPermissionRequestState
   'e2e:set-detection-state': E2EDetectionState
   'e2e:detection-poll': void
+  'e2e:trigger-main-error': void
+  'e2e:trigger-notes-ready-notification': string
   'updater:get-status': UpdateStatus
   'updater:check': void
   'updater:install': void
@@ -230,6 +240,7 @@ export interface IpcOnEvents {
   'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]
+  'notes:open-meeting': [payload: { meetingId: string }]
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
@@ -237,5 +248,6 @@ export interface IpcOnEvents {
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]
   'prefs:analytics-consent-changed': [enabled: boolean]
+  'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
 }

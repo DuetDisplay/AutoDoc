@@ -73,7 +73,8 @@ describe('Onboarding', () => {
       if (channel === 'calendar:get-accounts') return Promise.resolve([])
       if (channel === 'permissions:check')
         return Promise.resolve({ microphone: true, screen: true })
-      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'prefs:get-onboarding-permission-settings-opened')
+        return Promise.resolve(false)
       return Promise.resolve({} as never)
     })
 
@@ -94,7 +95,8 @@ describe('Onboarding', () => {
       if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
       if (channel === 'permissions:check')
         return Promise.resolve({ microphone: true, screen: true })
-      if (channel === 'prefs:get-onboarding-permission-settings-opened') return Promise.resolve(false)
+      if (channel === 'prefs:get-onboarding-permission-settings-opened')
+        return Promise.resolve(false)
       return Promise.resolve({} as never)
     })
 
@@ -152,6 +154,7 @@ describe('Onboarding', () => {
       if (channel === 'prefs:get-onboarding-step') return Promise.resolve(9)
       if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
       if (channel === 'prefs:set-analytics-consent') return Promise.resolve(args[0])
+      if (channel === 'prefs:set-diagnostic-log-upload-consent') return Promise.resolve(args[0])
       if (channel === 'prefs:set-onboarding-step') return Promise.resolve(undefined)
       return Promise.resolve({} as never)
     })
@@ -162,12 +165,73 @@ describe('Onboarding', () => {
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'prefs:set-diagnostic-log-upload-consent',
+        false
+      )
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 10)
     })
 
     expect(
       await screen.findByRole('heading', { name: /you’re all set|you're all set/i })
     ).toBeInTheDocument()
+  })
+
+  it('allows analytics opt-in while leaving diagnostic log upload off', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string, ...args: any[]) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(9)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'prefs:set-analytics-consent') return Promise.resolve(args[0])
+      if (channel === 'prefs:set-diagnostic-log-upload-consent') return Promise.resolve(args[0])
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(undefined)
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    expect(checkbox).not.toBeChecked()
+
+    await userEvent.click(screen.getByRole('button', { name: /share anonymous data/i }))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'prefs:set-diagnostic-log-upload-consent',
+        false
+      )
+    })
+  })
+
+  it('preserves the diagnostic log upload choice when navigating back and forward from analytics', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(9)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(undefined)
+      if (channel === 'ollama:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    await userEvent.click(checkbox)
+    expect(checkbox).toBeChecked()
+
+    await userEvent.click(screen.getByRole('button', { name: /back/i }))
+    expect(await screen.findByRole('heading', { name: /AI/i })).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
+
+    const restoredCheckbox = await screen.findByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    expect(restoredCheckbox).toBeChecked()
   })
 
   it('skips macOS permission steps on Windows', async () => {

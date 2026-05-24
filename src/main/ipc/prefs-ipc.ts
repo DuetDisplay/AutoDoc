@@ -8,6 +8,13 @@ function broadcastAnalyticsConsent(enabled: boolean): void {
   }
 }
 
+function broadcastDiagnosticLogUploadConsent(enabled: boolean): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('prefs:diagnostic-log-upload-consent-changed', enabled)
+  }
+}
+
 function broadcastExperimentalSpeakerDiarization(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
@@ -18,6 +25,7 @@ function broadcastExperimentalSpeakerDiarization(enabled: boolean): void {
 export function registerPrefsIpc(
   prefsStore: PrefsStore,
   onAnalyticsConsentChanged?: (enabled: boolean) => void,
+  onDiagnosticLogUploadConsentChanged?: (enabled: boolean) => void,
   onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void
 ): void {
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {
@@ -66,6 +74,16 @@ export function registerPrefsIpc(
     prefsStore.setAnalyticsConsent(enabled)
     onAnalyticsConsentChanged?.(enabled)
     broadcastAnalyticsConsent(enabled)
+  })
+
+  ipcMain.handle('prefs:get-diagnostic-log-upload-consent', (): boolean => {
+    return prefsStore.getDiagnosticLogUploadConsent()
+  })
+
+  ipcMain.handle('prefs:set-diagnostic-log-upload-consent', (_event, enabled: boolean): void => {
+    prefsStore.setDiagnosticLogUploadConsent(enabled)
+    onDiagnosticLogUploadConsentChanged?.(enabled)
+    broadcastDiagnosticLogUploadConsent(enabled)
   })
 
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {

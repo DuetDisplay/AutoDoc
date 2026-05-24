@@ -14,10 +14,9 @@ import {
   isReconnectRequiredMicrosoftAuthError,
   isUnsupportedMicrosoftMailboxError
 } from './calendar-error-classification'
+import { requireConfiguredAuthWorkerUrl } from './distribution-config'
 
 const OAUTH_PORT = 42813
-const AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
-
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
@@ -79,7 +78,8 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     const state = crypto.randomBytes(16).toString('hex')
     const statePayload = JSON.stringify({ provider: 'microsoft', nonce: state })
     const encodedState = Buffer.from(statePayload).toString('base64url')
-    const authUrl = `${AUTH_WORKER_URL}/auth/microsoft?state=${encodeURIComponent(encodedState)}`
+    const authWorkerUrl = requireConfiguredAuthWorkerUrl()
+    const authUrl = `${authWorkerUrl}/auth/microsoft?state=${encodeURIComponent(encodedState)}`
     const callbackPromise = this.waitForCallback(encodedState)
 
     await shell.openExternal(authUrl)
@@ -281,7 +281,8 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     if (tokens.expiry_date && tokens.expiry_date > Date.now() + 5 * 60_000) return
 
     try {
-      const response = await fetch(`${AUTH_WORKER_URL}/microsoft/refresh`, {
+      const authWorkerUrl = requireConfiguredAuthWorkerUrl()
+      const response = await fetch(`${authWorkerUrl}/microsoft/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: tokens.refresh_token }),

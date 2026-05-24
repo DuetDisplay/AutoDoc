@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { readFile } from 'fs/promises'
 import { cpus } from 'os'
 import { promisify } from 'util'
+import { getConfiguredWindowsTranscriptionAssetBaseUrl } from './distribution-config'
 
 const execFileAsync = promisify(execFile)
 
@@ -56,9 +57,7 @@ export interface WindowsTranscriptionManifest {
   profiles: WindowsTranscriptionProfile[]
 }
 
-const ASSET_BASE_URL =
-  process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL ??
-  'https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1'
+const ASSET_BASE_URL = getConfiguredWindowsTranscriptionAssetBaseUrl()
 
 export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
   WindowsTranscriptionBackendId,
@@ -76,7 +75,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
       {
         id: 'runtime',
         filename: 'faster-whisper-runtime-cuda-win-x64.zip',
-        url: `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip`,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip` : '',
         sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
         bytes: 1439431425,
         expectedFiles: [
@@ -88,7 +87,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
       {
         id: 'model',
         filename: 'faster-whisper-distil-large-v3-ct2.zip',
-        url: `${ASSET_BASE_URL}/faster-whisper-distil-large-v3-ct2.zip`,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-distil-large-v3-ct2.zip` : '',
         sha256: '81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064',
         bytes: 1397218990,
         expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
@@ -106,7 +105,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
       {
         id: 'runtime',
         filename: 'faster-whisper-runtime-cpu-win-x64.zip',
-        url: `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip`,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip` : '',
         sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
         bytes: 122910760,
         expectedFiles: [
@@ -118,7 +117,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
       {
         id: 'model',
         filename: 'faster-whisper-small-en-ct2-int8.zip',
-        url: `${ASSET_BASE_URL}/faster-whisper-small-en-ct2-int8.zip`,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-small-en-ct2-int8.zip` : '',
         sha256: '1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8',
         bytes: 445198952,
         expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
@@ -153,7 +152,7 @@ export function normalizeWindowsTranscriptionProfiles(
 ): Record<WindowsTranscriptionBackendId, WindowsTranscriptionProfile> {
   const profiles = { ...WINDOWS_TRANSCRIPTION_PROFILES }
   const artifactBaseUrl =
-    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL ?? manifest.artifactBaseUrl
+    getConfiguredWindowsTranscriptionAssetBaseUrl() ?? manifest.artifactBaseUrl ?? null
 
   for (const profile of manifest.profiles) {
     if (

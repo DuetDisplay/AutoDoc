@@ -1,10 +1,16 @@
 import { useState } from 'react'
 
 interface Props {
-  onNext: (consented: boolean) => void
+  diagnosticLogUploadConsented: boolean
+  onDiagnosticLogUploadConsentedChange: (enabled: boolean) => void
+  onNext: (consented: boolean, diagnosticLogUploadConsented: boolean) => void
 }
 
-export function AnalyticsStep({ onNext }: Props) {
+export function AnalyticsStep({
+  diagnosticLogUploadConsented,
+  onDiagnosticLogUploadConsentedChange,
+  onNext
+}: Props) {
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -23,7 +29,7 @@ export function AnalyticsStep({ onNext }: Props) {
 
       <p className="text-[14px] text-ink-muted leading-relaxed mb-4">
         Share anonymous usage data so we can understand which features matter most and fix crashes faster.
-        No meeting content, transcripts, or personal data — ever.
+        Meeting content stays local. If you choose, you can also attach technical app logs to error reports.
       </p>
 
       {/* What we track disclosure */}
@@ -64,6 +70,10 @@ export function AnalyticsStep({ onNext }: Props) {
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
+              <span><strong className="text-ink">Optional diagnostic logs</strong> — technical app logs only if you explicitly allow them</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-sage font-bold mt-[1px]">✓</span>
               <span><strong className="text-ink">App version & OS</strong> — helps us prioritize platform fixes</span>
             </div>
             <div className="border-t border-border-subtle mt-3 pt-3 space-y-2">
@@ -88,15 +98,30 @@ export function AnalyticsStep({ onNext }: Props) {
         AutoDoc is open source — you can audit our tracking code anytime. You can change this later in Settings.
       </p>
 
+      <label className="flex items-start gap-3 rounded-lg border border-border-subtle bg-bg-accent px-4 py-3 mb-4 text-left">
+        <input
+          type="checkbox"
+          checked={diagnosticLogUploadConsented}
+          onChange={(event) => onDiagnosticLogUploadConsentedChange(event.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-border-subtle text-sage focus:ring-sage"
+          aria-label="Attach technical app logs to error reports"
+        />
+        <span className="text-[12px] text-ink-muted leading-relaxed">
+          <strong className="text-ink font-semibold">Attach technical app logs to error reports</strong>
+          {' '}
+          if I choose to share diagnostics. This can help debug failures faster, and can stay off while analytics remain on.
+        </span>
+      </label>
+
       <div className="flex flex-col gap-2">
         <button
-          onClick={() => onNext(true)}
+          onClick={() => onNext(true, diagnosticLogUploadConsented)}
           className="w-full px-6 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
           Share Anonymous Data
         </button>
         <button
-          onClick={() => onNext(false)}
+          onClick={() => onNext(false, false)}
           className="w-full px-6 py-2.5 text-ink-muted text-[13px] font-medium hover:text-ink transition-colors"
         >
           No Thanks

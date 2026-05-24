@@ -71,4 +71,13 @@ describe('PrefsStore', () => {
     store.setExperimentalSpeakerDiarization(true)
     expect(store.getExperimentalSpeakerDiarization()).toBe(false)
   })
+
+  it('defaults diagnostic log upload consent to false', () => {
+    expect(store.getDiagnosticLogUploadConsent()).toBe(false)
+  })
+
+  it('persists diagnostic log upload consent', () => {
+    store.setDiagnosticLogUploadConsent(true)
+    expect(store.getDiagnosticLogUploadConsent()).toBe(true)
+  })
 })

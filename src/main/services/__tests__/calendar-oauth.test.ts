@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MicrosoftCalendarProvider } from '../microsoft-calendar'
 
 type RequestHandler = (
@@ -91,6 +91,8 @@ describe('Calendar OAuth', () => {
     vi.clearAllMocks()
     tokenStore.clear()
     httpState.handler = null
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+    delete process.env.AUTODOC_AUTH_WORKER_URL
     openExternal.mockResolvedValue(undefined)
     vi.stubGlobal(
       'fetch',
@@ -105,6 +107,11 @@ describe('Calendar OAuth', () => {
         throw new Error(`Unexpected fetch: ${String(url)}`)
       })
     )
+  })
+
+  afterEach(() => {
+    delete process.env.AUTODOC_OFFICIAL_BUILD
+    delete process.env.AUTODOC_AUTH_WORKER_URL
   })
 
   it('starts Microsoft OAuth through the auth worker and completes from returned tokens', async () => {

@@ -4,6 +4,10 @@ import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 
+const mocks = vi.hoisted(() => ({
+  logAutodocFailure: vi.fn()
+}))
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: vi.fn(() => []) }
 }))
@@ -20,6 +24,10 @@ vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
   decryptJSON: vi.fn(),
   encryptJSON: vi.fn()
+}))
+
+vi.mock('../autodoc-log', () => ({
+  logAutodocFailure: mocks.logAutodocFailure
 }))
 
 const fsMock = vi.mocked(await import('fs/promises'))
@@ -196,6 +204,137 @@ describe('SegmentationService', () => {
       },
       join('/mock/home/AutoDoc/recordings', 'm1', 'segments.json')
     )
+  })
+
+  it('invokes onComplete when segmentation finishes successfully', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      Buffer.from(
+        JSON.stringify([
+          {
+            id: 'm1-0',
+            meetingId: 'm1',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ])
+      )
+    )
+    vi.mocked(provider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      information: [
+        {
+          id: 'seg-1',
+          meetingId: 'm1',
+          category: 'information',
+          topic: 'Rollout',
+          title: 'Plan confirmed',
+          content: 'The rollout plan was confirmed.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 65_000
+        }
+      ],
+      discussion: [],
+      statusUpdates: []
+    })
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+
+    await (service as any).processJob('m1')
+
+    expect(onComplete).toHaveBeenCalledWith('m1')
+  })
+
+  it('logs onComplete callback failures without failing completed segmentation', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      information: [
+        {
+          id: 'seg-1',
+          meetingId: 'm1',
+          category: 'information',
+          topic: 'Rollout',
+          title: 'Plan confirmed',
+          content: 'The rollout plan was confirmed.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 65_000
+        }
+      ],
+      discussion: [],
+      statusUpdates: []
+    })
+    const error = new Error('callback failed')
+    service.onComplete(() => {
+      throw error
+    })
+
+    const serviceTestApi = service as unknown as {
+      processJob(meetingId: string): Promise<void>
+    }
+
+    await expect(serviceTestApi.processJob('m1')).resolves.toBeUndefined()
+
+    expect(mocks.logAutodocFailure).toHaveBeenCalledWith({
+      area: 'segmentation',
+      message: 'Segmentation completion callback failed',
+      error,
+      meetingId: 'm1'
+    })
+  })
+
+  it('does not invoke onComplete when segmentation fails', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockRejectedValue(new Error('Ollama unavailable'))
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+
+    await expect((service as any).processJob('m1')).rejects.toThrow('Ollama unavailable')
+    expect(onComplete).not.toHaveBeenCalled()
   })
 
   it('marks substantive empty segmentation output as transcript-only instead of retry-failed', async () => {

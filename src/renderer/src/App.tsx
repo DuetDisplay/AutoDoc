@@ -176,7 +176,7 @@ export default function App() {
       (payload) => {
         trackEvent(`segmentation_${payload.event}`, {
           meetingId: payload.meetingId,
-          ...payload.properties,
+          ...payload.properties
         })
       }
     )
@@ -294,6 +294,12 @@ export default function App() {
     )
     return unsub
   }, [events, isRecording, fetchSources, handleStart])
+
+  useEffect(() => {
+    return window.electronAPI.on('notes:open-meeting', ({ meetingId }) => {
+      window.location.hash = `#${ROUTES.recordings}/${encodeURIComponent(meetingId)}`
+    })
+  }, [])
 
   // Auto-stop recording when meeting-end signals stay gone long enough to be convincing.
   useEffect(() => {

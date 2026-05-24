@@ -20,7 +20,8 @@ describe('Settings', () => {
     const state = {
       accounts: [createCalendarAccount()],
       events: [] as any[],
-      analyticsConsent: false
+      analyticsConsent: false,
+      diagnosticLogUploadConsent: false
     }
 
     installMockElectronApi({
@@ -29,6 +30,7 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-diagnostic-log-upload-consent': () => state.diagnosticLogUploadConsent,
       'calendar:get-accounts': () => state.accounts,
       'calendar:get-events': () => state.events,
       'calendar:disconnect': (accountId: string) => {
@@ -65,7 +67,8 @@ describe('Settings', () => {
     const state = {
       accounts: [] as ReturnType<typeof createCalendarAccount>[],
       events: [] as any[],
-      analyticsConsent: false
+      analyticsConsent: false,
+      diagnosticLogUploadConsent: false
     }
 
     installMockElectronApi({
@@ -74,8 +77,12 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-diagnostic-log-upload-consent': () => state.diagnosticLogUploadConsent,
       'prefs:set-analytics-consent': (enabled: boolean) => {
         state.analyticsConsent = enabled
+      },
+      'prefs:set-diagnostic-log-upload-consent': (enabled: boolean) => {
+        state.diagnosticLogUploadConsent = enabled
       },
       'calendar:get-accounts': () => state.accounts,
       'calendar:get-events': () => state.events,
@@ -102,6 +109,17 @@ describe('Settings', () => {
       expect(analyticsToggle).toHaveAttribute('aria-pressed', 'true')
     })
 
+    const logUploadCheckbox = screen.getByRole('checkbox', {
+      name: /attach technical app logs to error reports/i
+    })
+    expect(logUploadCheckbox).not.toBeChecked()
+
+    await user.click(logUploadCheckbox)
+
+    await waitFor(() => {
+      expect(logUploadCheckbox).toBeChecked()
+    })
+
     view.unmount()
     render(<Settings />)
 
@@ -109,6 +127,9 @@ describe('Settings', () => {
     expect(
       screen.getByRole('button', { name: /toggle analytics and crash reports/i })
     ).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
+    ).toBeChecked()
   })
 
   it('does not render the speaker diarization toggle', async () => {
@@ -118,6 +139,7 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
       'calendar:get-accounts': [],
       'calendar:get-events': []
     })
@@ -138,6 +160,7 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
       'calendar:get-accounts': [
         createCalendarAccount({
           id: 'acct-microsoft',
@@ -199,6 +222,7 @@ describe('Settings', () => {
         return storageInfo
       },
       'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
       'calendar:get-accounts': [],
       'calendar:get-events': []
     })
@@ -224,6 +248,7 @@ describe('Settings', () => {
       'app:get-storage-info': createStorageInfo(),
       'app:reset-local-data': undefined,
       'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
       'calendar:get-accounts': [],
       'calendar:get-events': []
     })
