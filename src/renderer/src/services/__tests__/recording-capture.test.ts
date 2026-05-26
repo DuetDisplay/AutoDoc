@@ -490,9 +490,8 @@ describe('recording-capture', () => {
     await stopCapture()
   })
 
-  it('does not restart capture for an output-only route change', async () => {
-    let currentSpeakerGroupId = 'airpods-default'
-    let currentSpeakerLabel = 'AirPods'
+  it('recovers microphone capture for an output-only route change', async () => {
+    let currentSpeakerGroupId = 'speaker-default'
 
     const mediaDevices = navigator.mediaDevices as MediaDevices & {
       enumerateDevices: ReturnType<typeof vi.fn>
@@ -508,7 +507,7 @@ describe('recording-capture', () => {
         kind: 'audiooutput',
         deviceId: 'default',
         groupId: currentSpeakerGroupId,
-        label: currentSpeakerLabel
+        label: `Speaker ${currentSpeakerGroupId}`
       }
     ])
 
@@ -517,24 +516,35 @@ describe('recording-capture', () => {
     await startCapture('window:1', 'meeting-1')
 
     currentSpeakerGroupId = 'speaker-switched'
-    currentSpeakerLabel = 'MacBook Pro Speakers'
     deviceChangeListeners.forEach((listener) => listener())
 
     await vi.advanceTimersByTimeAsync(750)
     await Promise.resolve()
 
-    expect(getUserMediaMock).toHaveBeenCalledTimes(3)
-    expect(recordPersistentDiagnosticAction).not.toHaveBeenCalledWith(
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4)
+    expect(getUserMediaMock.mock.calls[3]?.[0]).toEqual({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'recording',
-        action: 'capture_recovery_started'
+        action: 'capture_recovery_started',
+        details: expect.objectContaining({
+          reason: 'devicechange',
+          audioOnly: true,
+          plannedSources: ['mic']
+        })
       })
     )
-    expect(window.electronAPI.invoke).toHaveBeenCalledWith(
-      'recording:save-audio-route-timing',
-      'meeting-1',
-      expect.any(Number),
-      'speaker'
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_recovered',
+        details: expect.objectContaining({
+          reason: 'devicechange',
+          segmentIndex: 1
+        })
+      })
     )
     expect(isCapturing()).toBe(true)
 
@@ -680,7 +690,7 @@ describe('recording-capture', () => {
       }
 
       override start(): void {
-        if (this.mimeType === 'video/webm;codecs=vp9,opus') {
+        if (this.mimeType === 'video/webm;codecs=vp9') {
           throw new Error('encoder unavailable')
         }
         super.start()
@@ -693,8 +703,8 @@ describe('recording-capture', () => {
 
     await expect(startCapture('window:1', 'meeting-1')).resolves.toBeUndefined()
     expect(recorderMimeTypes.filter((mimeType) => mimeType.startsWith('video/'))).toEqual([
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus'
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8'
     ])
     expect(isCapturing()).toBe(true)
 

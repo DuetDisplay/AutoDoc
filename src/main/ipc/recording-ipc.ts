@@ -32,19 +32,11 @@ const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
 const segmentTimingWriteQueues = new Map<string, Promise<void>>()
-const audioRouteTimingWriteQueues = new Map<string, Promise<void>>()
-
-type AudioOutputKind = 'headphones' | 'speaker' | 'unknown'
 
 interface SegmentTimingEntry {
   type: 'video' | 'mic' | 'system'
   segmentIndex: number
   offsetMs: number
-}
-
-interface AudioRouteTimingEntry {
-  offsetMs: number
-  outputKind: AudioOutputKind
 }
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
@@ -116,23 +108,16 @@ function mergeAudioFiles(
   ffmpegPath: string,
   input1: string,
   input2: string,
-  outputPath: string,
-  routeTimings: AudioRouteTimingEntry[] = []
+  outputPath: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const speakerIntervals = getSpeakerOutputIntervals(routeTimings)
-    const micFilter = buildMicPlaybackFilter(speakerIntervals)
-    const filterComplex = micFilter
-      ? `[0:a]${micFilter}[mic];[mic][1:a]amix=inputs=2:duration=longest:normalize=1[out]`
-      : 'amix=inputs=2:duration=longest:normalize=1'
     const proc = spawn(ffmpegPath, [
       '-i',
       input1,
       '-i',
       input2,
       '-filter_complex',
-      filterComplex,
-      ...(micFilter ? ['-map', '[out]'] : []),
+      'amix=inputs=2:duration=longest:normalize=1',
       '-c:a',
       'libopus',
       '-b:a',
@@ -154,51 +139,6 @@ function mergeAudioFiles(
       else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
     })
   })
-}
-
-function getSpeakerOutputIntervals(
-  routeTimings: AudioRouteTimingEntry[]
-): Array<{ startSec: number; endSec: number | null }> {
-  const sorted = routeTimings
-    .filter((entry) => Number.isFinite(entry.offsetMs))
-    .map((entry) => ({
-      offsetMs: Math.max(0, entry.offsetMs),
-      outputKind: entry.outputKind
-    }))
-    .sort((a, b) => a.offsetMs - b.offsetMs)
-
-  const intervals: Array<{ startSec: number; endSec: number | null }> = []
-  for (let index = 0; index < sorted.length; index += 1) {
-    const entry = sorted[index]
-    if (entry.outputKind !== 'speaker') {
-      continue
-    }
-
-    const next = sorted.slice(index + 1).find((candidate) => candidate.outputKind !== 'speaker')
-    intervals.push({
-      startSec: entry.offsetMs / 1000,
-      endSec: next ? next.offsetMs / 1000 : null
-    })
-  }
-
-  return intervals
-}
-
-function buildMicPlaybackFilter(
-  speakerIntervals: Array<{ startSec: number; endSec: number | null }>
-): string | null {
-  if (speakerIntervals.length === 0) {
-    return null
-  }
-
-  return speakerIntervals
-    .map(({ startSec, endSec }) => {
-      const start = startSec.toFixed(3)
-      const enable =
-        endSec == null ? `gte(t\\,${start})` : `between(t\\,${start}\\,${endSec.toFixed(3)})`
-      return `volume=volume=0:enable='${enable}'`
-    })
-    .join(',')
 }
 
 function concatAudioSegments(
@@ -444,32 +384,6 @@ async function readSegmentTimings(
   }
 }
 
-async function readAudioRouteTimings(meetingDir: string): Promise<AudioRouteTimingEntry[]> {
-  const timingPath = join(meetingDir, 'audio-route-timings.json')
-  const raw = await readFile(timingPath, 'utf-8').catch(() => null)
-  if (!raw) {
-    return []
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as AudioRouteTimingEntry[]
-    return parsed
-      .filter(
-        (entry) =>
-          Number.isFinite(entry.offsetMs) &&
-          (entry.outputKind === 'headphones' ||
-            entry.outputKind === 'speaker' ||
-            entry.outputKind === 'unknown')
-      )
-      .map((entry) => ({
-        offsetMs: Math.max(0, entry.offsetMs),
-        outputKind: entry.outputKind
-      }))
-  } catch {
-    return []
-  }
-}
-
 async function assembleRecordingAudioSegments(
   meetingDir: string,
   ffmpegPath: string | null
@@ -550,10 +464,7 @@ async function maybeReportRapidAbortWithoutMedia(params: {
   })
 }
 
-/** Mux audio track into video file so playback has both video and audio.
- *  Screen chunks already embed system audio; we must map video from input 0 and
- *  replacement audio from input 1 — otherwise ffmpeg keeps 0:a (system-only) and
- *  the merged mic+system track is ignored, so HTML5 playback only hears system audio. */
+/** Mux audio track into video file so playback has both video and audio. */
 function muxAudioIntoVideo(
   ffmpegPath: string,
   videoPath: string,
@@ -771,13 +682,7 @@ export function registerRecordingIpc(
             if (!ffmpegPath) {
               throw new Error('ffmpeg path unavailable for merged audio mux')
             }
-            await mergeAudioFiles(
-              ffmpegPath,
-              micPath,
-              systemPath,
-              mergedAudioPath,
-              await readAudioRouteTimings(meetingDir)
-            )
+            await mergeAudioFiles(ffmpegPath, micPath, systemPath, mergedAudioPath)
             await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath)
             await unlink(mergedAudioPath)
           } else {
@@ -1233,13 +1138,7 @@ export function registerRecordingIpc(
             if (!ffmpegPath) {
               throw new Error('ffmpeg path unavailable for merged audio mux')
             }
-            await mergeAudioFiles(
-              ffmpegPath,
-              micPath,
-              systemPath,
-              mergedAudioPath,
-              await readAudioRouteTimings(meetingDir)
-            )
+            await mergeAudioFiles(ffmpegPath, micPath, systemPath, mergedAudioPath)
             await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath)
             await unlink(mergedAudioPath)
           } else {
@@ -1509,57 +1408,6 @@ export function registerRecordingIpc(
         })
 
       segmentTimingWriteQueues.set(timingPath, nextWrite)
-      await nextWrite
-    }
-  )
-
-  ipcMain.handle(
-    'recording:save-audio-route-timing',
-    async (
-      _event,
-      meetingId: string,
-      offsetMs: number,
-      outputKind: AudioOutputKind
-    ) => {
-      const currentState = recordingService.getState()
-      const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
-      if (
-        (!currentState.isRecording || currentState.meetingId !== meetingId) &&
-        !allowFinalizingWrite
-      ) {
-        return
-      }
-
-      if (!['headphones', 'speaker', 'unknown'].includes(outputKind)) {
-        return
-      }
-
-      const baseDir = recordingService.getRecordingsBaseDir()
-      const timingPath = join(baseDir, meetingId, 'audio-route-timings.json')
-      const nextEntry: AudioRouteTimingEntry = {
-        offsetMs: Math.max(0, Math.round(offsetMs)),
-        outputKind
-      }
-      const previousWrite = audioRouteTimingWriteQueues.get(timingPath) ?? Promise.resolve()
-      let nextWrite: Promise<void>
-      nextWrite = previousWrite
-        .catch(() => {})
-        .then(async () => {
-          const existing = await readFile(timingPath, 'utf-8')
-            .then((raw) => JSON.parse(raw) as AudioRouteTimingEntry[])
-            .catch(() => [] as AudioRouteTimingEntry[])
-          const withoutDuplicate = existing.filter(
-            (entry) => Math.abs(entry.offsetMs - nextEntry.offsetMs) > 250
-          )
-          await writeFile(timingPath, JSON.stringify([...withoutDuplicate, nextEntry], null, 2))
-        })
-        .finally(() => {
-          if (audioRouteTimingWriteQueues.get(timingPath) === nextWrite) {
-            audioRouteTimingWriteQueues.delete(timingPath)
-          }
-        })
-
-      audioRouteTimingWriteQueues.set(timingPath, nextWrite)
       await nextWrite
     }
   )

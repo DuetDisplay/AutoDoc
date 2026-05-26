@@ -11,10 +11,7 @@ interface CaptureStreams {
 interface DeviceSnapshot {
   defaultAudioInputKey: string | null
   defaultAudioOutputKey: string | null
-  defaultAudioOutputKind: AudioOutputKind
 }
-
-type AudioOutputKind = 'headphones' | 'speaker' | 'unknown'
 
 interface AudioWatchdog {
   label: 'mic' | 'system'
@@ -78,11 +75,6 @@ const AUDIO_WATCHDOG_INTERVAL_MS = 5_000
 const AUDIO_WATCHDOG_SILENCE_MS = 20_000
 const AUDIO_WATCHDOG_STARTUP_GRACE_MS = 12_000
 const AUDIO_SIGNAL_THRESHOLD = 4
-const VIDEO_RECORDER_MIME_CANDIDATES_WITH_AUDIO = [
-  'video/webm;codecs=vp9,opus',
-  'video/webm;codecs=vp8,opus',
-  'video/webm'
-]
 const VIDEO_RECORDER_MIME_CANDIDATES = [
   'video/webm;codecs=vp9',
   'video/webm;codecs=vp8',
@@ -97,41 +89,21 @@ async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
 
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
-    const selectDefaultDevice = (kind: 'audioinput' | 'audiooutput'): MediaDeviceInfo | null => {
+    const selectKey = (kind: 'audioinput' | 'audiooutput'): string | null => {
       const candidates = devices.filter((device) => device.kind === kind)
       if (candidates.length === 0) return null
-      return candidates.find((device) => device.deviceId === 'default') ?? candidates[0]
+      const preferred = candidates.find((device) => device.deviceId === 'default') ?? candidates[0]
+      return preferred.groupId || preferred.label || preferred.deviceId || null
     }
-    const selectKey = (kind: 'audioinput' | 'audiooutput'): string | null => {
-      const preferred = selectDefaultDevice(kind)
-      return preferred?.groupId || preferred?.label || preferred?.deviceId || null
-    }
-    const defaultOutput = selectDefaultDevice('audiooutput')
 
     return {
       defaultAudioInputKey: selectKey('audioinput'),
-      defaultAudioOutputKey: selectKey('audiooutput'),
-      defaultAudioOutputKind: classifyAudioOutputDevice(defaultOutput)
+      defaultAudioOutputKey: selectKey('audiooutput')
     }
   } catch (err) {
     console.warn('Failed to enumerate media devices for capture watchdog:', err)
     return null
   }
-}
-
-function classifyAudioOutputDevice(device: MediaDeviceInfo | null): AudioOutputKind {
-  if (!device) {
-    return 'unknown'
-  }
-
-  const label = `${device.label} ${device.groupId} ${device.deviceId}`.toLowerCase()
-  if (/\b(airpods?|headphones?|headsets?|earbuds?|earphones?)\b/.test(label)) {
-    return 'headphones'
-  }
-  if (/\b(speakers?|display|monitor|hdmi|tv|receiver)\b/.test(label)) {
-    return 'speaker'
-  }
-  return 'unknown'
 }
 
 function getAudioContextCtor(): typeof AudioContext | undefined {
@@ -447,33 +419,6 @@ function trackSegmentTiming(
     .invoke('recording:save-segment-timing', meetingId, type, segmentIndex, offsetMs)
     .catch((err) => {
       console.error(`Failed to persist ${type} segment timing:`, err)
-    })
-    .finally(() => {
-      pendingChunkWrites.delete(savePromise)
-    })
-
-  pendingChunkWrites.add(savePromise)
-}
-
-function trackAudioRouteTiming(
-  pendingChunkWrites: Set<Promise<void>>,
-  meetingId: string,
-  snapshot: DeviceSnapshot | null,
-  offsetMs: number
-): void {
-  if (!snapshot) {
-    return
-  }
-
-  const savePromise: Promise<void> = window.electronAPI
-    .invoke(
-      'recording:save-audio-route-timing',
-      meetingId,
-      Math.max(0, Math.round(offsetMs)),
-      snapshot.defaultAudioOutputKind
-    )
-    .catch((err) => {
-      console.error('Failed to persist audio route timing:', err)
     })
     .finally(() => {
       pendingChunkWrites.delete(savePromise)
@@ -872,16 +817,11 @@ function buildCaptureHandles(
   const hasMic = micStream !== null && micStream.getAudioTracks().length > 0
   const pendingChunkWrites = new Set<Promise<void>>()
   const createdAt = Date.now()
-  trackAudioRouteTiming(pendingChunkWrites, meetingId, deviceSnapshot, 0)
 
-  const videoWithAudio = new MediaStream([
-    ...videoStream.getVideoTracks(),
-    ...(hasSystemAudio ? audioStream.getAudioTracks() : [])
-  ])
   const videoRecorder = createStartedRecorder(
-    videoWithAudio,
+    new MediaStream(videoStream.getVideoTracks()),
     'video',
-    hasSystemAudio ? VIDEO_RECORDER_MIME_CANDIDATES_WITH_AUDIO : VIDEO_RECORDER_MIME_CANDIDATES,
+    VIDEO_RECORDER_MIME_CANDIDATES,
     {
       videoBitsPerSecond: 1_500_000
     },
@@ -1064,7 +1004,7 @@ async function getAudioRecoveryPlan(
 
   if (inputRouteChanged || outputRouteChanged) {
     return {
-      recoverMic: capture.expectedAudio.hasMic && inputRouteChanged,
+      recoverMic: capture.expectedAudio.hasMic && (inputRouteChanged || outputRouteChanged),
       recoverSystem: false,
       nextSnapshot
     }
@@ -1097,12 +1037,6 @@ async function recoverAudioCapture(
     if (plan.recoverSystem) plannedSources.push('system')
 
     if (plannedSources.length === 0) {
-      trackAudioRouteTiming(
-        capture.pendingChunkWrites,
-        capture.meetingId,
-        plan.nextSnapshot,
-        Date.now() - capture.createdAt
-      )
       capture.deviceSnapshot = plan.nextSnapshot
       return
     }
@@ -1261,12 +1195,6 @@ async function recoverAudioCapture(
         const nextSnapshot = (await getDefaultDeviceSnapshot()) ?? plan.nextSnapshot
 
         capture.cleanupMonitoring?.()
-        trackAudioRouteTiming(
-          capture.pendingChunkWrites,
-          capture.meetingId,
-          nextSnapshot,
-          Date.now() - capture.createdAt
-        )
         if (plan.recoverMic) {
           capture.micStream = micStream
           capture.micRecorder = micRecorder
