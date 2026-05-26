@@ -152,6 +152,21 @@ export function MicPermissionStep({
           : 'AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can\'t hear your meetings.'}
       </p>
 
+      <div className="flex items-start gap-3 px-4 py-3 bg-bg-card border border-border rounded-xl text-left mb-7">
+        <div className="w-9 h-9 rounded-lg bg-[#FEF3C7] flex items-center justify-center text-[16px] shrink-0">
+          🎧
+        </div>
+        <div>
+          <div className="text-[13px] font-semibold text-ink">
+            Use headphones for the clearest notes
+          </div>
+          <div className="text-[12px] text-ink-muted leading-snug mt-0.5">
+            Wear headphones while recording. They help AutoDoc tell your voice apart from everyone
+            else's and make playback cleaner.
+          </div>
+        </div>
+      </div>
+
       {granted ? (
         <button
           onClick={() => void handleContinue()}
