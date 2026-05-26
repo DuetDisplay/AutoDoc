@@ -164,6 +164,14 @@ describe('recording-capture', () => {
     vi.stubGlobal('MediaStream', MockMediaStream)
     vi.stubGlobal('MediaRecorder', MockMediaRecorder)
     vi.stubGlobal('AudioContext', MockAudioContext)
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        send: vi.fn(),
+        invoke: vi.fn().mockResolvedValue(undefined),
+        on: vi.fn(() => vi.fn())
+      }
+    })
 
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -355,34 +363,15 @@ describe('recording-capture', () => {
     await stopCapture()
   })
 
-  it('keeps expecting microphone audio when recovery is triggered by an ended mic track', async () => {
-    let getUserMediaCallCount = 0
+  it('recovers an ended mic track without restarting video capture', async () => {
     let initialMicStream: MockMediaStream | null = null
 
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
-      getUserMediaCallCount += 1
-
-      if (getUserMediaCallCount <= 3) {
-        const stream = createMockStreamForConstraints(constraints)
-        if (!(constraints.audio === false) && !(constraints.audio && constraints.video)) {
-          initialMicStream = stream
-        }
-        return Promise.resolve(stream)
+      const stream = createMockStreamForConstraints(constraints)
+      if (!(constraints.audio === false) && !(constraints.audio && constraints.video)) {
+        initialMicStream = stream
       }
-
-      if (getUserMediaCallCount <= 6) {
-        if (constraints.audio === false) {
-          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
-        }
-        if (constraints.audio && constraints.video) {
-          return Promise.resolve(
-            new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
-          )
-        }
-        return Promise.resolve(new MockMediaStream())
-      }
-
-      return Promise.resolve(createMockStreamForConstraints(constraints))
+      return Promise.resolve(stream)
     })
 
     const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
@@ -394,7 +383,10 @@ describe('recording-capture', () => {
     await vi.advanceTimersByTimeAsync(2_250)
     await Promise.resolve()
 
-    expect(getUserMediaMock).toHaveBeenCalledTimes(9)
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4)
+    expect(getUserMediaMock.mock.calls[3]?.[0]).toEqual({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
     expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'recording',
@@ -408,13 +400,141 @@ describe('recording-capture', () => {
         })
       })
     )
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Capture recovery is waiting for audio routes to settle',
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        attempt: 1,
-        reason: 'mic:ended',
-        missingSources: ['mic']
+        category: 'recording',
+        action: 'capture_recovery_recovered',
+        details: expect.objectContaining({
+          reason: 'mic:ended',
+          segmentIndex: 1,
+          expectedAudio: {
+            hasMic: true,
+            hasSystemAudio: true
+          },
+          actualAudio: {
+            hasMic: true,
+            hasSystemAudio: true
+          }
+        })
       })
+    )
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
+
+  it('recovers only microphone capture for input and output route changes', async () => {
+    let currentMicGroupId = 'mic-default'
+    let currentSpeakerGroupId = 'speaker-default'
+
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      enumerateDevices: ReturnType<typeof vi.fn>
+    }
+    mediaDevices.enumerateDevices = vi.fn().mockImplementation(async () => [
+      {
+        kind: 'audioinput',
+        deviceId: 'default',
+        groupId: currentMicGroupId,
+        label: `Mic ${currentMicGroupId}`
+      },
+      {
+        kind: 'audiooutput',
+        deviceId: 'default',
+        groupId: currentSpeakerGroupId,
+        label: `Speaker ${currentSpeakerGroupId}`
+      }
+    ])
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    currentMicGroupId = 'mic-switched'
+    currentSpeakerGroupId = 'speaker-switched'
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(750)
+    await Promise.resolve()
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(4)
+    expect(getUserMediaMock.mock.calls[3]?.[0]).toEqual({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_started',
+        details: expect.objectContaining({
+          reason: 'devicechange',
+          audioOnly: true,
+          plannedSources: ['mic']
+        })
+      })
+    )
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_recovered',
+        details: expect.objectContaining({
+          reason: 'devicechange',
+          segmentIndex: 1,
+          actualAudio: {
+            hasMic: true,
+            hasSystemAudio: true
+          }
+        })
+      })
+    )
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
+
+  it('does not restart capture for an output-only route change', async () => {
+    let currentSpeakerGroupId = 'airpods-default'
+    let currentSpeakerLabel = 'AirPods'
+
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      enumerateDevices: ReturnType<typeof vi.fn>
+    }
+    mediaDevices.enumerateDevices = vi.fn().mockImplementation(async () => [
+      {
+        kind: 'audioinput',
+        deviceId: 'default',
+        groupId: 'mic-default',
+        label: 'Mic'
+      },
+      {
+        kind: 'audiooutput',
+        deviceId: 'default',
+        groupId: currentSpeakerGroupId,
+        label: currentSpeakerLabel
+      }
+    ])
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    currentSpeakerGroupId = 'speaker-switched'
+    currentSpeakerLabel = 'MacBook Pro Speakers'
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(750)
+    await Promise.resolve()
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(3)
+    expect(recordPersistentDiagnosticAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_started'
+      })
+    )
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+      'recording:save-audio-route-timing',
+      'meeting-1',
+      expect.any(Number),
+      'speaker'
     )
     expect(isCapturing()).toBe(true)
 

@@ -84,6 +84,17 @@ export interface IpcInvokeEvents {
     chunk: ArrayBuffer,
     segmentIndex?: number
   ]
+  'recording:save-segment-timing': [
+    meetingId: string,
+    type: 'video' | 'mic' | 'system',
+    segmentIndex: number,
+    offsetMs: number
+  ]
+  'recording:save-audio-route-timing': [
+    meetingId: string,
+    offsetMs: number,
+    outputKind: 'headphones' | 'speaker' | 'unknown'
+  ]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
@@ -168,6 +179,8 @@ export interface IpcInvokeReturns {
   'recording:finalize-stop': void
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'recording:save-segment-timing': void
+  'recording:save-audio-route-timing': void
   'recording:update-title': void
   'recording:delete': void
   'transcription:get-status': TranscriptionStatus

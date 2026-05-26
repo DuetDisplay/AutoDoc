@@ -226,4 +226,129 @@ describe('recording IPC source handling', () => {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }
   })
+
+  it('preserves concurrent segment timing writes for recovered audio assembly', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingDir = path.join(recordingsDir, 'meeting-timing')
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      const saveSegmentTimingHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-segment-timing'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            type: 'mic' | 'system',
+            segmentIndex: number,
+            offsetMs: number
+          ) => Promise<void>)
+        | undefined
+
+      expect(saveSegmentTimingHandler).toBeTypeOf('function')
+      await Promise.all([
+        saveSegmentTimingHandler?.(null, 'meeting-timing', 'mic', 0, 0),
+        saveSegmentTimingHandler?.(null, 'meeting-timing', 'system', 0, 0),
+        saveSegmentTimingHandler?.(null, 'meeting-timing', 'mic', 1, 14_250)
+      ])
+
+      const raw = await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8')
+      const entries = JSON.parse(raw)
+
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          { type: 'mic', segmentIndex: 0, offsetMs: 0 },
+          { type: 'system', segmentIndex: 0, offsetMs: 0 },
+          { type: 'mic', segmentIndex: 1, offsetMs: 14250 }
+        ])
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves output route timing writes for playback de-duplication', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingDir = path.join(recordingsDir, 'meeting-routes')
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-routes' })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      const saveAudioRouteTimingHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-audio-route-timing'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            offsetMs: number,
+            outputKind: 'headphones' | 'speaker' | 'unknown'
+          ) => Promise<void>)
+        | undefined
+
+      expect(saveAudioRouteTimingHandler).toBeTypeOf('function')
+      await Promise.all([
+        saveAudioRouteTimingHandler?.(null, 'meeting-routes', 0, 'headphones'),
+        saveAudioRouteTimingHandler?.(null, 'meeting-routes', 19_250, 'speaker'),
+        saveAudioRouteTimingHandler?.(null, 'meeting-routes', 31_000, 'headphones')
+      ])
+
+      const raw = await fsp.readFile(path.join(meetingDir, 'audio-route-timings.json'), 'utf-8')
+      const entries = JSON.parse(raw)
+
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          { offsetMs: 0, outputKind: 'headphones' },
+          { offsetMs: 19250, outputKind: 'speaker' },
+          { offsetMs: 31000, outputKind: 'headphones' }
+        ])
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
 })

@@ -11,7 +11,10 @@ interface CaptureStreams {
 interface DeviceSnapshot {
   defaultAudioInputKey: string | null
   defaultAudioOutputKey: string | null
+  defaultAudioOutputKind: AudioOutputKind
 }
+
+type AudioOutputKind = 'headphones' | 'speaker' | 'unknown'
 
 interface AudioWatchdog {
   label: 'mic' | 'system'
@@ -37,6 +40,9 @@ interface CaptureHandles {
   sourceId: string
   meetingId: string
   segmentIndex: number
+  nextSegmentIndex: number
+  micSegmentIndex: number
+  systemSegmentIndex: number
   createdAt: number
   stopping: boolean
   recoverySequence: number
@@ -91,21 +97,41 @@ async function getDefaultDeviceSnapshot(): Promise<DeviceSnapshot | null> {
 
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
-    const selectKey = (kind: 'audioinput' | 'audiooutput'): string | null => {
+    const selectDefaultDevice = (kind: 'audioinput' | 'audiooutput'): MediaDeviceInfo | null => {
       const candidates = devices.filter((device) => device.kind === kind)
       if (candidates.length === 0) return null
-      const preferred = candidates.find((device) => device.deviceId === 'default') ?? candidates[0]
-      return preferred.groupId || preferred.label || preferred.deviceId || null
+      return candidates.find((device) => device.deviceId === 'default') ?? candidates[0]
     }
+    const selectKey = (kind: 'audioinput' | 'audiooutput'): string | null => {
+      const preferred = selectDefaultDevice(kind)
+      return preferred?.groupId || preferred?.label || preferred?.deviceId || null
+    }
+    const defaultOutput = selectDefaultDevice('audiooutput')
 
     return {
       defaultAudioInputKey: selectKey('audioinput'),
-      defaultAudioOutputKey: selectKey('audiooutput')
+      defaultAudioOutputKey: selectKey('audiooutput'),
+      defaultAudioOutputKind: classifyAudioOutputDevice(defaultOutput)
     }
   } catch (err) {
     console.warn('Failed to enumerate media devices for capture watchdog:', err)
     return null
   }
+}
+
+function classifyAudioOutputDevice(device: MediaDeviceInfo | null): AudioOutputKind {
+  if (!device) {
+    return 'unknown'
+  }
+
+  const label = `${device.label} ${device.groupId} ${device.deviceId}`.toLowerCase()
+  if (/\b(airpods?|headphones?|headsets?|earbuds?|earphones?)\b/.test(label)) {
+    return 'headphones'
+  }
+  if (/\b(speakers?|display|monitor|hdmi|tv|receiver)\b/.test(label)) {
+    return 'speaker'
+  }
+  return 'unknown'
 }
 
 function getAudioContextCtor(): typeof AudioContext | undefined {
@@ -410,6 +436,52 @@ function trackChunkWrite(
   pendingChunkWrites.add(savePromise)
 }
 
+function trackSegmentTiming(
+  pendingChunkWrites: Set<Promise<void>>,
+  meetingId: string,
+  type: 'mic' | 'system',
+  segmentIndex: number,
+  offsetMs: number
+): void {
+  const savePromise: Promise<void> = window.electronAPI
+    .invoke('recording:save-segment-timing', meetingId, type, segmentIndex, offsetMs)
+    .catch((err) => {
+      console.error(`Failed to persist ${type} segment timing:`, err)
+    })
+    .finally(() => {
+      pendingChunkWrites.delete(savePromise)
+    })
+
+  pendingChunkWrites.add(savePromise)
+}
+
+function trackAudioRouteTiming(
+  pendingChunkWrites: Set<Promise<void>>,
+  meetingId: string,
+  snapshot: DeviceSnapshot | null,
+  offsetMs: number
+): void {
+  if (!snapshot) {
+    return
+  }
+
+  const savePromise: Promise<void> = window.electronAPI
+    .invoke(
+      'recording:save-audio-route-timing',
+      meetingId,
+      Math.max(0, Math.round(offsetMs)),
+      snapshot.defaultAudioOutputKind
+    )
+    .catch((err) => {
+      console.error('Failed to persist audio route timing:', err)
+    })
+    .finally(() => {
+      pendingChunkWrites.delete(savePromise)
+    })
+
+  pendingChunkWrites.add(savePromise)
+}
+
 function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Promise<void> {
   if (!recorder || recorder.state === 'inactive') {
     return Promise.resolve()
@@ -497,27 +569,8 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     )
   }
 
-  let audioStream: MediaStream
-  try {
-    audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId
-        }
-      } as MediaTrackConstraints,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId,
-          maxFrameRate: 1
-        }
-      } as MediaTrackConstraints
-    })
-    audioStream.getVideoTracks().forEach((t) => t.stop())
-  } catch (err) {
-    console.error('System audio capture failed:', err)
-    audioStream = new MediaStream()
+  const audioStream = await createSystemAudioStream(sourceId)
+  if (audioStream.getAudioTracks().length === 0) {
     useToastStore.getState().showToast({
       type: 'screen',
       message:
@@ -525,14 +578,7 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     })
   }
 
-  let micStream: MediaStream | null = null
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true }
-    })
-  } catch {
-    // Mic may not be available
-  }
+  const micStream = await createMicStream()
 
   if (!micStream || micStream.getAudioTracks().length === 0) {
     useToastStore.getState().showToast({
@@ -551,6 +597,41 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     videoStream,
     audioStream,
     micStream
+  }
+}
+
+async function createSystemAudioStream(sourceId: string): Promise<MediaStream> {
+  try {
+    const audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId
+        }
+      } as MediaTrackConstraints,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+          maxFrameRate: 1
+        }
+      } as MediaTrackConstraints
+    })
+    audioStream.getVideoTracks().forEach((track) => track.stop())
+    return audioStream
+  } catch (err) {
+    console.error('System audio capture failed:', err)
+    return new MediaStream()
+  }
+}
+
+async function createMicStream(): Promise<MediaStream | null> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
+  } catch {
+    return null
   }
 }
 
@@ -790,6 +871,8 @@ function buildCaptureHandles(
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
   const hasMic = micStream !== null && micStream.getAudioTracks().length > 0
   const pendingChunkWrites = new Set<Promise<void>>()
+  const createdAt = Date.now()
+  trackAudioRouteTiming(pendingChunkWrites, meetingId, deviceSnapshot, 0)
 
   const videoWithAudio = new MediaStream([
     ...videoStream.getVideoTracks(),
@@ -811,6 +894,7 @@ function buildCaptureHandles(
 
   let micRecorder: MediaRecorder | null = null
   if (hasMic) {
+    trackSegmentTiming(pendingChunkWrites, meetingId, 'mic', segmentIndex, 0)
     micRecorder = createStartedRecorder(
       micStream!,
       'mic',
@@ -826,6 +910,7 @@ function buildCaptureHandles(
 
   let systemRecorder: MediaRecorder | null = null
   if (hasSystemAudio) {
+    trackSegmentTiming(pendingChunkWrites, meetingId, 'system', segmentIndex, 0)
     systemRecorder = createStartedRecorder(
       audioStream,
       'system',
@@ -843,7 +928,10 @@ function buildCaptureHandles(
     sourceId,
     meetingId,
     segmentIndex,
-    createdAt: Date.now(),
+    nextSegmentIndex: segmentIndex + 1,
+    micSegmentIndex: segmentIndex,
+    systemSegmentIndex: segmentIndex,
+    createdAt,
     stopping: false,
     recoverySequence,
     expectedAudio: expectedAudio ?? { hasMic, hasSystemAudio },
@@ -926,6 +1014,372 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
   return capture.finalizePromise
 }
 
+function isMicRecoveryReason(reason: string): boolean {
+  return reason.startsWith('mic:') || reason.startsWith('watchdog:mic')
+}
+
+function isSystemRecoveryReason(reason: string): boolean {
+  return reason.startsWith('system:') || reason.startsWith('watchdog:output')
+}
+
+interface AudioRecoveryPlan {
+  recoverMic: boolean
+  recoverSystem: boolean
+  nextSnapshot: DeviceSnapshot | null
+}
+
+async function getAudioRecoveryPlan(
+  capture: CaptureHandles,
+  reason: string
+): Promise<AudioRecoveryPlan | null> {
+  if (reason.startsWith('video:')) {
+    return null
+  }
+
+  if (isMicRecoveryReason(reason)) {
+    return capture.expectedAudio.hasMic
+      ? { recoverMic: true, recoverSystem: false, nextSnapshot: await getDefaultDeviceSnapshot() }
+      : null
+  }
+
+  if (isSystemRecoveryReason(reason)) {
+    return capture.expectedAudio.hasSystemAudio
+      ? { recoverMic: false, recoverSystem: true, nextSnapshot: await getDefaultDeviceSnapshot() }
+      : null
+  }
+
+  if (reason !== 'devicechange') {
+    return null
+  }
+
+  const nextSnapshot = await getDefaultDeviceSnapshot()
+  const inputRouteChanged = didDefaultRouteChange(
+    capture.deviceSnapshot?.defaultAudioInputKey,
+    nextSnapshot?.defaultAudioInputKey
+  )
+  const outputRouteChanged = didDefaultRouteChange(
+    capture.deviceSnapshot?.defaultAudioOutputKey,
+    nextSnapshot?.defaultAudioOutputKey
+  )
+
+  if (inputRouteChanged || outputRouteChanged) {
+    return {
+      recoverMic: capture.expectedAudio.hasMic && inputRouteChanged,
+      recoverSystem: false,
+      nextSnapshot
+    }
+  }
+
+  return null
+}
+
+function getAudioRecoverySegmentIndex(capture: CaptureHandles, plan: AudioRecoveryPlan): number {
+  return Math.max(
+    plan.recoverMic ? capture.micSegmentIndex : capture.segmentIndex,
+    plan.recoverSystem ? capture.systemSegmentIndex : capture.segmentIndex
+  )
+}
+
+async function recoverAudioCapture(
+  capture: CaptureHandles,
+  reason: string,
+  plan: AudioRecoveryPlan
+): Promise<void> {
+  if (activeCapture !== capture || capture.stopping || capture.finalized) {
+    return
+  }
+
+  capture.recoveryPromise = (async () => {
+    console.warn(`Audio source changed during recording, attempting audio recovery (${reason})`)
+    const expectedAudio = capture.expectedAudio
+    const plannedSources: Array<'mic' | 'system'> = []
+    if (plan.recoverMic) plannedSources.push('mic')
+    if (plan.recoverSystem) plannedSources.push('system')
+
+    if (plannedSources.length === 0) {
+      trackAudioRouteTiming(
+        capture.pendingChunkWrites,
+        capture.meetingId,
+        plan.nextSnapshot,
+        Date.now() - capture.createdAt
+      )
+      capture.deviceSnapshot = plan.nextSnapshot
+      return
+    }
+
+    recordCaptureRecoveryDiagnostic('capture_recovery_started', {
+      meetingId: capture.meetingId,
+      sourceType: getSourceType(capture.sourceId),
+      segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+      reason,
+      expectedAudio,
+      audioOnly: true,
+      plannedSources
+    })
+
+    const previousSnapshot = capture.deviceSnapshot
+    const previousMicRecorder = plan.recoverMic ? capture.micRecorder : null
+    const previousMicStream = plan.recoverMic ? capture.micStream : null
+    const previousSystemRecorder = plan.recoverSystem ? capture.systemRecorder : null
+    const previousSystemStream = plan.recoverSystem ? capture.audioStream : null
+    await Promise.all([
+      waitForRecorderStop(previousMicRecorder, 'mic'),
+      waitForRecorderStop(previousSystemRecorder, 'system')
+    ])
+    previousMicStream?.getTracks().forEach((track) => track.stop())
+    previousSystemStream?.getTracks().forEach((track) => track.stop())
+
+    for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
+      if (activeCapture !== capture || capture.stopping || capture.finalized) {
+        return
+      }
+
+      let micStream: MediaStream | null = null
+      let systemStream: MediaStream | null = null
+      try {
+        if (plan.recoverMic) {
+          micStream = await createMicStream()
+        }
+        if (plan.recoverSystem) {
+          systemStream = await createSystemAudioStream(capture.sourceId)
+        }
+
+        const actualAudio = {
+          hasMic: plan.recoverMic
+            ? streamHasLiveAudio(micStream)
+            : streamHasLiveAudio(capture.micStream),
+          hasSystemAudio: plan.recoverSystem
+            ? streamHasLiveAudio(systemStream)
+            : streamHasLiveAudio(capture.audioStream)
+        }
+        const missingSources = getMissingRecoverySources(expectedAudio, actualAudio).filter(
+          (source) =>
+            (source === 'mic' && plan.recoverMic) ||
+            (source === 'system' && plan.recoverSystem)
+        )
+
+        if (missingSources.length > 0) {
+          micStream?.getTracks().forEach((track) => track.stop())
+          systemStream?.getTracks().forEach((track) => track.stop())
+          if (attempt < MAX_RECOVERY_ATTEMPTS) {
+            recordCaptureRecoveryDiagnostic('capture_recovery_waiting_for_routes', {
+              meetingId: capture.meetingId,
+              sourceType: getSourceType(capture.sourceId),
+              segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+              reason,
+              attempt,
+              expectedAudio,
+              actualAudio,
+              missingSources
+            })
+            await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+            continue
+          }
+
+          const degradationError = new Error(
+            `Capture recovery completed with missing audio sources: ${missingSources.join(', ')}`
+          )
+          recordCaptureRecoveryDiagnostic('capture_recovery_recovered_degraded', {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+            reason,
+            attempt,
+            expectedAudio,
+            actualAudio,
+            missingSources
+          })
+          captureRecordingRecoveryFailure(degradationError, {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+            reason,
+            attemptCount: attempt,
+            expectedAudio,
+            actualAudio,
+            missingSources,
+            failureKind: 'degraded'
+          })
+          return
+        }
+
+        const segmentIndex = capture.nextSegmentIndex++
+        let micRecorder: MediaRecorder | null = null
+        let systemRecorder: MediaRecorder | null = null
+        if (plan.recoverMic && micStream) {
+          trackSegmentTiming(
+            capture.pendingChunkWrites,
+            capture.meetingId,
+            'mic',
+            segmentIndex,
+            Date.now() - capture.createdAt
+          )
+          micRecorder = createStartedRecorder(
+            micStream,
+            'mic',
+            AUDIO_RECORDER_MIME_CANDIDATES,
+            {},
+            async (e) => {
+              if (e.data.size > 0) {
+                trackChunkWrite(
+                  capture.pendingChunkWrites,
+                  capture.meetingId,
+                  'mic',
+                  segmentIndex,
+                  e.data
+                )
+              }
+            }
+          )
+        }
+        if (plan.recoverSystem && systemStream) {
+          trackSegmentTiming(
+            capture.pendingChunkWrites,
+            capture.meetingId,
+            'system',
+            segmentIndex,
+            Date.now() - capture.createdAt
+          )
+          systemRecorder = createStartedRecorder(
+            systemStream,
+            'system',
+            AUDIO_RECORDER_MIME_CANDIDATES,
+            {},
+            async (e) => {
+              if (e.data.size > 0) {
+                trackChunkWrite(
+                  capture.pendingChunkWrites,
+                  capture.meetingId,
+                  'system',
+                  segmentIndex,
+                  e.data
+                )
+              }
+            }
+          )
+        }
+        const nextSnapshot = (await getDefaultDeviceSnapshot()) ?? plan.nextSnapshot
+
+        capture.cleanupMonitoring?.()
+        trackAudioRouteTiming(
+          capture.pendingChunkWrites,
+          capture.meetingId,
+          nextSnapshot,
+          Date.now() - capture.createdAt
+        )
+        if (plan.recoverMic) {
+          capture.micStream = micStream
+          capture.micRecorder = micRecorder
+          capture.micSegmentIndex = segmentIndex
+        }
+        if (plan.recoverSystem && systemStream && systemRecorder) {
+          capture.audioStream = systemStream
+          capture.systemRecorder = systemRecorder
+          capture.systemSegmentIndex = segmentIndex
+        }
+        capture.deviceSnapshot = nextSnapshot
+        installCaptureMonitoring(capture)
+
+        const recoveredAudio = getCaptureAudioAvailability(capture)
+        const pendingValidationSources = getPendingRecoveryValidationSources(
+          reason,
+          previousSnapshot,
+          nextSnapshot,
+          expectedAudio,
+          recoveredAudio,
+          capture
+        ).filter(
+          (source) =>
+            (source === 'mic' && plan.recoverMic) ||
+            (source === 'system' && plan.recoverSystem)
+        )
+
+        if (pendingValidationSources.length > 0) {
+          capture.recoveryValidation = {
+            reason,
+            attempt,
+            expectedAudio,
+            pendingSources: pendingValidationSources,
+            startedAt: Date.now()
+          }
+        } else {
+          recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex,
+            reason,
+            attempt,
+            expectedAudio,
+            actualAudio: recoveredAudio
+          })
+        }
+        console.log(
+          capture.recoveryValidation
+            ? 'Audio capture resumed after device change; awaiting audio signal validation'
+            : 'Audio capture recovered after device change',
+          {
+            meetingId: capture.meetingId,
+            nextSegmentIndex: segmentIndex,
+            reason,
+            attempt,
+            recoveredSources: plannedSources
+          }
+        )
+        return
+      } catch (err) {
+        micStream?.getTracks().forEach((track) => track.stop())
+        systemStream?.getTracks().forEach((track) => track.stop())
+        const canRetry =
+          attempt < MAX_RECOVERY_ATTEMPTS && activeCapture === capture && !capture.stopping
+
+        if (!canRetry) {
+          recordCaptureRecoveryDiagnostic('capture_recovery_failed', {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+            reason,
+            attempt,
+            expectedAudio,
+            error: serializeErrorForDiagnostics(err)
+          })
+          captureRecordingRecoveryFailure(err, {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+            reason,
+            attemptCount: attempt,
+            expectedAudio,
+            failureKind: 'failed'
+          })
+          console.error('Failed to recover audio capture after device change:', err)
+          return
+        }
+
+        recordCaptureRecoveryDiagnostic('capture_recovery_attempt_failed', {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex: getAudioRecoverySegmentIndex(capture, plan),
+          reason,
+          attempt,
+          expectedAudio,
+          error: serializeErrorForDiagnostics(err)
+        })
+        console.warn('Audio capture recovery attempt failed, retrying', {
+          meetingId: capture.meetingId,
+          attempt,
+          reason,
+          error: describeError(err)
+        })
+        await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+      }
+    }
+  })().finally(() => {
+    capture.recoveryPromise = null
+  })
+
+  return capture.recoveryPromise
+}
+
 async function recoverCapture(capture: CaptureHandles, reason: string): Promise<void> {
   if (activeCapture !== capture || capture.stopping || capture.finalized) {
     return
@@ -933,6 +1387,11 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
 
   if (capture.recoveryPromise) {
     return capture.recoveryPromise
+  }
+
+  const audioRecoveryPlan = await getAudioRecoveryPlan(capture, reason)
+  if (audioRecoveryPlan) {
+    return recoverAudioCapture(capture, reason, audioRecoveryPlan)
   }
 
   capture.recoveryPromise = (async () => {
@@ -958,11 +1417,12 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
         }
 
         let replacement: CaptureHandles | null = null
+        const segmentIndex = capture.nextSegmentIndex++
         try {
           replacement = await createCaptureSegment(
             capture.sourceId,
             capture.meetingId,
-            capture.segmentIndex + 1,
+            segmentIndex,
             capture.recoverySequence + 1,
             expectedAudio
           )
@@ -1060,11 +1520,11 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
               ? 'Capture resumed after device change; awaiting audio signal validation'
               : 'Capture recovered after device change',
             {
-            meetingId: capture.meetingId,
-            nextSegmentIndex: replacement.segmentIndex,
-            reason,
-            attempt,
-            missingSources
+              meetingId: capture.meetingId,
+              nextSegmentIndex: replacement.segmentIndex,
+              reason,
+              attempt,
+              missingSources
             }
           )
           return
