@@ -788,9 +788,9 @@ app.whenReady().then(async () => {
   })
 
   managedOllamaManager.on('download-complete', () => {
-    lastSuccessfulOllamaPhase = 'pulling'
-    ollamaSetupState.phase = 'pulling'
-    ollamaSetupState.percent = 0
+    lastSuccessfulOllamaPhase = 'downloading'
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = 100
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()

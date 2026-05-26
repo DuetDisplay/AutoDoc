@@ -142,7 +142,7 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('uses MLX Whisper by default on Apple Silicon and downloads only the cached model during setup', async () => {
+  it('uses MLX Whisper by default on Apple Silicon without reporting a model download during validation', async () => {
     if (process.arch !== 'arm64') {
       return
     }
@@ -190,6 +190,11 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getMlxWhisperScriptPath())).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       expect(statuses).toContainEqual({
+        phase: 'checking',
+        backend: 'mlx-whisper',
+        backendLabel: 'Apple Silicon optimized transcription'
+      })
+      expect(statuses).not.toContainEqual({
         phase: 'downloading-model',
         backend: 'mlx-whisper',
         backendLabel: 'Apple Silicon optimized transcription'

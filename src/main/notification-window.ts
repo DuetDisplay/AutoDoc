@@ -1,6 +1,8 @@
 import { BrowserWindow, screen, ipcMain } from 'electron'
 
 let notificationWindow: BrowserWindow | null = null
+let notificationKind: NotificationKind | null = null
+let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
 
 function escapeHtml(value: string): string {
@@ -18,10 +20,24 @@ interface NotificationOptions {
   primaryActionLabel: string
   onPrimaryAction: () => void
   onDismiss: () => void
+  kind?: NotificationKind
+  autoDismissMs?: number
+}
+
+export type NotificationKind = 'meeting-detection' | 'notes-ready'
+
+function clearAutoDismissTimer(): void {
+  if (autoDismissTimer) {
+    clearTimeout(autoDismissTimer)
+    autoDismissTimer = null
+  }
 }
 
 export function showNotificationWindow(options: NotificationOptions): void {
   if (notificationWindow) {
+    clearAutoDismissTimer()
+    cleanupListeners?.()
+    cleanupListeners = null
     notificationWindow.close()
   }
 
@@ -32,7 +48,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   const x = Math.round(workArea.x + (workArea.width - winWidth) / 2)
   const y = workArea.y + 8
 
-  notificationWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: winWidth,
     height: winHeight,
     x,
@@ -51,15 +67,17 @@ export function showNotificationWindow(options: NotificationOptions): void {
       contextIsolation: false
     }
   })
+  notificationWindow = win
+  notificationKind = options.kind ?? null
 
-  const handlePrimaryAction = () => {
+  const handlePrimaryAction = (): void => {
     try {
       options.onPrimaryAction()
     } finally {
       animateOut()
     }
   }
-  const handleDismiss = () => {
+  const handleDismiss = (): void => {
     try {
       options.onDismiss()
     } finally {
@@ -70,15 +88,22 @@ export function showNotificationWindow(options: NotificationOptions): void {
   ipcMain.once('notification:primary-action', handlePrimaryAction)
   ipcMain.once('notification:dismiss', handleDismiss)
 
-  cleanupListeners = () => {
+  const cleanup = (): void => {
     ipcMain.removeListener('notification:primary-action', handlePrimaryAction)
     ipcMain.removeListener('notification:dismiss', handleDismiss)
   }
+  cleanupListeners = cleanup
 
-  notificationWindow.on('closed', () => {
-    cleanupListeners?.()
-    cleanupListeners = null
-    notificationWindow = null
+  win.on('closed', () => {
+    cleanup()
+    if (cleanupListeners === cleanup) {
+      cleanupListeners = null
+    }
+    if (notificationWindow === win) {
+      clearAutoDismissTimer()
+      notificationWindow = null
+      notificationKind = null
+    }
   })
 
   const title = escapeHtml(options.title)
@@ -235,18 +260,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
 </body>
 </html>`
 
-  notificationWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 
-  notificationWindow.once('ready-to-show', () => {
-    notificationWindow?.showInactive()
+  win.once('ready-to-show', () => {
+    if (notificationWindow === win) {
+      win.showInactive()
+    }
   })
 
-  // Auto-dismiss after 30 seconds
-  setTimeout(() => {
-    if (notificationWindow) {
+  const autoDismissMs = options.autoDismissMs ?? 30_000
+  autoDismissTimer = setTimeout(() => {
+    if (notificationWindow === win) {
       handleDismiss()
     }
-  }, 30_000)
+  }, autoDismissMs)
 }
 
 function animateOut(): void {
@@ -271,7 +298,11 @@ function animateOut(): void {
     })
 }
 
-export function hideNotificationWindow(): void {
+export function hideNotificationWindow(kind?: NotificationKind): void {
+  if (kind && notificationKind !== kind) {
+    return
+  }
+
   if (notificationWindow) {
     animateOut()
   }

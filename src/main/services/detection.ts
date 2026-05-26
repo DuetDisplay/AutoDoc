@@ -222,7 +222,7 @@ export class DetectionService {
   }
 
   dismissPrompt(): void {
-    hideNotificationWindow()
+    hideNotificationWindow('meeting-detection')
   }
 
   async debugPollNow(advanceMs = 0): Promise<void> {
@@ -237,7 +237,7 @@ export class DetectionService {
         this.clearAutoRecordPending()
         if (!this.shouldUseMeetingAutoStop()) {
           this.resetAutoStopState()
-          hideNotificationWindow()
+          hideNotificationWindow('meeting-detection')
           return
         }
         const windowClosed = await this.isRecordedWindowClosed()
@@ -273,14 +273,14 @@ export class DetectionService {
           this.cancelPendingAutoStop(snapshot)
         }
 
-        hideNotificationWindow()
+        hideNotificationWindow('meeting-detection')
         return
       }
 
       this.resetAutoStopState()
 
       if (this.isAutoRecordPending()) {
-        hideNotificationWindow()
+        hideNotificationWindow('meeting-detection')
         return
       }
 
@@ -301,7 +301,7 @@ export class DetectionService {
       if (this.hasUpcomingEventSoon()) {
         this.promptedCalendarEventId = null
         this.resetProviderState()
-        hideNotificationWindow()
+        hideNotificationWindow('meeting-detection')
         return
       }
 
@@ -833,7 +833,7 @@ export class DetectionService {
         this.broadcast('detection:mic-inactive', {})
         this.lastProviderSignalKey = ''
       }
-      hideNotificationWindow()
+      hideNotificationWindow('meeting-detection')
       return
     }
 
@@ -856,7 +856,7 @@ export class DetectionService {
   ): Promise<void> {
     if (!provider) {
       this.resetProviderState()
-      hideNotificationWindow()
+      hideNotificationWindow('meeting-detection')
       return
     }
 
@@ -929,6 +929,7 @@ export class DetectionService {
       title,
       body,
       primaryActionLabel: 'Start AI Notes',
+      kind: 'meeting-detection',
       onPrimaryAction: () => {
         this.markAutoRecordPending()
         focusMainWindow()

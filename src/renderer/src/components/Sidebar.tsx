@@ -94,6 +94,10 @@ export function Sidebar() {
     setupPhase == null ? null : ({ phase: setupPhase, percent: setupPercent } as OllamaSetupStatus)
   const whisperLabel = getWhisperSetupLabel(whisperStatus)
   const ollamaLabel = getOllamaSetupLabel(ollamaStatus)
+  const showOllamaSetupProgress =
+    setupPhase === 'downloading' ||
+    setupPhase === 'pulling' ||
+    (setupPhase === 'starting' && ollamaConnected !== true)
 
   return (
     <aside className="w-[200px] bg-bg-sidebar border-r border-border flex flex-col shrink-0">
@@ -140,10 +144,7 @@ export function Sidebar() {
             </div>
           ) : null}
 
-          {(setupPhase === 'starting' ||
-            setupPhase === 'downloading' ||
-            setupPhase === 'pulling') &&
-          setupPhase !== null ? (
+          {showOllamaSetupProgress ? (
             <div className="px-2.5 py-2 flex flex-col gap-1.5">
               <span className="text-[11px] text-ink-faint">{ollamaLabel}</span>
               <div className="w-full h-1 bg-border rounded-full overflow-hidden">

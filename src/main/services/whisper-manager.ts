@@ -720,7 +720,7 @@ export class WhisperManager extends EventEmitter {
       throw new Error('Bundled MLX Whisper bridge script is missing from this app package.')
     }
 
-    this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: 75 })
+    this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
     this.emit('setup-status', this.getSetupStatus())
 
     let isUsable = await this.isMlxWhisperUsableWithRetry()

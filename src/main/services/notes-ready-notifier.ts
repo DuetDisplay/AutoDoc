@@ -36,6 +36,7 @@ export async function notifyNotesReady(
     title: 'Notes Ready',
     body: buildNotesReadyBody(getMeetingDisplayTitle(metadata)),
     primaryActionLabel: 'Open Notes',
+    kind: 'notes-ready',
     onPrimaryAction: () => {
       focusMainWindow()
       getMainWindow()?.webContents.send('notes:open-meeting', { meetingId })

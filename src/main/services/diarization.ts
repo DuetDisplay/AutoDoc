@@ -185,8 +185,11 @@ export class DiarizationService extends EventEmitter {
         )
       }
 
-      this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
-      const modelPath = await this.ensureModelReady()
+      let modelPath = await this.resolveExistingModelPath()
+      if (!modelPath) {
+        this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
+        modelPath = await this.ensureModelReady()
+      }
       if (!(await this.isPythonEnvUsable(packagedBundledPython, modelPath))) {
         throw new Error(
           'Bundled speaker diarization runtime did not pass validation after packaging.'
@@ -213,8 +216,11 @@ export class DiarizationService extends EventEmitter {
     this.setSetupStatus({ phase: 'installing-speaker-id', percent: 55 })
     await this.installPythonDependencies()
 
-    this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
-    const modelPath = await this.ensureModelReady()
+    let modelPath = await this.resolveExistingModelPath()
+    if (!modelPath) {
+      this.setSetupStatus({ phase: 'downloading-speaker-model', percent: 75 })
+      modelPath = await this.ensureModelReady()
+    }
 
     if (!(await this.isPythonEnvUsable(this.getPythonPath(), modelPath))) {
       throw new Error('Speaker diarization environment did not pass validation after setup.')

@@ -52,7 +52,8 @@ describe('notes ready notifier', () => {
     expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Notes Ready',
-        primaryActionLabel: 'Open Notes'
+        primaryActionLabel: 'Open Notes',
+        kind: 'notes-ready'
       })
     )
     expect(mocks.encryptJSON).toHaveBeenCalledWith(
