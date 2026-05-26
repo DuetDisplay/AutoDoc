@@ -892,6 +892,14 @@ describe('TranscriptionService', () => {
     ).toBe('whisper-metal-crash')
   })
 
+  it('classifies Ollama runner stops with resource-limit hints as insufficient memory', () => {
+    expect(
+      classifyError(
+        'Ollama returned 500: {"error":"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error"}'
+      )
+    ).toBe('ollama-insufficient-memory')
+  })
+
   it('retries whisper on CPU after a macOS Metal abort', async () => {
     setPlatform('darwin')
     const first = new MockChildProcess()

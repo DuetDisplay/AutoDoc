@@ -5,6 +5,7 @@ import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 
 const mocks = vi.hoisted(() => ({
+  logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn()
 }))
 
@@ -27,6 +28,7 @@ vi.mock('../crypto', () => ({
 }))
 
 vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: mocks.logAutodocEvent,
   logAutodocFailure: mocks.logAutodocFailure
 }))
 

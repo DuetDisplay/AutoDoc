@@ -476,6 +476,8 @@ export class SegmentationService {
       meetingId,
       context: {
         ...context,
+        errorCode,
+        retries,
         processingProfile: this.getProcessingProfileLogContext()
       }
     })

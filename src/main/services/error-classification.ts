@@ -36,6 +36,13 @@ export function classifyError(rawError: string): string {
   ) {
     return 'ollama-insufficient-memory'
   }
+  if (
+    error.includes('ollama') &&
+    error.includes('model runner has unexpectedly stopped') &&
+    error.includes('resource limitations')
+  ) {
+    return 'ollama-insufficient-memory'
+  }
   if (error.includes('eacces') || error.includes('permission')) {
     return 'permission-denied'
   }
