@@ -40,6 +40,10 @@ interface CaptureHandles {
   createdAt: number
   stopping: boolean
   recoverySequence: number
+  expectedAudio: {
+    hasMic: boolean
+    hasSystemAudio: boolean
+  }
   deviceSnapshot: DeviceSnapshot | null
   videoRecorder: MediaRecorder
   micRecorder: MediaRecorder | null
@@ -778,6 +782,7 @@ function buildCaptureHandles(
   meetingId: string,
   segmentIndex: number,
   recoverySequence: number,
+  expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null,
   deviceSnapshot: DeviceSnapshot | null,
   streams: CaptureStreams
 ): CaptureHandles {
@@ -841,6 +846,7 @@ function buildCaptureHandles(
     createdAt: Date.now(),
     stopping: false,
     recoverySequence,
+    expectedAudio: expectedAudio ?? { hasMic, hasSystemAudio },
     deviceSnapshot,
     videoRecorder,
     micRecorder,
@@ -865,7 +871,8 @@ async function createCaptureSegment(
   sourceId: string,
   meetingId: string,
   segmentIndex: number,
-  recoverySequence = 0
+  recoverySequence = 0,
+  expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null = null
 ): Promise<CaptureHandles> {
   const streams = await createCaptureStreams(sourceId)
 
@@ -876,6 +883,7 @@ async function createCaptureSegment(
       meetingId,
       segmentIndex,
       recoverySequence,
+      expectedAudio,
       deviceSnapshot,
       streams
     )
@@ -929,7 +937,7 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
 
   capture.recoveryPromise = (async () => {
     console.warn(`Capture source changed during recording, attempting recovery (${reason})`)
-    const expectedAudio = getCaptureAudioAvailability(capture)
+    const expectedAudio = capture.expectedAudio
     recordCaptureRecoveryDiagnostic('capture_recovery_started', {
       meetingId: capture.meetingId,
       sourceType: getSourceType(capture.sourceId),
@@ -955,7 +963,8 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
             capture.sourceId,
             capture.meetingId,
             capture.segmentIndex + 1,
-            capture.recoverySequence + 1
+            capture.recoverySequence + 1,
+            expectedAudio
           )
           const actualAudio = getCaptureAudioAvailability(replacement)
           const missingSources = getMissingRecoverySources(expectedAudio, actualAudio)

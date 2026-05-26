@@ -355,6 +355,72 @@ describe('recording-capture', () => {
     await stopCapture()
   })
 
+  it('keeps expecting microphone audio when recovery is triggered by an ended mic track', async () => {
+    let getUserMediaCallCount = 0
+    let initialMicStream: MockMediaStream | null = null
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      getUserMediaCallCount += 1
+
+      if (getUserMediaCallCount <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (!(constraints.audio === false) && !(constraints.audio && constraints.video)) {
+          initialMicStream = stream
+        }
+        return Promise.resolve(stream)
+      }
+
+      if (getUserMediaCallCount <= 6) {
+        if (constraints.audio === false) {
+          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+        }
+        if (constraints.audio && constraints.video) {
+          return Promise.resolve(
+            new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
+          )
+        }
+        return Promise.resolve(new MockMediaStream())
+      }
+
+      return Promise.resolve(createMockStreamForConstraints(constraints))
+    })
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-1')
+
+    initialMicStream?.getAudioTracks()[0]?.stop()
+
+    await vi.advanceTimersByTimeAsync(2_250)
+    await Promise.resolve()
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(9)
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_started',
+        details: expect.objectContaining({
+          reason: 'mic:ended',
+          expectedAudio: {
+            hasMic: true,
+            hasSystemAudio: true
+          }
+        })
+      })
+    )
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      'Capture recovery is waiting for audio routes to settle',
+      expect.objectContaining({
+        attempt: 1,
+        reason: 'mic:ended',
+        missingSources: ['mic']
+      })
+    )
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  })
+
   it('reports degraded recovery when expected audio never returns', async () => {
     let getUserMediaCallCount = 0
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
