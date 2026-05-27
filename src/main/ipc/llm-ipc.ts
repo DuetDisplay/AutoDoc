@@ -13,7 +13,8 @@ export function registerLlmIpc(
   ollamaProvider: OllamaProvider,
   getOllamaSetupStatus: () => OllamaSetupStatus,
   ensureOllamaRunning: (options?: { force?: boolean }) => void,
-  startSetupFromStatusCheck = true
+  startSetupFromStatusCheck = true,
+  onManualSegmentationRetry?: (meetingId: string) => void
 ): void {
   ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
     if (isE2E) {
@@ -55,6 +56,7 @@ export function registerLlmIpc(
   )
 
   ipcMain.handle('segmentation:retry', async (_event, meetingId: string): Promise<void> => {
+    onManualSegmentationRetry?.(meetingId)
     segmentationService.retry(meetingId)
   })
 

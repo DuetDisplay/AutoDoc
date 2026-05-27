@@ -143,7 +143,12 @@ export interface IpcInvokeEvents {
   'e2e:detection-poll': [advanceMs?: number]
   'e2e:trigger-main-error': []
   'e2e:trigger-notes-ready-notification': [
-    options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+    options?: {
+      meetingId?: string
+      title?: string
+      status?: 'complete' | 'failed'
+      allowRepeat?: boolean
+    }
   ]
   'updater:get-status': []
   'updater:check': []

@@ -17,6 +17,8 @@ function escapeHtml(value: string): string {
 interface NotificationOptions {
   title: string
   body: string
+  bodyTitle?: string
+  bodySuffix?: string
   primaryActionLabel: string
   onPrimaryAction: () => void
   onDismiss: () => void
@@ -44,7 +46,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   const primaryDisplay = screen.getPrimaryDisplay()
   const workArea = primaryDisplay.workArea
   const winWidth = 400
-  const winHeight = 100 // Extra space for transparent padding + shadow
+  const winHeight = 128 // Extra space for multi-line text, transparent padding, and shadow
   const x = Math.round(workArea.x + (workArea.width - winWidth) / 2)
   const y = workArea.y + 8
 
@@ -108,6 +110,10 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
   const title = escapeHtml(options.title)
   const body = escapeHtml(options.body)
+  const subtitle =
+    options.bodyTitle && options.bodySuffix
+      ? `<div class="subtitle has-note-title">${escapeHtml(`${options.bodyTitle} ${options.bodySuffix}`)}</div>`
+      : `<div class="subtitle">${body}</div>`
   const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
   const html = `<!DOCTYPE html>
@@ -185,8 +191,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
   .subtitle {
     font-size: 11.5px;
     color: #86837e;
-    line-height: 1.3;
+    line-height: 1.25;
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subtitle.has-note-title {
+    min-width: 0;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    white-space: normal;
   }
 
   .actions {
@@ -236,7 +254,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     <div class="dot"></div>
     <div class="text">
       <div class="title">${title}</div>
-      <div class="subtitle">${body}</div>
+      ${subtitle}
     </div>
     <div class="actions">
       <button class="btn-record" id="primary-action">${primaryActionLabel}</button>

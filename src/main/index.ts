@@ -1030,15 +1030,26 @@ app.whenReady().then(async () => {
   transcriptionService.onComplete((meetingId) => {
     segmentationService.enqueue(meetingId)
   })
+  const pendingReprocessNotificationMeetingIds = new Set<string>()
+  const markReprocessNotificationPending = (meetingId: string): void => {
+    pendingReprocessNotificationMeetingIds.add(meetingId)
+  }
   segmentationService.onComplete((meetingId) => {
-    void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId).catch((err) => {
-      logAutodocFailure({
-        area: 'segmentation',
-        message: 'Failed to show notes ready notification',
-        error: err,
-        meetingId
+    const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
+    void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'segmentation',
+          message: 'Failed to show notes ready notification',
+          error: err,
+          meetingId
+        })
       })
-    })
+      .finally(() => {
+        if (allowRepeat) {
+          pendingReprocessNotificationMeetingIds.delete(meetingId)
+        }
+      })
   })
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
@@ -1257,7 +1268,12 @@ app.whenReady().then(async () => {
       'e2e:trigger-notes-ready-notification',
       async (
         _event,
-        options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+        options?: {
+          meetingId?: string
+          title?: string
+          status?: 'complete' | 'failed'
+          allowRepeat?: boolean
+        }
       ) => {
         const meetingId = options?.meetingId ?? `e2e-notes-ready-${Date.now()}`
         const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
@@ -1325,7 +1341,9 @@ app.whenReady().then(async () => {
         }
 
         if (options?.status !== 'failed') {
-          await notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId)
+          await notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, {
+            allowRepeat: options?.allowRepeat
+          })
         }
         return meetingId
       }
@@ -1349,14 +1367,15 @@ app.whenReady().then(async () => {
     whisperManager,
     calendarManager
   )
-  registerTranscriptionIpc(transcriptionService)
+  registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
-    !windowsOllamaSetupCoordinator
+    !windowsOllamaSetupCoordinator,
+    markReprocessNotificationPending
   )
   registerWhisperIpc(
     whisperManager,
