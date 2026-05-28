@@ -5,15 +5,22 @@ import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 export function AskAI() {
-  const { messages, addMessage } = useChatStore()
+  const { messages, addMessage, updateMessage, appendToMessage } = useChatStore()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const activeStreamCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      activeStreamCleanupRef.current?.()
+    }
   }, [])
 
   useEffect(() => {
@@ -24,29 +31,69 @@ export function AskAI() {
     const question = input.trim()
     if (!question || loading) return
 
+    activeStreamCleanupRef.current?.()
+    const requestId =
+      globalThis.crypto?.randomUUID?.() ??
+      `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const assistantMessageId = `assistant-${requestId}`
+    const history = messages
+      .filter((message) => message.content.trim().length > 0)
+      .slice(-8)
+      .map((message) => ({ role: message.role, content: message.content }))
     setInput('')
     addMessage({ role: 'user', content: question })
+    addMessage({ id: assistantMessageId, role: 'assistant', content: '' })
     setLoading(true)
     recordDiagnosticAction({
       category: 'chat',
       action: 'chat_message_sent',
       details: {
-        questionLength: question.length,
-      },
+        questionLength: question.length
+      }
     })
     trackEvent('chat_message_sent')
 
-    try {
-      const response = await window.electronAPI.invoke('chat:send', question)
-      addMessage({ role: 'assistant', content: response })
-    } catch (err) {
-      addMessage({
-        role: 'assistant',
-        content: 'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+    const cleanupListeners = [
+      window.electronAPI.on('chat:chunk', (payload) => {
+        if (payload.requestId !== requestId) return
+        appendToMessage(assistantMessageId, payload.content)
+      }),
+      window.electronAPI.on('chat:done', (payload) => {
+        if (payload.requestId !== requestId) return
+        updateMessage(assistantMessageId, payload.content)
+        setLoading(false)
+        activeStreamCleanupRef.current?.()
+        activeStreamCleanupRef.current = null
+        inputRef.current?.focus()
+      }),
+      window.electronAPI.on('chat:error', (payload) => {
+        if (payload.requestId !== requestId) return
+        updateMessage(
+          assistantMessageId,
+          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+        )
+        console.error('Chat failed:', payload.error)
+        setLoading(false)
+        activeStreamCleanupRef.current?.()
+        activeStreamCleanupRef.current = null
+        inputRef.current?.focus()
       })
+    ]
+    activeStreamCleanupRef.current = () => {
+      for (const cleanup of cleanupListeners) cleanup()
+    }
+
+    try {
+      await window.electronAPI.invoke('chat:send-stream', requestId, question, history)
+    } catch (err) {
+      updateMessage(
+        assistantMessageId,
+        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+      )
       console.error('Chat failed:', err)
-    } finally {
       setLoading(false)
+      activeStreamCleanupRef.current?.()
+      activeStreamCleanupRef.current = null
       inputRef.current?.focus()
     }
   }
@@ -81,7 +128,8 @@ export function AskAI() {
               </svg>
             </div>
             <p className="text-ink-muted text-[13px] text-center max-w-xs">
-              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to answer.
+              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to
+              answer.
             </p>
             {ollamaReady === false && (
               <p className="text-clay text-[11px] mt-1">
@@ -95,7 +143,7 @@ export function AskAI() {
           <div className="flex flex-col gap-4 max-w-2xl mx-auto">
             {messages.map((msg, i) => (
               <div
-                key={i}
+                key={msg.id ?? i}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
@@ -105,7 +153,22 @@ export function AskAI() {
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
-                  {msg.role === 'assistant' ? (
+                  {msg.role === 'assistant' && msg.content.length === 0 ? (
+                    <div className="flex gap-1.5 py-1">
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '0ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '150ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '300ms' }}
+                      />
+                    </div>
+                  ) : msg.role === 'assistant' ? (
                     <div className="whitespace-pre-wrap">{msg.content}</div>
                   ) : (
                     msg.content
@@ -113,18 +176,6 @@ export function AskAI() {
                 </div>
               </div>
             ))}
-
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-bg-card border border-border rounded-2xl rounded-bl-md px-4 py-3">
-                  <div className="flex gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

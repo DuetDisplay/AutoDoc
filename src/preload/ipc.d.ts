@@ -41,6 +41,11 @@ export interface SearchResult {
   matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
 }
 
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface IpcSendEvents {
   'window:minimize': []
   'window:maximize': []
@@ -109,6 +114,7 @@ export interface IpcInvokeEvents {
   'recording:get-detail': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
+  'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
   'detection:dismiss': []
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
@@ -210,6 +216,7 @@ export interface IpcInvokeReturns {
   }
   'search:query': SearchResult[]
   'chat:send': string
+  'chat:send-stream': void
   'detection:dismiss': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
@@ -260,6 +267,9 @@ export interface IpcOnEvents {
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
+  'chat:chunk': [payload: { requestId: string; content: string }]
+  'chat:done': [payload: { requestId: string; content: string }]
+  'chat:error': [payload: { requestId: string; error: string }]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]

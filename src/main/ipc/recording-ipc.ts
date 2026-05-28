@@ -9,6 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
+import { buildRecordingTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
@@ -51,29 +52,6 @@ function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: numb
   return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
 }
 
-function buildRecordingTitle(
-  metadata: MeetingMetadata | null,
-  startedAt: number,
-  calendarTitle: string | null
-): string {
-  const createdAt = new Date(startedAt)
-  const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-
-  if (metadata?.customTitle) {
-    return metadata.customTitle
-  }
-
-  if (calendarTitle) {
-    return `${calendarTitle} — ${dateSuffix}`
-  }
-
-  if (metadata?.sourceName) {
-    return `${metadata.sourceName} — ${dateSuffix}`
-  }
-
-  return `Recording ${dateSuffix}`
-}
-
 function logRecordingDebug(
   message: string,
   meetingId?: string,
@@ -97,10 +75,7 @@ function getSourceTypeFromId(sourceId: string | null | undefined): 'window' | 's
 }
 
 function isRecordingMediaFilename(name: string): boolean {
-  return (
-    (/^(screen|mic|system)(-\d+)?\.webm$/).test(name) ||
-    name === 'audio.webm'
-  )
+  return /^(screen|mic|system)(-\d+)?\.webm$/.test(name) || name === 'audio.webm'
 }
 
 /** Merge two audio files into one using amix filter. */
@@ -171,9 +146,7 @@ function concatAudioSegments(
       outputPath
     ])
     let stderr = ''
-    proc.on('error', (err) =>
-      reject(new Error(`ffmpeg audio concat spawn failed: ${err.message}`))
-    )
+    proc.on('error', (err) => reject(new Error(`ffmpeg audio concat spawn failed: ${err.message}`)))
     proc.stderr.on('data', (data: Buffer) => {
       stderr += data.toString()
     })
@@ -439,7 +412,7 @@ async function maybeReportRapidAbortWithoutMedia(params: {
     sourceType,
     recordingIntent: params.recordingIntent ?? null,
     meetingDir: params.meetingDir,
-    mediaFiles,
+    mediaFiles
   }
 
   logAutodocEvent({
@@ -1185,7 +1158,6 @@ export function registerRecordingIpc(
         })
         console.error('Failed to remux for seeking (video will still play but may not seek):', err)
       }
-
     })().catch((err) => {
       logAutodocFailure({
         area: 'recording',
