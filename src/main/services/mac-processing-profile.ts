@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { totalmem, freemem, availableParallelism, cpus } from 'os'
 import { promisify } from 'util'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../shared/constants'
 
 const execFileAsync = promisify(execFile)
 
@@ -27,6 +28,7 @@ export interface MacProcessingProfile {
   hardware: MacHardwareSnapshot
   transcriptionBackend: 'mlx-whisper'
   transcriptionModel: 'distil-large-v3'
+  notesModel: string
   dualSourceMode: MacDualSourceMode
   notesAfterTranscriptionOnly: boolean
   serializeLocalProcessing: boolean
@@ -77,7 +79,8 @@ export function selectEffectiveMacProcessingProfile(
   if (!isMemoryHealthyForConcurrentProcessing(runtimeHardware)) {
     return createLowSpecProfile(
       runtimeHardware,
-      'runtime memory pressure, free memory, or swap usage is not healthy for concurrent processing'
+      'runtime memory pressure, free memory, or swap usage is not healthy for concurrent processing',
+      stableProfile.notesModel
     )
   }
 
@@ -112,7 +115,11 @@ function getLowSpecHardwareReason(hardware: MacHardwareSnapshot): string | null 
   return null
 }
 
-function createLowSpecProfile(hardware: MacHardwareSnapshot, reason: string): MacProcessingProfile {
+function createLowSpecProfile(
+  hardware: MacHardwareSnapshot,
+  reason: string,
+  notesModel = LOW_SPEC_MAC_OLLAMA_MODEL
+): MacProcessingProfile {
   return {
     id: 'mac-low-spec',
     label: 'Low-spec Apple Silicon Mac',
@@ -120,6 +127,7 @@ function createLowSpecProfile(hardware: MacHardwareSnapshot, reason: string): Ma
     hardware,
     transcriptionBackend: 'mlx-whisper',
     transcriptionModel: 'distil-large-v3',
+    notesModel,
     dualSourceMode: 'sequential',
     notesAfterTranscriptionOnly: true,
     serializeLocalProcessing: true
@@ -134,6 +142,7 @@ function createNormalProfile(hardware: MacHardwareSnapshot, reason: string): Mac
     hardware,
     transcriptionBackend: 'mlx-whisper',
     transcriptionModel: 'distil-large-v3',
+    notesModel: DEFAULT_OLLAMA_MODEL,
     dualSourceMode: 'concurrent',
     notesAfterTranscriptionOnly: true,
     serializeLocalProcessing: false

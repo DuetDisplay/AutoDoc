@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const originalPlatform = process.platform
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
@@ -50,6 +51,7 @@ async function loadOllamaManager(
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
   vi.resetModules()
@@ -140,6 +142,106 @@ describe('Ollama onboarding dependency installation', () => {
         access(join(rootDir, 'models', 'ollama-runtime', 'ollama'))
       ).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('selects the low-spec Mac notes model before onboarding pulls the model', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-low-spec-mac-'))
+
+    try {
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const manager = new OllamaManager({ resolveModel: () => LOW_SPEC_MAC_OLLAMA_MODEL })
+      const selectedModels: string[] = []
+      manager.on('model-selected', (model: string) => selectedModels.push(model))
+
+      vi.spyOn(manager, 'start').mockImplementation(async () => {
+        const dataDir = join(rootDir, 'ollama-data')
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'serve-ready.txt'), 'ready')
+      })
+
+      vi.spyOn(manager, 'pullModel').mockImplementation(async () => {
+        const dataDir = join(rootDir, 'ollama-data')
+        await mkdir(dataDir, { recursive: true })
+        await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
+      })
+
+      await manager.startAndPull()
+
+      expect(selectedModels).toEqual([LOW_SPEC_MAC_OLLAMA_MODEL])
+      expect(manager.getModel()).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
+      await expect(
+        readFile(join(rootDir, 'ollama-data', 'model-ready.txt'), 'utf-8')
+      ).resolves.toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('requests the low-spec Mac notes model from the managed Ollama pull API', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-low-spec-pull-'))
+    const pulledModels: string[] = []
+
+    try {
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+          const href = String(url)
+          if (href.endsWith('/api/tags')) {
+            return new Response(JSON.stringify({ models: [] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
+          }
+
+          if (href.endsWith('/api/pull')) {
+            const body = JSON.parse(String(init?.body ?? '{}')) as { name?: string }
+            pulledModels.push(body.name ?? '')
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  const encoder = new TextEncoder()
+                  controller.enqueue(
+                    encoder.encode(
+                      JSON.stringify({
+                        status: 'pulling manifest',
+                        total: 100,
+                        completed: 100
+                      }) + '\n'
+                    )
+                  )
+                  controller.enqueue(encoder.encode(JSON.stringify({ status: 'success' }) + '\n'))
+                  controller.close()
+                }
+              }),
+              {
+                status: 200,
+                headers: { 'content-type': 'application/x-ndjson' }
+              }
+            )
+          }
+
+          return new Response(null, { status: 404 })
+        })
+      )
+
+      const manager = new OllamaManager({ resolveModel: () => LOW_SPEC_MAC_OLLAMA_MODEL })
+      vi.spyOn(manager, 'start').mockResolvedValue(undefined)
+
+      await manager.startAndPull()
+
+      expect(pulledModels).toEqual([LOW_SPEC_MAC_OLLAMA_MODEL])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_OLLAMA_MODEL,
+  LOW_SPEC_MAC_OLLAMA_MODEL
+} from '../../../shared/constants'
+import {
   isMemoryHealthyForConcurrentProcessing,
   parseMacAvailableMemoryGiBFromVmStat,
   parseMacMemoryPressureOutput,
@@ -28,6 +32,7 @@ describe('mac processing profile selection', () => {
     const profile = selectMacProcessingProfile(hardware({ totalMemoryGiB: 8 }))
 
     expect(profile.id).toBe('mac-low-spec')
+    expect(profile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
     expect(profile.dualSourceMode).toBe('sequential')
     expect(profile.serializeLocalProcessing).toBe(true)
   })
@@ -36,6 +41,7 @@ describe('mac processing profile selection', () => {
     const profile = selectMacProcessingProfile(hardware({ totalMemoryGiB: 24, freeMemoryGiB: 12 }))
 
     expect(profile.id).toBe('mac-normal')
+    expect(profile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
     expect(profile.dualSourceMode).toBe('concurrent')
     expect(profile.serializeLocalProcessing).toBe(false)
   })
@@ -64,11 +70,24 @@ describe('mac processing profile selection', () => {
     )
 
     expect(pressuredProfile.id).toBe('mac-low-spec')
+    expect(pressuredProfile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
     expect(pressuredProfile.dualSourceMode).toBe('sequential')
     expect(pressuredProfile.serializeLocalProcessing).toBe(true)
     expect(recoveredProfile.id).toBe('mac-normal')
+    expect(recoveredProfile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
     expect(recoveredProfile.dualSourceMode).toBe('concurrent')
     expect(recoveredProfile.serializeLocalProcessing).toBe(false)
+  })
+
+  it('keeps the low-spec notes model stable for 8 GB Apple Silicon Macs at runtime', () => {
+    const stableProfile = selectMacProcessingProfile(hardware({ totalMemoryGiB: 8 }))
+    const effectiveProfile = selectEffectiveMacProcessingProfile(
+      stableProfile,
+      hardware({ totalMemoryGiB: 8, freeMemoryGiB: 5, memoryPressure: 'green' })
+    )
+
+    expect(effectiveProfile.id).toBe('mac-low-spec')
+    expect(effectiveProfile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
   })
 
   it('treats memory pressure and swap as unsafe for concurrency', () => {

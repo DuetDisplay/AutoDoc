@@ -106,6 +106,7 @@ import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
 import { shouldSuppressNotificationActivation } from './notification-window'
+import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -746,7 +747,10 @@ app.whenReady().then(async () => {
     isExperimentalSpeakerDiarizationEnabled,
     localProcessingCoordinator
   )
-  ollamaManager = new OllamaManager()
+  ollamaManager = new OllamaManager({
+    resolveModel: async () =>
+      (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+  })
   const managedOllamaManager = ollamaManager
 
   // Mutable state tracking Ollama setup progress
@@ -902,6 +906,15 @@ app.whenReady().then(async () => {
     managedOllamaManager.getModel(),
     { onTelemetry: broadcastSegmentationDiagnostic }
   )
+  managedOllamaManager.on('model-selected', (model: string) => {
+    ollamaProvider.setModel(model)
+    updateOllamaSentryContext({
+      ready: ollamaSetupState.phase === 'ready',
+      modelName: model,
+      phase: ollamaSetupState.phase,
+      failedStep: ollamaSetupState.failedStep ?? null
+    })
+  })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
   const ollamaRuntime = {
     waitUntilReady: () => ollamaReadiness.waitUntilReady(),

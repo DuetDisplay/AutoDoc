@@ -3,6 +3,7 @@ import { join } from 'path'
 import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const mocks = vi.hoisted(() => ({
   logAutodocEvent: vi.fn(),
@@ -46,6 +47,7 @@ function createMockProvider(): LLMProvider {
     }),
     checkConnection: vi.fn().mockResolvedValue(true),
     abortActiveRequests: vi.fn(),
+    setModel: vi.fn(),
     setLowMemoryMode: vi.fn()
   }
 }
@@ -539,6 +541,7 @@ describe('SegmentationService', () => {
         },
         transcriptionBackend: 'mlx-whisper',
         transcriptionModel: 'distil-large-v3',
+        notesModel: LOW_SPEC_MAC_OLLAMA_MODEL,
         dualSourceMode: 'sequential',
         notesAfterTranscriptionOnly: true,
         serializeLocalProcessing: true
@@ -565,6 +568,7 @@ describe('SegmentationService', () => {
     await (service as any).processJob('m-low')
 
     expect(provider.setLowMemoryMode).toHaveBeenCalledWith(true)
+    expect(provider.setModel).toHaveBeenCalledWith(LOW_SPEC_MAC_OLLAMA_MODEL)
     expect(provider.summarize).toHaveBeenCalledOnce()
   })
 })

@@ -32,9 +32,10 @@ export const RECORDING_SUBDIR = 'recordings'
 export const MODELS_SUBDIR = 'models'
 export const PYTHON_ENV_SUBDIR = 'python-env'
 export const DEFAULT_OLLAMA_MODEL = 'llama3.1'
+export const LOW_SPEC_MAC_OLLAMA_MODEL = 'llama3.2:3b'
 export const DEFAULT_OLLAMA_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 export const OLLAMA_RUNTIME_LABEL = 'Ollama runtime'
-export const OLLAMA_NOTES_MODEL_LABEL = 'Llama 3.1 notes model'
+export const OLLAMA_NOTES_MODEL_LABEL = 'notes model'
 
 export const SPEAKER_COLORS: { border: string; bg: string }[] = [
   { border: '#5B8C6A', bg: '#f6faf7' }, // Me — sage green

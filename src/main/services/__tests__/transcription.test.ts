@@ -1063,6 +1063,7 @@ describe('TranscriptionService', () => {
       },
       transcriptionBackend: 'mlx-whisper',
       transcriptionModel: 'distil-large-v3',
+      notesModel: 'llama3.2:3b',
       dualSourceMode: 'sequential',
       notesAfterTranscriptionOnly: true,
       serializeLocalProcessing: true

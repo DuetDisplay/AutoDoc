@@ -29,6 +29,13 @@ const TEST_OLLAMA_SETUP_SEQUENCE =
         .filter(Boolean)
     : []
 
+type PreferredModelResolver = () => string | null | undefined | Promise<string | null | undefined>
+
+export interface OllamaManagerOptions {
+  model?: string
+  resolveModel?: PreferredModelResolver
+}
+
 function consumeTestOllamaSetupStep(): string | null {
   return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
 }
@@ -36,28 +43,34 @@ function consumeTestOllamaSetupStep(): string | null {
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   private model: string
+  private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
 
-  constructor(model?: string) {
+  constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
-    this.model = model ?? DEFAULT_OLLAMA_MODEL
+    const options =
+      typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
+    this.model = options.model ?? DEFAULT_OLLAMA_MODEL
+    this.resolveModel = options.resolveModel ?? null
   }
 
   /** Call once at startup. Subsequent calls return the same promise. */
   startAndPull(): Promise<void> {
     if (!this.readyPromise) {
-      const testStep = consumeTestOllamaSetupStep()
-      this.readyPromise = (
-        testStep
-          ? this.runTestSetupStep(testStep)
-          : this.start()
-              .then(() => this.pullModel())
-              .then(() => this.pullOptionalEmbeddingModel())
-      ).catch((err) => {
-        // Reset so the next call retries instead of permanently failing
-        this.readyPromise = null
-        throw err
-      })
+      this.readyPromise = this.selectPreferredModel()
+        .then(() => {
+          const testStep = consumeTestOllamaSetupStep()
+          return testStep
+            ? this.runTestSetupStep(testStep)
+            : this.start()
+                .then(() => this.pullModel())
+                .then(() => this.pullOptionalEmbeddingModel())
+        })
+        .catch((err) => {
+          // Reset so the next call retries instead of permanently failing
+          this.readyPromise = null
+          throw err
+        })
     }
     return this.readyPromise
   }
@@ -97,7 +110,18 @@ export class OllamaManager extends EventEmitter {
   }
 
   setModel(model: string): void {
+    if (this.model === model) return
     this.model = model
+    this.emit('model-selected', model)
+  }
+
+  private async selectPreferredModel(): Promise<void> {
+    if (!this.resolveModel) return
+
+    const preferredModel = await this.resolveModel()
+    if (!preferredModel) return
+
+    this.setModel(preferredModel)
   }
 
   private getModelsDir(): string {

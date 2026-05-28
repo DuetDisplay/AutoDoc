@@ -276,41 +276,31 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
+    const macProcessingProfile =
+      (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
+    if (macProcessingProfile) {
+      this.llmProvider.setModel?.(macProcessingProfile.notesModel)
+      this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes effective processing profile selected',
+        meetingId,
+        context: this.getProcessingProfileLogContext(macProcessingProfile) ?? undefined
+      })
+    }
     logAutodocEvent({
       area: 'segmentation',
       message: 'notes generation waiting for model',
       meetingId,
       context: {
         transcriptCount: transcripts.length,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
       }
     })
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
     this.broadcastStatus(meetingId, 'segmenting', 0)
-    const macProcessingProfile =
-      (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
-    if (macProcessingProfile) {
-      this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
-      logAutodocEvent({
-        area: 'segmentation',
-        message: 'notes effective processing profile selected',
-        meetingId,
-        context: {
-          profileId: macProcessingProfile.id,
-          reason: macProcessingProfile.reason,
-          hardware: macProcessingProfile.hardware,
-          settings: {
-            transcriptionBackend: macProcessingProfile.transcriptionBackend,
-            transcriptionModel: macProcessingProfile.transcriptionModel,
-            dualSourceMode: macProcessingProfile.dualSourceMode,
-            notesAfterTranscriptionOnly: macProcessingProfile.notesAfterTranscriptionOnly,
-            serializeLocalProcessing: macProcessingProfile.serializeLocalProcessing
-          }
-        }
-      })
-    }
 
     const t0 = Date.now()
     logAutodocEvent({
@@ -320,7 +310,7 @@ export class SegmentationService {
       context: {
         transcriptCount: transcripts.length,
         waitForModelMs: t0 - jobStartedAt,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
       }
     })
 
@@ -548,8 +538,10 @@ export class SegmentationService {
     return 'failed'
   }
 
-  private getProcessingProfileLogContext(): Record<string, unknown> | null {
-    const profile = this.getMacProcessingProfile?.()
+  private getProcessingProfileLogContext(
+    selectedProfile?: MacProcessingProfile
+  ): Record<string, unknown> | null {
+    const profile = selectedProfile ?? this.getMacProcessingProfile?.()
     if (!profile) {
       return null
     }
@@ -561,6 +553,7 @@ export class SegmentationService {
       settings: {
         transcriptionBackend: profile.transcriptionBackend,
         transcriptionModel: profile.transcriptionModel,
+        notesModel: profile.notesModel,
         dualSourceMode: profile.dualSourceMode,
         notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
         serializeLocalProcessing: profile.serializeLocalProcessing

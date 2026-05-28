@@ -11,6 +11,7 @@ export interface LLMProvider {
   ): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
   abortActiveRequests?(reason?: string): void
+  setModel?(model: string): void
   setLowMemoryMode?(enabled: boolean): void
   releaseResources?(meetingId?: string): Promise<void>
 }
