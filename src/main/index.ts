@@ -81,7 +81,8 @@ import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
   handleSecondInstanceLaunch,
-  traceInstallPolicy
+  traceInstallPolicy,
+  warnIfUnsupportedMacOS
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 import {
@@ -360,16 +361,6 @@ if (!gotSingleInstanceLock) {
   // app.exit(0) may not terminate on macOS when app.whenReady() hasn't fired yet
   setTimeout(() => process.exit(0), 2000).unref()
 } else {
-  try {
-    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
-    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
-    syncDiagnosticLogUploadForErrors()
-  } catch (err) {
-    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
-  }
-
-  initializeMainSentry()
-
   app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
     void handleSecondInstanceLaunch(additionalData, argv)
       .then((handled) => {
@@ -437,6 +428,18 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  if (!(await warnIfUnsupportedMacOS())) return
+
+  try {
+    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
+    syncDiagnosticLogUploadForErrors()
+  } catch (err) {
+    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
+  }
+
+  initializeMainSentry()
+
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
 
   const buildPermissionLogContext = (

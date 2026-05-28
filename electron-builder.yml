@@ -39,6 +39,7 @@ mac:
   target:
     - dmg
     - zip
+  minimumSystemVersion: 14.0.0
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSMicrophoneUsageDescription: Application requires access to the microphone.

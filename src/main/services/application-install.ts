@@ -1,12 +1,14 @@
 import { execFile as execFileCallback, execFileSync, spawn } from 'node:child_process'
 import { access, readFile } from 'node:fs/promises'
 import { appendFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, win32 as pathWin32 } from 'node:path'
 import { promisify } from 'node:util'
 import { app, dialog } from 'electron'
 
 const execFile = promisify(execFileCallback)
 const APPLICATIONS_DIR = '/Applications'
+export const MINIMUM_SUPPORTED_MACOS_VERSION = '14.0.0'
+export const MINIMUM_SUPPORTED_MACOS_NAME = 'macOS Sonoma'
 const INSTALL_POLICY_TRACE_ENABLED = process.env.AUTODOC_INSTALL_POLICY_TRACE === '1'
 const INSTALL_POLICY_TRACE_FILE = process.env.AUTODOC_INSTALL_POLICY_TRACE_FILE || '/tmp/autodoc-install-policy.log'
 const WINDOWS_UNINSTALL_PATHS = [
@@ -118,6 +120,36 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
   return false
 }
 
+export async function warnIfUnsupportedMacOS(
+  platform: NodeJS.Platform = process.platform,
+  systemVersion: string | null = getSystemVersion(),
+): Promise<boolean> {
+  if (platform !== 'darwin' || isSupportedMacOSVersion(systemVersion)) {
+    return true
+  }
+
+  await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Quit AutoDoc'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Unsupported macOS Version',
+    message: `AutoDoc requires ${MINIMUM_SUPPORTED_MACOS_NAME} or newer.`,
+    detail: systemVersion
+      ? `This Mac is running macOS ${systemVersion}. Please update macOS to continue using AutoDoc.`
+      : 'Please update macOS to continue using AutoDoc.',
+    noLink: true,
+  })
+
+  quitForInstalledCopyPolicy(platform)
+  return false
+}
+
+export function isSupportedMacOSVersion(systemVersion: string | null | undefined): boolean {
+  if (!systemVersion) return true
+  return compareVersionStrings(systemVersion, MINIMUM_SUPPORTED_MACOS_VERSION) >= 0
+}
+
 export function compareVersionStrings(currentVersion: string, installedVersion: string | null): number {
   if (!installedVersion) return 1
 
@@ -133,6 +165,16 @@ export function compareVersionStrings(currentVersion: string, installedVersion: 
   }
 
   return 0
+}
+
+function getSystemVersion(): string | null {
+  const electronProcess = process as NodeJS.Process & { getSystemVersion?: () => string }
+
+  try {
+    return electronProcess.getSystemVersion?.() ?? null
+  } catch {
+    return null
+  }
 }
 
 function normalizeVersion(version: string): number[] {
@@ -256,7 +298,7 @@ function getCurrentApplication(platform: NodeJS.Platform): ResolvedApplication {
   }
 
   return {
-    containerPath: dirname(executablePath),
+    containerPath: platformDirname(executablePath, platform),
     executablePath,
     version: app.getVersion(),
   }
@@ -326,7 +368,7 @@ async function readBundleVersion(bundlePath: string): Promise<string | null> {
 }
 
 async function readInstalledWindowsApplication(): Promise<InstalledApplication | null> {
-  const executableName = basename(app.getPath('exe'))
+  const executableName = platformBasename(app.getPath('exe'), 'win32')
   const registryInstall = await readWindowsInstallFromRegistry(executableName)
   const candidates = [
     registryInstall,
@@ -351,7 +393,7 @@ async function readInstalledWindowsApplication(): Promise<InstalledApplication |
 
 async function readFallbackWindowsSecondInstanceExecutablePath(): Promise<string | null> {
   const currentExecutablePath = app.getPath('exe')
-  const executableName = basename(currentExecutablePath)
+  const executableName = platformBasename(currentExecutablePath, 'win32')
   const script = [
     `$processes = Get-CimInstance Win32_Process -Filter "Name = '${escapePowerShellSingleQuotedString(executableName)}'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath`,
     'if ($processes) { $processes | ConvertTo-Json -Compress }',
@@ -479,10 +521,10 @@ async function readWindowsInstallFromRegistry(executableName: string): Promise<I
 
     const displayIconPath = parseWindowsDisplayIconPath(parsed.DisplayIcon)
     const installRoot = parsed.InstallLocation?.trim()
-      || (displayIconPath ? dirname(displayIconPath) : null)
+      || (displayIconPath ? platformDirname(displayIconPath, 'win32') : null)
     if (!installRoot) return null
 
-    const executablePath = displayIconPath ?? join(installRoot, executableName)
+    const executablePath = displayIconPath ?? pathWin32.join(installRoot, executableName)
     return {
       containerPath: installRoot,
       executablePath,
@@ -504,8 +546,8 @@ function getWindowsInstallPathCandidates(executableName: string): InstalledAppli
 
   return installRoots.map((containerPath) => ({
     containerPath,
-    executablePath: join(containerPath, executableName),
-    launchPath: join(containerPath, executableName),
+    executablePath: pathWin32.join(containerPath, executableName),
+    launchPath: pathWin32.join(containerPath, executableName),
     locationLabel: 'the installed copy',
     version: null,
   }))
@@ -662,11 +704,11 @@ async function resolveSecondInstanceLaunchData(
   }
 
   return {
-    containerPath: dirname(fallbackExecutablePath),
+    containerPath: platformDirname(fallbackExecutablePath, 'win32'),
     executablePath: fallbackExecutablePath,
     packaged: true,
     platform,
-    version: await readPackagedApplicationVersion(dirname(fallbackExecutablePath), platform),
+    version: await readPackagedApplicationVersion(platformDirname(fallbackExecutablePath, 'win32'), platform),
   }
 }
 
@@ -680,6 +722,14 @@ function sameApplicationCopy(leftPath: string, rightPath: string, platform: Node
 
 function normalizeWindowsPath(targetPath: string): string {
   return targetPath.replaceAll('/', '\\').toLowerCase()
+}
+
+function platformBasename(targetPath: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? pathWin32.basename(targetPath) : basename(targetPath)
+}
+
+function platformDirname(targetPath: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? pathWin32.dirname(targetPath) : dirname(targetPath)
 }
 
 function getMacBundlePath(executablePath: string): string | null {
@@ -728,7 +778,7 @@ async function replaceInstalledCopyAndRelaunch(
 async function readPackagedApplicationVersion(containerPath: string, platform: NodeJS.Platform): Promise<string | null> {
   const packageJsonPath = platform === 'darwin'
     ? join(containerPath, 'Contents', 'Resources', 'app.asar', 'package.json')
-    : join(containerPath, 'resources', 'app.asar', 'package.json')
+    : pathWin32.join(containerPath, 'resources', 'app.asar', 'package.json')
 
   try {
     const packageJson = await readFile(packageJsonPath, 'utf8')
@@ -742,14 +792,14 @@ async function readPackagedApplicationVersion(containerPath: string, platform: N
 }
 
 function parseWindowsSecondInstanceExecutablePath(argv: string[]): string | null {
-  const expectedExecutableName = basename(app.getPath('exe')).toLowerCase()
+  const expectedExecutableName = platformBasename(app.getPath('exe'), 'win32').toLowerCase()
 
   for (const value of argv) {
     if (typeof value !== 'string') continue
 
     const trimmed = value.trim().replace(/^"(.*)"$/, '$1')
     if (!trimmed.toLowerCase().endsWith('.exe')) continue
-    if (basename(trimmed).toLowerCase() !== expectedExecutableName) continue
+    if (platformBasename(trimmed, 'win32').toLowerCase() !== expectedExecutableName) continue
 
     return trimmed
   }
@@ -1014,7 +1064,7 @@ function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, 
       spawn(installedApplication.launchPath, [], {
         detached: true,
         stdio: 'ignore',
-        cwd: dirname(installedApplication.launchPath),
+        cwd: platformDirname(installedApplication.launchPath, platform),
       }).unref()
     }
   } catch {
