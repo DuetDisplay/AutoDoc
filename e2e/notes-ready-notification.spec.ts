@@ -164,6 +164,52 @@ test('shows Notes Ready again when completion is from a manual reprocess', async
   }
 })
 
+test('dismissing Notes Ready does not reveal the main window', async () => {
+  const session = await launchIsolatedE2EApp()
+  const { electronApp } = session
+  const page = await electronApp.firstWindow()
+
+  try {
+    await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
+
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('prefs:set-onboarding-complete')
+    })
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+
+    const mainWindowHidden = await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      mainWindow?.hide()
+      return mainWindow?.isVisible() === false
+    })
+    expect(mainWindowHidden).toBe(true)
+
+    const notificationWindowPromise = electronApp.waitForEvent('window')
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('e2e:trigger-notes-ready-notification', {
+        title: 'Dismiss Review'
+      })
+    })
+
+    const notificationWindow = await notificationWindowPromise
+    await expect(notificationWindow.getByText('Notes Ready')).toBeVisible()
+
+    await notificationWindow.locator('#dismiss').click()
+    await electronApp.evaluate(({ app }) => {
+      app.emit('activate')
+    })
+
+    const mainWindowVisible = await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      return mainWindow?.isVisible() ?? false
+    })
+    expect(mainWindowVisible).toBe(false)
+  } finally {
+    await session.cleanup()
+  }
+})
+
 test('does not show a Notes Ready notification when segmentation fails', async () => {
   const session = await launchIsolatedE2EApp()
   const { electronApp } = session

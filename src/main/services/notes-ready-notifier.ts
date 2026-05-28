@@ -41,6 +41,9 @@ export async function notifyNotesReady(
     return false
   }
   const displayTitle = getMeetingDisplayTitle(metadata)
+  const mainWindow = getMainWindow()
+  const wasMainWindowVisible = mainWindow?.isVisible() ?? false
+  const wasMainWindowMinimized = mainWindow?.isMinimized() ?? false
 
   showNotificationWindow({
     title: 'Notes Ready',
@@ -50,11 +53,20 @@ export async function notifyNotesReady(
       : {}),
     primaryActionLabel: 'Open Notes',
     kind: 'notes-ready',
+    suppressAppActivationWhileVisible: !wasMainWindowVisible || wasMainWindowMinimized,
     onPrimaryAction: () => {
       focusMainWindow()
       getMainWindow()?.webContents.send('notes:open-meeting', { meetingId })
     },
-    onDismiss: () => {}
+    onDismiss: () => {
+      const window = getMainWindow()
+      if (!window) return
+      if (wasMainWindowMinimized) {
+        window.minimize()
+      } else if (!wasMainWindowVisible) {
+        window.hide()
+      }
+    }
   })
 
   const updatedMetadata: MeetingMetadata = {

@@ -27,9 +27,19 @@ vi.mock('../main-window', () => ({
 
 const { buildNotesReadyBody, notifyNotesReady } = await import('../notes-ready-notifier')
 
+function createMainWindowMock(options: { visible?: boolean; minimized?: boolean } = {}) {
+  return {
+    webContents: { send: vi.fn() },
+    isVisible: vi.fn(() => options.visible ?? true),
+    isMinimized: vi.fn(() => options.minimized ?? false),
+    hide: vi.fn(),
+    minimize: vi.fn()
+  }
+}
+
 describe('notes ready notifier', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
   })
 
   it('builds a fallback body when there is no meeting title', () => {
@@ -49,8 +59,8 @@ describe('notes ready notifier', () => {
   })
 
   it('shows the notification once and persists the dedupe marker', async () => {
-    const send = vi.fn()
-    mocks.getMainWindow.mockReturnValue({ webContents: { send } })
+    const mainWindow = createMainWindowMock()
+    mocks.getMainWindow.mockReturnValue(mainWindow)
     mocks.readMetadata.mockResolvedValue({
       sourceName: 'Weekly Sync',
       startedAt: 1,
@@ -68,7 +78,8 @@ describe('notes ready notifier', () => {
         bodyTitle: 'Weekly Sync',
         bodySuffix: 'notes are ready.',
         primaryActionLabel: 'Open Notes',
-        kind: 'notes-ready'
+        kind: 'notes-ready',
+        suppressAppActivationWhileVisible: false
       })
     )
     expect(mocks.encryptJSON).toHaveBeenCalledWith(
@@ -86,7 +97,33 @@ describe('notes ready notifier', () => {
     options.onPrimaryAction()
 
     expect(mocks.focusMainWindow).toHaveBeenCalled()
-    expect(send).toHaveBeenCalledWith('notes:open-meeting', { meetingId: 'meeting-123' })
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('notes:open-meeting', {
+      meetingId: 'meeting-123'
+    })
+  })
+
+  it('keeps a hidden main window hidden when the notification is dismissed', async () => {
+    const mainWindow = createMainWindowMock({ visible: false })
+    mocks.getMainWindow.mockReturnValue(mainWindow)
+    mocks.readMetadata.mockResolvedValue({
+      sourceName: 'Weekly Sync',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 60
+    })
+
+    await notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')
+
+    const options = mocks.showNotificationWindow.mock.calls[0]?.[0]
+    options.onDismiss()
+
+    expect(mainWindow.hide).toHaveBeenCalledTimes(1)
+    expect(mainWindow.minimize).not.toHaveBeenCalled()
+    expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suppressAppActivationWhileVisible: true
+      })
+    )
   })
 
   it('does not show a duplicate notification when the marker is already set', async () => {

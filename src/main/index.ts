@@ -105,6 +105,7 @@ import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
+import { shouldSuppressNotificationActivation } from './notification-window'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -1542,6 +1543,9 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (!isE2E) {
       recoverPendingWork()
+    }
+    if (shouldSuppressNotificationActivation()) {
+      return
     }
     if (!focusMainWindow()) {
       createWindow()
