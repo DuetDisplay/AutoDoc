@@ -150,11 +150,10 @@ describe('ChatRecordingIndex', () => {
       []
     )
 
-    expect(small.directAnswer).toBeNull()
+    expect(small.directAnswer).toContain('I found 9 relevant notes across 9 meetings')
+    expect(small.directAnswer).toContain('Target recording notes')
     expect(small.diagnostics.selectedContextCount).toBe(9)
-    expect(small.context).toContain(
-      'Recording inventory: 9 total recordings. 9 recordings selected'
-    )
+    expect(small.context).toBe('')
 
     const largeDir = await createTempRecordingsDir()
     await createLargeLibrary(largeDir, MAX_CHAT_ALL_CONTEXT_MEETINGS + 1)
@@ -572,6 +571,51 @@ describe('ChatRecordingIndex', () => {
     expect(result.context).not.toContain('Design Review')
   })
 
+  it('persists semantic meeting embeddings across index restarts', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const cachePath = join(baseDir, 'cache', 'semantic-embeddings.json')
+    const startedAt = new Date(2026, 4, 27, 10, 0).getTime()
+    await createRecording(baseDir, 'calendar-auth-scope', {
+      startedAt,
+      sourceName: 'Entire screen',
+      calendarTitle: 'Reliability Review',
+      segments: createSegmentsFromItems({
+        discussion: [
+          {
+            title: 'OAuth consent scope regression',
+            content:
+              'Google Calendar sync was blocked because the app token lacked the required readonly event permission.',
+            topic: 'calendar integration'
+          }
+        ]
+      })
+    })
+    await createRecording(baseDir, 'design-icons', {
+      startedAt: startedAt + 60_000,
+      sourceName: 'Entire screen',
+      calendarTitle: 'Design Review',
+      notes: 'Reviewed toolbar icons, sidebar spacing, and visual polish.'
+    })
+
+    const firstProvider = new FakeEmbeddingProvider()
+    const first = await new ChatRecordingIndex(baseDir, {
+      embeddingProvider: firstProvider,
+      embeddingCachePath: cachePath
+    }).buildContext('Where did we talk about account access failing after sign-in?', [])
+
+    const secondProvider = new FakeEmbeddingProvider()
+    const second = await new ChatRecordingIndex(baseDir, {
+      embeddingProvider: secondProvider,
+      embeddingCachePath: cachePath
+    }).buildContext('Where did we talk about account access failing after sign-in?', [])
+
+    expect(first.diagnostics.embeddingCacheMisses).toBeGreaterThan(0)
+    expect(second.diagnostics.embeddingCacheHits).toBeGreaterThan(0)
+    expect(second.diagnostics.embeddingCacheMisses).toBe(0)
+    expect(second.diagnostics.selectedMeetingIds[0]).toBe('calendar-auth-scope')
+    expect(secondProvider.embedCalls).toEqual([])
+  })
+
   it('keeps structured broad questions warm over 500 recordings under the target budget', async () => {
     const baseDir = await createTempRecordingsDir()
     await createLargeLibrary(baseDir, 500)
@@ -650,6 +694,151 @@ describe('ChatRecordingIndex', () => {
       (await index.buildContext('Summarize Entire screen — May 27 at 9:49 AM', [])).directAnswer
     ).toContain('New cache text')
   })
+
+  it('evaluates natural broad questions across topics, ambiguity, and no-match cases', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createEvaluationCorpus(baseDir)
+    const index = new ChatRecordingIndex(baseDir, {
+      embeddingProvider: new FakeEmbeddingProvider()
+    })
+
+    const cases: Array<{
+      question: string
+      expectedIds?: string[]
+      directAnswerIncludes?: string
+      clarification?: boolean
+      noMatch?: boolean
+    }> = [
+      ...[
+        'Which meeting covered Google Calendar scope failures?',
+        'Where did we discuss account access failing after sign-in?',
+        'Which call talked about OAuth consent permissions?',
+        'Find the meeting about reconnecting calendar accounts',
+        'What meeting mentioned readonly event permission?',
+        'Where was Google Calendar reconnect discussed?'
+      ].map((question) => ({ question, expectedIds: ['eval-calendar-auth'] })),
+      ...[
+        'Who owns the beta launch checklist?',
+        'What is due for the launch plan?',
+        'Which meeting talked about June beta scope?',
+        'Where did we decide to limit the beta?',
+        'What tasks came out of the launch planning meeting?',
+        'Which notes mention customer-facing checklist work?'
+      ].map((question) => ({ question, expectedIds: ['eval-product-launch'] })),
+      ...[
+        'Which meeting covered toolbar icon polish?',
+        'Where did we discuss sidebar spacing?',
+        'What meeting reviewed visual polish?',
+        'Find notes about the command palette icon set',
+        'Which design review mentioned compact navigation?',
+        'Where did we decide to reduce sidebar spacing?'
+      ].map((question) => ({ question, expectedIds: ['eval-design-review'] })),
+      ...[
+        'Who was assigned the offline mode QA matrix?',
+        'What is the due date for offline QA?',
+        'Which standup mentioned the offline queue?',
+        'Where did we discuss flaky offline uploads?',
+        'What tasks do I have around offline mode?',
+        'Which meeting reproduced flaky upload coverage?'
+      ].map((question) => ({ question, expectedIds: ['eval-offline-standup'] })),
+      ...[
+        'Which meeting discussed enterprise onboarding blockers?',
+        'Who owns the SSO migration checklist?',
+        'When is the SSO migration checklist due?',
+        'Where did we talk about SAML setup?',
+        'What customer onboarding actions are open?',
+        'Which meeting had enterprise admin setup steps?'
+      ].map((question) => ({ question, expectedIds: ['eval-enterprise-sync'] })),
+      ...[
+        'What meetings mentioned customer trust?',
+        'Where did we discuss hallucinated action items?',
+        'Which meeting covered answer citations?',
+        'What was decided about evidence-first answers?',
+        'Find the reliability meeting about grounded notes',
+        'Where did we say answers should use local notes first?'
+      ].map((question) => ({ question, expectedIds: ['eval-reliability-review'] })),
+      ...[
+        'Which huddle should I use?',
+        'Can you summarize the huddle?',
+        'What did we talk about in the sync?',
+        'I cannot remember the huddle, which one was it?',
+        'Which meeting was that?',
+        'Can you find that meeting for me?'
+      ].map((question) => ({ question, clarification: true })),
+      {
+        question: 'I cannot remember the standup, which one was it?',
+        expectedIds: ['eval-offline-standup']
+      },
+      ...[
+        'Were there any meetings about hotdogs?',
+        'Find the meeting about submarine procurement',
+        'Who owns the lunar greenhouse task?',
+        'What was the deadline for the salsa festival?',
+        'Which meeting discussed medieval tax policy?'
+      ].map((question) => ({ question, noMatch: true })),
+      {
+        question: 'Summarize what we discussed across this week’s meetings',
+        expectedIds: ['eval-calendar-auth', 'eval-product-launch'],
+        directAnswerIncludes: 'I found'
+      },
+      {
+        question: 'Compare the decisions from this week’s meetings',
+        expectedIds: ['eval-calendar-auth', 'eval-product-launch'],
+        directAnswerIncludes: 'From'
+      },
+      {
+        question: 'What action items came out of all meetings this week?',
+        expectedIds: ['eval-calendar-auth', 'eval-product-launch'],
+        directAnswerIncludes: 'action item'
+      },
+      {
+        question: 'What did meetings this week say about reliability?',
+        expectedIds: ['eval-reliability-review'],
+        directAnswerIncludes: 'Grounded notes'
+      },
+      {
+        question: 'Which meeting had Slack channel #duet-display?',
+        expectedIds: ['eval-slack-huddle']
+      }
+    ]
+
+    expect(cases.length).toBeGreaterThanOrEqual(50)
+
+    for (const testCase of cases) {
+      const result = await index.buildContext(testCase.question, createEvaluationCalendarEvents())
+
+      if (testCase.clarification) {
+        if (typeof result.directAnswer !== 'string') {
+          throw new Error(
+            `${testCase.question}: expected clarification string, got ${JSON.stringify(
+              result.directAnswer
+            )}; diagnostics ${JSON.stringify(result.diagnostics)}`
+          )
+        }
+        expect(result.directAnswer, testCase.question).toMatch(/which one should i use/i)
+        expect(result.clarificationOptions?.length, testCase.question).toBeGreaterThan(1)
+        expect(result.diagnostics.clarificationReason, testCase.question).not.toBe('none')
+        continue
+      }
+
+      if (testCase.noMatch) {
+        expect(result.directAnswer ?? result.context, testCase.question).toMatch(
+          /could not find|did not find|no matching meeting data/i
+        )
+        continue
+      }
+
+      for (const expectedId of testCase.expectedIds ?? []) {
+        expect(result.diagnostics.selectedMeetingIds, testCase.question).toContain(expectedId)
+      }
+      if (testCase.directAnswerIncludes) {
+        expect(result.directAnswer ?? result.context, testCase.question).toContain(
+          testCase.directAnswerIncludes
+        )
+      }
+      expect(result.diagnostics.promptChars, testCase.question).toBeLessThan(14_000)
+    }
+  })
 })
 
 async function createTempRecordingsDir(): Promise<string> {
@@ -714,6 +903,226 @@ async function createLargeLibrary(baseDir: string, count: number): Promise<void>
   )
 }
 
+async function createEvaluationCorpus(baseDir: string): Promise<void> {
+  const thisWeekTuesday = new Date(2026, 4, 26, 9, 30).getTime()
+  const thisWeekWednesday = new Date(2026, 4, 27, 10, 30).getTime()
+  const thisWeekThursday = new Date(2026, 4, 28, 11, 0).getTime()
+  const lastWeekTuesday = new Date(2026, 4, 19, 9, 30).getTime()
+  const lastWeekWednesday = new Date(2026, 4, 20, 9, 30).getTime()
+
+  await createRecording(baseDir, 'eval-calendar-auth', {
+    startedAt: thisWeekTuesday,
+    sourceName: 'Entire screen',
+    calendarTitle: 'Calendar Reliability Review',
+    speakers: {
+      'speaker-1': { label: 'Avery' },
+      'speaker-2': { label: 'Casey' }
+    },
+    segments: createSegmentsFromItems({
+      discussion: [
+        {
+          title: 'Google Calendar scope failures',
+          content:
+            'Google Calendar sync failed after sign-in because account access tokens were missing readonly event permission.',
+          topic: 'calendar integration'
+        },
+        {
+          title: 'OAuth consent permissions',
+          content:
+            'The team reviewed OAuth consent and decided QA should reconnect calendar accounts after the scope migration.',
+          topic: 'calendar integration'
+        }
+      ],
+      actionItems: [
+        {
+          title: 'Reconnect calendar accounts',
+          content: 'Ask QA to reconnect Google Calendar after the scope migration lands.',
+          topic: 'calendar integration',
+          assignee: 'Casey',
+          deadline: '2026-05-29'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-product-launch', {
+    startedAt: thisWeekWednesday,
+    sourceName: 'Entire screen',
+    calendarTitle: 'Launch Planning',
+    speakers: {
+      'speaker-1': { label: 'Morgan' },
+      'speaker-2': { label: 'Taylor' }
+    },
+    segments: createSegmentsFromItems({
+      decisions: [
+        {
+          title: 'Limit June beta scope',
+          content:
+            'The June beta will focus on workspace notes, import stability, and admin setup.',
+          topic: 'June beta scope'
+        }
+      ],
+      actionItems: [
+        {
+          title: 'Beta launch checklist',
+          content: 'Build the launch plan and customer-facing checklist for the June beta.',
+          topic: 'June beta scope',
+          assignee: 'Morgan',
+          deadline: '2026-06-03'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-design-review', {
+    startedAt: lastWeekTuesday,
+    sourceName: 'Figma',
+    calendarTitle: 'Design Review',
+    segments: createSegmentsFromItems({
+      discussion: [
+        {
+          title: 'Toolbar icon polish',
+          content:
+            'Reviewed command palette icon set, sidebar spacing, compact navigation, and visual polish.',
+          topic: 'toolbar icons'
+        }
+      ],
+      decisions: [
+        {
+          title: 'Compact navigation',
+          content: 'Keep the compact navigation treatment and reduce sidebar spacing.',
+          topic: 'navigation'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-offline-standup', {
+    startedAt: lastWeekWednesday,
+    sourceName: 'Entire screen',
+    calendarTitle: 'Daily Standup',
+    segments: createSegmentsFromItems({
+      statusUpdates: [
+        {
+          title: 'Offline queue status',
+          content: 'Flaky offline uploads were reproduced in the offline queue.',
+          topic: 'offline mode'
+        }
+      ],
+      actionItems: [
+        {
+          title: 'Offline mode QA matrix',
+          content: 'Complete the offline mode QA matrix for flaky upload coverage.',
+          topic: 'offline mode',
+          assignee: 'Riley',
+          deadline: '2026-05-23'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-enterprise-sync', {
+    startedAt: new Date(2026, 4, 18, 14, 0).getTime(),
+    sourceName: 'Zoom',
+    calendarTitle: 'Enterprise Onboarding Sync',
+    segments: createSegmentsFromItems({
+      discussion: [
+        {
+          title: 'Enterprise onboarding blockers',
+          content: 'Customer onboarding is blocked by SAML setup and SSO migration coordination.',
+          topic: 'enterprise onboarding'
+        }
+      ],
+      actionItems: [
+        {
+          title: 'SSO migration checklist',
+          content:
+            'Prepare enterprise admin setup steps, SAML setup steps, and the SSO migration checklist.',
+          topic: 'enterprise onboarding',
+          assignee: 'Jordan',
+          deadline: '2026-05-22'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-reliability-review', {
+    startedAt: thisWeekThursday,
+    sourceName: 'Entire screen',
+    calendarTitle: 'Answer Reliability Review',
+    segments: createSegmentsFromItems({
+      discussion: [
+        {
+          title: 'Grounded notes',
+          content:
+            'The team discussed customer trust, answer citations, and preventing hallucinated action items.',
+          topic: 'answer reliability'
+        }
+      ],
+      decisions: [
+        {
+          title: 'Evidence-first answers',
+          content: 'Answers should be grounded in local notes before transcript excerpts.',
+          topic: 'answer reliability'
+        }
+      ]
+    })
+  })
+
+  await createRecording(baseDir, 'eval-slack-huddle', {
+    startedAt: lastWeekWednesday + 60 * 60_000,
+    sourceName: 'Huddle: #duet-display - Duet Display - Slack',
+    transcript:
+      'We talked about beta rollout follow-up in the duet-display channel and checked QA ownership.',
+    speakers: {
+      'speaker-1': { label: 'Chris' },
+      'speaker-2': { label: 'Sam' }
+    }
+  })
+
+  await createRecording(baseDir, 'eval-second-huddle', {
+    startedAt: lastWeekWednesday + 2 * 60 * 60_000,
+    sourceName: 'Slack Huddle',
+    notes: 'A second huddle covered analytics cleanup and support triage.'
+  })
+
+  await createRecording(baseDir, 'eval-customer-sync', {
+    startedAt: new Date(2026, 4, 21, 12, 0).getTime(),
+    sourceName: 'Entire screen',
+    calendarTitle: 'Customer Sync',
+    notes: 'Reviewed renewal sentiment and customer feedback about exports.'
+  })
+}
+
+function createEvaluationCalendarEvents(): CalendarEvent[] {
+  return [
+    {
+      ...createCalendarEvent(
+        'eval-calendar-auth-event',
+        'Calendar Reliability Review',
+        new Date(2026, 4, 26, 9, 30).getTime()
+      ),
+      attendees: ['avery@example.com', 'casey@example.com']
+    },
+    {
+      ...createCalendarEvent(
+        'eval-product-launch-event',
+        'Launch Planning',
+        new Date(2026, 4, 27, 10, 30).getTime()
+      ),
+      attendees: ['morgan@example.com', 'taylor@example.com']
+    },
+    {
+      ...createCalendarEvent(
+        'eval-reliability-event',
+        'Answer Reliability Review',
+        new Date(2026, 4, 28, 11, 0).getTime()
+      ),
+      attendees: ['qa@example.com', 'product@example.com']
+    }
+  ]
+}
+
 async function createRecording(
   baseDir: string,
   id: string,
@@ -725,6 +1134,7 @@ async function createRecording(
     customTitle?: string
     calendarTitle?: string
     segments?: MeetingSegments
+    speakers?: Record<string, { label: string }>
   }
 ): Promise<string> {
   const meetingDir = join(baseDir, id)
@@ -761,6 +1171,10 @@ async function createRecording(
       }
     ]
     await writeFile(join(meetingDir, 'transcript.json'), JSON.stringify(transcript))
+  }
+
+  if (params.speakers != null) {
+    await writeFile(join(meetingDir, 'speakers.json'), JSON.stringify(params.speakers))
   }
 
   return meetingDir
@@ -837,23 +1251,74 @@ function segmentCategoryForKey(category: keyof MeetingSegments) {
 
 class FakeEmbeddingProvider implements ChatEmbeddingProvider {
   readonly model = 'fake-semantic'
+  readonly embedCalls: string[][] = []
 
   async isAvailable(): Promise<boolean> {
     return true
   }
 
   async embed(texts: string[]): Promise<number[][]> {
+    this.embedCalls.push(texts)
     return texts.map((text) => {
       const normalized = text.toLowerCase()
       if (
         normalized.includes('account access') ||
         normalized.includes('oauth consent') ||
+        normalized.includes('google calendar') ||
         normalized.includes('google calendar sync') ||
+        normalized.includes('readonly event permission') ||
+        normalized.includes('calendar accounts') ||
         normalized.includes('scope migration')
       ) {
-        return [1, 0, 0]
+        return [1, 0, 0, 0, 0, 0, 0]
       }
-      return [0, 1, 0]
+      if (
+        normalized.includes('beta launch') ||
+        normalized.includes('launch plan') ||
+        normalized.includes('june beta') ||
+        normalized.includes('customer-facing checklist') ||
+        normalized.includes('limit the beta')
+      ) {
+        return [0, 1, 0, 0, 0, 0, 0]
+      }
+      if (
+        normalized.includes('toolbar') ||
+        normalized.includes('sidebar') ||
+        normalized.includes('visual polish') ||
+        normalized.includes('command palette') ||
+        normalized.includes('compact navigation')
+      ) {
+        return [0, 0, 1, 0, 0, 0, 0]
+      }
+      if (
+        normalized.includes('offline') ||
+        normalized.includes('flaky upload') ||
+        normalized.includes('offline queue')
+      ) {
+        return [0, 0, 0, 1, 0, 0, 0]
+      }
+      if (
+        normalized.includes('enterprise') ||
+        normalized.includes('sso') ||
+        normalized.includes('saml') ||
+        normalized.includes('customer onboarding')
+      ) {
+        return [0, 0, 0, 0, 1, 0, 0]
+      }
+      if (
+        normalized.includes('customer trust') ||
+        normalized.includes('hallucinated') ||
+        normalized.includes('answer citations') ||
+        normalized.includes('evidence-first') ||
+        normalized.includes('grounded notes') ||
+        normalized.includes('local notes first')
+      ) {
+        return [0, 0, 0, 0, 0, 1, 0]
+      }
+      if (normalized.includes('duet-display') || normalized.includes('slack channel')) {
+        return [0, 0, 0, 0, 0, 0, 1]
+      }
+      return [0, 0, 0, 0, 0, 0, 0]
     })
   }
 }

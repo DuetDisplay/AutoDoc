@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
+  app: { getPath: vi.fn(() => '/tmp/autodoc-chat-ipc-test') },
   ipcMain: { handle: vi.fn() }
 }))
 
@@ -61,6 +62,9 @@ describe('chat meeting retrieval helpers', () => {
     expect(isMeetingInventoryQuestion('how many meetings did I have this week')).toBe(true)
     expect(isMeetingInventoryQuestion('which standups did I have yesterday?')).toBe(true)
     expect(isMeetingInventoryQuestion('who was assigned the billing checklist?')).toBe(false)
+    expect(isMeetingInventoryQuestion('which meetings covered calendar access this week?')).toBe(
+      false
+    )
   })
 
   it('uses high-confidence fast plans for obvious source choices', () => {
@@ -112,6 +116,19 @@ describe('chat meeting retrieval helpers', () => {
     expect(
       buildFastRetrievalPlan(
         'Which meeting discussed Google Calendar authentication scopes, and what was the due date?'
+      )
+    ).toMatchObject({
+      confidence: 'high',
+      plan: {
+        needsCalendar: false,
+        needsRecordings: true,
+        evidenceMode: 'mixed'
+      }
+    })
+
+    expect(
+      buildFastRetrievalPlan(
+        'Which meeting covered the OAuth permission problem with calendar access?'
       )
     ).toMatchObject({
       confidence: 'high',

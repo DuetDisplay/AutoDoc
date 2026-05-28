@@ -1,10 +1,12 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
+import { join } from 'path'
 import type { OllamaProvider } from '../services/llm'
 import type { CalendarEvent } from '../../shared/types'
 import type { CalendarManager } from '../services/calendar-manager'
 import { logAutodocEvent } from '../services/autodoc-log'
 import {
   ChatRecordingIndex,
+  type ChatClarificationOption,
   type ChatRetrievalResult,
   detectChatIntent,
   extractQuestionTerms,
@@ -27,6 +29,7 @@ Rules:
 - Do not end with generic follow-up offers like "would you like to know more"
 - Treat each "## Meeting" block as a separate meeting record
 - For questions about what was discussed or what happened in a matched meeting, summarize the available structured notes across decisions, action items, information, discussion, and status updates
+- For multi-meeting synthesis, group claims by meeting or theme, cite the meeting titles, and only merge themes that appear in the provided notes/transcripts
 - Use structured notes as the primary source for matched meetings; use transcript excerpts as backup when notes are missing or do not answer the question
 - Preserve useful evidence type when it matters: decisions are decisions, action items are tasks, and transcript excerpts are lower-confidence backup
 - Do not combine notes from one meeting with a different calendar event unless the title and date clearly match
@@ -75,6 +78,7 @@ interface ChatConversationState {
   lastCalendarEvents: CalendarEvent[]
   lastRecordingIds: string[]
   focusedRecordingIds: string[]
+  lastClarificationOptions: ChatClarificationOption[]
 }
 
 interface FastPlanDecision {
@@ -96,11 +100,18 @@ interface ChatStreamPayload {
 interface ChatDonePayload {
   requestId: string
   content: string
+  clarificationOptions?: ChatClarificationOption[]
 }
 
 interface ChatErrorPayload {
   requestId: string
   error: string
+}
+
+interface PreparedChatContext {
+  directAnswer: string | null
+  context: string
+  clarificationOptions?: ChatClarificationOption[]
 }
 
 export { extractQuestionTerms, scoreMeetingRelevance, sortMeetingsByQuestion }
@@ -113,7 +124,8 @@ export function registerChatIpc(
 ): void {
   const recordingIndex = new ChatRecordingIndex(recordingsBaseDir, {
     watch: true,
-    embeddingProvider: new OllamaEmbeddingProvider(ollamaManager.getBaseUrl())
+    embeddingProvider: new OllamaEmbeddingProvider(ollamaManager.getBaseUrl()),
+    embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json')
   })
   const chatSessions = new Map<number, ChatConversationState>()
   let calendarFailureUntil = 0
@@ -158,11 +170,13 @@ export function registerChatIpc(
   ): Promise<{
     directAnswer: string | null
     context: string
+    clarificationOptions?: ChatClarificationOption[]
   }> => {
     const intent = detectChatIntent(question)
     if (intent === 'count' || intent === 'list') {
       clearConversationScope(session)
       const meetingContext = await recordingIndex.buildContext(question, [])
+      updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -176,7 +190,11 @@ export function registerChatIpc(
         }
       })
 
-      return { directAnswer: meetingContext.directAnswer, context: meetingContext.context }
+      return {
+        directAnswer: meetingContext.directAnswer,
+        context: meetingContext.context,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
     }
 
     const localExactContext = await recordingIndex.buildExactTitleContext(question, [])
@@ -184,6 +202,7 @@ export function registerChatIpc(
       session.lastCalendarEvents = []
       session.lastRecordingIds = localExactContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = localExactContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, localExactContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -199,7 +218,8 @@ export function registerChatIpc(
 
       return {
         directAnswer: localExactContext.directAnswer,
-        context: localExactContext.context
+        context: localExactContext.context,
+        clarificationOptions: localExactContext.clarificationOptions
       }
     }
 
@@ -235,6 +255,7 @@ export function registerChatIpc(
 
     const localMeetingContext = await recordingIndex.buildContext(question, [])
     if (shouldUseLocalRecordingContext(question, localMeetingContext)) {
+      updateClarificationState(session, localMeetingContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -250,13 +271,15 @@ export function registerChatIpc(
 
       return {
         directAnswer: localMeetingContext.directAnswer,
-        context: localMeetingContext.context
+        context: localMeetingContext.context,
+        clarificationOptions: localMeetingContext.clarificationOptions
       }
     }
 
     const { recentEvents, upcomingEvents, skippedByBackoff, elapsedMs } =
       await loadCalendarContextDataWithBackoff()
     const meetingContext = await recordingIndex.buildContext(question, recentEvents)
+    updateClarificationState(session, meetingContext)
     const calendarContext = formatCalendarContext(recentEvents, upcomingEvents, question)
     const context = [meetingContext.context, calendarContext].filter(Boolean).join('\n\n---\n\n')
 
@@ -272,13 +295,17 @@ export function registerChatIpc(
       }
     })
 
-    return { directAnswer: meetingContext.directAnswer, context }
+    return {
+      directAnswer: meetingContext.directAnswer,
+      context,
+      clarificationOptions: meetingContext.clarificationOptions
+    }
   }
 
   const prepareConversationScopedContext = async (
     question: string,
     session: ChatConversationState
-  ): Promise<{ directAnswer: string | null; context: string } | null> => {
+  ): Promise<PreparedChatContext | null> => {
     if (shouldStartNewConversationScope(question)) return null
 
     if (asksForNotesInPreviousSet(question) && session.lastCalendarEvents.length > 0) {
@@ -288,6 +315,7 @@ export function registerChatIpc(
       )
       session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -300,7 +328,11 @@ export function registerChatIpc(
           calendarUpcomingCount: 0
         }
       })
-      return { directAnswer: meetingContext.directAnswer, context: meetingContext.context }
+      return {
+        directAnswer: meetingContext.directAnswer,
+        context: meetingContext.context,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
     }
 
     const scopedIds = resolveScopedRecordingIds(question, session)
@@ -312,6 +344,7 @@ export function registerChatIpc(
       )
       session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -325,7 +358,11 @@ export function registerChatIpc(
           calendarUpcomingCount: 0
         }
       })
-      return { directAnswer: meetingContext.directAnswer, context: meetingContext.context }
+      return {
+        directAnswer: meetingContext.directAnswer,
+        context: meetingContext.context,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
     }
 
     if (session.lastCalendarEvents.length > 0 && shouldUseConversationScope(question)) {
@@ -336,6 +373,7 @@ export function registerChatIpc(
       )
       session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
         message: 'chat retrieval completed',
@@ -349,7 +387,11 @@ export function registerChatIpc(
           calendarUpcomingCount: 0
         }
       })
-      return { directAnswer: null, context: meetingContext.context }
+      return {
+        directAnswer: null,
+        context: meetingContext.context,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
     }
 
     return null
@@ -360,10 +402,7 @@ export function registerChatIpc(
     plan: ChatRetrievalPlan,
     plannerSource: 'fast' | 'model' | 'fallback',
     session: ChatConversationState
-  ): Promise<{
-    directAnswer: string | null
-    context: string
-  }> => {
+  ): Promise<PreparedChatContext> => {
     let calendarElapsedMs = 0
     let calendarSkippedByBackoff = false
     let calendarRecentCount = 0
@@ -418,6 +457,7 @@ export function registerChatIpc(
       session.lastCalendarEvents = selectedCalendarEvents
       session.lastRecordingIds = []
       session.focusedRecordingIds = []
+      session.lastClarificationOptions = []
       return { directAnswer, context: '' }
     }
 
@@ -441,6 +481,7 @@ export function registerChatIpc(
         contextParts.push(`Local recording answer: ${meetingContext.directAnswer}`)
       session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
       if (selectedCalendarEvents.length > 0) {
         session.lastCalendarEvents = selectedCalendarEvents
       }
@@ -459,7 +500,8 @@ export function registerChatIpc(
 
     return {
       directAnswer: meetingContext?.directAnswer ?? null,
-      context: contextParts.join('\n\n---\n\n')
+      context: contextParts.join('\n\n---\n\n'),
+      clarificationOptions: meetingContext?.clarificationOptions
     }
   }
 
@@ -478,6 +520,11 @@ export function registerChatIpc(
     })
   })
 
+  ipcMain.handle('chat:new', (event): void => {
+    const session = getChatSession(chatSessions, event.sender.id)
+    clearConversationScope(session)
+  })
+
   ipcMain.handle(
     'chat:send-stream',
     async (
@@ -491,7 +538,7 @@ export function registerChatIpc(
 
       try {
         const normalizedHistory = normalizeChatHistory(history)
-        const { directAnswer, context } = await prepareChatContext(
+        const { directAnswer, context, clarificationOptions } = await prepareChatContext(
           question,
           normalizedHistory,
           session
@@ -501,7 +548,11 @@ export function registerChatIpc(
             requestId,
             content: directAnswer
           } satisfies ChatStreamPayload)
-          sender.send('chat:done', { requestId, content: directAnswer } satisfies ChatDonePayload)
+          sender.send('chat:done', {
+            requestId,
+            content: directAnswer,
+            clarificationOptions
+          } satisfies ChatDonePayload)
           return
         }
 
@@ -512,6 +563,77 @@ export function registerChatIpc(
           model: ollamaProvider.getModel(),
           question,
           context,
+          history: normalizedHistory,
+          onChunk: (chunk) => {
+            content += chunk
+            sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
+          }
+        })
+        sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
+      } catch (error) {
+        sender.send('chat:error', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error)
+        } satisfies ChatErrorPayload)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'chat:select-recording-stream',
+    async (
+      event,
+      requestId: string,
+      meetingId: string,
+      question: string,
+      history: ChatHistoryMessage[] = []
+    ): Promise<void> => {
+      const sender = event.sender
+      const session = getChatSession(chatSessions, sender.id)
+
+      try {
+        const normalizedHistory = normalizeChatHistory(history)
+        const meetingContext = await recordingIndex.buildContextForMeetingIds(
+          `Use the selected meeting to answer this question: ${question}`,
+          [meetingId],
+          session.lastCalendarEvents
+        )
+        session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+        session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+        updateClarificationState(session, meetingContext)
+        logAutodocEvent({
+          area: 'chat',
+          message: 'chat retrieval completed',
+          context: {
+            ...meetingContext.diagnostics,
+            selectedFromClarification: true,
+            calendarElapsedMs: 0,
+            calendarSkippedByBackoff: false,
+            calendarRecentCount: session.lastCalendarEvents.length,
+            calendarUpcomingCount: 0
+          }
+        })
+
+        if (meetingContext.directAnswer) {
+          sender.send('chat:chunk', {
+            requestId,
+            content: meetingContext.directAnswer
+          } satisfies ChatStreamPayload)
+          sender.send('chat:done', {
+            requestId,
+            content: meetingContext.directAnswer,
+            clarificationOptions: meetingContext.clarificationOptions
+          } satisfies ChatDonePayload)
+          return
+        }
+
+        await waitForOllama(ollamaManager)
+        let content = ''
+        await streamOllamaChat({
+          baseUrl: ollamaManager.getBaseUrl(),
+          model: ollamaProvider.getModel(),
+          question,
+          context: meetingContext.context,
           history: normalizedHistory,
           onChunk: (chunk) => {
             content += chunk
@@ -538,7 +660,8 @@ function getChatSession(
     session = {
       lastCalendarEvents: [],
       lastRecordingIds: [],
-      focusedRecordingIds: []
+      focusedRecordingIds: [],
+      lastClarificationOptions: []
     }
     sessions.set(webContentsId, session)
   }
@@ -549,6 +672,14 @@ function clearConversationScope(session: ChatConversationState): void {
   session.lastCalendarEvents = []
   session.lastRecordingIds = []
   session.focusedRecordingIds = []
+  session.lastClarificationOptions = []
+}
+
+function updateClarificationState(
+  session: ChatConversationState,
+  result: ChatRetrievalResult
+): void {
+  session.lastClarificationOptions = result.clarificationOptions ?? []
 }
 
 function normalizeChatHistory(history: ChatHistoryMessage[]): ChatHistoryMessage[] {
@@ -777,6 +908,8 @@ function shouldUseLocalRecordingContext(question: string, result: ChatRetrievalR
 
 export function isMeetingInventoryQuestion(question: string): boolean {
   const normalizedQuestion = normalizeRecordingSearchText(question)
+  if (isRecordingContentQuestion(normalizedQuestion)) return false
+
   const asksMeetings = /\b(meetings?|calls?|standups?|syncs?)\b/.test(normalizedQuestion)
   const asksInventory =
     /\b(what|which|list|show|had|have|how many|count|number of|was on|were on)\b/.test(
@@ -878,7 +1011,10 @@ function isCalendarScheduleQuestion(normalizedQuestion: string): boolean {
 
 function isRecordingContentQuestion(normalizedQuestion: string): boolean {
   return (
-    /\b(discuss|discussed|talk|talked|mention|mentioned|happened|recap|summarize|summary|notes?|transcript)\b/.test(
+    /\b(discuss|discussed|talk|talked|mention|mentioned|cover|covered|review|reviewed|address|addressed|happened|recap|summarize|summary|notes?|transcript)\b/.test(
+      normalizedQuestion
+    ) ||
+    /\b(which|what)\s+(meeting|meetings|call|calls|standup|standups|sync|syncs)\b.*\b(about|related|involved|focused|included)\b/.test(
       normalizedQuestion
     ) ||
     /\b(action items?|actions?|tasks?|todos?|follow ups?|next steps?|assigned|owner|owns|responsible|due|deadline|decision|decisions|decided|status|blockers?|risks?)\b/.test(

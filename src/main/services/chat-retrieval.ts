@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'fs'
-import { readdir, readFile, stat } from 'fs/promises'
-import { join } from 'path'
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'fs/promises'
+import { dirname, join } from 'path'
 import type {
   CalendarEvent,
   MeetingMetadata,
@@ -27,6 +27,8 @@ const EMBED_BATCH_SIZE = 24
 const SEMANTIC_SCORE_WEIGHT = 18
 const INVENTORY_CACHE_TTL_MS = 60_000
 const LIST_DIRECT_LIMIT = 50
+const EMBEDDING_CACHE_VERSION = 1
+const MAX_PERSISTED_EMBEDDING_CACHE_ENTRIES = 5_000
 
 const QUESTION_STOP_WORDS = new Set([
   'a',
@@ -109,6 +111,12 @@ interface SummaryCacheEntry {
 interface EmbeddingCacheEntry {
   signature: string
   vector: number[]
+  lastUsedAt: number
+}
+
+interface PersistedEmbeddingCache {
+  version: typeof EMBEDDING_CACHE_VERSION
+  entries: Record<string, EmbeddingCacheEntry>
 }
 
 interface MaterializedInventoryCacheEntry {
@@ -122,6 +130,14 @@ export interface MeetingInventoryEntry {
   dir: string
   title: string
   calendarTitle: string | null
+  sourceName: string | null
+  sourceApp: string | null
+  slackChannel: string | null
+  attendees: string[]
+  participants: string[]
+  notePreview: string | null
+  transcriptStatus: 'notes' | 'transcript' | 'failed' | 'none'
+  metadataSearchText: string
   aliases: string[]
   normalizedAliases: string[]
 }
@@ -132,6 +148,9 @@ interface RawInventoryEntry {
   dir: string
   metadata: MeetingMetadata | null
   primaryBirthtime: number
+  speakerLabels: string[]
+  notePreview: string | null
+  transcriptStatus: MeetingInventoryEntry['transcriptStatus']
 }
 
 export interface MeetingSummary {
@@ -167,6 +186,29 @@ interface MeetingCandidateSelection {
   ranked: RankedMeetingSummary[]
   constrainedPoolCount: number
   hasWindowConstraint: boolean
+  confidence: CandidateConfidence
+}
+
+interface CandidateConfidence {
+  shouldClarify: boolean
+  reason: 'none' | 'no-match' | 'weak-top-score' | 'close-score-spread' | 'ambiguous-metadata'
+  topScore: number
+  secondScore: number
+  scoreGap: number
+  scoreRatio: number
+}
+
+export interface ChatClarificationOption {
+  meetingId: string
+  title: string
+  subtitle: string
+  date: number
+  sourceName: string | null
+  calendarTitle: string | null
+  slackChannel: string | null
+  participants: string[]
+  notePreview: string | null
+  score: number
 }
 
 interface MeetingEvidenceChunk {
@@ -200,11 +242,17 @@ export interface ChatRetrievalDiagnostics {
   semanticElapsedMs?: number
   embeddingCacheHits?: number
   embeddingCacheMisses?: number
+  candidateTopScore?: number
+  candidateSecondScore?: number
+  candidateScoreGap?: number
+  candidateScoreRatio?: number
+  clarificationReason?: CandidateConfidence['reason']
 }
 
 export interface ChatRetrievalResult {
   directAnswer: string | null
   context: string
+  clarificationOptions?: ChatClarificationOption[]
   diagnostics: ChatRetrievalDiagnostics
 }
 
@@ -218,6 +266,7 @@ export interface CalendarNoteAvailability {
 interface ChatRecordingIndexOptions {
   watch?: boolean
   embeddingProvider?: ChatEmbeddingProvider | null
+  embeddingCachePath?: string | null
 }
 
 export interface ChatEmbeddingProvider {
@@ -240,6 +289,8 @@ export class ChatRecordingIndex {
   private materializedInventoryCache = new Map<string, MaterializedInventoryCacheEntry>()
   private summaryCache = new Map<string, SummaryCacheEntry>()
   private embeddingCache = new Map<string, EmbeddingCacheEntry>()
+  private embeddingCacheLoaded = false
+  private embeddingCachePath: string | null
   private embeddingProvider: ChatEmbeddingProvider | null
   private semanticDiagnostics = createEmptySemanticDiagnostics()
   private watcher: FSWatcher | null = null
@@ -250,6 +301,7 @@ export class ChatRecordingIndex {
     options: ChatRecordingIndexOptions = {}
   ) {
     this.embeddingProvider = options.embeddingProvider ?? null
+    this.embeddingCachePath = options.embeddingCachePath ?? null
     if (options.watch) this.startWatcher()
   }
 
@@ -258,6 +310,7 @@ export class ChatRecordingIndex {
     this.inventoryGeneration += 1
     this.materializedInventoryCache.clear()
     this.embeddingCache.clear()
+    this.embeddingCacheLoaded = false
   }
 
   dispose(): void {
@@ -392,12 +445,12 @@ export class ChatRecordingIndex {
     const summaryStats = { cacheHits: 0, cacheMisses: 0 }
 
     if (candidateSelection) {
-      const clarificationAnswer = formatMeetingClarificationAnswer(question, candidateSelection)
-      if (clarificationAnswer) {
+      const clarification = formatMeetingClarification(question, candidateSelection)
+      if (clarification) {
         return this.result({
           intent,
           inventory,
-          directAnswer: clarificationAnswer,
+          directAnswer: clarification.answer,
           context: '',
           matched,
           selected,
@@ -406,7 +459,9 @@ export class ChatRecordingIndex {
           selectionElapsedMs,
           summaryElapsedMs: 0,
           cacheHits: 0,
-          cacheMisses: 0
+          cacheMisses: 0,
+          clarificationOptions: clarification.options,
+          candidateConfidence: candidateSelection.confidence
         })
       }
 
@@ -428,7 +483,8 @@ export class ChatRecordingIndex {
           selectionElapsedMs,
           summaryElapsedMs: Date.now() - summaryStartedAt,
           cacheHits: summaryStats.cacheHits,
-          cacheMisses: summaryStats.cacheMisses
+          cacheMisses: summaryStats.cacheMisses,
+          candidateConfidence: candidateSelection.confidence
         })
       }
     }
@@ -471,6 +527,31 @@ export class ChatRecordingIndex {
           summaryElapsedMs: Date.now() - summaryStartedAt,
           cacheHits: summaryStats.cacheHits,
           cacheMisses: summaryStats.cacheMisses
+        })
+      }
+    }
+
+    if (isMultiMeetingSynthesisQuestion(question) && selected.length > 1) {
+      const directAnswer = await this.formatMultiMeetingSynthesisAnswer(
+        selected,
+        question,
+        summaryStats
+      )
+      if (directAnswer) {
+        return this.result({
+          intent,
+          inventory,
+          directAnswer,
+          context: '',
+          matched,
+          selected,
+          matchMode: 'ranked',
+          inventoryElapsedMs,
+          selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses,
+          candidateConfidence: candidateSelection?.confidence
         })
       }
     }
@@ -807,13 +888,21 @@ export class ChatRecordingIndex {
     if (!primaryStat) return null
 
     const metadata = await readMetadata(meetingDir)
+    const [speakerLabels, notePreview, transcriptStatus] = await Promise.all([
+      readInventorySpeakerLabels(meetingDir),
+      readInventoryNotePreview(meetingDir),
+      readInventoryTranscriptStatus(meetingDir)
+    ])
 
     return {
       id: meetingId,
       date: metadata?.startedAt ?? primaryStat.birthtime.getTime(),
       dir: meetingDir,
       metadata,
-      primaryBirthtime: primaryStat.birthtime.getTime()
+      primaryBirthtime: primaryStat.birthtime.getTime(),
+      speakerLabels,
+      notePreview,
+      transcriptStatus
     }
   }
 
@@ -853,13 +942,21 @@ export class ChatRecordingIndex {
           selected,
           ranked: fullyRanked,
           constrainedPoolCount: poolSource.length,
-          hasWindowConstraint
+          hasWindowConstraint,
+          confidence: evaluateCandidateConfidence(fullyRanked, selected, question)
         }
       }
     }
     const relevant = filterRelevantRankedMeetings(fullyRanked)
 
-    selected = (relevant.length > 0 ? relevant : fullyRanked)
+    const shouldUseFallbackCandidates =
+      !hasSpecificSubjectQuestion(question) ||
+      hasExplicitMeetingTypeCue(question) ||
+      (hasWindowConstraint &&
+        (isGeneralSummaryQuestion(question) ||
+          isActionItemQuestion(question) ||
+          isMultiMeetingSynthesisQuestion(question)))
+    selected = (relevant.length > 0 ? relevant : shouldUseFallbackCandidates ? fullyRanked : [])
       .slice(0, Math.min(MAX_CHAT_FULL_CONTEXT_MEETINGS, MAX_RELEVANCE_CANDIDATES))
       .map(({ meeting }) => meeting)
 
@@ -867,7 +964,8 @@ export class ChatRecordingIndex {
       selected,
       ranked: fullyRanked,
       constrainedPoolCount: poolSource.length,
-      hasWindowConstraint
+      hasWindowConstraint,
+      confidence: evaluateCandidateConfidence(fullyRanked, selected, question)
     }
   }
 
@@ -905,6 +1003,7 @@ export class ChatRecordingIndex {
     })
 
     if (options.semantic === false) return lexicalRanked
+    if (hasStrongLexicalRetrievalSignal(lexicalRanked, question)) return lexicalRanked
     return this.rerankMeetingsSemantically(lexicalRanked, question)
   }
 
@@ -926,8 +1025,29 @@ export class ChatRecordingIndex {
         return ranked
       }
 
+      await this.loadPersistentEmbeddingCache()
+
       const candidates = selectSemanticCandidates(ranked)
-      const queryVector = (await provider.embed([buildQueryEmbeddingText(question)]))[0]
+      const queryText = buildQueryEmbeddingText(question)
+      const querySignature = hashText(queryText)
+      const queryCacheKey = buildQueryEmbeddingCacheKey(provider.model, queryText)
+      let queryCacheMissed = false
+      let queryVector = this.embeddingCache.get(queryCacheKey)?.vector
+      const cachedQuery = this.embeddingCache.get(queryCacheKey)
+      if (cachedQuery?.signature === querySignature) {
+        cachedQuery.lastUsedAt = Date.now()
+        queryVector = cachedQuery.vector
+      } else {
+        queryVector = (await provider.embed([queryText]))[0]
+        if (queryVector) {
+          this.embeddingCache.set(queryCacheKey, {
+            signature: querySignature,
+            vector: queryVector,
+            lastUsedAt: Date.now()
+          })
+          queryCacheMissed = true
+        }
+      }
       if (!queryVector) return ranked
 
       const profile = buildRetrievalProfile(question)
@@ -949,6 +1069,7 @@ export class ChatRecordingIndex {
         const cacheKey = buildEmbeddingCacheKey(provider.model, ref.meetingId, ref.chunk, ref.text)
         const cached = this.embeddingCache.get(cacheKey)
         if (cached?.signature === hashText(ref.text)) {
+          cached.lastUsedAt = Date.now()
           this.semanticDiagnostics.embeddingCacheHits += 1
           return false
         }
@@ -965,11 +1086,16 @@ export class ChatRecordingIndex {
             buildEmbeddingCacheKey(provider.model, ref.meetingId, ref.chunk, ref.text),
             {
               signature: hashText(ref.text),
-              vector
+              vector,
+              lastUsedAt: Date.now()
             }
           )
           this.semanticDiagnostics.embeddingCacheMisses += 1
         })
+      }
+
+      if (missing.length > 0 || queryCacheMissed) {
+        await this.savePersistentEmbeddingCache(provider.model)
       }
 
       const semanticByMeeting = new Map<string, number>()
@@ -978,6 +1104,7 @@ export class ChatRecordingIndex {
           buildEmbeddingCacheKey(provider.model, ref.meetingId, ref.chunk, ref.text)
         )
         if (!cached) continue
+        cached.lastUsedAt = Date.now()
         const similarity = cosineSimilarity(queryVector, cached.vector)
         const categoryBoost = semanticCategoryBoost(ref.chunk, question)
         const score = Math.max(0, similarity) * SEMANTIC_SCORE_WEIGHT + categoryBoost
@@ -1016,6 +1143,51 @@ export class ChatRecordingIndex {
         elapsedMs: Date.now() - startedAt
       }
       return ranked
+    }
+  }
+
+  private async loadPersistentEmbeddingCache(): Promise<void> {
+    if (this.embeddingCacheLoaded) return
+    this.embeddingCacheLoaded = true
+    if (!this.embeddingCachePath) return
+
+    try {
+      const raw = await readFile(this.embeddingCachePath, 'utf-8')
+      const parsed = JSON.parse(raw) as Partial<PersistedEmbeddingCache>
+      if (parsed.version !== EMBEDDING_CACHE_VERSION || parsed.entries == null) return
+
+      for (const [key, entry] of Object.entries(parsed.entries)) {
+        if (!isValidEmbeddingCacheEntry(entry)) continue
+        this.embeddingCache.set(key, {
+          signature: entry.signature,
+          vector: entry.vector,
+          lastUsedAt: entry.lastUsedAt
+        })
+      }
+    } catch {
+      // Cache persistence is an optimization; retrieval should never depend on it.
+    }
+  }
+
+  private async savePersistentEmbeddingCache(model: string): Promise<void> {
+    if (!this.embeddingCachePath) return
+
+    try {
+      const entries = Array.from(this.embeddingCache.entries())
+        .filter(([key, entry]) => key.startsWith(`${model}:`) && isValidEmbeddingCacheEntry(entry))
+        .sort((a, b) => b[1].lastUsedAt - a[1].lastUsedAt)
+        .slice(0, MAX_PERSISTED_EMBEDDING_CACHE_ENTRIES)
+
+      const payload: PersistedEmbeddingCache = {
+        version: EMBEDDING_CACHE_VERSION,
+        entries: Object.fromEntries(entries)
+      }
+      const tempPath = `${this.embeddingCachePath}.${process.pid}.tmp`
+      await mkdir(dirname(this.embeddingCachePath), { recursive: true })
+      await writeFile(tempPath, JSON.stringify(payload))
+      await rename(tempPath, this.embeddingCachePath)
+    } catch {
+      // Best effort only; a failed cache write should not slow or break chat.
     }
   }
 
@@ -1060,6 +1232,8 @@ export class ChatRecordingIndex {
       if (meeting.calendarTitle && !meeting.title.includes(meeting.calendarTitle)) {
         meetingContext += `Calendar match: ${meeting.calendarTitle}\n`
       }
+      const metadataLines = formatMeetingMetadataForContext(meeting)
+      if (metadataLines) meetingContext += metadataLines
       if (summary.body) {
         meetingContext +=
           '\nUse the structured notes first. Use the transcript excerpt only as fallback or supporting detail.\n'
@@ -1226,6 +1400,46 @@ export class ChatRecordingIndex {
     return `I found this in the structured meeting notes:\n\n${lines.join('\n')}`
   }
 
+  private async formatMultiMeetingSynthesisAnswer(
+    selected: MeetingInventoryEntry[],
+    question: string,
+    summaryStats: { cacheHits: number; cacheMisses: number }
+  ): Promise<string | null> {
+    const sections: string[] = []
+    let evidenceCount = 0
+
+    for (const meeting of selected) {
+      const beforeHits = this.getCacheHitCount()
+      const summary = await this.loadMeetingSummary(meeting, 'search')
+      if (this.getCacheHitCount() > beforeHits) {
+        summaryStats.cacheHits += 1
+      } else {
+        summaryStats.cacheMisses += 1
+      }
+
+      const evidence = selectSynthesisEvidence(summary, question)
+      if (evidence.length === 0) continue
+      evidenceCount += evidence.length
+      const dateStr = new Date(meeting.date).toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+      sections.push(
+        `From ${meeting.title} (${dateStr}):\n${evidence
+          .map((chunk) => `- [${chunk.category}] ${formatEvidenceChunkForContext(chunk)}`)
+          .join('\n')}`
+      )
+    }
+
+    if (sections.length === 0) return null
+
+    const prefix = `I found ${evidenceCount} relevant note${evidenceCount === 1 ? '' : 's'} across ${sections.length} meeting${sections.length === 1 ? '' : 's'}.`
+    return `${prefix}\n\n${sections.join('\n\n')}`
+  }
+
   private cacheHitCount = 0
 
   private getCacheHitCount(): number {
@@ -1272,10 +1486,13 @@ export class ChatRecordingIndex {
     summaryElapsedMs: number
     cacheHits: number
     cacheMisses: number
+    clarificationOptions?: ChatClarificationOption[]
+    candidateConfidence?: CandidateConfidence
   }): ChatRetrievalResult {
     return {
       directAnswer: params.directAnswer,
       context: params.context,
+      clarificationOptions: params.clarificationOptions,
       diagnostics: {
         intent: params.intent,
         inventoryCount: params.inventory.length,
@@ -1294,7 +1511,12 @@ export class ChatRecordingIndex {
         semanticCandidateCount: this.semanticDiagnostics.candidateCount,
         semanticElapsedMs: this.semanticDiagnostics.elapsedMs,
         embeddingCacheHits: this.semanticDiagnostics.embeddingCacheHits,
-        embeddingCacheMisses: this.semanticDiagnostics.embeddingCacheMisses
+        embeddingCacheMisses: this.semanticDiagnostics.embeddingCacheMisses,
+        candidateTopScore: params.candidateConfidence?.topScore,
+        candidateSecondScore: params.candidateConfidence?.secondScore,
+        candidateScoreGap: params.candidateConfidence?.scoreGap,
+        candidateScoreRatio: params.candidateConfidence?.scoreRatio,
+        clarificationReason: params.candidateConfidence?.reason
       }
     }
   }
@@ -1400,6 +1622,88 @@ async function loadMeetingSummaryFromDisk(
       source: 'none'
     }
   }
+}
+
+async function readInventorySpeakerLabels(meetingDir: string): Promise<string[]> {
+  try {
+    const speakerPath = join(meetingDir, 'speakers.json')
+    const speakers = (await readMaybeEncryptedJson<Record<string, { label?: string }>>(
+      speakerPath
+    )) as Record<string, { label?: string }>
+    return Array.from(
+      new Set(
+        Object.values(speakers)
+          .map((speaker) => speaker.label?.trim())
+          .filter((label): label is string => Boolean(label && !/^speaker\s*\d*$/i.test(label)))
+      )
+    ).slice(0, 8)
+  } catch {
+    return []
+  }
+}
+
+async function readInventoryNotePreview(meetingDir: string): Promise<string | null> {
+  try {
+    const segments = await readMaybeEncryptedJson<MeetingSegments>(
+      join(meetingDir, 'segments.json')
+    )
+    const preview = Object.values(segments)
+      .flat()
+      .slice(0, 4)
+      .map((segment) => `${segment.title}: ${segment.content}`)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return preview ? limitText(preview, 360) : null
+  } catch {
+    try {
+      const transcript = await readMaybeEncryptedJson<Transcript[]>(
+        join(meetingDir, 'transcript.json')
+      )
+      const preview = transcript
+        .slice(0, 4)
+        .map((segment) => segment.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      return preview ? limitText(preview, 240) : null
+    } catch {
+      return null
+    }
+  }
+}
+
+async function readInventoryTranscriptStatus(
+  meetingDir: string
+): Promise<MeetingInventoryEntry['transcriptStatus']> {
+  if (
+    await stat(join(meetingDir, 'segments.json'))
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    return 'notes'
+  }
+  if (
+    await stat(join(meetingDir, 'transcript.json'))
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    return 'transcript'
+  }
+  if (
+    await stat(join(meetingDir, 'transcript.error'))
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    return 'failed'
+  }
+  return 'none'
+}
+
+async function readMaybeEncryptedJson<T>(targetPath: string): Promise<T> {
+  return (await isEncrypted(targetPath))
+    ? await decryptJSON<T>(targetPath)
+    : JSON.parse(await readFile(targetPath, 'utf-8'))
 }
 
 async function readTranscriptEvidence(meetingDir: string): Promise<MeetingEvidenceChunk[]> {
@@ -1515,6 +1819,7 @@ function scoreMeetingForRetrieval(
   profile: RetrievalProfile
 ): number {
   const subject = stripQuestionScaffolding(normalizeRecordingSearchText(question))
+  const metadataText = meeting.metadataSearchText
   const summaryTextScore =
     subject && subjectTermCoverage(summary.searchText, subject) < 0.6
       ? 0
@@ -1523,13 +1828,17 @@ function scoreMeetingForRetrieval(
     subject && subjectTermCoverage(meeting.title, subject) < 0.6
       ? 0
       : scoreTextRelevance(meeting.title, subject || question)
+  const metadataScore =
+    subject && subjectTermCoverage(metadataText, subject) < 0.5
+      ? 0
+      : scoreTextRelevance(metadataText, subject || question)
   const evidenceScore = summary.evidence
     .map((chunk) => scoreEvidenceChunkForRetrieval(chunk, question, profile))
     .sort((a, b) => b - a)
     .slice(0, 6)
     .reduce((total, score) => total + score, 0)
 
-  return titleScore * 3 + summaryTextScore + evidenceScore
+  return titleScore * 3 + metadataScore * 2 + summaryTextScore + evidenceScore
 }
 
 function scoreEvidenceChunkForRetrieval(
@@ -1616,10 +1925,41 @@ function isStructuredActionFactQuestion(question: string): boolean {
   return /\b(assigned|assignee|owner|owns|responsible|due|deadline)\b/.test(normalized)
 }
 
+function isMultiMeetingSynthesisQuestion(question: string): boolean {
+  const normalized = normalizeRecordingSearchText(question)
+  return (
+    /\b(compare|across|summarize|summary|recap|what was discussed|what did we discuss|what happened|content|themes?|topics?)\b/.test(
+      normalized
+    ) && /\b(meetings?|calls?|standups?|syncs?|huddles?|all|each|every|week)\b/.test(normalized)
+  )
+}
+
 function isActionLikeEvidence(chunk: MeetingEvidenceChunk): boolean {
   return /\b(action|actions|item|items|task|tasks|todo|todos|follow up|next step|assigned|owner|due)\b/.test(
     chunk.searchText
   )
+}
+
+function selectSynthesisEvidence(
+  summary: MeetingSummary,
+  question: string
+): MeetingEvidenceChunk[] {
+  if (summary.evidence.length === 0) return []
+  const profile = buildRetrievalProfile(question)
+  const scored = summary.evidence
+    .map((chunk) => ({
+      chunk,
+      score: scoreEvidenceChunkForRetrieval(chunk, question, profile)
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  const positive = scored
+    .filter(({ score }) => score > 0)
+    .slice(0, 4)
+    .map(({ chunk }) => chunk)
+  if (positive.length > 0) return positive
+
+  return summary.evidence.filter((chunk) => chunk.source === 'note').slice(0, 4)
 }
 
 function createEmptySemanticDiagnostics(): SemanticRetrievalDiagnostics {
@@ -1655,6 +1995,30 @@ function selectSemanticCandidates(ranked: RankedMeetingSummary[]): RankedMeeting
 
   return Array.from(selected.values()).slice(0, MAX_SEMANTIC_CANDIDATES)
 }
+
+function hasStrongLexicalRetrievalSignal(
+  ranked: RankedMeetingSummary[],
+  question: string
+): boolean {
+  const top = ranked[0]
+  if (!top || top.lexicalScore < 18) return false
+
+  const subject = stripQuestionScaffolding(normalizeRecordingSearchText(question))
+  const terms = subject
+    .split(' ')
+    .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term))
+  if (terms.length < 2) return false
+
+  const topText = `${top.meeting.title} ${top.summary.searchText}`
+  if (subjectTermCoverage(topText, subject) < 0.6) return false
+
+  const relevant = filterRelevantRankedMeetings(ranked)
+  if (relevant.length <= MAX_CHAT_FULL_CONTEXT_MEETINGS) return true
+
+  const secondScore = ranked[1]?.lexicalScore ?? 0
+  return top.lexicalScore - secondScore >= 8
+}
+
 function buildQueryEmbeddingText(question: string): string {
   return `User meeting question: ${question}`
 }
@@ -1686,6 +2050,10 @@ function buildEmbeddingCacheKey(
   return `${model}:${meetingId}:${chunk.id}:${hashText(text)}`
 }
 
+function buildQueryEmbeddingCacheKey(model: string, text: string): string {
+  return `${model}:query:${hashText(text)}`
+}
+
 function hashText(text: string): string {
   let hash = 5381
   for (let index = 0; index < text.length; index += 1) {
@@ -1708,6 +2076,17 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm))
 }
 
+function isValidEmbeddingCacheEntry(value: unknown): value is EmbeddingCacheEntry {
+  if (value == null || typeof value !== 'object') return false
+  const entry = value as Partial<EmbeddingCacheEntry>
+  return (
+    typeof entry.signature === 'string' &&
+    typeof entry.lastUsedAt === 'number' &&
+    Array.isArray(entry.vector) &&
+    entry.vector.every((item) => typeof item === 'number')
+  )
+}
+
 function semanticCategoryBoost(chunk: MeetingEvidenceChunk, question: string): number {
   const profile = buildRetrievalProfile(question)
   if (profile.wantsActions && chunk.category === 'actionItems') return 4
@@ -1723,6 +2102,94 @@ function filterRelevantRankedMeetings(ranked: RankedMeetingSummary[]): RankedMee
 
   const minimumScore = Math.max(4, Math.ceil(topScore * 0.35))
   return scored.filter(({ score }) => score >= minimumScore)
+}
+
+function evaluateCandidateConfidence(
+  ranked: RankedMeetingSummary[],
+  selected: MeetingInventoryEntry[],
+  question: string
+): CandidateConfidence {
+  const selectedIds = new Set(selected.map((meeting) => meeting.id))
+  const selectedRanked = ranked.filter((entry) => selectedIds.has(entry.meeting.id))
+  const top = selectedRanked[0]
+  const second = selectedRanked[1]
+  const topScore = top?.score ?? 0
+  const secondScore = second?.score ?? 0
+  const scoreGap = Math.max(0, topScore - secondScore)
+  const scoreRatio = topScore > 0 ? secondScore / topScore : 1
+
+  if (selected.length === 0 || topScore <= 0) {
+    return {
+      shouldClarify: true,
+      reason: 'no-match',
+      topScore,
+      secondScore,
+      scoreGap,
+      scoreRatio
+    }
+  }
+
+  if (selectedRanked.length < 2) {
+    return {
+      shouldClarify: false,
+      reason: 'none',
+      topScore,
+      secondScore,
+      scoreGap,
+      scoreRatio: 0
+    }
+  }
+
+  const normalized = normalizeRecordingSearchText(question)
+  const hasVagueMeetingCue =
+    /\b(which meeting|what meeting|the meeting|a meeting|that meeting|cant remember|can't remember|do not remember|don't remember)\b/.test(
+      normalized
+    )
+  const hasTypeOnlyCue =
+    /\b(standup|stand up|huddle|call|sync|1 on 1|one on one|one-on-one)\b/.test(normalized) &&
+    stripQuestionScaffolding(normalized).split(' ').filter(Boolean).length <= 4
+
+  if ((hasVagueMeetingCue || hasTypeOnlyCue) && selectedRanked.length > 1) {
+    return {
+      shouldClarify: true,
+      reason: 'ambiguous-metadata',
+      topScore,
+      secondScore,
+      scoreGap,
+      scoreRatio
+    }
+  }
+
+  if (topScore < 8) {
+    return {
+      shouldClarify: true,
+      reason: 'weak-top-score',
+      topScore,
+      secondScore,
+      scoreGap,
+      scoreRatio
+    }
+  }
+
+  if (scoreRatio >= 0.82 || scoreGap <= 5) {
+    return {
+      shouldClarify: true,
+      reason: 'close-score-spread',
+      topScore,
+      secondScore,
+      scoreGap,
+      scoreRatio
+    }
+  }
+
+  return {
+    shouldClarify: false,
+    reason: 'none',
+    topScore,
+    secondScore,
+    scoreGap,
+    scoreRatio
+  }
 }
 
 function limitMeetingBody(body: string): string {
@@ -1787,10 +2254,17 @@ function stripQuestionScaffolding(question: string): string {
   const extraStopWords = new Set([
     'action',
     'actions',
+    'around',
     'assigned',
     'assignment',
+    'assignee',
+    'call',
+    'calls',
     'came',
+    'can',
+    'cannot',
     'complete',
+    'could',
     'date',
     'deadline',
     'decide',
@@ -1799,22 +2273,46 @@ function stripQuestionScaffolding(question: string): string {
     'decisions',
     'discuss',
     'discussed',
+    'do',
     'due',
+    'find',
+    'huddle',
+    'huddles',
     'item',
     'items',
+    'last',
+    'mention',
+    'mentioned',
     'meeting',
+    'one',
+    'open',
     'out',
+    'owner',
+    'owners',
+    'owns',
     'recording',
     'responsible',
+    'remember',
+    'say',
+    'should',
     'standup',
     'stand',
     'status',
+    'sync',
     'task',
     'tasks',
+    'think',
     'talk',
     'talked',
     'todo',
+    't',
+    'up',
+    'use',
+    'we',
+    'were',
     'week',
+    'weeks',
+    'you',
     'yesterday'
   ])
 
@@ -1962,9 +2460,14 @@ function materializeInventoryEntry(
   recentEvents: CalendarEvent[]
 ): MeetingInventoryEntry {
   const startedAt = entry.metadata?.startedAt ?? entry.primaryBirthtime
-  const calendarTitle =
-    matchCalendarEvent(recentEvents, startedAt)?.title ?? entry.metadata?.calendarTitle ?? null
+  const matchedCalendarEvent = matchCalendarEvent(recentEvents, startedAt)
+  const calendarTitle = matchedCalendarEvent?.title ?? entry.metadata?.calendarTitle ?? null
   const title = buildRecordingTitle(entry.metadata, startedAt, calendarTitle)
+  const sourceName = entry.metadata?.sourceName ?? null
+  const sourceApp = inferSourceApp(sourceName, title)
+  const slackChannel = inferSlackChannel(`${sourceName ?? ''} ${title} ${calendarTitle ?? ''}`)
+  const attendees = matchedCalendarEvent?.attendees ?? []
+  const participants = Array.from(new Set([...entry.speakerLabels, ...attendees])).slice(0, 12)
   const aliases = buildRecordingTitleAliases({
     title,
     metadata: entry.metadata,
@@ -1981,6 +2484,23 @@ function materializeInventoryEntry(
     dir: entry.dir,
     title,
     calendarTitle,
+    sourceName,
+    sourceApp,
+    slackChannel,
+    attendees,
+    participants,
+    notePreview: entry.notePreview,
+    transcriptStatus: entry.transcriptStatus,
+    metadataSearchText: buildMeetingMetadataSearchText({
+      title,
+      calendarTitle,
+      sourceName,
+      sourceApp,
+      slackChannel,
+      participants,
+      notePreview: entry.notePreview,
+      transcriptStatus: entry.transcriptStatus
+    }),
     aliases,
     normalizedAliases
   }
@@ -1989,8 +2509,52 @@ function materializeInventoryEntry(
 function buildCalendarSignature(events: CalendarEvent[]): string {
   if (events.length === 0) return 'none'
   return events
-    .map((event) => `${event.id}:${event.title}:${event.startTime}:${event.endTime}`)
+    .map(
+      (event) =>
+        `${event.id}:${event.title}:${event.startTime}:${event.endTime}:${event.attendees.join(',')}`
+    )
     .join('|')
+}
+
+function buildMeetingMetadataSearchText(params: {
+  title: string
+  calendarTitle: string | null
+  sourceName: string | null
+  sourceApp: string | null
+  slackChannel: string | null
+  participants: string[]
+  notePreview: string | null
+  transcriptStatus: MeetingInventoryEntry['transcriptStatus']
+}): string {
+  return normalizeRecordingSearchText(
+    [
+      params.title,
+      params.calendarTitle,
+      params.sourceName,
+      params.sourceApp,
+      params.slackChannel ? `#${params.slackChannel} ${params.slackChannel}` : null,
+      params.participants.join(' '),
+      params.notePreview,
+      params.transcriptStatus
+    ]
+      .filter(Boolean)
+      .join(' ')
+  )
+}
+
+function inferSourceApp(sourceName: string | null, title: string): string | null {
+  const text = `${sourceName ?? ''} ${title}`.toLowerCase()
+  if (text.includes('slack') || text.includes('huddle')) return 'Slack'
+  if (text.includes('zoom')) return 'Zoom'
+  if (text.includes('meet.google') || text.includes('google meet')) return 'Google Meet'
+  if (text.includes('teams')) return 'Microsoft Teams'
+  if (sourceName && sourceName !== 'Entire screen') return sourceName
+  return null
+}
+
+function inferSlackChannel(text: string): string | null {
+  const match = text.match(/#([a-z0-9][a-z0-9_-]{1,80})/i)
+  return match?.[1] ?? null
 }
 
 function shouldAnswerExactSummaryDirectly(question: string): boolean {
@@ -2095,10 +2659,10 @@ function formatLargeAllGuardrailAnswer(inventory: MeetingInventoryEntry[]): stri
   return `I found ${inventory.length} recordings. Summarizing all of them at once would be slow and may exceed the local AI context window.\n\nHere are the most recent ${visible.length}:\n${lines.join('\n')}\n\nAsk for a date range, title, or topic and I can summarize that smaller set.`
 }
 
-function formatMeetingClarificationAnswer(
+function formatMeetingClarification(
   question: string,
   selection: MeetingCandidateSelection
-): string | null {
+): { answer: string; options: ChatClarificationOption[] } | null {
   if (!shouldClarifyMeetingSelection(question)) return null
 
   const selectedRanked = selection.ranked.filter((entry) =>
@@ -2107,24 +2671,24 @@ function formatMeetingClarificationAnswer(
 
   if (selection.selected.length === 0 || selection.constrainedPoolCount === 0) {
     const windowText = selection.hasWindowConstraint ? ' in that time window' : ''
-    return `I could not find a matching local recording${windowText}. What date, time frame, title, person, or topic should I search for?`
+    return {
+      answer: `I could not find a matching local recording${windowText}. What date, time frame, title, person, or topic should I search for?`,
+      options: []
+    }
   }
 
   if (selectedRanked.length < 2) return null
 
-  const [top, second] = selectedRanked
-  if (!top || !second) return null
-
-  const topScore = top.score
-  const secondScore = second.score
-  const closeScores = topScore <= 0 || secondScore >= topScore * 0.82 || topScore - secondScore <= 5
-  if (!closeScores) return null
+  if (!selection.confidence.shouldClarify) return null
 
   const options = selectedRanked.slice(0, 4).map((entry, index) => {
     return `${index + 1}. ${formatMeetingOption(entry.meeting)}`
   })
 
-  return `I found a few possible matching meetings. Which one should I use?\n\n${options.join('\n')}\n\nIf none of these are right, tell me the date, time frame, title, person, or topic to search for.`
+  return {
+    answer: `I found a few possible matching meetings. Which one should I use?\n\n${options.join('\n')}\n\nIf none of these are right, tell me the date, time frame, title, person, or topic to search for.`,
+    options: selectedRanked.slice(0, 4).map((entry) => formatClarificationOption(entry))
+  }
 }
 
 function shouldClarifyMeetingSelection(question: string): boolean {
@@ -2166,6 +2730,50 @@ function formatMeetingOption(meeting: MeetingInventoryEntry): string {
     minute: '2-digit'
   })
   return `${meeting.title} (${date})`
+}
+
+function formatClarificationOption(entry: RankedMeetingSummary): ChatClarificationOption {
+  const meeting = entry.meeting
+  const date = new Date(meeting.date).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+  const details = [
+    date,
+    meeting.slackChannel ? `#${meeting.slackChannel}` : null,
+    meeting.sourceApp,
+    meeting.participants.length > 0 ? meeting.participants.slice(0, 3).join(', ') : null
+  ].filter(Boolean)
+
+  return {
+    meetingId: meeting.id,
+    title: meeting.title,
+    subtitle: details.join(' · '),
+    date: meeting.date,
+    sourceName: meeting.sourceName,
+    calendarTitle: meeting.calendarTitle,
+    slackChannel: meeting.slackChannel,
+    participants: meeting.participants,
+    notePreview: meeting.notePreview,
+    score: entry.score
+  }
+}
+
+function formatMeetingMetadataForContext(meeting: MeetingInventoryEntry): string {
+  const lines = [
+    meeting.sourceName ? `Source: ${meeting.sourceName}` : null,
+    meeting.sourceApp ? `App: ${meeting.sourceApp}` : null,
+    meeting.slackChannel ? `Slack channel: #${meeting.slackChannel}` : null,
+    meeting.participants.length > 0
+      ? `Participants/attendees: ${meeting.participants.slice(0, 10).join(', ')}`
+      : null,
+    meeting.notePreview ? `Inventory note preview: ${meeting.notePreview}` : null,
+    `Local data status: ${meeting.transcriptStatus}`
+  ].filter(Boolean)
+  return lines.length > 0 ? `${lines.join('\n')}\n` : ''
 }
 
 function filterMeetingsForQuestionWindow<T extends { date: number }>(
@@ -2233,20 +2841,30 @@ function filterMeetingsForQuestionWindow<T extends { date: number }>(
 
   if (/\b(standup|stand up)\b/.test(normalizedQuestion)) {
     filtered = filtered.filter((meeting) => {
-      const title = normalizeRecordingSearchText('title' in meeting ? String(meeting.title) : '')
-      return title.includes('stand') || title.includes('huddle')
+      const text = meetingSearchTextForTypeFilter(meeting)
+      return text.includes('stand') || text.includes('huddle')
     })
   }
 
   if (/\bhuddle\b/.test(normalizedQuestion)) {
     filtered = filtered.filter((meeting) =>
-      normalizeRecordingSearchText('title' in meeting ? String(meeting.title) : '').includes(
-        'huddle'
-      )
+      meetingSearchTextForTypeFilter(meeting).includes('huddle')
     )
   }
 
   return filtered
+}
+
+function meetingSearchTextForTypeFilter<T extends { date: number }>(meeting: T): string {
+  const fields: string[] = []
+  if ('title' in meeting && meeting.title) fields.push(String(meeting.title))
+  if ('aliases' in meeting && Array.isArray(meeting.aliases)) {
+    fields.push(...meeting.aliases.map((alias) => String(alias)))
+  }
+  if ('sourceName' in meeting && meeting.sourceName) fields.push(String(meeting.sourceName))
+  if ('calendarTitle' in meeting && meeting.calendarTitle)
+    fields.push(String(meeting.calendarTitle))
+  return normalizeRecordingSearchText(fields.join(' '))
 }
 
 function hasExplicitMeetingTypeCue(question: string): boolean {
@@ -2267,7 +2885,7 @@ function hasQuestionWindowCue(question: string): boolean {
 }
 
 function hasThisWeekCue(normalizedQuestion: string): boolean {
-  return /\bthis weeks?\b/.test(normalizedQuestion)
+  return /\bthis weeks?\b|\bthis week s\b/.test(normalizedQuestion)
 }
 
 function hasThisMonthCue(normalizedQuestion: string): boolean {

@@ -46,6 +46,19 @@ export interface ChatHistoryMessage {
   content: string
 }
 
+export interface ChatClarificationOption {
+  meetingId: string
+  title: string
+  subtitle: string
+  date: number
+  sourceName: string | null
+  calendarTitle: string | null
+  slackChannel: string | null
+  participants: string[]
+  notePreview: string | null
+  score: number
+}
+
 export interface IpcSendEvents {
   'window:minimize': []
   'window:maximize': []
@@ -114,7 +127,14 @@ export interface IpcInvokeEvents {
   'recording:get-detail': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
+  'chat:new': []
   'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
+  'chat:select-recording-stream': [
+    requestId: string,
+    meetingId: string,
+    question: string,
+    history?: ChatHistoryMessage[]
+  ]
   'detection:dismiss': []
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
@@ -216,7 +236,9 @@ export interface IpcInvokeReturns {
   }
   'search:query': SearchResult[]
   'chat:send': string
+  'chat:new': void
   'chat:send-stream': void
+  'chat:select-recording-stream': void
   'detection:dismiss': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
@@ -268,7 +290,13 @@ export interface IpcOnEvents {
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
   'chat:chunk': [payload: { requestId: string; content: string }]
-  'chat:done': [payload: { requestId: string; content: string }]
+  'chat:done': [
+    payload: {
+      requestId: string
+      content: string
+      clarificationOptions?: ChatClarificationOption[]
+    }
+  ]
   'chat:error': [payload: { requestId: string; error: string }]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
