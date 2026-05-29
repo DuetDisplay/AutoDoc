@@ -476,7 +476,7 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
       phase: 'pulling',
       percent: 82
     })
-    await expect(page.getByText(/downloading Llama 3\.1 notes model\.\.\. 82%/i)).toBeVisible()
+    await expect(page.getByText(/downloading notes model\.\.\. 82%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'ready',
       percent: 100
@@ -544,7 +544,7 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
       phase: 'pulling',
       percent: 91
     })
-    await expect(page.getByText(/downloading Llama 3\.1 notes model\.\.\. 91%/i)).toBeVisible()
+    await expect(page.getByText(/downloading notes model\.\.\. 91%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'ready',
       percent: 100
