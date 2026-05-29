@@ -158,6 +158,44 @@ describe('DiarizationService bootstrap resolution', () => {
     expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
   })
 
+  it('does not report a speaker model download when an existing model is present', async () => {
+    const target = getManagedPythonTarget(process.platform, process.arch)
+    expect(target).not.toBeNull()
+
+    const bundledRuntimePython = path.join(
+      '/mock/resources',
+      'python-runtime',
+      target!.key,
+      'python',
+      'bin',
+      'python3'
+    )
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path) === bundledRuntimePython) return undefined
+      throw new Error('ENOENT')
+    })
+
+    const service = new DiarizationService()
+    const setupStatuses: unknown[] = []
+    service.on('setup-status', (status) => setupStatuses.push(status))
+    const ensureModelReadySpy = vi
+      .spyOn(service as any, 'ensureModelReady')
+      .mockResolvedValue('/mock/model/community-1')
+
+    vi.spyOn(service, 'isReady').mockResolvedValue(false)
+    vi.spyOn(service as any, 'resolveExistingModelPath').mockResolvedValue('/mock/model/community-1')
+    vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
+
+    await expect(service.ensureReady()).resolves.toBeUndefined()
+
+    expect(ensureModelReadySpy).not.toHaveBeenCalled()
+    expect(setupStatuses).not.toContainEqual({
+      phase: 'downloading-speaker-model',
+      percent: 75
+    })
+    expect(service.getSetupStatus()).toEqual({ phase: 'ready', percent: 100 })
+  })
+
   it('fails packaged setup when the bundled runtime is missing', async () => {
     const service = new DiarizationService()
 

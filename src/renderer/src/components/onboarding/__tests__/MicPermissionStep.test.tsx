@@ -24,6 +24,10 @@ describe('MicPermissionStep', () => {
     render(<MicPermissionStep onNext={vi.fn()} />)
     expect(screen.getByText('REQUIRED')).toBeInTheDocument()
     expect(screen.getByText('Enable Microphone')).toBeInTheDocument()
+    expect(screen.getByText('Use headphones for the clearest notes')).toBeInTheDocument()
+    expect(
+      screen.getByText(/help AutoDoc tell your voice apart from everyone else's/i)
+    ).toBeInTheDocument()
   })
 
   it('does not show Continue until permission granted', () => {

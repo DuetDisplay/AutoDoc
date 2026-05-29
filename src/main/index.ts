@@ -29,6 +29,7 @@ import { OllamaProvider } from './services/llm'
 import { OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
+import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
@@ -80,7 +81,8 @@ import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
   handleSecondInstanceLaunch,
-  traceInstallPolicy
+  traceInstallPolicy,
+  warnIfUnsupportedMacOS
 } from './services/application-install'
 import { focusMainWindow, registerMainWindow } from './services/main-window'
 import {
@@ -103,11 +105,14 @@ import { getResetLocalDataTargets } from './services/reset-local-data'
 import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
+import { getScopedTestUserDataDir } from './services/test-runtime'
+import { shouldSuppressNotificationActivation } from './notification-window'
+import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
 const isE2E = process.env.AUTODOC_E2E === '1'
-const testUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const testUserDataDir = getScopedTestUserDataDir()
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const skipInstalledApplicationPolicy =
@@ -178,7 +183,7 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
   for (const targetPath of getResetLocalDataTargets({
     userDataPath,
     appDataPath,
-    testUserDataDir,
+    testUserDataDir: testUserDataDir ?? undefined,
     isE2E,
     isRealSetupTest
   })) {
@@ -356,16 +361,6 @@ if (!gotSingleInstanceLock) {
   // app.exit(0) may not terminate on macOS when app.whenReady() hasn't fired yet
   setTimeout(() => process.exit(0), 2000).unref()
 } else {
-  try {
-    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
-    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
-    syncDiagnosticLogUploadForErrors()
-  } catch (err) {
-    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
-  }
-
-  initializeMainSentry()
-
   app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
     void handleSecondInstanceLaunch(additionalData, argv)
       .then((handled) => {
@@ -433,6 +428,18 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  if (!(await warnIfUnsupportedMacOS())) return
+
+  try {
+    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
+    syncDiagnosticLogUploadForErrors()
+  } catch (err) {
+    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
+  }
+
+  initializeMainSentry()
+
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
 
   const buildPermissionLogContext = (
@@ -723,6 +730,10 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
+  const localProcessingCoordinator = new LocalProcessingCoordinator(
+    async () =>
+      (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
+  )
   const audioConverter = new AudioConverter()
   const diarizationService =
     isE2E || isExperimentalSpeakerDiarizationEnabled() ? new DiarizationService() : null
@@ -736,9 +747,13 @@ app.whenReady().then(async () => {
       return state.isRecording && state.meetingId === meetingId
     },
     diarizationService,
-    isExperimentalSpeakerDiarizationEnabled
+    isExperimentalSpeakerDiarizationEnabled,
+    localProcessingCoordinator
   )
-  ollamaManager = new OllamaManager()
+  ollamaManager = new OllamaManager({
+    resolveModel: async () =>
+      (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+  })
   const managedOllamaManager = ollamaManager
 
   // Mutable state tracking Ollama setup progress
@@ -781,9 +796,9 @@ app.whenReady().then(async () => {
   })
 
   managedOllamaManager.on('download-complete', () => {
-    lastSuccessfulOllamaPhase = 'pulling'
-    ollamaSetupState.phase = 'pulling'
-    ollamaSetupState.percent = 0
+    lastSuccessfulOllamaPhase = 'downloading'
+    ollamaSetupState.phase = 'downloading'
+    ollamaSetupState.percent = 100
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
@@ -894,6 +909,15 @@ app.whenReady().then(async () => {
     managedOllamaManager.getModel(),
     { onTelemetry: broadcastSegmentationDiagnostic }
   )
+  managedOllamaManager.on('model-selected', (model: string) => {
+    ollamaProvider.setModel(model)
+    updateOllamaSentryContext({
+      ready: ollamaSetupState.phase === 'ready',
+      modelName: model,
+      phase: ollamaSetupState.phase,
+      failedStep: ollamaSetupState.failedStep ?? null
+    })
+  })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
   const ollamaRuntime = {
     waitUntilReady: () => ollamaReadiness.waitUntilReady(),
@@ -903,7 +927,10 @@ app.whenReady().then(async () => {
   const segmentationService = new SegmentationService(
     ollamaProvider,
     ollamaReadiness,
-    recordingService.getRecordingsBaseDir()
+    recordingService.getRecordingsBaseDir(),
+    localProcessingCoordinator,
+    () => whisperManager.getMacProcessingProfile(),
+    () => whisperManager.getEffectiveMacProcessingProfile()
   )
   ipcMain.handle(
     'app:get-runtime-info',
@@ -1020,15 +1047,26 @@ app.whenReady().then(async () => {
   transcriptionService.onComplete((meetingId) => {
     segmentationService.enqueue(meetingId)
   })
+  const pendingReprocessNotificationMeetingIds = new Set<string>()
+  const markReprocessNotificationPending = (meetingId: string): void => {
+    pendingReprocessNotificationMeetingIds.add(meetingId)
+  }
   segmentationService.onComplete((meetingId) => {
-    void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId).catch((err) => {
-      logAutodocFailure({
-        area: 'segmentation',
-        message: 'Failed to show notes ready notification',
-        error: err,
-        meetingId
+    const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
+    void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'segmentation',
+          message: 'Failed to show notes ready notification',
+          error: err,
+          meetingId
+        })
       })
-    })
+      .finally(() => {
+        if (allowRepeat) {
+          pendingReprocessNotificationMeetingIds.delete(meetingId)
+        }
+      })
   })
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
@@ -1247,7 +1285,12 @@ app.whenReady().then(async () => {
       'e2e:trigger-notes-ready-notification',
       async (
         _event,
-        options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+        options?: {
+          meetingId?: string
+          title?: string
+          status?: 'complete' | 'failed'
+          allowRepeat?: boolean
+        }
       ) => {
         const meetingId = options?.meetingId ?? `e2e-notes-ready-${Date.now()}`
         const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
@@ -1315,7 +1358,9 @@ app.whenReady().then(async () => {
         }
 
         if (options?.status !== 'failed') {
-          await notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId)
+          await notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, {
+            allowRepeat: options?.allowRepeat
+          })
         }
         return meetingId
       }
@@ -1339,14 +1384,15 @@ app.whenReady().then(async () => {
     whisperManager,
     calendarManager
   )
-  registerTranscriptionIpc(transcriptionService)
+  registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,
     managedOllamaManager,
     ollamaProvider,
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
-    !windowsOllamaSetupCoordinator
+    !windowsOllamaSetupCoordinator,
+    markReprocessNotificationPending
   )
   registerWhisperIpc(
     whisperManager,
@@ -1513,6 +1559,9 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (!isE2E) {
       recoverPendingWork()
+    }
+    if (shouldSuppressNotificationActivation()) {
+      return
     }
     if (!focusMainWindow()) {
       createWindow()

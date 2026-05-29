@@ -44,7 +44,7 @@ describe('OllamaStep', () => {
 
     expect(screen.getByRole('heading', { name: 'AI Model Ready' })).toBeInTheDocument()
     expect(
-      screen.getByText(/Ollama runtime and the Llama 3.1 notes model are installed and ready to go\./i)
+      screen.getByText(/Ollama runtime and the notes model are installed and ready to go\./i)
     ).toBeInTheDocument()
 
     await act(async () => {
@@ -114,6 +114,6 @@ describe('OllamaStep', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByText(/downloading Llama 3.1 notes model\.\.\. 82%/i)).toBeInTheDocument()
+    expect(screen.getByText(/downloading notes model\.\.\. 82%/i)).toBeInTheDocument()
   })
 })

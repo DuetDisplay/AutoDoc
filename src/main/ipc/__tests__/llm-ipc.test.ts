@@ -15,10 +15,14 @@ vi.mock('electron', () => ({
 function registerWith(
   isServerRunning: () => Promise<boolean>,
   ensureOllamaRunning: () => void,
-  startSetupFromStatusCheck?: boolean
+  startSetupFromStatusCheck?: boolean,
+  onManualSegmentationRetry?: (meetingId: string) => void
 ) {
+  const retry = vi.fn()
   registerLlmIpc(
-    {} as never,
+    {
+      retry
+    } as never,
     {
       isServerRunning
     } as never,
@@ -27,8 +31,10 @@ function registerWith(
     } as never,
     () => ({ phase: 'starting', percent: 0 }),
     ensureOllamaRunning,
-    startSetupFromStatusCheck
+    startSetupFromStatusCheck,
+    onManualSegmentationRetry
   )
+  return { retry }
 }
 
 describe('registerLlmIpc', () => {
@@ -53,5 +59,23 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
     expect(ensureOllamaRunning).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks manual segmentation retries before retrying notes', async () => {
+    const onManualSegmentationRetry = vi.fn()
+    const { retry } = registerWith(
+      vi.fn().mockResolvedValue(true),
+      vi.fn(),
+      true,
+      onManualSegmentationRetry
+    )
+
+    await handlers.get('segmentation:retry')?.({}, 'meeting-123')
+
+    expect(onManualSegmentationRetry).toHaveBeenCalledWith('meeting-123')
+    expect(onManualSegmentationRetry.mock.invocationCallOrder[0]).toBeLessThan(
+      retry.mock.invocationCallOrder[0]
+    )
+    expect(retry).toHaveBeenCalledWith('meeting-123')
   })
 })

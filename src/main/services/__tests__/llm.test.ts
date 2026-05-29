@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   LOW_MEMORY_CONTEXT_TOKENS,
+  MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
@@ -127,8 +128,48 @@ describe('OllamaProvider grounding', () => {
     )
 
     expect(result.actionItems).toHaveLength(1)
-    expect(result.actionItems[0].sourceStartMs).toBe(600_000)
-    expect(result.actionItems[0].sourceEndMs).toBe(600_000)
+    expect(result.actionItems[0].sourceStartMs).toBe(
+      process.platform === 'darwin' ? 605_000 : 600_000
+    )
+    expect(result.actionItems[0].sourceEndMs).toBe(
+      process.platform === 'darwin' ? 605_000 : 600_000
+    )
+  })
+
+  it('anchors macOS note timestamps to the strongest matching transcript evidence', () => {
+    const transcript = [
+      '[10:00] [Speaker] We are going to switch topics after the release discussion.',
+      '[10:20] [Speaker] Chris will enable the feature flag after QA signs off.',
+      '[10:40] [Speaker] Then we can talk about unrelated pricing details.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        decisions: [],
+        action_items: [
+          {
+            topic: 'Release Planning',
+            title: 'Enable the feature flag after QA',
+            content: 'Chris will enable the feature flag once QA signs off.',
+            sourceStartMs: 600_000,
+            sourceEndMs: 600_000
+          }
+        ],
+        information: [],
+        discussion: [],
+        status_updates: []
+      }),
+      undefined,
+      650_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.actionItems[0].sourceStartMs).toBe(
+      process.platform === 'darwin' ? 620_000 : 600_000
+    )
   })
 
   it('normalizes overly specific topics into a smaller set of broad themes after chunk merge', () => {
@@ -238,6 +279,156 @@ describe('OllamaProvider grounding', () => {
     expect(segments.information[6].topic).toBe('Open Source Packaging')
   })
 
+  it('uses macOS notes tuning with quality-preserving chunking', () => {
+    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const longTranscript = Array.from(
+      { length: 9 },
+      (_, index) => `[0${index}:00] [Speaker] ${'planning '.repeat(110)}`
+    ).join('\n')
+
+    const chunks = (tunedProvider as any).chunkTranscript(longTranscript) as string[]
+    const systemPrompt = (tunedProvider as any).getSystemPrompt() as string
+
+    if (process.platform === 'darwin') {
+      expect(chunks).toHaveLength(3)
+      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
+
+      tunedProvider.setLowMemoryMode(true)
+      expect((tunedProvider as any).chunkTranscript(longTranscript)).toHaveLength(3)
+      return
+    }
+
+    expect(chunks).toHaveLength(3)
+    expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
+  })
+
+  it('can request Ollama to unload the resident model after local notes work', async () => {
+    const releaseProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await releaseProvider.releaseResources('meeting-1')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:11434/api/generate',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ model: 'test-model', keep_alive: 0 })
+      })
+    )
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'segmentation',
+        message: 'ollama model unload requested',
+        meetingId: 'meeting-1'
+      })
+    )
+  })
+
+  it('does not let unsupported pricing headings win canonical topic selection on macOS', () => {
+    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const canonical = (tunedProvider as any).pickCanonicalTopic({
+      segments: [
+        {
+          topic: 'Pricing & Costs',
+          title: 'Retina setting default changed',
+          content: 'The team discussed the retina setting and resolution behavior.'
+        },
+        {
+          topic: 'Pricing & Costs',
+          title: 'Feature flag issue needs cleanup',
+          content: 'The local discovery feature flag needs refactoring before it ships.'
+        },
+        {
+          topic: 'Pricing & Costs',
+          title: 'Stylus hover implementation changed',
+          content: 'The iOS and desktop sides need changes for stylus hover behavior.'
+        },
+        {
+          topic: 'Technical Changes',
+          title: 'Technical changes grouped together',
+          content: 'The notes should use a technical chapter instead of a pricing chapter.'
+        }
+      ],
+      labelCounts: new Map([
+        ['Pricing & Costs', 3],
+        ['Technical Changes', 1]
+      ])
+    })
+
+    expect(canonical).toBe(process.platform === 'darwin' ? 'Technical Changes' : 'Pricing & Costs')
+  })
+
+  it('consolidates macOS local note topics into broad topic families', () => {
+    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const segments = {
+      decisions: [
+        {
+          id: 'd1',
+          meetingId: 'm1',
+          category: 'decision',
+          topic: 'Pricing & Costs',
+          title: 'Retina setting default changed',
+          content: 'The team agreed to make retina the default resolution setting.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 0
+        }
+      ],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    }
+
+    ;(tunedProvider as any).consolidateMacTopicFamilies(segments)
+
+    expect(segments.decisions[0].topic).toBe(
+      process.platform === 'darwin' ? 'Technical Changes' : 'Pricing & Costs'
+    )
+  })
+
+  it('stores ordered timestamp ranges for macOS notes', () => {
+    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[10:00] [Speaker] The team discussed the release plan.',
+      '[10:05] [Speaker] QA should finish testing today.'
+    ].join('\n')
+
+    const result = (tunedProvider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        decisions: [
+          {
+            topic: 'Release Planning',
+            title: 'Release plan confirmed',
+            content: 'The team discussed the release plan and testing status.',
+            sourceStartMs: 605_000,
+            sourceEndMs: 600_000
+          }
+        ],
+        action_items: [],
+        information: [],
+        discussion: [],
+        status_updates: []
+      }),
+      undefined,
+      700_000,
+      (tunedProvider as any).extractTimestampsMs(transcript),
+      (tunedProvider as any).parseTranscriptLines(transcript)
+    )
+
+    if (process.platform === 'darwin') {
+      expect(result.decisions[0].sourceStartMs).toBe(600_000)
+      expect(result.decisions[0].sourceEndMs).toBe(605_000)
+      return
+    }
+
+    expect(result.decisions[0].sourceStartMs).toBe(605_000)
+    expect(result.decisions[0].sourceEndMs).toBe(600_000)
+  })
+
   it('falls back to a smaller Ollama context after an insufficient RAM response', async () => {
     const telemetry = vi.fn()
     const adaptiveProvider = new OllamaProvider('http://localhost:11434', 'test-model', {
@@ -303,25 +494,33 @@ describe('OllamaProvider grounding', () => {
     )
 
     expect(result.information).toHaveLength(1)
-    expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      LOW_MEMORY_CONTEXT_TOKENS
-    ])
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        meetingId: 'meeting-low-ram',
-        event: 'ollama_low_memory_fallback_triggered',
-        properties: expect.objectContaining({
-          ollamaRequiredSystemMemoryGiB: 8.3,
-          ollamaAvailableSystemMemoryGiB: 5.5
+    const initialContextTokens =
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
+    if (initialContextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
+      expect(requestContextTokens).toEqual([initialContextTokens, LOW_MEMORY_CONTEXT_TOKENS])
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meetingId: 'meeting-low-ram',
+          event: 'ollama_low_memory_fallback_triggered',
+          properties: expect.objectContaining({
+            ollamaRequiredSystemMemoryGiB: 8.3,
+            ollamaAvailableSystemMemoryGiB: 5.5
+          })
         })
-      })
-    )
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'ollama_low_memory_fallback_succeeded'
-      })
-    )
+      )
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'ollama_low_memory_fallback_succeeded'
+        })
+      )
+    } else {
+      expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
+      expect(telemetry).not.toHaveBeenCalled()
+    }
   })
 
   it('falls back to a smaller Ollama context after a runner-stop 500 on a low-memory host', async () => {
@@ -385,25 +584,33 @@ describe('OllamaProvider grounding', () => {
     )
 
     expect(result.information).toHaveLength(1)
-    expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      LOW_MEMORY_CONTEXT_TOKENS
-    ])
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        meetingId: 'meeting-low-ram-generic-500',
-        event: 'ollama_low_memory_fallback_triggered',
-        properties: expect.objectContaining({
-          hostFreeMemoryGiB: 0.66,
-          hostTotalMemoryGiB: 8
+    const initialContextTokens =
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
+    if (initialContextTokens > LOW_MEMORY_CONTEXT_TOKENS) {
+      expect(requestContextTokens).toEqual([initialContextTokens, LOW_MEMORY_CONTEXT_TOKENS])
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meetingId: 'meeting-low-ram-generic-500',
+          event: 'ollama_low_memory_fallback_triggered',
+          properties: expect.objectContaining({
+            hostFreeMemoryGiB: 0.66,
+            hostTotalMemoryGiB: 8
+          })
         })
-      })
-    )
-    expect(telemetry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'ollama_low_memory_fallback_succeeded'
-      })
-    )
+      )
+      expect(telemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'ollama_low_memory_fallback_succeeded'
+        })
+      )
+    } else {
+      expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
+      expect(telemetry).not.toHaveBeenCalled()
+    }
   })
 
   it('does not force low-memory fallback for a runner-stop 500 on a healthy host', async () => {
@@ -433,9 +640,21 @@ describe('OllamaProvider grounding', () => {
     ).rejects.toThrow('model runner has unexpectedly stopped')
 
     expect(requestContextTokens).toEqual([
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS,
-      process.platform === 'win32' ? WINDOWS_CONTEXT_TOKENS : STANDARD_CONTEXT_TOKENS
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS,
+      process.platform === 'win32'
+        ? WINDOWS_CONTEXT_TOKENS
+        : process.platform === 'darwin'
+          ? MAC_CONTEXT_TOKENS
+          : STANDARD_CONTEXT_TOKENS
     ])
     expect(telemetry).not.toHaveBeenCalledWith(
       expect.objectContaining({

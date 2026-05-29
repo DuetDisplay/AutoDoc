@@ -13,6 +13,7 @@ interface PrefsSchema {
   analyticsConsent: boolean | null // null = not yet asked
   diagnosticLogUploadConsent: boolean
   experimentalSpeakerDiarization: boolean
+  lowSpecMacProcessingBannerDismissed: boolean
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
@@ -26,7 +27,8 @@ function createPrefsStore(): Store<PrefsSchema> {
       launchAtLogin: true,
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
-      experimentalSpeakerDiarization: false
+      experimentalSpeakerDiarization: false,
+      lowSpecMacProcessingBannerDismissed: false
     }
   })
 }
@@ -118,6 +120,14 @@ export class PrefsStore {
 
   setExperimentalSpeakerDiarization(_enabled: boolean): void {
     this.store.set('experimentalSpeakerDiarization', false)
+  }
+
+  getLowSpecMacProcessingBannerDismissed(): boolean {
+    return this.store.get('lowSpecMacProcessingBannerDismissed')
+  }
+
+  setLowSpecMacProcessingBannerDismissed(dismissed: boolean): void {
+    this.store.set('lowSpecMacProcessingBannerDismissed', dismissed)
   }
 
   private applyLaunchAtLogin(): void {

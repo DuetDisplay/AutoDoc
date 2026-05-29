@@ -20,6 +20,7 @@ type LogArea =
   | 'whisper'
   | 'diarization'
   | 'detection'
+  | 'chat'
 
 interface LogEntryInput {
   area: LogArea

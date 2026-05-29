@@ -1,7 +1,11 @@
 import { BrowserWindow, screen, ipcMain } from 'electron'
 
 let notificationWindow: BrowserWindow | null = null
+let notificationKind: NotificationKind | null = null
+let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
+let suppressAppActivationUntil = 0
+let suppressAppActivationWhileVisible = false
 
 function escapeHtml(value: string): string {
   return value
@@ -15,24 +19,60 @@ function escapeHtml(value: string): string {
 interface NotificationOptions {
   title: string
   body: string
+  bodyTitle?: string
+  bodySuffix?: string
   primaryActionLabel: string
   onPrimaryAction: () => void
   onDismiss: () => void
+  kind?: NotificationKind
+  autoDismissMs?: number
+  suppressAppActivationWhileVisible?: boolean
+}
+
+export type NotificationKind = 'meeting-detection' | 'notes-ready'
+
+export function shouldSuppressNotificationActivation(): boolean {
+  if (
+    suppressAppActivationWhileVisible &&
+    notificationWindow &&
+    !notificationWindow.isDestroyed()
+  ) {
+    return true
+  }
+
+  if (suppressAppActivationUntil > 0) {
+    if (Date.now() <= suppressAppActivationUntil) {
+      return true
+    }
+    suppressAppActivationUntil = 0
+  }
+
+  return false
+}
+
+function clearAutoDismissTimer(): void {
+  if (autoDismissTimer) {
+    clearTimeout(autoDismissTimer)
+    autoDismissTimer = null
+  }
 }
 
 export function showNotificationWindow(options: NotificationOptions): void {
   if (notificationWindow) {
+    clearAutoDismissTimer()
+    cleanupListeners?.()
+    cleanupListeners = null
     notificationWindow.close()
   }
 
   const primaryDisplay = screen.getPrimaryDisplay()
   const workArea = primaryDisplay.workArea
   const winWidth = 400
-  const winHeight = 100 // Extra space for transparent padding + shadow
+  const winHeight = 128 // Extra space for multi-line text, transparent padding, and shadow
   const x = Math.round(workArea.x + (workArea.width - winWidth) / 2)
   const y = workArea.y + 8
 
-  notificationWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: winWidth,
     height: winHeight,
     x,
@@ -51,16 +91,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
       contextIsolation: false
     }
   })
+  notificationWindow = win
+  notificationKind = options.kind ?? null
+  suppressAppActivationWhileVisible = options.suppressAppActivationWhileVisible ?? false
 
-  const handlePrimaryAction = () => {
+  const handlePrimaryAction = (): void => {
     try {
       options.onPrimaryAction()
     } finally {
       animateOut()
     }
   }
-  const handleDismiss = () => {
+  const handleDismiss = (): void => {
     try {
+      suppressAppActivationUntil = Date.now() + 1_000
       options.onDismiss()
     } finally {
       animateOut()
@@ -70,19 +114,31 @@ export function showNotificationWindow(options: NotificationOptions): void {
   ipcMain.once('notification:primary-action', handlePrimaryAction)
   ipcMain.once('notification:dismiss', handleDismiss)
 
-  cleanupListeners = () => {
+  const cleanup = (): void => {
     ipcMain.removeListener('notification:primary-action', handlePrimaryAction)
     ipcMain.removeListener('notification:dismiss', handleDismiss)
   }
+  cleanupListeners = cleanup
 
-  notificationWindow.on('closed', () => {
-    cleanupListeners?.()
-    cleanupListeners = null
-    notificationWindow = null
+  win.on('closed', () => {
+    cleanup()
+    if (cleanupListeners === cleanup) {
+      cleanupListeners = null
+    }
+    if (notificationWindow === win) {
+      clearAutoDismissTimer()
+      notificationWindow = null
+      notificationKind = null
+      suppressAppActivationWhileVisible = false
+    }
   })
 
   const title = escapeHtml(options.title)
   const body = escapeHtml(options.body)
+  const subtitle =
+    options.bodyTitle && options.bodySuffix
+      ? `<div class="subtitle has-note-title">${escapeHtml(`${options.bodyTitle} ${options.bodySuffix}`)}</div>`
+      : `<div class="subtitle">${body}</div>`
   const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
   const html = `<!DOCTYPE html>
@@ -160,8 +216,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
   .subtitle {
     font-size: 11.5px;
     color: #86837e;
-    line-height: 1.3;
+    line-height: 1.25;
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subtitle.has-note-title {
+    min-width: 0;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    white-space: normal;
   }
 
   .actions {
@@ -211,7 +279,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     <div class="dot"></div>
     <div class="text">
       <div class="title">${title}</div>
-      <div class="subtitle">${body}</div>
+      ${subtitle}
     </div>
     <div class="actions">
       <button class="btn-record" id="primary-action">${primaryActionLabel}</button>
@@ -226,6 +294,10 @@ export function showNotificationWindow(options: NotificationOptions): void {
     const { ipcRenderer } = require('electron');
     function dismiss(channel) {
       const toast = document.querySelector('.toast');
+      if (channel === 'notification:dismiss') {
+        ipcRenderer.send(channel);
+        return;
+      }
       toast.classList.add('dismissing');
       toast.addEventListener('animationend', () => ipcRenderer.send(channel), { once: true });
     }
@@ -235,18 +307,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
 </body>
 </html>`
 
-  notificationWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 
-  notificationWindow.once('ready-to-show', () => {
-    notificationWindow?.showInactive()
+  win.once('ready-to-show', () => {
+    if (notificationWindow === win) {
+      win.showInactive()
+    }
   })
 
-  // Auto-dismiss after 30 seconds
-  setTimeout(() => {
-    if (notificationWindow) {
+  const autoDismissMs = options.autoDismissMs ?? 30_000
+  autoDismissTimer = setTimeout(() => {
+    if (notificationWindow === win) {
       handleDismiss()
     }
-  }, 30_000)
+  }, autoDismissMs)
 }
 
 function animateOut(): void {
@@ -271,7 +345,11 @@ function animateOut(): void {
     })
 }
 
-export function hideNotificationWindow(): void {
+export function hideNotificationWindow(kind?: NotificationKind): void {
+  if (kind && notificationKind !== kind) {
+    return
+  }
+
   if (notificationWindow) {
     animateOut()
   }

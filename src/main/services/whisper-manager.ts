@@ -14,7 +14,7 @@ import {
   rename,
   stat
 } from 'fs/promises'
-import { basename, dirname, join } from 'path'
+import { basename, delimiter, dirname, join } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
@@ -39,8 +39,16 @@ import {
   type WindowsTranscriptionProfile
 } from './windows-transcription-runtime'
 import { getConfiguredMacWhisperRuntimeAssetBaseUrl } from './distribution-config'
+import {
+  detectMacHardwareSnapshot,
+  selectEffectiveMacProcessingProfile,
+  selectMacProcessingProfile,
+  type MacProcessingProfile
+} from './mac-processing-profile'
+import { getManagedPythonTarget } from './managed-python'
 
 const IS_WIN = process.platform === 'win32'
+const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
 
 // Pinned release versions for reproducibility
 const WHISPER_VERSION = 'v1.8.4'
@@ -50,6 +58,10 @@ const FFMPEG_WIN_URL =
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
 const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
 const FASTER_WHISPER_PROBE_TIMEOUT_MS = 45_000
+const MLX_WHISPER_PROBE_TIMEOUT_MS = 10 * 60_000
+const MLX_WHISPER_MODEL = 'mlx-community/distil-whisper-large-v3'
+const MLX_WHISPER_LABEL = 'Apple Silicon optimized transcription'
+const MLX_WHISPER_RUNTIME_EXPECTED_FILES = ['python/bin/python3', 'AUTODOC_MLX_WHISPER_READY.txt']
 const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
   'whisper-cpp',
   'libwhisper.1.dylib',
@@ -84,6 +96,8 @@ export interface WhisperModelInfo {
   downloadUrl: string
 }
 
+export type TranscriptionBackendId = WindowsTranscriptionBackendId | 'mlx-whisper'
+
 export interface DownloadProgress {
   file: string
   percent: number
@@ -104,6 +118,8 @@ export class WhisperManager extends EventEmitter {
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private runtimeValidated = false
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
+  private selectedMacProfile: MacProcessingProfile | null = null
+  private mlxWhisperDisabledForSession = false
   private windowsTranscriptionProfiles: Record<
     WindowsTranscriptionBackendId,
     WindowsTranscriptionProfile
@@ -130,10 +146,21 @@ export class WhisperManager extends EventEmitter {
   }
 
   getModelInfo(): WhisperModelInfo {
+    if (this.isMlxWhisperSelected()) {
+      return {
+        filename: 'mlx-distil-large-v3',
+        downloadUrl: MLX_WHISPER_MODEL
+      }
+    }
+
     return DEFAULT_MODEL
   }
 
   getModelName(): string {
+    if (this.isMlxWhisperSelected()) {
+      return 'distil-large-v3'
+    }
+
     const profile = this.selectedWindowsProfile
     if (profile && profile.id !== 'whisper-cpp') {
       return profile.modelName
@@ -144,18 +171,84 @@ export class WhisperManager extends EventEmitter {
       .replace(/\.bin$/i, '')
   }
 
-  getTranscriptionBackend(): WindowsTranscriptionBackendId {
+  getTranscriptionBackend(): TranscriptionBackendId {
+    if (this.isMlxWhisperSelected()) {
+      return 'mlx-whisper'
+    }
+
     return this.selectedWindowsProfile?.id ?? 'whisper-cpp'
   }
 
   getTranscriptionBackendLabel(): string {
+    if (this.isMlxWhisperSelected()) {
+      return MLX_WHISPER_LABEL
+    }
+
     return (
       this.selectedWindowsProfile?.label ?? this.windowsTranscriptionProfiles['whisper-cpp'].label
     )
   }
 
+  getMacProcessingProfile(): MacProcessingProfile | null {
+    return this.selectedMacProfile ? { ...this.selectedMacProfile } : null
+  }
+
+  async getEffectiveMacProcessingProfile(): Promise<MacProcessingProfile | null> {
+    if (!this.isMlxWhisperSelected()) {
+      return null
+    }
+
+    if (!this.selectedMacProfile) {
+      await this.selectMacProfile()
+    }
+    if (!this.selectedMacProfile) {
+      return null
+    }
+    const runtimeHardware = await detectMacHardwareSnapshot()
+    return selectEffectiveMacProcessingProfile(this.selectedMacProfile, runtimeHardware)
+  }
+
+  isMlxWhisperSelected(): boolean {
+    if (this.mlxWhisperDisabledForSession) {
+      return false
+    }
+    if (process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND === 'whisper-cpp') {
+      return false
+    }
+    if (process.env.AUTODOC_DISABLE_MLX_WHISPER === '1') {
+      return false
+    }
+    return IS_MAC_ARM
+  }
+
   isFasterWhisperSelected(): boolean {
     return IS_WIN && this.getTranscriptionBackend() !== 'whisper-cpp'
+  }
+
+  getMlxWhisperPythonPath(): string {
+    return join(this.getMlxWhisperRuntimeDir(), 'python', 'bin', 'python3')
+  }
+
+  getMlxWhisperModelRef(): string {
+    return process.env.AUTODOC_MLX_WHISPER_MODEL ?? MLX_WHISPER_MODEL
+  }
+
+  getMlxWhisperScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('mlx-whisper-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('mlx-whisper-transcribe.py')
+  }
+
+  getMlxWhisperProcessEnv(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      PATH: [dirname(this.getFfmpegPath()), process.env.PATH ?? ''].filter(Boolean).join(delimiter),
+      HF_HOME: this.getMlxWhisperCacheDir(),
+      HF_HUB_CACHE: join(this.getMlxWhisperCacheDir(), 'hub'),
+      TRANSFORMERS_CACHE: join(this.getMlxWhisperCacheDir(), 'transformers'),
+      PYTHONDONTWRITEBYTECODE: '1'
+    }
   }
 
   getFasterWhisperPythonPath(): string {
@@ -207,6 +300,37 @@ export class WhisperManager extends EventEmitter {
     return this.selectedWindowsProfile
   }
 
+  private getMlxWhisperRuntimeDir(): string {
+    const target = getManagedPythonTarget(process.platform, process.arch)
+    const targetKey = target?.key ?? `${process.platform}-${process.arch}`
+    if (app.isPackaged) {
+      return join(
+        process.resourcesPath ?? this.getDevelopmentAppPath(),
+        'mlx-python-runtime',
+        targetKey
+      )
+    }
+
+    const developmentCandidates = [
+      join(this.getDevelopmentAppPath(), 'vendor', 'mlx-python-runtime', targetKey),
+      join(process.cwd(), 'vendor', 'mlx-python-runtime', targetKey),
+      join(this.getDevelopmentAppPath(), '.benchmarks', 'pyenv'),
+      join(process.cwd(), '.benchmarks', 'pyenv')
+    ]
+
+    for (const candidate of developmentCandidates) {
+      if (existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    return developmentCandidates[0]
+  }
+
+  private getMlxWhisperCacheDir(): string {
+    return join(app.getPath('userData'), 'models', 'mlx-whisper-cache')
+  }
+
   private getFasterWhisperRuntimeDir(profile = this.getSelectedWindowsProfile()): string {
     return join(this.getModelsDir(), 'transcription-runtimes', profile.id)
   }
@@ -221,6 +345,16 @@ export class WhisperManager extends EventEmitter {
   }
 
   private withBackendStatus(status: WhisperSetupStatus): WhisperSetupStatus {
+    if (this.isMlxWhisperSelected()) {
+      return {
+        ...status,
+        backend: 'mlx-whisper',
+        backendLabel: MLX_WHISPER_LABEL,
+        macProcessingProfileId: this.selectedMacProfile?.id,
+        macProcessingProfileReason: this.selectedMacProfile?.reason
+      }
+    }
+
     if (!IS_WIN) {
       return status
     }
@@ -268,6 +402,32 @@ export class WhisperManager extends EventEmitter {
     })
   }
 
+  private async selectMacProfile(): Promise<void> {
+    if (!this.isMlxWhisperSelected()) {
+      this.selectedMacProfile = null
+      return
+    }
+
+    const hardware = await detectMacHardwareSnapshot()
+    this.selectedMacProfile = selectMacProcessingProfile(hardware)
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'mac processing profile selected',
+      context: {
+        profileId: this.selectedMacProfile.id,
+        reason: this.selectedMacProfile.reason,
+        hardware: this.selectedMacProfile.hardware,
+        settings: {
+          transcriptionBackend: this.selectedMacProfile.transcriptionBackend,
+          transcriptionModel: this.selectedMacProfile.transcriptionModel,
+          dualSourceMode: this.selectedMacProfile.dualSourceMode,
+          notesAfterTranscriptionOnly: this.selectedMacProfile.notesAfterTranscriptionOnly,
+          serializeLocalProcessing: this.selectedMacProfile.serializeLocalProcessing
+        }
+      }
+    })
+  }
+
   private getWindowsTranscriptionManifestPath(): string {
     if (app.isPackaged) {
       return join(
@@ -283,6 +443,18 @@ export class WhisperManager extends EventEmitter {
     return typeof app.getAppPath === 'function' ? app.getAppPath() : process.cwd()
   }
 
+  private getPackagedResourcePath(filename: string): string {
+    const resourcesPath = process.resourcesPath ?? this.getDevelopmentAppPath()
+    const candidates = [
+      join(resourcesPath, 'app.asar.unpacked', 'resources', filename),
+      join(resourcesPath, 'resources', filename),
+      join(resourcesPath, filename),
+      join(this.getDevelopmentAppPath(), 'resources', filename)
+    ]
+
+    return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
+  }
+
   private getDevelopmentResourcePath(filename: string): string {
     const appResourcePath = join(this.getDevelopmentAppPath(), 'resources', filename)
     if (existsSync(appResourcePath)) {
@@ -294,6 +466,13 @@ export class WhisperManager extends EventEmitter {
 
   async isReady(): Promise<boolean> {
     try {
+      if (this.isMlxWhisperSelected()) {
+        await access(this.getMlxWhisperPythonPath())
+        await access(this.getMlxWhisperScriptPath())
+        await access(this.getFfmpegPath())
+        return this.runtimeValidated
+      }
+
       if (this.isFasterWhisperSelected()) {
         await access(this.getFasterWhisperPythonPath())
         await access(this.getFasterWhisperModelPath())
@@ -339,11 +518,34 @@ export class WhisperManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     try {
       await mkdir(this.getModelsDir(), { recursive: true })
+      await this.selectMacProfile()
       await this.selectWindowsProfile()
       this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
       this.emit('setup-status', this.getSetupStatus())
 
       await this.adoptInstalledAssetsIfAvailable()
+
+      if (this.isMlxWhisperSelected()) {
+        try {
+          await this.ensureMlxWhisperReady()
+          return
+        } catch (err) {
+          logAutodocFailure({
+            area: 'whisper',
+            message: 'MLX Whisper setup failed; falling back to whisper.cpp',
+            error: err,
+            context: {
+              backend: 'mlx-whisper',
+              backendLabel: MLX_WHISPER_LABEL
+            }
+          })
+          this.mlxWhisperDisabledForSession = true
+          this.selectedMacProfile = null
+          this.runtimeValidated = false
+          this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
+          this.emit('setup-status', this.getSetupStatus())
+        }
+      }
 
       if (this.isFasterWhisperSelected()) {
         try {
@@ -511,6 +713,57 @@ export class WhisperManager extends EventEmitter {
     this.runtimeValidated = true
     this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
     this.emit('setup-status', this.getSetupStatus())
+  }
+
+  private async ensureMlxWhisperReady(): Promise<void> {
+    await this.ensureFfmpegForSelectedRuntime()
+    await mkdir(this.getMlxWhisperCacheDir(), { recursive: true })
+
+    const missingRuntimeFiles = await this.getMissingMlxWhisperRuntimeFiles()
+    if (missingRuntimeFiles.length > 0) {
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'MLX Whisper runtime missing expected files before setup',
+        context: {
+          backend: 'mlx-whisper',
+          backendLabel: MLX_WHISPER_LABEL,
+          runtimeDir: this.getMlxWhisperRuntimeDir(),
+          missingRuntimeFiles
+        },
+        level: 'warn'
+      })
+      throw new Error(
+        `Bundled MLX Whisper runtime is incomplete (${missingRuntimeFiles.join(', ')}). Rebuild after running prepare:macos-mlx-runtime.`
+      )
+    }
+
+    if (!(await this.fileExists(this.getMlxWhisperScriptPath()))) {
+      throw new Error('Bundled MLX Whisper bridge script is missing from this app package.')
+    }
+
+    this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
+    this.emit('setup-status', this.getSetupStatus())
+
+    let isUsable = await this.isMlxWhisperUsableWithRetry()
+    if (!isUsable) {
+      await this.recoverFromMlxProbeValidationFailure()
+      isUsable = await this.isMlxWhisperUsableWithRetry()
+    }
+
+    if (!isUsable) {
+      throw new Error('MLX Whisper failed startup validation after setup.')
+    }
+
+    this.runtimeValidated = true
+    this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
+    this.emit('setup-status', this.getSetupStatus())
+  }
+
+  private async getMissingMlxWhisperRuntimeFiles(): Promise<string[]> {
+    return await this.getMissingExpectedFiles(
+      this.getMlxWhisperRuntimeDir(),
+      MLX_WHISPER_RUNTIME_EXPECTED_FILES
+    )
   }
 
   private async ensureFfmpegForSelectedRuntime(): Promise<void> {
@@ -706,6 +959,26 @@ export class WhisperManager extends EventEmitter {
     }
 
     await this.resolveWhisper()
+  }
+
+  private async recoverFromMlxProbeValidationFailure(): Promise<void> {
+    this.setupStatus = this.withBackendStatus({ phase: 'downloading-model', percent: 0 })
+    this.emit('setup-status', this.getSetupStatus())
+
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'MLX Whisper probe validation failed; removing cached model before retry',
+      context: {
+        backend: 'mlx-whisper',
+        backendLabel: MLX_WHISPER_LABEL,
+        modelRef: this.getMlxWhisperModelRef(),
+        cacheDir: this.getMlxWhisperCacheDir(),
+        runtimeDir: this.getMlxWhisperRuntimeDir()
+      },
+      level: 'warn'
+    })
+    await rm(this.getMlxWhisperCacheDir(), { recursive: true, force: true })
+    await mkdir(this.getMlxWhisperCacheDir(), { recursive: true })
   }
 
   private async adoptInstalledAssetsIfAvailable(): Promise<void> {
@@ -918,14 +1191,13 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async resolveBundledMacWhisperRuntimeDir(): Promise<string | null> {
-    if (!app.isPackaged) {
-      return null
-    }
-
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
     const candidates = [
-      process.resourcesPath ? join(process.resourcesPath, 'macos-whisper-runtime', arch) : null,
-      join(this.getDevelopmentAppPath(), 'resources', 'macos-whisper-runtime', arch)
+      app.isPackaged && process.resourcesPath
+        ? join(process.resourcesPath, 'macos-whisper-runtime', arch)
+        : null,
+      join(this.getDevelopmentAppPath(), 'resources', 'macos-whisper-runtime', arch),
+      join(process.cwd(), 'resources', 'macos-whisper-runtime', arch)
     ].filter((candidate): candidate is string => Boolean(candidate))
 
     for (const candidate of candidates) {
@@ -1106,7 +1378,9 @@ export class WhisperManager extends EventEmitter {
   }
 
   private getPackagedFfmpegPath(): string | null {
-    if (!usesManagedRuntimeOnly()) {
+    const shouldUseBundledFfmpegForMacRealSetup =
+      !IS_WIN && process.env.AUTODOC_TEST_REAL_SETUP === '1'
+    if (!usesManagedRuntimeOnly() && !shouldUseBundledFfmpegForMacRealSetup) {
       return null
     }
 
@@ -1365,6 +1639,89 @@ export class WhisperManager extends EventEmitter {
     } finally {
       await rm(probeDir, { recursive: true, force: true })
     }
+  }
+
+  private async isMlxWhisperUsable(): Promise<boolean> {
+    if (!(await this.fileExists(this.getMlxWhisperPythonPath()))) {
+      return false
+    }
+    if (!(await this.fileExists(this.getMlxWhisperScriptPath()))) {
+      return false
+    }
+
+    const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-mlx-whisper-probe-'))
+    const probeWavPath = join(probeDir, 'probe.wav')
+    const probeJsonPath = join(probeDir, 'probe.json')
+
+    try {
+      await writeFile(probeWavPath, this.createSilentProbeWav())
+      return await new Promise<boolean>((resolve) => {
+        execFile(
+          this.getMlxWhisperPythonPath(),
+          [
+            this.getMlxWhisperScriptPath(),
+            '--model',
+            this.getMlxWhisperModelRef(),
+            '--audio',
+            probeWavPath,
+            '--output',
+            probeJsonPath,
+            '--language',
+            'en'
+          ],
+          {
+            windowsHide: true,
+            timeout: MLX_WHISPER_PROBE_TIMEOUT_MS,
+            env: this.getMlxWhisperProcessEnv()
+          },
+          (err, stdout, stderr) => {
+            if (err) {
+              logAutodocFailure({
+                area: 'whisper',
+                message: 'MLX Whisper probe validation failed',
+                error: err,
+                context: {
+                  backend: 'mlx-whisper',
+                  backendLabel: MLX_WHISPER_LABEL,
+                  pythonPath: this.getMlxWhisperPythonPath(),
+                  modelRef: this.getMlxWhisperModelRef(),
+                  stdoutTail: String(stdout ?? '').slice(-1000),
+                  stderrTail: String(stderr ?? '').slice(-1000),
+                  profile: this.selectedMacProfile
+                    ? {
+                        id: this.selectedMacProfile.id,
+                        reason: this.selectedMacProfile.reason,
+                        hardware: this.selectedMacProfile.hardware
+                      }
+                    : null
+                }
+              })
+              resolve(false)
+              return
+            }
+
+            resolve(true)
+          }
+        )
+      })
+    } finally {
+      await rm(probeDir, { recursive: true, force: true })
+    }
+  }
+
+  private async isMlxWhisperUsableWithRetry(): Promise<boolean> {
+    if (await this.isMlxWhisperUsable()) {
+      return true
+    }
+
+    for (const delayMs of WHISPER_PROBE_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      if (await this.isMlxWhisperUsable()) {
+        return true
+      }
+    }
+
+    return false
   }
 
   private async isFasterWhisperUsableWithRetry(): Promise<boolean> {

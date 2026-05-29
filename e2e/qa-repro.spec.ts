@@ -502,7 +502,7 @@ test.describe('QA Linear repro pass', () => {
         evidence: [
           `capture getUserMedia calls before mic switch: ${beforeSwitchCalls}`,
           `capture getUserMedia calls after mic switch: ${afterSwitchCalls}`,
-          'Device-change recovery re-entered capture in the sandbox.'
+          'Mic-ended recovery re-entered capture in the sandbox.'
         ],
         limitation:
           'This validates capture recovery after a microphone route change; it cannot prove transcription quality without real recorded audio.'
@@ -533,6 +533,7 @@ async function installFakeCaptureDevices(page: Page): Promise<void> {
 
     let micVersion = 1
     const listeners = new Set<EventListenerOrEventListenerObject>()
+    const activeMicTracks = new Set<MediaStreamTrack>()
 
     const makeVideoStream = () => {
       const canvas = document.createElement('canvas')
@@ -575,7 +576,11 @@ async function installFakeCaptureDevices(page: Page): Promise<void> {
         tracks.push(...makeVideoStream().getVideoTracks())
       }
       if (wantsAudio) {
-        tracks.push(...makeAudioStream().getAudioTracks())
+        const audioTracks = makeAudioStream().getAudioTracks()
+        if (!wantsVideo) {
+          audioTracks.forEach((track) => activeMicTracks.add(track))
+        }
+        tracks.push(...audioTracks)
       }
 
       return new MediaStream(tracks)
@@ -604,6 +609,11 @@ async function installFakeCaptureDevices(page: Page): Promise<void> {
 
     qaWindow.__qaSwitchDefaultMic = () => {
       micVersion += 1
+      for (const track of activeMicTracks) {
+        activeMicTracks.delete(track)
+        track.stop()
+        track.dispatchEvent(new Event('ended'))
+      }
       const event = new Event('devicechange')
       for (const listener of listeners) {
         if (typeof listener === 'function') {

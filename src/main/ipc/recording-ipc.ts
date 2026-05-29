@@ -1,6 +1,6 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
-import { appendFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
+import { appendFile, readFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { RecordingService } from '../services/recording'
@@ -9,6 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
+import { buildRecordingTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
@@ -31,6 +32,13 @@ const CALENDAR_MATCH_LOOKBACK_DAYS = 30
 const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
+const segmentTimingWriteQueues = new Map<string, Promise<void>>()
+
+interface SegmentTimingEntry {
+  type: 'video' | 'mic' | 'system'
+  segmentIndex: number
+  offsetMs: number
+}
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
   return type === 'video' ? 'screen' : type
@@ -42,29 +50,6 @@ function getFinalFilename(type: 'video' | 'mic' | 'system'): string {
 
 function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: number): string {
   return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
-}
-
-function buildRecordingTitle(
-  metadata: MeetingMetadata | null,
-  startedAt: number,
-  calendarTitle: string | null
-): string {
-  const createdAt = new Date(startedAt)
-  const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-
-  if (metadata?.customTitle) {
-    return metadata.customTitle
-  }
-
-  if (calendarTitle) {
-    return `${calendarTitle} — ${dateSuffix}`
-  }
-
-  if (metadata?.sourceName) {
-    return `${metadata.sourceName} — ${dateSuffix}`
-  }
-
-  return `Recording ${dateSuffix}`
 }
 
 function logRecordingDebug(
@@ -90,13 +75,10 @@ function getSourceTypeFromId(sourceId: string | null | undefined): 'window' | 's
 }
 
 function isRecordingMediaFilename(name: string): boolean {
-  return (
-    (/^(screen|mic|system)(-\d+)?\.webm$/).test(name) ||
-    name === 'audio.webm'
-  )
+  return /^(screen|mic|system)(-\d+)?\.webm$/.test(name) || name === 'audio.webm'
 }
 
-/** Merge two audio files into one using amix filter */
+/** Merge two audio files into one using amix filter. */
 function mergeAudioFiles(
   ffmpegPath: string,
   input1: string,
@@ -110,7 +92,7 @@ function mergeAudioFiles(
       '-i',
       input2,
       '-filter_complex',
-      'amix=inputs=2:duration=longest:normalize=0',
+      'amix=inputs=2:duration=longest:normalize=1',
       '-c:a',
       'libopus',
       '-b:a',
@@ -134,28 +116,94 @@ function mergeAudioFiles(
   })
 }
 
-function concatWebmFiles(ffmpegPath: string, listPath: string, outputPath: string): Promise<void> {
+function concatAudioSegments(
+  ffmpegPath: string,
+  listPath: string,
+  outputPath: string
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, [
+      '-fflags',
+      '+genpts',
       '-f',
       'concat',
       '-safe',
       '0',
       '-i',
       listPath,
-      '-c',
-      'copy',
+      '-vn',
+      '-af',
+      'aresample=async=1:first_pts=0',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '48k',
+      '-compression_level',
+      '0',
+      '-application',
+      'audio',
       '-y',
       outputPath
     ])
     let stderr = ''
-    proc.on('error', (err) => reject(new Error(`ffmpeg concat spawn failed: ${err.message}`)))
+    proc.on('error', (err) => reject(new Error(`ffmpeg audio concat spawn failed: ${err.message}`)))
     proc.stderr.on('data', (data: Buffer) => {
       stderr += data.toString()
     })
     proc.on('close', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`))
+      else reject(new Error(`ffmpeg audio concat exited with code ${code}: ${stderr.slice(-500)}`))
+    })
+  })
+}
+
+function mixAudioSegmentsWithOffsets(
+  ffmpegPath: string,
+  segmentPaths: string[],
+  offsetsMs: number[],
+  outputPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const inputArgs = segmentPaths.flatMap((segmentPath) => ['-i', segmentPath])
+    const preparedInputs = offsetsMs.map((offsetMs, index) => {
+      const delayMs = Math.max(0, Math.round(offsetMs))
+      return `[${index}:a]asetpts=PTS-STARTPTS,adelay=${delayMs}:all=1[a${index}]`
+    })
+    const mixedInputs = offsetsMs.map((_, index) => `[a${index}]`).join('')
+    const filterComplex = `${preparedInputs.join(';')};${mixedInputs}amix=inputs=${offsetsMs.length}:duration=longest:normalize=0,aresample=async=1:first_pts=0[out]`
+    const proc = spawn(ffmpegPath, [
+      '-fflags',
+      '+genpts',
+      ...inputArgs,
+      '-filter_complex',
+      filterComplex,
+      '-map',
+      '[out]',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '48k',
+      '-compression_level',
+      '0',
+      '-application',
+      'audio',
+      '-y',
+      outputPath
+    ])
+    let stderr = ''
+    proc.on('error', (err) =>
+      reject(new Error(`ffmpeg audio timeline mix spawn failed: ${err.message}`))
+    )
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else {
+        reject(
+          new Error(`ffmpeg audio timeline mix exited with code ${code}: ${stderr.slice(-500)}`)
+        )
+      }
     })
   })
 }
@@ -187,7 +235,7 @@ function concatVideoSegments(
       '-row-mt',
       '1',
       '-crf',
-      '36',
+      '34',
       '-b:v',
       '0',
       '-y',
@@ -201,49 +249,6 @@ function concatVideoSegments(
     proc.on('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(`ffmpeg video concat exited with code ${code}: ${stderr.slice(-500)}`))
-    })
-  })
-}
-
-function concatVideoSegmentsWithStreamCopy(
-  ffmpegPath: string,
-  listPath: string,
-  outputPath: string
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ffmpegPath, [
-      '-fflags',
-      '+genpts',
-      '-f',
-      'concat',
-      '-safe',
-      '0',
-      '-i',
-      listPath,
-      '-map',
-      '0:v:0',
-      '-an',
-      '-c:v',
-      'copy',
-      '-y',
-      outputPath
-    ])
-    let stderr = ''
-    proc.on('error', (err) =>
-      reject(new Error(`ffmpeg video stream-copy concat spawn failed: ${err.message}`))
-    )
-    proc.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString()
-    })
-    proc.on('close', (code) => {
-      if (code === 0) resolve()
-      else {
-        reject(
-          new Error(
-            `ffmpeg video stream-copy concat exited with code ${code}: ${stderr.slice(-500)}`
-          )
-        )
-      }
     })
   })
 }
@@ -285,27 +290,27 @@ async function assembleSegmentedCaptureFile(
 
   try {
     if (type === 'video') {
-      try {
-        await concatVideoSegmentsWithStreamCopy(ffmpegPath, listPath, finalPath)
-        logRecordingDebug('assembled segmented video with stream-copy concat', undefined, {
+      await concatVideoSegments(ffmpegPath, listPath, finalPath)
+      logRecordingDebug('assembled segmented video with VP9 re-encode concat', undefined, {
+        segmentCount: segmentNames.length,
+        finalFilename
+      })
+    } else {
+      const timingOffsets = await readSegmentTimings(meetingDir, type)
+      const segmentOffsets = segmentNames.map((name) => {
+        const match = name.match(/-(\d+)\.webm$/)
+        const segmentIndex = match ? Number.parseInt(match[1], 10) : Number.NaN
+        return timingOffsets.get(segmentIndex) ?? (segmentIndex === 0 ? 0 : undefined)
+      })
+      if (segmentOffsets.every((offset): offset is number => typeof offset === 'number')) {
+        await mixAudioSegmentsWithOffsets(ffmpegPath, segmentPaths, segmentOffsets, finalPath)
+        logRecordingDebug('assembled segmented audio with timeline offsets', undefined, {
           segmentCount: segmentNames.length,
           finalFilename
         })
-      } catch (copyError) {
-        logRecordingDebug(
-          'stream-copy video concat failed; falling back to VP9 re-encode',
-          undefined,
-          {
-            segmentCount: segmentNames.length,
-            finalFilename,
-            error: copyError instanceof Error ? copyError.message : String(copyError)
-          }
-        )
-        await unlink(finalPath).catch(() => {})
-        await concatVideoSegments(ffmpegPath, listPath, finalPath)
+      } else {
+        await concatAudioSegments(ffmpegPath, listPath, finalPath)
       }
-    } else {
-      await concatWebmFiles(ffmpegPath, listPath, finalPath)
     }
     await Promise.all(segmentPaths.map((segmentPath) => unlink(segmentPath).catch(() => {})))
   } finally {
@@ -330,13 +335,41 @@ function normalizeCaptureSourceError(err: unknown): Error {
   return err instanceof Error ? err : new Error(message)
 }
 
-async function assembleRecordingSegments(
+async function readSegmentTimings(
+  meetingDir: string,
+  type: 'video' | 'mic' | 'system'
+): Promise<Map<number, number>> {
+  const timingPath = join(meetingDir, 'segment-timings.json')
+  const raw = await readFile(timingPath, 'utf-8').catch(() => null)
+  if (!raw) {
+    return new Map()
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as SegmentTimingEntry[]
+    return new Map(
+      parsed
+        .filter((entry) => entry.type === type && Number.isFinite(entry.offsetMs))
+        .map((entry) => [entry.segmentIndex, Math.max(0, entry.offsetMs)])
+    )
+  } catch {
+    return new Map()
+  }
+}
+
+async function assembleRecordingAudioSegments(
+  meetingDir: string,
+  ffmpegPath: string | null
+): Promise<void> {
+  await assembleSegmentedCaptureFile(meetingDir, 'mic', ffmpegPath)
+  await assembleSegmentedCaptureFile(meetingDir, 'system', ffmpegPath)
+}
+
+async function assembleRecordingVideoSegment(
   meetingDir: string,
   ffmpegPath: string | null
 ): Promise<void> {
   await assembleSegmentedCaptureFile(meetingDir, 'video', ffmpegPath)
-  await assembleSegmentedCaptureFile(meetingDir, 'mic', ffmpegPath)
-  await assembleSegmentedCaptureFile(meetingDir, 'system', ffmpegPath)
 }
 
 async function getSegmentedCapturePresence(
@@ -379,7 +412,7 @@ async function maybeReportRapidAbortWithoutMedia(params: {
     sourceType,
     recordingIntent: params.recordingIntent ?? null,
     meetingDir: params.meetingDir,
-    mediaFiles,
+    mediaFiles
   }
 
   logAutodocEvent({
@@ -404,10 +437,7 @@ async function maybeReportRapidAbortWithoutMedia(params: {
   })
 }
 
-/** Mux audio track into video file so playback has both video and audio.
- *  Screen chunks already embed system audio; we must map video from input 0 and
- *  replacement audio from input 1 — otherwise ffmpeg keeps 0:a (system-only) and
- *  the merged mic+system track is ignored, so HTML5 playback only hears system audio. */
+/** Mux audio track into video file so playback has both video and audio. */
 function muxAudioIntoVideo(
   ffmpegPath: string,
   videoPath: string,
@@ -416,6 +446,8 @@ function muxAudioIntoVideo(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, [
+      '-fflags',
+      '+genpts',
       '-i',
       videoPath,
       '-i',
@@ -426,6 +458,8 @@ function muxAudioIntoVideo(
       '1:a:0',
       '-c',
       'copy',
+      '-avoid_negative_ts',
+      'make_zero',
       '-y',
       outputPath
     ])
@@ -446,12 +480,16 @@ function muxAudioIntoVideo(
 function remuxForSeeking(ffmpegPath: string, inputPath: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpegPath, [
-      '-i',
-      inputPath,
-      '-c',
-      'copy',
       '-fflags',
       '+genpts',
+      '-i',
+      inputPath,
+      '-map',
+      '0',
+      '-c',
+      'copy',
+      '-avoid_negative_ts',
+      'make_zero',
       '-y',
       outputPath
     ])
@@ -575,15 +613,32 @@ export function registerRecordingIpc(
       }
 
       try {
-        await assembleRecordingSegments(meetingDir, ffmpegPath)
+        await assembleRecordingAudioSegments(meetingDir, ffmpegPath)
       } catch (err) {
         logAutodocFailure({
           area: 'recording',
-          message: 'Failed to assemble segmented recording media',
+          message: 'Failed to assemble segmented recording audio',
           error: err,
           meetingId
         })
-        console.error('Failed to assemble segmented recording media:', err)
+        console.error('Failed to assemble segmented recording audio:', err)
+      }
+
+      transcriptionService.enqueue(meetingId)
+      logRecordingDebug('transcription enqueued after audio post-processing', meetingId, {
+        elapsedMs: Date.now() - postProcessStartedAt
+      })
+
+      try {
+        await assembleRecordingVideoSegment(meetingDir, ffmpegPath)
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to assemble segmented recording video',
+          error: err,
+          meetingId
+        })
+        console.error('Failed to assemble segmented recording video:', err)
       }
 
       try {
@@ -652,7 +707,6 @@ export function registerRecordingIpc(
         metadata,
         'post-processing-finished'
       )
-      transcriptionService.enqueue(meetingId)
       scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, finalizedMetadata)
       broadcastEntryUpdated(meetingId)
       logRecordingDebug('post-processing finished', meetingId, {
@@ -1016,15 +1070,30 @@ export function registerRecordingIpc(
       }
 
       try {
-        await assembleRecordingSegments(meetingDir, ffmpegPath)
+        await assembleRecordingAudioSegments(meetingDir, ffmpegPath)
       } catch (err) {
         logAutodocFailure({
           area: 'recording',
-          message: 'Failed to assemble segmented recording media',
+          message: 'Failed to assemble segmented recording audio',
           error: err,
           meetingId: result.meetingId
         })
-        console.error('Failed to assemble segmented recording media:', err)
+        console.error('Failed to assemble segmented recording audio:', err)
+      }
+
+      transcriptionService.enqueue(result.meetingId)
+      logRecordingDebug('transcription enqueued after audio post-processing', result.meetingId)
+
+      try {
+        await assembleRecordingVideoSegment(meetingDir, ffmpegPath)
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to assemble segmented recording video',
+          error: err,
+          meetingId: result.meetingId
+        })
+        console.error('Failed to assemble segmented recording video:', err)
       }
 
       // Mux audio into video so the video player has both tracks, then remux for seeking
@@ -1089,8 +1158,6 @@ export function registerRecordingIpc(
         })
         console.error('Failed to remux for seeking (video will still play but may not seek):', err)
       }
-
-      transcriptionService.enqueue(result.meetingId)
     })().catch((err) => {
       logAutodocFailure({
         area: 'recording',
@@ -1265,6 +1332,55 @@ export function registerRecordingIpc(
         })
         throw err
       }
+    }
+  )
+
+  ipcMain.handle(
+    'recording:save-segment-timing',
+    async (
+      _event,
+      meetingId: string,
+      type: 'video' | 'mic' | 'system',
+      segmentIndex: number,
+      offsetMs: number
+    ) => {
+      const currentState = recordingService.getState()
+      const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
+      if (
+        (!currentState.isRecording || currentState.meetingId !== meetingId) &&
+        !allowFinalizingWrite
+      ) {
+        return
+      }
+
+      const baseDir = recordingService.getRecordingsBaseDir()
+      const timingPath = join(baseDir, meetingId, 'segment-timings.json')
+      const nextEntry: SegmentTimingEntry = {
+        type,
+        segmentIndex,
+        offsetMs: Math.max(0, Math.round(offsetMs))
+      }
+      const previousWrite = segmentTimingWriteQueues.get(timingPath) ?? Promise.resolve()
+      let nextWrite: Promise<void>
+      nextWrite = previousWrite
+        .catch(() => {})
+        .then(async () => {
+          const existing = await readFile(timingPath, 'utf-8')
+            .then((raw) => JSON.parse(raw) as SegmentTimingEntry[])
+            .catch(() => [] as SegmentTimingEntry[])
+          const withoutDuplicate = existing.filter(
+            (entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)
+          )
+          await writeFile(timingPath, JSON.stringify([...withoutDuplicate, nextEntry], null, 2))
+        })
+        .finally(() => {
+          if (segmentTimingWriteQueues.get(timingPath) === nextWrite) {
+            segmentTimingWriteQueues.delete(timingPath)
+          }
+        })
+
+      segmentTimingWriteQueues.set(timingPath, nextWrite)
+      await nextWrite
     }
   )
 

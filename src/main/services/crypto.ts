@@ -16,11 +16,13 @@ const CANONICAL_APP_DIR = 'AutoDoc'
 const MAGIC = Buffer.from('ADOC', 'ascii')
 const BLOCK_SIZE = 65536 // 64KB plaintext per block
 const CHUNKED_VERSION = 0x01
+const MEDIA_DECRYPT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+const MEDIA_DECRYPT_CACHE_MAX_ENTRIES = 6
 const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
   'AutoDoc Safe Storage',
   'autodoc Safe Storage',
   'Autodoc Safe Storage',
-  'Electron Safe Storage',
+  'Electron Safe Storage'
 ] as const
 
 interface StoredKeyFile {
@@ -41,10 +43,12 @@ let cachedKey: Buffer | null = null
 let cachedKeyError: Error | null = null
 
 function usesIsolatedStore(): boolean {
-  return !app.isPackaged
-    || Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR)
-    || process.env.AUTODOC_E2E === '1'
-    || process.env.AUTODOC_TEST_REAL_SETUP === '1'
+  return (
+    !app.isPackaged ||
+    Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR) ||
+    process.env.AUTODOC_E2E === '1' ||
+    process.env.AUTODOC_TEST_REAL_SETUP === '1'
+  )
 }
 
 function getPrimaryStorePath(): string {
@@ -64,7 +68,7 @@ function getLegacyStorePaths(): string[] {
     path.join(app.getPath('appData'), 'autodoc', STORE_FILENAME),
     path.join(app.getPath('appData'), 'Autodoc', STORE_FILENAME),
     path.join(app.getPath('appData'), 'Electron', STORE_FILENAME),
-    getPrimaryStorePath(),
+    getPrimaryStorePath()
   ])
 
   return [...paths]
@@ -97,7 +101,7 @@ function persistKey(key: Buffer): void {
 
   writeStoreFile(getPrimaryStorePath(), {
     [STORE_KEY]: storedValue,
-    [STORE_VERSION_KEY]: 1,
+    [STORE_VERSION_KEY]: 1
   })
 }
 
@@ -165,7 +169,9 @@ function tryRecoverFromLegacyKeychain(storedEncrypted: string): Buffer | null {
     try {
       const recovered = tryRecoverFromMacSafeStorageService(storedEncrypted, serviceName)
       if (recovered) {
-        console.log(`Successfully recovered encryption key from legacy keychain service: ${serviceName}`)
+        console.log(
+          `Successfully recovered encryption key from legacy keychain service: ${serviceName}`
+        )
         return recovered
       }
     } catch {
@@ -176,12 +182,17 @@ function tryRecoverFromLegacyKeychain(storedEncrypted: string): Buffer | null {
   return null
 }
 
-function tryRecoverFromMacSafeStorageService(storedEncrypted: string, serviceName: string): Buffer | null {
-  const legacyPassword = execFileSync('security', [
-    'find-generic-password',
-    '-s', serviceName,
-    '-w',
-  ], { timeout: 5000 }).toString().trim()
+function tryRecoverFromMacSafeStorageService(
+  storedEncrypted: string,
+  serviceName: string
+): Buffer | null {
+  const legacyPassword = execFileSync(
+    'security',
+    ['find-generic-password', '-s', serviceName, '-w'],
+    { timeout: 5000 }
+  )
+    .toString()
+    .trim()
 
   const buf = Buffer.from(storedEncrypted, 'latin1')
   if (buf.length < 19 || buf.toString('ascii', 0, 3) !== 'v10') {
@@ -233,7 +244,7 @@ export async function initializeEncryption(recordingsBaseDir: string): Promise<v
 
   if (await recordingsContainEncryptedFiles(recordingsBaseDir)) {
     cachedKeyError = new EncryptionKeyUnavailableError(
-      'Encrypted recordings exist but the AutoDoc encryption key could not be recovered. Restore the prior autodoc-encryption.json store before retrying transcription.',
+      'Encrypted recordings exist but the AutoDoc encryption key could not be recovered. Restore the prior autodoc-encryption.json store before retrying transcription.'
     )
     throw cachedKeyError
   }
@@ -345,7 +356,10 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
 export async function decryptFileToTemp(encPath: string): Promise<string> {
   const key = getKey()
   const ext = path.extname(encPath) || '.tmp'
-  const tmpFilePath = path.join(os.tmpdir(), `autodoc-${crypto.randomBytes(8).toString('hex')}${ext}`)
+  const tmpFilePath = path.join(
+    os.tmpdir(),
+    `autodoc-${crypto.randomBytes(8).toString('hex')}${ext}`
+  )
 
   const srcFd = await fsp.open(encPath, 'r')
   const dstFd = await fsp.open(tmpFilePath, 'w')
@@ -401,7 +415,10 @@ export async function decryptFileToTemp(encPath: string): Promise<string> {
 }
 
 /** Cached decrypted paths for custom-protocol media (one decrypt per recording file, not per HTTP range). */
-const mediaDecryptCache = new Map<string, { tempPath: string; mtimeMs: number; size: number }>()
+const mediaDecryptCache = new Map<
+  string,
+  { tempPath: string; mtimeMs: number; size: number; lastAccessedMs: number }
+>()
 const mediaDecryptInflight = new Map<string, Promise<string>>()
 
 export async function clearMediaDecryptCache(): Promise<void> {
@@ -410,6 +427,40 @@ export async function clearMediaDecryptCache(): Promise<void> {
   }
   mediaDecryptCache.clear()
   mediaDecryptInflight.clear()
+}
+
+async function pruneMediaDecryptCache(): Promise<void> {
+  let totalBytes = 0
+  for (const entry of mediaDecryptCache.values()) {
+    totalBytes += entry.size
+  }
+
+  if (
+    mediaDecryptCache.size <= MEDIA_DECRYPT_CACHE_MAX_ENTRIES &&
+    totalBytes <= MEDIA_DECRYPT_CACHE_MAX_BYTES
+  ) {
+    return
+  }
+
+  const entries = [...mediaDecryptCache.entries()].sort(
+    ([, a], [, b]) => a.lastAccessedMs - b.lastAccessedMs
+  )
+  for (const [encPath, entry] of entries) {
+    if (
+      mediaDecryptCache.size <= MEDIA_DECRYPT_CACHE_MAX_ENTRIES &&
+      totalBytes <= MEDIA_DECRYPT_CACHE_MAX_BYTES
+    ) {
+      break
+    }
+
+    try {
+      await fsp.unlink(entry.tempPath)
+      mediaDecryptCache.delete(encPath)
+      totalBytes -= entry.size
+    } catch {
+      // Keep the entry tracked so a later prune or shutdown can retry cleanup.
+    }
+  }
 }
 
 /**
@@ -423,6 +474,7 @@ export async function getDecryptedTempPathForMedia(encPath: string): Promise<str
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
     try {
       await fsp.access(cached.tempPath)
+      cached.lastAccessedMs = Date.now()
       return cached.tempPath
     } catch {
       mediaDecryptCache.delete(encPath)
@@ -438,7 +490,13 @@ export async function getDecryptedTempPathForMedia(encPath: string): Promise<str
     inflight = (async () => {
       const tmp = await decryptFileToTemp(encPath)
       const stFresh = await fsp.stat(encPath)
-      mediaDecryptCache.set(encPath, { tempPath: tmp, mtimeMs: stFresh.mtimeMs, size: stFresh.size })
+      mediaDecryptCache.set(encPath, {
+        tempPath: tmp,
+        mtimeMs: stFresh.mtimeMs,
+        size: stFresh.size,
+        lastAccessedMs: Date.now()
+      })
+      await pruneMediaDecryptCache()
       return tmp
     })().finally(() => {
       mediaDecryptInflight.delete(encPath)
@@ -517,7 +575,16 @@ export async function isEncrypted(filePath: string): Promise<boolean> {
 }
 
 export async function migrateRecordings(recordingsBaseDir: string): Promise<void> {
-  const targetFiles = ['audio.webm', 'mic.webm', 'system.webm', 'screen.webm', 'transcript.json', 'segments.json', 'speakers.json', 'metadata.json']
+  const targetFiles = [
+    'audio.webm',
+    'mic.webm',
+    'system.webm',
+    'screen.webm',
+    'transcript.json',
+    'segments.json',
+    'speakers.json',
+    'metadata.json'
+  ]
 
   let entries: fs.Dirent[]
   try {

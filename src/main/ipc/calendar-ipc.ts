@@ -8,6 +8,8 @@ import {
   getE2ECalendarAccounts,
   getE2ECalendarEvents,
 } from '../services/e2e-fixtures'
+import { logAutodocFailure } from '../services/autodoc-log'
+import { getConfiguredAuthWorkerUrl, isOfficialAutoDocBuild } from '../services/distribution-config'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 
@@ -27,25 +29,39 @@ export function registerCalendarIpc(
       return account
     }
 
-    const account = await calendarManager.connect(providerType)
+    try {
+      const account = await calendarManager.connect(providerType)
 
-    const events = await calendarManager.fetchAllUpcomingEvents()
-    const enriched = applyAutoRecordState(events)
-    pushEventsToRenderer(enriched)
-    onEventsUpdated?.(enriched)
+      const events = await calendarManager.fetchAllUpcomingEvents()
+      const enriched = applyAutoRecordState(events)
+      pushEventsToRenderer(enriched)
+      onEventsUpdated?.(enriched)
 
-    // Start sync if this is the first account
-    if (calendarManager.getAccounts().length === 1) {
-      calendarManager.startSync((updatedEvents) => {
-        const enrichedUpdated = applyAutoRecordState(updatedEvents)
-        pushEventsToRenderer(enrichedUpdated)
-        onEventsUpdated?.(enrichedUpdated)
+      // Start sync if this is the first account
+      if (calendarManager.getAccounts().length === 1) {
+        calendarManager.startSync((updatedEvents) => {
+          const enrichedUpdated = applyAutoRecordState(updatedEvents)
+          pushEventsToRenderer(enrichedUpdated)
+          onEventsUpdated?.(enrichedUpdated)
+        })
+      }
+
+      pushConnectionStatus(true)
+      onConnectionChanged?.(true)
+      return account
+    } catch (err) {
+      logAutodocFailure({
+        area: 'calendar',
+        message: 'Calendar connection failed',
+        error: err,
+        context: {
+          provider: providerType,
+          authWorkerConfigured: Boolean(getConfiguredAuthWorkerUrl()),
+          officialBuild: isOfficialAutoDocBuild()
+        }
       })
+      throw err
     }
-
-    pushConnectionStatus(true)
-    onConnectionChanged?.(true)
-    return account
   })
 
   ipcMain.handle('calendar:disconnect', async (_event, accountId: string) => {

@@ -17,12 +17,6 @@ files:
   - '!**/__tests__/**'
   - '!**/*.{map,md,markdown,tsbuildinfo}'
   - '!**/.DS_Store'
-extraResources:
-  - from: resources/macos-whisper-runtime
-    to: macos-whisper-runtime
-    filter:
-      - '**/*'
-      - '!**/._*'
 asarUnpack:
   - 'resources/**'
   - 'native/**'
@@ -45,10 +39,19 @@ mac:
   target:
     - dmg
     - zip
+  minimumSystemVersion: 14.0.0
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSMicrophoneUsageDescription: Application requires access to the microphone.
     - NSAudioCaptureUsageDescription: Application requests access to capture system audio during screen recording.
+  extraResources:
+    - from: vendor/mlx-python-runtime
+      to: mlx-python-runtime
+      filter:
+        - '**/*'
+        - '!**/._*'
+    - from: resources/mlx-whisper-transcribe.py
+      to: mlx-whisper-transcribe.py
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}

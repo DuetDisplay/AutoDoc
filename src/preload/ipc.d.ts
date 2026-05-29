@@ -41,6 +41,24 @@ export interface SearchResult {
   matches: { type: 'transcript' | 'segment'; text: string; category?: string }[]
 }
 
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatClarificationOption {
+  meetingId: string
+  title: string
+  subtitle: string
+  date: number
+  sourceName: string | null
+  calendarTitle: string | null
+  slackChannel: string | null
+  participants: string[]
+  notePreview: string | null
+  score: number
+}
+
 export interface IpcSendEvents {
   'window:minimize': []
   'window:maximize': []
@@ -84,6 +102,12 @@ export interface IpcInvokeEvents {
     chunk: ArrayBuffer,
     segmentIndex?: number
   ]
+  'recording:save-segment-timing': [
+    meetingId: string,
+    type: 'video' | 'mic' | 'system',
+    segmentIndex: number,
+    offsetMs: number
+  ]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'transcription:get-status': [meetingId: string]
@@ -103,6 +127,14 @@ export interface IpcInvokeEvents {
   'recording:get-detail': [meetingId: string]
   'search:query': [query: string]
   'chat:send': [question: string]
+  'chat:new': []
+  'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
+  'chat:select-recording-stream': [
+    requestId: string,
+    meetingId: string,
+    question: string,
+    history?: ChatHistoryMessage[]
+  ]
   'detection:dismiss': []
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
@@ -123,6 +155,8 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
+  'prefs:get-low-spec-mac-processing-banner-dismissed': []
+  'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -135,7 +169,12 @@ export interface IpcInvokeEvents {
   'e2e:detection-poll': [advanceMs?: number]
   'e2e:trigger-main-error': []
   'e2e:trigger-notes-ready-notification': [
-    options?: { meetingId?: string; title?: string; status?: 'complete' | 'failed' }
+    options?: {
+      meetingId?: string
+      title?: string
+      status?: 'complete' | 'failed'
+      allowRepeat?: boolean
+    }
   ]
   'updater:get-status': []
   'updater:check': []
@@ -166,6 +205,7 @@ export interface IpcInvokeReturns {
   'recording:finalize-stop': void
   'recording:get-state': RecordingState
   'recording:save-chunk': void
+  'recording:save-segment-timing': void
   'recording:update-title': void
   'recording:delete': void
   'transcription:get-status': TranscriptionStatus
@@ -196,6 +236,9 @@ export interface IpcInvokeReturns {
   }
   'search:query': SearchResult[]
   'chat:send': string
+  'chat:new': void
+  'chat:send-stream': void
+  'chat:select-recording-stream': void
   'detection:dismiss': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
@@ -213,6 +256,8 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
+  'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
+  'prefs:set-low-spec-mac-processing-banner-dismissed': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
@@ -244,6 +289,15 @@ export interface IpcOnEvents {
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]
   'detection:auto-stop-cancelled': [payload: DetectionAutoStopCancelledPayload]
+  'chat:chunk': [payload: { requestId: string; content: string }]
+  'chat:done': [
+    payload: {
+      requestId: string
+      content: string
+      clarificationOptions?: ChatClarificationOption[]
+    }
+  ]
+  'chat:error': [payload: { requestId: string; error: string }]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]

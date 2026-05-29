@@ -5,7 +5,11 @@ import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
-import { DEFAULT_OLLAMA_MODEL, MODELS_SUBDIR } from '../../shared/constants'
+import {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  DEFAULT_OLLAMA_MODEL,
+  MODELS_SUBDIR
+} from '../../shared/constants'
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 
@@ -15,6 +19,8 @@ const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user
 const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
+const SHOULD_PULL_ASK_AI_EMBEDDING_MODEL =
+  !IS_TEST_RUNTIME && process.env.AUTODOC_ASK_AI_EMBEDDINGS !== '0'
 const TEST_OLLAMA_SETUP_SEQUENCE =
   IS_WIN && IS_TEST_RUNTIME && process.env.AUTODOC_TEST_REAL_SETUP === '1'
     ? (process.env.AUTODOC_TEST_OLLAMA_SETUP_SEQUENCE ?? '')
@@ -23,6 +29,13 @@ const TEST_OLLAMA_SETUP_SEQUENCE =
         .filter(Boolean)
     : []
 
+type PreferredModelResolver = () => string | null | undefined | Promise<string | null | undefined>
+
+export interface OllamaManagerOptions {
+  model?: string
+  resolveModel?: PreferredModelResolver
+}
+
 function consumeTestOllamaSetupStep(): string | null {
   return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
 }
@@ -30,24 +43,34 @@ function consumeTestOllamaSetupStep(): string | null {
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   private model: string
+  private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
 
-  constructor(model?: string) {
+  constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
-    this.model = model ?? DEFAULT_OLLAMA_MODEL
+    const options =
+      typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
+    this.model = options.model ?? DEFAULT_OLLAMA_MODEL
+    this.resolveModel = options.resolveModel ?? null
   }
 
   /** Call once at startup. Subsequent calls return the same promise. */
   startAndPull(): Promise<void> {
     if (!this.readyPromise) {
-      const testStep = consumeTestOllamaSetupStep()
-      this.readyPromise = (
-        testStep ? this.runTestSetupStep(testStep) : this.start().then(() => this.pullModel())
-      ).catch((err) => {
-        // Reset so the next call retries instead of permanently failing
-        this.readyPromise = null
-        throw err
-      })
+      this.readyPromise = this.selectPreferredModel()
+        .then(() => {
+          const testStep = consumeTestOllamaSetupStep()
+          return testStep
+            ? this.runTestSetupStep(testStep)
+            : this.start()
+                .then(() => this.pullModel())
+                .then(() => this.pullOptionalEmbeddingModel())
+        })
+        .catch((err) => {
+          // Reset so the next call retries instead of permanently failing
+          this.readyPromise = null
+          throw err
+        })
     }
     return this.readyPromise
   }
@@ -87,7 +110,18 @@ export class OllamaManager extends EventEmitter {
   }
 
   setModel(model: string): void {
+    if (this.model === model) return
     this.model = model
+    this.emit('model-selected', model)
+  }
+
+  private async selectPreferredModel(): Promise<void> {
+    if (!this.resolveModel) return
+
+    const preferredModel = await this.resolveModel()
+    if (!preferredModel) return
+
+    this.setModel(preferredModel)
   }
 
   private getModelsDir(): string {
@@ -126,14 +160,14 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async hasModel(): Promise<boolean> {
+  async hasModel(model = this.model): Promise<boolean> {
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000)
       })
       if (!res.ok) return false
       const data = (await res.json()) as { models?: { name: string }[] }
-      return data.models?.some((m) => m.name.startsWith(this.model)) ?? false
+      return data.models?.some((m) => m.name === model || m.name.startsWith(`${model}:`)) ?? false
     } catch {
       return false
     }
@@ -318,22 +352,22 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async pullModel(): Promise<void> {
-    if (await this.hasModel()) {
-      this.emit('pull-complete', this.model)
+  async pullModel(model = this.model): Promise<void> {
+    if (await this.hasModel(model)) {
+      this.emit('pull-complete', model)
       return
     }
 
-    this.emit('pull-start', this.model)
+    this.emit('pull-start', model)
 
     const res = await fetch(`${OLLAMA_BASE_URL}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: this.model, stream: true })
+      body: JSON.stringify({ name: model, stream: true })
     })
 
     if (!res.ok) {
-      throw new Error(`Failed to pull model ${this.model}: ${res.status}`)
+      throw new Error(`Failed to pull model ${model}: ${res.status}`)
     }
 
     const reader = res.body?.getReader()
@@ -356,7 +390,7 @@ export class OllamaManager extends EventEmitter {
           const data = JSON.parse(line) as { status?: string; total?: number; completed?: number }
           if (data.total && data.completed) {
             this.emit('pull-progress', {
-              model: this.model,
+              model,
               percent: Math.round((data.completed / data.total) * 100),
               status: data.status ?? 'downloading'
             })
@@ -367,7 +401,17 @@ export class OllamaManager extends EventEmitter {
       }
     }
 
-    this.emit('pull-complete', this.model)
+    this.emit('pull-complete', model)
+  }
+
+  private async pullOptionalEmbeddingModel(): Promise<void> {
+    if (!SHOULD_PULL_ASK_AI_EMBEDDING_MODEL) return
+    const model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL
+    try {
+      await this.pullModel(model)
+    } catch {
+      this.emit('pull-complete', model)
+    }
   }
 
   private async downloadBinary(): Promise<void> {

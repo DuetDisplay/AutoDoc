@@ -5,7 +5,9 @@ import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
+const originalArch = process.arch
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
+const originalWindowsAssetBaseUrl = process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
 type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
 
 function getExecFileCallback(
@@ -27,18 +29,35 @@ function setPlatform(platform: NodeJS.Platform) {
   })
 }
 
+function setArch(arch: NodeJS.Architecture) {
+  Object.defineProperty(process, 'arch', {
+    configurable: true,
+    value: arch
+  })
+}
+
 async function loadWhisperManager(
   platform: 'darwin' | 'win32',
   rootDir: string,
   options?: {
     isPackaged?: boolean
     ffmpegStaticPath?: string | null
+    macBackend?: 'mlx-whisper' | 'whisper-cpp' | 'auto'
     windowsBackend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp' | 'auto'
   }
 ) {
   setPlatform(platform)
-  if (platform === 'win32' && options?.windowsBackend !== 'auto') {
-    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = options?.windowsBackend ?? 'whisper-cpp'
+  if (platform === 'darwin' && options?.macBackend && options.macBackend !== 'auto') {
+    process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND = options.macBackend
+  }
+  if (platform === 'win32' && options?.windowsBackend && options.windowsBackend !== 'auto') {
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = options.windowsBackend
+    if (
+      options.windowsBackend !== 'whisper-cpp' &&
+      !process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+    ) {
+      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = 'https://example.invalid/autodoc'
+    }
   }
   vi.resetModules()
 
@@ -85,7 +104,13 @@ afterEach(async () => {
   vi.doUnmock('child_process')
   vi.doUnmock('ffmpeg-static')
   delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
+  delete process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
+  if (originalWindowsAssetBaseUrl == null) {
+    delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+  } else {
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = originalWindowsAssetBaseUrl
+  }
   if (originalTestUserDataDir == null) {
     delete process.env.AUTODOC_TEST_USER_DATA_DIR
   } else {
@@ -93,6 +118,7 @@ afterEach(async () => {
   }
   vi.resetModules()
   setPlatform(originalPlatform)
+  setArch(originalArch)
 })
 
 describe('Whisper onboarding dependency installation', () => {
@@ -104,7 +130,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        macBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -137,6 +164,172 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('uses MLX Whisper by default on Apple Silicon without reporting a model download during validation', async () => {
+    setArch('arm64')
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-mlx-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
+        ffmpegStaticPath: bundledFfmpeg,
+        isPackaged: true,
+        macBackend: 'auto'
+      })
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used when packaged ffmpeg exists')
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(dirname(manager.getMlxWhisperPythonPath()), { recursive: true })
+      await mkdir(dirname(manager.getMlxWhisperScriptPath()), { recursive: true })
+      await writeFile(manager.getMlxWhisperPythonPath(), 'python')
+      await writeFile(manager.getMlxWhisperScriptPath(), 'bridge')
+      await writeFile(
+        join((manager as any).getMlxWhisperRuntimeDir(), 'AUTODOC_MLX_WHISPER_READY.txt'),
+        'ready'
+      )
+
+      const statuses: Array<{ phase: string; backend?: string; backendLabel?: string }> = []
+      manager.on('setup-status', (status) => {
+        statuses.push({
+          phase: status.phase,
+          backend: status.backend,
+          backendLabel: status.backendLabel
+        })
+      })
+
+      vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('mlx-whisper')
+      expect(manager.getModelName()).toBe('distil-large-v3')
+      await expect(access(manager.getMlxWhisperPythonPath())).resolves.toBeUndefined()
+      await expect(access(manager.getMlxWhisperScriptPath())).resolves.toBeUndefined()
+      await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      expect(statuses).toContainEqual({
+        phase: 'checking',
+        backend: 'mlx-whisper',
+        backendLabel: 'Apple Silicon optimized transcription'
+      })
+      expect(statuses).not.toContainEqual({
+        phase: 'downloading-model',
+        backend: 'mlx-whisper',
+        backendLabel: 'Apple Silicon optimized transcription'
+      })
+      expect(statuses.at(-1)).toMatchObject({
+        phase: 'ready',
+        backend: 'mlx-whisper'
+      })
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to whisper.cpp when the bundled MLX Whisper runtime is incomplete', async () => {
+    setArch('arm64')
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-mlx-incomplete-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        ffmpegStaticPath: bundledFfmpeg,
+        isPackaged: true,
+        macBackend: 'auto'
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(dirname(manager.getMlxWhisperPythonPath()), { recursive: true })
+      await mkdir(dirname(manager.getMlxWhisperScriptPath()), { recursive: true })
+      await writeFile(manager.getMlxWhisperPythonPath(), 'python')
+      await writeFile(manager.getMlxWhisperScriptPath(), 'bridge')
+
+      const usabilitySpy = vi.spyOn(manager as any, 'isMlxWhisperUsableWithRetry')
+      const downloadWhisperSpy = vi
+        .spyOn(manager as never, 'downloadWhisperMac')
+        .mockImplementation(async () => {
+          await writeFile(manager.getWhisperPath(), 'whisper')
+        })
+      const downloadModelSpy = vi
+        .spyOn(manager as never, 'downloadModel')
+        .mockImplementation(async () => {
+          await writeFile(manager.getModelPath(), 'model')
+        })
+
+      await manager.ensureReady()
+
+      expect(usabilitySpy).not.toHaveBeenCalled()
+      expect(downloadWhisperSpy).toHaveBeenCalledTimes(1)
+      expect(downloadModelSpy).toHaveBeenCalledTimes(1)
+      expect(manager.getTranscriptionBackend()).toBe('whisper-cpp')
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears the MLX Whisper model cache and retries after probe validation fails', async () => {
+    setArch('arm64')
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-mlx-retry-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
+    await writeFile(bundledFfmpeg, 'ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
+        ffmpegStaticPath: bundledFfmpeg,
+        isPackaged: true,
+        macBackend: 'auto'
+      })
+
+      const manager = new WhisperManager()
+      await mkdir(dirname(manager.getMlxWhisperPythonPath()), { recursive: true })
+      await mkdir(dirname(manager.getMlxWhisperScriptPath()), { recursive: true })
+      await writeFile(manager.getMlxWhisperPythonPath(), 'python')
+      await writeFile(manager.getMlxWhisperScriptPath(), 'bridge')
+      await writeFile(
+        join((manager as any).getMlxWhisperRuntimeDir(), 'AUTODOC_MLX_WHISPER_READY.txt'),
+        'ready'
+      )
+
+      const staleCacheFile = join((manager as any).getMlxWhisperCacheDir(), 'stale-model-file')
+      await mkdir(dirname(staleCacheFile), { recursive: true })
+      await writeFile(staleCacheFile, 'stale')
+
+      const statuses: Array<{ phase: string; backend?: string; backendLabel?: string }> = []
+      manager.on('setup-status', (status) => {
+        statuses.push({
+          phase: status.phase,
+          backend: status.backend,
+          backendLabel: status.backendLabel
+        })
+      })
+      const usabilitySpy = vi
+        .spyOn(manager as any, 'isMlxWhisperUsableWithRetry')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+
+      await manager.ensureReady()
+
+      expect(usabilitySpy).toHaveBeenCalledTimes(2)
+      await expect(access(staleCacheFile)).rejects.toThrow()
+      expect(statuses).toContainEqual({
+        phase: 'downloading-model',
+        backend: 'mlx-whisper',
+        backendLabel: 'Apple Silicon optimized transcription'
+      })
+      expect(statuses.at(-1)).toMatchObject({
+        phase: 'ready',
+        backend: 'mlx-whisper'
+      })
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('allows macOS dev builds to adopt system binaries when explicitly enabled', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-dev-mac-'))
     const systemBinDir = join(rootDir, 'system-bin')
@@ -149,7 +342,9 @@ describe('Whisper onboarding dependency installation', () => {
 
     try {
       process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK = '1'
-      const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir)
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('darwin', rootDir, {
+        macBackend: 'whisper-cpp'
+      })
       execSyncMock.mockImplementation((command: string) => {
         if (command.includes('whisper-cli')) return whisperBinary
         if (command.includes('ffmpeg')) return ffmpegBinary
@@ -216,7 +411,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()
@@ -270,7 +466,8 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(bundledRuntimeDir, 'libggml-metal.so'), 'bundled-lib')
 
       const { WhisperManager, execFileMock } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true
+        isPackaged: true,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()
@@ -296,6 +493,7 @@ describe('Whisper onboarding dependency installation', () => {
     const bundledRuntimeDir = join(rootDir, 'resources', 'macos-whisper-runtime', process.arch)
 
     try {
+      vi.spyOn(process, 'cwd').mockReturnValue(rootDir)
       await mkdir(bundledRuntimeDir, { recursive: true })
       await writeFile(join(bundledRuntimeDir, 'whisper-cpp'), 'bundled-whisper')
       await writeFile(join(bundledRuntimeDir, 'libwhisper.1.dylib'), 'bundled-lib')
@@ -304,13 +502,14 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(bundledRuntimeDir, 'libomp.dylib'), 'bundled-lib')
 
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true
+        isPackaged: true,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()
 
       await expect((manager as any).downloadWhisperMac()).rejects.toThrow(
-        'AutoDoc is missing the checksum'
+        'Managed macOS whisper runtime assets are not configured'
       )
       await expect(access(manager.getWhisperPath())).rejects.toThrow()
     } finally {
@@ -323,7 +522,8 @@ describe('Whisper onboarding dependency installation', () => {
 
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
-        isPackaged: true
+        isPackaged: true,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()
@@ -665,7 +865,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          macBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {
@@ -983,7 +1184,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()
@@ -1024,7 +1226,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        macBackend: 'whisper-cpp'
       })
 
       vi.stubGlobal(
@@ -1062,7 +1265,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager } = await loadWhisperManager('darwin', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        macBackend: 'whisper-cpp'
       })
 
       const manager = new WhisperManager()

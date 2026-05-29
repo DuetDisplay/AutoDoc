@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { MODELS_SUBDIR } from '../../shared/constants'
+import { getScopedTestUserDataDir } from './test-runtime'
 
 const CANONICAL_APP_DIR = 'AutoDoc'
 const OLLAMA_DATA_SUBDIR = 'ollama-data'
@@ -8,7 +9,7 @@ const OLLAMA_DATA_SUBDIR = 'ollama-data'
 export function shouldUseInstalledAppRuntimeFallback(): boolean {
   return (
     !app.isPackaged &&
-    !process.env.AUTODOC_TEST_USER_DATA_DIR &&
+    !getScopedTestUserDataDir() &&
     process.env.AUTODOC_E2E !== '1' &&
     process.env.AUTODOC_TEST_REAL_SETUP !== '1'
   )

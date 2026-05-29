@@ -80,4 +80,12 @@ describe('PrefsStore', () => {
     store.setDiagnosticLogUploadConsent(true)
     expect(store.getDiagnosticLogUploadConsent()).toBe(true)
   })
+
+  it('persists the low-memory Mac processing banner dismissal flag', () => {
+    expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(false)
+
+    store.setLowSpecMacProcessingBannerDismissed(true)
+
+    expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(true)
+  })
 })

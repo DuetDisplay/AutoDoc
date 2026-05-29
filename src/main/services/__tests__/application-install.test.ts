@@ -91,6 +91,43 @@ describe('application-install', () => {
     expect(mockSpawn).not.toHaveBeenCalled()
   })
 
+  it('allows supported macOS versions', async () => {
+    const { isSupportedMacOSVersion, warnIfUnsupportedMacOS } = await loadModule()
+
+    expect(isSupportedMacOSVersion('14.0')).toBe(true)
+    expect(isSupportedMacOSVersion('14.4.1')).toBe(true)
+
+    await expect(warnIfUnsupportedMacOS('darwin', '14.0')).resolves.toBe(true)
+    expect(mockShowMessageBox).not.toHaveBeenCalled()
+    expect(mockExit).not.toHaveBeenCalled()
+  })
+
+  it('warns and quits on macOS Ventura and older', async () => {
+    const { isSupportedMacOSVersion, warnIfUnsupportedMacOS } = await loadModule()
+
+    expect(isSupportedMacOSVersion('13.6.7')).toBe(false)
+    expect(isSupportedMacOSVersion('12.7.6')).toBe(false)
+
+    await expect(warnIfUnsupportedMacOS('darwin', '13.6.7')).resolves.toBe(false)
+
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'warning',
+      title: 'Unsupported macOS Version',
+      message: 'AutoDoc requires macOS Sonoma or newer.',
+      buttons: ['Quit AutoDoc'],
+    }))
+    expect(mockExit).toHaveBeenCalledWith(0)
+  })
+
+  it('does not apply the macOS compatibility warning on other platforms', async () => {
+    const { warnIfUnsupportedMacOS } = await loadModule()
+
+    await expect(warnIfUnsupportedMacOS('win32', '13.6.7')).resolves.toBe(true)
+
+    expect(mockShowMessageBox).not.toHaveBeenCalled()
+    expect(mockExit).not.toHaveBeenCalled()
+  })
+
   it('redirects to the installed macOS copy and quits when the version matches', async () => {
     const { enforceInstalledApplicationPolicy } = await loadModule()
 

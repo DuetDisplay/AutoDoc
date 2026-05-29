@@ -76,7 +76,9 @@ describe('Sidebar', () => {
       send: vi.fn(),
       invoke: vi.fn((channel: string) => {
         if (channel === 'ollama:check-status') return Promise.resolve(false)
-        if (channel === 'ollama:get-setup-status') return Promise.resolve({ phase: 'starting', percent: 0 })
+        if (channel === 'ollama:get-setup-status') {
+          return Promise.resolve({ phase: 'starting', percent: 0 })
+        }
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
@@ -85,6 +87,27 @@ describe('Sidebar', () => {
 
     await renderSidebar()
     expect(screen.getByText('Starting Ollama runtime...')).toBeInTheDocument()
+  })
+
+  it('shows Ollama connected instead of stale startup progress when the runtime is already running', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') {
+          return Promise.resolve({ phase: 'starting', percent: 0 })
+        }
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {}),
+    } as any
+
+    await renderSidebar()
+    await waitFor(() => {
+      expect(screen.getByText('Ollama connected')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Starting Ollama runtime...')).not.toBeInTheDocument()
   })
 
   it('shows whisper download progress when downloading speech model', async () => {

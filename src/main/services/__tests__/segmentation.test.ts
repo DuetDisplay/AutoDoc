@@ -3,8 +3,10 @@ import { join } from 'path'
 import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const mocks = vi.hoisted(() => ({
+  logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn()
 }))
 
@@ -27,6 +29,7 @@ vi.mock('../crypto', () => ({
 }))
 
 vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: mocks.logAutodocEvent,
   logAutodocFailure: mocks.logAutodocFailure
 }))
 
@@ -43,7 +46,9 @@ function createMockProvider(): LLMProvider {
       statusUpdates: []
     }),
     checkConnection: vi.fn().mockResolvedValue(true),
-    abortActiveRequests: vi.fn()
+    abortActiveRequests: vi.fn(),
+    setModel: vi.fn(),
+    setLowMemoryMode: vi.fn()
   }
 }
 
@@ -493,5 +498,77 @@ describe('SegmentationService', () => {
       'SEGMENTATION_PREEMPTED'
     )
     expect((service as any).queue).toEqual(['direct-1', 'recovery-active'])
+  })
+
+  it('enables low-memory LLM mode for low-spec Mac profiles', async () => {
+    provider = createMockProvider()
+    ;(provider.summarize as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decisions: [
+        {
+          topic: 'Planning',
+          title: 'Follow-up planned',
+          content: 'The team agreed to follow up next week.',
+          assignee: null,
+          deadline: null,
+          sourceStartMs: 0,
+          sourceEndMs: 15_000
+        }
+      ],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    })
+    service = new SegmentationService(
+      provider,
+      createMockOllamaManager(),
+      '/mock/home/AutoDoc/recordings',
+      null,
+      () => ({
+        id: 'mac-low-spec',
+        label: 'Low-spec Apple Silicon Mac',
+        reason: 'totalMemoryGiB <= 8.5',
+        hardware: {
+          platform: 'darwin',
+          arch: 'arm64',
+          isAppleSilicon: true,
+          chip: 'Apple M1',
+          logicalProcessors: 8,
+          totalMemoryGiB: 8,
+          freeMemoryGiB: 2.5,
+          memoryPressure: 'green',
+          swapUsedGiB: 0
+        },
+        transcriptionBackend: 'mlx-whisper',
+        transcriptionModel: 'distil-large-v3',
+        notesModel: LOW_SPEC_MAC_OLLAMA_MODEL,
+        dualSourceMode: 'sequential',
+        notesAfterTranscriptionOnly: true,
+        serializeLocalProcessing: true
+      })
+    )
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-low-0',
+          meetingId: 'm-low',
+          speaker: 'Chris',
+          text: 'We should follow up next week.',
+          startMs: 0,
+          endMs: 15_000,
+          confidence: 0.8
+        }
+      ]) as any
+    )
+
+    await (service as any).processJob('m-low')
+
+    expect(provider.setLowMemoryMode).toHaveBeenCalledWith(true)
+    expect(provider.setModel).toHaveBeenCalledWith(LOW_SPEC_MAC_OLLAMA_MODEL)
+    expect(provider.summarize).toHaveBeenCalledOnce()
   })
 })

@@ -3,52 +3,136 @@ import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
+import type { ChatClarificationOption } from '../../../preload/ipc'
 
 export function AskAI() {
-  const { messages, addMessage } = useChatStore()
+  const { messages, addMessage, updateMessage, appendToMessage, clearMessages } = useChatStore()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const activeStreamCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
   }, [])
 
   useEffect(() => {
+    return () => {
+      activeStreamCleanupRef.current?.()
+    }
+  }, [])
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, loading])
 
-  const handleSend = async () => {
-    const question = input.trim()
+  const sendChatRequest = async (params: {
+    question: string
+    displayQuestion: string
+    selectedMeetingId?: string
+  }) => {
+    const question = params.question.trim()
     if (!question || loading) return
-
-    setInput('')
-    addMessage({ role: 'user', content: question })
+    activeStreamCleanupRef.current?.()
+    const requestId =
+      globalThis.crypto?.randomUUID?.() ??
+      `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const assistantMessageId = `assistant-${requestId}`
+    const history = messages
+      .filter((message) => message.content.trim().length > 0)
+      .slice(-8)
+      .map((message) => ({ role: message.role, content: message.content }))
+    addMessage({ role: 'user', content: params.displayQuestion })
+    addMessage({
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      originalQuestion: question
+    })
     setLoading(true)
     recordDiagnosticAction({
       category: 'chat',
       action: 'chat_message_sent',
       details: {
-        questionLength: question.length,
-      },
+        questionLength: question.length
+      }
     })
     trackEvent('chat_message_sent')
 
-    try {
-      const response = await window.electronAPI.invoke('chat:send', question)
-      addMessage({ role: 'assistant', content: response })
-    } catch (err) {
-      addMessage({
-        role: 'assistant',
-        content: 'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+    const cleanupListeners = [
+      window.electronAPI.on('chat:chunk', (payload) => {
+        if (payload.requestId !== requestId) return
+        appendToMessage(assistantMessageId, payload.content)
+      }),
+      window.electronAPI.on('chat:done', (payload) => {
+        if (payload.requestId !== requestId) return
+        updateMessage(assistantMessageId, payload.content, payload.clarificationOptions)
+        setLoading(false)
+        activeStreamCleanupRef.current?.()
+        activeStreamCleanupRef.current = null
+        inputRef.current?.focus()
+      }),
+      window.electronAPI.on('chat:error', (payload) => {
+        if (payload.requestId !== requestId) return
+        updateMessage(
+          assistantMessageId,
+          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+        )
+        console.error('Chat failed:', payload.error)
+        setLoading(false)
+        activeStreamCleanupRef.current?.()
+        activeStreamCleanupRef.current = null
+        inputRef.current?.focus()
       })
+    ]
+    activeStreamCleanupRef.current = () => {
+      for (const cleanup of cleanupListeners) cleanup()
+    }
+
+    try {
+      if (params.selectedMeetingId) {
+        await window.electronAPI.invoke(
+          'chat:select-recording-stream',
+          requestId,
+          params.selectedMeetingId,
+          question,
+          history
+        )
+      } else {
+        await window.electronAPI.invoke('chat:send-stream', requestId, question, history)
+      }
+    } catch (err) {
+      updateMessage(
+        assistantMessageId,
+        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+      )
       console.error('Chat failed:', err)
-    } finally {
       setLoading(false)
+      activeStreamCleanupRef.current?.()
+      activeStreamCleanupRef.current = null
       inputRef.current?.focus()
     }
+  }
+
+  const handleSend = async () => {
+    const question = input.trim()
+    if (!question || loading) return
+    setInput('')
+    await sendChatRequest({ question, displayQuestion: question })
+  }
+
+  const handleClarificationSelect = async (
+    message: { originalQuestion?: string },
+    option: ChatClarificationOption
+  ) => {
+    if (loading) return
+    await sendChatRequest({
+      question: message.originalQuestion ?? `Answer using ${option.title}`,
+      displayQuestion: option.title,
+      selectedMeetingId: option.meetingId
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -58,9 +142,31 @@ export function AskAI() {
     }
   }
 
+  const handleNewChat = async () => {
+    activeStreamCleanupRef.current?.()
+    activeStreamCleanupRef.current = null
+    clearMessages()
+    setInput('')
+    setLoading(false)
+    await window.electronAPI.invoke('chat:new')
+    inputRef.current?.focus()
+  }
+
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Ask AI" />
+      <PageHeader
+        title="Ask AI"
+        action={
+          <button
+            type="button"
+            onClick={handleNewChat}
+            disabled={messages.length === 0 && !input.trim()}
+            className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
+          >
+            New chat
+          </button>
+        }
+      />
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 && !loading && (
@@ -81,7 +187,8 @@ export function AskAI() {
               </svg>
             </div>
             <p className="text-ink-muted text-[13px] text-center max-w-xs">
-              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to answer.
+              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to
+              answer.
             </p>
             {ollamaReady === false && (
               <p className="text-clay text-[11px] mt-1">
@@ -95,7 +202,7 @@ export function AskAI() {
           <div className="flex flex-col gap-4 max-w-2xl mx-auto">
             {messages.map((msg, i) => (
               <div
-                key={i}
+                key={msg.id ?? i}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
@@ -105,26 +212,56 @@ export function AskAI() {
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
-                  {msg.role === 'assistant' ? (
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  {msg.role === 'assistant' && msg.content.length === 0 ? (
+                    <div className="flex gap-1.5 py-1">
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '0ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '150ms' }}
+                      />
+                      <span
+                        className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
+                        style={{ animationDelay: '300ms' }}
+                      />
+                    </div>
+                  ) : msg.role === 'assistant' ? (
+                    <div className="space-y-3">
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
+                        <div className="grid gap-2">
+                          {msg.clarificationOptions.map((option) => (
+                            <button
+                              key={option.meetingId}
+                              type="button"
+                              disabled={loading}
+                              onClick={() => handleClarificationSelect(msg, option)}
+                              className="text-left rounded-lg border border-border bg-bg px-3 py-2 hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-60"
+                            >
+                              <span className="block text-[13px] font-medium text-ink">
+                                {option.title}
+                              </span>
+                              <span className="block text-[11px] text-ink-muted">
+                                {option.subtitle}
+                              </span>
+                              {option.notePreview && (
+                                <span className="mt-1 block text-[11px] text-ink-muted line-clamp-2">
+                                  {option.notePreview}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     msg.content
                   )}
                 </div>
               </div>
             ))}
-
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-bg-card border border-border rounded-2xl rounded-bl-md px-4 py-3">
-                  <div className="flex gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 rounded-full bg-ink-faint animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

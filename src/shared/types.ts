@@ -218,8 +218,10 @@ export interface WhisperSetupStatus {
     | 'error'
   percent: number
   error?: string
-  backend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp'
+  backend?: 'mlx-whisper' | 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp'
   backendLabel?: string
+  macProcessingProfileId?: 'mac-normal' | 'mac-low-spec'
+  macProcessingProfileReason?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'

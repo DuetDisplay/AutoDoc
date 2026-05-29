@@ -26,6 +26,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoRetryAttempts = useRef(0)
   const hasSeenMeaningfulSetupProgress = useRef(false)
+  const isLowSpecMac = setupStatus.macProcessingProfileId === 'mac-low-spec'
 
   const clearRetryTimer = () => {
     if (retryTimer.current) {
@@ -176,6 +177,21 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
           phaseLabels[phase]?.(percent) ??
           (error ? `Setup failed: ${error}` : 'Preparing...')}
       </div>
+
+      {isLowSpecMac && (
+        <div className="max-w-[390px] mx-auto mb-5 rounded-[16px] border border-sage/25 bg-sage-light/45 p-4 text-left">
+          <h3 className="text-[14px] font-semibold text-ink mb-2">Optimized for this Mac</h3>
+          <p className="text-[13px] text-ink-muted leading-relaxed mb-2">
+            AutoDoc detected that this Mac has limited memory, so we will use a lower-impact local
+            processing mode. Transcription and notes may take longer, but this helps keep recording
+            reliable while everything stays on your device.
+          </p>
+          <p className="text-[12px] text-ink-faint leading-relaxed">
+            AutoDoc will process mic and system audio one at a time on this Mac to reduce memory
+            pressure.
+          </p>
+        </div>
+      )}
 
       {isAutoRetrying && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">

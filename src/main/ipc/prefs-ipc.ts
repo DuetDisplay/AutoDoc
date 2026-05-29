@@ -95,4 +95,15 @@ export function registerPrefsIpc(
     onExperimentalSpeakerDiarizationChanged?.(false)
     broadcastExperimentalSpeakerDiarization(false)
   })
+
+  ipcMain.handle('prefs:get-low-spec-mac-processing-banner-dismissed', (): boolean => {
+    return prefsStore.getLowSpecMacProcessingBannerDismissed()
+  })
+
+  ipcMain.handle(
+    'prefs:set-low-spec-mac-processing-banner-dismissed',
+    (_event, dismissed: boolean): void => {
+      prefsStore.setLowSpecMacProcessingBannerDismissed(dismissed)
+    }
+  )
 }

@@ -74,6 +74,7 @@ export function installMockElectronApi(
 }
 
 export function resetRendererStores(): void {
+  window.localStorage?.removeItem('autodoc-ask-ai-chat')
   useCalendarStore.setState({
     accounts: [],
     isConnecting: false,

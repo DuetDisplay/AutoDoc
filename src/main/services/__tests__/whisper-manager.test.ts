@@ -51,6 +51,7 @@ describe('WhisperManager', () => {
     vi.clearAllMocks()
     isPackaged = false
     delete process.env.AUTODOC_ALLOW_SYSTEM_RUNTIME_FALLBACK
+    process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND = 'whisper-cpp'
     process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'whisper-cpp'
     manager = new WhisperManager()
     mockAccess.mockResolvedValue(undefined)
@@ -248,6 +249,22 @@ describe('WhisperManager', () => {
     await manager.ensureReady()
 
     expect(resolveWhisperSpy).toHaveBeenCalled()
+    expect(mockExecSync).not.toHaveBeenCalled()
+  })
+
+  it('uses the bundled ffmpeg binary in packaged builds', async () => {
+    isPackaged = true
+    manager = new WhisperManager()
+    const installBundledBinarySpy = vi
+      .spyOn(manager as never, 'installBundledBinary')
+      .mockResolvedValue(undefined)
+
+    await (manager as any).resolveFfmpeg()
+
+    expect(installBundledBinarySpy).toHaveBeenCalledWith(
+      '/mock/ffmpeg-static',
+      manager.getFfmpegPath()
+    )
     expect(mockExecSync).not.toHaveBeenCalled()
   })
 

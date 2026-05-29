@@ -18,6 +18,7 @@ import {
 import { RecordingBanner } from './components/RecordingBanner'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
+import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
 import { Onboarding } from './pages/Onboarding'
 import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
@@ -385,6 +386,7 @@ export default function App() {
           />
           <MeetingDetectedBanner />
           <PermissionToast />
+          <LowSpecMacProcessingBanner />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

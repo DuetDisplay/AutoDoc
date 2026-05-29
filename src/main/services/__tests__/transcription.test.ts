@@ -34,7 +34,8 @@ vi.mock('fs/promises', () => ({
 }))
 
 vi.mock('child_process', () => ({
-  spawn: vi.fn()
+  spawn: vi.fn(),
+  execFile: vi.fn()
 }))
 
 vi.mock('../crypto', () => ({
@@ -63,7 +64,13 @@ function createMockWhisperManager(ready = true): WhisperManager {
     getWhisperPath: vi.fn().mockReturnValue('/mock/whisper'),
     getFfmpegPath: vi.fn().mockReturnValue('/mock/ffmpeg'),
     getModelPath: vi.fn().mockReturnValue('/mock/model.bin'),
+    getModelName: vi.fn().mockReturnValue('distil-large-v3'),
     getModelsDir: vi.fn().mockReturnValue('/mock/home/AutoDoc/models'),
+    getTranscriptionBackend: vi.fn().mockReturnValue('whisper-cpp'),
+    getTranscriptionBackendLabel: vi.fn().mockReturnValue('compatible transcription'),
+    getMacProcessingProfile: vi.fn().mockReturnValue(null),
+    isMlxWhisperSelected: vi.fn().mockReturnValue(false),
+    isFasterWhisperSelected: vi.fn().mockReturnValue(false),
     emit: vi.fn(),
     on: vi.fn()
   } as unknown as WhisperManager
@@ -885,6 +892,14 @@ describe('TranscriptionService', () => {
     ).toBe('whisper-metal-crash')
   })
 
+  it('classifies Ollama runner stops with resource-limit hints as insufficient memory', () => {
+    expect(
+      classifyError(
+        'Ollama returned 500: {"error":"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error"}'
+      )
+    ).toBe('ollama-insufficient-memory')
+  })
+
   it('retries whisper on CPU after a macOS Metal abort', async () => {
     setPlatform('darwin')
     const first = new MockChildProcess()
@@ -1027,5 +1042,59 @@ describe('TranscriptionService', () => {
       suppressSpy.mock.results[0]?.value,
       expect.any(Array)
     )
+  })
+
+  it('uses sequential dual-source transcription on low-spec Apple Silicon Macs', async () => {
+    setPlatform('darwin')
+    ;(mockWhisper as any).isMlxWhisperSelected = vi.fn().mockReturnValue(true)
+    ;(mockWhisper as any).getMacProcessingProfile = vi.fn().mockReturnValue({
+      id: 'mac-low-spec',
+      reason: 'totalMemoryGiB <= 8.5',
+      hardware: {
+        platform: 'darwin',
+        arch: 'arm64',
+        isAppleSilicon: true,
+        chip: 'Apple M1',
+        logicalProcessors: 8,
+        totalMemoryGiB: 8,
+        freeMemoryGiB: 2.5,
+        memoryPressure: 'green',
+        swapUsedGiB: 0
+      },
+      transcriptionBackend: 'mlx-whisper',
+      transcriptionModel: 'distil-large-v3',
+      notesModel: 'llama3.2:3b',
+      dualSourceMode: 'sequential',
+      notesAfterTranscriptionOnly: true,
+      serializeLocalProcessing: true
+    })
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) {
+        return undefined
+      }
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    const order: string[] = []
+    ;(service as any).transcribeWithFallback = vi.fn(async (_wav: string, _meeting: string) => {
+      order.push(order.length === 0 ? 'first-complete' : 'second-complete')
+      return { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'words' }] }
+    })
+    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+      {
+        id: 'meeting-low-spec-0',
+        meetingId: 'meeting-low-spec',
+        speaker: 'Speaker',
+        text: 'words',
+        startMs: 0,
+        endMs: 1000,
+        confidence: -1
+      }
+    ])
+
+    await expect((service as any).processJob('meeting-low-spec')).resolves.toBeUndefined()
+
+    expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
+    expect(order).toEqual(['first-complete', 'second-complete'])
   })
 })

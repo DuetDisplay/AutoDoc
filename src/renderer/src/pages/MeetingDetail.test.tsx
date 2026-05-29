@@ -7,7 +7,7 @@ import {
   createMeetingSegments,
   createTranscript,
   installMockElectronApi,
-  resetRendererStores,
+  resetRendererStores
 } from '../test/fixtures'
 
 beforeEach(() => {
@@ -19,13 +19,21 @@ beforeEach(() => {
   })
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
-    value: vi.fn(),
+    value: vi.fn()
   })
   installMockElectronApi({
     'transcription:get-status': 'pending',
     'transcription:get-progress': undefined,
     'transcription:get-transcript': [
-      { id: 't1', meetingId: 'test-123', speaker: 'Speaker 1', text: 'Intro', startMs: 0, endMs: 5000, confidence: 0.9 },
+      {
+        id: 't1',
+        meetingId: 'test-123',
+        speaker: 'Speaker 1',
+        text: 'Intro',
+        startMs: 0,
+        endMs: 5000,
+        confidence: 0.9
+      }
     ],
     'segmentation:get-status': 'complete',
     'segmentation:get-progress': undefined,
@@ -43,15 +51,20 @@ beforeEach(() => {
           assignee: null,
           deadline: null,
           sourceStartMs: 12000,
-          sourceEndMs: 12000,
-        },
+          sourceEndMs: 12000
+        }
       ],
       discussion: [],
-      statusUpdates: [],
+      statusUpdates: []
     },
-    'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
+    'recording:get-detail': {
+      title: 'Test Meeting',
+      sourceName: 'Zoom',
+      date: Date.now(),
+      durationSeconds: 300
+    },
     'recording:get-media': { hasVideo: true, hasAudio: false, mediaBaseUrl: 'http://127.0.0.1:9' },
-    'speakers:get': {},
+    'speakers:get': {}
   })
 })
 
@@ -109,9 +122,18 @@ describe('MeetingDetail', () => {
       'segmentation:get-status': 'pending',
       'segmentation:get-progress': undefined,
       'segmentation:get-segments': null,
-      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
-      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
-      'speakers:get': {},
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {}
     })
 
     await renderMeetingDetail()
@@ -120,7 +142,9 @@ describe('MeetingDetail', () => {
   })
 
   it('updates the transcript and notes when processing completes live', async () => {
-    const transcript = [createTranscript({ meetingId: 'test-123', text: 'Launch the PR regression suite.' })]
+    const transcript = [
+      createTranscript({ meetingId: 'test-123', text: 'Launch the PR regression suite.' })
+    ]
     const segments = createMeetingSegments({
       information: [
         {
@@ -133,9 +157,9 @@ describe('MeetingDetail', () => {
           assignee: null,
           deadline: null,
           sourceStartMs: 12_000,
-          sourceEndMs: 18_000,
-        },
-      ],
+          sourceEndMs: 18_000
+        }
+      ]
     })
 
     const api = installMockElectronApi({
@@ -145,11 +169,20 @@ describe('MeetingDetail', () => {
       'segmentation:get-status': 'segmenting',
       'segmentation:get-progress': 10,
       'segmentation:get-segments': segments,
-      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
-      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
-      'speakers:get': {
-        'speaker-1': { label: 'Taylor' },
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
       },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {
+        'speaker-1': { label: 'Taylor' }
+      }
     })
 
     await renderMeetingDetail()
@@ -161,12 +194,12 @@ describe('MeetingDetail', () => {
       api.emit('transcription:status-changed', {
         meetingId: 'test-123',
         status: 'complete',
-        progress: 100,
+        progress: 100
       })
       api.emit('segmentation:status-changed', {
         meetingId: 'test-123',
         status: 'complete',
-        progress: 100,
+        progress: 100
       })
       await Promise.resolve()
     })
@@ -190,22 +223,31 @@ describe('MeetingDetail', () => {
         createTranscript({
           meetingId: 'test-123',
           speaker: 'Speaker 1',
-          text: 'This transcript is still available even though structured notes were not generated.',
-        }),
+          text: 'This transcript is still available even though structured notes were not generated.'
+        })
       ],
       'segmentation:get-status': 'no-notes',
       'segmentation:get-progress': undefined,
       'segmentation:get-segments': null,
-      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
-      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
-      'speakers:get': {},
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {}
     })
 
     await renderMeetingDetail()
 
     expect(screen.getByText('Transcript only')).toBeInTheDocument()
     expect(
-      screen.getAllByText(/AutoDoc could not turn this transcript into structured notes/i).length,
+      screen.getAllByText(/AutoDoc could not turn this transcript into structured notes/i).length
     ).toBeGreaterThan(0)
   })
 
@@ -217,21 +259,30 @@ describe('MeetingDetail', () => {
         createTranscript({
           meetingId: 'test-123',
           speaker: 'speaker-1',
-          text: 'We should rename speakers from the meeting detail view.',
-        }),
+          text: 'We should rename speakers from the meeting detail view.'
+        })
       ],
       'segmentation:get-status': 'complete',
       'segmentation:get-progress': undefined,
       'segmentation:get-segments': createMeetingSegments(),
-      'recording:get-detail': { title: 'Test Meeting', sourceName: 'Zoom', date: Date.now(), durationSeconds: 300 },
-      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
       'speakers:get': {
         'speaker-1': {
           label: 'Speaker 1',
-          suggestions: ['Avery'],
-        },
+          suggestions: ['Avery']
+        }
       },
-      'speakers:rename': undefined,
+      'speakers:rename': undefined
     })
 
     await renderMeetingDetail()
@@ -242,7 +293,12 @@ describe('MeetingDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Avery' }))
 
     await waitFor(() => {
-      expect(window.electronAPI.invoke).toHaveBeenCalledWith('speakers:rename', 'test-123', 'speaker-1', 'Avery')
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'speakers:rename',
+        'test-123',
+        'speaker-1',
+        'Avery'
+      )
       expect(screen.getAllByText('Avery').length).toBeGreaterThan(0)
     })
   })
@@ -252,11 +308,11 @@ describe('MeetingDetail', () => {
       createTranscript({
         meetingId: 'test-123',
         speaker: 'me',
-        text: 'Initial local transcript before speaker diarization.',
-      }),
+        text: 'Initial local transcript before speaker diarization.'
+      })
     ]
     let speakerData = {
-      me: { label: 'Me' },
+      me: { label: 'Me' }
     }
 
     const api = installMockElectronApi({
@@ -271,10 +327,14 @@ describe('MeetingDetail', () => {
         title: 'Test Meeting',
         sourceName: 'Entire screen',
         date: Date.now(),
-        durationSeconds: 300,
+        durationSeconds: 300
       },
-      'recording:get-media': { hasVideo: false, hasAudio: true, mediaBaseUrl: 'http://127.0.0.1:9' },
-      'speakers:get': () => speakerData,
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': () => speakerData
     })
 
     await renderMeetingDetail()
@@ -289,7 +349,7 @@ describe('MeetingDetail', () => {
       createTranscript({
         meetingId: 'test-123',
         speaker: 'me',
-        text: 'I am still the local speaker after diarization.',
+        text: 'I am still the local speaker after diarization.'
       }),
       createTranscript({
         id: 't-2',
@@ -298,19 +358,19 @@ describe('MeetingDetail', () => {
         text: 'Remote teammate joins as the diarized speaker.',
         startMs: 20_000,
         endMs: 26_000,
-        confidence: 0.95,
-      }),
+        confidence: 0.95
+      })
     ]
     speakerData = {
       me: { label: 'Me' },
-      speaker_1: { label: 'Speaker 1' },
+      speaker_1: { label: 'Speaker 1' }
     }
 
     await act(async () => {
       api.emit('transcription:status-changed', {
         meetingId: 'test-123',
         status: 'complete',
-        progress: 100,
+        progress: 100
       })
       await Promise.resolve()
     })
@@ -321,7 +381,9 @@ describe('MeetingDetail', () => {
       expect(screen.getAllByText('Me').length).toBeGreaterThan(0)
       expect(screen.getAllByText('Speaker 1').length).toBeGreaterThan(0)
       expect(screen.queryByText('Speaker 2')).not.toBeInTheDocument()
-      expect(screen.getByText('I am still the local speaker after diarization.')).toBeInTheDocument()
+      expect(
+        screen.getByText('I am still the local speaker after diarization.')
+      ).toBeInTheDocument()
     })
   })
 
@@ -338,14 +400,16 @@ describe('MeetingDetail', () => {
         sourceName: 'Zoom',
         date: Date.now(),
         durationSeconds: 12,
-        isFinalizing: true,
+        isFinalizing: true
       },
       'recording:get-media': { hasVideo: false, hasAudio: false },
-      'speakers:get': {},
+      'speakers:get': {}
     })
 
     await renderMeetingDetail()
 
-    expect(screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')).toBeInTheDocument()
+    expect(
+      screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')
+    ).toBeInTheDocument()
   })
 })
