@@ -56,7 +56,11 @@ export function registerLlmIpc(
   )
 
   ipcMain.handle('segmentation:retry', async (_event, meetingId: string): Promise<void> => {
-    onManualSegmentationRetry?.(meetingId)
+    try {
+      onManualSegmentationRetry?.(meetingId)
+    } catch (err) {
+      console.warn('Manual segmentation retry callback failed:', err)
+    }
     segmentationService.retry(meetingId)
   })
 

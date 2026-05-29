@@ -49,6 +49,8 @@ async function isRuntimeReady() {
   try {
     const marker = await require('fs/promises').readFile(READY_MARKER, 'utf8')
     return (
+      marker.includes(`target=${TARGET_KEY}`) &&
+      marker.includes(`python=${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}`) &&
       marker.includes(`mode=${BUNDLE_FORMAT}`) &&
       marker.includes(`wheelPlatform=${WHEEL_PLATFORM}`) &&
       marker.includes(`packages=${PACKAGES.join(',')}`)
@@ -96,7 +98,9 @@ async function main() {
   }
 
   if (!(await fileExists(ARCHIVE_PATH))) {
-    throw new Error(`Managed Python archive not found at ${ARCHIVE_PATH}. Run prepare:python-runtime first.`)
+    throw new Error(
+      `Managed Python archive not found at ${ARCHIVE_PATH}. Run prepare:python-runtime first.`
+    )
   }
 
   await rm(OUTPUT_DIR, { recursive: true, force: true })

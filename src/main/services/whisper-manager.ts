@@ -119,6 +119,7 @@ export class WhisperManager extends EventEmitter {
   private runtimeValidated = false
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
   private selectedMacProfile: MacProcessingProfile | null = null
+  private mlxWhisperDisabledForSession = false
   private windowsTranscriptionProfiles: Record<
     WindowsTranscriptionBackendId,
     WindowsTranscriptionProfile
@@ -208,6 +209,9 @@ export class WhisperManager extends EventEmitter {
   }
 
   isMlxWhisperSelected(): boolean {
+    if (this.mlxWhisperDisabledForSession) {
+      return false
+    }
     if (process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND === 'whisper-cpp') {
       return false
     }
@@ -522,8 +526,25 @@ export class WhisperManager extends EventEmitter {
       await this.adoptInstalledAssetsIfAvailable()
 
       if (this.isMlxWhisperSelected()) {
-        await this.ensureMlxWhisperReady()
-        return
+        try {
+          await this.ensureMlxWhisperReady()
+          return
+        } catch (err) {
+          logAutodocFailure({
+            area: 'whisper',
+            message: 'MLX Whisper setup failed; falling back to whisper.cpp',
+            error: err,
+            context: {
+              backend: 'mlx-whisper',
+              backendLabel: MLX_WHISPER_LABEL
+            }
+          })
+          this.mlxWhisperDisabledForSession = true
+          this.selectedMacProfile = null
+          this.runtimeValidated = false
+          this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
+          this.emit('setup-status', this.getSetupStatus())
+        }
       }
 
       if (this.isFasterWhisperSelected()) {

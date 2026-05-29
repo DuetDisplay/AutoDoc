@@ -11,6 +11,7 @@ export interface UpdateStatus {
 }
 
 let currentStatus: UpdateStatus = { state: 'idle' }
+let errorResetToken = 0
 
 function getUpdaterVersion(info: unknown): string | undefined {
   if (!info || typeof info !== 'object') {
@@ -52,6 +53,9 @@ function formatUpdaterError(err: Error): string {
 }
 
 function broadcast(status: UpdateStatus): void {
+  if (status.state !== 'error') {
+    errorResetToken += 1
+  }
   currentStatus = status
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
@@ -73,7 +77,12 @@ function reportUpdaterError(message: string, err: unknown): void {
   })
   broadcast({ state: 'error', error: formatUpdaterError(error) })
   // Reset to idle after 30s so it doesn't stay stuck on error
-  setTimeout(() => broadcast({ state: 'idle' }), 30_000)
+  const resetToken = ++errorResetToken
+  setTimeout(() => {
+    if (errorResetToken === resetToken && currentStatus.state === 'error') {
+      broadcast({ state: 'idle' })
+    }
+  }, 30_000)
 }
 
 function safeCheckForUpdates(): void {
@@ -115,7 +124,10 @@ export function initAutoUpdater(): void {
 
     autoUpdater.on('download-progress', (progress) => {
       const percent = getDownloadPercent(progress)
-      broadcast({ state: 'downloading', percent: percent == null ? undefined : Math.round(percent) })
+      broadcast({
+        state: 'downloading',
+        percent: percent == null ? undefined : Math.round(percent)
+      })
     })
 
     autoUpdater.on('update-downloaded', (info) => {

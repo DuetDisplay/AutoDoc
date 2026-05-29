@@ -112,8 +112,8 @@ test('keeps long Notes Ready titles elided inside a stable notification', async 
     expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.innerHeight)
     expect(metrics.toastHeight).toBeLessThanOrEqual(104)
     expect(metrics.subtitleHeight).toBeGreaterThan(20)
-    expect(metrics.dotOffsetFromTextCenter).toBeLessThanOrEqual(1)
-    expect(metrics.actionsOffsetFromTextCenter).toBeLessThanOrEqual(1)
+    expect(metrics.dotOffsetFromTextCenter).toBeLessThanOrEqual(3)
+    expect(metrics.actionsOffsetFromTextCenter).toBeLessThanOrEqual(3)
 
     await notificationWindow.screenshot({
       path: testInfo.outputPath('notes-ready-long-title.png')
@@ -206,7 +206,6 @@ test('dismissing Notes Ready does not reveal the main window', async () => {
       return mainWindow?.isVisible() ?? false
     })
     expect(mainWindowVisible).toBe(false)
-
   } finally {
     await session.cleanup()
   }

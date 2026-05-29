@@ -3,11 +3,13 @@ import type { ChatEmbeddingProvider } from './chat-retrieval'
 
 const EMBED_TIMEOUT_MS = 12_000
 const AVAILABILITY_TIMEOUT_MS = 1_500
+const UNAVAILABLE_CACHE_TTL_MS = 30_000
 const EMBED_KEEP_ALIVE = process.env.AUTODOC_ASK_AI_EMBED_KEEP_ALIVE ?? '10m'
 
 export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
   readonly model: string
   private availability: boolean | null = null
+  private availabilityCheckedAt = 0
 
   constructor(
     private baseUrl: string,
@@ -18,7 +20,13 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
 
   async isAvailable(): Promise<boolean> {
     if (process.env.AUTODOC_ASK_AI_EMBEDDINGS === '0') return false
-    if (this.availability != null) return this.availability
+    if (this.availability === true) return true
+    if (
+      this.availability === false &&
+      Date.now() - this.availabilityCheckedAt < UNAVAILABLE_CACHE_TTL_MS
+    ) {
+      return false
+    }
 
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, {
@@ -26,6 +34,7 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
       })
       if (!res.ok) {
         this.availability = false
+        this.availabilityCheckedAt = Date.now()
         return false
       }
 
@@ -35,9 +44,11 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
           const name = entry.name ?? entry.model ?? ''
           return name === this.model || name.startsWith(`${this.model}:`)
         }) ?? false
+      this.availabilityCheckedAt = Date.now()
       return this.availability
     } catch {
       this.availability = false
+      this.availabilityCheckedAt = Date.now()
       return false
     }
   }
@@ -59,12 +70,27 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
 
     if (!res.ok) {
       this.availability = false
+      this.availabilityCheckedAt = Date.now()
       throw new Error(`Ollama embedding model ${this.model} returned ${res.status}`)
     }
 
     const data = (await res.json()) as { embeddings?: number[][]; embedding?: number[] }
-    if (Array.isArray(data.embeddings)) return data.embeddings
-    if (Array.isArray(data.embedding)) return [data.embedding]
+    if (Array.isArray(data.embeddings)) {
+      if (data.embeddings.length !== texts.length) {
+        throw new Error(
+          `Ollama embedding model ${this.model} returned ${data.embeddings.length} embeddings for ${texts.length} inputs`
+        )
+      }
+      return data.embeddings
+    }
+    if (Array.isArray(data.embedding)) {
+      if (texts.length !== 1) {
+        throw new Error(
+          `Ollama embedding model ${this.model} returned one embedding for ${texts.length} inputs`
+        )
+      }
+      return [data.embedding]
+    }
     throw new Error(`Ollama embedding model ${this.model} returned no embeddings`)
   }
 }

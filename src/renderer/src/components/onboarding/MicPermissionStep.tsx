@@ -17,13 +17,17 @@ export function MicPermissionStep({
       action,
       details: {
         panel: 'microphone',
-        ...details,
+        ...details
       }
     })
   }, [])
 
   const clearOpenedState = useCallback(async () => {
-    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'microphone', false)
+    await window.electronAPI.invoke(
+      'prefs:set-onboarding-permission-settings-opened',
+      'microphone',
+      false
+    )
     setOpenedSettings(false)
     recordPermissionTrace('microphone_permission_opened_state_cleared')
   }, [recordPermissionTrace])
@@ -31,31 +35,34 @@ export function MicPermissionStep({
   const handleContinue = useCallback(async () => {
     recordPermissionTrace('microphone_permission_continue_clicked', {
       granted,
-      openedSettings,
+      openedSettings
     })
     await clearOpenedState()
     onNext()
   }, [clearOpenedState, granted, onNext, openedSettings, recordPermissionTrace])
 
-  const checkPermission = useCallback(async (autoAdvance = false, reason = 'unspecified') => {
-    const perms = await window.electronAPI.invoke('permissions:check')
-    recordPermissionTrace('microphone_permission_check_completed', {
-      autoAdvance,
-      reason,
-      microphoneGranted: perms.microphone,
-      screenGranted: perms.screen,
-    })
-    if (perms.microphone) {
-      if (autoAdvance) {
-        await clearOpenedState()
-        onNext()
-      } else {
-        setGranted(true)
+  const checkPermission = useCallback(
+    async (autoAdvance = false, reason = 'unspecified') => {
+      const perms = await window.electronAPI.invoke('permissions:check')
+      recordPermissionTrace('microphone_permission_check_completed', {
+        autoAdvance,
+        reason,
+        microphoneGranted: perms.microphone,
+        screenGranted: perms.screen
+      })
+      if (perms.microphone) {
+        if (autoAdvance) {
+          await clearOpenedState()
+          onNext()
+        } else {
+          setGranted(true)
+        }
+        return
       }
-      return
-    }
-    setGranted(false)
-  }, [clearOpenedState, onNext, recordPermissionTrace])
+      setGranted(false)
+    },
+    [clearOpenedState, onNext, recordPermissionTrace]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -63,14 +70,14 @@ export function MicPermissionStep({
     const restoreStepState = async () => {
       const wasOpened = await window.electronAPI.invoke(
         'prefs:get-onboarding-permission-settings-opened',
-        'microphone',
+        'microphone'
       )
       if (!cancelled) {
         setOpenedSettings(wasOpened)
       }
       recordPermissionTrace('microphone_permission_step_restored', {
         allowAutoAdvance,
-        openedSettings: wasOpened,
+        openedSettings: wasOpened
       })
       await checkPermission(allowAutoAdvance, 'restore')
     }
@@ -90,7 +97,7 @@ export function MicPermissionStep({
   const handleEnable = async () => {
     recordPermissionTrace('microphone_permission_enable_clicked', {
       openedSettings,
-      granted,
+      granted
     })
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -98,10 +105,7 @@ export function MicPermissionStep({
       recordPermissionTrace('microphone_permission_get_user_media_succeeded')
     } catch (error) {
       recordPermissionTrace('microphone_permission_get_user_media_failed', {
-        error:
-          error instanceof Error
-            ? { name: error.name, message: error.message }
-            : String(error),
+        error: error instanceof Error ? { name: error.name, message: error.message } : String(error)
       })
       // We'll fall through to the OS-level permission check below.
     }
@@ -109,7 +113,7 @@ export function MicPermissionStep({
     const perms = await window.electronAPI.invoke('permissions:check')
     recordPermissionTrace('microphone_permission_post_get_user_media_check', {
       microphoneGranted: perms.microphone,
-      screenGranted: perms.screen,
+      screenGranted: perms.screen
     })
     if (perms.microphone) {
       setGranted(true)
@@ -123,7 +127,7 @@ export function MicPermissionStep({
     const requestedPerms = await window.electronAPI.invoke('permissions:check')
     recordPermissionTrace('microphone_permission_post_app_request_check', {
       microphoneGranted: requestedPerms.microphone,
-      screenGranted: requestedPerms.screen,
+      screenGranted: requestedPerms.screen
     })
     if (requestedPerms.microphone) {
       setGranted(true)
@@ -131,7 +135,11 @@ export function MicPermissionStep({
       return
     }
 
-    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'microphone', true)
+    await window.electronAPI.invoke(
+      'prefs:set-onboarding-permission-settings-opened',
+      'microphone',
+      true
+    )
     recordPermissionTrace('microphone_permission_settings_fallback_opened')
     await window.electronAPI.invoke('permissions:open-settings', 'microphone')
     setOpenedSettings(true)
@@ -149,7 +157,7 @@ export function MicPermissionStep({
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {openedSettings && !granted
           ? 'macOS may require a restart for the permission to take effect. If you chose "Restart Later", you can continue setup and grant access from Settings later.'
-          : 'AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can\'t hear your meetings.'}
+          : "AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can't hear your meetings."}
       </p>
 
       <div className="flex items-start gap-3 px-4 py-3 bg-bg-card border border-border rounded-xl text-left mb-7">
@@ -162,7 +170,7 @@ export function MicPermissionStep({
           </div>
           <div className="text-[12px] text-ink-muted leading-snug mt-0.5">
             Wear headphones while recording. They help AutoDoc tell your voice apart from everyone
-            else's and make playback cleaner.
+            else&apos;s and make playback cleaner.
           </div>
         </div>
       </div>

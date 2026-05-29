@@ -32,7 +32,7 @@ function isTrustedServePath(absPath: string, recordingsBaseDir: string): boolean
 
 function parseByteRange(
   rangeHeader: string | undefined,
-  fileSize: number,
+  fileSize: number
 ): { start: number; end: number } | 'unsatisfiable' | null {
   if (fileSize <= 0) {
     return rangeHeader?.toLowerCase().startsWith('bytes=') ? 'unsatisfiable' : null
@@ -86,14 +86,14 @@ function reportMediaServerFailure(
   message: string,
   error: unknown,
   context: Record<string, unknown>,
-  meetingId?: string,
+  meetingId?: string
 ): void {
   logAutodocFailure({
     area: 'recording',
     message,
     error,
     meetingId,
-    context: { component: 'media-http-server', ...context },
+    context: { component: 'media-http-server', ...context }
   })
 }
 
@@ -109,7 +109,7 @@ async function resolveServePath(diskPath: string): Promise<string | null> {
 async function handleMediaRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  getRecordingsBaseDir: () => string,
+  getRecordingsBaseDir: () => string
 ): Promise<void> {
   const method = (req.method ?? 'GET').toUpperCase()
   if (method !== 'GET' && method !== 'HEAD') {
@@ -176,7 +176,7 @@ async function handleMediaRequest(
   const baseHeaders: Record<string, string> = {
     'Content-Type': ct,
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store'
   }
 
   const isFull = parsed === null || (parsed.start === 0 && parsed.end === fileSize - 1)
@@ -192,10 +192,15 @@ async function handleMediaRequest(
     const rs = createReadStream(servePath)
     rs.on('error', (err) => {
       if (!isBenignMediaStreamError(err)) {
-        reportMediaServerFailure('Recording media read stream error (full)', err, {
-          filename,
-          servePathPresent: true,
-        }, meetingId)
+        reportMediaServerFailure(
+          'Recording media read stream error (full)',
+          err,
+          {
+            filename,
+            servePathPresent: true
+          },
+          meetingId
+        )
       }
       if (!res.headersSent) res.statusCode = 500
       res.destroy()
@@ -217,10 +222,15 @@ async function handleMediaRequest(
   const rs = createReadStream(servePath, { start, end })
   rs.on('error', (err) => {
     if (!isBenignMediaStreamError(err)) {
-      reportMediaServerFailure('Recording media read stream error (range)', err, {
-        filename,
-        range: { start, end },
-      }, meetingId)
+      reportMediaServerFailure(
+        'Recording media read stream error (range)',
+        err,
+        {
+          filename,
+          range: { start, end }
+        },
+        meetingId
+      )
     }
     if (!res.headersSent) res.statusCode = 500
     res.destroy()
@@ -234,7 +244,9 @@ let mediaServer: http.Server | null = null
  * Serves decrypted/plain recording files on 127.0.0.1 with Range support so `<video>` can seek.
  * Custom `protocol` handlers in Electron are unreliable for both decode and seeking; loopback HTTP is not.
  */
-export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => string): Promise<number> {
+export async function startRecordingMediaHttpServer(
+  getRecordingsBaseDir: () => string
+): Promise<number> {
   if (mediaServer) {
     const addr = mediaServer.address()
     if (typeof addr === 'object' && addr?.port) return addr.port
@@ -244,10 +256,15 @@ export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => 
     const server = http.createServer((req, res) => {
       const meetingId = parseMeetingIdFromRequestUrl(req.url)
       void handleMediaRequest(req, res, getRecordingsBaseDir).catch((err) => {
-        reportMediaServerFailure('Recording media HTTP handler threw', err, {
-          method: req.method,
-          url: req.url ?? null,
-        }, meetingId)
+        reportMediaServerFailure(
+          'Recording media HTTP handler threw',
+          err,
+          {
+            method: req.method,
+            url: req.url ?? null
+          },
+          meetingId
+        )
         if (!res.headersSent) res.statusCode = 500
         res.end()
       })
@@ -255,10 +272,14 @@ export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => 
 
     server.on('error', (err) => {
       if (mediaServer === server) {
-        reportMediaServerFailure('Recording media HTTP server runtime error', err, { phase: 'runtime' })
+        reportMediaServerFailure('Recording media HTTP server runtime error', err, {
+          phase: 'runtime'
+        })
         return
       }
-      reportMediaServerFailure('Recording media HTTP server failed to listen', err, { phase: 'listen' })
+      reportMediaServerFailure('Recording media HTTP server failed to listen', err, {
+        phase: 'listen'
+      })
       reject(err)
     })
 
@@ -269,7 +290,9 @@ export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => 
         resolvePort(addr.port)
       } else {
         const err = new Error('Recording media server: could not bind')
-        reportMediaServerFailure('Recording media HTTP server bind address missing', err, { phase: 'listen-callback' })
+        reportMediaServerFailure('Recording media HTTP server bind address missing', err, {
+          phase: 'listen-callback'
+        })
         reject(err)
       }
     })
@@ -277,7 +300,14 @@ export async function startRecordingMediaHttpServer(getRecordingsBaseDir: () => 
 }
 
 export function stopRecordingMediaHttpServer(): void {
-  mediaServer?.close()
+  const server = mediaServer
   mediaServer = null
-  void clearMediaDecryptCache()
+  if (!server) {
+    void clearMediaDecryptCache()
+    return
+  }
+
+  server.close(() => {
+    void clearMediaDecryptCache()
+  })
 }

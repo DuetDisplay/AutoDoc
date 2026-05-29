@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, writeFile, readdir } from 'node:fs/promises'
+import { mkdir, writeFile, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -69,7 +69,8 @@ const fixtures = [
       decisions: [
         {
           title: 'Beta launch scope',
-          content: 'Keep the June beta focused on retrieval accuracy, streaming answers, and calendar-scoped meeting summaries.',
+          content:
+            'Keep the June beta focused on retrieval accuracy, streaming answers, and calendar-scoped meeting summaries.',
           topic: 'beta launch'
         }
       ],
@@ -85,7 +86,8 @@ const fixtures = [
       discussion: [
         {
           title: 'Customer trust',
-          content: 'The team discussed that hallucinated action items would hurt customer trust more than a slower answer.',
+          content:
+            'The team discussed that hallucinated action items would hurt customer trust more than a slower answer.',
           topic: 'Ask AI reliability'
         }
       ]
@@ -101,14 +103,16 @@ const fixtures = [
       decisions: [
         {
           title: 'Use evidence-first retrieval',
-          content: 'Adopt evidence-first retrieval so Ask AI sends grounded notes and transcript snippets to the model instead of relying on broad meeting dumps.',
+          content:
+            'Adopt evidence-first retrieval so Ask AI sends grounded notes and transcript snippets to the model instead of relying on broad meeting dumps.',
           topic: 'Ask AI architecture'
         }
       ],
       actionItems: [
         {
           title: 'Investigate calendar auth scopes',
-          content: 'Check whether insufficient Google Calendar scopes caused calendar fetch failures and add backoff when auth is broken.',
+          content:
+            'Check whether insufficient Google Calendar scopes caused calendar fetch failures and add backoff when auth is broken.',
           topic: 'calendar reliability',
           assignee: 'Casey',
           deadline: '2026-05-28'
@@ -117,7 +121,8 @@ const fixtures = [
       statusUpdates: [
         {
           title: 'Streaming progress',
-          content: 'Streaming answers reduce perceived latency, but retrieval accuracy remains the product-critical blocker.',
+          content:
+            'Streaming answers reduce perceived latency, but retrieval accuracy remains the product-critical blocker.',
           topic: 'Ask AI speed'
         }
       ]
@@ -133,14 +138,16 @@ const fixtures = [
       information: [
         {
           title: 'Customer reported missed title match',
-          content: 'The customer could not find a recording by the visible title Entire screen May 27 at 9:49 AM.',
+          content:
+            'The customer could not find a recording by the visible title Entire screen May 27 at 9:49 AM.',
           topic: 'AD-83'
         }
       ],
       actionItems: [
         {
           title: 'Send customer follow-up',
-          content: 'Send the customer a follow-up explaining the title lookup fix and the new evidence-based retrieval test plan.',
+          content:
+            'Send the customer a follow-up explaining the title lookup fix and the new evidence-based retrieval test plan.',
           topic: 'customer follow-up',
           assignee: 'Morgan',
           deadline: '2026-05-30'
@@ -197,18 +204,14 @@ await mkdir(recordingsDir, { recursive: true })
 const existing = new Set(await readdir(recordingsDir).catch(() => []))
 
 let created = 0
-let skipped = 0
+let updated = 0
 for (const fixture of fixtures) {
   const meetingDir = join(recordingsDir, fixture.id)
   if (existing.has(fixture.id)) {
-    if (fixture.segments) {
-      await writeFile(join(meetingDir, 'segments.json'), JSON.stringify(fixture.segments))
-    }
-    if (fixture.transcriptError) {
-      await writeFile(join(meetingDir, 'transcript.error'), fixture.transcriptError)
-    }
-    skipped += 1
-    continue
+    await rm(meetingDir, { recursive: true, force: true })
+    updated += 1
+  } else {
+    created += 1
   }
 
   await mkdir(meetingDir, { recursive: true })
@@ -252,8 +255,6 @@ for (const fixture of fixtures) {
   if (fixture.transcriptError) {
     await writeFile(join(meetingDir, 'transcript.error'), fixture.transcriptError)
   }
-
-  created += 1
 }
 
 console.log(
@@ -261,7 +262,7 @@ console.log(
     {
       recordingsDir,
       created,
-      skipped,
+      updated,
       totalFixtures: fixtures.length,
       exactTitleToAsk: 'Entire screen — May 27 at 9:49 AM',
       usefulQuestions: [

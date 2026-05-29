@@ -503,8 +503,10 @@ export function MeetingDetail() {
         })
         setDetail(nextDetail)
       })
+    const refreshMedia = () => window.electronAPI.invoke('recording:get-media', id).then(setMedia)
 
     refreshDetail()
+    refreshMedia()
     void Promise.all([
       window.electronAPI.invoke('transcription:get-status', id),
       window.electronAPI.invoke('transcription:get-progress', id),
@@ -534,7 +536,6 @@ export function MeetingDetail() {
       }
     )
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
-    window.electronAPI.invoke('recording:get-media', id).then(setMedia)
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
@@ -568,6 +569,7 @@ export function MeetingDetail() {
       (payload) => {
         if (payload.meetingId === id) {
           refreshDetail()
+          refreshMedia()
         }
       }
     )

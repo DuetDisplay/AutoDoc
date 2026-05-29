@@ -53,7 +53,9 @@ const QUESTION_STOP_WORDS = new Set([
   'is',
   'it',
   'latest',
+  'list',
   'me',
+  'many',
   'meeting',
   'meetings',
   'my',
@@ -63,6 +65,8 @@ const QUESTION_STOP_WORDS = new Set([
   'recording',
   'recordings',
   'show',
+  'count',
+  'number',
   'summarize',
   'summary',
   'tell',
@@ -370,13 +374,14 @@ export class ChatRecordingIndex {
     const intent = detectChatIntent(question)
 
     if (intent === 'count') {
-      const directAnswer = `You have ${inventory.length} recording${inventory.length === 1 ? '' : 's'}.`
+      const matched = filterInventoryForDirectIntent(inventory, question)
+      const directAnswer = `You have ${matched.length} recording${matched.length === 1 ? '' : 's'}.`
       return this.result({
         intent,
         inventory,
         directAnswer,
         context: '',
-        matched: inventory,
+        matched,
         selected: [],
         matchMode: 'direct-count',
         inventoryElapsedMs,
@@ -388,13 +393,14 @@ export class ChatRecordingIndex {
     }
 
     if (intent === 'list') {
-      const directAnswer = formatRecordingListAnswer(inventory)
+      const matched = filterInventoryForDirectIntent(inventory, question)
+      const directAnswer = formatRecordingListAnswer(matched)
       return this.result({
         intent,
         inventory,
         directAnswer,
         context: '',
-        matched: inventory,
+        matched,
         selected: [],
         matchMode: 'direct-list',
         inventoryElapsedMs,
@@ -1906,6 +1912,48 @@ function hasSubjectPhraseOrProximity(normalizedText: string, terms: string[]): b
 
 function hasSpecificSubjectQuestion(question: string): boolean {
   return stripQuestionScaffolding(normalizeRecordingSearchText(question)).length > 0
+}
+
+function filterInventoryForDirectIntent(
+  inventory: MeetingInventoryEntry[],
+  question: string
+): MeetingInventoryEntry[] {
+  const normalizedQuestion = normalizeRecordingSearchText(question)
+  const subject = stripQuestionScaffolding(normalizedQuestion)
+  const hasWindowConstraint = hasQuestionWindowCue(question)
+  const hasMeetingTypeCue = hasExplicitMeetingTypeCue(question)
+  const subjectTerms = extractQuestionTerms(subject)
+
+  if (!hasWindowConstraint && !hasMeetingTypeCue && subjectTerms.length === 0) {
+    return inventory
+  }
+
+  let filtered =
+    hasWindowConstraint || hasMeetingTypeCue
+      ? filterMeetingsForQuestionWindow(inventory, question)
+      : inventory
+
+  if (subjectTerms.length > 0) {
+    filtered = filtered.filter((meeting) => {
+      const searchableText = [
+        meeting.title,
+        meeting.calendarTitle,
+        meeting.sourceName,
+        meeting.sourceApp,
+        meeting.slackChannel,
+        meeting.notePreview,
+        meeting.metadataSearchText,
+        ...meeting.aliases,
+        ...meeting.attendees,
+        ...meeting.participants
+      ]
+        .filter(Boolean)
+        .join(' ')
+      return scoreTextRelevance(searchableText, subject) > 0
+    })
+  }
+
+  return sortMeetingsByQuestion(filtered, question)
 }
 
 function isGeneralSummaryQuestion(question: string): boolean {

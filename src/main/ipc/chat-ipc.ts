@@ -143,8 +143,8 @@ export function registerChatIpc(
 
     try {
       const [recentEvents, upcomingEvents] = await Promise.all([
-        withTimeout(calendarManager.fetchAllRecentEvents(CALENDAR_TITLE_LOOKBACK_DAYS), []),
-        withTimeout(calendarManager.fetchAllUpcomingEvents(), [])
+        withTimeout(calendarManager.fetchAllRecentEvents(CALENDAR_TITLE_LOOKBACK_DAYS)),
+        withTimeout(calendarManager.fetchAllUpcomingEvents())
       ])
       return {
         recentEvents,
@@ -1657,13 +1657,16 @@ function filterCalendarEventsByQuestionRelevance(
   return relevant.length > 0 ? relevant : ranked
 }
 
-async function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       promise,
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), CALENDAR_FETCH_TIMEOUT_MS)
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Calendar fetch timed out')),
+          CALENDAR_FETCH_TIMEOUT_MS
+        )
       })
     ])
   } finally {

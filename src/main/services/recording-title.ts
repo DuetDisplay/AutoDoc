@@ -12,8 +12,9 @@ export function buildRecordingTitle(
 ): string {
   const dateSuffix = formatRecordingDateSuffix(startedAt)
 
-  if (metadata?.customTitle) {
-    return metadata.customTitle
+  const customTitle = metadata?.customTitle?.trim()
+  if (customTitle) {
+    return customTitle
   }
 
   if (calendarTitle) {

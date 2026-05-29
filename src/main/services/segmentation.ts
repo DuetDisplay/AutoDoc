@@ -58,6 +58,8 @@ export class SegmentationService {
   private processing = false
   private enqueueSource = new Map<string, EnqueueSource>()
   private onCompleteCallback: ((meetingId: string) => void) | null = null
+  private baselineLlmModel: string | null = null
+  private lastAppliedMacModel: string | null = null
 
   constructor(
     private llmProvider: LLMProvider,
@@ -279,14 +281,25 @@ export class SegmentationService {
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
     if (macProcessingProfile) {
+      const currentModel = this.llmProvider.getModel?.()
+      if (currentModel && currentModel !== this.lastAppliedMacModel) {
+        this.baselineLlmModel = currentModel
+      }
       this.llmProvider.setModel?.(macProcessingProfile.notesModel)
       this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
+      this.lastAppliedMacModel = macProcessingProfile.notesModel
       logAutodocEvent({
         area: 'segmentation',
         message: 'notes effective processing profile selected',
         meetingId,
         context: this.getProcessingProfileLogContext(macProcessingProfile) ?? undefined
       })
+    } else {
+      if (this.baselineLlmModel) {
+        this.llmProvider.setModel?.(this.baselineLlmModel)
+      }
+      this.llmProvider.setLowMemoryMode?.(false)
+      this.lastAppliedMacModel = null
     }
     logAutodocEvent({
       area: 'segmentation',

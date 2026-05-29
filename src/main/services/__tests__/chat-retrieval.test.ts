@@ -142,6 +142,30 @@ describe('ChatRecordingIndex', () => {
     expect(list.diagnostics.inventoryCount).toBe(100)
   })
 
+  it('applies direct count and list qualifiers before answering', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const startedAt = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'standup', {
+      startedAt,
+      sourceName: 'Engineering Standup',
+      notes: 'Standup notes about release readiness.'
+    })
+    await createRecording(baseDir, 'billing', {
+      startedAt: startedAt + 60_000,
+      sourceName: 'Billing Review',
+      notes: 'Billing migration checklist and customer invoice follow-up.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const count = await index.buildContext('How many billing recordings do I have?', [])
+    const list = await index.buildContext('List my standup recordings', [])
+
+    expect(count.directAnswer).toBe('You have 1 recording.')
+    expect(count.diagnostics.matchedCount).toBe(1)
+    expect(list.directAnswer).toContain('Engineering Standup')
+    expect(list.directAnswer).not.toContain('Billing Review')
+  })
+
   it('summarizes every recording in small libraries and guards large libraries truthfully', async () => {
     const smallDir = await createTempRecordingsDir()
     await createQaRecordings(smallDir, new Date(2026, 4, 27, 9, 49).getTime())

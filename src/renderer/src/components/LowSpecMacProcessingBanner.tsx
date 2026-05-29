@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 
-export function LowSpecMacProcessingBanner() {
+export function LowSpecMacProcessingBanner(): ReactElement | null {
   const [visible, setVisible] = useState(false)
 
   const refreshVisibility = useCallback(async () => {
@@ -42,9 +42,14 @@ export function LowSpecMacProcessingBanner() {
     }
   }, [refreshVisibility])
 
-  const dismiss = async () => {
+  const dismiss = async (): Promise<void> => {
     setVisible(false)
-    await window.electronAPI.invoke('prefs:set-low-spec-mac-processing-banner-dismissed', true)
+    try {
+      await window.electronAPI.invoke('prefs:set-low-spec-mac-processing-banner-dismissed', true)
+    } catch (err) {
+      console.warn('Failed to dismiss low-spec Mac processing banner:', err)
+      setVisible(true)
+    }
   }
 
   if (!visible) return null

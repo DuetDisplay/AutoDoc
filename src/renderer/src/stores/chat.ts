@@ -22,34 +22,41 @@ interface ChatState {
   clearMessages: () => void
 }
 
+const MAX_CHAT_MESSAGES = 20
+const capMessages = (messages: Message[]): Message[] => messages.slice(-MAX_CHAT_MESSAGES)
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       messages: [],
-      addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
+      addMessage: (msg) => set((state) => ({ messages: capMessages([...state.messages, msg]) })),
       updateMessage: (id, content, clarificationOptions) =>
         set((state) => ({
-          messages: state.messages.map((msg) =>
-            msg.id === id
-              ? {
-                  ...msg,
-                  content,
-                  clarificationOptions: clarificationOptions ?? msg.clarificationOptions
-                }
-              : msg
+          messages: capMessages(
+            state.messages.map((msg) =>
+              msg.id === id
+                ? {
+                    ...msg,
+                    content,
+                    clarificationOptions: clarificationOptions ?? msg.clarificationOptions
+                  }
+                : msg
+            )
           )
         })),
       appendToMessage: (id, chunk) =>
         set((state) => ({
-          messages: state.messages.map((msg) =>
-            msg.id === id ? { ...msg, content: msg.content + chunk } : msg
+          messages: capMessages(
+            state.messages.map((msg) =>
+              msg.id === id ? { ...msg, content: msg.content + chunk } : msg
+            )
           )
         })),
       clearMessages: () => set({ messages: [] })
     }),
     {
       name: 'autodoc-ask-ai-chat',
-      partialize: (state) => ({ messages: state.messages.slice(-20) })
+      partialize: (state) => ({ messages: state.messages.slice(-MAX_CHAT_MESSAGES) })
     }
   )
 )
