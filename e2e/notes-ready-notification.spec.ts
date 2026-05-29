@@ -198,6 +198,7 @@ test('dismissing Notes Ready does not reveal the main window', async () => {
     await notificationWindow.locator('#dismiss').click()
     await electronApp.evaluate(({ app }) => {
       app.emit('activate')
+      app.emit('activate')
     })
 
     const mainWindowVisible = await electronApp.evaluate(({ BrowserWindow }) => {
@@ -205,6 +206,59 @@ test('dismissing Notes Ready does not reveal the main window', async () => {
       return mainWindow?.isVisible() ?? false
     })
     expect(mainWindowVisible).toBe(false)
+
+  } finally {
+    await session.cleanup()
+  }
+})
+
+test('Notes Ready hides an unfocused visible main window before it can be raised', async () => {
+  const session = await launchIsolatedE2EApp()
+  const { electronApp } = session
+  const page = await electronApp.firstWindow()
+
+  try {
+    await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
+
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('prefs:set-onboarding-complete')
+    })
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      mainWindow?.show()
+      mainWindow?.blur()
+    })
+
+    const notificationWindowPromise = electronApp.waitForEvent('window')
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('e2e:trigger-notes-ready-notification', {
+        title: 'Visible Behind Review'
+      })
+    })
+
+    const notificationWindow = await notificationWindowPromise
+    await expect(notificationWindow.getByText('Notes Ready')).toBeVisible()
+
+    const mainWindowVisible = await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      return mainWindow?.isVisible() ?? false
+    })
+    expect(mainWindowVisible).toBe(false)
+
+    await notificationWindow.locator('#dismiss').click()
+    await electronApp.evaluate(({ app }) => {
+      app.emit('activate')
+      app.emit('activate')
+    })
+
+    const mainWindowVisibleAfterDismiss = await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      return mainWindow?.isVisible() ?? false
+    })
+    expect(mainWindowVisibleAfterDismiss).toBe(false)
   } finally {
     await session.cleanup()
   }

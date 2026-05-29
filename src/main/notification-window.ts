@@ -40,12 +40,14 @@ export function shouldSuppressNotificationActivation(): boolean {
     return true
   }
 
-  if (Date.now() > suppressAppActivationUntil) {
-    return false
+  if (suppressAppActivationUntil > 0) {
+    if (Date.now() <= suppressAppActivationUntil) {
+      return true
+    }
+    suppressAppActivationUntil = 0
   }
 
-  suppressAppActivationUntil = 0
-  return true
+  return false
 }
 
 function clearAutoDismissTimer(): void {
@@ -292,6 +294,10 @@ export function showNotificationWindow(options: NotificationOptions): void {
     const { ipcRenderer } = require('electron');
     function dismiss(channel) {
       const toast = document.querySelector('.toast');
+      if (channel === 'notification:dismiss') {
+        ipcRenderer.send(channel);
+        return;
+      }
       toast.classList.add('dismissing');
       toast.addEventListener('animationend', () => ipcRenderer.send(channel), { once: true });
     }
