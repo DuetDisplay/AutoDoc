@@ -13,6 +13,7 @@ export function AskAI() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeStreamCleanupRef = useRef<(() => void) | null>(null)
+  const isSendingRef = useRef(false)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
@@ -34,7 +35,8 @@ export function AskAI() {
     selectedMeetingId?: string
   }) => {
     const question = params.question.trim()
-    if (!question || loading) return
+    if (!question || loading || isSendingRef.current) return
+    isSendingRef.current = true
     activeStreamCleanupRef.current?.()
     const requestId =
       globalThis.crypto?.randomUUID?.() ??
@@ -69,6 +71,7 @@ export function AskAI() {
       window.electronAPI.on('chat:done', (payload) => {
         if (payload.requestId !== requestId) return
         updateMessage(assistantMessageId, payload.content, payload.clarificationOptions)
+        isSendingRef.current = false
         setLoading(false)
         activeStreamCleanupRef.current?.()
         activeStreamCleanupRef.current = null
@@ -81,6 +84,7 @@ export function AskAI() {
           'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
         )
         console.error('Chat failed:', payload.error)
+        isSendingRef.current = false
         setLoading(false)
         activeStreamCleanupRef.current?.()
         activeStreamCleanupRef.current = null
@@ -109,6 +113,7 @@ export function AskAI() {
         'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
       )
       console.error('Chat failed:', err)
+      isSendingRef.current = false
       setLoading(false)
       activeStreamCleanupRef.current?.()
       activeStreamCleanupRef.current = null
@@ -145,6 +150,7 @@ export function AskAI() {
   const handleNewChat = async () => {
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
+    isSendingRef.current = false
     clearMessages()
     setInput('')
     setLoading(false)

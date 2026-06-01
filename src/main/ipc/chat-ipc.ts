@@ -307,6 +307,7 @@ export function registerChatIpc(
     session: ChatConversationState
   ): Promise<PreparedChatContext | null> => {
     if (shouldStartNewConversationScope(question)) return null
+    if (hasFreshSearchTerms(normalizeRecordingSearchText(question))) return null
 
     if (asksForNotesInPreviousSet(question) && session.lastCalendarEvents.length > 0) {
       const meetingContext = await recordingIndex.buildNoteAvailabilityForCalendarEvents(
@@ -729,12 +730,7 @@ function shouldStartNewConversationScope(question: string): boolean {
 
 function shouldUseConversationScope(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)
-  return (
-    isRecordingContentQuestion(normalized) ||
-    isImplicitFollowUpQuestion(normalized) ||
-    hasContextReference(normalized) ||
-    isShortContextualQuestion(normalized)
-  )
+  return isImplicitFollowUpQuestion(normalized) || hasContextReference(normalized)
 }
 
 function hasContextReference(normalizedQuestion: string): boolean {
@@ -783,11 +779,55 @@ function extractOrdinalReference(question: string): number | null {
 }
 
 function isImplicitFollowUpQuestion(normalizedQuestion: string): boolean {
-  return (
+  if (
     /\b(anything else|what else|more|details|elaborate|what about that|that meeting|this meeting|it)\b/.test(
       normalizedQuestion
-    ) || normalizedQuestion.split(' ').filter(Boolean).length <= 4
+    )
   )
+    return true
+
+  return isShortContextualQuestion(normalizedQuestion) && !hasFreshSearchTerms(normalizedQuestion)
+}
+
+function hasFreshSearchTerms(normalizedQuestion: string): boolean {
+  const genericFollowUpTerms = new Set([
+    'action',
+    'actions',
+    'assigned',
+    'blocker',
+    'blockers',
+    'deadline',
+    'deadlines',
+    'decision',
+    'decisions',
+    'detail',
+    'details',
+    'due',
+    'item',
+    'items',
+    'more',
+    'next',
+    'note',
+    'notes',
+    'owner',
+    'owners',
+    'owns',
+    'recap',
+    'risk',
+    'risks',
+    'status',
+    'step',
+    'steps',
+    'summary',
+    'task',
+    'tasks',
+    'todo',
+    'todos',
+    'transcript',
+    'transcripts'
+  ])
+
+  return extractQuestionTerms(normalizedQuestion).some((term) => !genericFollowUpTerms.has(term))
 }
 
 function buildScopedQuestion(question: string, session: ChatConversationState): string {

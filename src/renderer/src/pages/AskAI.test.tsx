@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AskAI } from './AskAI'
@@ -52,6 +52,31 @@ describe('AskAI', () => {
       'chat:send-stream',
       expect.any(String),
       'What changed in onboarding?',
+      []
+    )
+  })
+
+  it('ignores rapid duplicate submits while the first request is starting', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', () => new Promise(() => {}))
+
+    render(<AskAI />)
+
+    const input = screen.getByPlaceholderText(/ask a question about your meetings/i)
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Who owns billing migration?' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledTimes(2)
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('ollama:check-status')
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+      'chat:send-stream',
+      expect.any(String),
+      'Who owns billing migration?',
       []
     )
   })
