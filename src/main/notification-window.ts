@@ -5,7 +5,6 @@ let notificationKind: NotificationKind | null = null
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
 let suppressAppActivationUntil = 0
-let suppressAppActivationWhileVisible = false
 
 function escapeHtml(value: string): string {
   return value
@@ -26,20 +25,11 @@ interface NotificationOptions {
   onDismiss: () => void
   kind?: NotificationKind
   autoDismissMs?: number
-  suppressAppActivationWhileVisible?: boolean
 }
 
 export type NotificationKind = 'meeting-detection' | 'notes-ready'
 
 export function shouldSuppressNotificationActivation(): boolean {
-  if (
-    suppressAppActivationWhileVisible &&
-    notificationWindow &&
-    !notificationWindow.isDestroyed()
-  ) {
-    return true
-  }
-
   if (suppressAppActivationUntil > 0) {
     if (Date.now() <= suppressAppActivationUntil) {
       return true
@@ -93,7 +83,6 @@ export function showNotificationWindow(options: NotificationOptions): void {
   })
   notificationWindow = win
   notificationKind = options.kind ?? null
-  suppressAppActivationWhileVisible = options.suppressAppActivationWhileVisible ?? false
 
   const handlePrimaryAction = (): void => {
     try {
@@ -129,7 +118,6 @@ export function showNotificationWindow(options: NotificationOptions): void {
       clearAutoDismissTimer()
       notificationWindow = null
       notificationKind = null
-      suppressAppActivationWhileVisible = false
     }
   })
 

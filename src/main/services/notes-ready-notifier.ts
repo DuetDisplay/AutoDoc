@@ -58,7 +58,6 @@ export async function notifyNotesReady(
       : {}),
     primaryActionLabel: 'Open Notes',
     kind: 'notes-ready',
-    suppressAppActivationWhileVisible: true,
     onPrimaryAction: () => {
       focusMainWindow()
       getMainWindow()?.webContents.send('notes:open-meeting', { meetingId })

@@ -88,8 +88,7 @@ describe('notes ready notifier', () => {
         bodyTitle: 'Weekly Sync',
         bodySuffix: 'notes are ready.',
         primaryActionLabel: 'Open Notes',
-        kind: 'notes-ready',
-        suppressAppActivationWhileVisible: true
+        kind: 'notes-ready'
       })
     )
     expect(mocks.encryptJSON).toHaveBeenCalledWith(
@@ -132,10 +131,8 @@ describe('notes ready notifier', () => {
     if (process.platform === 'darwin') {
       expect(mocks.appHide).toHaveBeenCalledTimes(1)
     }
-    expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        suppressAppActivationWhileVisible: true
-      })
+    expect(mocks.showNotificationWindow.mock.calls[0]?.[0]).not.toHaveProperty(
+      'suppressAppActivationWhileVisible'
     )
   })
 
