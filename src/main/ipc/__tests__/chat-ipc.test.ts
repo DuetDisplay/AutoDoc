@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MeetingMetadata, MeetingSegments } from '../../../shared/types'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/autodoc-chat-ipc-test') },
@@ -18,9 +22,23 @@ import {
 } from '../chat-ipc'
 
 describe('chat meeting retrieval helpers', () => {
+  const tempDirs: string[] = []
+
   beforeEach(() => {
     vi.clearAllMocks()
   })
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
+    tempDirs.length = 0
+  })
+
+  async function createTempRecordingsDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'autodoc-chat-ipc-'))
+    tempDirs.push(dir)
+    return dir
+  }
 
   it('drops generic filler terms from broad meeting questions', () => {
     expect(extractQuestionTerms('What happened in my stand up meetings this week?')).toEqual([
@@ -293,4 +311,126 @@ describe('chat meeting retrieval helpers', () => {
       content: 'You have 0 recordings.'
     })
   })
+
+  it('does not pin a new short content question to the previous exact-title recording', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'slack-qa', {
+      startedAt: new Date(2026, 5, 1, 9, 23).getTime(),
+      sourceName: 'sqa-testing (Channel) - Duet Display - Slack',
+      notes: 'QA huddle notes about smoke testing the release candidate.'
+    })
+    await createRecording(baseDir, 'billing-review', {
+      startedAt: new Date(2026, 5, 1, 10, 30).getTime(),
+      sourceName: 'Billing Migration Review',
+      notes: 'Morgan owns the billing migration checklist and the due date is Wednesday morning.',
+      noteCategory: 'actionItems'
+    })
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        messages: Array<{ role: string; content: string }>
+      }
+      const context = body.messages.at(-1)?.content ?? ''
+      const answer = context.includes('Billing Migration Review')
+        ? 'billing-context'
+        : 'stale-slack-context'
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(`${JSON.stringify({ message: { content: answer } })}\n`)
+          )
+          controller.close()
+        }
+      })
+      return { ok: true, body: stream } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    registerChatIpc(
+      baseDir,
+      {
+        waitUntilReady: vi.fn(),
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const sender = { id: 101, send: vi.fn() }
+
+    await streamHandler?.(
+      { sender } as never,
+      'req-exact',
+      'Summarize sqa-testing (Channel) - Duet Display - Slack'
+    )
+    await streamHandler?.({ sender } as never, 'req-billing', 'who owns billing migration')
+
+    expect(sender.send).toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-billing',
+      content: expect.stringContaining('Morgan')
+    })
+    expect(sender.send).not.toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-billing',
+      content: expect.stringContaining('sqa-testing')
+    })
+  })
 })
+
+async function createRecording(
+  baseDir: string,
+  id: string,
+  params: {
+    startedAt: number
+    sourceName: string
+    notes: string
+    noteCategory?: keyof MeetingSegments
+  }
+): Promise<void> {
+  const meetingDir = join(baseDir, id)
+  await mkdir(meetingDir, { recursive: true })
+  await writeFile(join(meetingDir, 'mic.webm'), '')
+
+  const metadata: MeetingMetadata = {
+    sourceName: params.sourceName,
+    startedAt: params.startedAt,
+    stoppedAt: params.startedAt + 30 * 60_000,
+    durationSeconds: 30 * 60
+  }
+  await writeFile(join(meetingDir, 'metadata.json'), JSON.stringify(metadata))
+  await writeFile(
+    join(meetingDir, 'segments.json'),
+    JSON.stringify(createSegments(params.notes, params.noteCategory))
+  )
+}
+
+function createSegments(content: string, noteCategory: keyof MeetingSegments = 'information') {
+  const segments: MeetingSegments = {
+    decisions: [],
+    actionItems: [],
+    information: [],
+    discussion: [],
+    statusUpdates: []
+  }
+  segments[noteCategory] = [
+    {
+      id: 'note-1',
+      meetingId: 'fixture',
+      category: noteCategory === 'actionItems' ? 'action_item' : 'information',
+      topic: 'QA',
+      title: 'Fixture note',
+      content,
+      assignee: noteCategory === 'actionItems' ? 'Morgan' : null,
+      deadline: noteCategory === 'actionItems' ? 'Wednesday morning' : null,
+      sourceStartMs: 0,
+      sourceEndMs: 10_000
+    }
+  ]
+  return segments
+}

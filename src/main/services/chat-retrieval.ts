@@ -2342,6 +2342,7 @@ function stripQuestionScaffolding(question: string): string {
     'responsible',
     'remember',
     'say',
+    'search',
     'should',
     'standup',
     'stand',
@@ -2360,6 +2361,7 @@ function stripQuestionScaffolding(question: string): string {
     'were',
     'week',
     'weeks',
+    'focus',
     'you',
     'yesterday'
   ])

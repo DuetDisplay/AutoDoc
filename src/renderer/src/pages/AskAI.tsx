@@ -1,11 +1,21 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption } from '../../../preload/ipc'
 
-export function AskAI() {
+let fallbackRequestIdCounter = 0
+
+function createChatRequestId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.()
+  if (randomId) return randomId
+
+  fallbackRequestIdCounter += 1
+  return `chat-${fallbackRequestIdCounter}`
+}
+
+export function AskAI(): ReactElement {
   const { messages, addMessage, updateMessage, appendToMessage, clearMessages } = useChatStore()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -13,6 +23,7 @@ export function AskAI() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeStreamCleanupRef = useRef<(() => void) | null>(null)
+  const isSendingRef = useRef(false)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
@@ -32,13 +43,12 @@ export function AskAI() {
     question: string
     displayQuestion: string
     selectedMeetingId?: string
-  }) => {
+  }): Promise<void> => {
     const question = params.question.trim()
-    if (!question || loading) return
+    if (!question || loading || isSendingRef.current) return
+    isSendingRef.current = true
     activeStreamCleanupRef.current?.()
-    const requestId =
-      globalThis.crypto?.randomUUID?.() ??
-      `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const requestId = createChatRequestId()
     const assistantMessageId = `assistant-${requestId}`
     const history = messages
       .filter((message) => message.content.trim().length > 0)
@@ -69,6 +79,7 @@ export function AskAI() {
       window.electronAPI.on('chat:done', (payload) => {
         if (payload.requestId !== requestId) return
         updateMessage(assistantMessageId, payload.content, payload.clarificationOptions)
+        isSendingRef.current = false
         setLoading(false)
         activeStreamCleanupRef.current?.()
         activeStreamCleanupRef.current = null
@@ -81,6 +92,7 @@ export function AskAI() {
           'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
         )
         console.error('Chat failed:', payload.error)
+        isSendingRef.current = false
         setLoading(false)
         activeStreamCleanupRef.current?.()
         activeStreamCleanupRef.current = null
@@ -109,6 +121,7 @@ export function AskAI() {
         'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
       )
       console.error('Chat failed:', err)
+      isSendingRef.current = false
       setLoading(false)
       activeStreamCleanupRef.current?.()
       activeStreamCleanupRef.current = null
@@ -116,7 +129,7 @@ export function AskAI() {
     }
   }
 
-  const handleSend = async () => {
+  const handleSend = async (): Promise<void> => {
     const question = input.trim()
     if (!question || loading) return
     setInput('')
@@ -126,7 +139,7 @@ export function AskAI() {
   const handleClarificationSelect = async (
     message: { originalQuestion?: string },
     option: ChatClarificationOption
-  ) => {
+  ): Promise<void> => {
     if (loading) return
     await sendChatRequest({
       question: message.originalQuestion ?? `Answer using ${option.title}`,
@@ -135,16 +148,17 @@ export function AskAI() {
     })
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  const handleNewChat = async () => {
+  const handleNewChat = async (): Promise<void> => {
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
+    isSendingRef.current = false
     clearMessages()
     setInput('')
     setLoading(false)
