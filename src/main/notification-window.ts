@@ -40,6 +40,10 @@ export function shouldSuppressNotificationActivation(): boolean {
   return false
 }
 
+export function resetNotificationActivationSuppressionForTests(): void {
+  suppressAppActivationUntil = 0
+}
+
 function clearAutoDismissTimer(): void {
   if (autoDismissTimer) {
     clearTimeout(autoDismissTimer)

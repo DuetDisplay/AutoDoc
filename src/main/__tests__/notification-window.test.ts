@@ -22,12 +22,12 @@ const mocks = vi.hoisted(() => {
       windows.push(this)
     }
 
-    on(event: string, handler: () => void) {
+    on(event: string, handler: () => void): this {
       this.listeners.set(event, handler)
       return this
     }
 
-    once(event: string, handler: () => void) {
+    once(event: string, handler: () => void): this {
       this.listeners.set(event, handler)
       return this
     }
@@ -61,10 +61,15 @@ vi.mock('electron', () => ({
   }
 }))
 
-const { shouldSuppressNotificationActivation, showNotificationWindow } =
-  await import('../notification-window')
+const {
+  resetNotificationActivationSuppressionForTests,
+  shouldSuppressNotificationActivation,
+  showNotificationWindow
+} = await import('../notification-window')
 
-function showTestNotification(options: Partial<Parameters<typeof showNotificationWindow>[0]> = {}) {
+function showTestNotification(
+  options: Partial<Parameters<typeof showNotificationWindow>[0]> = {}
+): void {
   showNotificationWindow({
     title: 'Notes Ready',
     body: 'Notes are ready.',
@@ -82,6 +87,7 @@ describe('notification window activation suppression', () => {
     vi.clearAllMocks()
     mocks.ipcHandlers.clear()
     mocks.windows.length = 0
+    resetNotificationActivationSuppressionForTests()
   })
 
   afterEach(() => {
