@@ -1,11 +1,21 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption } from '../../../preload/ipc'
 
-export function AskAI() {
+let fallbackRequestIdCounter = 0
+
+function createChatRequestId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.()
+  if (randomId) return randomId
+
+  fallbackRequestIdCounter += 1
+  return `chat-${fallbackRequestIdCounter}`
+}
+
+export function AskAI(): ReactElement {
   const { messages, addMessage, updateMessage, appendToMessage, clearMessages } = useChatStore()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -33,14 +43,12 @@ export function AskAI() {
     question: string
     displayQuestion: string
     selectedMeetingId?: string
-  }) => {
+  }): Promise<void> => {
     const question = params.question.trim()
     if (!question || loading || isSendingRef.current) return
     isSendingRef.current = true
     activeStreamCleanupRef.current?.()
-    const requestId =
-      globalThis.crypto?.randomUUID?.() ??
-      `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const requestId = createChatRequestId()
     const assistantMessageId = `assistant-${requestId}`
     const history = messages
       .filter((message) => message.content.trim().length > 0)
@@ -121,7 +129,7 @@ export function AskAI() {
     }
   }
 
-  const handleSend = async () => {
+  const handleSend = async (): Promise<void> => {
     const question = input.trim()
     if (!question || loading) return
     setInput('')
@@ -131,7 +139,7 @@ export function AskAI() {
   const handleClarificationSelect = async (
     message: { originalQuestion?: string },
     option: ChatClarificationOption
-  ) => {
+  ): Promise<void> => {
     if (loading) return
     await sendChatRequest({
       question: message.originalQuestion ?? `Answer using ${option.title}`,
@@ -140,14 +148,14 @@ export function AskAI() {
     })
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  const handleNewChat = async () => {
+  const handleNewChat = async (): Promise<void> => {
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
     isSendingRef.current = false
