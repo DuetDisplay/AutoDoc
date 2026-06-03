@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { access, chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
@@ -7,7 +7,19 @@ import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 const originalPlatform = process.platform
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 
-function setPlatform(platform: NodeJS.Platform) {
+interface LoadedOllamaManager {
+  OllamaManager: typeof import('../ollama-manager').OllamaManager
+  clearDownloadedComponents: typeof import('../storage-manager').clearDownloadedComponents
+  execSyncMock: Mock
+  execFileMock: Mock
+  spawnMock: Mock
+}
+
+interface OllamaManagerPrivateAccess {
+  getOllamaDataDir(): string
+}
+
+function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', {
     configurable: true,
     value: platform
@@ -18,7 +30,7 @@ async function loadOllamaManager(
   platform: 'darwin' | 'win32',
   rootDir: string,
   isPackaged = false
-) {
+): Promise<LoadedOllamaManager> {
   setPlatform(platform)
   vi.resetModules()
 
@@ -45,6 +57,7 @@ async function loadOllamaManager(
     OllamaManager: mod.OllamaManager,
     clearDownloadedComponents: storageMod.clearDownloadedComponents,
     execSyncMock,
+    execFileMock,
     spawnMock
   }
 }
@@ -85,6 +98,7 @@ describe('Ollama onboarding dependency installation', () => {
         const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
         await mkdir(runtimeDir, { recursive: true })
         await writeFile(join(runtimeDir, 'ollama'), 'binary')
+        await writeFile(join(runtimeDir, 'llama-server'), 'binary')
         manager.emit('download-complete', 'ollama')
       })
 
@@ -107,6 +121,9 @@ describe('Ollama onboarding dependency installation', () => {
       await expect(
         access(join(rootDir, 'models', 'ollama-runtime', 'ollama'))
       ).resolves.toBeUndefined()
+      await expect(
+        access(join(rootDir, 'models', 'ollama-runtime', 'llama-server'))
+      ).resolves.toBeUndefined()
       await expect(access(join(rootDir, 'ollama-data', 'serve-ready.txt'))).resolves.toBeUndefined()
       await expect(access(join(rootDir, 'ollama-data', 'model-ready.txt'))).resolves.toBeUndefined()
       await expect(
@@ -120,6 +137,74 @@ describe('Ollama onboarding dependency installation', () => {
         'pull-complete'
       ])
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('extracts the complete macOS Ollama runtime archive including llama-server', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-extract-'))
+
+    try {
+      const { OllamaManager, execFileMock, execSyncMock } = await loadOllamaManager(
+        'darwin',
+        rootDir,
+        true
+      )
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }))
+      )
+
+      execFileMock.mockImplementation(
+        async (command: string, args: string[], callback: (err: Error | null) => void) => {
+          expect(command).toBe('tar')
+          expect(args).toEqual([
+            'xzf',
+            join(rootDir, 'models', 'ollama-runtime', 'ollama-darwin.tgz'),
+            '-C',
+            join(rootDir, 'models', 'ollama-runtime')
+          ])
+          await writeFile(join(rootDir, 'models', 'ollama-runtime', 'ollama'), 'binary')
+          await writeFile(join(rootDir, 'models', 'ollama-runtime', 'llama-server'), 'binary')
+          callback(null)
+        }
+      )
+
+      const manager = new OllamaManager()
+      await manager.ensureReady()
+
+      await expect(
+        access(join(rootDir, 'models', 'ollama-runtime', 'ollama'))
+      ).resolves.toBeUndefined()
+      await expect(
+        access(join(rootDir, 'models', 'ollama-runtime', 'llama-server'))
+      ).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a packaged macOS runtime without llama-server as not ready', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-missing-sidecar-'))
+
+    try {
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir, true)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+
+      const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+      await mkdir(runtimeDir, { recursive: true })
+      await writeFile(join(runtimeDir, 'ollama'), 'binary')
+
+      const manager = new OllamaManager()
+      await expect(manager.isReady()).resolves.toBe(false)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -141,6 +226,37 @@ describe('Ollama onboarding dependency installation', () => {
       await expect(
         access(join(rootDir, 'models', 'ollama-runtime', 'ollama'))
       ).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks copied macOS installed runtime sidecars executable', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
+    const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
+    const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+
+    try {
+      delete process.env.AUTODOC_TEST_USER_DATA_DIR
+      await mkdir(installedRuntimeDir, { recursive: true })
+      await writeFile(join(installedRuntimeDir, 'ollama'), 'binary')
+      await writeFile(join(installedRuntimeDir, 'llama-server'), 'binary')
+      await chmod(join(installedRuntimeDir, 'ollama'), 0o644)
+      await chmod(join(installedRuntimeDir, 'llama-server'), 0o644)
+
+      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be needed when installed assets exist')
+      })
+
+      const manager = new OllamaManager()
+      await manager.ensureReady()
+
+      const ollamaMode = (await stat(join(runtimeDir, 'ollama'))).mode
+      const llamaServerMode = (await stat(join(runtimeDir, 'llama-server'))).mode
+      expect(ollamaMode & 0o111).not.toBe(0)
+      expect(llamaServerMode & 0o111).not.toBe(0)
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
@@ -273,7 +389,9 @@ describe('Ollama onboarding dependency installation', () => {
       await expect(
         access(join(rootDir, 'models', 'ollama-runtime', 'ollama.exe'))
       ).resolves.toBeUndefined()
-      expect((manager as any).getOllamaDataDir()).toBe(installedDataDir)
+      expect((manager as unknown as OllamaManagerPrivateAccess).getOllamaDataDir()).toBe(
+        installedDataDir
+      )
       await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
@@ -329,6 +447,7 @@ describe('Ollama onboarding dependency installation', () => {
       await mkdir(runtimeDir, { recursive: true })
       await mkdir(dataDir, { recursive: true })
       await writeFile(join(runtimeDir, 'ollama'), 'binary')
+      await writeFile(join(runtimeDir, 'llama-server'), 'binary')
       await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
 
       await expect(manager.isReady()).resolves.toBe(true)
@@ -343,6 +462,7 @@ describe('Ollama onboarding dependency installation', () => {
         .mockImplementation(async () => {
           await mkdir(runtimeDir, { recursive: true })
           await writeFile(join(runtimeDir, 'ollama'), 'binary')
+          await writeFile(join(runtimeDir, 'llama-server'), 'binary')
         })
       const startSpy = vi.spyOn(manager, 'start').mockImplementation(async () => {
         await manager.ensureReady()
@@ -363,6 +483,7 @@ describe('Ollama onboarding dependency installation', () => {
       expect(startSpy).toHaveBeenCalledTimes(1)
       expect(pullSpy).toHaveBeenCalledTimes(1)
       await expect(access(join(runtimeDir, 'ollama'))).resolves.toBeUndefined()
+      await expect(access(join(runtimeDir, 'llama-server'))).resolves.toBeUndefined()
       await expect(access(join(dataDir, 'serve-ready.txt'))).resolves.toBeUndefined()
       await expect(access(join(dataDir, 'model-ready.txt'))).resolves.toBeUndefined()
       expect(execSyncMock).not.toHaveBeenCalled()

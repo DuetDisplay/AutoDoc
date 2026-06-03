@@ -13,6 +13,7 @@ import {
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 
+const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
 
 const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
@@ -45,6 +46,7 @@ export class OllamaManager extends EventEmitter {
   private model: string
   private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
+  private adoptedSystemRuntime = false
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -136,6 +138,10 @@ export class OllamaManager extends EventEmitter {
     return join(this.getRuntimeDir(), IS_WIN ? 'ollama.exe' : 'ollama')
   }
 
+  private getLlamaServerPath(): string {
+    return join(this.getRuntimeDir(), 'llama-server')
+  }
+
   private getOllamaDataDir(): string {
     return this.getInstalledFallbackOllamaDataDir() ?? join(app.getPath('userData'), 'ollama-data')
   }
@@ -143,6 +149,9 @@ export class OllamaManager extends EventEmitter {
   async isReady(): Promise<boolean> {
     try {
       await access(this.getBinaryPath())
+      if (process.platform === 'darwin' && !this.adoptedSystemRuntime) {
+        await access(this.getLlamaServerPath())
+      }
       return true
     } catch {
       return false
@@ -185,6 +194,7 @@ export class OllamaManager extends EventEmitter {
         const systemBinary = this.findSystemOllama()
         if (systemBinary) {
           await copyFile(systemBinary, this.getBinaryPath())
+          this.adoptedSystemRuntime = true
           return
         }
       }
@@ -428,7 +438,7 @@ export class OllamaManager extends EventEmitter {
   }
 
   private async downloadBinaryWindows(runtimeDir: string): Promise<void> {
-    const url = 'https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip'
+    const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/ollama-windows-amd64.zip`
     const zipPath = join(runtimeDir, 'ollama.zip')
 
     await this.downloadToFile(url, zipPath)
@@ -453,21 +463,26 @@ export class OllamaManager extends EventEmitter {
   }
 
   private async downloadBinaryUnix(runtimeDir: string): Promise<void> {
-    const platform = process.platform === 'darwin' ? 'darwin' : 'linux'
-    const url = `https://github.com/ollama/ollama/releases/latest/download/ollama-${platform}.tgz`
-    const tgzPath = join(runtimeDir, 'ollama.tgz')
+    if (process.platform !== 'darwin') {
+      throw new Error('Managed Ollama downloads are only supported on macOS and Windows')
+    }
 
-    await this.downloadToFile(url, tgzPath)
+    const archiveName = 'ollama-darwin.tgz'
+    const archivePath = join(runtimeDir, archiveName)
+    const url = `https://github.com/ollama/ollama/releases/download/${OLLAMA_DOWNLOAD_VERSION}/${archiveName}`
+
+    await this.downloadToFile(url, archivePath)
 
     await new Promise<void>((resolve, reject) => {
-      execFile('tar', ['xzf', tgzPath, '-C', runtimeDir, 'ollama'], (err) => {
+      execFile('tar', ['xzf', archivePath, '-C', runtimeDir], (err) => {
         if (err) reject(new Error(`Failed to extract Ollama: ${err.message}`))
         else resolve()
       })
     })
 
     await chmod(this.getBinaryPath(), 0o755)
-    await rm(tgzPath, { force: true })
+    await chmod(this.getLlamaServerPath(), 0o755)
+    await rm(archivePath, { force: true })
   }
 
   private async downloadToFile(url: string, destPath: string): Promise<void> {
@@ -531,7 +546,7 @@ export class OllamaManager extends EventEmitter {
       }
 
       await copyFile(sourcePath, destPath)
-      if (!IS_WIN && entry.name === 'ollama') {
+      if (!IS_WIN && (entry.name === 'ollama' || entry.name === 'llama-server')) {
         await chmod(destPath, 0o755)
       }
     }
