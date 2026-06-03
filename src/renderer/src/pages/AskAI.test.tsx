@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AskAI } from './AskAI'
 import { installMockElectronApi, resetRendererStores } from '../test/fixtures'
+import { useChatStore } from '../stores/chat'
 
 describe('AskAI', () => {
   beforeEach(() => {
@@ -11,6 +12,10 @@ describe('AskAI', () => {
       configurable: true,
       value: vi.fn()
     })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('shows the reconnecting hint when Ollama is not ready yet', async () => {
@@ -103,6 +108,186 @@ describe('AskAI', () => {
     await waitFor(() => {
       expect(screen.getByText(/make sure Ollama is running and try again/i)).toBeInTheDocument()
     })
+  })
+
+  it('stops an in-flight response, cancels the backend, and keeps partial text', async () => {
+    let requestId = ''
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      queueMicrotask(() => {
+        api.emit('chat:chunk', { requestId: id, content: 'Partial answer' })
+      })
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Partial answer')).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /stop generating/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', requestId)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
+
+    const assistantMessage = useChatStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant')
+    expect(assistantMessage?.status).toBe('canceled')
+    expect(assistantMessage?.content).toBe('Partial answer')
+  })
+
+  it('removes the empty bubble when stopping before any token arrives', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', () => new Promise(() => {}))
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await user.click(await screen.findByRole('button', { name: /stop generating/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', expect.any(String))
+    expect(
+      useChatStore
+        .getState()
+        .messages.some((message) => message.role === 'assistant' && message.content.length === 0)
+    ).toBe(false)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
+  })
+
+  it('persists the draft when the Ask AI view remounts', async () => {
+    installMockElectronApi({
+      'ollama:check-status': true
+    })
+
+    const { unmount } = render(<AskAI />)
+    await act(async () => {})
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Draft about the second recording'
+    )
+
+    unmount()
+    render(<AskAI />)
+    await act(async () => {})
+
+    expect(screen.getByPlaceholderText(/ask a question about your meetings/i)).toHaveValue(
+      'Draft about the second recording'
+    )
+  })
+
+  it('removes an empty pending assistant message when the view unmounts', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', () => new Promise(() => {}))
+
+    const { unmount } = render(<AskAI />)
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Who owns billing migration?'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => {
+      expect(useChatStore.getState().messages.some((message) => message.status === 'pending')).toBe(
+        true
+      )
+    })
+
+    unmount()
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', expect.any(String))
+    expect(
+      useChatStore
+        .getState()
+        .messages.some((message) => message.role === 'assistant' && message.content.length === 0)
+    ).toBe(false)
+  })
+
+  it('cancels the in-flight backend request when starting a new chat', async () => {
+    let requestId = ''
+    const api = installMockElectronApi({
+      'ollama:check-status': true,
+      'chat:new': undefined
+    })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => {
+      expect(useChatStore.getState().messages.some((message) => message.status === 'pending')).toBe(
+        true
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: /new chat/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', requestId)
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:new')
+  })
+
+  it('times out stalled responses and ignores late stream events', async () => {
+    vi.useFakeTimers()
+    let requestId = ''
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const input = screen.getByPlaceholderText(/ask a question about your meetings/i)
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Summarize the second recording' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(requestId).not.toBe('')
+
+    act(() => {
+      vi.advanceTimersByTime(45_000)
+    })
+
+    expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
+
+    act(() => {
+      api.emit('chat:done', { requestId, content: 'Late answer that should be ignored' })
+    })
+
+    expect(screen.queryByText('Late answer that should be ignored')).not.toBeInTheDocument()
   })
 
   it('renders clarification options as selectable meetings and sends the meeting id', async () => {

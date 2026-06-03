@@ -81,7 +81,7 @@ export function resetRendererStores(): void {
     events: [],
     isSyncing: false
   })
-  useChatStore.setState({ messages: [] })
+  useChatStore.setState({ messages: [], draftInput: '' })
   useSearchStore.setState({ query: '', results: [], searched: false })
   useToastStore.setState({ activeToast: null })
   useRecordingStore.setState({

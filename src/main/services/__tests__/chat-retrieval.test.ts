@@ -1,7 +1,7 @@
 import { mkdtemp, rm, mkdir, writeFile, utimes } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   CalendarEvent,
   MeetingMetadata,
@@ -16,7 +16,13 @@ import {
 
 const tempDirs: string[] = []
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 4, 27, 12, 0))
+})
+
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
 })
@@ -137,9 +143,12 @@ describe('ChatRecordingIndex', () => {
     expect(count.directAnswer).toBe('You have 100 recordings.')
     expect(count.diagnostics.matchMode).toBe('direct-count')
     expect(count.diagnostics.selectedContextCount).toBe(0)
+    expect(count.diagnostics.matchedMeetingIds).toHaveLength(100)
     expect(list.directAnswer).toContain('I found 100 recordings total')
     expect(list.directAnswer).toContain('showed the most recent 50')
     expect(list.diagnostics.inventoryCount).toBe(100)
+    expect(list.diagnostics.selectedContextCount).toBe(0)
+    expect(list.diagnostics.matchedMeetingIds).toHaveLength(100)
   })
 
   it('applies direct count and list qualifiers before answering', async () => {

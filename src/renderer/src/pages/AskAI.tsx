@@ -6,6 +6,8 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption } from '../../../preload/ipc'
 
 let fallbackRequestIdCounter = 0
+const FIRST_TOKEN_TIMEOUT_MS = 45_000
+const COMPLETION_TIMEOUT_MS = 180_000
 
 function createChatRequestId(): string {
   const randomId = globalThis.crypto?.randomUUID?.()
@@ -16,13 +18,26 @@ function createChatRequestId(): string {
 }
 
 export function AskAI(): ReactElement {
-  const { messages, addMessage, updateMessage, appendToMessage, clearMessages } = useChatStore()
-  const [input, setInput] = useState('')
+  const {
+    messages,
+    draftInput,
+    addMessage,
+    updateMessage,
+    appendToMessage,
+    setMessageStatus,
+    removeEmptyInFlightAssistantMessages,
+    setDraftInput,
+    clearMessages
+  } = useChatStore()
   const [loading, setLoading] = useState(false)
   const [ollamaReady, setOllamaReady] = useState<boolean | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeStreamCleanupRef = useRef<(() => void) | null>(null)
+  const activeRequestIdRef = useRef<string | null>(null)
+  const activeAssistantMessageIdRef = useRef<string | null>(null)
+  const firstTokenTimeoutRef = useRef<number | null>(null)
+  const completionTimeoutRef = useRef<number | null>(null)
   const isSendingRef = useRef(false)
 
   useEffect(() => {
@@ -31,13 +46,59 @@ export function AskAI(): ReactElement {
 
   useEffect(() => {
     return () => {
+      const activeRequestId = activeRequestIdRef.current
+      if (activeRequestId) {
+        void window.electronAPI.invoke('chat:cancel', activeRequestId)
+      }
       activeStreamCleanupRef.current?.()
+      clearRequestTimeouts()
+      const activeAssistantMessageId = activeAssistantMessageIdRef.current
+      if (activeAssistantMessageId) {
+        setMessageStatus(activeAssistantMessageId, 'canceled')
+      }
+      removeEmptyInFlightAssistantMessages()
+      activeRequestIdRef.current = null
+      activeAssistantMessageIdRef.current = null
+      isSendingRef.current = false
     }
-  }, [])
+  }, [removeEmptyInFlightAssistantMessages, setMessageStatus])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, loading])
+
+  const clearRequestTimeouts = (): void => {
+    if (firstTokenTimeoutRef.current) {
+      window.clearTimeout(firstTokenTimeoutRef.current)
+      firstTokenTimeoutRef.current = null
+    }
+    if (completionTimeoutRef.current) {
+      window.clearTimeout(completionTimeoutRef.current)
+      completionTimeoutRef.current = null
+    }
+  }
+
+  const finishActiveRequest = (): void => {
+    clearRequestTimeouts()
+    isSendingRef.current = false
+    setLoading(false)
+    activeRequestIdRef.current = null
+    activeAssistantMessageIdRef.current = null
+    activeStreamCleanupRef.current?.()
+    activeStreamCleanupRef.current = null
+    inputRef.current?.focus()
+  }
+
+  const markActiveRequestTimedOut = (requestId: string, messageId: string): void => {
+    if (activeRequestIdRef.current !== requestId) return
+    updateMessage(
+      messageId,
+      'Sorry, this is taking longer than expected. Please try again.',
+      undefined,
+      'timed_out'
+    )
+    finishActiveRequest()
+  }
 
   const sendChatRequest = async (params: {
     question: string
@@ -45,13 +106,16 @@ export function AskAI(): ReactElement {
     selectedMeetingId?: string
   }): Promise<void> => {
     const question = params.question.trim()
-    if (!question || loading || isSendingRef.current) return
+    if (!question || loading || isSendingRef.current || activeRequestIdRef.current) return
     isSendingRef.current = true
     activeStreamCleanupRef.current?.()
+    clearRequestTimeouts()
     const requestId = createChatRequestId()
     const assistantMessageId = `assistant-${requestId}`
+    activeRequestIdRef.current = requestId
+    activeAssistantMessageIdRef.current = assistantMessageId
     const history = messages
-      .filter((message) => message.content.trim().length > 0)
+      .filter((message) => message.content.trim().length > 0 && message.status !== 'timed_out')
       .slice(-8)
       .map((message) => ({ role: message.role, content: message.content }))
     addMessage({ role: 'user', content: params.displayQuestion })
@@ -59,6 +123,7 @@ export function AskAI(): ReactElement {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
+      status: 'pending',
       originalQuestion: question
     })
     setLoading(true)
@@ -74,34 +139,50 @@ export function AskAI(): ReactElement {
     const cleanupListeners = [
       window.electronAPI.on('chat:chunk', (payload) => {
         if (payload.requestId !== requestId) return
+        if (activeRequestIdRef.current !== requestId) return
+        if (firstTokenTimeoutRef.current) {
+          window.clearTimeout(firstTokenTimeoutRef.current)
+          firstTokenTimeoutRef.current = null
+        }
         appendToMessage(assistantMessageId, payload.content)
       }),
       window.electronAPI.on('chat:done', (payload) => {
         if (payload.requestId !== requestId) return
-        updateMessage(assistantMessageId, payload.content, payload.clarificationOptions)
-        isSendingRef.current = false
-        setLoading(false)
-        activeStreamCleanupRef.current?.()
-        activeStreamCleanupRef.current = null
-        inputRef.current?.focus()
+        if (activeRequestIdRef.current !== requestId) return
+        updateMessage(assistantMessageId, payload.content, payload.clarificationOptions, 'complete')
+        finishActiveRequest()
       }),
       window.electronAPI.on('chat:error', (payload) => {
         if (payload.requestId !== requestId) return
+        if (activeRequestIdRef.current !== requestId) return
         updateMessage(
           assistantMessageId,
-          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+          undefined,
+          'failed'
         )
         console.error('Chat failed:', payload.error)
-        isSendingRef.current = false
-        setLoading(false)
-        activeStreamCleanupRef.current?.()
-        activeStreamCleanupRef.current = null
-        inputRef.current?.focus()
+        finishActiveRequest()
+      }),
+      window.electronAPI.on('chat:canceled', (payload) => {
+        if (payload.requestId !== requestId) return
+        if (activeRequestIdRef.current !== requestId) return
+        setMessageStatus(assistantMessageId, 'canceled')
+        removeEmptyInFlightAssistantMessages()
+        finishActiveRequest()
       })
     ]
     activeStreamCleanupRef.current = () => {
       for (const cleanup of cleanupListeners) cleanup()
     }
+    firstTokenTimeoutRef.current = window.setTimeout(
+      () => markActiveRequestTimedOut(requestId, assistantMessageId),
+      FIRST_TOKEN_TIMEOUT_MS
+    )
+    completionTimeoutRef.current = window.setTimeout(
+      () => markActiveRequestTimedOut(requestId, assistantMessageId),
+      COMPLETION_TIMEOUT_MS
+    )
 
     try {
       if (params.selectedMeetingId) {
@@ -116,24 +197,35 @@ export function AskAI(): ReactElement {
         await window.electronAPI.invoke('chat:send-stream', requestId, question, history)
       }
     } catch (err) {
+      if (activeRequestIdRef.current !== requestId) return
       updateMessage(
         assistantMessageId,
-        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.'
+        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+        undefined,
+        'failed'
       )
       console.error('Chat failed:', err)
-      isSendingRef.current = false
-      setLoading(false)
-      activeStreamCleanupRef.current?.()
-      activeStreamCleanupRef.current = null
-      inputRef.current?.focus()
+      finishActiveRequest()
     }
   }
 
   const handleSend = async (): Promise<void> => {
-    const question = input.trim()
+    const question = draftInput.trim()
     if (!question || loading) return
-    setInput('')
+    setDraftInput('')
     await sendChatRequest({ question, displayQuestion: question })
+  }
+
+  const handleStop = (): void => {
+    const requestId = activeRequestIdRef.current
+    const assistantMessageId = activeAssistantMessageIdRef.current
+    if (!requestId) return
+    void window.electronAPI.invoke('chat:cancel', requestId)
+    if (assistantMessageId) {
+      setMessageStatus(assistantMessageId, 'canceled')
+    }
+    removeEmptyInFlightAssistantMessages()
+    finishActiveRequest()
   }
 
   const handleClarificationSelect = async (
@@ -156,11 +248,17 @@ export function AskAI(): ReactElement {
   }
 
   const handleNewChat = async (): Promise<void> => {
+    const activeRequestId = activeRequestIdRef.current
+    if (activeRequestId) {
+      void window.electronAPI.invoke('chat:cancel', activeRequestId)
+    }
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
+    clearRequestTimeouts()
     isSendingRef.current = false
+    activeRequestIdRef.current = null
+    activeAssistantMessageIdRef.current = null
     clearMessages()
-    setInput('')
     setLoading(false)
     await window.electronAPI.invoke('chat:new')
     inputRef.current?.focus()
@@ -174,7 +272,7 @@ export function AskAI(): ReactElement {
           <button
             type="button"
             onClick={handleNewChat}
-            disabled={messages.length === 0 && !input.trim()}
+            disabled={messages.length === 0 && !draftInput.trim()}
             className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
           >
             New chat
@@ -226,7 +324,9 @@ export function AskAI(): ReactElement {
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
-                  {msg.role === 'assistant' && msg.content.length === 0 ? (
+                  {msg.role === 'assistant' &&
+                  msg.content.length === 0 &&
+                  (msg.status === 'pending' || msg.status === 'streaming') ? (
                     <div className="flex gap-1.5 py-1">
                       <span
                         className="w-2 h-2 rounded-full bg-ink-faint animate-bounce"
@@ -285,21 +385,34 @@ export function AskAI(): ReactElement {
           <input
             ref={inputRef}
             type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+            value={draftInput}
+            onChange={(e) => setDraftInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask a question about your meetings..."
             disabled={loading}
             className="flex-1 px-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors disabled:opacity-50"
             autoFocus
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || loading}
-            className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-          >
-            Send
-          </button>
+          {loading ? (
+            <button
+              type="button"
+              onClick={handleStop}
+              aria-label="Stop generating"
+              className="px-4 py-2.5 bg-clay text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+            >
+              <span className="w-2.5 h-2.5 rounded-[2px] bg-white" />
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!draftInput.trim()}
+              className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>

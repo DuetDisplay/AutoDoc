@@ -1,3 +1,4 @@
+# Windows-only asset pipeline — disabled while we ship macOS-only.
 name: Windows Transcription Assets
 
 on:
@@ -16,6 +17,7 @@ on:
 
 jobs:
   build-windows-transcription-assets:
+    if: false # macOS-only for now — re-enable when Windows shipping resumes
     runs-on: windows-2022
     permissions:
       contents: write

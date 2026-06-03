@@ -16,6 +16,7 @@ import {
 } from '../services/chat-retrieval'
 import { normalizeRecordingSearchText } from '../services/recording-title'
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
+import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 
 const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts, notes, and their calendar.
 
@@ -77,6 +78,7 @@ interface ChatHistoryMessage {
 interface ChatConversationState {
   lastCalendarEvents: CalendarEvent[]
   lastRecordingIds: string[]
+  lastRecordingTitles: string[]
   focusedRecordingIds: string[]
   lastClarificationOptions: ChatClarificationOption[]
 }
@@ -108,6 +110,10 @@ interface ChatErrorPayload {
   error: string
 }
 
+interface ChatCanceledPayload {
+  requestId: string
+}
+
 interface PreparedChatContext {
   directAnswer: string | null
   context: string
@@ -128,6 +134,7 @@ export function registerChatIpc(
     embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json')
   })
   const chatSessions = new Map<number, ChatConversationState>()
+  const activeChatRequests = new Map<string, AbortController>()
   let calendarFailureUntil = 0
 
   const loadCalendarContextDataWithBackoff = async (): Promise<{
@@ -166,16 +173,77 @@ export function registerChatIpc(
   const prepareChatContext = async (
     question: string,
     history: ChatHistoryMessage[],
-    session: ChatConversationState
+    session: ChatConversationState,
+    signal?: AbortSignal
   ): Promise<{
     directAnswer: string | null
     context: string
     clarificationOptions?: ChatClarificationOption[]
   }> => {
+    const turn = classifyChatTurn(question, history, toClassifierSession(session))
+
+    if (turn.kind === 'acknowledgement') {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: {
+          route: 'conversational-acknowledgement',
+          questionLength: question.length
+        }
+      })
+      return { directAnswer: "You're welcome.", context: '' }
+    }
+
+    if (turn.kind === 'smalltalk') {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: { route: 'smalltalk', topic: turn.topic, questionLength: question.length }
+      })
+      return { directAnswer: buildSmalltalkAnswer(turn.topic), context: '' }
+    }
+
+    if (turn.kind === 'count_confirmation') {
+      const directAnswer = formatCountConfirmationAnswer({
+        label: turn.scope === 'calendar' ? 'calendar meeting' : 'local recording',
+        actualCount:
+          turn.scope === 'calendar'
+            ? session.lastCalendarEvents.length
+            : session.lastRecordingIds.length,
+        referencedCount: turn.referencedCount
+      })
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: {
+          route: 'count-confirmation',
+          scope: turn.scope,
+          questionLength: question.length,
+          previousCalendarCount: session.lastCalendarEvents.length,
+          previousRecordingCount: session.lastRecordingIds.length
+        }
+      })
+      return { directAnswer, context: '' }
+    }
+
+    if (turn.kind === 'reference') {
+      return prepareMeetingScopedContext(question, turn.meetingIds, session, turn.followUp)
+    }
+
+    if (turn.kind === 'scoped_followup') {
+      return prepareMeetingScopedContext(question, turn.meetingIds, session, true)
+    }
+
     const intent = detectChatIntent(question)
     if (intent === 'count' || intent === 'list') {
       clearConversationScope(session)
       const meetingContext = await recordingIndex.buildContext(question, [])
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.matchedMeetingIds,
+        meetingContext.diagnostics.matchedTitles
+      )
+      session.focusedRecordingIds = []
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
@@ -200,7 +268,11 @@ export function registerChatIpc(
     const localExactContext = await recordingIndex.buildExactTitleContext(question, [])
     if (localExactContext) {
       session.lastCalendarEvents = []
-      session.lastRecordingIds = localExactContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        localExactContext.diagnostics.selectedMeetingIds,
+        localExactContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = localExactContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, localExactContext)
       logAutodocEvent({
@@ -245,7 +317,8 @@ export function registerChatIpc(
         baseUrl: ollamaManager.getBaseUrl(),
         model: ollamaProvider.getModel(),
         question,
-        history
+        history,
+        signal
       })
       const plannedContext = await preparePlannedChatContext(question, plan, 'model', session)
       if (plannedContext.directAnswer || plannedContext.context.trim().length > 0) {
@@ -302,10 +375,53 @@ export function registerChatIpc(
     }
   }
 
+  // Recording coreference / implicit follow-ups are resolved up front by the
+  // turn classifier; this builds the answer for the recordings it selected.
+  const prepareMeetingScopedContext = async (
+    question: string,
+    meetingIds: string[],
+    session: ChatConversationState,
+    followUp: boolean
+  ): Promise<PreparedChatContext> => {
+    const meetingContext = await recordingIndex.buildContextForMeetingIds(
+      buildScopedQuestion(question, session, followUp),
+      meetingIds,
+      session.lastCalendarEvents
+    )
+    mergeScopedRecordingList(
+      session,
+      meetingContext.diagnostics.selectedMeetingIds,
+      meetingContext.diagnostics.selectedTitles
+    )
+    session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+    updateClarificationState(session, meetingContext)
+    logAutodocEvent({
+      area: 'chat',
+      message: 'chat retrieval completed',
+      context: {
+        ...meetingContext.diagnostics,
+        conversationScopedFollowUp: true,
+        scopedToFocusedRecordings: true,
+        calendarElapsedMs: 0,
+        calendarSkippedByBackoff: false,
+        calendarRecentCount: session.lastCalendarEvents.length,
+        calendarUpcomingCount: 0
+      }
+    })
+    return {
+      directAnswer: meetingContext.directAnswer,
+      context: meetingContext.context,
+      clarificationOptions: meetingContext.clarificationOptions
+    }
+  }
+
+  // Calendar-list follow-ups (e.g. "which of those had notes?") remain here;
+  // recording references/follow-ups are handled by the classifier dispatch.
   const prepareConversationScopedContext = async (
     question: string,
     session: ChatConversationState
   ): Promise<PreparedChatContext | null> => {
+    if (session.lastCalendarEvents.length === 0) return null
     if (shouldStartNewConversationScope(question)) return null
     if (hasFreshSearchTerms(normalizeRecordingSearchText(question))) return null
 
@@ -314,36 +430,11 @@ export function registerChatIpc(
         session.lastCalendarEvents,
         session.lastCalendarEvents
       )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-      session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-      updateClarificationState(session, meetingContext)
-      logAutodocEvent({
-        area: 'chat',
-        message: 'chat retrieval completed',
-        context: {
-          ...meetingContext.diagnostics,
-          conversationScopedFollowUp: true,
-          calendarElapsedMs: 0,
-          calendarSkippedByBackoff: false,
-          calendarRecentCount: session.lastCalendarEvents.length,
-          calendarUpcomingCount: 0
-        }
-      })
-      return {
-        directAnswer: meetingContext.directAnswer,
-        context: meetingContext.context,
-        clarificationOptions: meetingContext.clarificationOptions
-      }
-    }
-
-    const scopedIds = resolveScopedRecordingIds(question, session)
-    if (scopedIds.length > 0 && shouldUseConversationScope(question)) {
-      const meetingContext = await recordingIndex.buildContextForMeetingIds(
-        buildScopedQuestion(question, session),
-        scopedIds,
-        session.lastCalendarEvents
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
       )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
@@ -352,7 +443,6 @@ export function registerChatIpc(
         context: {
           ...meetingContext.diagnostics,
           conversationScopedFollowUp: true,
-          scopedToFocusedRecordings: true,
           calendarElapsedMs: 0,
           calendarSkippedByBackoff: false,
           calendarRecentCount: session.lastCalendarEvents.length,
@@ -372,7 +462,11 @@ export function registerChatIpc(
         session.lastCalendarEvents,
         session.lastCalendarEvents
       )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
@@ -456,7 +550,7 @@ export function registerChatIpc(
         calendarUpcomingCount
       })
       session.lastCalendarEvents = selectedCalendarEvents
-      session.lastRecordingIds = []
+      rememberRecordingList(session, [], [])
       session.focusedRecordingIds = []
       session.lastClarificationOptions = []
       return { directAnswer, context: '' }
@@ -480,7 +574,11 @@ export function registerChatIpc(
       if (meetingContext.context) contextParts.push(meetingContext.context)
       if (meetingContext.directAnswer)
         contextParts.push(`Local recording answer: ${meetingContext.directAnswer}`)
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       if (selectedCalendarEvents.length > 0) {
@@ -526,6 +624,14 @@ export function registerChatIpc(
     clearConversationScope(session)
   })
 
+  ipcMain.handle('chat:cancel', (_event, requestId: string): void => {
+    const controller = activeChatRequests.get(requestId)
+    if (controller) {
+      controller.abort()
+      activeChatRequests.delete(requestId)
+    }
+  })
+
   ipcMain.handle(
     'chat:send-stream',
     async (
@@ -536,6 +642,8 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      const controller = new AbortController()
+      activeChatRequests.set(requestId, controller)
       let normalizedHistoryLength = 0
 
       try {
@@ -544,7 +652,8 @@ export function registerChatIpc(
         const { directAnswer, context, clarificationOptions } = await prepareChatContext(
           question,
           normalizedHistory,
-          session
+          session,
+          controller.signal
         )
         if (directAnswer) {
           sender.send('chat:chunk', {
@@ -567,6 +676,7 @@ export function registerChatIpc(
           question,
           context,
           history: normalizedHistory,
+          signal: controller.signal,
           onChunk: (chunk) => {
             content += chunk
             sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
@@ -574,6 +684,10 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
+          return
+        }
         logChatFailure(error, {
           requestId,
           route: 'chat:send-stream',
@@ -584,6 +698,8 @@ export function registerChatIpc(
           requestId,
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
+      } finally {
+        activeChatRequests.delete(requestId)
       }
     }
   )
@@ -599,6 +715,8 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      const controller = new AbortController()
+      activeChatRequests.set(requestId, controller)
       let normalizedHistoryLength = 0
 
       try {
@@ -609,7 +727,11 @@ export function registerChatIpc(
           [meetingId],
           session.lastCalendarEvents
         )
-        session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+        rememberRecordingList(
+          session,
+          meetingContext.diagnostics.selectedMeetingIds,
+          meetingContext.diagnostics.selectedTitles
+        )
         session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
         updateClarificationState(session, meetingContext)
         logAutodocEvent({
@@ -646,6 +768,7 @@ export function registerChatIpc(
           question,
           context: meetingContext.context,
           history: normalizedHistory,
+          signal: controller.signal,
           onChunk: (chunk) => {
             content += chunk
             sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
@@ -653,6 +776,10 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
+          return
+        }
         logChatFailure(error, {
           requestId,
           route: 'chat:select-recording-stream',
@@ -664,9 +791,15 @@ export function registerChatIpc(
           requestId,
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
+      } finally {
+        activeChatRequests.delete(requestId)
       }
     }
   )
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
 }
 
 function logChatFailure(
@@ -697,6 +830,7 @@ function getChatSession(
     session = {
       lastCalendarEvents: [],
       lastRecordingIds: [],
+      lastRecordingTitles: [],
       focusedRecordingIds: [],
       lastClarificationOptions: []
     }
@@ -708,6 +842,7 @@ function getChatSession(
 function clearConversationScope(session: ChatConversationState): void {
   session.lastCalendarEvents = []
   session.lastRecordingIds = []
+  session.lastRecordingTitles = []
   session.focusedRecordingIds = []
   session.lastClarificationOptions = []
 }
@@ -717,6 +852,45 @@ function updateClarificationState(
   result: ChatRetrievalResult
 ): void {
   session.lastClarificationOptions = result.clarificationOptions ?? []
+}
+
+function toClassifierSession(session: ChatConversationState): ChatTurnSession {
+  return {
+    recordingIds: session.lastRecordingIds,
+    recordingTitles: session.lastRecordingTitles,
+    calendarEventCount: session.lastCalendarEvents.length,
+    focusedRecordingIds: session.focusedRecordingIds,
+    lastTurnWasClarification: session.lastClarificationOptions.length > 0
+  }
+}
+
+function rememberRecordingList(
+  session: ChatConversationState,
+  ids: string[],
+  titles: string[]
+): void {
+  // Keep the two arrays index-aligned so title coreference resolves the right id.
+  session.lastRecordingIds = ids
+  session.lastRecordingTitles = ids.map((_, index) => titles[index] ?? '')
+}
+
+function buildSmalltalkAnswer(topic: 'greeting' | 'capability'): string {
+  if (topic === 'capability') {
+    return "I'm AutoDoc's meeting assistant. Ask me what was discussed in a meeting, who owns an action item, decisions and deadlines, or what's on your calendar — I'll answer from your local recordings and notes."
+  }
+  return 'Hi! Ask me anything about your meetings — what was discussed, your action items and owners, or what you have coming up on your calendar.'
+}
+
+function formatCountConfirmationAnswer(params: {
+  label: string
+  actualCount: number
+  referencedCount: number | null
+}): string {
+  const pluralLabel = `${params.label}${params.actualCount === 1 ? '' : 's'}`
+  if (params.referencedCount == null || params.referencedCount === params.actualCount) {
+    return `Yes, you have ${params.actualCount} ${pluralLabel} in that list.`
+  }
+  return `Not quite - you have ${params.actualCount} ${pluralLabel} in that list.`
 }
 
 function normalizeChatHistory(history: ChatHistoryMessage[]): ChatHistoryMessage[] {
@@ -766,11 +940,15 @@ function shouldStartNewConversationScope(question: string): boolean {
 
 function shouldUseConversationScope(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)
-  return isImplicitFollowUpQuestion(normalized) || hasContextReference(normalized)
+  return (
+    isImplicitFollowUpQuestion(normalized) ||
+    hasContextReference(normalized) ||
+    extractOrdinalReference(question) != null
+  )
 }
 
 function hasContextReference(normalizedQuestion: string): boolean {
-  return /\b(it|that|those|these|them|there|same|above|previous|earlier|for me|for us|the list|that list|this meeting|that meeting|these meetings|those meetings)\b/.test(
+  return /\b(it|that|those|these|them|there|same|above|previous|earlier|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|for me|for us|the list|that list|this meeting|that meeting|these meetings|those meetings)\b/.test(
     normalizedQuestion
   )
 }
@@ -780,18 +958,26 @@ function isShortContextualQuestion(normalizedQuestion: string): boolean {
   return words.length > 0 && words.length <= 8
 }
 
-function resolveScopedRecordingIds(question: string, session: ChatConversationState): string[] {
-  const ordinalIndex = extractOrdinalReference(question)
-  if (ordinalIndex != null && session.lastRecordingIds[ordinalIndex]) {
-    return [session.lastRecordingIds[ordinalIndex]]
+function mergeScopedRecordingList(
+  session: ChatConversationState,
+  selectedIds: string[],
+  selectedTitles: string[]
+): void {
+  if (session.lastRecordingIds.length === 0) {
+    rememberRecordingList(session, selectedIds, selectedTitles)
+    return
   }
+  if (selectedIds.length === 0) return
 
-  const normalized = normalizeRecordingSearchText(question)
-  if (session.focusedRecordingIds.length > 0 && isImplicitFollowUpQuestion(normalized)) {
-    return session.focusedRecordingIds
-  }
-
-  return []
+  const mergedIds = [...session.lastRecordingIds]
+  const mergedTitles = [...session.lastRecordingTitles]
+  selectedIds.forEach((id, index) => {
+    if (!mergedIds.includes(id)) {
+      mergedIds.push(id)
+      mergedTitles.push(selectedTitles[index] ?? '')
+    }
+  })
+  rememberRecordingList(session, mergedIds, mergedTitles)
 }
 
 function extractOrdinalReference(question: string): number | null {
@@ -800,15 +986,25 @@ function extractOrdinalReference(question: string): number | null {
   if (numeric) return Number(numeric[1]) - 1
 
   const ordinals: Array<[RegExp, number]> = [
+    [/\b1st\b/, 0],
     [/\bfirst\b/, 0],
+    [/\b2nd\b/, 1],
     [/\bsecond\b/, 1],
+    [/\b3rd\b/, 2],
     [/\bthird\b/, 2],
+    [/\b4th\b/, 3],
     [/\bfourth\b/, 3],
+    [/\b5th\b/, 4],
     [/\bfifth\b/, 4],
+    [/\b6th\b/, 5],
     [/\bsixth\b/, 5],
+    [/\b7th\b/, 6],
     [/\bseventh\b/, 6],
+    [/\b8th\b/, 7],
     [/\beighth\b/, 7],
+    [/\b9th\b/, 8],
     [/\bninth\b/, 8],
+    [/\b10th\b/, 9],
     [/\btenth\b/, 9]
   ]
   return ordinals.find(([pattern]) => pattern.test(normalized))?.[1] ?? null
@@ -860,14 +1056,34 @@ function hasFreshSearchTerms(normalizedQuestion: string): boolean {
     'todo',
     'todos',
     'transcript',
-    'transcripts'
+    'transcripts',
+    'appreciate',
+    'awesome',
+    'can',
+    'cool',
+    'could',
+    'got',
+    'ok',
+    'okay',
+    'please',
+    'show',
+    'sounds',
+    'thank',
+    'thanks',
+    'thx',
+    'would',
+    'you'
   ])
 
   return extractQuestionTerms(normalizedQuestion).some((term) => !genericFollowUpTerms.has(term))
 }
 
-function buildScopedQuestion(question: string, session: ChatConversationState): string {
-  if (isImplicitFollowUpQuestion(normalizeRecordingSearchText(question))) {
+function buildScopedQuestion(
+  question: string,
+  session: ChatConversationState,
+  followUp: boolean
+): string {
+  if (followUp) {
     return `${question} Summarize any additional relevant notes from the selected meeting.`
   }
   if (session.lastRecordingIds.length > 0) {
@@ -945,6 +1161,8 @@ function logChatRetrieval(params: {
         matchedCount: 0,
         selectedContextCount: 0,
         matchMode: 'ranked',
+        matchedMeetingIds: [],
+        matchedTitles: [],
         selectedMeetingIds: [],
         selectedTitles: [],
         inventoryElapsedMs: 0,
@@ -1309,11 +1527,13 @@ async function buildChatRetrievalPlan(params: {
   model: string
   question: string
   history: ChatHistoryMessage[]
+  signal?: AbortSignal
 }): Promise<ChatRetrievalPlan> {
   try {
     const res = await fetch(`${params.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: params.signal,
       body: JSON.stringify({
         model: params.model,
         messages: buildPlannerMessages(params.question, params.history),
@@ -1331,7 +1551,8 @@ async function buildChatRetrievalPlan(params: {
     if (!res.ok) throw new Error(`Ollama returned ${res.status}`)
     const data = (await res.json()) as { message?: { content?: string } }
     return parseChatRetrievalPlan(data.message?.content ?? '', params.question)
-  } catch {
+  } catch (error) {
+    if (params.signal?.aborted) throw error
     return buildFallbackRetrievalPlan(params.question)
   }
 }
@@ -1535,10 +1756,12 @@ async function streamOllamaChat(params: {
   context: string
   history: ChatHistoryMessage[]
   onChunk: (chunk: string) => void
+  signal?: AbortSignal
 }): Promise<void> {
   const res = await fetch(`${params.baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: params.signal,
     body: JSON.stringify({
       model: params.model,
       messages: buildChatMessages(
