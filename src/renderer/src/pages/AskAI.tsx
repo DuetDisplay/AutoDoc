@@ -46,6 +46,10 @@ export function AskAI(): ReactElement {
 
   useEffect(() => {
     return () => {
+      const activeRequestId = activeRequestIdRef.current
+      if (activeRequestId) {
+        void window.electronAPI.invoke('chat:cancel', activeRequestId)
+      }
       activeStreamCleanupRef.current?.()
       clearRequestTimeouts()
       const activeAssistantMessageId = activeAssistantMessageIdRef.current
@@ -244,6 +248,10 @@ export function AskAI(): ReactElement {
   }
 
   const handleNewChat = async (): Promise<void> => {
+    const activeRequestId = activeRequestIdRef.current
+    if (activeRequestId) {
+      void window.electronAPI.invoke('chat:cancel', activeRequestId)
+    }
     activeStreamCleanupRef.current?.()
     activeStreamCleanupRef.current = null
     clearRequestTimeouts()

@@ -388,9 +388,10 @@ export function registerChatIpc(
       meetingIds,
       session.lastCalendarEvents
     )
-    session.lastRecordingIds = mergeScopedRecordingIds(
-      session.lastRecordingIds,
-      meetingContext.diagnostics.selectedMeetingIds
+    mergeScopedRecordingList(
+      session,
+      meetingContext.diagnostics.selectedMeetingIds,
+      meetingContext.diagnostics.selectedTitles
     )
     session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
     updateClarificationState(session, meetingContext)
@@ -429,7 +430,11 @@ export function registerChatIpc(
         session.lastCalendarEvents,
         session.lastCalendarEvents
       )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
@@ -457,7 +462,11 @@ export function registerChatIpc(
         session.lastCalendarEvents,
         session.lastCalendarEvents
       )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
@@ -541,7 +550,7 @@ export function registerChatIpc(
         calendarUpcomingCount
       })
       session.lastCalendarEvents = selectedCalendarEvents
-      session.lastRecordingIds = []
+      rememberRecordingList(session, [], [])
       session.focusedRecordingIds = []
       session.lastClarificationOptions = []
       return { directAnswer, context: '' }
@@ -565,7 +574,11 @@ export function registerChatIpc(
       if (meetingContext.context) contextParts.push(meetingContext.context)
       if (meetingContext.directAnswer)
         contextParts.push(`Local recording answer: ${meetingContext.directAnswer}`)
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.selectedMeetingIds,
+        meetingContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, meetingContext)
       if (selectedCalendarEvents.length > 0) {
@@ -714,7 +727,11 @@ export function registerChatIpc(
           [meetingId],
           session.lastCalendarEvents
         )
-        session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+        rememberRecordingList(
+          session,
+          meetingContext.diagnostics.selectedMeetingIds,
+          meetingContext.diagnostics.selectedTitles
+        )
         session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
         updateClarificationState(session, meetingContext)
         logAutodocEvent({
@@ -852,8 +869,9 @@ function rememberRecordingList(
   ids: string[],
   titles: string[]
 ): void {
+  // Keep the two arrays index-aligned so title coreference resolves the right id.
   session.lastRecordingIds = ids
-  session.lastRecordingTitles = titles
+  session.lastRecordingTitles = ids.map((_, index) => titles[index] ?? '')
 }
 
 function buildSmalltalkAnswer(topic: 'greeting' | 'capability'): string {
@@ -940,12 +958,26 @@ function isShortContextualQuestion(normalizedQuestion: string): boolean {
   return words.length > 0 && words.length <= 8
 }
 
-function mergeScopedRecordingIds(previousIds: string[], selectedIds: string[]): string[] {
-  if (previousIds.length === 0) return selectedIds
-  if (selectedIds.length === 0) return previousIds
-  const missingSelectedIds = selectedIds.filter((id) => !previousIds.includes(id))
-  if (missingSelectedIds.length > 0) return [...previousIds, ...missingSelectedIds]
-  return previousIds
+function mergeScopedRecordingList(
+  session: ChatConversationState,
+  selectedIds: string[],
+  selectedTitles: string[]
+): void {
+  if (session.lastRecordingIds.length === 0) {
+    rememberRecordingList(session, selectedIds, selectedTitles)
+    return
+  }
+  if (selectedIds.length === 0) return
+
+  const mergedIds = [...session.lastRecordingIds]
+  const mergedTitles = [...session.lastRecordingTitles]
+  selectedIds.forEach((id, index) => {
+    if (!mergedIds.includes(id)) {
+      mergedIds.push(id)
+      mergedTitles.push(selectedTitles[index] ?? '')
+    }
+  })
+  rememberRecordingList(session, mergedIds, mergedTitles)
 }
 
 function extractOrdinalReference(question: string): number | null {

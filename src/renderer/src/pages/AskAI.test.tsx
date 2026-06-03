@@ -216,11 +216,44 @@ describe('AskAI', () => {
 
     unmount()
 
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', expect.any(String))
     expect(
       useChatStore
         .getState()
         .messages.some((message) => message.role === 'assistant' && message.content.length === 0)
     ).toBe(false)
+  })
+
+  it('cancels the in-flight backend request when starting a new chat', async () => {
+    let requestId = ''
+    const api = installMockElectronApi({
+      'ollama:check-status': true,
+      'chat:new': undefined
+    })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => {
+      expect(useChatStore.getState().messages.some((message) => message.status === 'pending')).toBe(
+        true
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: /new chat/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', requestId)
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:new')
   })
 
   it('times out stalled responses and ignores late stream events', async () => {
