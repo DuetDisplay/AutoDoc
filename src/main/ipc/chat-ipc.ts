@@ -3,7 +3,7 @@ import { join } from 'path'
 import type { OllamaProvider } from '../services/llm'
 import type { CalendarEvent } from '../../shared/types'
 import type { CalendarManager } from '../services/calendar-manager'
-import { logAutodocEvent } from '../services/autodoc-log'
+import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import {
   ChatRecordingIndex,
   type ChatClarificationOption,
@@ -536,9 +536,11 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      let normalizedHistoryLength = 0
 
       try {
         const normalizedHistory = normalizeChatHistory(history)
+        normalizedHistoryLength = normalizedHistory.length
         const { directAnswer, context, clarificationOptions } = await prepareChatContext(
           question,
           normalizedHistory,
@@ -572,6 +574,12 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        logChatFailure(error, {
+          requestId,
+          route: 'chat:send-stream',
+          questionLength: question.length,
+          historyCount: normalizedHistoryLength
+        })
         sender.send('chat:error', {
           requestId,
           error: error instanceof Error ? error.message : String(error)
@@ -591,9 +599,11 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      let normalizedHistoryLength = 0
 
       try {
         const normalizedHistory = normalizeChatHistory(history)
+        normalizedHistoryLength = normalizedHistory.length
         const meetingContext = await recordingIndex.buildContextForMeetingIds(
           `Use the selected meeting to answer this question: ${question}`,
           [meetingId],
@@ -643,6 +653,13 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        logChatFailure(error, {
+          requestId,
+          route: 'chat:select-recording-stream',
+          questionLength: question.length,
+          historyCount: normalizedHistoryLength,
+          selectedMeetingId: meetingId
+        })
         sender.send('chat:error', {
           requestId,
           error: error instanceof Error ? error.message : String(error)
@@ -650,6 +667,25 @@ export function registerChatIpc(
       }
     }
   )
+}
+
+function logChatFailure(
+  error: unknown,
+  context: {
+    requestId: string
+    route: 'chat:send-stream' | 'chat:select-recording-stream'
+    questionLength: number
+    historyCount: number
+    selectedMeetingId?: string
+  }
+): void {
+  logAutodocFailure({
+    area: 'chat',
+    message: 'Ask AI chat request failed',
+    error,
+    meetingId: context.selectedMeetingId,
+    context
+  })
 }
 
 function getChatSession(
