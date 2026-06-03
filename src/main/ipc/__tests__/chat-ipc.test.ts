@@ -312,6 +312,233 @@ describe('chat meeting retrieval helpers', () => {
     })
   })
 
+  it('routes conversational acknowledgements without retrieval or Ollama', async () => {
+    const waitUntilReady = vi.fn()
+    const fetchAllRecentEvents = vi.fn()
+    const fetchAllUpcomingEvents = vi.fn()
+
+    registerChatIpc(
+      '/tmp/autodoc-chat-empty',
+      {
+        waitUntilReady,
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents,
+        fetchAllUpcomingEvents
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const sender = { id: 201, send: vi.fn() }
+
+    await streamHandler?.({ sender } as never, 'req-thanks', 'awesome, thank you!', [
+      { role: 'assistant', content: 'I found 4 recordings.' }
+    ])
+
+    expect(sender.send).toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-thanks',
+      content: "You're welcome."
+    })
+    expect(waitUntilReady).not.toHaveBeenCalled()
+    expect(fetchAllRecentEvents).not.toHaveBeenCalled()
+    expect(fetchAllUpcomingEvents).not.toHaveBeenCalled()
+  })
+
+  it('answers count confirmations from prior calendar scope without invoking the model', async () => {
+    const waitUntilReady = vi.fn()
+    const now = new Date()
+    now.setHours(9, 0, 0, 0)
+    const events = [0, 1].map((offset) => ({
+      id: `google_event_${offset}`,
+      externalId: `event_${offset}`,
+      accountId: 'google',
+      provider: 'google',
+      recurringEventId: null,
+      title: offset === 0 ? 'Design Sync' : 'Support Triage',
+      startTime: now.getTime() + offset * 60 * 60_000,
+      endTime: now.getTime() + offset * 60 * 60_000 + 30 * 60_000,
+      attendees: [],
+      meetingUrl: null,
+      autoRecord: 'off',
+      syncedAt: now.getTime()
+    }))
+
+    registerChatIpc(
+      '/tmp/autodoc-chat-empty',
+      {
+        waitUntilReady,
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents: vi.fn().mockResolvedValue(events),
+        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const sender = { id: 202, send: vi.fn() }
+
+    await streamHandler?.({ sender } as never, 'req-calendar', 'what meetings did I have today')
+    await streamHandler?.({ sender } as never, 'req-confirm', 'so, i have 8 meetings right?')
+
+    expect(sender.send).toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-confirm',
+      content: 'Not quite - you have 2 calendar meetings in that list.'
+    })
+    expect(waitUntilReady).not.toHaveBeenCalled()
+  })
+
+  it('resolves ordinal follow-ups against the previously listed recordings', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'newer-roadmap', {
+      startedAt: new Date(2026, 5, 1, 10, 0).getTime(),
+      sourceName: 'Roadmap Review',
+      notes: 'First listed meeting notes.'
+    })
+    await createRecording(baseDir, 'older-support', {
+      startedAt: new Date(2026, 5, 1, 9, 0).getTime(),
+      sourceName: 'Support Triage',
+      notes: 'Second listed meeting notes about escalation follow-up.'
+    })
+
+    registerChatIpc(
+      baseDir,
+      {
+        waitUntilReady: vi.fn(),
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const sender = { id: 203, send: vi.fn() }
+
+    await streamHandler?.({ sender } as never, 'req-list', 'list my recordings')
+    await streamHandler?.({ sender } as never, 'req-second', 'show notes for the second one')
+
+    expect(sender.send).toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-second',
+      content: expect.stringContaining('Second listed meeting notes')
+    })
+    expect(sender.send).not.toHaveBeenCalledWith('chat:done', {
+      requestId: 'req-second',
+      content: expect.stringContaining('First listed meeting notes')
+    })
+  })
+
+  it('covers adjacent Ask AI prompt variants around thanks, counts, ordinals, and requests', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'ad83-001-roadmap', {
+      startedAt: new Date(2026, 5, 1, 10, 0).getTime(),
+      sourceName: 'AD83 Fixture - Roadmap Review',
+      notes: 'First listed fixture notes about roadmap sequencing.'
+    })
+    await createRecording(baseDir, 'ad83-002-support', {
+      startedAt: new Date(2026, 5, 1, 9, 0).getTime(),
+      sourceName: 'AD83 Fixture - Support Triage',
+      notes: 'Second listed fixture notes. Casey owns the escalation follow-up.',
+      noteCategory: 'actionItems'
+    })
+    await createRecording(baseDir, 'ad83-003-design', {
+      startedAt: new Date(2026, 5, 1, 8, 0).getTime(),
+      sourceName: 'AD83 Fixture - Design Sync',
+      notes: 'Third listed fixture notes about onboarding copy.'
+    })
+    await createRecording(baseDir, 'ad83-004-calendar', {
+      startedAt: new Date(2026, 5, 1, 7, 0).getTime(),
+      sourceName: 'AD83 Fixture - Calendar Auth Review',
+      notes: 'Fourth listed fixture notes about Google Calendar scopes.'
+    })
+
+    const waitUntilReady = vi.fn()
+    registerChatIpc(
+      baseDir,
+      {
+        waitUntilReady,
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const sender = { id: 204, send: vi.fn() }
+    const ask = async (
+      requestId: string,
+      question: string,
+      history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+    ): Promise<string> => {
+      await streamHandler?.({ sender } as never, requestId, question, history)
+      return getDoneContent(sender.send, requestId)
+    }
+
+    const listAnswer = await ask('req-list', 'list my recordings')
+    expect(listAnswer).toContain('I found 4 recordings total')
+
+    await expect(
+      ask('req-2nd', 'show notes for the 2nd one', [
+        { role: 'user', content: 'list my recordings' },
+        { role: 'assistant', content: listAnswer }
+      ])
+    ).resolves.toContain('Second listed fixture notes')
+
+    await expect(
+      ask('req-right-now', 'show notes for the 2nd recording right now')
+    ).resolves.toContain('Second listed fixture notes')
+
+    await expect(ask('req-four-then', 'so four then?')).resolves.toBe(
+      'Yes, you have 4 local recordings in that list.'
+    )
+    await expect(ask('req-five-total', 'so five total?')).resolves.toBe(
+      'Not quite - you have 4 local recordings in that list.'
+    )
+
+    for (const [requestId, prompt] of [
+      ['req-ok-cool', 'ok cool'],
+      ['req-sounds-good', 'sounds good'],
+      ['req-got-it', 'got it'],
+      ['req-thx', 'thx']
+    ] as const) {
+      await expect(
+        ask(requestId, prompt, [
+          { role: 'user', content: 'list my recordings' },
+          { role: 'assistant', content: listAnswer }
+        ])
+      ).resolves.toBe("You're welcome.")
+    }
+
+    await expect(
+      ask('req-thanks-request', 'thanks, can you show action items?')
+    ).resolves.toContain('Casey owns the escalation follow-up')
+    await expect(ask('req-cool-request', 'cool, summarize the third one')).resolves.toContain(
+      'Third listed fixture notes'
+    )
+
+    expect(waitUntilReady).not.toHaveBeenCalled()
+  })
+
   it('does not pin a new short content question to the previous exact-title recording', async () => {
     const baseDir = await createTempRecordingsDir()
     await createRecording(baseDir, 'slack-qa', {
@@ -433,4 +660,12 @@ function createSegments(content: string, noteCategory: keyof MeetingSegments = '
     }
   ]
   return segments
+}
+
+function getDoneContent(send: ReturnType<typeof vi.fn>, requestId: string): string {
+  const doneCall = send.mock.calls.find(
+    ([channel, payload]) => channel === 'chat:done' && payload?.requestId === requestId
+  )
+  if (!doneCall) throw new Error(`Missing chat:done for ${requestId}`)
+  return doneCall[1].content
 }

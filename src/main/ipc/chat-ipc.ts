@@ -172,10 +172,40 @@ export function registerChatIpc(
     context: string
     clarificationOptions?: ChatClarificationOption[]
   }> => {
+    const acknowledgementAnswer = buildAcknowledgementAnswer(question, history)
+    if (acknowledgementAnswer) {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: {
+          route: 'conversational-acknowledgement',
+          questionLength: question.length
+        }
+      })
+      return { directAnswer: acknowledgementAnswer, context: '' }
+    }
+
+    const countConfirmationAnswer = buildCountConfirmationAnswer(question, session)
+    if (countConfirmationAnswer) {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: {
+          route: 'count-confirmation',
+          questionLength: question.length,
+          previousCalendarCount: session.lastCalendarEvents.length,
+          previousRecordingCount: session.lastRecordingIds.length
+        }
+      })
+      return { directAnswer: countConfirmationAnswer, context: '' }
+    }
+
     const intent = detectChatIntent(question)
     if (intent === 'count' || intent === 'list') {
       clearConversationScope(session)
       const meetingContext = await recordingIndex.buildContext(question, [])
+      session.lastRecordingIds = meetingContext.diagnostics.matchedMeetingIds
+      session.focusedRecordingIds = []
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
         area: 'chat',
@@ -307,6 +337,40 @@ export function registerChatIpc(
     session: ChatConversationState
   ): Promise<PreparedChatContext | null> => {
     if (shouldStartNewConversationScope(question)) return null
+
+    const scopedIds = resolveScopedRecordingIds(question, session)
+    if (scopedIds.length > 0 && shouldUseConversationScope(question)) {
+      const meetingContext = await recordingIndex.buildContextForMeetingIds(
+        buildScopedQuestion(question, session),
+        scopedIds,
+        session.lastCalendarEvents
+      )
+      session.lastRecordingIds = mergeScopedRecordingIds(
+        session.lastRecordingIds,
+        meetingContext.diagnostics.selectedMeetingIds
+      )
+      session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+      updateClarificationState(session, meetingContext)
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat retrieval completed',
+        context: {
+          ...meetingContext.diagnostics,
+          conversationScopedFollowUp: true,
+          scopedToFocusedRecordings: true,
+          calendarElapsedMs: 0,
+          calendarSkippedByBackoff: false,
+          calendarRecentCount: session.lastCalendarEvents.length,
+          calendarUpcomingCount: 0
+        }
+      })
+      return {
+        directAnswer: meetingContext.directAnswer,
+        context: meetingContext.context,
+        clarificationOptions: meetingContext.clarificationOptions
+      }
+    }
+
     if (hasFreshSearchTerms(normalizeRecordingSearchText(question))) return null
 
     if (asksForNotesInPreviousSet(question) && session.lastCalendarEvents.length > 0) {
@@ -323,36 +387,6 @@ export function registerChatIpc(
         context: {
           ...meetingContext.diagnostics,
           conversationScopedFollowUp: true,
-          calendarElapsedMs: 0,
-          calendarSkippedByBackoff: false,
-          calendarRecentCount: session.lastCalendarEvents.length,
-          calendarUpcomingCount: 0
-        }
-      })
-      return {
-        directAnswer: meetingContext.directAnswer,
-        context: meetingContext.context,
-        clarificationOptions: meetingContext.clarificationOptions
-      }
-    }
-
-    const scopedIds = resolveScopedRecordingIds(question, session)
-    if (scopedIds.length > 0 && shouldUseConversationScope(question)) {
-      const meetingContext = await recordingIndex.buildContextForMeetingIds(
-        buildScopedQuestion(question, session),
-        scopedIds,
-        session.lastCalendarEvents
-      )
-      session.lastRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-      session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-      updateClarificationState(session, meetingContext)
-      logAutodocEvent({
-        area: 'chat',
-        message: 'chat retrieval completed',
-        context: {
-          ...meetingContext.diagnostics,
-          conversationScopedFollowUp: true,
-          scopedToFocusedRecordings: true,
           calendarElapsedMs: 0,
           calendarSkippedByBackoff: false,
           calendarRecentCount: session.lastCalendarEvents.length,
@@ -719,6 +753,173 @@ function updateClarificationState(
   session.lastClarificationOptions = result.clarificationOptions ?? []
 }
 
+function buildAcknowledgementAnswer(
+  question: string,
+  history: ChatHistoryMessage[]
+): string | null {
+  const normalized = normalizeRecordingSearchText(question)
+  if (!normalized) return null
+  if (hasRequestCue(normalized) || hasMeetingDataCue(normalized)) return null
+
+  const tokens = normalized.split(' ').filter(Boolean)
+  if (tokens.length === 0 || tokens.length > 8) return null
+
+  const nonAckTokens = tokens.filter((token) => !ACKNOWLEDGEMENT_TERMS.has(token))
+  if (nonAckTokens.length > 0) return null
+
+  const hasPriorAssistantTurn = history.some((message) => message.role === 'assistant')
+  if (!hasPriorAssistantTurn && !tokens.some((token) => token === 'thanks' || token === 'thank')) {
+    return null
+  }
+
+  return "You're welcome."
+}
+
+function buildCountConfirmationAnswer(
+  question: string,
+  session: ChatConversationState
+): string | null {
+  const normalized = normalizeRecordingSearchText(question)
+  if (!isCountConfirmationQuestion(normalized, session)) return null
+
+  const referencedCount = extractReferencedCount(normalized)
+  if (/\brecordings?\b/.test(normalized) && session.lastRecordingIds.length > 0) {
+    return formatCountConfirmationAnswer({
+      label: 'local recording',
+      actualCount: session.lastRecordingIds.length,
+      referencedCount
+    })
+  }
+
+  if (/\b(meetings?|calls?|standups?|syncs?)\b/.test(normalized)) {
+    if (session.lastCalendarEvents.length > 0) {
+      return formatCountConfirmationAnswer({
+        label: 'calendar meeting',
+        actualCount: session.lastCalendarEvents.length,
+        referencedCount
+      })
+    }
+
+    if (session.lastRecordingIds.length > 0) {
+      return formatCountConfirmationAnswer({
+        label: 'local recording',
+        actualCount: session.lastRecordingIds.length,
+        referencedCount
+      })
+    }
+  }
+
+  if (!/\b(meetings?|recordings?|calls?|standups?|syncs?)\b/.test(normalized)) {
+    if (session.lastCalendarEvents.length > 0 && session.lastRecordingIds.length === 0) {
+      return formatCountConfirmationAnswer({
+        label: 'calendar meeting',
+        actualCount: session.lastCalendarEvents.length,
+        referencedCount
+      })
+    }
+
+    if (session.lastRecordingIds.length > 0 && session.lastCalendarEvents.length === 0) {
+      return formatCountConfirmationAnswer({
+        label: 'local recording',
+        actualCount: session.lastRecordingIds.length,
+        referencedCount
+      })
+    }
+  }
+
+  return null
+}
+
+const ACKNOWLEDGEMENT_TERMS = new Set([
+  'amazing',
+  'appreciate',
+  'appreciated',
+  'awesome',
+  'cool',
+  'good',
+  'got',
+  'great',
+  'it',
+  'nice',
+  'ok',
+  'okay',
+  'perfect',
+  'sounds',
+  'sweet',
+  'thank',
+  'thanks',
+  'thx',
+  'yep',
+  'yes',
+  'you'
+])
+
+function hasRequestCue(normalizedQuestion: string): boolean {
+  return /\b(can|could|would|please|show|list|summarize|summary|recap|find|search|tell|explain|what|which|who|when|where|why|how|give|pull|open|check|help)\b/.test(
+    normalizedQuestion
+  )
+}
+
+function hasMeetingDataCue(normalizedQuestion: string): boolean {
+  return /\b(actions?|agenda|assigned|blockers?|calendar|calls?|decisions?|deadlines?|discussed|meetings?|notes?|recordings?|risks?|schedule|tasks?|transcripts?)\b/.test(
+    normalizedQuestion
+  )
+}
+
+function isCountConfirmationQuestion(
+  normalizedQuestion: string,
+  session: ChatConversationState
+): boolean {
+  if (/\bright now\b/.test(normalizedQuestion)) return false
+
+  const hasConfirmationCue = /\b(right|correct|accurate|then|total)\b/.test(normalizedQuestion)
+  const hasCountCue =
+    extractReferencedCount(normalizedQuestion) != null ||
+    /\b(how many|count|number of)\b/.test(normalizedQuestion)
+  const hasScopedSubjectCue = /\b(meetings?|recordings?|calls?|standups?|syncs?)\b/.test(
+    normalizedQuestion
+  )
+  const hasSingleImplicitScope =
+    (session.lastCalendarEvents.length > 0 && session.lastRecordingIds.length === 0) ||
+    (session.lastRecordingIds.length > 0 && session.lastCalendarEvents.length === 0)
+
+  return hasConfirmationCue && hasCountCue && (hasScopedSubjectCue || hasSingleImplicitScope)
+}
+
+function extractReferencedCount(normalizedQuestion: string): number | null {
+  const numeric = normalizedQuestion.match(/\b([0-9]{1,3})(?:st|nd|rd|th)?\b/)
+  if (numeric) return Number(numeric[1])
+
+  const wordCounts = new Map<string, number>([
+    ['one', 1],
+    ['two', 2],
+    ['three', 3],
+    ['four', 4],
+    ['five', 5],
+    ['six', 6],
+    ['seven', 7],
+    ['eight', 8],
+    ['nine', 9],
+    ['ten', 10]
+  ])
+  for (const [word, count] of wordCounts) {
+    if (new RegExp(`\\b${word}\\b`).test(normalizedQuestion)) return count
+  }
+  return null
+}
+
+function formatCountConfirmationAnswer(params: {
+  label: string
+  actualCount: number
+  referencedCount: number | null
+}): string {
+  const pluralLabel = `${params.label}${params.actualCount === 1 ? '' : 's'}`
+  if (params.referencedCount == null || params.referencedCount === params.actualCount) {
+    return `Yes, you have ${params.actualCount} ${pluralLabel} in that list.`
+  }
+  return `Not quite - you have ${params.actualCount} ${pluralLabel} in that list.`
+}
+
 function normalizeChatHistory(history: ChatHistoryMessage[]): ChatHistoryMessage[] {
   return history
     .filter(
@@ -766,11 +967,15 @@ function shouldStartNewConversationScope(question: string): boolean {
 
 function shouldUseConversationScope(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)
-  return isImplicitFollowUpQuestion(normalized) || hasContextReference(normalized)
+  return (
+    isImplicitFollowUpQuestion(normalized) ||
+    hasContextReference(normalized) ||
+    extractOrdinalReference(question) != null
+  )
 }
 
 function hasContextReference(normalizedQuestion: string): boolean {
-  return /\b(it|that|those|these|them|there|same|above|previous|earlier|for me|for us|the list|that list|this meeting|that meeting|these meetings|those meetings)\b/.test(
+  return /\b(it|that|those|these|them|there|same|above|previous|earlier|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|for me|for us|the list|that list|this meeting|that meeting|these meetings|those meetings)\b/.test(
     normalizedQuestion
   )
 }
@@ -791,7 +996,19 @@ function resolveScopedRecordingIds(question: string, session: ChatConversationSt
     return session.focusedRecordingIds
   }
 
+  if (session.lastRecordingIds.length > 0 && isImplicitFollowUpQuestion(normalized)) {
+    return session.lastRecordingIds
+  }
+
   return []
+}
+
+function mergeScopedRecordingIds(previousIds: string[], selectedIds: string[]): string[] {
+  if (previousIds.length === 0) return selectedIds
+  if (selectedIds.length === 0) return previousIds
+  const missingSelectedIds = selectedIds.filter((id) => !previousIds.includes(id))
+  if (missingSelectedIds.length > 0) return [...previousIds, ...missingSelectedIds]
+  return previousIds
 }
 
 function extractOrdinalReference(question: string): number | null {
@@ -800,15 +1017,25 @@ function extractOrdinalReference(question: string): number | null {
   if (numeric) return Number(numeric[1]) - 1
 
   const ordinals: Array<[RegExp, number]> = [
+    [/\b1st\b/, 0],
     [/\bfirst\b/, 0],
+    [/\b2nd\b/, 1],
     [/\bsecond\b/, 1],
+    [/\b3rd\b/, 2],
     [/\bthird\b/, 2],
+    [/\b4th\b/, 3],
     [/\bfourth\b/, 3],
+    [/\b5th\b/, 4],
     [/\bfifth\b/, 4],
+    [/\b6th\b/, 5],
     [/\bsixth\b/, 5],
+    [/\b7th\b/, 6],
     [/\bseventh\b/, 6],
+    [/\b8th\b/, 7],
     [/\beighth\b/, 7],
+    [/\b9th\b/, 8],
     [/\bninth\b/, 8],
+    [/\b10th\b/, 9],
     [/\btenth\b/, 9]
   ]
   return ordinals.find(([pattern]) => pattern.test(normalized))?.[1] ?? null
@@ -860,7 +1087,23 @@ function hasFreshSearchTerms(normalizedQuestion: string): boolean {
     'todo',
     'todos',
     'transcript',
-    'transcripts'
+    'transcripts',
+    'appreciate',
+    'awesome',
+    'can',
+    'cool',
+    'could',
+    'got',
+    'ok',
+    'okay',
+    'please',
+    'show',
+    'sounds',
+    'thank',
+    'thanks',
+    'thx',
+    'would',
+    'you'
   ])
 
   return extractQuestionTerms(normalizedQuestion).some((term) => !genericFollowUpTerms.has(term))
@@ -945,6 +1188,8 @@ function logChatRetrieval(params: {
         matchedCount: 0,
         selectedContextCount: 0,
         matchMode: 'ranked',
+        matchedMeetingIds: [],
+        matchedTitles: [],
         selectedMeetingIds: [],
         selectedTitles: [],
         inventoryElapsedMs: 0,

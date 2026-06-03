@@ -6,19 +6,25 @@ export interface Message {
   id?: string
   role: 'user' | 'assistant'
   content: string
+  status?: 'pending' | 'streaming' | 'complete' | 'failed' | 'canceled' | 'timed_out'
   originalQuestion?: string
   clarificationOptions?: ChatClarificationOption[]
 }
 
 interface ChatState {
   messages: Message[]
+  draftInput: string
   addMessage: (msg: Message) => void
   updateMessage: (
     id: string,
     content: string,
-    clarificationOptions?: ChatClarificationOption[]
+    clarificationOptions?: ChatClarificationOption[],
+    status?: Message['status']
   ) => void
   appendToMessage: (id: string, chunk: string) => void
+  setMessageStatus: (id: string, status: Message['status']) => void
+  removeEmptyInFlightAssistantMessages: () => void
+  setDraftInput: (value: string) => void
   clearMessages: () => void
 }
 
@@ -29,8 +35,9 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       messages: [],
+      draftInput: '',
       addMessage: (msg) => set((state) => ({ messages: capMessages([...state.messages, msg]) })),
-      updateMessage: (id, content, clarificationOptions) =>
+      updateMessage: (id, content, clarificationOptions, status) =>
         set((state) => ({
           messages: capMessages(
             state.messages.map((msg) =>
@@ -38,7 +45,8 @@ export const useChatStore = create<ChatState>()(
                 ? {
                     ...msg,
                     content,
-                    clarificationOptions: clarificationOptions ?? msg.clarificationOptions
+                    clarificationOptions: clarificationOptions ?? msg.clarificationOptions,
+                    status: status ?? msg.status
                   }
                 : msg
             )
@@ -48,15 +56,40 @@ export const useChatStore = create<ChatState>()(
         set((state) => ({
           messages: capMessages(
             state.messages.map((msg) =>
-              msg.id === id ? { ...msg, content: msg.content + chunk } : msg
+              msg.id === id ? { ...msg, content: msg.content + chunk, status: 'streaming' } : msg
             )
           )
         })),
-      clearMessages: () => set({ messages: [] })
+      setMessageStatus: (id, status) =>
+        set((state) => ({
+          messages: capMessages(
+            state.messages.map((msg) => (msg.id === id ? { ...msg, status } : msg))
+          )
+        })),
+      removeEmptyInFlightAssistantMessages: () =>
+        set((state) => ({
+          messages: state.messages.filter(
+            (msg) =>
+              !(
+                msg.role === 'assistant' &&
+                msg.content.trim().length === 0 &&
+                (msg.status === 'pending' ||
+                  msg.status === 'streaming' ||
+                  msg.status === 'canceled')
+              )
+          )
+        })),
+      setDraftInput: (value) => set({ draftInput: value }),
+      clearMessages: () => set({ messages: [], draftInput: '' })
     }),
     {
       name: 'autodoc-ask-ai-chat',
-      partialize: (state) => ({ messages: state.messages.slice(-MAX_CHAT_MESSAGES) })
+      partialize: (state) => ({
+        messages: state.messages
+          .filter((message) => message.status !== 'pending' && message.status !== 'streaming')
+          .slice(-MAX_CHAT_MESSAGES),
+        draftInput: state.draftInput
+      })
     }
   )
 )

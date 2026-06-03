@@ -233,6 +233,8 @@ export interface ChatRetrievalDiagnostics {
   matchedCount: number
   selectedContextCount: number
   matchMode: 'direct-count' | 'direct-list' | 'large-all-guardrail' | 'exact-title' | 'ranked'
+  matchedMeetingIds: string[]
+  matchedTitles: string[]
   selectedMeetingIds: string[]
   selectedTitles: string[]
   inventoryElapsedMs: number
@@ -1505,6 +1507,8 @@ export class ChatRecordingIndex {
         matchedCount: params.matched.length,
         selectedContextCount: params.selected.length,
         matchMode: params.matchMode,
+        matchedMeetingIds: params.matched.map((meeting) => meeting.id),
+        matchedTitles: params.matched.map((meeting) => meeting.title),
         selectedMeetingIds: params.selected.map((meeting) => meeting.id),
         selectedTitles: params.selected.map((meeting) => meeting.title),
         inventoryElapsedMs: params.inventoryElapsedMs,
