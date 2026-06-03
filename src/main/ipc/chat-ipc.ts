@@ -16,6 +16,7 @@ import {
 } from '../services/chat-retrieval'
 import { normalizeRecordingSearchText } from '../services/recording-title'
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
+import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
 
 const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts, notes, and their calendar.
 
@@ -77,6 +78,7 @@ interface ChatHistoryMessage {
 interface ChatConversationState {
   lastCalendarEvents: CalendarEvent[]
   lastRecordingIds: string[]
+  lastRecordingTitles: string[]
   focusedRecordingIds: string[]
   lastClarificationOptions: ChatClarificationOption[]
 }
@@ -108,6 +110,10 @@ interface ChatErrorPayload {
   error: string
 }
 
+interface ChatCanceledPayload {
+  requestId: string
+}
+
 interface PreparedChatContext {
   directAnswer: string | null
   context: string
@@ -128,6 +134,7 @@ export function registerChatIpc(
     embeddingCachePath: join(app.getPath('userData'), 'cache', 'ask-ai-embeddings.json')
   })
   const chatSessions = new Map<number, ChatConversationState>()
+  const activeChatRequests = new Map<string, AbortController>()
   let calendarFailureUntil = 0
 
   const loadCalendarContextDataWithBackoff = async (): Promise<{
@@ -166,14 +173,16 @@ export function registerChatIpc(
   const prepareChatContext = async (
     question: string,
     history: ChatHistoryMessage[],
-    session: ChatConversationState
+    session: ChatConversationState,
+    signal?: AbortSignal
   ): Promise<{
     directAnswer: string | null
     context: string
     clarificationOptions?: ChatClarificationOption[]
   }> => {
-    const acknowledgementAnswer = buildAcknowledgementAnswer(question, history)
-    if (acknowledgementAnswer) {
+    const turn = classifyChatTurn(question, history, toClassifierSession(session))
+
+    if (turn.kind === 'acknowledgement') {
       logAutodocEvent({
         area: 'chat',
         message: 'chat routed without retrieval',
@@ -182,29 +191,58 @@ export function registerChatIpc(
           questionLength: question.length
         }
       })
-      return { directAnswer: acknowledgementAnswer, context: '' }
+      return { directAnswer: "You're welcome.", context: '' }
     }
 
-    const countConfirmationAnswer = buildCountConfirmationAnswer(question, session)
-    if (countConfirmationAnswer) {
+    if (turn.kind === 'smalltalk') {
+      logAutodocEvent({
+        area: 'chat',
+        message: 'chat routed without retrieval',
+        context: { route: 'smalltalk', topic: turn.topic, questionLength: question.length }
+      })
+      return { directAnswer: buildSmalltalkAnswer(turn.topic), context: '' }
+    }
+
+    if (turn.kind === 'count_confirmation') {
+      const directAnswer = formatCountConfirmationAnswer({
+        label: turn.scope === 'calendar' ? 'calendar meeting' : 'local recording',
+        actualCount:
+          turn.scope === 'calendar'
+            ? session.lastCalendarEvents.length
+            : session.lastRecordingIds.length,
+        referencedCount: turn.referencedCount
+      })
       logAutodocEvent({
         area: 'chat',
         message: 'chat routed without retrieval',
         context: {
           route: 'count-confirmation',
+          scope: turn.scope,
           questionLength: question.length,
           previousCalendarCount: session.lastCalendarEvents.length,
           previousRecordingCount: session.lastRecordingIds.length
         }
       })
-      return { directAnswer: countConfirmationAnswer, context: '' }
+      return { directAnswer, context: '' }
+    }
+
+    if (turn.kind === 'reference') {
+      return prepareMeetingScopedContext(question, turn.meetingIds, session, turn.followUp)
+    }
+
+    if (turn.kind === 'scoped_followup') {
+      return prepareMeetingScopedContext(question, turn.meetingIds, session, true)
     }
 
     const intent = detectChatIntent(question)
     if (intent === 'count' || intent === 'list') {
       clearConversationScope(session)
       const meetingContext = await recordingIndex.buildContext(question, [])
-      session.lastRecordingIds = meetingContext.diagnostics.matchedMeetingIds
+      rememberRecordingList(
+        session,
+        meetingContext.diagnostics.matchedMeetingIds,
+        meetingContext.diagnostics.matchedTitles
+      )
       session.focusedRecordingIds = []
       updateClarificationState(session, meetingContext)
       logAutodocEvent({
@@ -230,7 +268,11 @@ export function registerChatIpc(
     const localExactContext = await recordingIndex.buildExactTitleContext(question, [])
     if (localExactContext) {
       session.lastCalendarEvents = []
-      session.lastRecordingIds = localExactContext.diagnostics.selectedMeetingIds
+      rememberRecordingList(
+        session,
+        localExactContext.diagnostics.selectedMeetingIds,
+        localExactContext.diagnostics.selectedTitles
+      )
       session.focusedRecordingIds = localExactContext.diagnostics.selectedMeetingIds
       updateClarificationState(session, localExactContext)
       logAutodocEvent({
@@ -275,7 +317,8 @@ export function registerChatIpc(
         baseUrl: ollamaManager.getBaseUrl(),
         model: ollamaProvider.getModel(),
         question,
-        history
+        history,
+        signal
       })
       const plannedContext = await preparePlannedChatContext(question, plan, 'model', session)
       if (plannedContext.directAnswer || plannedContext.context.trim().length > 0) {
@@ -332,45 +375,53 @@ export function registerChatIpc(
     }
   }
 
+  // Recording coreference / implicit follow-ups are resolved up front by the
+  // turn classifier; this builds the answer for the recordings it selected.
+  const prepareMeetingScopedContext = async (
+    question: string,
+    meetingIds: string[],
+    session: ChatConversationState,
+    followUp: boolean
+  ): Promise<PreparedChatContext> => {
+    const meetingContext = await recordingIndex.buildContextForMeetingIds(
+      buildScopedQuestion(question, session, followUp),
+      meetingIds,
+      session.lastCalendarEvents
+    )
+    session.lastRecordingIds = mergeScopedRecordingIds(
+      session.lastRecordingIds,
+      meetingContext.diagnostics.selectedMeetingIds
+    )
+    session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
+    updateClarificationState(session, meetingContext)
+    logAutodocEvent({
+      area: 'chat',
+      message: 'chat retrieval completed',
+      context: {
+        ...meetingContext.diagnostics,
+        conversationScopedFollowUp: true,
+        scopedToFocusedRecordings: true,
+        calendarElapsedMs: 0,
+        calendarSkippedByBackoff: false,
+        calendarRecentCount: session.lastCalendarEvents.length,
+        calendarUpcomingCount: 0
+      }
+    })
+    return {
+      directAnswer: meetingContext.directAnswer,
+      context: meetingContext.context,
+      clarificationOptions: meetingContext.clarificationOptions
+    }
+  }
+
+  // Calendar-list follow-ups (e.g. "which of those had notes?") remain here;
+  // recording references/follow-ups are handled by the classifier dispatch.
   const prepareConversationScopedContext = async (
     question: string,
     session: ChatConversationState
   ): Promise<PreparedChatContext | null> => {
+    if (session.lastCalendarEvents.length === 0) return null
     if (shouldStartNewConversationScope(question)) return null
-
-    const scopedIds = resolveScopedRecordingIds(question, session)
-    if (scopedIds.length > 0 && shouldUseConversationScope(question)) {
-      const meetingContext = await recordingIndex.buildContextForMeetingIds(
-        buildScopedQuestion(question, session),
-        scopedIds,
-        session.lastCalendarEvents
-      )
-      session.lastRecordingIds = mergeScopedRecordingIds(
-        session.lastRecordingIds,
-        meetingContext.diagnostics.selectedMeetingIds
-      )
-      session.focusedRecordingIds = meetingContext.diagnostics.selectedMeetingIds
-      updateClarificationState(session, meetingContext)
-      logAutodocEvent({
-        area: 'chat',
-        message: 'chat retrieval completed',
-        context: {
-          ...meetingContext.diagnostics,
-          conversationScopedFollowUp: true,
-          scopedToFocusedRecordings: true,
-          calendarElapsedMs: 0,
-          calendarSkippedByBackoff: false,
-          calendarRecentCount: session.lastCalendarEvents.length,
-          calendarUpcomingCount: 0
-        }
-      })
-      return {
-        directAnswer: meetingContext.directAnswer,
-        context: meetingContext.context,
-        clarificationOptions: meetingContext.clarificationOptions
-      }
-    }
-
     if (hasFreshSearchTerms(normalizeRecordingSearchText(question))) return null
 
     if (asksForNotesInPreviousSet(question) && session.lastCalendarEvents.length > 0) {
@@ -560,6 +611,14 @@ export function registerChatIpc(
     clearConversationScope(session)
   })
 
+  ipcMain.handle('chat:cancel', (_event, requestId: string): void => {
+    const controller = activeChatRequests.get(requestId)
+    if (controller) {
+      controller.abort()
+      activeChatRequests.delete(requestId)
+    }
+  })
+
   ipcMain.handle(
     'chat:send-stream',
     async (
@@ -570,6 +629,8 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      const controller = new AbortController()
+      activeChatRequests.set(requestId, controller)
       let normalizedHistoryLength = 0
 
       try {
@@ -578,7 +639,8 @@ export function registerChatIpc(
         const { directAnswer, context, clarificationOptions } = await prepareChatContext(
           question,
           normalizedHistory,
-          session
+          session,
+          controller.signal
         )
         if (directAnswer) {
           sender.send('chat:chunk', {
@@ -601,6 +663,7 @@ export function registerChatIpc(
           question,
           context,
           history: normalizedHistory,
+          signal: controller.signal,
           onChunk: (chunk) => {
             content += chunk
             sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
@@ -608,6 +671,10 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
+          return
+        }
         logChatFailure(error, {
           requestId,
           route: 'chat:send-stream',
@@ -618,6 +685,8 @@ export function registerChatIpc(
           requestId,
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
+      } finally {
+        activeChatRequests.delete(requestId)
       }
     }
   )
@@ -633,6 +702,8 @@ export function registerChatIpc(
     ): Promise<void> => {
       const sender = event.sender
       const session = getChatSession(chatSessions, sender.id)
+      const controller = new AbortController()
+      activeChatRequests.set(requestId, controller)
       let normalizedHistoryLength = 0
 
       try {
@@ -680,6 +751,7 @@ export function registerChatIpc(
           question,
           context: meetingContext.context,
           history: normalizedHistory,
+          signal: controller.signal,
           onChunk: (chunk) => {
             content += chunk
             sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
@@ -687,6 +759,10 @@ export function registerChatIpc(
         })
         sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
       } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
+          return
+        }
         logChatFailure(error, {
           requestId,
           route: 'chat:select-recording-stream',
@@ -698,9 +774,15 @@ export function registerChatIpc(
           requestId,
           error: error instanceof Error ? error.message : String(error)
         } satisfies ChatErrorPayload)
+      } finally {
+        activeChatRequests.delete(requestId)
       }
     }
   )
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
 }
 
 function logChatFailure(
@@ -731,6 +813,7 @@ function getChatSession(
     session = {
       lastCalendarEvents: [],
       lastRecordingIds: [],
+      lastRecordingTitles: [],
       focusedRecordingIds: [],
       lastClarificationOptions: []
     }
@@ -742,6 +825,7 @@ function getChatSession(
 function clearConversationScope(session: ChatConversationState): void {
   session.lastCalendarEvents = []
   session.lastRecordingIds = []
+  session.lastRecordingTitles = []
   session.focusedRecordingIds = []
   session.lastClarificationOptions = []
 }
@@ -753,159 +837,30 @@ function updateClarificationState(
   session.lastClarificationOptions = result.clarificationOptions ?? []
 }
 
-function buildAcknowledgementAnswer(
-  question: string,
-  history: ChatHistoryMessage[]
-): string | null {
-  const normalized = normalizeRecordingSearchText(question)
-  if (!normalized) return null
-  if (hasRequestCue(normalized) || hasMeetingDataCue(normalized)) return null
-
-  const tokens = normalized.split(' ').filter(Boolean)
-  if (tokens.length === 0 || tokens.length > 8) return null
-
-  const nonAckTokens = tokens.filter((token) => !ACKNOWLEDGEMENT_TERMS.has(token))
-  if (nonAckTokens.length > 0) return null
-
-  const hasPriorAssistantTurn = history.some((message) => message.role === 'assistant')
-  if (!hasPriorAssistantTurn && !tokens.some((token) => token === 'thanks' || token === 'thank')) {
-    return null
+function toClassifierSession(session: ChatConversationState): ChatTurnSession {
+  return {
+    recordingIds: session.lastRecordingIds,
+    recordingTitles: session.lastRecordingTitles,
+    calendarEventCount: session.lastCalendarEvents.length,
+    focusedRecordingIds: session.focusedRecordingIds,
+    lastTurnWasClarification: session.lastClarificationOptions.length > 0
   }
-
-  return "You're welcome."
 }
 
-function buildCountConfirmationAnswer(
-  question: string,
-  session: ChatConversationState
-): string | null {
-  const normalized = normalizeRecordingSearchText(question)
-  if (!isCountConfirmationQuestion(normalized, session)) return null
-
-  const referencedCount = extractReferencedCount(normalized)
-  if (/\brecordings?\b/.test(normalized) && session.lastRecordingIds.length > 0) {
-    return formatCountConfirmationAnswer({
-      label: 'local recording',
-      actualCount: session.lastRecordingIds.length,
-      referencedCount
-    })
-  }
-
-  if (/\b(meetings?|calls?|standups?|syncs?)\b/.test(normalized)) {
-    if (session.lastCalendarEvents.length > 0) {
-      return formatCountConfirmationAnswer({
-        label: 'calendar meeting',
-        actualCount: session.lastCalendarEvents.length,
-        referencedCount
-      })
-    }
-
-    if (session.lastRecordingIds.length > 0) {
-      return formatCountConfirmationAnswer({
-        label: 'local recording',
-        actualCount: session.lastRecordingIds.length,
-        referencedCount
-      })
-    }
-  }
-
-  if (!/\b(meetings?|recordings?|calls?|standups?|syncs?)\b/.test(normalized)) {
-    if (session.lastCalendarEvents.length > 0 && session.lastRecordingIds.length === 0) {
-      return formatCountConfirmationAnswer({
-        label: 'calendar meeting',
-        actualCount: session.lastCalendarEvents.length,
-        referencedCount
-      })
-    }
-
-    if (session.lastRecordingIds.length > 0 && session.lastCalendarEvents.length === 0) {
-      return formatCountConfirmationAnswer({
-        label: 'local recording',
-        actualCount: session.lastRecordingIds.length,
-        referencedCount
-      })
-    }
-  }
-
-  return null
+function rememberRecordingList(
+  session: ChatConversationState,
+  ids: string[],
+  titles: string[]
+): void {
+  session.lastRecordingIds = ids
+  session.lastRecordingTitles = titles
 }
 
-const ACKNOWLEDGEMENT_TERMS = new Set([
-  'amazing',
-  'appreciate',
-  'appreciated',
-  'awesome',
-  'cool',
-  'good',
-  'got',
-  'great',
-  'it',
-  'nice',
-  'ok',
-  'okay',
-  'perfect',
-  'sounds',
-  'sweet',
-  'thank',
-  'thanks',
-  'thx',
-  'yep',
-  'yes',
-  'you'
-])
-
-function hasRequestCue(normalizedQuestion: string): boolean {
-  return /\b(can|could|would|please|show|list|summarize|summary|recap|find|search|tell|explain|what|which|who|when|where|why|how|give|pull|open|check|help)\b/.test(
-    normalizedQuestion
-  )
-}
-
-function hasMeetingDataCue(normalizedQuestion: string): boolean {
-  return /\b(actions?|agenda|assigned|blockers?|calendar|calls?|decisions?|deadlines?|discussed|meetings?|notes?|recordings?|risks?|schedule|tasks?|transcripts?)\b/.test(
-    normalizedQuestion
-  )
-}
-
-function isCountConfirmationQuestion(
-  normalizedQuestion: string,
-  session: ChatConversationState
-): boolean {
-  if (/\bright now\b/.test(normalizedQuestion)) return false
-
-  const hasConfirmationCue = /\b(right|correct|accurate|then|total)\b/.test(normalizedQuestion)
-  const hasCountCue =
-    extractReferencedCount(normalizedQuestion) != null ||
-    /\b(how many|count|number of)\b/.test(normalizedQuestion)
-  const hasScopedSubjectCue = /\b(meetings?|recordings?|calls?|standups?|syncs?)\b/.test(
-    normalizedQuestion
-  )
-  const hasSingleImplicitScope =
-    (session.lastCalendarEvents.length > 0 && session.lastRecordingIds.length === 0) ||
-    (session.lastRecordingIds.length > 0 && session.lastCalendarEvents.length === 0)
-
-  return hasConfirmationCue && hasCountCue && (hasScopedSubjectCue || hasSingleImplicitScope)
-}
-
-function extractReferencedCount(normalizedQuestion: string): number | null {
-  const numeric = normalizedQuestion.match(/\b([0-9]{1,3})(?:st|nd|rd|th)?\b/)
-  if (numeric) return Number(numeric[1])
-
-  const wordCounts = new Map<string, number>([
-    ['one', 1],
-    ['two', 2],
-    ['three', 3],
-    ['four', 4],
-    ['five', 5],
-    ['six', 6],
-    ['seven', 7],
-    ['eight', 8],
-    ['nine', 9],
-    ['ten', 10]
-  ])
-  for (const [word, count] of wordCounts) {
-    if (new RegExp(`\\b${word}\\b`).test(normalizedQuestion)) return count
+function buildSmalltalkAnswer(topic: 'greeting' | 'capability'): string {
+  if (topic === 'capability') {
+    return "I'm AutoDoc's meeting assistant. Ask me what was discussed in a meeting, who owns an action item, decisions and deadlines, or what's on your calendar — I'll answer from your local recordings and notes."
   }
-  return null
+  return 'Hi! Ask me anything about your meetings — what was discussed, your action items and owners, or what you have coming up on your calendar.'
 }
 
 function formatCountConfirmationAnswer(params: {
@@ -983,24 +938,6 @@ function hasContextReference(normalizedQuestion: string): boolean {
 function isShortContextualQuestion(normalizedQuestion: string): boolean {
   const words = normalizedQuestion.split(' ').filter(Boolean)
   return words.length > 0 && words.length <= 8
-}
-
-function resolveScopedRecordingIds(question: string, session: ChatConversationState): string[] {
-  const ordinalIndex = extractOrdinalReference(question)
-  if (ordinalIndex != null && session.lastRecordingIds[ordinalIndex]) {
-    return [session.lastRecordingIds[ordinalIndex]]
-  }
-
-  const normalized = normalizeRecordingSearchText(question)
-  if (session.focusedRecordingIds.length > 0 && isImplicitFollowUpQuestion(normalized)) {
-    return session.focusedRecordingIds
-  }
-
-  if (session.lastRecordingIds.length > 0 && isImplicitFollowUpQuestion(normalized)) {
-    return session.lastRecordingIds
-  }
-
-  return []
 }
 
 function mergeScopedRecordingIds(previousIds: string[], selectedIds: string[]): string[] {
@@ -1109,8 +1046,12 @@ function hasFreshSearchTerms(normalizedQuestion: string): boolean {
   return extractQuestionTerms(normalizedQuestion).some((term) => !genericFollowUpTerms.has(term))
 }
 
-function buildScopedQuestion(question: string, session: ChatConversationState): string {
-  if (isImplicitFollowUpQuestion(normalizeRecordingSearchText(question))) {
+function buildScopedQuestion(
+  question: string,
+  session: ChatConversationState,
+  followUp: boolean
+): string {
+  if (followUp) {
     return `${question} Summarize any additional relevant notes from the selected meeting.`
   }
   if (session.lastRecordingIds.length > 0) {
@@ -1554,11 +1495,13 @@ async function buildChatRetrievalPlan(params: {
   model: string
   question: string
   history: ChatHistoryMessage[]
+  signal?: AbortSignal
 }): Promise<ChatRetrievalPlan> {
   try {
     const res = await fetch(`${params.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: params.signal,
       body: JSON.stringify({
         model: params.model,
         messages: buildPlannerMessages(params.question, params.history),
@@ -1576,7 +1519,8 @@ async function buildChatRetrievalPlan(params: {
     if (!res.ok) throw new Error(`Ollama returned ${res.status}`)
     const data = (await res.json()) as { message?: { content?: string } }
     return parseChatRetrievalPlan(data.message?.content ?? '', params.question)
-  } catch {
+  } catch (error) {
+    if (params.signal?.aborted) throw error
     return buildFallbackRetrievalPlan(params.question)
   }
 }
@@ -1780,10 +1724,12 @@ async function streamOllamaChat(params: {
   context: string
   history: ChatHistoryMessage[]
   onChunk: (chunk: string) => void
+  signal?: AbortSignal
 }): Promise<void> {
   const res = await fetch(`${params.baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: params.signal,
     body: JSON.stringify({
       model: params.model,
       messages: buildChatMessages(

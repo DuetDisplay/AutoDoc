@@ -539,6 +539,63 @@ describe('chat meeting retrieval helpers', () => {
     expect(waitUntilReady).not.toHaveBeenCalled()
   })
 
+  it('aborts an in-flight streaming request and emits chat:canceled instead of chat:error', async () => {
+    const baseDir = await createTempRecordingsDir()
+
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        const fail = (): void => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        if (signal?.aborted) {
+          fail()
+          return
+        }
+        signal?.addEventListener('abort', fail)
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    registerChatIpc(
+      baseDir,
+      {
+        waitUntilReady: vi.fn(),
+        isServerRunning: vi.fn(),
+        getBaseUrl: () => 'http://localhost:11434'
+      },
+      { getModel: () => 'fake-model' } as never,
+      {
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+      } as never
+    )
+
+    const streamHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    const cancelHandler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'chat:cancel')?.[1]
+    const sender = { id: 301, send: vi.fn() }
+
+    const streamPromise = streamHandler?.(
+      { sender } as never,
+      'req-cancel',
+      'what should I focus on?'
+    )
+
+    for (let i = 0; i < 100 && fetchMock.mock.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    expect(fetchMock).toHaveBeenCalled()
+
+    await cancelHandler?.({} as never, 'req-cancel')
+    await streamPromise
+
+    expect(sender.send).toHaveBeenCalledWith('chat:canceled', { requestId: 'req-cancel' })
+    expect(sender.send).not.toHaveBeenCalledWith('chat:error', expect.anything())
+    expect(sender.send).not.toHaveBeenCalledWith('chat:done', expect.anything())
+  })
+
   it('does not pin a new short content question to the previous exact-title recording', async () => {
     const baseDir = await createTempRecordingsDir()
     await createRecording(baseDir, 'slack-qa', {
@@ -637,7 +694,10 @@ async function createRecording(
   )
 }
 
-function createSegments(content: string, noteCategory: keyof MeetingSegments = 'information') {
+function createSegments(
+  content: string,
+  noteCategory: keyof MeetingSegments = 'information'
+): MeetingSegments {
   const segments: MeetingSegments = {
     decisions: [],
     actionItems: [],

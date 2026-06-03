@@ -110,6 +110,68 @@ describe('AskAI', () => {
     })
   })
 
+  it('stops an in-flight response, cancels the backend, and keeps partial text', async () => {
+    let requestId = ''
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', (id: string) => {
+      requestId = id
+      queueMicrotask(() => {
+        api.emit('chat:chunk', { requestId: id, content: 'Partial answer' })
+      })
+      return new Promise(() => {})
+    })
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Partial answer')).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /stop generating/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', requestId)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
+
+    const assistantMessage = useChatStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant')
+    expect(assistantMessage?.status).toBe('canceled')
+    expect(assistantMessage?.content).toBe('Partial answer')
+  })
+
+  it('removes the empty bubble when stopping before any token arrives', async () => {
+    const api = installMockElectronApi({
+      'ollama:check-status': true
+    })
+    api.setHandler('chat:send-stream', () => new Promise(() => {}))
+
+    render(<AskAI />)
+
+    const user = userEvent.setup()
+    await user.type(
+      screen.getByPlaceholderText(/ask a question about your meetings/i),
+      'Summarize everything'
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await user.click(await screen.findByRole('button', { name: /stop generating/i }))
+
+    expect(window.electronAPI.invoke).toHaveBeenCalledWith('chat:cancel', expect.any(String))
+    expect(
+      useChatStore
+        .getState()
+        .messages.some((message) => message.role === 'assistant' && message.content.length === 0)
+    ).toBe(false)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
+  })
+
   it('persists the draft when the Ask AI view remounts', async () => {
     installMockElectronApi({
       'ollama:check-status': true

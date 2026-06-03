@@ -159,6 +159,13 @@ export function AskAI(): ReactElement {
         )
         console.error('Chat failed:', payload.error)
         finishActiveRequest()
+      }),
+      window.electronAPI.on('chat:canceled', (payload) => {
+        if (payload.requestId !== requestId) return
+        if (activeRequestIdRef.current !== requestId) return
+        setMessageStatus(assistantMessageId, 'canceled')
+        removeEmptyInFlightAssistantMessages()
+        finishActiveRequest()
       })
     ]
     activeStreamCleanupRef.current = () => {
@@ -203,6 +210,18 @@ export function AskAI(): ReactElement {
     if (!question || loading) return
     setDraftInput('')
     await sendChatRequest({ question, displayQuestion: question })
+  }
+
+  const handleStop = (): void => {
+    const requestId = activeRequestIdRef.current
+    const assistantMessageId = activeAssistantMessageIdRef.current
+    if (!requestId) return
+    void window.electronAPI.invoke('chat:cancel', requestId)
+    if (assistantMessageId) {
+      setMessageStatus(assistantMessageId, 'canceled')
+    }
+    removeEmptyInFlightAssistantMessages()
+    finishActiveRequest()
   }
 
   const handleClarificationSelect = async (
@@ -366,13 +385,26 @@ export function AskAI(): ReactElement {
             className="flex-1 px-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors disabled:opacity-50"
             autoFocus
           />
-          <button
-            onClick={handleSend}
-            disabled={!draftInput.trim() || loading}
-            className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-          >
-            Send
-          </button>
+          {loading ? (
+            <button
+              type="button"
+              onClick={handleStop}
+              aria-label="Stop generating"
+              className="px-4 py-2.5 bg-clay text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+            >
+              <span className="w-2.5 h-2.5 rounded-[2px] bg-white" />
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!draftInput.trim()}
+              className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -128,6 +128,7 @@ export interface IpcInvokeEvents {
   'search:query': [query: string]
   'chat:send': [question: string]
   'chat:new': []
+  'chat:cancel': [requestId: string]
   'chat:send-stream': [requestId: string, question: string, history?: ChatHistoryMessage[]]
   'chat:select-recording-stream': [
     requestId: string,
@@ -237,6 +238,7 @@ export interface IpcInvokeReturns {
   'search:query': SearchResult[]
   'chat:send': string
   'chat:new': void
+  'chat:cancel': void
   'chat:send-stream': void
   'chat:select-recording-stream': void
   'detection:dismiss': void
@@ -298,6 +300,7 @@ export interface IpcOnEvents {
     }
   ]
   'chat:error': [payload: { requestId: string; error: string }]
+  'chat:canceled': [payload: { requestId: string }]
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]
