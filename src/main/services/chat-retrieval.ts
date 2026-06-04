@@ -390,8 +390,9 @@ export class ChatRecordingIndex {
     const intent = detectChatIntent(question)
     // Inventory questions (count/list/summarize-all) must reflect a just-finished
     // recording immediately rather than wait out the watcher-backed TTL cache.
+    const wantsLatest = isLatestRecordingQuery(question)
     const requiresFreshInventory =
-      intent === 'count' || intent === 'list' || intent === 'summarize-all'
+      intent === 'count' || intent === 'list' || intent === 'summarize-all' || wantsLatest
     const inventory = await this.getInventory(recentEvents, requiresFreshInventory)
     const inventoryElapsedMs = Date.now() - startedAt
     const selectionStartedAt = Date.now()
@@ -449,6 +450,17 @@ export class ChatRecordingIndex {
         summaryElapsedMs: 0,
         cacheHits: 0,
         cacheMisses: 0
+      })
+    }
+
+    if (wantsLatest && inventory.length > 0) {
+      // Inventory is ordered most-recent-first, so entry 0 is the newest.
+      return this.buildExactMatchResult({
+        question,
+        inventory,
+        selected: [inventory[0]],
+        inventoryElapsedMs,
+        selectionElapsedMs: Date.now() - selectionStartedAt
       })
     }
 
@@ -2689,6 +2701,19 @@ export function detectChatIntent(question: string): ChatIntent {
   }
 
   return 'broad'
+}
+
+// "what was my most recent recording about?" / "my latest recording" select the
+// single newest recording. Ranked relevance retrieval ignores recency and was
+// picking the wrong (often oldest) meeting, so this is handled deterministically
+// against the inventory, which is ordered most-recent-first. A bare time window
+// ("last week") is NOT a recency selector.
+export function isLatestRecordingQuery(question: string): boolean {
+  const n = normalizeRecordingSearchText(question)
+  const recency = /\b(most recent|latest|newest|last)\b/.test(n)
+  const recording = /\b(recording|recorded|record)\b/.test(n)
+  const timeWindow = /\b(week|month|year|yesterday|today|day|quarter)\b/.test(n)
+  return recency && recording && !timeWindow
 }
 
 function findExactTitleMatches(

@@ -11,6 +11,7 @@ import type {
 import {
   ChatRecordingIndex,
   MAX_CHAT_ALL_CONTEXT_MEETINGS,
+  isLatestRecordingQuery,
   type ChatEmbeddingProvider
 } from '../chat-retrieval'
 
@@ -92,6 +93,33 @@ describe('ChatRecordingIndex', () => {
     const result = await index.buildExactTitleContext('Summarize Daily Standup Notes')
     expect(result?.diagnostics.matchMode).toBe('exact-title')
     expect(result?.diagnostics.selectedMeetingIds).toEqual(['standup'])
+  })
+
+  it('selects the newest recording for a "most recent recording" question (AD-83 recall)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'older', {
+      startedAt: base,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'newer', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Design Sync',
+      notes: 'The team rewrote the onboarding copy.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what was my most recent recording about?', [])
+    expect(result.diagnostics.selectedMeetingIds).toEqual(['newer'])
+    expect(result.context).toContain('onboarding')
+  })
+
+  it('treats a time window ("last week") as a filter, not a most-recent selector', () => {
+    expect(isLatestRecordingQuery('what was my most recent recording about?')).toBe(true)
+    expect(isLatestRecordingQuery('my latest recording')).toBe(true)
+    expect(isLatestRecordingQuery('summarize my recordings from last week')).toBe(false)
+    expect(isLatestRecordingQuery('what did we discuss in the roadmap review?')).toBe(false)
   })
 
   it('matches custom, calendar, source, and generic aliases', async () => {
