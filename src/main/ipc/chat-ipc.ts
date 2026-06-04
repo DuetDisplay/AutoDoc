@@ -17,6 +17,7 @@ import {
 import { normalizeRecordingSearchText } from '../services/recording-title'
 import { OllamaEmbeddingProvider } from '../services/ollama-embedding'
 import { classifyChatTurn, type ChatTurnSession } from '../services/chat-turn-classifier'
+import { runAskAiAgent, type AgentToolDeps } from '../services/ask-ai-agent'
 
 const CHAT_SYSTEM_PROMPT = `You are AutoDoc's AI assistant. You help users understand their meetings by answering questions based on meeting transcripts, notes, and their calendar.
 
@@ -43,6 +44,9 @@ const CALENDAR_TITLE_LOOKBACK_DAYS = 30
 const CALENDAR_FETCH_TIMEOUT_MS = 1_500
 const CALENDAR_FAILURE_BACKOFF_MS = 2 * 60_000
 const USE_MODEL_CHAT_PLANNER = process.env.AUTODOC_ASK_AI_PLANNER !== '0'
+// Ask AI v2: route turns through the tool-calling agent instead of the v1
+// classifier + planner cascade. Off by default until benchmarked on real Ollama.
+const USE_ASK_AI_AGENT = process.env.AUTODOC_ASK_AI_AGENT === '1'
 const CHAT_CONTEXT_CHAR_LIMIT = Number(process.env.AUTODOC_ASK_AI_CONTEXT_CHARS ?? 14_000)
 const CHAT_OLLAMA_NUM_CTX = Number(process.env.AUTODOC_ASK_AI_NUM_CTX ?? 4096)
 const CHAT_OLLAMA_NUM_PREDICT = Number(process.env.AUTODOC_ASK_AI_NUM_PREDICT ?? 512)
@@ -168,6 +172,15 @@ export function registerChatIpc(
         elapsedMs: Date.now() - startedAt
       }
     }
+  }
+
+  const agentToolDeps: AgentToolDeps = {
+    recordingIndex,
+    loadCalendar: async () => {
+      const { recentEvents, upcomingEvents } = await loadCalendarContextDataWithBackoff()
+      return { recentEvents, upcomingEvents }
+    },
+    rememberRecordingList: (session, ids, titles) => rememberRecordingList(session, ids, titles)
   }
 
   const prepareChatContext = async (
@@ -649,6 +662,42 @@ export function registerChatIpc(
       try {
         const normalizedHistory = normalizeChatHistory(history)
         normalizedHistoryLength = normalizedHistory.length
+
+        if (USE_ASK_AI_AGENT) {
+          await waitForOllama(ollamaManager)
+          const agentResult = await runAskAiAgent({
+            baseUrl: ollamaManager.getBaseUrl(),
+            model: ollamaProvider.getModel(),
+            question,
+            history: normalizedHistory,
+            session,
+            deps: agentToolDeps,
+            signal: controller.signal,
+            onChunk: (chunk) => {
+              if (chunk)
+                sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
+            },
+            onToolEvent: (event) => {
+              logAutodocEvent({
+                area: 'chat',
+                message: 'ask ai agent tool call',
+                context: {
+                  requestId,
+                  tool: event.name,
+                  arguments: event.arguments,
+                  result: event.resultSummary
+                }
+              })
+            }
+          })
+          sender.send('chat:done', {
+            requestId,
+            content: agentResult.answer,
+            clarificationOptions: agentResult.clarificationOptions
+          } satisfies ChatDonePayload)
+          return
+        }
+
         const { directAnswer, context, clarificationOptions } = await prepareChatContext(
           question,
           normalizedHistory,
@@ -865,7 +914,7 @@ function toClassifierSession(session: ChatConversationState): ChatTurnSession {
 }
 
 function rememberRecordingList(
-  session: ChatConversationState,
+  session: { lastRecordingIds: string[]; lastRecordingTitles: string[] },
   ids: string[],
   titles: string[]
 ): void {

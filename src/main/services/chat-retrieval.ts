@@ -343,6 +343,18 @@ export class ChatRecordingIndex {
     }
   }
 
+  /**
+   * Deterministic inventory accessor used by the tool-calling agent (Ask AI v2).
+   *
+   * Returns the full materialized recording inventory, most-recent-first. This is
+   * the single source of truth for counts and ordered lists, so the agent's
+   * count/list tools never depend on the language model and can never report a
+   * fabricated number (the AD-83 "you have 0 recordings" class of bug).
+   */
+  async listInventory(recentEvents: CalendarEvent[] = []): Promise<MeetingInventoryEntry[]> {
+    return this.getInventory(recentEvents)
+  }
+
   async buildExactTitleContext(
     question: string,
     recentEvents: CalendarEvent[] = []
