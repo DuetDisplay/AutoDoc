@@ -37,6 +37,24 @@ describe('classifyChatTurn — acknowledgements', () => {
     }
   })
 
+  it('treats gratitude with intensifier filler as an acknowledgement', () => {
+    for (const q of [
+      'got it, thanks a lot',
+      'thanks so much',
+      'thanks a ton',
+      'thank you very much',
+      'thanks a bunch'
+    ]) {
+      expect(classifyChatTurn(q, PRIOR_LIST_HISTORY, LISTED).kind, q).toBe('acknowledgement')
+    }
+  })
+
+  it('does not treat a bare intensifier/doubt as gratitude', () => {
+    for (const q of ['really?', 'so?']) {
+      expect(classifyChatTurn(q, PRIOR_LIST_HISTORY, LISTED).kind, q).not.toBe('acknowledgement')
+    }
+  })
+
   it('does not swallow a mixed thanks+request as an acknowledgement', () => {
     expect(
       classifyChatTurn('thanks, can you show action items?', PRIOR_LIST_HISTORY, LISTED).kind

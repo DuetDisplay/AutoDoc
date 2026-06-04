@@ -13,6 +13,7 @@ import { ipcMain } from 'electron'
 import {
   buildFastRetrievalPlan,
   buildFallbackRetrievalPlan,
+  detectsUnsupportedActionRequest,
   extractQuestionTerms,
   isMeetingInventoryQuestion,
   parseChatRetrievalPlan,
@@ -20,6 +21,54 @@ import {
   scoreMeetingRelevance,
   sortMeetingsByQuestion
 } from '../chat-ipc'
+
+describe('detectsUnsupportedActionRequest', () => {
+  it('flags requests to perform actions the read-only assistant cannot do', () => {
+    for (const q of [
+      'can you schedule a follow-up meeting for me?',
+      'please delete the support triage recording',
+      'can you email the roadmap summary to my team?',
+      'create a calendar event for next week',
+      'cancel my 3pm meeting',
+      'reschedule the design sync'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(true)
+    }
+  })
+
+  it('does not flag content questions that merely mention an action noun', () => {
+    for (const q of [
+      "what's on my schedule today",
+      'what did we decide to set up for onboarding',
+      'show me my calendar',
+      'who owns the escalation follow up',
+      'summarize the roadmap recording'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(false)
+    }
+  })
+})
+
+describe('fast retrieval plan routing (recordings vs calendar)', () => {
+  it('routes comparison / recorded questions to recordings, not the calendar planner', () => {
+    for (const q of [
+      'compare the roadmap and support meetings',
+      'were these all recorded on the same day?',
+      "what's the difference between the design and roadmap meetings"
+    ]) {
+      const { confidence, plan } = buildFastRetrievalPlan(q)
+      expect(confidence, q).toBe('high')
+      expect(plan.needsRecordings, q).toBe(true)
+      expect(plan.needsCalendar, q).toBe(false)
+    }
+  })
+
+  it('still routes genuine calendar inventory questions to the calendar', () => {
+    const { plan } = buildFastRetrievalPlan('what meetings do I have this week?')
+    expect(plan.needsCalendar).toBe(true)
+    expect(plan.needsRecordings).toBe(false)
+  })
+})
 
 describe('chat meeting retrieval helpers', () => {
   const tempDirs: string[] = []

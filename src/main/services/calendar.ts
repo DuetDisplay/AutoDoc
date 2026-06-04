@@ -10,6 +10,7 @@ import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
 import { CalendarTransientError, isTransientCalendarError } from './calendar-error-classification'
 import { requireConfiguredAuthWorkerUrl } from './distribution-config'
+import { parseGoogleEventTime } from './calendar-time'
 
 const OAUTH_PORT = 42813
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
@@ -180,8 +181,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
       provider: 'google' as const,
       recurringEventId: event.recurringEventId ?? null,
       title: event.summary ?? 'Untitled',
-      startTime: new Date(event.start?.dateTime ?? event.start?.date ?? '').getTime(),
-      endTime: new Date(event.end?.dateTime ?? event.end?.date ?? '').getTime(),
+      startTime: parseGoogleEventTime(event.start),
+      endTime: parseGoogleEventTime(event.end),
       attendees: (event.attendees ?? []).map((a) => a.email ?? '').filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
       autoRecord: 'off' as const,

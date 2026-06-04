@@ -86,6 +86,33 @@ const ACKNOWLEDGEMENT_TERMS = new Set([
   'you'
 ])
 
+/**
+ * Intensifier / filler words that commonly glue onto gratitude ("thanks a lot",
+ * "thanks so much", "thank you very much"). They never carry their own meaning,
+ * so they should not block acknowledgement detection — but on their own they are
+ * not gratitude either (a genuine ACKNOWLEDGEMENT_TERMS token is still required).
+ */
+const ACK_FILLER = new Set([
+  'a',
+  'again',
+  'bunch',
+  'heaps',
+  'indeed',
+  'loads',
+  'lot',
+  'lots',
+  'many',
+  'plenty',
+  'really',
+  'so',
+  'ton',
+  'tonne',
+  'tonnes',
+  'tons',
+  'truly',
+  'very'
+])
+
 /** Greeting / small-talk openers that do not need retrieval or the model. */
 const GREETING_TERMS = new Set([
   'afternoon',
@@ -322,7 +349,8 @@ function isAcknowledgement(
   if (hasAffirmation && session.lastTurnWasClarification) return false
 
   const leftover = tokens.filter(
-    (token) => !ACKNOWLEDGEMENT_TERMS.has(token) && !AFFIRMATION_TERMS.has(token)
+    (token) =>
+      !ACKNOWLEDGEMENT_TERMS.has(token) && !AFFIRMATION_TERMS.has(token) && !ACK_FILLER.has(token)
   )
   if (leftover.length > 0) return false
 
