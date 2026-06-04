@@ -977,15 +977,35 @@ export class ChatRecordingIndex {
     })
     let selected: MeetingInventoryEntry[]
     if (actionItemQuestion) {
+      const hasActionEvidence = (summary: MeetingSummary): boolean =>
+        summary.evidence.some(
+          (chunk) => chunk.category === 'actionItems' || isActionLikeEvidence(chunk)
+        )
       const actionMatches = fullyRanked.filter(
-        ({ summary, score }) =>
-          score > 0 &&
-          summary.evidence.some(
-            (chunk) => chunk.category === 'actionItems' || isActionLikeEvidence(chunk)
-          )
+        ({ summary, score }) => score > 0 && hasActionEvidence(summary)
       )
-      if (actionMatches.length > 0) {
-        selected = actionMatches
+      // A generic follow-up question ("what do I need to follow up on?") has no
+      // subject term to match lexically, so actionMatches is empty even though
+      // the user clearly wants their open action items. Detect "generic" as: the
+      // only leftover subject terms are action-item vocabulary. For those, surface
+      // every meeting that actually has action items rather than answering "I did
+      // not find any". A specific subject ("action items about pricing") still
+      // returns honestly empty so we never fabricate relevance.
+      const subjectTerms = extractQuestionTerms(
+        stripQuestionScaffolding(normalizeRecordingSearchText(question))
+      )
+      const isGenericActionQuestion =
+        subjectTerms.filter(
+          (term) => !ACTION_ITEM_VOCABULARY.has(term) && !GENERIC_FOLLOWUP_FILLER.has(term)
+        ).length === 0
+      const actionCandidates =
+        actionMatches.length > 0
+          ? actionMatches
+          : isGenericActionQuestion
+            ? fullyRanked.filter(({ summary }) => hasActionEvidence(summary))
+            : []
+      if (actionCandidates.length > 0) {
+        selected = actionCandidates
           .slice(0, MAX_CHAT_ALL_CONTEXT_MEETINGS)
           .map(({ meeting }) => meeting)
         return {
@@ -2008,6 +2028,44 @@ function isGeneralSummaryQuestion(question: string): boolean {
     normalized
   )
 }
+
+// Generic verbs/qualifiers that carry no subject on their own, so a question
+// built only from these + action vocabulary ("what do I NEED to follow up on?",
+// "any OUTSTANDING action items?") is a generic "list my action items" request.
+const GENERIC_FOLLOWUP_FILLER = new Set([
+  'need',
+  'needs',
+  'want',
+  'wants',
+  'have',
+  'outstanding',
+  'open',
+  'pending',
+  'left',
+  'remaining',
+  'remember',
+  'still',
+  'address',
+  'handle',
+  'must'
+])
+
+const ACTION_ITEM_VOCABULARY = new Set([
+  'action',
+  'actions',
+  'item',
+  'items',
+  'task',
+  'tasks',
+  'todo',
+  'todos',
+  'follow',
+  'followup',
+  'followups',
+  'up',
+  'step',
+  'steps'
+])
 
 function isActionItemQuestion(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)

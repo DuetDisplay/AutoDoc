@@ -95,6 +95,36 @@ describe('ChatRecordingIndex', () => {
     expect(result?.diagnostics.selectedMeetingIds).toEqual(['standup'])
   })
 
+  it('answers a generic follow-up question from meetings that have action items (AD-83 action-items)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'roadmap', {
+      startedAt: base + 7_200_000,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'support', {
+      startedAt: base,
+      sourceName: 'Support Triage',
+      segments: createSegmentsFromItems({
+        actionItems: [
+          {
+            title: 'Escalation follow-up',
+            content: 'Casey owns the escalation follow-up for the priority customer queue.',
+            topic: 'Support',
+            assignee: 'Casey'
+          }
+        ]
+      })
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what do I need to follow up on?', [])
+    const answer = result.directAnswer ?? result.context
+    expect(answer).toContain('Casey')
+    expect(answer).not.toContain('did not find')
+  })
+
   it('selects the newest recording for a "most recent recording" question (AD-83 recall)', async () => {
     const baseDir = await createTempRecordingsDir()
     const base = new Date(2026, 4, 27, 9, 0).getTime()
