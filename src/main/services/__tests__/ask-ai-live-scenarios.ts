@@ -63,6 +63,10 @@ const has =
   (...tokens: string[]) =>
   (a: string): boolean =>
     tokens.every((t) => lc(a).includes(t))
+const hasAny =
+  (...tokens: string[]) =>
+  (a: string): boolean =>
+    tokens.some((t) => lc(a).includes(t))
 const lacks =
   (...tokens: string[]) =>
   (a: string): boolean =>
@@ -71,6 +75,17 @@ const all =
   (...checks: Array<(a: string) => boolean>) =>
   (a: string): boolean =>
     checks.every((c) => c(a))
+const nonEmpty = (a: string): boolean => a.trim().length > 0 && !a.startsWith('__')
+const shortReply =
+  (max = 400) =>
+  (a: string): boolean =>
+    a.trim().length > 0 && a.length < max
+// A grounded answer that has no supporting data should SAY so rather than
+// fabricate. Accepts the common ways a model signals "I don't have that".
+const expressesAbsence = (a: string): boolean =>
+  /\b(no|not|don'?t|doesn'?t|didn'?t|can'?t|cannot|couldn'?t|won'?t|isn'?t|aren'?t|nothing|none|unable|without|n'?t (find|see|have))\b|no (record|mention|data|info|results?|meetings?|events?|recordings?)/i.test(
+    a
+  )
 
 export const SCENARIOS: Scenario[] = [
   {
@@ -150,6 +165,123 @@ export const SCENARIOS: Scenario[] = [
       {
         question: 'give me 2 takeaways from the roadmap review',
         check: all(has('roadmap'), lacks('escalation', 'onboarding'))
+      }
+    ]
+  },
+
+  // ---- Broad, realistic turns beyond the original AD-83 cases. These probe
+  // general chatbot behavior (greetings, capability, chit-chat, out-of-scope
+  // deflection, summarization, recall, no-fabrication grounding) to guard
+  // against regressions outside the scenarios we explicitly engineered for.
+  {
+    id: 'greeting',
+    category: 'smalltalk',
+    turns: [{ question: 'good morning!', check: all(nonEmpty, notWelcome, shortReply(300)) }]
+  },
+  {
+    id: 'capability',
+    category: 'smalltalk',
+    turns: [
+      {
+        question: 'what can you do?',
+        check: hasAny('meeting', 'recording', 'calendar', 'note', 'action item')
+      }
+    ]
+  },
+  {
+    id: 'chit-chat',
+    category: 'smalltalk',
+    turns: [{ question: "how's it going?", check: all(nonEmpty, shortReply(300)) }]
+  },
+  {
+    id: 'out-of-scope',
+    category: 'general-knowledge',
+    turns: [
+      {
+        // A meeting assistant should answer briefly or scope back to meetings —
+        // either is fine; fabricating a meeting about France is not.
+        question: 'what is the capital of France?',
+        check: all(
+          nonEmpty,
+          hasAny(
+            'paris',
+            'meeting',
+            'recording',
+            'calendar',
+            'note',
+            "don't",
+            'cannot',
+            "can't",
+            'not able',
+            'focus',
+            'designed to',
+            'help you with'
+          )
+        )
+      }
+    ]
+  },
+  {
+    id: 'summarize-meeting',
+    category: 'summarization',
+    turns: [
+      {
+        question: 'summarize the design sync for me',
+        check: hasAny('onboarding', 'illustration', 'copy', 'design')
+      }
+    ]
+  },
+  {
+    id: 'action-items',
+    category: 'tasks',
+    turns: [
+      {
+        question: 'what do I need to follow up on?',
+        check: hasAny('escalation', 'casey', 'follow', 'customer')
+      }
+    ]
+  },
+  {
+    id: 'topic-recall',
+    category: 'recall',
+    turns: [
+      {
+        question: 'what was decided about the roadmap?',
+        check: hasAny('q3', 'priya', 'roadmap', 'sequenc', 'milestone')
+      }
+    ]
+  },
+  {
+    id: 'no-fabrication',
+    category: 'grounding',
+    turns: [
+      {
+        // Nothing in the fixtures mentions pricing — the assistant must admit it
+        // has no data rather than invent a pricing decision.
+        question: 'what did we decide about pricing in our meetings?',
+        check: all(expressesAbsence, lacks('q3', 'priya', 'escalation'))
+      }
+    ]
+  },
+  {
+    id: 'empty-calendar',
+    category: 'calendar',
+    turns: [
+      {
+        // Calendar is mocked empty in the harness; admitting "nothing scheduled"
+        // is correct, inventing events is not.
+        question: "what's on my calendar today?",
+        check: expressesAbsence
+      }
+    ]
+  },
+  {
+    id: 'multi-part',
+    category: 'search',
+    turns: [
+      {
+        question: 'who owns the escalation follow-up and when is it due?',
+        check: has('casey')
       }
     ]
   }

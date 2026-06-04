@@ -44,9 +44,27 @@ const CALENDAR_TITLE_LOOKBACK_DAYS = 30
 const CALENDAR_FETCH_TIMEOUT_MS = 1_500
 const CALENDAR_FAILURE_BACKOFF_MS = 2 * 60_000
 const USE_MODEL_CHAT_PLANNER = process.env.AUTODOC_ASK_AI_PLANNER !== '0'
-// Ask AI v2: route turns through the tool-calling agent instead of the v1
-// classifier + planner cascade. Off by default until benchmarked on real Ollama.
-const USE_ASK_AI_AGENT = process.env.AUTODOC_ASK_AI_AGENT === '1'
+
+// Ask AI routing mode:
+//   'v1'     - deterministic classifier + planner cascade (fast, brittle on conversation)
+//   'agent'  - tool-calling agent for every turn (robust, uniform ~5-12s latency)
+//   'hybrid' - keep v1's instant deterministic path for high-confidence turns
+//              (inventory counts/lists, coreference, count confirmation, smalltalk,
+//              clear gratitude) and delegate everything ambiguous or open-ended
+//              (doubt/pushback, free-form Q&A) to the agent. The fast path is
+//              opt-in for cases we are confident about; anything uncertain falls
+//              through to the robust agent, so a missed fast-path classification
+//              only costs latency, never correctness.
+// Default stays 'v1' until the hybrid is benchmarked; AUTODOC_ASK_AI_AGENT=1 is
+// still honored as a shortcut for the pure-agent mode.
+type AskAiMode = 'v1' | 'agent' | 'hybrid'
+function resolveAskAiMode(): AskAiMode {
+  const explicit = process.env.AUTODOC_ASK_AI_MODE
+  if (explicit === 'v1' || explicit === 'agent' || explicit === 'hybrid') return explicit
+  if (process.env.AUTODOC_ASK_AI_AGENT === '1') return 'agent'
+  return 'v1'
+}
+const ASK_AI_MODE = resolveAskAiMode()
 const CHAT_CONTEXT_CHAR_LIMIT = Number(process.env.AUTODOC_ASK_AI_CONTEXT_CHARS ?? 14_000)
 const CHAT_OLLAMA_NUM_CTX = Number(process.env.AUTODOC_ASK_AI_NUM_CTX ?? 4096)
 const CHAT_OLLAMA_NUM_PREDICT = Number(process.env.AUTODOC_ASK_AI_NUM_PREDICT ?? 512)
@@ -663,7 +681,7 @@ export function registerChatIpc(
         const normalizedHistory = normalizeChatHistory(history)
         normalizedHistoryLength = normalizedHistory.length
 
-        if (USE_ASK_AI_AGENT) {
+        const runAgentTurn = async (): Promise<void> => {
           await waitForOllama(ollamaManager)
           const agentResult = await runAskAiAgent({
             baseUrl: ollamaManager.getBaseUrl(),
@@ -695,43 +713,64 @@ export function registerChatIpc(
             content: agentResult.answer,
             clarificationOptions: agentResult.clarificationOptions
           } satisfies ChatDonePayload)
-          return
         }
 
-        const { directAnswer, context, clarificationOptions } = await prepareChatContext(
-          question,
-          normalizedHistory,
-          session,
-          controller.signal
-        )
-        if (directAnswer) {
-          sender.send('chat:chunk', {
-            requestId,
-            content: directAnswer
-          } satisfies ChatStreamPayload)
-          sender.send('chat:done', {
-            requestId,
-            content: directAnswer,
-            clarificationOptions
-          } satisfies ChatDonePayload)
-          return
-        }
-
-        await waitForOllama(ollamaManager)
-        let content = ''
-        await streamOllamaChat({
-          baseUrl: ollamaManager.getBaseUrl(),
-          model: ollamaProvider.getModel(),
-          question,
-          context,
-          history: normalizedHistory,
-          signal: controller.signal,
-          onChunk: (chunk) => {
-            content += chunk
-            sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
+        const runV1Turn = async (): Promise<void> => {
+          const { directAnswer, context, clarificationOptions } = await prepareChatContext(
+            question,
+            normalizedHistory,
+            session,
+            controller.signal
+          )
+          if (directAnswer) {
+            sender.send('chat:chunk', {
+              requestId,
+              content: directAnswer
+            } satisfies ChatStreamPayload)
+            sender.send('chat:done', {
+              requestId,
+              content: directAnswer,
+              clarificationOptions
+            } satisfies ChatDonePayload)
+            return
           }
-        })
-        sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
+
+          await waitForOllama(ollamaManager)
+          let content = ''
+          await streamOllamaChat({
+            baseUrl: ollamaManager.getBaseUrl(),
+            model: ollamaProvider.getModel(),
+            question,
+            context,
+            history: normalizedHistory,
+            signal: controller.signal,
+            onChunk: (chunk) => {
+              content += chunk
+              sender.send('chat:chunk', { requestId, content: chunk } satisfies ChatStreamPayload)
+            }
+          })
+          sender.send('chat:done', { requestId, content } satisfies ChatDonePayload)
+        }
+
+        if (ASK_AI_MODE === 'agent') {
+          await runAgentTurn()
+          return
+        }
+
+        if (ASK_AI_MODE === 'hybrid') {
+          const route = decideAskAiRoute(question, normalizedHistory, session)
+          logAutodocEvent({
+            area: 'chat',
+            message: 'ask ai hybrid route',
+            context: { requestId, route, questionLength: question.length }
+          })
+          if (route === 'agent') {
+            await runAgentTurn()
+            return
+          }
+        }
+
+        await runV1Turn()
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) {
           sender.send('chat:canceled', { requestId } satisfies ChatCanceledPayload)
@@ -911,6 +950,74 @@ function toClassifierSession(session: ChatConversationState): ChatTurnSession {
     focusedRecordingIds: session.focusedRecordingIds,
     lastTurnWasClarification: session.lastClarificationOptions.length > 0
   }
+}
+
+// Conservative gratitude/closing detector. Only matches utterances that are
+// unambiguously a thank-you or sign-off so the hybrid router can answer them
+// instantly with v1's canned reply. Deliberately narrow: anything that is not
+// clearly gratitude (including doubt the v1 classifier also labels as an
+// "acknowledgement", e.g. "you sure?") falls through to the robust agent.
+const GRATITUDE_CLOSING = new Set([
+  'thanks',
+  'thank',
+  'thx',
+  'ty',
+  'cheers',
+  'great',
+  'perfect',
+  'awesome',
+  'nice',
+  'cool',
+  'ok',
+  'okay',
+  'k',
+  'got',
+  'gotcha',
+  'understood'
+])
+export function isClearGratitudeClosing(question: string): boolean {
+  const tokens = question
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  if (tokens.length === 0 || tokens.length > 4) return false
+  // Every token must be gratitude/closing vocabulary or a harmless connector
+  // ("thank you", "ok cool", "got it", "thanks so much").
+  const connectors = new Set(['you', 'so', 'much', 'a', 'lot', 'it', 'that', 'very'])
+  let sawGratitude = false
+  for (const token of tokens) {
+    if (GRATITUDE_CLOSING.has(token)) {
+      sawGratitude = true
+      continue
+    }
+    if (connectors.has(token)) continue
+    return false
+  }
+  return sawGratitude
+}
+
+// Hybrid router: decide whether a turn takes v1's instant deterministic path or
+// the robust tool-calling agent. The guiding rule is "fast path only when we are
+// confident; otherwise defer to the agent" so missing a fast-path case costs
+// latency, never correctness.
+export function decideAskAiRoute(
+  question: string,
+  history: ChatHistoryMessage[],
+  session: ChatConversationState
+): 'v1' | 'agent' {
+  const turn = classifyChatTurn(question, history, toClassifierSession(session))
+  // The live head-to-head showed v1's retrieve-then-ground RAG is the stronger,
+  // faster workhorse for factual and open-ended turns, while a small local model
+  // is an unreliable tool-caller there (it bails to "which meeting?" or even
+  // fabricates). The agent's one decisive advantage is conversational doubt /
+  // pushback, where v1 structurally misfires ("you sure?" -> "You're welcome.").
+  // So the agent is a surgical specialist for that single class; everything else
+  // stays on v1.
+  if (turn.kind === 'acknowledgement' && !isClearGratitudeClosing(question)) {
+    return 'agent'
+  }
+  return 'v1'
 }
 
 function rememberRecordingList(
