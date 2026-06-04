@@ -351,8 +351,11 @@ export class ChatRecordingIndex {
    * count/list tools never depend on the language model and can never report a
    * fabricated number (the AD-83 "you have 0 recordings" class of bug).
    */
-  async listInventory(recentEvents: CalendarEvent[] = []): Promise<MeetingInventoryEntry[]> {
-    return this.getInventory(recentEvents)
+  async listInventory(
+    recentEvents: CalendarEvent[] = [],
+    forceRefresh = true
+  ): Promise<MeetingInventoryEntry[]> {
+    return this.getInventory(recentEvents, forceRefresh)
   }
 
   async buildExactTitleContext(
@@ -361,7 +364,9 @@ export class ChatRecordingIndex {
   ): Promise<ChatRetrievalResult | null> {
     this.semanticDiagnostics = createEmptySemanticDiagnostics()
     const startedAt = Date.now()
-    const inventory = await this.getInventory(recentEvents)
+    // Title lookups must see a just-finished recording (AD-83: "not detecting
+    // some recordings by title"), so bypass the watcher-backed TTL cache.
+    const inventory = await this.getInventory(recentEvents, true)
     const inventoryElapsedMs = Date.now() - startedAt
     const selectionStartedAt = Date.now()
     const exactMatches = findExactTitleMatches(inventory, question)
@@ -382,10 +387,14 @@ export class ChatRecordingIndex {
   ): Promise<ChatRetrievalResult> {
     this.semanticDiagnostics = createEmptySemanticDiagnostics()
     const startedAt = Date.now()
-    const inventory = await this.getInventory(recentEvents)
+    const intent = detectChatIntent(question)
+    // Inventory questions (count/list/summarize-all) must reflect a just-finished
+    // recording immediately rather than wait out the watcher-backed TTL cache.
+    const requiresFreshInventory =
+      intent === 'count' || intent === 'list' || intent === 'summarize-all'
+    const inventory = await this.getInventory(recentEvents, requiresFreshInventory)
     const inventoryElapsedMs = Date.now() - startedAt
     const selectionStartedAt = Date.now()
-    const intent = detectChatIntent(question)
 
     if (intent === 'count') {
       const matched = filterInventoryForDirectIntent(inventory, question)
@@ -850,8 +859,11 @@ export class ChatRecordingIndex {
     })
   }
 
-  private async getInventory(recentEvents: CalendarEvent[]): Promise<MeetingInventoryEntry[]> {
-    const rawEntries = await this.getRawInventory()
+  private async getInventory(
+    recentEvents: CalendarEvent[],
+    forceRefresh = false
+  ): Promise<MeetingInventoryEntry[]> {
+    const rawEntries = await this.getRawInventory(forceRefresh)
     const cacheKey = buildCalendarSignature(recentEvents)
     const cached = this.materializedInventoryCache.get(cacheKey)
     if (cached?.generation === this.inventoryGeneration) return cached.entries
@@ -866,8 +878,14 @@ export class ChatRecordingIndex {
     return entries
   }
 
-  private async getRawInventory(): Promise<RawInventoryEntry[]> {
+  private async getRawInventory(forceRefresh = false): Promise<RawInventoryEntry[]> {
+    // macOS recursive fs.watch can miss nested writes (a recording finishes
+    // writing its files over time), so the TTL cache can lag a just-finished
+    // recording by up to INVENTORY_CACHE_TTL_MS. Count/list/title lookups are the
+    // exact paths QA saw report a stale count (AD-83: "took three attempts"), so
+    // those callers force a fresh disk scan rather than trust the watcher.
     if (
+      !forceRefresh &&
       this.inventoryCache &&
       Date.now() - this.inventoryCache.fetchedAt < INVENTORY_CACHE_TTL_MS
     ) {

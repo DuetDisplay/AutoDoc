@@ -9,7 +9,7 @@ vi.mock('../../services/autodoc-log', () => ({
   logAutodocFailure: vi.fn()
 }))
 
-import { decideAskAiRoute, isClearGratitudeClosing } from '../chat-ipc'
+import { decideAskAiRoute, looksLikeConversationalDoubt } from '../chat-ipc'
 
 type Session = Parameters<typeof decideAskAiRoute>[2]
 
@@ -37,31 +37,32 @@ const priorCount = [
   { role: 'assistant' as const, content: 'You have 4 recordings.' }
 ]
 
-describe('isClearGratitudeClosing', () => {
-  it('matches unambiguous gratitude / sign-offs', () => {
+describe('looksLikeConversationalDoubt', () => {
+  it('matches skeptical pushback', () => {
     for (const phrase of [
-      'thanks',
-      'thank you',
-      'thanks so much',
-      'great',
-      'perfect',
-      'ok cool',
-      'got it'
+      'you sure?',
+      'are you sure about that?',
+      'wait, really?',
+      'are you certain?',
+      "that's not right",
+      "that doesn't seem right",
+      'seriously?'
     ]) {
-      expect(isClearGratitudeClosing(phrase)).toBe(true)
+      expect(looksLikeConversationalDoubt(phrase)).toBe(true)
     }
   })
 
-  it('does not match doubt, questions, or content', () => {
+  it('does not match genuine gratitude or affirmations', () => {
     for (const phrase of [
-      'you sure?',
-      'wait, really?',
-      "that doesn't seem right",
-      'are you certain about that?',
-      'thanks, but what about the roadmap?',
-      'summarize the design sync'
+      'thanks',
+      'thank you',
+      'sounds good',
+      'ok cool',
+      'got it',
+      'perfect',
+      'nice'
     ]) {
-      expect(isClearGratitudeClosing(phrase)).toBe(false)
+      expect(looksLikeConversationalDoubt(phrase)).toBe(false)
     }
   })
 })

@@ -47,22 +47,23 @@ const USE_MODEL_CHAT_PLANNER = process.env.AUTODOC_ASK_AI_PLANNER !== '0'
 
 // Ask AI routing mode:
 //   'v1'     - deterministic classifier + planner cascade (fast, brittle on conversation)
-//   'agent'  - tool-calling agent for every turn (robust, uniform ~5-12s latency)
-//   'hybrid' - keep v1's instant deterministic path for high-confidence turns
-//              (inventory counts/lists, coreference, count confirmation, smalltalk,
-//              clear gratitude) and delegate everything ambiguous or open-ended
-//              (doubt/pushback, free-form Q&A) to the agent. The fast path is
-//              opt-in for cases we are confident about; anything uncertain falls
-//              through to the robust agent, so a missed fast-path classification
-//              only costs latency, never correctness.
-// Default stays 'v1' until the hybrid is benchmarked; AUTODOC_ASK_AI_AGENT=1 is
-// still honored as a shortcut for the pure-agent mode.
+//   'agent'  - tool-calling agent for every turn (robust on inventory, but a small
+//              local model is an unreliable tool-caller on open-ended Q&A and can
+//              fabricate; ~5-13s uniform latency)
+//   'hybrid' - DEFAULT. v1's retrieve-then-ground RAG is the workhorse for every
+//              factual and open-ended turn (the live benchmark showed it grounds
+//              better and faster than the agent there). The agent is a surgical
+//              specialist used only for the one class v1 structurally misfires on:
+//              conversational doubt / pushback ("you sure?" -> v1 wrongly says
+//              "You're welcome."). Live: hybrid 96.3% > v1 92.6% > agent 85.2%.
+// AUTODOC_ASK_AI_MODE overrides the default; AUTODOC_ASK_AI_AGENT=1 is still
+// honored as a shortcut for the pure-agent mode.
 type AskAiMode = 'v1' | 'agent' | 'hybrid'
 function resolveAskAiMode(): AskAiMode {
   const explicit = process.env.AUTODOC_ASK_AI_MODE
   if (explicit === 'v1' || explicit === 'agent' || explicit === 'hybrid') return explicit
   if (process.env.AUTODOC_ASK_AI_AGENT === '1') return 'agent'
-  return 'v1'
+  return 'hybrid'
 }
 const ASK_AI_MODE = resolveAskAiMode()
 const CHAT_CONTEXT_CHAR_LIMIT = Number(process.env.AUTODOC_ASK_AI_CONTEXT_CHARS ?? 14_000)
@@ -952,49 +953,18 @@ function toClassifierSession(session: ChatConversationState): ChatTurnSession {
   }
 }
 
-// Conservative gratitude/closing detector. Only matches utterances that are
-// unambiguously a thank-you or sign-off so the hybrid router can answer them
-// instantly with v1's canned reply. Deliberately narrow: anything that is not
-// clearly gratitude (including doubt the v1 classifier also labels as an
-// "acknowledgement", e.g. "you sure?") falls through to the robust agent.
-const GRATITUDE_CLOSING = new Set([
-  'thanks',
-  'thank',
-  'thx',
-  'ty',
-  'cheers',
-  'great',
-  'perfect',
-  'awesome',
-  'nice',
-  'cool',
-  'ok',
-  'okay',
-  'k',
-  'got',
-  'gotcha',
-  'understood'
-])
-export function isClearGratitudeClosing(question: string): boolean {
-  const tokens = question
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-  if (tokens.length === 0 || tokens.length > 4) return false
-  // Every token must be gratitude/closing vocabulary or a harmless connector
-  // ("thank you", "ok cool", "got it", "thanks so much").
-  const connectors = new Set(['you', 'so', 'much', 'a', 'lot', 'it', 'that', 'very'])
-  let sawGratitude = false
-  for (const token of tokens) {
-    if (GRATITUDE_CLOSING.has(token)) {
-      sawGratitude = true
-      continue
-    }
-    if (connectors.has(token)) continue
-    return false
-  }
-  return sawGratitude
+// Conversational-doubt detector. The v1 turn classifier lumps genuine gratitude
+// and affirmations ("thanks", "sounds good", "ok cool") together with skeptical
+// pushback ("you sure?") as a single "acknowledgement" kind, and v1 answers them
+// all with a canned "You're welcome." That is correct for the affirmations but
+// wrong for doubt. So the hybrid keeps every acknowledgement on v1's instant path
+// EXCEPT the ones that carry a doubt cue, which it hands to the agent to
+// re-verify. Used only as a routing hint: a missed cue costs a wrong "You're
+// welcome" (rare), an over-match just sends a benign ack to the slower agent.
+const DOUBT_CUE =
+  /\b(sure|really|certain|positive|seriously|serious)\b|\bfor real\b|\bno way\b|\bare you sure\b|\b(that'?s|that is|it'?s|its) (not|isn'?t) right\b|\bdoesn'?t (seem|sound|look) right\b/i
+export function looksLikeConversationalDoubt(question: string): boolean {
+  return DOUBT_CUE.test(question)
 }
 
 // Hybrid router: decide whether a turn takes v1's instant deterministic path or
@@ -1014,7 +984,7 @@ export function decideAskAiRoute(
   // pushback, where v1 structurally misfires ("you sure?" -> "You're welcome.").
   // So the agent is a surgical specialist for that single class; everything else
   // stays on v1.
-  if (turn.kind === 'acknowledgement' && !isClearGratitudeClosing(question)) {
+  if (turn.kind === 'acknowledgement' && looksLikeConversationalDoubt(question)) {
     return 'agent'
   }
   return 'v1'

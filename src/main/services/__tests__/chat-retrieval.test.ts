@@ -43,6 +43,57 @@ describe('ChatRecordingIndex', () => {
     expect(result.context).toBe('')
   })
 
+  it('counts a just-finished recording immediately, without waiting out the inventory TTL (AD-83)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'rec-1', {
+      startedAt: base,
+      sourceName: 'Entire screen',
+      notes: 'first recording'
+    })
+    // No watcher: the only freshness mechanism is the forced scan on count/list.
+    const index = new ChatRecordingIndex(baseDir)
+
+    const first = await index.buildContext('how many recordings do I have?', [])
+    expect(first.directAnswer).toContain('1 recording')
+
+    // A second recording lands. The fs watcher is off and we do NOT advance the
+    // clock past the 60s TTL, reproducing QA's "took three attempts" staleness.
+    await createRecording(baseDir, 'rec-2', {
+      startedAt: base + 60_000,
+      sourceName: 'Slack Huddle',
+      notes: 'second recording'
+    })
+
+    const second = await index.buildContext('how many recordings do I have?', [])
+    expect(second.directAnswer).toContain('2 recordings')
+    expect(await index.listInventory()).toHaveLength(2)
+  })
+
+  it('finds a just-finished recording by title within the TTL window (AD-83)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'rec-1', {
+      startedAt: base,
+      sourceName: 'Entire screen',
+      notes: 'first recording'
+    })
+    const index = new ChatRecordingIndex(baseDir)
+    // Warm the inventory cache, then add a recording without advancing the clock.
+    await index.buildContext('how many recordings do I have?', [])
+
+    await createRecording(baseDir, 'standup', {
+      startedAt: base + 60_000,
+      sourceName: 'Entire screen',
+      customTitle: 'Daily Standup Notes',
+      notes: 'standup notes'
+    })
+
+    const result = await index.buildExactTitleContext('Summarize Daily Standup Notes')
+    expect(result?.diagnostics.matchMode).toBe('exact-title')
+    expect(result?.diagnostics.selectedMeetingIds).toEqual(['standup'])
+  })
+
   it('matches custom, calendar, source, and generic aliases', async () => {
     const baseDir = await createTempRecordingsDir()
     const startedAt = new Date(2026, 4, 27, 11, 15).getTime()
@@ -1267,7 +1318,9 @@ function createSegmentsFromItems(
   return segments
 }
 
-function segmentCategoryForKey(category: keyof MeetingSegments) {
+function segmentCategoryForKey(
+  category: keyof MeetingSegments
+): 'decision' | 'action_item' | 'information' | 'discussion' | 'status_update' {
   switch (category) {
     case 'decisions':
       return 'decision'
