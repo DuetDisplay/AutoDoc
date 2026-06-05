@@ -13,6 +13,7 @@ import { ipcMain } from 'electron'
 import {
   buildFastRetrievalPlan,
   buildFallbackRetrievalPlan,
+  detectsUnsupportedActionRequest,
   extractQuestionTerms,
   isMeetingInventoryQuestion,
   parseChatRetrievalPlan,
@@ -20,6 +21,65 @@ import {
   scoreMeetingRelevance,
   sortMeetingsByQuestion
 } from '../chat-ipc'
+
+describe('detectsUnsupportedActionRequest', () => {
+  it('flags requests to perform actions the read-only assistant cannot do', () => {
+    for (const q of [
+      'can you schedule a follow-up meeting for me?',
+      'please delete the support triage recording',
+      'can you email the roadmap summary to my team?',
+      'create a calendar event for next week',
+      'cancel my 3pm meeting',
+      'reschedule the design sync'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(true)
+    }
+  })
+
+  it('does not flag content questions that merely mention an action noun', () => {
+    for (const q of [
+      "what's on my schedule today",
+      'what did we decide to set up for onboarding',
+      'show me my calendar',
+      'who owns the escalation follow up',
+      'summarize the roadmap recording'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(false)
+    }
+  })
+
+  it('does not flag request-framed read-only questions that contain a mutate verb', () => {
+    for (const q of [
+      'can you summarize what we decided to create for onboarding?',
+      'can you explain why we planned to delete the legacy endpoint?',
+      'could you tell me which meeting decided to cancel the launch?',
+      'what did we decide to schedule for next quarter?'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(false)
+    }
+  })
+})
+
+describe('fast retrieval plan routing (recordings vs calendar)', () => {
+  it('routes comparison / recorded questions to recordings, not the calendar planner', () => {
+    for (const q of [
+      'compare the roadmap and support meetings',
+      'were these all recorded on the same day?',
+      "what's the difference between the design and roadmap meetings"
+    ]) {
+      const { confidence, plan } = buildFastRetrievalPlan(q)
+      expect(confidence, q).toBe('high')
+      expect(plan.needsRecordings, q).toBe(true)
+      expect(plan.needsCalendar, q).toBe(false)
+    }
+  })
+
+  it('still routes genuine calendar inventory questions to the calendar', () => {
+    const { plan } = buildFastRetrievalPlan('what meetings do I have this week?')
+    expect(plan.needsCalendar).toBe(true)
+    expect(plan.needsRecordings).toBe(false)
+  })
+})
 
 describe('chat meeting retrieval helpers', () => {
   const tempDirs: string[] = []
@@ -30,6 +90,7 @@ describe('chat meeting retrieval helpers', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
     tempDirs.length = 0
   })
@@ -237,6 +298,12 @@ describe('chat meeting retrieval helpers', () => {
 
   it('answers meeting inventory questions from calendar without waiting on Ollama', async () => {
     const waitUntilReady = vi.fn()
+    // Pin the clock to local noon so a 10:00 "today" event is always in the
+    // past within today's window — the question is past-tense ("did I have"),
+    // which clamps the range to [midnight, now]. Without this, the test flakes
+    // when CI runs before 10:00 (e.g. early-morning UTC).
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 5, 4, 12, 0, 0))
     const now = new Date()
     now.setHours(10, 0, 0, 0)
     const event = {
@@ -351,6 +418,10 @@ describe('chat meeting retrieval helpers', () => {
 
   it('answers count confirmations from prior calendar scope without invoking the model', async () => {
     const waitUntilReady = vi.fn()
+    // Pin the clock (see note above) so the 9:00/10:00 "today" events are always
+    // within the past-tense window, keeping this deterministic across CI run times.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 5, 4, 12, 0, 0))
     const now = new Date()
     now.setHours(9, 0, 0, 0)
     const events = [0, 1].map((offset) => ({

@@ -11,6 +11,10 @@ import type {
 import {
   ChatRecordingIndex,
   MAX_CHAT_ALL_CONTEXT_MEETINGS,
+  detectChatIntent,
+  isLatestRecordingQuery,
+  isOldestRecordingQuery,
+  isRecordingCollectionTemporalQuestion,
   type ChatEmbeddingProvider
 } from '../chat-retrieval'
 
@@ -41,6 +45,228 @@ describe('ChatRecordingIndex', () => {
     expect(result.diagnostics.matchMode).toBe('exact-title')
     expect(result.diagnostics.selectedMeetingIds).toEqual(['qa-target'])
     expect(result.context).toBe('')
+  })
+
+  it('counts a just-finished recording immediately, without waiting out the inventory TTL (AD-83)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'rec-1', {
+      startedAt: base,
+      sourceName: 'Entire screen',
+      notes: 'first recording'
+    })
+    // No watcher: the only freshness mechanism is the forced scan on count/list.
+    const index = new ChatRecordingIndex(baseDir)
+
+    const first = await index.buildContext('how many recordings do I have?', [])
+    expect(first.directAnswer).toContain('1 recording')
+
+    // A second recording lands. The fs watcher is off and we do NOT advance the
+    // clock past the 60s TTL, reproducing QA's "took three attempts" staleness.
+    await createRecording(baseDir, 'rec-2', {
+      startedAt: base + 60_000,
+      sourceName: 'Slack Huddle',
+      notes: 'second recording'
+    })
+
+    const second = await index.buildContext('how many recordings do I have?', [])
+    expect(second.directAnswer).toContain('2 recordings')
+    expect(await index.listInventory()).toHaveLength(2)
+  })
+
+  it('finds a just-finished recording by title within the TTL window (AD-83)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'rec-1', {
+      startedAt: base,
+      sourceName: 'Entire screen',
+      notes: 'first recording'
+    })
+    const index = new ChatRecordingIndex(baseDir)
+    // Warm the inventory cache, then add a recording without advancing the clock.
+    await index.buildContext('how many recordings do I have?', [])
+
+    await createRecording(baseDir, 'standup', {
+      startedAt: base + 60_000,
+      sourceName: 'Entire screen',
+      customTitle: 'Daily Standup Notes',
+      notes: 'standup notes'
+    })
+
+    const result = await index.buildExactTitleContext('Summarize Daily Standup Notes')
+    expect(result?.diagnostics.matchMode).toBe('exact-title')
+    expect(result?.diagnostics.selectedMeetingIds).toEqual(['standup'])
+  })
+
+  it('answers a generic follow-up question from meetings that have action items (AD-83 action-items)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'roadmap', {
+      startedAt: base + 7_200_000,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'support', {
+      startedAt: base,
+      sourceName: 'Support Triage',
+      segments: createSegmentsFromItems({
+        actionItems: [
+          {
+            title: 'Escalation follow-up',
+            content: 'Casey owns the escalation follow-up for the priority customer queue.',
+            topic: 'Support',
+            assignee: 'Casey'
+          }
+        ]
+      })
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what do I need to follow up on?', [])
+    const answer = result.directAnswer ?? result.context
+    expect(answer).toContain('Casey')
+    expect(answer).not.toContain('did not find')
+  })
+
+  it('selects the newest recording for a "most recent recording" question (AD-83 recall)', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'older', {
+      startedAt: base,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'newer', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Design Sync',
+      notes: 'The team rewrote the onboarding copy.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what was my most recent recording about?', [])
+    expect(result.diagnostics.selectedMeetingIds).toEqual(['newer'])
+    expect(result.context).toContain('onboarding')
+  })
+
+  it('treats a time window ("last week") as a filter, not a most-recent selector', () => {
+    expect(isLatestRecordingQuery('what was my most recent recording about?')).toBe(true)
+    expect(isLatestRecordingQuery('my latest recording')).toBe(true)
+    expect(isLatestRecordingQuery('summarize my recordings from last week')).toBe(false)
+    expect(isLatestRecordingQuery('what did we discuss in the roadmap review?')).toBe(false)
+  })
+
+  it('selects the oldest recording for an "oldest recording" question', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'older', {
+      startedAt: base,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'newer', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Design Sync',
+      notes: 'The team rewrote the onboarding copy.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what is the oldest recording I have?', [])
+    expect(result.diagnostics.selectedMeetingIds).toEqual(['older'])
+    expect(result.context).toContain('roadmap')
+  })
+
+  it('detects oldest/first ordering without treating time windows as selectors', () => {
+    expect(isOldestRecordingQuery('what is the oldest recording I have?')).toBe(true)
+    expect(isOldestRecordingQuery('my very first recording')).toBe(true)
+    expect(isOldestRecordingQuery('the earliest recording')).toBe(true)
+    expect(isOldestRecordingQuery('recordings from last month')).toBe(false)
+    expect(isOldestRecordingQuery('what did we discuss in the roadmap review?')).toBe(false)
+  })
+
+  it('routes "main topics across my recordings" to synthesis, not an empty list', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'roadmap', {
+      startedAt: base,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked.'
+    })
+    await createRecording(baseDir, 'support', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Support Triage',
+      notes: 'Casey owns the escalation follow-up due Friday.'
+    })
+
+    expect(detectChatIntent('what are the main topics across my recordings?')).toBe('summarize-all')
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('what are the main topics across my recordings?', [])
+    const answer = result.directAnswer ?? result.context
+    expect(answer).not.toContain('do not have any recordings')
+    expect(answer.toLowerCase()).toMatch(/roadmap|support|escalation|casey/)
+  })
+
+  it('answers a comparison question with both named meetings in context', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'roadmap', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Roadmap Review',
+      notes: 'Q3 roadmap sequencing was locked. Priya drives the milestone tracker.'
+    })
+    await createRecording(baseDir, 'support', {
+      startedAt: base,
+      sourceName: 'Support Triage',
+      notes: 'Casey owns the escalation follow-up for the priority customer queue.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('compare the roadmap and support meetings', [])
+    const answer = (result.directAnswer ?? result.context).toLowerCase()
+    expect(answer).toMatch(/roadmap|priya|q3/)
+    expect(answer).toMatch(/support|casey|escalation/)
+  })
+
+  it('answers a collection-timing question with the dated inventory list', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const base = new Date(2026, 4, 27, 9, 0).getTime()
+    await createRecording(baseDir, 'a', {
+      startedAt: base,
+      sourceName: 'Roadmap Review',
+      notes: 'x'
+    })
+    await createRecording(baseDir, 'b', {
+      startedAt: base + 3_600_000,
+      sourceName: 'Design Sync',
+      notes: 'y'
+    })
+
+    expect(isRecordingCollectionTemporalQuestion('were these all recorded on the same day?')).toBe(
+      true
+    )
+    expect(isRecordingCollectionTemporalQuestion('what did we discuss in these recordings?')).toBe(
+      false
+    )
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext('were these all recorded on the same day?', [])
+    const answer = result.directAnswer ?? result.context
+    expect(answer).not.toContain('calendar')
+    expect(answer.toLowerCase()).toMatch(/roadmap|design|recordings?/)
+  })
+
+  it('surfaces action items for a generic "follow-up I\'m forgetting" question', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'support', {
+      startedAt: new Date(2026, 4, 27, 9, 0).getTime(),
+      sourceName: 'Support Triage',
+      notes: 'Action item: Casey to follow up on the escalation for the priority customer queue.'
+    })
+
+    const index = new ChatRecordingIndex(baseDir)
+    const result = await index.buildContext("is there a follow-up I'm forgetting?", [])
+    const answer = (result.directAnswer ?? result.context).toLowerCase()
+    expect(answer).not.toContain('did not find')
+    expect(answer).toMatch(/casey|escalation|follow/)
   })
 
   it('matches custom, calendar, source, and generic aliases', async () => {
@@ -1267,7 +1493,9 @@ function createSegmentsFromItems(
   return segments
 }
 
-function segmentCategoryForKey(category: keyof MeetingSegments) {
+function segmentCategoryForKey(
+  category: keyof MeetingSegments
+): 'decision' | 'action_item' | 'information' | 'discussion' | 'status_update' {
   switch (category) {
     case 'decisions':
       return 'decision'

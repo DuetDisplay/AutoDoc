@@ -343,13 +343,30 @@ export class ChatRecordingIndex {
     }
   }
 
+  /**
+   * Deterministic inventory accessor used by the tool-calling agent (Ask AI v2).
+   *
+   * Returns the full materialized recording inventory, most-recent-first. This is
+   * the single source of truth for counts and ordered lists, so the agent's
+   * count/list tools never depend on the language model and can never report a
+   * fabricated number (the AD-83 "you have 0 recordings" class of bug).
+   */
+  async listInventory(
+    recentEvents: CalendarEvent[] = [],
+    forceRefresh = true
+  ): Promise<MeetingInventoryEntry[]> {
+    return this.getInventory(recentEvents, forceRefresh)
+  }
+
   async buildExactTitleContext(
     question: string,
     recentEvents: CalendarEvent[] = []
   ): Promise<ChatRetrievalResult | null> {
     this.semanticDiagnostics = createEmptySemanticDiagnostics()
     const startedAt = Date.now()
-    const inventory = await this.getInventory(recentEvents)
+    // Title lookups must see a just-finished recording (AD-83: "not detecting
+    // some recordings by title"), so bypass the watcher-backed TTL cache.
+    const inventory = await this.getInventory(recentEvents, true)
     const inventoryElapsedMs = Date.now() - startedAt
     const selectionStartedAt = Date.now()
     const exactMatches = findExactTitleMatches(inventory, question)
@@ -370,10 +387,21 @@ export class ChatRecordingIndex {
   ): Promise<ChatRetrievalResult> {
     this.semanticDiagnostics = createEmptySemanticDiagnostics()
     const startedAt = Date.now()
-    const inventory = await this.getInventory(recentEvents)
+    const intent = detectChatIntent(question)
+    // Inventory questions (count/list/summarize-all) must reflect a just-finished
+    // recording immediately rather than wait out the watcher-backed TTL cache.
+    const wantsLatest = isLatestRecordingQuery(question)
+    const wantsOldest = !wantsLatest && isOldestRecordingQuery(question)
+    const requiresFreshInventory =
+      intent === 'count' ||
+      intent === 'list' ||
+      intent === 'summarize-all' ||
+      wantsLatest ||
+      wantsOldest ||
+      isRecordingCollectionTemporalQuestion(question)
+    const inventory = await this.getInventory(recentEvents, requiresFreshInventory)
     const inventoryElapsedMs = Date.now() - startedAt
     const selectionStartedAt = Date.now()
-    const intent = detectChatIntent(question)
 
     if (intent === 'count') {
       const matched = filterInventoryForDirectIntent(inventory, question)
@@ -395,7 +423,11 @@ export class ChatRecordingIndex {
     }
 
     if (intent === 'list') {
-      const matched = filterInventoryForDirectIntent(inventory, question)
+      // A subject filter that matches nothing should still list the inventory
+      // rather than claim "you do not have any recordings yet" (that message is
+      // reserved for a genuinely empty inventory).
+      const filtered = filterInventoryForDirectIntent(inventory, question)
+      const matched = filtered.length > 0 ? filtered : inventory
       const directAnswer = formatRecordingListAnswer(matched)
       return this.result({
         intent,
@@ -431,6 +463,47 @@ export class ChatRecordingIndex {
       })
     }
 
+    if (wantsLatest && inventory.length > 0) {
+      // Inventory is ordered most-recent-first, so entry 0 is the newest.
+      return this.buildExactMatchResult({
+        question,
+        inventory,
+        selected: [inventory[0]],
+        inventoryElapsedMs,
+        selectionElapsedMs: Date.now() - selectionStartedAt
+      })
+    }
+
+    if (wantsOldest && inventory.length > 0) {
+      // Inventory is ordered most-recent-first, so the last entry is the oldest.
+      return this.buildExactMatchResult({
+        question,
+        inventory,
+        selected: [inventory[inventory.length - 1]],
+        inventoryElapsedMs,
+        selectionElapsedMs: Date.now() - selectionStartedAt
+      })
+    }
+
+    if (isRecordingCollectionTemporalQuestion(question) && inventory.length > 0) {
+      // Answer collection-timing questions with the dated inventory listing.
+      const directAnswer = formatRecordingListAnswer(inventory)
+      return this.result({
+        intent,
+        inventory,
+        directAnswer,
+        context: '',
+        matched: inventory,
+        selected: [],
+        matchMode: 'direct-list',
+        inventoryElapsedMs,
+        selectionElapsedMs: Date.now() - selectionStartedAt,
+        summaryElapsedMs: 0,
+        cacheHits: 0,
+        cacheMisses: 0
+      })
+    }
+
     const exactMatches = findExactTitleMatches(inventory, question)
     if (exactMatches.length > 0) {
       return this.buildExactMatchResult({
@@ -451,6 +524,55 @@ export class ChatRecordingIndex {
     const selectionElapsedMs = Date.now() - selectionStartedAt
     const summaryStartedAt = Date.now()
     const summaryStats = { cacheHits: 0, cacheMisses: 0 }
+
+    // A compound ask ("summarize X and tell me who owns Y") spans two intents
+    // and often two meetings. The single-answer short circuits below would drop
+    // one half, so gather every positively-ranked meeting and let the model
+    // synthesize both parts from grounded context instead of clarifying.
+    if (
+      candidateSelection &&
+      (isCompoundSummaryAndFactQuestion(question) ||
+        (isComparisonQuestion(question) && !hasQuestionWindowCue(question)))
+    ) {
+      // The ranked scores are gated by whole-subject coverage, which is 0 here
+      // because no single meeting contains both halves' terms. Re-score each
+      // candidate's loaded summary ungated so the meeting matching each clause
+      // is retained (roadmap for the summary half, support for the owner half).
+      const compoundSelected = candidateSelection.ranked
+        .map((entry) => ({
+          meeting: entry.meeting,
+          score: scoreTextRelevance(`${entry.meeting.title} ${entry.summary.searchText}`, question)
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, Math.min(MAX_CHAT_FULL_CONTEXT_MEETINGS, MAX_RELEVANCE_CANDIDATES))
+        .map(({ meeting }) => meeting)
+      if (compoundSelected.length > 0) {
+        const context = await this.formatMeetingContext({
+          inventory,
+          selected: compoundSelected,
+          question,
+          includeTranscriptFallback: true,
+          includeFullNotes: false,
+          summaryStats
+        })
+        return this.result({
+          intent,
+          inventory,
+          directAnswer: null,
+          context,
+          matched: compoundSelected,
+          selected: compoundSelected,
+          matchMode: 'ranked',
+          inventoryElapsedMs,
+          selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses,
+          candidateConfidence: candidateSelection.confidence
+        })
+      }
+    }
 
     if (candidateSelection) {
       const clarification = formatMeetingClarification(question, candidateSelection)
@@ -605,6 +727,34 @@ export class ChatRecordingIndex {
     const selectionElapsedMs = Date.now() - selectionStartedAt
     const summaryStartedAt = Date.now()
     const summaryStats = { cacheHits: 0, cacheMisses: 0 }
+
+    // Coreference follow-ups that ask for a specific action-item fact ("when is
+    // it due?", "who owns it?") should answer that fact from the already-resolved
+    // meeting, not fall through to a generic summary.
+    if (isStructuredActionFactQuestion(question) && selected.length > 0) {
+      const directAnswer = await this.formatStructuredActionFactAnswer(
+        selected,
+        question,
+        summaryStats,
+        { requireRelevance: false }
+      )
+      if (directAnswer) {
+        return this.result({
+          intent: 'broad',
+          inventory,
+          directAnswer,
+          context: '',
+          matched: selected,
+          selected,
+          matchMode: 'ranked',
+          inventoryElapsedMs,
+          selectionElapsedMs,
+          summaryElapsedMs: Date.now() - summaryStartedAt,
+          cacheHits: summaryStats.cacheHits,
+          cacheMisses: summaryStats.cacheMisses
+        })
+      }
+    }
 
     if (shouldAnswerExactSummaryDirectly(question)) {
       const directAnswer = await this.formatExactSummaryAnswer({
@@ -838,8 +988,11 @@ export class ChatRecordingIndex {
     })
   }
 
-  private async getInventory(recentEvents: CalendarEvent[]): Promise<MeetingInventoryEntry[]> {
-    const rawEntries = await this.getRawInventory()
+  private async getInventory(
+    recentEvents: CalendarEvent[],
+    forceRefresh = false
+  ): Promise<MeetingInventoryEntry[]> {
+    const rawEntries = await this.getRawInventory(forceRefresh)
     const cacheKey = buildCalendarSignature(recentEvents)
     const cached = this.materializedInventoryCache.get(cacheKey)
     if (cached?.generation === this.inventoryGeneration) return cached.entries
@@ -854,8 +1007,14 @@ export class ChatRecordingIndex {
     return entries
   }
 
-  private async getRawInventory(): Promise<RawInventoryEntry[]> {
+  private async getRawInventory(forceRefresh = false): Promise<RawInventoryEntry[]> {
+    // macOS recursive fs.watch can miss nested writes (a recording finishes
+    // writing its files over time), so the TTL cache can lag a just-finished
+    // recording by up to INVENTORY_CACHE_TTL_MS. Count/list/title lookups are the
+    // exact paths QA saw report a stale count (AD-83: "took three attempts"), so
+    // those callers force a fresh disk scan rather than trust the watcher.
     if (
+      !forceRefresh &&
       this.inventoryCache &&
       Date.now() - this.inventoryCache.fetchedAt < INVENTORY_CACHE_TTL_MS
     ) {
@@ -935,15 +1094,53 @@ export class ChatRecordingIndex {
     })
     let selected: MeetingInventoryEntry[]
     if (actionItemQuestion) {
+      const hasActionEvidence = (summary: MeetingSummary): boolean =>
+        summary.evidence.some(
+          (chunk) => chunk.category === 'actionItems' || isActionLikeEvidence(chunk)
+        )
       const actionMatches = fullyRanked.filter(
-        ({ summary, score }) =>
-          score > 0 &&
-          summary.evidence.some(
-            (chunk) => chunk.category === 'actionItems' || isActionLikeEvidence(chunk)
-          )
+        ({ summary, score }) => score > 0 && hasActionEvidence(summary)
       )
+      // A generic follow-up question ("what do I need to follow up on?") has no
+      // subject term to match lexically, so actionMatches is empty even though
+      // the user clearly wants their open action items. Detect "generic" as: the
+      // only leftover subject terms are action-item vocabulary. For those, surface
+      // every meeting that actually has action items rather than answering "I did
+      // not find any". A specific subject ("action items about pricing") still
+      // returns honestly empty so we never fabricate relevance.
+      const subjectTerms = extractQuestionTerms(
+        stripQuestionScaffolding(normalizeRecordingSearchText(question))
+      )
+      // The residual subject is the question minus action-item vocabulary,
+      // generic filler, and output-format words — i.e. what meeting it's about.
+      const residualSubjectTerms = subjectTerms.filter(
+        (term) =>
+          !ACTION_ITEM_VOCABULARY.has(term) &&
+          !GENERIC_FOLLOWUP_FILLER.has(term) &&
+          !OUTPUT_FORMAT_VOCABULARY.has(term)
+      )
+      const isGenericActionQuestion = residualSubjectTerms.length === 0
+      let actionCandidates: RankedMeetingSummary[]
       if (actionMatches.length > 0) {
-        selected = actionMatches
+        actionCandidates = actionMatches
+      } else if (isGenericActionQuestion) {
+        // No subject left ("what's most pressing?") — surface every meeting that
+        // actually has action items rather than answering "I did not find any".
+        actionCandidates = fullyRanked.filter(({ summary }) => hasActionEvidence(summary))
+      } else {
+        // Request-type words ("as a checklist") shouldn't sink retrieval: match
+        // the residual subject ("support") against action-evidence meetings so a
+        // real subject still returns honestly empty without fabricating.
+        const residualQuery = residualSubjectTerms.join(' ')
+        actionCandidates = fullyRanked.filter(
+          ({ meeting, summary }) =>
+            hasActionEvidence(summary) &&
+            (scoreTextRelevance(meeting.title, residualQuery) > 0 ||
+              scoreTextRelevance(summary.searchText, residualQuery) > 0)
+        )
+      }
+      if (actionCandidates.length > 0) {
+        selected = actionCandidates
           .slice(0, MAX_CHAT_ALL_CONTEXT_MEETINGS)
           .map(({ meeting }) => meeting)
         return {
@@ -1349,8 +1546,14 @@ export class ChatRecordingIndex {
   private async formatStructuredActionFactAnswer(
     selected: MeetingInventoryEntry[],
     question: string,
-    summaryStats: { cacheHits: number; cacheMisses: number }
+    summaryStats: { cacheHits: number; cacheMisses: number },
+    options: { requireRelevance?: boolean } = {}
   ): Promise<string | null> {
+    // When the meetings were already resolved by coreference (e.g. a pronoun
+    // follow-up "when is it due?"), the question has no content tokens to score
+    // against, so relevance filtering would drop every chunk. Callers that pass
+    // an explicit selection set requireRelevance:false to answer from it directly.
+    const { requireRelevance = true } = options
     const matches: Array<{
       meeting: MeetingInventoryEntry
       chunk: MeetingEvidenceChunk
@@ -1375,7 +1578,7 @@ export class ChatRecordingIndex {
         if (asksDueDate && !chunk.deadline) continue
         if (asksOwner && !chunk.assignee) continue
         const score = scoreTextRelevance(`${meeting.title} ${chunk.searchText}`, question)
-        if (score > 0) matches.push({ meeting, chunk, score })
+        if (score > 0 || !requireRelevance) matches.push({ meeting, chunk, score })
       }
     }
 
@@ -1878,8 +2081,19 @@ function scoreEvidenceChunkForRetrieval(
   return Math.max(0, score)
 }
 
+// A query token matches a note token when it is a substring or a close
+// misspelling ("escalaton" ~ "escalation"), so typo'd questions still clear the
+// subject-coverage gate that protects retrieval precision for exact queries.
+function tokenFuzzilyMatchesTerm(word: string, term: string): boolean {
+  if (word.includes(term)) return true
+  if (term.length < 5 || word.length < 4) return false
+  const maxDistance = term.length >= 8 ? 2 : 1
+  return withinEditDistance(term, word, maxDistance)
+}
+
 function subjectTermCoverage(text: string, subject: string): number {
   const normalizedText = normalizeRecordingSearchText(text)
+  const words = normalizedText.split(' ').filter(Boolean)
   const terms = subject
     .split(' ')
     .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term))
@@ -1887,7 +2101,10 @@ function subjectTermCoverage(text: string, subject: string): number {
   if (terms.length > 1 && !hasSubjectPhraseOrProximity(normalizedText, terms)) {
     return 0
   }
-  const matched = terms.filter((term) => normalizedText.includes(term)).length
+  const matched = terms.filter(
+    (term) =>
+      normalizedText.includes(term) || words.some((word) => tokenFuzzilyMatchesTerm(word, term))
+  ).length
   return matched / terms.length
 }
 
@@ -1898,14 +2115,26 @@ function hasSubjectPhraseOrProximity(normalizedText: string, terms: string[]): b
   const words = normalizedText.split(' ')
   const positions = terms.map((term) =>
     words.reduce<number[]>((matches, word, index) => {
-      if (word.includes(term)) matches.push(index)
+      if (tokenFuzzilyMatchesTerm(word, term)) matches.push(index)
       return matches
     }, [])
   )
-  if (positions.some((matches) => matches.length === 0)) return false
 
-  for (const firstPosition of positions[0]) {
-    const allNearby = positions.every((matches) =>
+  // A missing *content* term (5+ chars) means the subject genuinely isn't here,
+  // so stay strict to protect precision (e.g. anti-fabrication "revenue q3").
+  // A missing short term is usually a typo'd verb/function word ("ons" for
+  // "owns") and is tolerated when at least two content terms cluster nearby.
+  const missingContentTerm = terms.some(
+    (term, index) => term.length >= 5 && positions[index].length === 0
+  )
+  if (missingContentTerm) return false
+
+  const presentPositions = positions.filter((matches) => matches.length > 0)
+  if (presentPositions.length === 0) return false
+  if (presentPositions.length < positions.length && presentPositions.length < 2) return false
+
+  for (const firstPosition of presentPositions[0]) {
+    const allNearby = presentPositions.every((matches) =>
       matches.some((position) => Math.abs(position - firstPosition) <= 6)
     )
     if (allNearby) return true
@@ -1967,6 +2196,79 @@ function isGeneralSummaryQuestion(question: string): boolean {
   )
 }
 
+// Generic verbs/qualifiers that carry no subject on their own, so a question
+// built only from these + action vocabulary ("what do I NEED to follow up on?",
+// "any OUTSTANDING action items?") is a generic "list my action items" request.
+const GENERIC_FOLLOWUP_FILLER = new Set([
+  'need',
+  'needs',
+  'want',
+  'wants',
+  'have',
+  'outstanding',
+  'open',
+  'pending',
+  'left',
+  'remaining',
+  'remember',
+  'forget',
+  'forgetting',
+  'forgot',
+  'missing',
+  'miss',
+  'overlooked',
+  'overlooking',
+  'still',
+  'address',
+  'handle',
+  'must',
+  'pressing',
+  'urgent',
+  'important',
+  'priority',
+  'critical',
+  'main',
+  'key',
+  'biggest',
+  'top',
+  'most'
+])
+
+// Output-shape words that describe how to format the answer, not what meeting
+// it is about. Stripped from the action-item subject so "support action items
+// as a checklist" still retrieves the support meeting.
+const OUTPUT_FORMAT_VOCABULARY = new Set([
+  'list',
+  'checklist',
+  'bullet',
+  'bullets',
+  'bulleted',
+  'points',
+  'summary',
+  'summarize',
+  'overview',
+  'rundown',
+  'recap',
+  'format'
+])
+
+const ACTION_ITEM_VOCABULARY = new Set([
+  'action',
+  'actions',
+  'item',
+  'items',
+  'task',
+  'tasks',
+  'todo',
+  'todos',
+  'follow',
+  'followup',
+  'followups',
+  'up',
+  'step',
+  'steps'
+])
+
 function isActionItemQuestion(question: string): boolean {
   const normalized = normalizeRecordingSearchText(question)
   return /\b(action|actions|item|items|task|tasks|todo|todos|follow|steps)\b/.test(normalized)
@@ -1983,6 +2285,32 @@ function isMultiMeetingSynthesisQuestion(question: string): boolean {
     /\b(compare|across|summarize|summary|recap|what was discussed|what did we discuss|what happened|content|themes?|topics?)\b/.test(
       normalized
     ) && /\b(meetings?|calls?|standups?|syncs?|huddles?|all|each|every|week)\b/.test(normalized)
+  )
+}
+
+// A two-part request that pairs a summary ask with a separate fact ask
+// ("summarize the roadmap review and tell me who owns the escalation follow-up").
+// Both halves must be answered, so callers route these to grounded context
+// synthesis rather than a single deterministic direct answer.
+function isCompoundSummaryAndFactQuestion(question: string): boolean {
+  const normalized = normalizeRecordingSearchText(question)
+  if (!/\band\b/.test(normalized)) return false
+  const hasSummaryAsk = /\b(summarize|summary|recap|overview|rundown)\b/.test(normalized)
+  const hasFactAsk =
+    /\b(who owns|who is responsible|owner|owns|assigned|assignee|responsible|due|deadline)\b/.test(
+      normalized
+    )
+  return hasSummaryAsk && hasFactAsk
+}
+
+// "compare the roadmap and support meetings" / "what's the difference between X
+// and Y" name two subjects that each live in a different meeting. The per-meeting
+// subject-coverage gate drops both (neither covers both subjects), so these need
+// the same ungated multi-meeting gathering as a compound ask.
+function isComparisonQuestion(question: string): boolean {
+  const normalized = normalizeRecordingSearchText(question)
+  return /\b(compare|compared|comparing|comparison|contrast|versus|vs|difference|differ)\b/.test(
+    normalized
   )
 }
 
@@ -2642,10 +2970,20 @@ export function detectChatIntent(question: string): ChatIntent {
     return 'count'
   }
 
+  // "what are the main topics / themes across my recordings" asks for content
+  // synthesized over everything, not an enumeration of titles. Route it to
+  // summarize-all so it answers from all meetings instead of being mistaken for
+  // a "list" by the bare "what are".
+  if (asksRecordings && /\b(topics?|themes?|overview|rundown)\b/.test(normalized)) {
+    return 'summarize-all'
+  }
+
   if (
     asksRecordings &&
     /\b(list|show|what are|which are)\b/.test(normalized) &&
-    !/\b(summarize|summary|notes?)\b/.test(normalized)
+    !/\b(summarize|summary|notes?|topics?|themes?|about|discuss(ed)?|decided|decisions?)\b/.test(
+      normalized
+    )
   ) {
     return 'list'
   }
@@ -2659,6 +2997,45 @@ export function detectChatIntent(question: string): ChatIntent {
   }
 
   return 'broad'
+}
+
+// "what was my most recent recording about?" / "my latest recording" select the
+// single newest recording. Ranked relevance retrieval ignores recency and was
+// picking the wrong (often oldest) meeting, so this is handled deterministically
+// against the inventory, which is ordered most-recent-first. A bare time window
+// ("last week") is NOT a recency selector.
+export function isLatestRecordingQuery(question: string): boolean {
+  const n = normalizeRecordingSearchText(question)
+  const recency = /\b(most recent|latest|newest|last)\b/.test(n)
+  const recording = /\b(recording|recorded|record)\b/.test(n)
+  const timeWindow = /\b(week|month|year|yesterday|today|day|quarter)\b/.test(n)
+  return recency && recording && !timeWindow
+}
+
+// Mirror of isLatestRecordingQuery for the oldest/first recording. Inventory is
+// ordered most-recent-first, so ranked retrieval (which ignores recency) tends
+// to return the wrong meeting; select the earliest deterministically instead.
+export function isOldestRecordingQuery(question: string): boolean {
+  const n = normalizeRecordingSearchText(question)
+  const earliest = /\b(oldest|earliest|first|very first|original)\b/.test(n)
+  const recording = /\b(recording|recorded|record)\b/.test(n)
+  const timeWindow = /\b(week|month|year|yesterday|today|day|quarter)\b/.test(n)
+  return earliest && recording && !timeWindow
+}
+
+// "were these all recorded on the same day?" / "when were these recorded?" ask
+// about the timing of the recording COLLECTION, not the content of one meeting.
+// Content retrieval finds no subject match and dead-ends, so these are answered
+// with the dated inventory listing instead.
+export function isRecordingCollectionTemporalQuestion(question: string): boolean {
+  const n = normalizeRecordingSearchText(question)
+  const refersCollection = /\b(these|those|them|all)\b/.test(n)
+  const aboutRecordings = /\b(recorded|recording|recordings)\b/.test(n)
+  const temporalOrGrouping =
+    /\b(same day|same time|same week|same date|together|when|what day|which day|on the same)\b/.test(
+      n
+    )
+  return refersCollection && aboutRecordings && temporalOrGrouping
 }
 
 function findExactTitleMatches(
@@ -2980,6 +3357,30 @@ export function extractQuestionTerms(question: string): string[] {
   ]
 }
 
+// Bounded Levenshtein: returns true as soon as the distance is known to exceed
+// `max` so a typo check never walks the full matrix for unrelated words.
+function withinEditDistance(a: string, b: string, max: number): boolean {
+  const la = a.length
+  const lb = b.length
+  if (Math.abs(la - lb) > max) return false
+  let prev = Array.from({ length: lb + 1 }, (_, j) => j)
+  let curr = new Array<number>(lb + 1)
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i
+    let rowMin = curr[0]
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+      if (curr[j] < rowMin) rowMin = curr[j]
+    }
+    if (rowMin > max) return false
+    const swap = prev
+    prev = curr
+    curr = swap
+  }
+  return prev[lb] <= max
+}
+
 export function scoreTextRelevance(text: string, question: string): number {
   const normalizedText = normalizeRecordingSearchText(text)
   if (!normalizedText) return 0
@@ -2987,13 +3388,31 @@ export function scoreTextRelevance(text: string, question: string): number {
   const terms = extractQuestionTerms(question)
   const phrases = extractQuestionPhrases(question)
   let score = 0
+  let textTokens: string[] | null = null
 
   for (const phrase of phrases) {
     if (normalizedText.includes(phrase)) score += 5
   }
 
   for (const term of terms) {
-    if (normalizedText.includes(term)) score += 2
+    if (normalizedText.includes(term)) {
+      score += 2
+      continue
+    }
+    // Typo tolerance: only when the exact term is absent, accept a near-miss
+    // token (e.g. "escalaton" -> "escalation") at a lower weight so misspellings
+    // still retrieve the right meeting without distorting exact-match ranking.
+    if (term.length >= 5) {
+      if (!textTokens) textTokens = normalizedText.split(' ').filter(Boolean)
+      const maxDistance = term.length >= 8 ? 2 : 1
+      if (
+        textTokens.some(
+          (token) => token.length >= 4 && withinEditDistance(term, token, maxDistance)
+        )
+      ) {
+        score += 1
+      }
+    }
   }
 
   return score
