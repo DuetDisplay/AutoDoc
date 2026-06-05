@@ -33,9 +33,11 @@ const MODEL = process.env.AUTODOC_ASK_AI_MODEL ?? 'llama3.1'
 const REPORT_DIR = join(process.cwd(), 'artifacts', 'ask-ai-hybrid-eval')
 
 type Mode = 'v1' | 'hybrid' | 'agent'
-const MODES: Mode[] = (process.env.AUTODOC_ASK_AI_EVAL_MODES?.split(',').map((m) => m.trim()) as
-  | Mode[]
-  | undefined) ?? ['v1', 'hybrid', 'agent']
+const VALID_MODES: Mode[] = ['v1', 'hybrid', 'agent']
+const requestedModes = process.env.AUTODOC_ASK_AI_EVAL_MODES?.split(',')
+  .map((m) => m.trim())
+  .filter((m): m is Mode => (VALID_MODES as string[]).includes(m))
+const MODES: Mode[] = requestedModes && requestedModes.length > 0 ? requestedModes : VALID_MODES
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => join(tmpdir(), 'autodoc-ask-ai-modes-userdata')) },
@@ -168,9 +170,13 @@ describe.skipIf(!LIVE)('Ask AI modes LIVE eval (v1 vs hybrid vs agent)', () => {
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
       } as never
     )
-    return vi
+    const handler = vi
       .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1] as never
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    if (!handler) {
+      throw new Error('registerChatIpc did not register chat:send-stream')
+    }
+    return handler as never
   }
 
   for (const mode of MODES) {

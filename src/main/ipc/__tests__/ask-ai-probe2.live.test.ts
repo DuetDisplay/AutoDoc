@@ -153,9 +153,13 @@ describe.skipIf(!LIVE)('Ask AI PROBE2 usability probe (hybrid)', () => {
         fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
       } as never
     )
-    return vi
+    const handler = vi
       .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1] as never
+      .mock.calls.find(([channel]) => channel === 'chat:send-stream')?.[1]
+    if (!handler) {
+      throw new Error('registerChatIpc did not register chat:send-stream')
+    }
+    return handler as never
   }
 
   it('runs the probe2 scenario set in hybrid mode', async () => {

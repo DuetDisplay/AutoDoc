@@ -72,7 +72,7 @@ describe.skipIf(!LIVE)('Ask AI agent LIVE eval', () => {
       const passed = results.filter((r) => r.pass).length
       const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b)
       const p = (q: number): number =>
-        latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))] ?? 0
+        latencies[Math.floor(q * (latencies.length - 1))] ?? 0
       const scorecard = {
         generatedAt: new Date().toISOString(),
         model: MODEL,
