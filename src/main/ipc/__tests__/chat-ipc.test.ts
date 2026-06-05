@@ -90,6 +90,7 @@ describe('chat meeting retrieval helpers', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
     tempDirs.length = 0
   })
@@ -297,6 +298,12 @@ describe('chat meeting retrieval helpers', () => {
 
   it('answers meeting inventory questions from calendar without waiting on Ollama', async () => {
     const waitUntilReady = vi.fn()
+    // Pin the clock to local noon so a 10:00 "today" event is always in the
+    // past within today's window — the question is past-tense ("did I have"),
+    // which clamps the range to [midnight, now]. Without this, the test flakes
+    // when CI runs before 10:00 (e.g. early-morning UTC).
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 5, 4, 12, 0, 0))
     const now = new Date()
     now.setHours(10, 0, 0, 0)
     const event = {
@@ -411,6 +418,10 @@ describe('chat meeting retrieval helpers', () => {
 
   it('answers count confirmations from prior calendar scope without invoking the model', async () => {
     const waitUntilReady = vi.fn()
+    // Pin the clock (see note above) so the 9:00/10:00 "today" events are always
+    // within the past-tense window, keeping this deterministic across CI run times.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 5, 4, 12, 0, 0))
     const now = new Date()
     now.setHours(9, 0, 0, 0)
     const events = [0, 1].map((offset) => ({
