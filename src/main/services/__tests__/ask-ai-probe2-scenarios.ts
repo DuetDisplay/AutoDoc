@@ -35,6 +35,14 @@ const shortReply =
   (max = 400) =>
   (a: string): boolean =>
     a.trim().length > 0 && a.length < max
+// Validate an actual word ceiling (the scenario asks for "under 10 words"); a
+// small tolerance absorbs connectives without letting a paragraph pass.
+const maxWords =
+  (max: number) =>
+  (a: string): boolean => {
+    const words = a.trim().split(/\s+/).filter(Boolean)
+    return words.length > 0 && words.length <= max
+  }
 const expressesAbsence = (a: string): boolean =>
   /\b(no|not|don'?t|doesn'?t|didn'?t|can'?t|cannot|couldn'?t|won'?t|isn'?t|aren'?t|nothing|none|unable|without|n'?t (find|see|have))\b|no (record|mention|data|info|results?|meetings?|events?|recordings?)/i.test(
     a
@@ -512,7 +520,7 @@ export const PROBE2_SCENARIOS: Scenario[] = [
     turns: [
       {
         question: 'summarize the roadmap review in under 10 words',
-        check: all(hasAny('roadmap', 'priya', 'q3', 'sequencing'), shortReply(160))
+        check: all(hasAny('roadmap', 'priya', 'q3', 'sequencing'), maxWords(12))
       }
     ]
   },

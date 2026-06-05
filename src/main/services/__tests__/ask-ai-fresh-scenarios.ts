@@ -310,7 +310,7 @@ export const FRESH_SCENARIOS: Scenario[] = [
     turns: [
       {
         question: 'can you schedule a follow-up meeting for me?',
-        check: all(nonEmpty, hasAny("can't", 'cannot', 'unable', 'not able', 'calendar', 'sorry'))
+        check: all(nonEmpty, declines)
       }
     ]
   },

@@ -1032,12 +1032,25 @@ function rememberRecordingList(
 const UNSUPPORTED_ACTION_VERBS =
   /\b(schedule|reschedule|set up|setup|create|delete|remove|erase|cancel|email|e-?mail|invite|book)\b/
 
+// Read-only intent verbs. When one of these leads *before* the mutate verb, the
+// user is asking ABOUT a past/decided action ("summarize what we decided to
+// create", "explain why we planned to delete X") rather than asking us to
+// perform one — so it must not be refused.
+const READ_ONLY_LEAD =
+  /\b(summar(?:y|ize|ise)|recap|tell|explain|describe|what|which|who|when|where|why|how|show|find|list|search|review|decide|decided|deciding|discuss|discussed|happened|cover|covered)\b/
+
 // Only treat these as action requests when framed as a request to act ("can you
 // schedule...", "please delete...") or led by the imperative verb ("delete the
 // recording"). This avoids hijacking content questions like "what's on my
-// schedule?" or "what did we decide to set up?".
+// schedule?", "what did we decide to set up?", or "summarize what we decided to
+// create" — where a mutate verb merely appears inside a read-only question.
 export function detectsUnsupportedActionRequest(normalized: string): boolean {
-  if (!UNSUPPORTED_ACTION_VERBS.test(normalized)) return false
+  const actionMatch = UNSUPPORTED_ACTION_VERBS.exec(normalized)
+  if (!actionMatch) return false
+  // A read-only verb appearing before the mutate verb means the question is
+  // about the action, not a request to perform it.
+  const readLead = READ_ONLY_LEAD.exec(normalized)
+  if (readLead && readLead.index < actionMatch.index) return false
   const requestFramed =
     /\b(can|could|would|will|please|able to|go ahead and|i need you to|i want you to)\b/.test(
       normalized

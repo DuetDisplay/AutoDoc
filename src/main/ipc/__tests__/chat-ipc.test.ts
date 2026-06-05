@@ -47,6 +47,17 @@ describe('detectsUnsupportedActionRequest', () => {
       expect(detectsUnsupportedActionRequest(q), q).toBe(false)
     }
   })
+
+  it('does not flag request-framed read-only questions that contain a mutate verb', () => {
+    for (const q of [
+      'can you summarize what we decided to create for onboarding?',
+      'can you explain why we planned to delete the legacy endpoint?',
+      'could you tell me which meeting decided to cancel the launch?',
+      'what did we decide to schedule for next quarter?'
+    ]) {
+      expect(detectsUnsupportedActionRequest(q), q).toBe(false)
+    }
+  })
 })
 
 describe('fast retrieval plan routing (recordings vs calendar)', () => {

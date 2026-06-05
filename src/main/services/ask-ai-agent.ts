@@ -431,7 +431,24 @@ async function getCalendar(
 ): Promise<{ result: unknown; summary: string }> {
   const range = typeof args.time_range === 'string' ? args.time_range : 'upcoming'
   const { recentEvents, upcomingEvents } = await deps.loadCalendar()
-  const events = range === 'upcoming' ? upcomingEvents : recentEvents
+  let events: CalendarEvent[]
+  if (range === 'today') {
+    // "today" can span both windows (earlier today is recent, later today is
+    // upcoming), so merge, dedupe by id, and keep only events on the local day.
+    const startOfDay = new Date()
+    startOfDay.setHours(0, 0, 0, 0)
+    const endOfDay = new Date(startOfDay)
+    endOfDay.setDate(endOfDay.getDate() + 1)
+    const byId = new Map<string, CalendarEvent>()
+    for (const event of [...recentEvents, ...upcomingEvents]) {
+      if (event.startTime >= startOfDay.getTime() && event.startTime < endOfDay.getTime()) {
+        byId.set(event.id, event)
+      }
+    }
+    events = [...byId.values()]
+  } else {
+    events = range === 'upcoming' ? upcomingEvents : recentEvents
+  }
   session.lastCalendarEvents = events
 
   const formatted = events
@@ -500,8 +517,23 @@ export function extractTextToolCalls(content: string): OllamaToolCall[] {
   const name = typeof obj.name === 'string' ? obj.name : undefined
   if (!name || !KNOWN_TOOL_NAMES.has(name)) return []
 
-  const rawArgs = obj.arguments ?? obj.parameters ?? {}
-  const args = rawArgs && typeof rawArgs === 'object' ? (rawArgs as Record<string, unknown>) : {}
+  // Arguments may arrive as a nested object or as a JSON-encoded string (some
+  // models double-encode). Recover both so required params like
+  // `search_recordings.query` aren't silently dropped.
+  const rawArgs = obj.arguments ?? obj.parameters
+  let args: Record<string, unknown> = {}
+  if (rawArgs && typeof rawArgs === 'object') {
+    args = rawArgs as Record<string, unknown>
+  } else if (typeof rawArgs === 'string' && rawArgs.trim().length > 0) {
+    try {
+      const parsedArgs = JSON.parse(rawArgs)
+      if (parsedArgs && typeof parsedArgs === 'object') {
+        args = parsedArgs as Record<string, unknown>
+      }
+    } catch {
+      // Leave args empty; the tool layer handles missing params gracefully.
+    }
+  }
   return [{ function: { name, arguments: args } }]
 }
 
