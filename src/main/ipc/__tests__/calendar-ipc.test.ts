@@ -83,4 +83,20 @@ describe('calendar IPC', () => {
       })
     )
   })
+
+  it('cancels an in-progress calendar connection', () => {
+    const manager = {
+      cancelConnect: vi.fn()
+    } as unknown as CalendarManager
+
+    registerCalendarIpc(manager)
+
+    const cancelHandler = handle.mock.calls.find(
+      ([channel]) => channel === 'calendar:cancel-connect'
+    )?.[1] as (() => void) | undefined
+
+    cancelHandler?.()
+
+    expect(manager.cancelConnect).toHaveBeenCalledTimes(1)
+  })
 })

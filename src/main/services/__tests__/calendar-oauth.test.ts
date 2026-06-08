@@ -154,4 +154,16 @@ describe('Calendar OAuth', () => {
       })
     )
   })
+
+  it('cancels a pending Microsoft OAuth callback listener', async () => {
+    const provider = new MicrosoftCalendarProvider()
+
+    const connectPromise = provider.connect()
+    await waitForOpenExternal()
+
+    provider.cancelConnect()
+
+    await expect(connectPromise).rejects.toThrow('Calendar connection cancelled')
+    expect(httpState.close).toHaveBeenCalled()
+  })
 })

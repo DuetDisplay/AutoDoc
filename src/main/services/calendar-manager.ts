@@ -110,6 +110,15 @@ export class CalendarManager {
     }
   }
 
+  cancelConnect(): void {
+    if (!this.connecting) return
+
+    for (const provider of this.providers.values()) {
+      provider.cancelConnect?.()
+    }
+    this.connecting = false
+  }
+
   async disconnect(accountId: string): Promise<void> {
     const account = this.accounts.find((a) => a.id === accountId)
     if (!account) return
