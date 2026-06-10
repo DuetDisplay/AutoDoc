@@ -4,8 +4,8 @@
   "description": "Local-first meeting assistant",
   "license": "AGPL-3.0-only",
   "main": "./out/main/index.js",
-  "author": "",
-  "homepage": "https://electron-vite.org",
+  "author": "Duet Display, Inc.",
+  "homepage": "https://getautodoc.com/",
   "scripts": {
     "build:mac-meeting-detector": "node scripts/build-mac-meeting-detector.js",
     "build:win-meeting-detector": "node scripts/build-win-meeting-detector.js",
