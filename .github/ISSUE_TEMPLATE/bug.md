@@ -28,7 +28,7 @@ What actually happened.
 
 - **AutoDoc version:**
 - **macOS version:**
-- **Hardware:** (Apple Silicon / Intel)
+- **Hardware:** Apple Silicon (e.g. M1, M2 Pro, M3)
 
 ## Logs / screenshots
 

@@ -41,6 +41,7 @@ Record, transcribe, and summarize your meetings entirely on-device — speaker d
 - [Features](#features)
 - [Features in action](#features-in-action)
 - [Install](#install)
+  - [System requirements (macOS)](#system-requirements-macos)
 - [Build from source](#build-from-source)
 - [Architecture](#architecture)
 - [Privacy](#privacy)
@@ -54,7 +55,7 @@ Record, transcribe, and summarize your meetings entirely on-device — speaker d
 
 Meeting AI tools are everywhere — but most of them ship your conversations to someone else's servers. AutoDoc takes the opposite stance: **every recording, transcript, and summary stays on your Mac.**
 
-- **Truly local.** Transcription runs on-device with [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (and Apple MLX on Apple Silicon). Summaries run on a local [Ollama](https://ollama.com) instance AutoDoc manages for you. No API keys, no inference bills, no network round-trips for your audio.
+- **Truly local.** Transcription runs on-device with Apple [MLX](https://github.com/ml-explore/mlx) Whisper on Apple Silicon. Summaries run on a local [Ollama](https://ollama.com) instance AutoDoc manages for you. No API keys, no inference bills, no network round-trips for your audio.
 - **Everything included.** Speaker diarization, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
 - **Encrypted at rest.** Recordings and transcripts are encrypted with AES-256-GCM, keyed through the macOS Keychain.
 - **Mac-native.** Lives in your menu bar, detects meetings as they start, and gets out of your way.
@@ -78,7 +79,7 @@ AutoDoc is built around a simple idea: the privacy-protecting choice shouldn't a
 ## Features
 
 - **🎙️ Multi-track capture** — records screen, your microphone, and system audio as separate streams for clean diarization.
-- **📝 On-device transcription** — whisper.cpp with `large-v3`; Apple MLX acceleration on Apple Silicon.
+- **📝 On-device transcription** — MLX Whisper with `distil-large-v3` on Apple Silicon.
 - **🗣️ Speaker identification** — two-stream diarization labels who said what, with calendar-aware name suggestions.
 - **🧠 AI meeting notes** — structured Decisions, Action Items, Information, Discussion, and Status Updates extracted locally with Ollama.
 - **💬 Ask AI** — ask questions across your meetings and get grounded answers, entirely on-device.
@@ -106,13 +107,32 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ## Install
 
-> **Platform support:** AutoDoc is **macOS-only today** (macOS 14+, Apple Silicon and Intel). **Windows is on the roadmap.**
+> **Platform support:** AutoDoc requires **macOS 14+ on Apple Silicon (M1 or later)**. Intel Macs are **not supported**. **Windows is on the roadmap.**
+
+### System requirements (macOS)
+
+Local-first meeting apps need real hardware headroom for on-device transcription and summarization. [Meetily](https://github.com/Zackriya-Solutions/meetily) publishes similar guidance in their [install docs](https://meetily.ai/blog/how-to-install-meetily) (OS version, RAM, storage). AutoDoc's numbers below reflect our bundled models and full feature set — not a copy of theirs, but the same class of requirements you should expect from any Whisper + Ollama desktop app.
+
+| | Requirement |
+|---|---|
+| **macOS** | 14.0 (Sonoma) or later |
+| **Chip** | **Apple Silicon required** (M1, M2, M3, M4, or later). Intel Macs are not supported. |
+| **Memory** | **8 GB minimum** · **16 GB recommended** for the default concurrent processing profile |
+| **Storage** | **~10 GB free** for first-run downloads (Whisper + local Ollama model + MLX runtime cache), plus additional space for your encrypted recordings |
+| **Network** | Required once during onboarding to download local AI models; not needed for day-to-day recording after setup |
+| **Permissions** | **Screen Recording**, **Microphone**, and **System Audio Capture** (for remote participant audio) |
+
+**What to expect on an 8 GB Mac:** AutoDoc detects limited memory and switches to a lower-impact profile automatically — smaller notes model (`llama3.2:3b`), serialized audio processing, and longer transcription/notes times. Everything still runs locally; a 16 GB machine is simply more comfortable for hour-long meetings with concurrent processing.
+
+Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires Apple Silicon — there is no Intel or Rosetta fallback.
+
+### Download & install
 
 1. Download the latest signed `AutoDoc-<version>.dmg` from the [**Releases**](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest) page.
 2. Open the `.dmg` and drag **AutoDoc** to your Applications folder.
 3. Launch AutoDoc. On first run, it will guide you through granting **Screen Recording** and **Microphone** permissions and will set up its local transcription and AI models.
 
-The build is code-signed and notarized by Apple. On first launch, models (Whisper + Ollama) are downloaded on-device — this is a one-time setup.
+The build is code-signed and notarized by Apple. On first launch, models (Whisper + Ollama) are downloaded on-device — this is a one-time setup that uses the storage headroom above.
 
 ## Build from source
 
@@ -120,9 +140,10 @@ AutoDoc is an Electron + electron-vite app. To build it yourself:
 
 **Prerequisites**
 
-- macOS 14+ with Xcode command-line tools
+- **Apple Silicon Mac** (M1 or later) running macOS 14+
+- Xcode command-line tools
 - Node.js 20+
-- [Homebrew](https://brew.sh) (used for `ffmpeg` / `whisper-cli` tooling)
+- [Homebrew](https://brew.sh) (used for `ffmpeg` tooling)
 
 **Steps**
 
@@ -154,8 +175,8 @@ AutoDoc is a single Electron desktop app. The **main process** owns recording, t
 │                                   │                        │
 │   ┌───────────────────────────────┼──────────────────┐   │
 │   │ Recording   Transcription   Diarization   Notes   │   │
-│   │ (screen/    (whisper.cpp /  (two-stream)  (Ollama)│   │
-│   │  mic/sys)    MLX)                                  │   │
+│   │ (screen/    (MLX Whisper)   (two-stream)   (Ollama)│   │
+│   │  mic/sys)                                           │   │
 │   └───────────────────────────────┬──────────────────┘   │
 │                                    ▼                        │
 │              AES-256-GCM encrypted store                    │
@@ -187,7 +208,10 @@ No. Recording, transcription, diarization, and summarization all run locally. Th
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
 
 **Which models does it use?**
-Whisper `large-v3` for transcription (via whisper.cpp, with Apple MLX acceleration on Apple Silicon) and `llama3.1` via Ollama for notes.
+Whisper `large-v3` (or `distil-large-v3` via MLX on Apple Silicon) for transcription, and `llama3.1` via Ollama for notes — with an automatic fallback to `llama3.2:3b` on 8 GB Macs. See [System requirements](#system-requirements-macos) for RAM and disk guidance.
+
+**What Mac do I need?**
+An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB recommended) and ~10 GB free storage for first-run model downloads. **Intel Macs are not supported.**
 
 **Is Windows supported?**
 Not yet — AutoDoc is macOS-only today. Windows is on the roadmap.
