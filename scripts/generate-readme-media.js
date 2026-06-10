@@ -764,9 +764,10 @@ async function main() {
     for (let i = 0; i < frameCount; i += 1) {
       const output = path.join(frameDir, `frame-${String(i).padStart(3, '0')}.png`)
       const seconds = i / 2
-      if (seconds < 6) {
-        await captureContent(page, detectionHtml(), output, GIF_VIEWPORT)
-      } else if (seconds < 10) {
+      // Hero GIF leads with the recording state and the payoff (transcript →
+      // notes → Ask AI). Detection has its own screenshot in the grid, so it is
+      // intentionally not part of this loop to keep the hero visually distinct.
+      if (seconds < 4) {
         await captureUrl(
           page,
           `${url}capture.html?recording=1#/recordings`,
@@ -774,7 +775,7 @@ async function main() {
           GIF_VIEWPORT,
           'Weekly product sync'
         )
-      } else if (seconds < 17) {
+      } else if (seconds < 12) {
         await captureUrl(
           page,
           `${url}capture.html#/recordings/${MEETING_ID}?tab=transcript`,
@@ -782,7 +783,7 @@ async function main() {
           GIF_VIEWPORT,
           'Jordan'
         )
-      } else if (seconds < 24) {
+      } else if (seconds < 20) {
         await captureUrl(
           page,
           `${url}capture.html#/recordings/${MEETING_ID}?tab=notes`,

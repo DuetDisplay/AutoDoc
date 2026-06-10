@@ -6,15 +6,11 @@
 
 ### AI meeting notes that never leave your computer.
 
-Record, transcribe, and summarize your meetings entirely on-device — speaker diarization, calendar auto-record, and chat-with-your-meetings included. No cloud, no subscription, no data leaving your machine.
+AutoDoc lives in your menu bar, notices when a meeting starts, and hands you a clean transcript and structured notes the moment it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No cloud. No accounts. No API keys.
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-1A1A17.svg?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS-7A9E7E.svg?style=flat-square)](#install)
-[![100% local](https://img.shields.io/badge/processing-100%25_local-7A9E7E.svg?style=flat-square)](PRIVACY.md)
-[![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc-Local?style=flat-square&color=1A1A17)](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/DuetDisplay/AutoDoc-Local/build.yml?style=flat-square)](https://github.com/DuetDisplay/AutoDoc-Local/actions)
+[![Download for macOS](https://img.shields.io/badge/⬇_Download-macOS-1A1A17?style=for-the-badge)](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest)
 
-[**Website**](https://getautodoc.com/) · [Download](#install) · [Privacy](PRIVACY.md) · [How it works](PRODUCT.md) · [Self-hosting](docs/SELF_HOSTING.md)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platform](https://img.shields.io/badge/macOS-14%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc-Local?style=flat-square&color=1A1A17&label=release)](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest)
 
 </div>
 
