@@ -4,7 +4,7 @@
 
 # AutoDoc
 
-### AI meeting notes that never leave your Mac.
+### AI meeting notes that never leave your computer.
 
 Record, transcribe, and summarize your meetings entirely on-device — speaker diarization, calendar auto-record, and chat-with-your-meetings included. No cloud, no subscription, no data leaving your machine.
 
@@ -47,7 +47,7 @@ Record, transcribe, and summarize your meetings entirely on-device — speaker d
 
 ## Why AutoDoc
 
-Meeting AI tools are everywhere — but most of them ship your conversations to someone else's servers. AutoDoc takes the opposite stance: **every recording, transcript, and summary stays on your Mac.**
+Meeting AI tools are everywhere — but most of them ship your conversations to someone else's servers. AutoDoc takes the opposite stance: **every recording, transcript, and summary stays on your computer.**
 
 - **Truly local.** Transcription runs on-device with Apple [MLX](https://github.com/ml-explore/mlx) Whisper on Apple Silicon. Summaries run on a local [Ollama](https://ollama.com) instance AutoDoc manages for you. No API keys, no inference bills, no network round-trips for your audio.
 - **Everything included.** Speaker diarization, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
@@ -60,14 +60,14 @@ AutoDoc is built around a simple idea: the privacy-protecting choice shouldn't a
 
 | | **AutoDoc** | Cloud meeting AI | Other local/open-source assistants |
 |---|:---:|:---:|:---:|
-| Processing location | On your Mac | Vendor servers | On-device |
+| Processing location | On your computer | Vendor servers | On-device |
 | Audio & transcripts leave your device | **Never** | Yes | Never |
 | Speaker diarization | ✅ Included | Varies | Often paid / coming soon |
 | Calendar + per-event auto-record | ✅ Google + Microsoft | ✅ | Often paid / coming soon |
 | Automatic meeting detection | ✅ Included | Varies | Often paid |
 | Chat with your meetings | ✅ Included | Often paid | Often paid / coming soon |
 | Encryption at rest | ✅ AES-256-GCM | Vendor-controlled | Rarely |
-| Paid tier required for the above | ❌ None | Usually | Sometimes |
+| Features above locked behind a paywall | ❌ Never | Usually | Sometimes |
 | Cost | **Free & open source** | Subscription | Varies |
 
 ## Features
@@ -96,7 +96,7 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ## Install
 
-> **Platform support:** AutoDoc requires **macOS 14+ on Apple Silicon (M1 or later)**. Intel Macs are **not supported**. **Windows is on the roadmap.**
+> **Platform support:** AutoDoc requires **macOS 14+ on Apple Silicon (M1 or later)** — Intel Macs aren't supported. **Windows support is coming soon.**
 
 ### System requirements (macOS)
 
@@ -117,11 +117,21 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 
 ### Download & install
 
-1. Download the latest signed `AutoDoc-<version>.dmg` from the [**Releases**](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest) page.
-2. Open the `.dmg` and drag **AutoDoc** to your Applications folder.
-3. Launch AutoDoc. On first run, it will guide you through granting **Screen Recording** and **Microphone** permissions and will set up its local transcription and AI models.
+<div align="center">
 
-The build is code-signed and notarized by Apple. On first launch, models (Whisper + Ollama) are downloaded on-device — this is a one-time setup that uses the storage headroom above.
+## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest)
+
+**Apple Silicon · macOS 14+ · signed & notarized by Apple**
+
+</div>
+
+Then:
+
+1. **Download** the latest `AutoDoc-<version>.dmg` from the [Releases](https://github.com/DuetDisplay/AutoDoc-Local/releases/latest) page.
+2. **Open** the `.dmg` and drag **AutoDoc** into your **Applications** folder.
+3. **Launch** AutoDoc from Applications. On first run it walks you through granting **Screen Recording** and **Microphone** permissions, then downloads its local transcription and AI models (~10 GB, one time).
+
+That's it — no account, no API keys, nothing to configure. Everything runs locally from here on.
 
 ## Build from source
 
@@ -158,7 +168,7 @@ AutoDoc is a single Electron desktop app. The **main process** owns recording, t
 
 ```mermaid
 flowchart TB
-  subgraph mac["AutoDoc on your Mac"]
+  subgraph mac["AutoDoc on your computer"]
     UI["Renderer · React UI"] <-->|IPC| Main["Main process"]
 
     subgraph pipeline["Local processing pipeline"]
@@ -180,17 +190,17 @@ The only optional network component is a stateless Cloudflare Worker used purely
 
 ## Privacy
 
-AutoDoc processes everything on-device. Audio, transcripts, and notes never leave your Mac. Analytics and crash reporting are strictly **opt-in**. Read the full [**Privacy Policy**](PRIVACY.md) for exactly what is and isn't collected.
+AutoDoc processes everything on-device. Audio, transcripts, and notes never leave your computer. Analytics and crash reporting are strictly **opt-in**. Read the full [**Privacy Policy**](PRIVACY.md) for exactly what is and isn't collected.
 
 ## Roadmap
 
-- **Windows support** _(in progress)_
+- **Windows support** _(coming soon)_
 
 Have a request? [Open an issue](https://github.com/DuetDisplay/AutoDoc-Local/issues/new/choose).
 
 ## FAQ
 
-**Does anything leave my Mac?**
+**Does anything leave my computer?**
 No. Recording, transcription, diarization, and summarization all run locally. The only optional network call is OAuth token exchange when you connect a calendar — and even that never touches your meeting content.
 
 **Do I need an OpenAI or Anthropic API key?**
@@ -203,7 +213,7 @@ Whisper `large-v3` (or `distil-large-v3` via MLX on Apple Silicon) for transcrip
 An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB recommended) and ~10 GB free storage for first-run model downloads. **Intel Macs are not supported.**
 
 **Is Windows supported?**
-Not yet — AutoDoc is macOS-only today. Windows is on the roadmap.
+AutoDoc is macOS-only today, but **Windows support is coming soon.**
 
 **Why AGPL-3.0?**
 See [License](#license) below.

@@ -1,7 +1,7 @@
 # Contributing to AutoDoc
 
 Thanks for your interest in improving AutoDoc! This project is local-first,
-privacy-focused, and macOS-first (with Windows in progress). Contributions of
+privacy-focused, and macOS-first (Windows coming soon). Contributions of
 all kinds are welcome — bug reports, features, docs, and fixes.
 
 ## Code of Conduct

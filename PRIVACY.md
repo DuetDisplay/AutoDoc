@@ -7,7 +7,7 @@ what happens to your data — and, just as importantly, what does *not* happen.
 
 ## The short version
 
-- **Your audio, video, transcripts, and notes never leave your Mac.** All
+- **Your audio, video, transcripts, and notes never leave your computer.** All
   recording, transcription, speaker identification, and AI note generation run
   entirely on-device.
 - **No AutoDoc account.** There is nothing to sign up for.
@@ -22,11 +22,11 @@ Everything that touches your meeting content happens locally:
 
 | Stage | Where it runs |
 |-------|---------------|
-| Screen / microphone / system-audio capture | Your Mac |
-| Transcription (whisper.cpp / MLX) | Your Mac |
-| Speaker diarization | Your Mac |
-| AI note generation (Ollama / llama3.1) | Your Mac |
-| Search | Your Mac |
+| Screen / microphone / system-audio capture | Your computer |
+| Transcription (whisper.cpp / MLX) | Your computer |
+| Speaker diarization | Your computer |
+| AI note generation (Ollama / llama3.1) | Your computer |
+| Search | Your computer |
 
 No meeting audio, video, transcript, or generated note is ever transmitted to
 Duet or any third party.
@@ -52,7 +52,7 @@ If you connect Google or Microsoft Calendar:
 - Your OAuth tokens are encrypted with the macOS Keychain and stored locally.
 - AutoDoc reads upcoming events (title, times, attendees, meeting links) to
   match recordings and offer speaker suggestions. This calendar data stays on
-  your Mac.
+  your computer.
 
 Self-hosters can run their own OAuth worker so no Duet-operated service is
 involved at all — see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
