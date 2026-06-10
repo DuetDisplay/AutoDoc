@@ -20,15 +20,9 @@ Record, transcribe, and summarize your meetings entirely on-device — speaker d
 
 ---
 
-<!--
-  HERO DEMO PLACEHOLDER — highest-leverage element of this README.
-  Drop the demo recording at docs/assets/demo.gif (or .mp4) and uncomment below.
-  See docs/assets/CAPTURE_CHECKLIST.md for exactly what to capture.
--->
 <div align="center">
 
-<!-- ![AutoDoc demo](docs/assets/demo.gif) -->
-<em>📹 Demo video coming soon — see <a href="docs/assets/CAPTURE_CHECKLIST.md">capture checklist</a>.</em>
+![AutoDoc demo](docs/assets/demo.gif)
 
 </div>
 
@@ -92,18 +86,13 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ## Features in action
 
-<!--
-  SCREENSHOT PLACEHOLDERS — add images to docs/assets/screenshots/ and uncomment.
-  See docs/assets/CAPTURE_CHECKLIST.md for the recommended shot list.
--->
-
 | Automatic meeting detection | Speaker-colored transcript |
 |---|---|
-| <!-- ![Detection](docs/assets/screenshots/detection.png) --> _screenshot coming soon_ | <!-- ![Transcript](docs/assets/screenshots/transcript.png) --> _screenshot coming soon_ |
+| ![Detection](docs/assets/screenshots/detection.png) | ![Transcript](docs/assets/screenshots/transcript.png) |
 
 | AI notes by category | Ask AI across meetings |
 |---|---|
-| <!-- ![Notes](docs/assets/screenshots/notes.png) --> _screenshot coming soon_ | <!-- ![Ask AI](docs/assets/screenshots/ask-ai.png) --> _screenshot coming soon_ |
+| ![Notes](docs/assets/screenshots/notes.png) | ![Ask AI](docs/assets/screenshots/ask-ai.png) |
 
 ## Install
 
