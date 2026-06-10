@@ -1,5 +1,7 @@
 name: Build & Release
 
+# SECURITY: Do not add pull_request — this workflow uses signing secrets.
+
 on:
   push:
     branches:
@@ -34,6 +36,7 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+      actions: write
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc-Local' && '1' || '' }}
@@ -445,6 +448,7 @@ jobs:
       # - build-win  # Windows builds disabled — macOS-only for now
     permissions:
       contents: write
+      actions: read
 
     steps:
       - name: Resolve release metadata
