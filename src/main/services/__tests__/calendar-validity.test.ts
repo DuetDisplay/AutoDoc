@@ -4,6 +4,17 @@ import {
   ReconnectRequiredCalendarAuthError,
   isReconnectRequiredMicrosoftAuthError
 } from '../calendar-error-classification'
+import type { CalendarProvider } from '../calendar-types'
+
+type Deferred<T> = {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+}
+
+type TestCalendarManagerAccess = {
+  providers: Map<string, CalendarProvider>
+}
 
 const { logAutodocFailure, captureMessage } = vi.hoisted(() => ({
   logAutodocFailure: vi.fn(),
@@ -32,6 +43,7 @@ vi.mock('../sentry-reporter', () => ({
 
 function createProvider(overrides: Record<string, unknown> = {}) {
   return {
+    providerType: 'google' as const,
     connect: vi.fn(),
     disconnect: vi.fn(),
     isConnected: vi.fn().mockReturnValue(true),
@@ -41,6 +53,16 @@ function createProvider(overrides: Record<string, unknown> = {}) {
     fetchAccountEmail: vi.fn().mockResolvedValue(''),
     ...overrides
   }
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
 }
 
 const fetchScenarios = [
@@ -73,12 +95,40 @@ describe('Calendar sync hardening', () => {
         connectedAt: Date.now()
       }
     ]
-    ;(manager as any).providers = new Map([['google', googleProvider]])
+    ;(manager as unknown as TestCalendarManagerAccess).providers = new Map([
+      ['google', googleProvider as CalendarProvider]
+    ])
 
     await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
 
     expect(googleProvider.fetchUpcomingEvents).toHaveBeenCalledWith('google-account-1')
     expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('keeps a cancelled connect attempt locked until the provider promise settles', async () => {
+    const manager = new CalendarManager()
+    const deferredConnect = createDeferred<Awaited<ReturnType<CalendarManager['connect']>>>()
+    const cancelConnect = vi.fn()
+    const googleProvider = createProvider({
+      connect: vi.fn(() => deferredConnect.promise),
+      cancelConnect
+    })
+
+    ;(manager as unknown as TestCalendarManagerAccess).providers = new Map([
+      ['google', googleProvider as CalendarProvider]
+    ])
+
+    const firstConnect = manager.connect('google')
+    manager.cancelConnect()
+
+    await expect(manager.connect('google')).rejects.toThrow(
+      'Another calendar connection is already in progress'
+    )
+
+    deferredConnect.reject(new Error('Calendar connection cancelled'))
+
+    await expect(firstConnect).rejects.toThrow('Calendar connection cancelled')
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
   })
 
   it('disables unsupported Microsoft mailboxes after the first unsupported response', async () => {

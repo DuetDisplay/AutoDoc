@@ -13,6 +13,7 @@ import { requireConfiguredAuthWorkerUrl } from './distribution-config'
 import { parseGoogleEventTime } from './calendar-time'
 
 const OAUTH_PORT = 42813
+const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
   if (!idToken) return null
@@ -35,6 +36,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
   // Per-account OAuth clients — created on demand
   private clients = new Map<string, OAuth2Client>()
+  private pendingCallbackCancel: (() => void) | null = null
 
   private getClient(accountId: string): OAuth2Client {
     let client = this.clients.get(accountId)
@@ -85,8 +87,13 @@ export class GoogleCalendarProvider implements CalendarProvider {
     }
   }
 
+  cancelConnect(): void {
+    this.pendingCallbackCancel?.()
+  }
+
   private waitForCallback(expectedState: string): Promise<{ tokens: object }> {
     return new Promise((resolve, reject) => {
+      let settled = false
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
@@ -94,21 +101,23 @@ export class GoogleCalendarProvider implements CalendarProvider {
         const tokenData = url.searchParams.get('tokens')
 
         // If state doesn't match, ignore — might be for another provider
-        if (returnedState !== expectedState) return
+        if (returnedState !== expectedState) {
+          res.writeHead(404, { 'Content-Type': 'text/html' })
+          res.end('<html><body><p>Unknown calendar authorization request.</p></body></html>')
+          return
+        }
 
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Authorization failed. You may close this tab.</p></body></html>')
-          server.close()
-          reject(new Error(error))
+          rejectAndClose(new Error(error))
           return
         }
 
         if (!tokenData) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Missing token data. Please try again.</p></body></html>')
-          server.close()
-          reject(new Error('Missing token data'))
+          rejectAndClose(new Error('Missing token data'))
           return
         }
 
@@ -118,8 +127,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
         } catch {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Invalid token data. Please try again.</p></body></html>')
-          server.close()
-          reject(new Error('Invalid token data'))
+          rejectAndClose(new Error('Invalid token data'))
           return
         }
 
@@ -129,12 +137,48 @@ export class GoogleCalendarProvider implements CalendarProvider {
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>')
-        server.close()
-        resolve({ tokens })
+        resolveAndClose({ tokens })
       })
 
+      const timeout = setTimeout(() => {
+        rejectAndClose(new Error('Calendar connection timed out'))
+      }, OAUTH_CALLBACK_TIMEOUT_MS)
+      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
+      this.pendingCallbackCancel = cancel
+
+      const closeServer = (): Promise<void> => {
+        return new Promise((resolveClose) => {
+          try {
+            server.close(() => resolveClose())
+          } catch {
+            // The server may not have started listening yet.
+            resolveClose()
+          }
+        })
+      }
+
+      const cleanup = async (): Promise<void> => {
+        clearTimeout(timeout)
+        if (this.pendingCallbackCancel === cancel) {
+          this.pendingCallbackCancel = null
+        }
+        await closeServer()
+      }
+
+      function resolveAndClose(result: { tokens: object }): void {
+        if (settled) return
+        settled = true
+        void cleanup().then(() => resolve(result))
+      }
+
+      function rejectAndClose(error: Error): void {
+        if (settled) return
+        settled = true
+        void cleanup().then(() => reject(error))
+      }
+
       server.listen(OAUTH_PORT, '127.0.0.1')
-      server.on('error', reject)
+      server.on('error', rejectAndClose)
     })
   }
 

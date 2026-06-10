@@ -9,9 +9,9 @@ jobs:
     name: PR Onboarding
     runs-on: macos-latest
     timeout-minutes: 30
-    env:
-      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +37,8 @@ jobs:
     name: PR Recording
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +54,8 @@ jobs:
     name: PR Processing
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +71,8 @@ jobs:
     name: PR AI
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +88,8 @@ jobs:
     name: PR Settings
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { GoogleCalendarProvider } from '../calendar'
 import { MicrosoftCalendarProvider } from '../microsoft-calendar'
 
 type RequestHandler = (
@@ -94,6 +95,9 @@ describe('Calendar OAuth', () => {
     process.env.AUTODOC_OFFICIAL_BUILD = '1'
     delete process.env.AUTODOC_AUTH_WORKER_URL
     openExternal.mockResolvedValue(undefined)
+    httpState.close.mockImplementation((callback?: () => void) => {
+      callback?.()
+    })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL) => {
@@ -152,6 +156,76 @@ describe('Calendar OAuth', () => {
         refresh_token: 'microsoft-refresh-token',
         expiry_date: expect.any(Number)
       })
+    )
+  })
+
+  it('cancels a pending Microsoft OAuth callback listener', async () => {
+    const provider = new MicrosoftCalendarProvider()
+
+    const connectPromise = provider.connect()
+    await waitForOpenExternal()
+
+    provider.cancelConnect()
+
+    await expect(connectPromise).rejects.toThrow('Calendar connection cancelled')
+    expect(httpState.close).toHaveBeenCalled()
+  })
+
+  it('waits for the Microsoft OAuth listener to close before rejecting cancellation', async () => {
+    const provider = new MicrosoftCalendarProvider()
+    let closeCallback: (() => void) | undefined
+    httpState.close.mockImplementation((callback?: () => void) => {
+      closeCallback = callback
+    })
+
+    const connectPromise = provider.connect()
+    await waitForOpenExternal()
+
+    provider.cancelConnect()
+
+    let settled = false
+    const observedPromise = connectPromise.catch((error: Error) => {
+      settled = true
+      return error
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(closeCallback).toBeDefined()
+
+    closeCallback?.()
+
+    await expect(observedPromise).resolves.toEqual(
+      expect.objectContaining({ message: 'Calendar connection cancelled' })
+    )
+  })
+
+  it('waits for the Google OAuth listener to close before rejecting cancellation', async () => {
+    const provider = new GoogleCalendarProvider()
+    let closeCallback: (() => void) | undefined
+    httpState.close.mockImplementation((callback?: () => void) => {
+      closeCallback = callback
+    })
+
+    const connectPromise = provider.connect()
+    await waitForOpenExternal()
+
+    provider.cancelConnect()
+
+    let settled = false
+    const observedPromise = connectPromise.catch((error: Error) => {
+      settled = true
+      return error
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(closeCallback).toBeDefined()
+
+    closeCallback?.()
+
+    await expect(observedPromise).resolves.toEqual(
+      expect.objectContaining({ message: 'Calendar connection cancelled' })
     )
   })
 })

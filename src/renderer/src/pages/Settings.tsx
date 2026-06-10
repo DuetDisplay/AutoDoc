@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import type { UpdateStatus } from '../../../preload/ipc.d'
@@ -63,6 +63,10 @@ export function Settings() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
+  const [connectingProvider, setConnectingProvider] = useState<'google' | 'microsoft' | null>(
+    null
+  )
+  const connectAttemptRef = useRef<symbol | null>(null)
 
   const refreshStorageInfo = useCallback(() => {
     return window.electronAPI.invoke('app:get-storage-info').then(setStorageInfo)
@@ -97,7 +101,28 @@ export function Settings() {
     window.electronAPI.invoke('calendar:get-accounts').then(setAccounts)
   }, [setAccounts])
 
+  useEffect(() => {
+    const handleFocus = () => {
+      if (!connectAttemptRef.current) return
+
+      connectAttemptRef.current = null
+      setConnectingProvider(null)
+      setConnecting(false)
+      void window.electronAPI.invoke('calendar:cancel-connect').catch((err) => {
+        console.error('Failed to cancel calendar connection:', err)
+      })
+    }
+
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [setConnecting])
+
   const handleConnect = async (provider: 'google' | 'microsoft') => {
+    if (connectAttemptRef.current) return
+
+    const attemptId = Symbol(provider)
+    connectAttemptRef.current = attemptId
+    setConnectingProvider(provider)
     setConnecting(true)
     recordDiagnosticAction({
       category: 'settings',
@@ -106,13 +131,19 @@ export function Settings() {
     })
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
+      if (connectAttemptRef.current !== attemptId) return
       addAccount(account)
       const events = await window.electronAPI.invoke('calendar:get-events')
+      if (connectAttemptRef.current !== attemptId) return
       setEvents(events)
     } catch (err) {
       console.error('Failed to connect calendar:', err)
     } finally {
-      setConnecting(false)
+      if (connectAttemptRef.current === attemptId) {
+        connectAttemptRef.current = null
+        setConnectingProvider(null)
+        setConnecting(false)
+      }
     }
   }
 
@@ -260,7 +291,7 @@ export function Settings() {
             <div className="flex gap-2">
               <button
                 onClick={() => handleConnect('google')}
-                disabled={isConnecting}
+                disabled={isConnecting || connectingProvider !== null}
                 className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -281,11 +312,11 @@ export function Settings() {
                     fill="#EA4335"
                   />
                 </svg>
-                {isConnecting ? 'Connecting...' : 'Add Google Calendar'}
+                {connectingProvider === 'google' ? 'Connecting...' : 'Add Google Calendar'}
               </button>
               <button
                 onClick={() => handleConnect('microsoft')}
-                disabled={isConnecting}
+                disabled={isConnecting || connectingProvider !== null}
                 className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
               >
                 <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
@@ -294,7 +325,7 @@ export function Settings() {
                   <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
                   <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
                 </svg>
-                {isConnecting ? 'Connecting...' : 'Add Microsoft Outlook'}
+                {connectingProvider === 'microsoft' ? 'Connecting...' : 'Add Microsoft Outlook'}
               </button>
             </div>
           </div>

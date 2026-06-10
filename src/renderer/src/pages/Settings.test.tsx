@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './Settings'
@@ -132,6 +132,66 @@ describe('Settings', () => {
     ).toBeChecked()
   })
 
+  it('cancels an abandoned calendar connection when the app regains focus', async () => {
+    const state = {
+      accounts: [createCalendarAccount({ email: 'existing@example.com' })],
+      events: [] as any[],
+      analyticsConsent: false,
+      diagnosticLogUploadConsent: false
+    }
+    const abandonedAccount = createCalendarAccount({ email: 'abandoned@example.com' })
+    let resolveConnect!: (account: typeof abandonedAccount) => void
+    const connectPromise = new Promise<typeof abandonedAccount>((resolve) => {
+      resolveConnect = resolve
+    })
+    const getEvents = vi.fn(() => state.events)
+
+    const api = installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': () => state.analyticsConsent,
+      'prefs:get-diagnostic-log-upload-consent': () => state.diagnosticLogUploadConsent,
+      'calendar:get-accounts': () => state.accounts,
+      'calendar:get-events': getEvents,
+      'calendar:connect': () => connectPromise,
+      'calendar:cancel-connect': undefined
+    })
+
+    const user = userEvent.setup()
+    render(<Settings />)
+
+    expect(await screen.findByText('existing@example.com')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /add google calendar/i }))
+
+    expect(screen.getByRole('button', { name: /connecting/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeDisabled()
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add google calendar/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeEnabled()
+    })
+    expect(screen.queryByRole('button', { name: /connecting/i })).not.toBeInTheDocument()
+    expect(api.invoke).toHaveBeenCalledWith('calendar:cancel-connect')
+
+    getEvents.mockClear()
+    await act(async () => {
+      resolveConnect(abandonedAccount)
+      await connectPromise
+    })
+
+    expect(screen.queryByText('abandoned@example.com')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add google calendar/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeEnabled()
+    expect(getEvents).not.toHaveBeenCalled()
+  })
+
   it('does not render the speaker diarization toggle', async () => {
     installMockElectronApi({
       'app:get-version': '0.1.11',
@@ -187,6 +247,7 @@ describe('Settings', () => {
       'app:get-runtime-info': createRuntimeInfo(),
       'app:get-storage-info': createStorageInfo(),
       'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
       'calendar:get-accounts': [
         createCalendarAccount({
           id: 'acct-microsoft',
