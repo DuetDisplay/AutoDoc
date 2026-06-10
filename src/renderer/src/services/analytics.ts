@@ -26,21 +26,18 @@ export function initAnalytics(): void {
 
 /**
  * Call when the user makes their analytics choice.
- * We always fire the consent event itself (before opting out) so we can measure opt-in rate.
+ * Declines must not emit analytics. Opt-ins record the consent event after enabling capture.
  */
 export function setAnalyticsConsent(enabled: boolean): void {
   if (!initialized) return
-  // Temporarily opt in to capture the consent event itself
-  posthog.opt_in_capturing()
-  posthog.capture('analytics_consent', { consented: enabled })
 
   if (enabled) {
     consentGiven = true
+    posthog.opt_in_capturing()
+    posthog.capture('analytics_consent', { consented: true })
   } else {
-    // Flush the consent event, then opt out
     consentGiven = false
-    // Small delay to ensure the consent event is sent before opting out
-    setTimeout(() => posthog.opt_out_capturing(), 500)
+    posthog.opt_out_capturing()
   }
 }
 
