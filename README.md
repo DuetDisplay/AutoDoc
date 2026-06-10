@@ -167,24 +167,24 @@ If you want calendar integration or your own hosted services in a fork build, se
 
 AutoDoc is a single Electron desktop app. The **main process** owns recording, the transcription/diarization/summarization pipeline, encryption, calendar sync, and the local Ollama lifecycle. The **renderer** is a React UI. All heavy processing happens locally.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  AutoDoc (Electron, on your Mac)                          │
-│                                                           │
-│  Renderer (React UI)  ◄──IPC──►  Main process            │
-│                                   │                        │
-│   ┌───────────────────────────────┼──────────────────┐   │
-│   │ Recording   Transcription   Diarization   Notes   │   │
-│   │ (screen/    (MLX Whisper)   (two-stream)   (Ollama)│   │
-│   │  mic/sys)                                           │   │
-│   └───────────────────────────────┬──────────────────┘   │
-│                                    ▼                        │
-│              AES-256-GCM encrypted store                    │
-│         (~/Library/Application Support/AutoDoc)             │
-└───────────────────────────┬───────────────────────────────┘
-                            │ (optional, OAuth token exchange only)
-                            ▼
-              Calendar auth worker (Google / Microsoft)
+```mermaid
+flowchart TB
+  subgraph mac["AutoDoc on your Mac"]
+    UI["Renderer · React UI"] <-->|IPC| Main["Main process"]
+
+    subgraph pipeline["Local processing pipeline"]
+      direction LR
+      Rec["Recording<br/>screen · mic · system"]
+      Trans["Transcription<br/>MLX Whisper"]
+      Diar["Diarization<br/>two-stream"]
+      Notes["AI notes<br/>Ollama"]
+    end
+
+    Main --> pipeline
+    pipeline --> Store["Encrypted store<br/>AES-256-GCM · ~/Library/Application Support/AutoDoc"]
+  end
+
+  Store -.->|"optional · OAuth token exchange only"| Auth["Calendar auth worker<br/>Google · Microsoft"]
 ```
 
 The only optional network component is a stateless Cloudflare Worker used purely for OAuth token exchange during calendar sign-in — it never sees your audio, transcripts, or notes. Full details in [`PRODUCT.md`](PRODUCT.md).
