@@ -43,6 +43,16 @@ function createProvider(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
+}
+
 const fetchScenarios = [
   {
     label: 'upcoming events',
@@ -79,6 +89,30 @@ describe('Calendar sync hardening', () => {
 
     expect(googleProvider.fetchUpcomingEvents).toHaveBeenCalledWith('google-account-1')
     expect(logAutodocFailure).not.toHaveBeenCalled()
+  })
+
+  it('keeps a cancelled connect attempt locked until the provider promise settles', async () => {
+    const manager = new CalendarManager()
+    const deferredConnect = createDeferred<Awaited<ReturnType<CalendarManager['connect']>>>()
+    const cancelConnect = vi.fn()
+    const googleProvider = createProvider({
+      connect: vi.fn(() => deferredConnect.promise),
+      cancelConnect
+    })
+
+    ;(manager as any).providers = new Map([['google', googleProvider]])
+
+    const firstConnect = manager.connect('google')
+    manager.cancelConnect()
+
+    await expect(manager.connect('google')).rejects.toThrow(
+      'Another calendar connection is already in progress'
+    )
+
+    deferredConnect.reject(new Error('Calendar connection cancelled'))
+
+    await expect(firstConnect).rejects.toThrow('Calendar connection cancelled')
+    expect(cancelConnect).toHaveBeenCalledTimes(1)
   })
 
   it('disables unsupported Microsoft mailboxes after the first unsupported response', async () => {

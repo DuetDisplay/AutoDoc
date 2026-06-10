@@ -139,6 +139,12 @@ describe('Settings', () => {
       analyticsConsent: false,
       diagnosticLogUploadConsent: false
     }
+    const abandonedAccount = createCalendarAccount({ email: 'abandoned@example.com' })
+    let resolveConnect!: (account: typeof abandonedAccount) => void
+    const connectPromise = new Promise<typeof abandonedAccount>((resolve) => {
+      resolveConnect = resolve
+    })
+    const getEvents = vi.fn(() => state.events)
 
     const api = installMockElectronApi({
       'app:get-version': '0.1.11',
@@ -148,8 +154,8 @@ describe('Settings', () => {
       'prefs:get-analytics-consent': () => state.analyticsConsent,
       'prefs:get-diagnostic-log-upload-consent': () => state.diagnosticLogUploadConsent,
       'calendar:get-accounts': () => state.accounts,
-      'calendar:get-events': () => state.events,
-      'calendar:connect': () => new Promise(() => {}),
+      'calendar:get-events': getEvents,
+      'calendar:connect': () => connectPromise,
       'calendar:cancel-connect': undefined
     })
 
@@ -173,6 +179,17 @@ describe('Settings', () => {
     })
     expect(screen.queryByRole('button', { name: /connecting/i })).not.toBeInTheDocument()
     expect(api.invoke).toHaveBeenCalledWith('calendar:cancel-connect')
+
+    getEvents.mockClear()
+    await act(async () => {
+      resolveConnect(abandonedAccount)
+      await connectPromise
+    })
+
+    expect(screen.queryByText('abandoned@example.com')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add google calendar/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeEnabled()
+    expect(getEvents).not.toHaveBeenCalled()
   })
 
   it('does not render the speaker diarization toggle', async () => {

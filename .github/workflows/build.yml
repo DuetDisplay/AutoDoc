@@ -103,11 +103,22 @@ jobs:
           npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Build macOS artifacts (signed, no notarization)
-        if: github.event_name == 'push' && github.ref_type == 'branch'
+        if: >-
+          ${{
+            (github.event_name == 'push' && github.ref_type == 'branch') ||
+            (github.event_name == 'workflow_dispatch' && inputs.release_tag == '')
+          }}
         run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
       - name: Upload macOS artifacts
-        if: github.event_name == 'push' && github.ref_type == 'branch' && success()
+        if: >-
+          ${{
+            success() &&
+            (
+              (github.event_name == 'push' && github.ref_type == 'branch') ||
+              (github.event_name == 'workflow_dispatch' && inputs.release_tag == '')
+            )
+          }}
         uses: actions/upload-artifact@v7.0.1
         with:
           name: autodoc-macos-${{ github.run_number }}

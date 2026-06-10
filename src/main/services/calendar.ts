@@ -143,37 +143,38 @@ export class GoogleCalendarProvider implements CalendarProvider {
       const timeout = setTimeout(() => {
         rejectAndClose(new Error('Calendar connection timed out'))
       }, OAUTH_CALLBACK_TIMEOUT_MS)
-      const cancel = () => rejectAndClose(new Error('Calendar connection cancelled'))
+      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
       this.pendingCallbackCancel = cancel
 
-      const closeServer = () => {
-        try {
-          server.close()
-        } catch {
-          // The server may not have started listening yet.
-        }
+      const closeServer = (): Promise<void> => {
+        return new Promise((resolveClose) => {
+          try {
+            server.close(() => resolveClose())
+          } catch {
+            // The server may not have started listening yet.
+            resolveClose()
+          }
+        })
       }
 
-      const cleanup = () => {
+      const cleanup = async (): Promise<void> => {
         clearTimeout(timeout)
         if (this.pendingCallbackCancel === cancel) {
           this.pendingCallbackCancel = null
         }
-        closeServer()
+        await closeServer()
       }
 
       function resolveAndClose(result: { tokens: object }): void {
         if (settled) return
         settled = true
-        cleanup()
-        resolve(result)
+        void cleanup().then(() => resolve(result))
       }
 
       function rejectAndClose(error: Error): void {
         if (settled) return
         settled = true
-        cleanup()
-        reject(error)
+        void cleanup().then(() => reject(error))
       }
 
       server.listen(OAUTH_PORT, '127.0.0.1')

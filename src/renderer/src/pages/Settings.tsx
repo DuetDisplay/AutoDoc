@@ -131,8 +131,10 @@ export function Settings() {
     })
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
+      if (connectAttemptRef.current !== attemptId) return
       addAccount(account)
       const events = await window.electronAPI.invoke('calendar:get-events')
+      if (connectAttemptRef.current !== attemptId) return
       setEvents(events)
     } catch (err) {
       console.error('Failed to connect calendar:', err)

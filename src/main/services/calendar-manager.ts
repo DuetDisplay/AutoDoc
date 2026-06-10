@@ -22,6 +22,7 @@ export class CalendarManager {
   private accounts: CalendarAccount[] = []
   private syncInterval: ReturnType<typeof setInterval> | null = null
   private connecting = false
+  private connectAttemptId = 0
   private syncing = false
 
   constructor() {
@@ -85,6 +86,7 @@ export class CalendarManager {
     }
 
     this.connecting = true
+    const attemptId = ++this.connectAttemptId
     try {
       const provider = this.providers.get(providerType)
       if (!provider) throw new Error(`Unknown provider: ${providerType}`)
@@ -106,7 +108,9 @@ export class CalendarManager {
       this.saveAccounts()
       return account
     } finally {
-      this.connecting = false
+      if (this.connectAttemptId === attemptId) {
+        this.connecting = false
+      }
     }
   }
 
@@ -116,7 +120,6 @@ export class CalendarManager {
     for (const provider of this.providers.values()) {
       provider.cancelConnect?.()
     }
-    this.connecting = false
   }
 
   async disconnect(accountId: string): Promise<void> {
