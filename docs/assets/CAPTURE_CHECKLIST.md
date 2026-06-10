@@ -60,7 +60,7 @@ README.md
 5. **Notes** tab: categories populating (Decisions, Action Items, …).
 6. **Ask AI**: one short question → grounded answer.
 
-**Why:** Meetily leads with a hero demo too. Yours should feel **Mac-native** (overlay + menu bar) and end on **structured notes + Ask AI** — capabilities they often gate behind PRO.
+**Why:** The hero demo is the first thing people see. It should feel **Mac-native** (overlay + menu bar) and end on **structured notes + Ask AI** — the capabilities that set AutoDoc apart.
 
 **Wire into README** — in the hero block (~line 30), change:
 
@@ -91,7 +91,7 @@ to:
 
 **Caption in README:** “Automatic meeting detection”
 
-**Why:** Auto-detect is a headline free feature; meetily treats it as premium/roadmap.
+**Why:** Automatic meeting detection is a headline feature and it's free — lead with it.
 
 **Wire into README** — uncomment (~line 102):
 
@@ -115,7 +115,7 @@ Remove `_screenshot coming soon_` from that cell.
 
 **Caption in README:** “Speaker-colored transcript”
 
-**Why:** Speaker diarization is visually distinctive and on-brand; meetily’s free tier doesn’t lead with this.
+**Why:** Speaker diarization is visually distinctive and on-brand — a strong differentiator to show off.
 
 **Wire into README** — uncomment (~line 102):
 
@@ -137,7 +137,7 @@ Remove `_screenshot coming soon_` from that cell.
 
 **Caption in README:** “AI notes by category”
 
-**Why:** Meetily shows generic summaries; AutoDoc’s **structured categories** are a product identity choice — make the hierarchy obvious.
+**Why:** AutoDoc’s **structured categories** (vs. a generic summary blob) are a product identity choice — make the hierarchy obvious.
 
 **Wire into README** — uncomment (~line 106):
 

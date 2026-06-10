@@ -700,7 +700,18 @@ function detectionHtml() {
 </html>`
 }
 
+function ensurePillowAvailable() {
+  const check = spawnSync('python3', ['-c', 'import PIL'], { encoding: 'utf8' })
+  if (check.error || check.status !== 0) {
+    throw new Error(
+      'Python 3 with the Pillow library is required to build the hero GIF.\n' +
+        'Install it with: python3 -m pip install Pillow'
+    )
+  }
+}
+
 function makeGifWithPillow(frameDir, output, frameCount) {
+  ensurePillowAvailable()
   const python = `
 from PIL import Image
 from pathlib import Path
