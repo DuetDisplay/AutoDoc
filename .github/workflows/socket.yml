@@ -27,6 +27,7 @@ concurrency:
 jobs:
   socket-security:
     name: Socket Security
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -60,7 +61,7 @@ jobs:
       - name: Run Socket scan
         env:
           SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
-          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_API_TOKEN: ${{ github.token }}
         run: |
           PR_NUMBER=0
           if [ "${{ github.event_name }}" = "pull_request" ]; then

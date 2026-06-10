@@ -17,6 +17,7 @@ import {
 import { requireConfiguredAuthWorkerUrl } from './distribution-config'
 
 const OAUTH_PORT = 42813
+const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
@@ -60,6 +61,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   readonly providerType = 'microsoft' as const
 
   private tokenCache = new Map<string, OAuthTokens>()
+  private pendingCallbackCancel: (() => void) | null = null
 
   private getTokens(accountId: string): OAuthTokens | null {
     let tokens = this.tokenCache.get(accountId)
@@ -103,29 +105,36 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     }
   }
 
+  cancelConnect(): void {
+    this.pendingCallbackCancel?.()
+  }
+
   private waitForCallback(expectedState: string): Promise<{ tokens: OAuthTokens & { expires_in?: number } }> {
     return new Promise((resolve, reject) => {
+      let settled = false
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
         const error = url.searchParams.get('error')
         const tokenData = url.searchParams.get('tokens')
 
-        if (returnedState !== expectedState) return
+        if (returnedState !== expectedState) {
+          res.writeHead(404, { 'Content-Type': 'text/html' })
+          res.end('<html><body><p>Unknown calendar authorization request.</p></body></html>')
+          return
+        }
 
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Authorization failed. You may close this tab.</p></body></html>')
-          server.close()
-          reject(new Error(error))
+          rejectAndClose(new Error(error))
           return
         }
 
         if (!tokenData) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Missing token data. Please try again.</p></body></html>')
-          server.close()
-          reject(new Error('Missing token data'))
+          rejectAndClose(new Error('Missing token data'))
           return
         }
 
@@ -135,19 +144,54 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         } catch {
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end('<html><body><p>Invalid token data. Please try again.</p></body></html>')
-          server.close()
-          reject(new Error('Invalid token data'))
+          rejectAndClose(new Error('Invalid token data'))
           return
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end('<html><body><p>Connected to Microsoft Outlook! You may close this tab.</p></body></html>')
-        server.close()
-        resolve({ tokens })
+        resolveAndClose({ tokens })
       })
 
+      const timeout = setTimeout(() => {
+        rejectAndClose(new Error('Calendar connection timed out'))
+      }, OAUTH_CALLBACK_TIMEOUT_MS)
+      const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
+      this.pendingCallbackCancel = cancel
+
+      const closeServer = (): Promise<void> => {
+        return new Promise((resolveClose) => {
+          try {
+            server.close(() => resolveClose())
+          } catch {
+            // The server may not have started listening yet.
+            resolveClose()
+          }
+        })
+      }
+
+      const cleanup = async (): Promise<void> => {
+        clearTimeout(timeout)
+        if (this.pendingCallbackCancel === cancel) {
+          this.pendingCallbackCancel = null
+        }
+        await closeServer()
+      }
+
+      function resolveAndClose(result: { tokens: OAuthTokens & { expires_in?: number } }): void {
+        if (settled) return
+        settled = true
+        void cleanup().then(() => resolve(result))
+      }
+
+      function rejectAndClose(error: Error): void {
+        if (settled) return
+        settled = true
+        void cleanup().then(() => reject(error))
+      }
+
       server.listen(OAUTH_PORT, '127.0.0.1')
-      server.on('error', reject)
+      server.on('error', rejectAndClose)
     })
   }
 

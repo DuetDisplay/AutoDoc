@@ -74,6 +74,7 @@ export interface IpcInvokeEvents {
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
+  'calendar:cancel-connect': []
   'calendar:disconnect': [accountId: string]
   'calendar:get-accounts': []
   'calendar:get-events': []
@@ -191,6 +192,7 @@ export interface IpcInvokeReturns {
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
   'calendar:connect': CalendarAccount
+  'calendar:cancel-connect': void
   'calendar:disconnect': void
   'calendar:get-accounts': CalendarAccount[]
   'calendar:get-events': CalendarEvent[]
