@@ -52,9 +52,20 @@ binary. The token exchange happens server-side; the worker stores nothing.
 
 ### OAuth app setup
 
-Create OAuth apps with these settings. The desktop app listens on a localhost
-callback (`http://127.0.0.1:42813`) and your worker handles the provider
-redirect.
+Create OAuth apps with these settings. End to end, a sign-in flows like this:
+
+1. You start a connection in the desktop app, which opens your worker URL in the
+   browser.
+2. The worker redirects the browser to the provider (Google or Microsoft) with
+   the worker's own callback as the `redirect_uri`.
+3. You authenticate with the provider, which redirects back to the worker
+   callback with an authorization `code`.
+4. The worker exchanges the `code` for tokens server-side (so client secrets
+   never touch the desktop binary) and stores nothing.
+5. The worker redirects the browser to the app's localhost callback
+   (`http://127.0.0.1:42813`) with the tokens, and the app takes over.
+
+This is why the redirect URIs below point at *your worker*, not at the app.
 
 **Google** ([Google Cloud Console](https://console.cloud.google.com/apis/credentials)):
 - Scopes: `https://www.googleapis.com/auth/calendar.events.readonly`, `email`

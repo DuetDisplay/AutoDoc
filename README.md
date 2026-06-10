@@ -96,7 +96,7 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ### System requirements (macOS)
 
-Local-first meeting apps need real hardware headroom for on-device transcription and summarization. [Meetily](https://github.com/Zackriya-Solutions/meetily) publishes similar guidance in their [install docs](https://meetily.ai/blog/how-to-install-meetily) (OS version, RAM, storage). AutoDoc's numbers below reflect our bundled models and full feature set — not a copy of theirs, but the same class of requirements you should expect from any Whisper + Ollama desktop app.
+Local-first meeting apps need real hardware headroom for on-device transcription and summarization. AutoDoc's requirements below reflect our bundled models and full feature set — the kind of specs you should expect from any Whisper + Ollama desktop app.
 
 | | Requirement |
 |---|---|
