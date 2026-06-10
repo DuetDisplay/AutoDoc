@@ -22,7 +22,8 @@ vi.mock('fs/promises', () => ({
   access: vi.fn()
 }))
 
-vi.mock('child_process', () => ({
+vi.mock('child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('child_process')>()),
   spawn: vi.fn()
 }))
 

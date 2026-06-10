@@ -204,16 +204,17 @@ describe('recording IPC source handling', () => {
       )
 
       stopActiveRecording()
-      await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(logAutodocEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          area: 'recording',
-          level: 'warn',
-          message: 'Recording stopped shortly after start with no captured media',
-          meetingId: 'meeting-rapid-abort'
-        })
-      )
+      await vi.waitFor(() => {
+        expect(logAutodocEvent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            area: 'recording',
+            level: 'warn',
+            message: 'Recording stopped shortly after start with no captured media',
+            meetingId: 'meeting-rapid-abort'
+          })
+        )
+      })
       expect(captureMessage).toHaveBeenCalledWith(
         'Recording stopped shortly after start with no captured media',
         expect.objectContaining({
