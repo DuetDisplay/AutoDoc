@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron, TypeScript, Microsoft Graph API (REST), Google Calendar API v3 (via `googleapis`), Zustand, electron-store, safeStorage
 
-**Spec:** `docs/superpowers/specs/2026-03-27-multi-calendar-design.md`
+**Spec:** `docs/design/specs/2026-03-27-multi-calendar-design.md`
 
 ---
 

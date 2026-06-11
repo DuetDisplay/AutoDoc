@@ -4,8 +4,8 @@
   "description": "Local-first meeting assistant",
   "license": "AGPL-3.0-only",
   "main": "./out/main/index.js",
-  "author": "",
-  "homepage": "https://electron-vite.org",
+  "author": "Duet Display, Inc.",
+  "homepage": "https://getautodoc.com/",
   "scripts": {
     "build:mac-meeting-detector": "node scripts/build-mac-meeting-detector.js",
     "build:win-meeting-detector": "node scripts/build-win-meeting-detector.js",
@@ -50,6 +50,7 @@
     "test:smoke:mac": "bash scripts/macos-install-policy-smoke.sh",
     "test:smoke:mac:microphone": "bash scripts/macos-microphone-tcc-smoke.sh",
     "test:smoke:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-policy-smoke.ps1",
+    "generate:readme-media": "node scripts/generate-readme-media.js",
     "test:onboarding": "npm run build && npm run test:run -- src/renderer/src/components/onboarding/__tests__/TranscriptionStep.test.tsx src/renderer/src/pages/__tests__/Onboarding.test.tsx && npm run test:main:run -- src/main/services/__tests__/whisper-onboarding-install.test.ts src/main/services/__tests__/ollama-onboarding-install.test.ts && npm run test:e2e -- e2e/onboarding-smoke.spec.ts e2e/onboarding-journey.spec.ts",
     "test:pr:onboarding": "npm run build && npm run test:run -- src/renderer/src/components/onboarding/__tests__/TranscriptionStep.test.tsx src/renderer/src/pages/__tests__/Onboarding.test.tsx && npm run test:main:run -- src/main/services/__tests__/ollama-onboarding-install.test.ts && npm run test:e2e -- e2e/onboarding-smoke.spec.ts e2e/onboarding-journey.spec.ts",
     "test:pr:recording": "npm run test:run -- src/renderer/src/App.test.tsx src/renderer/src/components/EventCard.test.tsx src/renderer/src/components/__tests__/RecordingBanner.test.tsx src/renderer/src/components/__tests__/RecordingControls.test.tsx src/renderer/src/pages/Recordings.test.tsx src/renderer/src/pages/Upcoming.test.tsx src/renderer/src/services/__tests__/recording-capture.test.ts src/renderer/src/services/__tests__/window-detection.test.ts src/renderer/src/stores/__tests__/recording.test.ts && npm run test:main:run -- src/main/services/__tests__/recording.test.ts src/main/services/__tests__/detection.test.ts src/main/services/__tests__/calendar-dedupe.test.ts",

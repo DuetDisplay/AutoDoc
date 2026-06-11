@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js `crypto` (AES-256-GCM), Electron `safeStorage`, `electron-store`, `vitest`
 
-**Spec:** `docs/superpowers/specs/2026-03-25-encryption-at-rest-design.md`
+**Spec:** `docs/design/specs/2026-03-25-encryption-at-rest-design.md`
 
 ---
 

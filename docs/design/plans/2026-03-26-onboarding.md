@@ -8,7 +8,7 @@
 
 **Tech Stack:** React, Tailwind CSS (existing Murmur theme), electron-store, Zustand, Vitest + Testing Library
 
-**Spec:** `docs/superpowers/specs/2026-03-26-onboarding-design.md`
+**Spec:** `docs/design/specs/2026-03-26-onboarding-design.md`
 
 ---
 
