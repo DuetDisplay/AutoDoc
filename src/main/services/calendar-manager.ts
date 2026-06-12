@@ -15,7 +15,13 @@ import {
   isUnsupportedCalendarAccountError
 } from './calendar-error-classification'
 
-const accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
+let _accountStore: Store<{ accounts: CalendarAccount[] }> | null = null
+function getAccountStore(): Store<{ accounts: CalendarAccount[] }> {
+  // Lazily construct so the store resolves `userData` on first use, after the
+  // main process has had a chance to repath it (dev/e2e/test isolation).
+  if (!_accountStore) _accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
+  return _accountStore
+}
 
 export class CalendarManager {
   private providers: Map<string, CalendarProvider>
@@ -42,7 +48,7 @@ export class CalendarManager {
 
   async initialize(): Promise<CalendarAccount[]> {
     // Step 1: Load saved accounts
-    const saved = accountStore.get('accounts', []) as CalendarAccount[]
+    const saved = getAccountStore().get('accounts', []) as CalendarAccount[]
 
     // Step 2: Migrate legacy gcal_tokens if present (and no saved accounts yet)
     const migratedAccountId = migrateLegacyTokens()
@@ -81,8 +87,11 @@ export class CalendarManager {
   }
 
   async connect(providerType: 'google' | 'microsoft'): Promise<CalendarAccount> {
+    // Supersede any in-flight attempt instead of rejecting. A previous attempt can
+    // be left dangling when the user abandons the OAuth tab, and rejecting here
+    // would wedge every later connection until it times out or the app restarts.
     if (this.connecting) {
-      throw new Error('Another calendar connection is already in progress')
+      await this.cancelConnect()
     }
 
     this.connecting = true
@@ -114,12 +123,10 @@ export class CalendarManager {
     }
   }
 
-  cancelConnect(): void {
-    if (!this.connecting) return
-
-    for (const provider of this.providers.values()) {
-      provider.cancelConnect?.()
-    }
+  async cancelConnect(): Promise<void> {
+    await Promise.all(
+      Array.from(this.providers.values(), (provider) => provider.cancelConnect?.())
+    )
   }
 
   async disconnect(accountId: string): Promise<void> {
@@ -296,7 +303,7 @@ export class CalendarManager {
   }
 
   private saveAccounts(): void {
-    accountStore.set('accounts', this.accounts)
+    getAccountStore().set('accounts', this.accounts)
   }
 
   private async markAccountSyncIssue(

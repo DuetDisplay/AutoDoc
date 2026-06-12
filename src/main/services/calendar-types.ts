@@ -4,7 +4,7 @@ export interface CalendarProvider {
   readonly providerType: 'google' | 'microsoft'
 
   connect(): Promise<CalendarAccount>
-  cancelConnect?(): void
+  cancelConnect?(): void | Promise<void>
   disconnect(accountId: string): Promise<void>
   isConnected(accountId: string): boolean
   fetchAccountEmail(accountId: string): Promise<string | null>

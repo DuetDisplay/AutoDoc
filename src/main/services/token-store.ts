@@ -2,7 +2,13 @@ import { safeStorage } from 'electron'
 import Store from 'electron-store'
 import crypto from 'crypto'
 
-const store = new Store({ name: 'autodoc-tokens' })
+let _store: InstanceType<typeof Store> | null = null
+function getStore(): InstanceType<typeof Store> {
+  // Lazily construct so the store resolves `userData` on first use, after the
+  // main process has had a chance to repath it (dev/e2e/test isolation).
+  if (!_store) _store = new Store({ name: 'autodoc-tokens' })
+  return _store
+}
 
 const LEGACY_TOKEN_KEY = 'gcal_tokens'
 
@@ -18,19 +24,19 @@ function saveRaw(key: string, data: object): void {
   const json = JSON.stringify(data)
   if (safeStorage.isEncryptionAvailable()) {
     const encrypted = safeStorage.encryptString(json)
-    store.set(key, encrypted.toString('latin1'))
-    store.set(encryptedFlagKey(key), true)
+    getStore().set(key, encrypted.toString('latin1'))
+    getStore().set(encryptedFlagKey(key), true)
   } else {
-    store.set(key, json)
-    store.set(encryptedFlagKey(key), false)
+    getStore().set(key, json)
+    getStore().set(encryptedFlagKey(key), false)
   }
 }
 
 function loadRaw(key: string): object | null {
-  const raw = store.get(key) as string | undefined
+  const raw = getStore().get(key) as string | undefined
   if (!raw) return null
   try {
-    const isEncrypted = store.get(encryptedFlagKey(key)) as boolean
+    const isEncrypted = getStore().get(encryptedFlagKey(key)) as boolean
     if (isEncrypted && safeStorage.isEncryptionAvailable()) {
       const decrypted = safeStorage.decryptString(Buffer.from(raw, 'latin1'))
       return JSON.parse(decrypted)
@@ -42,8 +48,8 @@ function loadRaw(key: string): object | null {
 }
 
 function clearRaw(key: string): void {
-  store.delete(key)
-  store.delete(encryptedFlagKey(key))
+  getStore().delete(key)
+  getStore().delete(encryptedFlagKey(key))
 }
 
 // --- Account-scoped API ---
@@ -61,7 +67,7 @@ export function clearTokensForAccount(accountId: string): void {
 }
 
 export function hasTokensForAccount(accountId: string): boolean {
-  return store.has(tokenKey(accountId))
+  return getStore().has(tokenKey(accountId))
 }
 
 // --- Legacy migration ---

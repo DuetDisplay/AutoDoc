@@ -61,7 +61,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   readonly providerType = 'microsoft' as const
 
   private tokenCache = new Map<string, OAuthTokens>()
-  private pendingCallbackCancel: (() => void) | null = null
+  private pendingConnect: { cancel: () => void; closed: Promise<void> } | null = null
 
   private getTokens(accountId: string): OAuthTokens | null {
     let tokens = this.tokenCache.get(accountId)
@@ -105,13 +105,22 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     }
   }
 
-  cancelConnect(): void {
-    this.pendingCallbackCancel?.()
+  async cancelConnect(): Promise<void> {
+    const pending = this.pendingConnect
+    if (!pending) return
+    pending.cancel()
+    // Wait for the loopback server to fully close so a superseding attempt can
+    // rebind the OAuth port without hitting EADDRINUSE.
+    await pending.closed
   }
 
   private waitForCallback(expectedState: string): Promise<{ tokens: OAuthTokens & { expires_in?: number } }> {
     return new Promise((resolve, reject) => {
       let settled = false
+      let markClosed: () => void = () => {}
+      const closed = new Promise<void>((resolveClosed) => {
+        markClosed = resolveClosed
+      })
       const server = http.createServer((req, res) => {
         const url = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`)
         const returnedState = url.searchParams.get('state')
@@ -157,7 +166,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         rejectAndClose(new Error('Calendar connection timed out'))
       }, OAUTH_CALLBACK_TIMEOUT_MS)
       const cancel = (): void => rejectAndClose(new Error('Calendar connection cancelled'))
-      this.pendingCallbackCancel = cancel
+      this.pendingConnect = { cancel, closed }
 
       const closeServer = (): Promise<void> => {
         return new Promise((resolveClose) => {
@@ -172,10 +181,11 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
 
       const cleanup = async (): Promise<void> => {
         clearTimeout(timeout)
-        if (this.pendingCallbackCancel === cancel) {
-          this.pendingCallbackCancel = null
+        if (this.pendingConnect?.cancel === cancel) {
+          this.pendingConnect = null
         }
         await closeServer()
+        markClosed()
       }
 
       function resolveAndClose(result: { tokens: OAuthTokens & { expires_in?: number } }): void {

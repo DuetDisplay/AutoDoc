@@ -3,6 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
 import { ConnectCalendar } from '../components/ConnectCalendar'
 import { useCalendarStore, selectIsConnected } from '../stores/calendar'
+import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import { RecordingControls } from '../components/RecordingControls'
 import { useRecordingActions } from '../hooks/useRecording'
 import { useToastStore } from '../stores/toast'
@@ -15,9 +16,7 @@ let calendarToastShown = false
 
 export function Upcoming() {
   const [calendarChecked, setCalendarChecked] = useState(false)
-  const [calendarConnectError, setCalendarConnectError] = useState<string | null>(null)
   const {
-    isConnecting,
     events,
     isSyncing,
     setAccounts,
@@ -28,6 +27,24 @@ export function Upcoming() {
     setAutoRecord,
   } = useCalendarStore()
   const isConnected = useCalendarStore(selectIsConnected)
+
+  const {
+    connectingProvider,
+    error: calendarConnectError,
+    connect,
+  } = useCalendarConnect({
+    onConnected: async (account, provider) => {
+      addAccount(account)
+      trackEvent('calendar_connected', { provider })
+      const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
+      setEvents(fetchedEvents)
+    },
+  })
+  const isConnecting = connectingProvider !== null
+
+  useEffect(() => {
+    setConnecting(isConnecting)
+  }, [isConnecting, setConnecting])
 
   useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then((accts) => {
@@ -67,30 +84,13 @@ export function Upcoming() {
     }
   }, [isConnected, calendarChecked])
 
-  const handleConnect = async (provider: 'google' | 'microsoft') => {
-    setConnecting(true)
-    setCalendarConnectError(null)
+  const handleConnect = (provider: 'google' | 'microsoft') => {
     recordDiagnosticAction({
       category: 'calendar',
       action: 'calendar_connect_requested',
       details: { provider },
     })
-    try {
-      const account = await window.electronAPI.invoke('calendar:connect', provider)
-      addAccount(account)
-      setCalendarConnectError(null)
-      trackEvent('calendar_connected', { provider })
-      const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
-      setEvents(fetchedEvents)
-    } catch (err) {
-      console.error('Failed to connect calendar:', err)
-      const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
-      setCalendarConnectError(
-        `We couldn't connect ${providerName}. Check the permission prompt and try again.`
-      )
-    } finally {
-      setConnecting(false)
-    }
+    void connect(provider)
   }
 
   const handleSync = async () => {
