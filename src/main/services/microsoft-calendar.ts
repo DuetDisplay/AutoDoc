@@ -43,6 +43,7 @@ function extractEmailFromIdToken(idToken: string | undefined): string | null {
 interface GraphEvent {
   id: string
   subject?: string
+  isAllDay?: boolean
   start?: { dateTime?: string; timeZone?: string }
   end?: { dateTime?: string; timeZone?: string }
   attendees?: { emailAddress?: { address?: string } }[]
@@ -280,6 +281,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       title: event.subject ?? 'Untitled',
       startTime: event.start?.dateTime ? new Date(event.start.dateTime + 'Z').getTime() : 0,
       endTime: event.end?.dateTime ? new Date(event.end.dateTime + 'Z').getTime() : 0,
+      isAllDay: event.isAllDay === true,
       attendees: (event.attendees ?? [])
         .map((a) => a.emailAddress?.address ?? '')
         .filter(Boolean),

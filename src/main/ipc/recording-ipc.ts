@@ -850,6 +850,22 @@ export function registerRecordingIpc(
     })()
   }
 
+  function getRecordingDisplayCalendarTitle(
+    metadata: MeetingMetadata | null,
+    matchedEvent: CalendarEvent | null
+  ): string | null {
+    if (matchedEvent && !matchedEvent.isAllDay) {
+      return matchedEvent.title?.trim() || metadata?.calendarTitle?.trim() || null
+    }
+
+    const persistedCalendarTitle = metadata?.calendarTitle?.trim()
+    if (persistedCalendarTitle) {
+      return persistedCalendarTitle
+    }
+
+    return null
+  }
+
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
     const baseDir = recordingService.getRecordingsBaseDir()
     let dirs: string[]
@@ -897,8 +913,10 @@ export function registerRecordingIpc(
       if (!hasAudio && !hasVideo && !isFinalizing) continue
       const startedAt = metadata?.startedAt ?? dirStat.birthtime.getTime()
 
-      const calendarTitle =
-        matchCalendarEvent(recentEvents, startedAt)?.title ?? metadata?.calendarTitle ?? null
+      const calendarTitle = getRecordingDisplayCalendarTitle(
+        metadata,
+        matchCalendarEvent(recentEvents, startedAt)
+      )
       const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
 
       if (!metadata?.customTitle && !calendarTitle) {
@@ -1272,7 +1290,7 @@ export function registerRecordingIpc(
       // Calendar fetch failed
     }
 
-    const calendarTitle = calendarEvent?.title ?? metadata?.calendarTitle ?? null
+    const calendarTitle = getRecordingDisplayCalendarTitle(metadata, calendarEvent)
 
     const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
     if (!metadata?.customTitle && !calendarTitle) {

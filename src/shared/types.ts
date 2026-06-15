@@ -61,6 +61,7 @@ export interface CalendarEvent {
   title: string
   startTime: number
   endTime: number
+  isAllDay?: boolean
   attendees: string[]
   meetingUrl: string | null
   autoRecord: AutoRecordMode

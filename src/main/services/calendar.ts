@@ -237,6 +237,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       title: event.summary ?? 'Untitled',
       startTime: parseGoogleEventTime(event.start),
       endTime: parseGoogleEventTime(event.end),
+      isAllDay: Boolean(event.start?.date && event.end?.date),
       attendees: (event.attendees ?? []).map((a) => a.email ?? '').filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
       autoRecord: 'off' as const,
