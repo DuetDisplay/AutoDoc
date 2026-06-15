@@ -269,7 +269,11 @@ export interface DetectionAutoStopCancelledPayload extends DetectionAutoStopPayl
 }
 
 export interface AppRuntimeInfo {
+  appVersion: string
   platform: NodeJS.Platform
+  arch: string
+  officialBuild: boolean
+  buildChannel: 'development' | 'official' | 'custom'
   storagePath: string
   whisperModel: string
   transcriptionBackend?: string

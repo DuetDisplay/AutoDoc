@@ -108,6 +108,7 @@ import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
 import { shouldSuppressNotificationActivation } from './notification-window'
 import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
+import { isOfficialAutoDocBuild } from './services/distribution-config'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -935,7 +936,11 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'app:get-runtime-info',
     (): AppRuntimeInfo => ({
+      appVersion: app.getVersion(),
       platform: isE2E ? getE2EPlatform() : process.platform,
+      arch: process.arch,
+      officialBuild: isOfficialAutoDocBuild(),
+      buildChannel: is.dev ? 'development' : isOfficialAutoDocBuild() ? 'official' : 'custom',
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),

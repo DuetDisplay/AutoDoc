@@ -1,10 +1,41 @@
 import posthog from 'posthog-js'
+import type { AppRuntimeInfo } from '../../../shared/types'
 
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined
 const POSTHOG_HOST = (import.meta.env.VITE_POSTHOG_HOST as string) || 'https://us.i.posthog.com'
 
 let initialized = false
 let consentGiven = false
+let analyticsContext: Record<string, string | boolean | undefined> = {
+  platform: 'desktop',
+  build_mode: import.meta.env.MODE,
+  build_channel: import.meta.env.DEV ? 'development' : 'custom'
+}
+
+function buildEventProperties(properties?: Record<string, unknown>): Record<string, unknown> {
+  const mergedProperties = {
+    ...analyticsContext,
+    ...properties
+  }
+  return Object.fromEntries(
+    Object.entries(mergedProperties).filter(([, value]) => value !== undefined)
+  )
+}
+
+export function setAnalyticsContext(runtimeInfo: AppRuntimeInfo): void {
+  analyticsContext = {
+    platform: 'desktop',
+    app_version: runtimeInfo.appVersion,
+    app_platform: runtimeInfo.platform,
+    app_arch: runtimeInfo.arch,
+    official_build: runtimeInfo.officialBuild,
+    build_channel: runtimeInfo.buildChannel,
+    build_mode: import.meta.env.MODE,
+    transcription_backend: runtimeInfo.transcriptionBackend,
+    whisper_model: runtimeInfo.whisperModel,
+    ollama_model: runtimeInfo.ollamaModel
+  }
+}
 
 /**
  * Initialize PostHog — called once at app start.
@@ -19,7 +50,8 @@ export function initAnalytics(): void {
     capture_pageleave: false,
     disable_session_recording: true,
     persistence: 'localStorage',
-    opt_out_capturing_by_default: true,
+    request_batching: false,
+    opt_out_capturing_by_default: true
   })
   initialized = true
 }
@@ -34,7 +66,7 @@ export function setAnalyticsConsent(enabled: boolean): void {
   if (enabled) {
     consentGiven = true
     posthog.opt_in_capturing()
-    posthog.capture('analytics_consent', { consented: true })
+    posthog.capture('analytics_consent', buildEventProperties({ consented: true }))
   } else {
     consentGiven = false
     posthog.opt_out_capturing()
@@ -59,10 +91,7 @@ export function restoreAnalyticsConsent(enabled: boolean): void {
  */
 export function trackEvent(event: string, properties?: Record<string, unknown>): void {
   if (!initialized || !consentGiven) return
-  posthog.capture(event, {
-    platform: 'desktop',
-    ...properties,
-  })
+  posthog.capture(event, buildEventProperties(properties))
 }
 
 /**

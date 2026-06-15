@@ -20,7 +20,12 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
 import { Onboarding } from './pages/Onboarding'
-import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
+import {
+  initAnalytics,
+  restoreAnalyticsConsent,
+  setAnalyticsContext,
+  trackEvent
+} from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
@@ -49,7 +54,10 @@ export default function App() {
     useRecording()
   const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
+  const transcriptionCompletions = useRef<Set<string>>(new Set())
   const segmentationFailures = useRef<Record<string, string>>({})
+  const segmentationCompletions = useRef<Set<string>>(new Set())
+  const segmentationNoNotes = useRef<Set<string>>(new Set())
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
@@ -61,7 +69,16 @@ export default function App() {
     window.electronAPI.invoke('prefs:get-onboarding-complete').then(setOnboardingDone)
 
     // Restore analytics consent for returning users
-    window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
+    void (async () => {
+      const [consent, runtimeInfo] = await Promise.all([
+        window.electronAPI.invoke('prefs:get-analytics-consent'),
+        window.electronAPI.invoke('app:get-runtime-info').catch(() => null)
+      ])
+
+      if (runtimeInfo) {
+        setAnalyticsContext(runtimeInfo)
+      }
+
       restoreAnalyticsConsent(consent === true)
       setDiagnosticConsentEnabled(consent === true)
       updateRendererSentryConsent(consent === true)
@@ -72,7 +89,7 @@ export default function App() {
         })
         trackEvent('app_opened')
       }
-    })
+    })()
 
     const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', (enabled) => {
       restoreAnalyticsConsent(enabled)
@@ -125,8 +142,17 @@ export default function App() {
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
       if (payload.status !== 'failed') {
         delete transcriptionFailures.current[payload.meetingId]
+      }
+
+      if (payload.status === 'complete') {
+        if (!transcriptionCompletions.current.has(payload.meetingId)) {
+          transcriptionCompletions.current.add(payload.meetingId)
+          trackEvent('transcription_completed')
+        }
         return
       }
+
+      if (payload.status !== 'failed') return
 
       const errorCode = payload.errorCode ?? 'unknown'
       if (transcriptionFailures.current[payload.meetingId] === errorCode) return
@@ -137,8 +163,25 @@ export default function App() {
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
       if (payload.status !== 'failed') {
         delete segmentationFailures.current[payload.meetingId]
+      }
+
+      if (payload.status === 'complete') {
+        if (!segmentationCompletions.current.has(payload.meetingId)) {
+          segmentationCompletions.current.add(payload.meetingId)
+          trackEvent('notes_generated')
+        }
         return
       }
+
+      if (payload.status === 'no-notes') {
+        if (!segmentationNoNotes.current.has(payload.meetingId)) {
+          segmentationNoNotes.current.add(payload.meetingId)
+          trackEvent('notes_not_generated')
+        }
+        return
+      }
+
+      if (payload.status !== 'failed') return
 
       const errorCode = payload.errorCode ?? 'unknown'
       if (segmentationFailures.current[payload.meetingId] === errorCode) return
