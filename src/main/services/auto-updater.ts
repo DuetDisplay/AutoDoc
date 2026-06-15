@@ -99,6 +99,30 @@ export function getUpdateStatus(): UpdateStatus {
   return currentStatus
 }
 
+function configureUpdateFeedOverride(): void {
+  const overrideUrl = process.env.AUTODOC_UPDATE_FEED_URL?.trim()
+  if (!overrideUrl) {
+    return
+  }
+  const normalizedUrl = overrideUrl.endsWith('/') ? overrideUrl : `${overrideUrl}/`
+
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url: normalizedUrl
+  })
+
+  if (process.env.AUTODOC_TEST_MODE === '1') {
+    console.log(`Auto-updater using smoke feed: ${normalizedUrl}`)
+  }
+}
+
+function shouldQuitAndInstallAfterDownloadForSmoke(): boolean {
+  return (
+    process.env.AUTODOC_TEST_MODE === '1' &&
+    process.env.AUTODOC_UPDATE_QUIT_AND_INSTALL_ON_DOWNLOAD === '1'
+  )
+}
+
 export function initAutoUpdater(): void {
   if (is.dev) {
     console.log('Auto-updater disabled in dev')
@@ -109,6 +133,7 @@ export function initAutoUpdater(): void {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.disableDifferentialDownload = true
+    configureUpdateFeedOverride()
 
     autoUpdater.on('checking-for-update', () => {
       broadcast({ state: 'checking' })
@@ -132,6 +157,10 @@ export function initAutoUpdater(): void {
 
     autoUpdater.on('update-downloaded', (info) => {
       broadcast({ state: 'downloaded', version: getUpdaterVersion(info) })
+      if (shouldQuitAndInstallAfterDownloadForSmoke()) {
+        console.log('Auto-updater smoke install: update downloaded, calling quitAndInstall')
+        setTimeout(() => installUpdate(), 1_000)
+      }
     })
 
     autoUpdater.on('error', (err) => {

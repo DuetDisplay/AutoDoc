@@ -30,11 +30,11 @@ vendor/python-runtime/
 vendor/diarization-model/
 
 # Local electron-builder outputs for install-policy smoke tests (see scripts/*install-policy-smoke*)
-build-older-*/
-build-newer-*/
-build-update-*/
-build-local-*/
-update-feed-*/
+build-older-*
+build-newer-*
+build-update-*
+build-local-*
+update-feed-*
 build-[0-9][0-9][0-9]-*/
 build-out-*/
 build-output-*/

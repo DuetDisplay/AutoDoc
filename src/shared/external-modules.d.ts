@@ -74,6 +74,7 @@ declare module 'electron-updater' {
     autoInstallOnAppQuit: boolean
     disableDifferentialDownload: boolean
     on(event: string, listener: (...args: unknown[]) => void): void
+    setFeedURL(options: { provider: string; url: string }): void
     checkForUpdates(): void
     quitAndInstall(): void
   }
