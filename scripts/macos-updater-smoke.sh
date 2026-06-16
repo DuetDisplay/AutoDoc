@@ -9,6 +9,7 @@
 #   AUTODOC_UPDATE_ARTIFACTS  Root dir containing build-update-* folders
 #   AUTODOC_UPDATE_STAMP        Build stamp (default: 150900)
 #   AUTODOC_UPDATE_FEED_PORT    Local feed port (default: 18765)
+#   AUTODOC_UPDATE_PATCH_APP_UPDATE_YML  1 to rewrite app-update.yml after install
 #   AUTODOC_SMOKE_VERBOSE       1 for extra logging
 
 set -euo pipefail
@@ -19,6 +20,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STAMP="${AUTODOC_UPDATE_STAMP:-150900}"
 ARTIFACTS_ROOT="${AUTODOC_UPDATE_ARTIFACTS:-/Users/chris/Documents/AutoDoc-update-artifacts/${STAMP}}"
 FEED_PORT="${AUTODOC_UPDATE_FEED_PORT:-18765}"
+PATCH_APP_UPDATE_YML="${AUTODOC_UPDATE_PATCH_APP_UPDATE_YML:-0}"
 VERBOSE="${AUTODOC_SMOKE_VERBOSE:-0}"
 
 OLD_DIR="${ARTIFACTS_ROOT}/build-update-old-${STAMP}"
@@ -121,7 +123,9 @@ install_old_build() {
   else
     die "No old install artifact in ${OLD_DIR}"
   fi
-  patch_generic_feed "$INSTALLED_APP"
+  if [[ "$PATCH_APP_UPDATE_YML" == "1" ]]; then
+    patch_generic_feed "$INSTALLED_APP"
+  fi
 }
 
 feed_head_ok() {
@@ -192,6 +196,18 @@ wait_for_version() {
   return 1
 }
 
+wait_for_process_exit() {
+  local pid="$1" timeout_sec="${2:-90}"
+  local deadline=$((SECONDS + timeout_sec))
+  while (( SECONDS < deadline )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 launch_installed() {
   local log_file="$1"
   set_test_env
@@ -245,7 +261,11 @@ else
     ok_download=0
   fi
 fi
-kill "$pid" 2>/dev/null || killall AutoDoc 2>/dev/null || true
+if [[ "$ok_download" == "1" ]]; then
+  wait_for_process_exit "$pid" 90 || kill "$pid" 2>/dev/null || killall AutoDoc 2>/dev/null || true
+else
+  kill "$pid" 2>/dev/null || killall AutoDoc 2>/dev/null || true
+fi
 sleep 3
 stop_all_autodoc
 sleep 5
@@ -273,11 +293,7 @@ sleep 8
 # Trigger explicit check via AppleScript is brittle; rely on launch check + IPC not available.
 # Wait for download again after fresh install.
 wait_for_log "$log_manual" 'Auto-updater smoke install: update downloaded|update-downloaded|Update has been downloaded|downloaded update' 240 || true
-sleep 3
-# Simulate Settings "Restart to update" via quitAndInstall by sending SIGUSR? Not available.
-# Use osascript to open app and click if needed - fallback: call quit via killing after download
-# and rely on autoInstallOnAppQuit which fires on normal quit.
-kill "$pid3" 2>/dev/null || killall AutoDoc 2>/dev/null || true
+wait_for_process_exit "$pid3" 90 || kill "$pid3" 2>/dev/null || killall AutoDoc 2>/dev/null || true
 sleep 8
 stop_all_autodoc
 sleep 3
