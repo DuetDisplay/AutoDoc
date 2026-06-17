@@ -1,4 +1,10 @@
 import type {
+  AnalyticsConsentSnapshot,
+  AnalyticsDailyActiveResult,
+  AnalyticsLocalSignal,
+  AnalyticsSessionEndResult,
+  AnalyticsSessionStartResult,
+  AnalyticsState,
   AutoRecordMode,
   CalendarAccount,
   CalendarEvent,
@@ -71,6 +77,12 @@ export interface IpcInvokeEvents {
   'app:get-storage-info': []
   'app:clear-downloaded-components': []
   'app:reset-local-data': []
+  'analytics:get-state': []
+  'analytics:record-local-signal': [signal: AnalyticsLocalSignal]
+  'analytics:mark-daily-active': []
+  'analytics:start-session': []
+  'analytics:end-session': []
+  'analytics:get-consent-snapshot': []
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
@@ -189,6 +201,12 @@ export interface IpcInvokeReturns {
   'app:get-storage-info': AppStorageInfo
   'app:clear-downloaded-components': AppStorageInfo
   'app:reset-local-data': void
+  'analytics:get-state': AnalyticsState
+  'analytics:record-local-signal': boolean
+  'analytics:mark-daily-active': AnalyticsDailyActiveResult
+  'analytics:start-session': AnalyticsSessionStartResult
+  'analytics:end-session': AnalyticsSessionEndResult | null
+  'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
   'calendar:connect': CalendarAccount
@@ -309,4 +327,5 @@ export interface IpcOnEvents {
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
+  'e2e:track-analytics-event': [payload: { event: string; properties?: Record<string, unknown> }]
 }

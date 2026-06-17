@@ -21,16 +21,23 @@ import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
 import { Onboarding } from './pages/Onboarding'
 import {
+  endAnalyticsSession,
+  identifyConsentedInstall,
   initAnalytics,
   restoreAnalyticsConsent,
   setAnalyticsContext,
-  trackEvent
+  startAnalyticsSession,
+  toDurationBucket,
+  trackDailyActiveIfNeeded,
+  trackEvent,
+  trackFirstEventOnce
 } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import type { AppRuntimeInfo } from '../../shared/types'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()
@@ -55,12 +62,15 @@ export default function App() {
   const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
   const transcriptionCompletions = useRef<Set<string>>(new Set())
+  const transcriptionStarted = useRef<Record<string, number>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
   const segmentationCompletions = useRef<Set<string>>(new Set())
   const segmentationNoNotes = useRef<Set<string>>(new Set())
+  const notesGenerationStarted = useRef<Record<string, number>>({})
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
+  const runtimeInfoRef = useRef<AppRuntimeInfo | null>(null)
 
   useEffect(() => {
     // Initialize analytics early (stays opted-out until consent is restored/given)
@@ -76,6 +86,7 @@ export default function App() {
       ])
 
       if (runtimeInfo) {
+        runtimeInfoRef.current = runtimeInfo
         setAnalyticsContext(runtimeInfo)
       }
 
@@ -83,11 +94,14 @@ export default function App() {
       setDiagnosticConsentEnabled(consent === true)
       updateRendererSentryConsent(consent === true)
       if (consent === true) {
+        await identifyConsentedInstall()
         recordDiagnosticAction({
           category: 'app',
           action: 'app_opened'
         })
         trackEvent('app_opened')
+        await startAnalyticsSession()
+        await trackDailyActiveIfNeeded()
       }
     })()
 
@@ -96,8 +110,37 @@ export default function App() {
       setDiagnosticConsentEnabled(enabled)
       updateRendererSentryConsent(enabled)
     })
+    let unsubE2ETrackAnalytics: (() => void) | null = null
+    let disposed = false
+    void window.electronAPI
+      .invoke('e2e:get-detection-state')
+      .then(() => {
+        const unsubscribe = window.electronAPI.on(
+          'e2e:track-analytics-event',
+          ({ event, properties }) => {
+            trackEvent(event, properties)
+          }
+        )
+        if (disposed) {
+          unsubscribe()
+        } else {
+          unsubE2ETrackAnalytics = unsubscribe
+        }
+      })
+      .catch(() => {})
 
-    return unsubConsent
+    const handleBeforeUnload = () => {
+      void endAnalyticsSession()
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      void endAnalyticsSession()
+      unsubConsent()
+      disposed = true
+      unsubE2ETrackAnalytics?.()
+    }
   }, [])
 
   useEffect(() => {
@@ -144,10 +187,32 @@ export default function App() {
         delete transcriptionFailures.current[payload.meetingId]
       }
 
+      if (
+        (payload.status === 'downloading' ||
+          payload.status === 'transcribing' ||
+          payload.status === 'diarizing') &&
+        transcriptionStarted.current[payload.meetingId] === undefined
+      ) {
+        transcriptionStarted.current[payload.meetingId] = performance.now()
+        trackEvent('transcription_started', {
+          backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+          model: runtimeInfoRef.current?.whisperModel ?? 'unknown'
+        })
+      }
+
       if (payload.status === 'complete') {
         if (!transcriptionCompletions.current.has(payload.meetingId)) {
           transcriptionCompletions.current.add(payload.meetingId)
-          trackEvent('transcription_completed')
+          const startedAt = transcriptionStarted.current[payload.meetingId]
+          delete transcriptionStarted.current[payload.meetingId]
+          trackEvent('transcription_completed', {
+            backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+            model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
+            processing_time_bucket:
+              startedAt === undefined
+                ? undefined
+                : toDurationBucket((performance.now() - startedAt) / 1000)
+          })
         }
         return
       }
@@ -157,7 +222,12 @@ export default function App() {
       const errorCode = payload.errorCode ?? 'unknown'
       if (transcriptionFailures.current[payload.meetingId] === errorCode) return
       transcriptionFailures.current[payload.meetingId] = errorCode
-      trackEvent('transcription_failed', { meetingId: payload.meetingId, errorCode })
+      delete transcriptionStarted.current[payload.meetingId]
+      trackEvent('transcription_failed', {
+        backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+        model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
+        failure_code: errorCode
+      })
     })
 
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
@@ -165,10 +235,29 @@ export default function App() {
         delete segmentationFailures.current[payload.meetingId]
       }
 
+      if (
+        (payload.status === 'downloading-model' || payload.status === 'segmenting') &&
+        notesGenerationStarted.current[payload.meetingId] === undefined
+      ) {
+        notesGenerationStarted.current[payload.meetingId] = performance.now()
+        trackEvent('notes_generation_started')
+      }
+
       if (payload.status === 'complete') {
         if (!segmentationCompletions.current.has(payload.meetingId)) {
           segmentationCompletions.current.add(payload.meetingId)
-          trackEvent('notes_generated')
+          const startedAt = notesGenerationStarted.current[payload.meetingId]
+          delete notesGenerationStarted.current[payload.meetingId]
+          trackEvent('notes_generated', {
+            processing_time_bucket:
+              startedAt === undefined
+                ? undefined
+                : toDurationBucket((performance.now() - startedAt) / 1000)
+          })
+          void trackFirstEventOnce('notes_generated', 'first_notes_generated')
+          void trackFirstEventOnce('user_activated', 'user_activated', {
+            activation_reason: 'first_notes_generated'
+          })
         }
         return
       }
@@ -176,7 +265,8 @@ export default function App() {
       if (payload.status === 'no-notes') {
         if (!segmentationNoNotes.current.has(payload.meetingId)) {
           segmentationNoNotes.current.add(payload.meetingId)
-          trackEvent('notes_not_generated')
+          delete notesGenerationStarted.current[payload.meetingId]
+          trackEvent('notes_not_generated', { reason_code: 'no_notes_detected' })
         }
         return
       }
@@ -186,7 +276,8 @@ export default function App() {
       const errorCode = payload.errorCode ?? 'unknown'
       if (segmentationFailures.current[payload.meetingId] === errorCode) return
       segmentationFailures.current[payload.meetingId] = errorCode
-      trackEvent('segmentation_failed', { meetingId: payload.meetingId, errorCode })
+      delete notesGenerationStarted.current[payload.meetingId]
+      trackEvent('notes_generation_failed', { failure_code: errorCode })
     })
 
     const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
@@ -199,7 +290,12 @@ export default function App() {
       const errorKey = `${failedStep}:${status.error ?? ''}`
       if (whisperFailureKey.current === errorKey) return
       whisperFailureKey.current = errorKey
-      trackEvent('whisper_setup_failed', { failed_step: failedStep })
+      trackEvent('setup_component_failed', {
+        component: 'whisper',
+        phase: failedStep,
+        failure_code: failedStep,
+        attempt_number: 1
+      })
     })
 
     const unsubOllama = window.electronAPI.on('ollama:setup-progress', (status) => {
@@ -212,14 +308,18 @@ export default function App() {
       const errorKey = `${failedStep}:${status.error ?? ''}`
       if (ollamaFailureKey.current === errorKey) return
       ollamaFailureKey.current = errorKey
-      trackEvent('ollama_setup_failed', { failed_step: failedStep })
+      trackEvent('setup_component_failed', {
+        component: 'ollama',
+        phase: failedStep,
+        failure_code: failedStep,
+        attempt_number: 1
+      })
     })
 
     const unsubSegmentationDiagnostic = window.electronAPI.on(
       'segmentation:diagnostic-event',
       (payload) => {
         trackEvent(`segmentation_${payload.event}`, {
-          meetingId: payload.meetingId,
           ...payload.properties
         })
       }

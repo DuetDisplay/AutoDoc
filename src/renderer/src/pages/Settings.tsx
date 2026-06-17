@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
-import { setAnalyticsConsent } from '../services/analytics'
+import {
+  identifyConsentedInstall,
+  setAnalyticsConsent,
+  startAnalyticsSession,
+  toDurationBucket,
+  trackConsentSnapshot,
+  trackDailyActiveIfNeeded,
+  trackEvent
+} from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
@@ -45,14 +53,8 @@ function formatBytes(bytes: number | null | undefined): string {
 }
 
 export function Settings() {
-  const {
-    accounts,
-    setAccounts,
-    addAccount,
-    removeAccount,
-    setConnecting,
-    setEvents
-  } = useCalendarStore()
+  const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
+    useCalendarStore()
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
@@ -63,6 +65,8 @@ export function Settings() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
+  const previousUpdateState = useRef<UpdateStatus['state']>('idle')
+  const downloadStartedAt = useRef<number | null>(null)
 
   const refreshStorageInfo = useCallback(() => {
     return window.electronAPI.invoke('app:get-storage-info').then(setStorageInfo)
@@ -94,12 +98,62 @@ export function Settings() {
   }, [refreshStorageInfo])
 
   useEffect(() => {
+    const previousState = previousUpdateState.current
+    previousUpdateState.current = updateStatus.state
+
+    if (updateStatus.state === 'checking' && previousState !== 'checking') {
+      trackEvent('update_check_started')
+      return
+    }
+
+    if (updateStatus.state === 'idle' && previousState === 'checking') {
+      trackEvent('update_not_available', { current_version: appVersion })
+      return
+    }
+
+    if (updateStatus.state === 'available' && updateStatus.version) {
+      trackEvent('update_available', {
+        current_version: appVersion,
+        available_version: updateStatus.version
+      })
+      return
+    }
+
+    if (updateStatus.state === 'downloading' && previousState !== 'downloading') {
+      downloadStartedAt.current = performance.now()
+      trackEvent('update_download_started', {
+        available_version: updateStatus.version ?? 'unknown'
+      })
+      return
+    }
+
+    if (updateStatus.state === 'downloaded' && updateStatus.version) {
+      const startedAt = downloadStartedAt.current
+      downloadStartedAt.current = null
+      trackEvent('update_download_completed', {
+        available_version: updateStatus.version,
+        duration_bucket:
+          startedAt === null ? undefined : toDurationBucket((performance.now() - startedAt) / 1000)
+      })
+      return
+    }
+
+    if (updateStatus.state === 'error') {
+      trackEvent('update_download_failed', {
+        available_version: updateStatus.version ?? 'unknown',
+        failure_code: 'update_error'
+      })
+    }
+  }, [appVersion, updateStatus])
+
+  useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then(setAccounts)
   }, [setAccounts])
 
   const { connectingProvider, connect } = useCalendarConnect({
     onConnected: async (account) => {
       addAccount(account)
+      trackEvent('calendar_connected', { provider: account.provider })
       const events = await window.electronAPI.invoke('calendar:get-events')
       setEvents(events)
     }
@@ -136,8 +190,18 @@ export function Settings() {
       action: 'analytics_consent_toggled',
       details: { enabled: nextValue }
     })
+    if (!nextValue) {
+      trackEvent('analytics_disabled')
+    } else {
+      await identifyConsentedInstall()
+    }
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
+    if (nextValue) {
+      await trackConsentSnapshot()
+      await startAnalyticsSession()
+      await trackDailyActiveIfNeeded()
+    }
     setAnalyticsConsentState(nextValue)
   }
 
@@ -332,9 +396,11 @@ export function Settings() {
                   aria-label="Attach technical app logs to error reports"
                 />
                 <span className="text-[12px] text-ink-muted leading-relaxed">
-                  <strong className="text-ink font-semibold">Attach technical app logs to error reports</strong>
-                  {' '}
-                  when diagnostics are enabled. This can be off while analytics and crash reports stay on.
+                  <strong className="text-ink font-semibold">
+                    Attach technical app logs to error reports
+                  </strong>{' '}
+                  when diagnostics are enabled. This can be off while analytics and crash reports
+                  stay on.
                 </span>
               </label>
             </div>
@@ -449,7 +515,12 @@ export function Settings() {
               )}
               {updateStatus.state === 'downloaded' && (
                 <button
-                  onClick={() => window.electronAPI.invoke('updater:install')}
+                  onClick={() => {
+                    trackEvent('update_install_requested', {
+                      available_version: updateStatus.version ?? 'unknown'
+                    })
+                    void window.electronAPI.invoke('updater:install')
+                  }}
                   className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
                 >
                   Restart to update to v{updateStatus.version}

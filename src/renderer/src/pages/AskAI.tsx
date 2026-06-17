@@ -97,7 +97,7 @@ export function AskAI(): ReactElement {
       undefined,
       'timed_out'
     )
-    trackEvent('chat_response_timed_out')
+    trackEvent('chat_response_failed', { failure_code: 'timed_out' })
     finishActiveRequest()
   }
 
@@ -169,7 +169,7 @@ export function AskAI(): ReactElement {
           'failed'
         )
         console.error('Chat failed:', payload.error)
-        trackEvent('chat_response_failed')
+        trackEvent('chat_response_failed', { failure_code: 'stream_error' })
         finishActiveRequest()
       }),
       window.electronAPI.on('chat:canceled', (payload) => {
@@ -177,7 +177,7 @@ export function AskAI(): ReactElement {
         if (activeRequestIdRef.current !== requestId) return
         setMessageStatus(assistantMessageId, 'canceled')
         removeEmptyInFlightAssistantMessages()
-        trackEvent('chat_response_canceled')
+        trackEvent('chat_response_failed', { failure_code: 'canceled' })
         finishActiveRequest()
       })
     ]
@@ -214,7 +214,7 @@ export function AskAI(): ReactElement {
         'failed'
       )
       console.error('Chat failed:', err)
-      trackEvent('chat_response_failed')
+      trackEvent('chat_response_failed', { failure_code: 'invoke_failed' })
       finishActiveRequest()
     }
   }

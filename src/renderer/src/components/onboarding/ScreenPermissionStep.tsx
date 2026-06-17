@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { trackEvent } from '../../services/analytics'
 
 export function ScreenPermissionStep({
   onNext,
@@ -65,6 +66,7 @@ export function ScreenPermissionStep({
   }, [allowAutoAdvance, checkPermission])
 
   const handleEnable = async () => {
+    trackEvent('permission_requested', { permission_type: 'screen_recording' })
     try {
       const sources = await window.electronAPI.invoke('recording:get-sources')
       const targetSource = sources.find((source) => source.id.startsWith('screen:')) ?? sources[0]
@@ -88,11 +90,13 @@ export function ScreenPermissionStep({
 
     const perms = await window.electronAPI.invoke('permissions:check')
     if (perms.screen) {
+      trackEvent('permission_granted', { permission_type: 'screen_recording' })
       setGranted(true)
       await clearOpenedState()
       return
     }
 
+    trackEvent('permission_denied', { permission_type: 'screen_recording' })
     await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', true)
     await window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)

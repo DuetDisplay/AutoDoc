@@ -104,6 +104,10 @@ export function Upcoming() {
       setEvents(syncedEvents)
     } catch (err) {
       console.error('Calendar sync failed:', err)
+      trackEvent('calendar_sync_failed', {
+        provider: 'unknown',
+        failure_code: 'sync_failed',
+      })
       // Auth failure auto-disconnects via the connection-changed listener
     } finally {
       setSyncing(false)

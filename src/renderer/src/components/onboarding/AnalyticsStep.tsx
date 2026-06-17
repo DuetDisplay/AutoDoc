@@ -16,7 +16,16 @@ export function AnalyticsStep({
   return (
     <div className="text-center">
       <div className="w-14 h-14 rounded-full bg-mist-light flex items-center justify-center mx-auto mb-5">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#5B7B8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="26"
+          height="26"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#5B7B8A"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <path d="M18 20V10" />
           <path d="M12 20V4" />
           <path d="M6 20v-6" />
@@ -28,8 +37,10 @@ export function AnalyticsStep({
       </h2>
 
       <p className="text-[14px] text-ink-muted leading-relaxed mb-4">
-        Share anonymous usage data so we can understand which features matter most and fix crashes faster.
-        Meeting content stays local. If you choose, you can also attach technical app logs to error reports.
+        Share anonymous product health and usage metrics so we can understand which features matter
+        most and fix crashes faster. Meeting content, meeting titles, and recordings are never
+        included in this tracking. If you choose, you can also attach technical app logs to error
+        reports.
       </p>
 
       {/* What we track disclosure */}
@@ -58,28 +69,42 @@ export function AnalyticsStep({
           <div className="space-y-2">
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span><strong className="text-ink">Feature usage</strong> — which screens you visit, buttons you click</span>
+              <span>
+                <strong className="text-ink">Feature usage</strong> — anonymous feature, setup, and
+                recording workflow events
+              </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span><strong className="text-ink">Onboarding</strong> — which steps you complete or skip</span>
+              <span>
+                <strong className="text-ink">Onboarding</strong> — which steps you complete or skip
+              </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span><strong className="text-ink">Crash reports</strong> — stack traces when something goes wrong</span>
+              <span>
+                <strong className="text-ink">Crash reports</strong> — stack traces when something
+                goes wrong
+              </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span><strong className="text-ink">Optional diagnostic logs</strong> — technical app logs only if you explicitly allow them</span>
+              <span>
+                <strong className="text-ink">Optional diagnostic logs</strong> — technical app logs
+                only if you explicitly allow them
+              </span>
             </div>
             <div className="flex items-start gap-2">
               <span className="text-sage font-bold mt-[1px]">✓</span>
-              <span><strong className="text-ink">App version & OS</strong> — helps us prioritize platform fixes</span>
+              <span>
+                <strong className="text-ink">App version & OS</strong> — helps us prioritize
+                platform fixes
+              </span>
             </div>
             <div className="border-t border-border-subtle mt-3 pt-3 space-y-2">
               <div className="flex items-start gap-2">
                 <span className="text-red-400 font-bold mt-[1px]">✗</span>
-                <span>Meeting content, transcripts, or calendar data</span>
+                <span>Meeting content, meeting titles, transcripts, or calendar data</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-red-400 font-bold mt-[1px]">✗</span>
@@ -95,7 +120,8 @@ export function AnalyticsStep({
       )}
 
       <p className="text-[11px] text-ink-faint mb-5">
-        AutoDoc is open source — you can audit our tracking code anytime. You can change this later in Settings.
+        AutoDoc is open source — you can audit our tracking code anytime. You can change this later
+        in Settings.
       </p>
 
       <label className="flex items-start gap-3 rounded-lg border border-border-subtle bg-bg-accent px-4 py-3 mb-4 text-left">
@@ -107,9 +133,11 @@ export function AnalyticsStep({
           aria-label="Attach technical app logs to error reports"
         />
         <span className="text-[12px] text-ink-muted leading-relaxed">
-          <strong className="text-ink font-semibold">Attach technical app logs to error reports</strong>
-          {' '}
-          if I choose to share diagnostics. This can help debug failures faster, and can stay off while analytics remain on.
+          <strong className="text-ink font-semibold">
+            Attach technical app logs to error reports
+          </strong>{' '}
+          if I choose to share diagnostics. This can help debug failures faster, and can stay off
+          while analytics remain on.
         </span>
       </label>
 

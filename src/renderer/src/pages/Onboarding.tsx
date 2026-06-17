@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
 import { FeatureStep } from '../components/onboarding/FeatureStep'
@@ -9,7 +9,17 @@ import { TranscriptionStep } from '../components/onboarding/TranscriptionStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
-import { setAnalyticsConsent, trackEvent } from '../services/analytics'
+import {
+  identifyConsentedInstall,
+  recordAnalyticsLocalSignal,
+  setAnalyticsConsent,
+  startAnalyticsSession,
+  toDurationBucket,
+  trackConsentSnapshot,
+  trackDailyActiveIfNeeded,
+  trackEvent,
+  trackFirstEventOnce
+} from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
@@ -25,11 +35,15 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
   const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(false)
+  const startedAt = useRef(performance.now())
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
 
   useEffect(() => {
+    void recordAnalyticsLocalSignal('onboarding_started')
+    trackEvent('onboarding_started')
+
     Promise.all([
       window.electronAPI.invoke('prefs:get-onboarding-step'),
       window.electronAPI.invoke('app:get-runtime-info')
@@ -53,6 +67,11 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       void window.electronAPI.invoke('prefs:set-onboarding-step', normalizedStep)
     })
   }, [])
+
+  useEffect(() => {
+    if (step === null) return
+    trackEvent('onboarding_step_viewed', { step })
+  }, [step])
 
   const next = useCallback(() => {
     setNavigationMode('forward')
@@ -99,7 +118,15 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       'prefs:set-diagnostic-log-upload-consent',
       consented ? diagnosticLogUploadConsented : false
     )
+    if (consented) {
+      await identifyConsentedInstall()
+    }
     setAnalyticsConsent(consented)
+    if (consented) {
+      await trackConsentSnapshot()
+      await startAnalyticsSession()
+      await trackDailyActiveIfNeeded()
+    }
     setNavigationMode('forward')
     setStepIndex((currentIndex) => {
       const nextIndex = Math.min((currentIndex ?? 0) + 1, stepOrder.length - 1)
@@ -110,7 +137,9 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleFinish = async () => {
-    trackEvent('onboarding_completed')
+    await trackFirstEventOnce('onboarding_completed', 'onboarding_completed', {
+      duration_bucket: toDurationBucket((performance.now() - startedAt.current) / 1000)
+    })
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
     onComplete()
   }

@@ -186,7 +186,7 @@ The only optional network component is a stateless Cloudflare Worker used purely
 
 ## Privacy
 
-AutoDoc processes everything on-device. Audio, transcripts, and notes never leave your computer. Analytics and crash reporting are strictly **opt-in**. Read the full [**Privacy Policy**](PRIVACY.md) for exactly what is and isn't collected.
+AutoDoc processes everything on-device. Audio, transcripts, and notes never leave your computer. Analytics and crash reporting are strictly **opt-in**; before opt-in, analytics facts stay local only. Read the full [**Privacy Policy**](PRIVACY.md) for exactly what is and isn't collected.
 
 ## Roadmap
 

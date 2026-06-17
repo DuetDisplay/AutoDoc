@@ -83,9 +83,13 @@ declare module 'electron-updater' {
 declare module 'posthog-js' {
   export interface PostHogInstance {
     init(apiKey: string, options?: Record<string, unknown>): void
-    capture(event: string, properties?: Record<string, unknown>): void
+    capture(
+      event: string,
+      properties?: Record<string, unknown>,
+      options?: Record<string, unknown>
+    ): void
     identify(distinctId: string): void
-    opt_in_capturing(): void
+    opt_in_capturing(options?: { captureEventName?: string | false | null }): void
     opt_out_capturing(): void
     reset(): void
   }

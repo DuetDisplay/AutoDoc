@@ -281,6 +281,60 @@ export interface AppRuntimeInfo {
   ollamaModel: string
 }
 
+export type AnalyticsLocalSignal =
+  | 'onboarding_started'
+  | 'onboarding_completed'
+  | 'whisper_setup_completed'
+  | 'ollama_setup_completed'
+  | 'recording_completed'
+  | 'notes_generated'
+  | 'user_activated'
+
+export interface AnalyticsState {
+  installId: string
+  firstLaunchDate: string
+  lastDailyActiveDate: string | null
+  sessionId: string | null
+  sessionStartedAt: string | null
+  onboardingStarted: boolean
+  onboardingCompleted: boolean
+  whisperSetupCompleted: boolean
+  ollamaSetupCompleted: boolean
+  setupCompleted: boolean
+  firstRecordingCompleted: boolean
+  firstNotesGenerated: boolean
+  userActivated: boolean
+  recordingsCompletedCount: number
+  notesGeneratedCount: number
+}
+
+export interface AnalyticsConsentSnapshot {
+  days_since_first_launch: number
+  onboarding_started: boolean
+  onboarding_completed: boolean
+  setup_completed: boolean
+  first_recording_completed: boolean
+  first_notes_generated: boolean
+  user_activated: boolean
+  recordings_completed_bucket: string
+  notes_generated_bucket: string
+}
+
+export interface AnalyticsDailyActiveResult {
+  tracked: boolean
+  daysSinceFirstLaunch: number
+}
+
+export interface AnalyticsSessionStartResult {
+  sessionId: string
+  daysSinceFirstLaunch: number
+}
+
+export interface AnalyticsSessionEndResult {
+  sessionId: string
+  sessionDurationBucket: string
+}
+
 export interface AppStorageInfo {
   storagePath: string
   downloadedComponentsBytes: number
