@@ -1584,9 +1584,12 @@ app.on('before-quit', () => {
   stopRecordingMediaHttpServer()
 })
 
-app.on('before-quit-for-update', () => {
-  isQuitting = true
-})
+;(app as unknown as { on(event: 'before-quit-for-update', listener: () => void): void }).on(
+  'before-quit-for-update',
+  () => {
+    isQuitting = true
+  }
+)
 
 app.on('window-all-closed', () => {
   if (!isE2E && !isRealSetupTest) {
