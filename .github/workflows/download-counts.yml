@@ -1,0 +1,57 @@
+name: Download Counts
+
+on:
+  schedule:
+    # Snapshot public GitHub release asset download counts once per day.
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional release tag to ingest, for example v0.1.36
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: Fetch and summarize counts without sending to PostHog
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: download-counts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    name: Ingest GitHub release download counts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+
+      - name: Sync download counts to PostHog
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [ -n "$RELEASE_TAG" ]; then
+            args+=(--release-tag "$RELEASE_TAG")
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+
+          node scripts/ingest-github-download-counts.js "${args[@]}"
