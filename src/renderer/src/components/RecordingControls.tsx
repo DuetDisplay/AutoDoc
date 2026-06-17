@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
+import { useToastStore } from '../stores/toast'
 import {
   buildRecordingSelectionContext,
   buildRecordingTrackingContext,
@@ -9,6 +10,9 @@ import {
   findActiveCalendarEvent
 } from '../services/window-detection'
 import { getSavedSourcePreference } from '../services/recording-source-preferences'
+
+const SCREEN_RECORDING_PERMISSION_MESSAGE =
+  'AutoDoc needs Screen Recording access. If you just enabled it, fully quit and reopen AutoDoc, then press Record again.'
 
 interface RecordingControlsProps {
   isRecording: boolean
@@ -57,6 +61,9 @@ export function RecordingControls({
     setLoading(true)
     try {
       const fetchedSources = await onFetchSources()
+      if (fetchedSources.length === 0) {
+        throw new Error('No capture sources were available. Screen recording permission may be missing.')
+      }
       const selection = chooseAutoRecordSource(
         fetchedSources,
         selectionContext,
@@ -76,6 +83,17 @@ export function RecordingControls({
             ? 'Detected meeting'
             : 'Suggested window'
           : null
+      })
+    } catch (err) {
+      console.warn('Failed to list recording sources:', err)
+      useToastStore.getState().showToast({
+        type: 'screen',
+        message: SCREEN_RECORDING_PERMISSION_MESSAGE,
+        action: {
+          label: 'Open Settings',
+          type: 'open-settings',
+          target: 'screen'
+        }
       })
     } finally {
       setLoading(false)

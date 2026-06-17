@@ -33,6 +33,16 @@ verify_app_signature() {
   codesign --verify --deep --strict --verbose=4 "$app_path"
 }
 
+verify_app_entitlements_blob() {
+  local app_path="$1"
+  local output
+
+  output="$(codesign -d --entitlements :- "$app_path" 2>&1 >/dev/null || true)"
+  if grep -qi 'invalid entitlements blob' <<<"$output"; then
+    die "Extracted app has an invalid entitlements blob; ensure mac.entitlements points to ${MAC_ENTITLEMENTS_FILE}."
+  fi
+}
+
 verify_entitlement_config() {
   [[ -f "$MAC_ENTITLEMENTS_FILE" ]] || return 0
 
@@ -59,6 +69,7 @@ trap cleanup EXIT
 ditto -x -k "$zip_path" "$tmp_dir"
 
 extracted_app="${tmp_dir}/${APP_NAME}"
+verify_app_entitlements_blob "$extracted_app"
 verify_app_signature "$extracted_app"
 
 detached_signature_count="$(

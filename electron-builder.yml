@@ -40,6 +40,7 @@ mac:
     - dmg
     - zip
   minimumSystemVersion: 14.0.0
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   signIgnore:
     - '^.*?/Contents/Resources/.*$'

@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RecordingControls } from '../RecordingControls'
+import { useRecordingPickerStore } from '../../stores/recording-picker'
+import { useToastStore } from '../../stores/toast'
 
 const mockInvoke = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useRecordingPickerStore.getState().closePicker()
+  useToastStore.setState({ activeToast: null })
   window.electronAPI = {
     send: vi.fn(),
     invoke: mockInvoke,
@@ -60,6 +64,58 @@ describe('RecordingControls', () => {
     expect(await screen.findByText('Zoom Meeting')).toBeInTheDocument()
     expect(await screen.findByText('Visual Studio Code')).toBeInTheDocument()
     expect(await screen.findByText('Suggested window')).toBeInTheDocument()
+  })
+
+  it('shows a screen permission toast when capture sources cannot be listed', async () => {
+    const fetchSources = vi.fn(async () => {
+      throw new Error('AutoDoc could not list capture sources. Screen recording permission may be missing.')
+    })
+
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={fetchSources}
+      />
+    )
+
+    await userEvent.click(screen.getByText('Record'))
+
+    await waitFor(() => {
+      expect(useToastStore.getState().activeToast).toMatchObject({
+        type: 'screen',
+        action: {
+          label: 'Open Settings',
+          type: 'open-settings',
+          target: 'screen'
+        }
+      })
+    })
+    expect(useRecordingPickerStore.getState().isOpen).toBe(false)
+    expect(screen.getByText('Record')).toBeInTheDocument()
+  })
+
+  it('shows a screen permission toast instead of an empty picker when no sources are available', async () => {
+    const fetchSources = vi.fn(async () => [])
+
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={fetchSources}
+      />
+    )
+
+    await userEvent.click(screen.getByText('Record'))
+
+    await waitFor(() => {
+      expect(useToastStore.getState().activeToast?.message).toContain(
+        'fully quit and reopen AutoDoc'
+      )
+    })
+    expect(screen.queryByText('Select a window to record')).not.toBeInTheDocument()
   })
 
   it('pins the suggested source to the top of the picker list', async () => {
