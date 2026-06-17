@@ -1584,6 +1584,10 @@ app.on('before-quit', () => {
   stopRecordingMediaHttpServer()
 })
 
+app.on('before-quit-for-update', () => {
+  isQuitting = true
+})
+
 app.on('window-all-closed', () => {
   if (!isE2E && !isRealSetupTest) {
     // Don't quit — the tray keeps the app alive
