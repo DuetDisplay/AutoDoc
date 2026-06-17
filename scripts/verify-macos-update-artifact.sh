@@ -5,6 +5,7 @@ set -euo pipefail
 
 ARTIFACT_DIR="${1:-dist}"
 APP_NAME="${AUTODOC_MAC_APP_NAME:-AutoDoc.app}"
+MAC_ENTITLEMENTS_FILE="${AUTODOC_MAC_ENTITLEMENTS_FILE:-build/entitlements.mac.plist}"
 
 die() {
   echo "FATAL: $*" >&2
@@ -31,6 +32,18 @@ verify_app_signature() {
   [[ -d "$app_path" ]] || die "Missing app bundle: ${app_path}"
   codesign --verify --deep --strict --verbose=4 "$app_path"
 }
+
+verify_entitlement_config() {
+  [[ -f "$MAC_ENTITLEMENTS_FILE" ]] || return 0
+
+  if /usr/libexec/PlistBuddy \
+    -c 'Print :com.apple.security.device.audio-input' \
+    "$MAC_ENTITLEMENTS_FILE" >/dev/null 2>&1; then
+    die "Remove com.apple.security.device.audio-input from ${MAC_ENTITLEMENTS_FILE}; it is an App Sandbox entitlement and makes Developer ID signatures invalid on newer macOS versions."
+  fi
+}
+
+verify_entitlement_config
 
 zip_path="$(find_update_zip)"
 [[ -n "$zip_path" ]] || die "No macOS update zip found in ${ARTIFACT_DIR}"
