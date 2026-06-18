@@ -25,6 +25,15 @@ const PROVIDER_LABEL: Record<CalendarProviderType, string> = {
   microsoft: 'Microsoft Outlook'
 }
 
+// Completing OAuth in the browser returns focus to the app at almost the same
+// moment the loopback callback resolves `calendar:connect`. If we abandon the
+// attempt the instant focus returns, that success resolution is dropped and the
+// UI never advances (e.g. the onboarding "Continue" button never appears until
+// a relaunch re-reads the persisted account). Give the in-flight attempt a short
+// grace period to resolve on its own before treating the refocus as an
+// abandoned (tab-closed) flow.
+const FOCUS_ABANDON_GRACE_MS = 2500
+
 /**
  * Shared calendar-connect handling for every surface (onboarding, homepage banner,
  * settings).
@@ -54,20 +63,35 @@ export function useCalendarConnect(options: UseCalendarConnectOptions = {}): Use
   optionsRef.current = options
 
   useEffect(() => {
-    const handleFocus = (): void => {
-      if (!attemptRef.current) return
+    let abandonTimer: ReturnType<typeof setTimeout> | null = null
 
-      // The user returned to the app without completing OAuth (e.g. closed the tab).
-      // Abandon the in-flight attempt so the next press isn't blocked.
-      attemptRef.current = null
-      setConnectingProvider(null)
-      void window.electronAPI.invoke('calendar:cancel-connect').catch((err) => {
-        console.error('Failed to cancel calendar connection:', err)
-      })
+    const handleFocus = (): void => {
+      const activeAttempt = attemptRef.current
+      if (!activeAttempt) return
+      if (abandonTimer) return
+
+      // The user just returned to the app. They may have completed OAuth (the
+      // loopback callback resolves at roughly the same moment focus returns) or
+      // abandoned it (closed the tab). Wait briefly: if the attempt resolves on
+      // its own we leave it alone; otherwise we treat it as abandoned and cancel
+      // so the next press isn't blocked.
+      abandonTimer = setTimeout(() => {
+        abandonTimer = null
+        if (attemptRef.current !== activeAttempt) return
+
+        attemptRef.current = null
+        setConnectingProvider(null)
+        void window.electronAPI.invoke('calendar:cancel-connect').catch((err) => {
+          console.error('Failed to cancel calendar connection:', err)
+        })
+      }, FOCUS_ABANDON_GRACE_MS)
     }
 
     window.addEventListener('focus', handleFocus)
-    return () => window.removeEventListener('focus', handleFocus)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      if (abandonTimer) clearTimeout(abandonTimer)
+    }
   }, [])
 
   const connect = useCallback(async (provider: CalendarProviderType): Promise<void> => {
