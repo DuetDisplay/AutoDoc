@@ -9,7 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
-import { buildRecordingTitle } from '../services/recording-title'
+import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
@@ -815,7 +815,7 @@ export function registerRecordingIpc(
 
         const events = await getRecentEventsForMatching()
         const matched = matchCalendarEvent(events, metadata.startedAt)
-        const calendarTitle = matched?.title?.trim() || null
+        const calendarTitle = getRecordingDisplayCalendarTitle(metadata, matched)
         if (!calendarTitle) {
           return
         }
@@ -897,8 +897,10 @@ export function registerRecordingIpc(
       if (!hasAudio && !hasVideo && !isFinalizing) continue
       const startedAt = metadata?.startedAt ?? dirStat.birthtime.getTime()
 
-      const calendarTitle =
-        matchCalendarEvent(recentEvents, startedAt)?.title ?? metadata?.calendarTitle ?? null
+      const calendarTitle = getRecordingDisplayCalendarTitle(
+        metadata,
+        matchCalendarEvent(recentEvents, startedAt)
+      )
       const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
 
       if (!metadata?.customTitle && !calendarTitle) {
@@ -1272,7 +1274,7 @@ export function registerRecordingIpc(
       // Calendar fetch failed
     }
 
-    const calendarTitle = calendarEvent?.title ?? metadata?.calendarTitle ?? null
+    const calendarTitle = getRecordingDisplayCalendarTitle(metadata, calendarEvent)
 
     const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
     if (!metadata?.customTitle && !calendarTitle) {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
-import { trackEvent } from '../services/analytics'
+import { toCountBucket, trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { useSearchStore } from '../stores/search'
 
@@ -28,7 +28,7 @@ export function Search() {
           resultCount: res.length,
         },
       })
-      trackEvent('search_performed', { result_count: res.length })
+      trackEvent('search_performed', { result_count_bucket: toCountBucket(res.length) })
     } catch (err) {
       console.error('Search failed:', err)
     } finally {

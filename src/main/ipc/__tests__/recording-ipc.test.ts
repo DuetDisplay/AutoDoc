@@ -3,6 +3,8 @@ import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { registerRecordingIpc } from '../recording-ipc'
+import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
+import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
 
 const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage } = vi.hoisted(() => ({
   handle: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock('../../services/e2e-fixtures', () => ({
 describe('recording IPC source handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(readMetadata).mockResolvedValue(null)
+    vi.mocked(matchCalendarEvent).mockReturnValue(null)
     delete process.env.AUTODOC_E2E
     appGetPath.mockImplementation((name: string) => {
       if (name === 'userData') return '/mock/user-data'
@@ -223,6 +227,226 @@ describe('recording IPC source handling', () => {
           level: 'warning'
         })
       )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not rename existing source-titled recordings from newly linked calendar matches', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-before-calendar-link'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const startedAt = new Date(2026, 5, 15, 7, 49).getTime()
+    const metadata: MeetingMetadata = {
+      sourceName: 'Entire screen',
+      startedAt,
+      stoppedAt: startedAt + 60_000,
+      durationSeconds: 60
+    }
+    const homeEvent: CalendarEvent = {
+      id: 'google_home-all-day',
+      externalId: 'home-all-day',
+      accountId: 'google-account-1',
+      provider: 'google',
+      recurringEventId: null,
+      title: 'Home',
+      startTime: startedAt - 12 * 60 * 60_000,
+      endTime: startedAt + 12 * 60 * 60_000,
+      isAllDay: true,
+      attendees: [],
+      meetingUrl: null,
+      autoRecord: 'off',
+      syncedAt: startedAt
+    }
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockResolvedValue(metadata)
+      vi.mocked(matchCalendarEvent).mockReturnValue(homeEvent)
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn().mockResolvedValue('complete'),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => true),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([homeEvent])
+        } as any
+      )
+
+      const listHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:list'
+      )?.[1] as (() => Promise<Array<{ meetingId: string; title: string }>>) | undefined
+
+      expect(listHandler).toBeTypeOf('function')
+      const entries = await listHandler?.()
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          meetingId,
+          title: expect.stringMatching(/^Entire screen /)
+        })
+      ])
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('still uses timed calendar matches as recording titles', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-during-timed-event'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const startedAt = new Date(2026, 5, 15, 10, 0).getTime()
+    const metadata: MeetingMetadata = {
+      sourceName: 'Zoom Workplace',
+      startedAt,
+      stoppedAt: startedAt + 30 * 60_000,
+      durationSeconds: 30 * 60
+    }
+    const designReviewEvent: CalendarEvent = {
+      id: 'google_design-review',
+      externalId: 'design-review',
+      accountId: 'google-account-1',
+      provider: 'google',
+      recurringEventId: null,
+      title: 'Design Review',
+      startTime: startedAt - 5 * 60_000,
+      endTime: startedAt + 55 * 60_000,
+      isAllDay: false,
+      attendees: [],
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      autoRecord: 'off',
+      syncedAt: startedAt
+    }
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockResolvedValue(metadata)
+      vi.mocked(matchCalendarEvent).mockReturnValue(designReviewEvent)
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn().mockResolvedValue('complete'),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => true),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([designReviewEvent])
+        } as any
+      )
+
+      const listHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:list'
+      )?.[1] as (() => Promise<Array<{ meetingId: string; title: string }>>) | undefined
+
+      expect(listHandler).toBeTypeOf('function')
+      const entries = await listHandler?.()
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          meetingId,
+          title: expect.stringMatching(/^Design Review /)
+        })
+      ])
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves timed match precedence over persisted calendar titles', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-with-live-timed-match'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const startedAt = new Date(2026, 5, 15, 11, 0).getTime()
+    const metadata: MeetingMetadata = {
+      sourceName: 'Zoom Workplace',
+      calendarTitle: 'Persisted Planning',
+      startedAt,
+      stoppedAt: startedAt + 30 * 60_000,
+      durationSeconds: 30 * 60
+    }
+    const currentTimedEvent: CalendarEvent = {
+      id: 'google_current-review',
+      externalId: 'current-review',
+      accountId: 'google-account-1',
+      provider: 'google',
+      recurringEventId: null,
+      title: 'Current Review',
+      startTime: startedAt - 5 * 60_000,
+      endTime: startedAt + 55 * 60_000,
+      isAllDay: false,
+      attendees: [],
+      meetingUrl: 'https://meet.google.com/current-review',
+      autoRecord: 'off',
+      syncedAt: startedAt
+    }
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockResolvedValue(metadata)
+      vi.mocked(matchCalendarEvent).mockReturnValue(currentTimedEvent)
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn().mockResolvedValue('complete'),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => true),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([currentTimedEvent])
+        } as any
+      )
+
+      const listHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:list'
+      )?.[1] as (() => Promise<Array<{ meetingId: string; title: string }>>) | undefined
+
+      expect(listHandler).toBeTypeOf('function')
+      const entries = await listHandler?.()
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          meetingId,
+          title: expect.stringMatching(/^Current Review /)
+        })
+      ])
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }

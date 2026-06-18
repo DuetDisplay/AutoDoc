@@ -13,6 +13,7 @@ import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import {
   buildRecordingTitle,
   buildRecordingTitleAliases,
+  getRecordingDisplayCalendarTitle,
   normalizeRecordingSearchText
 } from './recording-title'
 
@@ -2843,7 +2844,7 @@ function materializeInventoryEntry(
 ): MeetingInventoryEntry {
   const startedAt = entry.metadata?.startedAt ?? entry.primaryBirthtime
   const matchedCalendarEvent = matchCalendarEvent(recentEvents, startedAt)
-  const calendarTitle = matchedCalendarEvent?.title ?? entry.metadata?.calendarTitle ?? null
+  const calendarTitle = getRecordingDisplayCalendarTitle(entry.metadata, matchedCalendarEvent)
   const title = buildRecordingTitle(entry.metadata, startedAt, calendarTitle)
   const sourceName = entry.metadata?.sourceName ?? null
   const sourceApp = inferSourceApp(sourceName, title)

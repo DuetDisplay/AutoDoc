@@ -1,8 +1,34 @@
-import type { MeetingMetadata } from '../../shared/types'
+import type { CalendarEvent, MeetingMetadata } from '../../shared/types'
 
 export function formatRecordingDateSuffix(startedAt: number): string {
   const createdAt = new Date(startedAt)
   return `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+}
+
+/**
+ * Resolves the calendar title to use for a recording's display name.
+ *
+ * All-day events (e.g. "Home", birthdays, OOO blocks) are deliberately excluded:
+ * matching one would rename a recording that already has a meaningful source title.
+ * A timed event match wins; otherwise we fall back to a previously persisted
+ * calendar title. This is the single source of truth shared by the recording list,
+ * recording detail, and AI/search inventory so every surface names recordings the
+ * same way.
+ */
+export function getRecordingDisplayCalendarTitle(
+  metadata: MeetingMetadata | null,
+  matchedEvent: CalendarEvent | null
+): string | null {
+  if (matchedEvent && !matchedEvent.isAllDay) {
+    return matchedEvent.title?.trim() || metadata?.calendarTitle?.trim() || null
+  }
+
+  const persistedCalendarTitle = metadata?.calendarTitle?.trim()
+  if (persistedCalendarTitle) {
+    return persistedCalendarTitle
+  }
+
+  return null
 }
 
 export function buildRecordingTitle(

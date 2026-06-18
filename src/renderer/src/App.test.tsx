@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -6,6 +6,7 @@ import {
   createCalendarAccount,
   createCalendarEvent,
   createRecordingEntry,
+  createUpdateStatus,
   installMockElectronApi,
   resetRendererStores
 } from './test/fixtures'
@@ -162,5 +163,60 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
     expect(screen.queryByText('Optimized local processing is on')).not.toBeInTheDocument()
+  })
+
+  it('shows a restart prompt when an update is ready', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus(),
+      'updater:install': undefined
+    })
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'downloaded', version: '0.1.47' }))
+    })
+
+    expect(await screen.findByText('Update ready')).toBeInTheDocument()
+    expect(screen.getByText('Restart AutoDoc to install v0.1.47.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restart' }))
+
+    expect(screen.getByRole('button', { name: 'Restarting...' })).toBeDisabled()
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('updater:install')
+    })
+  })
+
+  it('opens Settings when the update notification is clicked', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus(),
+      'app:get-version': '0.1.11',
+      'app:get-runtime-info': undefined,
+      'app:get-storage-info': undefined,
+      'prefs:get-diagnostic-log-upload-consent': false
+    })
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+
+    act(() => {
+      api.emit('updater:open-settings', undefined)
+    })
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/settings')
+    })
   })
 })

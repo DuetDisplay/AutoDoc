@@ -1,9 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
+import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
-import { setAnalyticsConsent } from '../services/analytics'
+import {
+  identifyConsentedInstall,
+  setAnalyticsConsent,
+  startAnalyticsSession,
+  toDurationBucket,
+  trackConsentSnapshot,
+  trackDailyActiveIfNeeded,
+  trackEvent
+} from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
@@ -44,15 +53,8 @@ function formatBytes(bytes: number | null | undefined): string {
 }
 
 export function Settings() {
-  const {
-    accounts,
-    isConnecting,
-    setAccounts,
-    addAccount,
-    removeAccount,
-    setConnecting,
-    setEvents
-  } = useCalendarStore()
+  const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
+    useCalendarStore()
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
@@ -63,10 +65,9 @@ export function Settings() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
-  const [connectingProvider, setConnectingProvider] = useState<'google' | 'microsoft' | null>(
-    null
-  )
-  const connectAttemptRef = useRef<symbol | null>(null)
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false)
+  const previousUpdateState = useRef<UpdateStatus['state']>('idle')
+  const downloadStartedAt = useRef<number | null>(null)
 
   const refreshStorageInfo = useCallback(() => {
     return window.electronAPI.invoke('app:get-storage-info').then(setStorageInfo)
@@ -98,53 +99,82 @@ export function Settings() {
   }, [refreshStorageInfo])
 
   useEffect(() => {
+    const previousState = previousUpdateState.current
+    previousUpdateState.current = updateStatus.state
+
+    if (updateStatus.state !== 'installing') {
+      setIsInstallingUpdate(false)
+    }
+
+    if (updateStatus.state === 'checking' && previousState !== 'checking') {
+      trackEvent('update_check_started')
+      return
+    }
+
+    if (updateStatus.state === 'idle' && previousState === 'checking') {
+      trackEvent('update_not_available', { current_version: appVersion })
+      return
+    }
+
+    if (updateStatus.state === 'available' && updateStatus.version) {
+      trackEvent('update_available', {
+        current_version: appVersion,
+        available_version: updateStatus.version
+      })
+      return
+    }
+
+    if (updateStatus.state === 'downloading' && previousState !== 'downloading') {
+      downloadStartedAt.current = performance.now()
+      trackEvent('update_download_started', {
+        available_version: updateStatus.version ?? 'unknown'
+      })
+      return
+    }
+
+    if (updateStatus.state === 'downloaded' && updateStatus.version) {
+      const startedAt = downloadStartedAt.current
+      downloadStartedAt.current = null
+      trackEvent('update_download_completed', {
+        available_version: updateStatus.version,
+        duration_bucket:
+          startedAt === null ? undefined : toDurationBucket((performance.now() - startedAt) / 1000)
+      })
+      return
+    }
+
+    if (updateStatus.state === 'error') {
+      trackEvent('update_download_failed', {
+        available_version: updateStatus.version ?? 'unknown',
+        failure_code: 'update_error'
+      })
+    }
+  }, [appVersion, updateStatus])
+
+  useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then(setAccounts)
   }, [setAccounts])
 
-  useEffect(() => {
-    const handleFocus = () => {
-      if (!connectAttemptRef.current) return
-
-      connectAttemptRef.current = null
-      setConnectingProvider(null)
-      setConnecting(false)
-      void window.electronAPI.invoke('calendar:cancel-connect').catch((err) => {
-        console.error('Failed to cancel calendar connection:', err)
-      })
+  const { connectingProvider, connect } = useCalendarConnect({
+    onConnected: async (account) => {
+      addAccount(account)
+      trackEvent('calendar_connected', { provider: account.provider })
+      const events = await window.electronAPI.invoke('calendar:get-events')
+      setEvents(events)
     }
+  })
 
-    window.addEventListener('focus', handleFocus)
-    return () => window.removeEventListener('focus', handleFocus)
-  }, [setConnecting])
+  useEffect(() => {
+    setConnecting(connectingProvider !== null)
+  }, [connectingProvider, setConnecting])
 
-  const handleConnect = async (provider: 'google' | 'microsoft') => {
-    if (connectAttemptRef.current) return
-
-    const attemptId = Symbol(provider)
-    connectAttemptRef.current = attemptId
-    setConnectingProvider(provider)
-    setConnecting(true)
+  const handleConnect = (provider: 'google' | 'microsoft') => {
     recordDiagnosticAction({
       category: 'settings',
       action: 'calendar_connect_requested',
       details: { provider }
     })
-    try {
-      const account = await window.electronAPI.invoke('calendar:connect', provider)
-      if (connectAttemptRef.current !== attemptId) return
-      addAccount(account)
-      const events = await window.electronAPI.invoke('calendar:get-events')
-      if (connectAttemptRef.current !== attemptId) return
-      setEvents(events)
-    } catch (err) {
-      console.error('Failed to connect calendar:', err)
-    } finally {
-      if (connectAttemptRef.current === attemptId) {
-        connectAttemptRef.current = null
-        setConnectingProvider(null)
-        setConnecting(false)
-      }
-    }
+    void connect(provider)
   }
 
   const handleDisconnect = async (accountId: string) => {
@@ -165,8 +195,18 @@ export function Settings() {
       action: 'analytics_consent_toggled',
       details: { enabled: nextValue }
     })
+    if (!nextValue) {
+      trackEvent('analytics_disabled')
+    } else {
+      await identifyConsentedInstall()
+    }
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
     setAnalyticsConsent(nextValue)
+    if (nextValue) {
+      await trackConsentSnapshot()
+      await startAnalyticsSession()
+      await trackDailyActiveIfNeeded()
+    }
     setAnalyticsConsentState(nextValue)
   }
 
@@ -291,7 +331,7 @@ export function Settings() {
             <div className="flex gap-2">
               <button
                 onClick={() => handleConnect('google')}
-                disabled={isConnecting || connectingProvider !== null}
+                disabled={connectingProvider !== null}
                 className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -316,7 +356,7 @@ export function Settings() {
               </button>
               <button
                 onClick={() => handleConnect('microsoft')}
-                disabled={isConnecting || connectingProvider !== null}
+                disabled={connectingProvider !== null}
                 className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
               >
                 <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
@@ -361,9 +401,11 @@ export function Settings() {
                   aria-label="Attach technical app logs to error reports"
                 />
                 <span className="text-[12px] text-ink-muted leading-relaxed">
-                  <strong className="text-ink font-semibold">Attach technical app logs to error reports</strong>
-                  {' '}
-                  when diagnostics are enabled. This can be off while analytics and crash reports stay on.
+                  <strong className="text-ink font-semibold">
+                    Attach technical app logs to error reports
+                  </strong>{' '}
+                  when diagnostics are enabled. This can be off while analytics and crash reports
+                  stay on.
                 </span>
               </label>
             </div>
@@ -478,11 +520,27 @@ export function Settings() {
               )}
               {updateStatus.state === 'downloaded' && (
                 <button
-                  onClick={() => window.electronAPI.invoke('updater:install')}
+                  onClick={() => {
+                    setIsInstallingUpdate(true)
+                    trackEvent('update_install_requested', {
+                      available_version: updateStatus.version ?? 'unknown'
+                    })
+                    window.setTimeout(() => {
+                      void window.electronAPI.invoke('updater:install')
+                    }, 300)
+                  }}
+                  disabled={isInstallingUpdate}
                   className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
                 >
-                  Restart to update to v{updateStatus.version}
+                  {isInstallingUpdate
+                    ? 'Restarting...'
+                    : `Restart to update to v${updateStatus.version}`}
                 </button>
+              )}
+              {updateStatus.state === 'installing' && (
+                <span className="text-[11px] text-sage font-medium animate-pulse">
+                  Restarting...
+                </span>
               )}
               {updateStatus.state === 'error' && (
                 <button

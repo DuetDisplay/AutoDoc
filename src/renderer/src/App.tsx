@@ -20,12 +20,25 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
 import { Onboarding } from './pages/Onboarding'
-import { initAnalytics, restoreAnalyticsConsent, trackEvent } from './services/analytics'
+import type { UpdateStatus } from '../../preload/ipc.d'
+import {
+  endAnalyticsSession,
+  identifyConsentedInstall,
+  initAnalytics,
+  restoreAnalyticsConsent,
+  setAnalyticsContext,
+  startAnalyticsSession,
+  toDurationBucket,
+  trackDailyActiveIfNeeded,
+  trackEvent,
+  trackFirstEventOnce
+} from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import type { AppRuntimeInfo } from '../../shared/types'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()
@@ -43,16 +56,112 @@ function RouteDiagnosticTracker() {
   return null
 }
 
+function UpdateReadyPrompt() {
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
+  const location = useLocation()
+
+  useEffect(() => {
+    let cancelled = false
+
+    window.electronAPI.invoke('updater:get-status').then((status) => {
+      if (!cancelled) {
+        setUpdateStatus(status)
+      }
+    })
+
+    const unsubscribeStatus = window.electronAPI.on('updater:status', (status) => {
+      setUpdateStatus(status)
+      if (status.state !== 'downloaded') {
+        setDismissedVersion(null)
+      }
+    })
+    const unsubscribeOpenSettings = window.electronAPI.on('updater:open-settings', () => {
+      window.location.hash = `#${ROUTES.settings}`
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribeStatus()
+      unsubscribeOpenSettings()
+    }
+  }, [])
+
+  if (
+    !updateStatus ||
+    (updateStatus.state !== 'downloaded' && updateStatus.state !== 'installing')
+  ) {
+    return null
+  }
+
+  const version = updateStatus.version ?? 'unknown'
+  const isInstalling = updateStatus.state === 'installing'
+
+  if (!isInstalling && dismissedVersion === version) {
+    return null
+  }
+
+  const handleRestart = () => {
+    setUpdateStatus({ state: 'installing', version: updateStatus.version })
+    trackEvent('update_install_requested', {
+      available_version: updateStatus.version ?? 'unknown',
+      surface: location.pathname === ROUTES.settings ? 'settings' : 'update_prompt'
+    })
+    window.setTimeout(() => {
+      void window.electronAPI.invoke('updater:install')
+    }, 300)
+  }
+
+  return (
+    <div className="mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 flex items-center gap-3 shadow-sm animate-[slideDown_300ms_ease]">
+      <span className="h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] font-semibold text-ink">
+          {isInstalling ? 'Restarting...' : 'Update ready'}
+        </p>
+        <p className="text-[11px] text-ink-muted">
+          {isInstalling
+            ? 'AutoDoc will reopen after the update installs.'
+            : `Restart AutoDoc to install v${version}.`}
+        </p>
+      </div>
+      {!isInstalling && (
+        <button
+          type="button"
+          onClick={() => setDismissedVersion(version)}
+          className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
+        >
+          Later
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={handleRestart}
+        disabled={isInstalling}
+        className="text-[12px] font-semibold text-white bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
+      >
+        {isInstalling ? 'Restarting...' : 'Restart'}
+      </button>
+    </div>
+  )
+}
+
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } =
     useRecording()
   const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
+  const transcriptionCompletions = useRef<Set<string>>(new Set())
+  const transcriptionStarted = useRef<Record<string, number>>({})
   const segmentationFailures = useRef<Record<string, string>>({})
+  const segmentationCompletions = useRef<Set<string>>(new Set())
+  const segmentationNoNotes = useRef<Set<string>>(new Set())
+  const notesGenerationStarted = useRef<Record<string, number>>({})
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
+  const runtimeInfoRef = useRef<AppRuntimeInfo | null>(null)
 
   useEffect(() => {
     // Initialize analytics early (stays opted-out until consent is restored/given)
@@ -61,26 +170,68 @@ export default function App() {
     window.electronAPI.invoke('prefs:get-onboarding-complete').then(setOnboardingDone)
 
     // Restore analytics consent for returning users
-    window.electronAPI.invoke('prefs:get-analytics-consent').then((consent) => {
+    void (async () => {
+      const [consent, runtimeInfo] = await Promise.all([
+        window.electronAPI.invoke('prefs:get-analytics-consent'),
+        window.electronAPI.invoke('app:get-runtime-info').catch(() => null)
+      ])
+
+      if (runtimeInfo) {
+        runtimeInfoRef.current = runtimeInfo
+        setAnalyticsContext(runtimeInfo)
+      }
+
       restoreAnalyticsConsent(consent === true)
       setDiagnosticConsentEnabled(consent === true)
       updateRendererSentryConsent(consent === true)
       if (consent === true) {
+        await identifyConsentedInstall()
         recordDiagnosticAction({
           category: 'app',
           action: 'app_opened'
         })
         trackEvent('app_opened')
+        await startAnalyticsSession()
+        await trackDailyActiveIfNeeded()
       }
-    })
+    })()
 
     const unsubConsent = window.electronAPI.on('prefs:analytics-consent-changed', (enabled) => {
       restoreAnalyticsConsent(enabled)
       setDiagnosticConsentEnabled(enabled)
       updateRendererSentryConsent(enabled)
     })
+    let unsubE2ETrackAnalytics: (() => void) | null = null
+    let disposed = false
+    void window.electronAPI
+      .invoke('e2e:get-detection-state')
+      .then(() => {
+        const unsubscribe = window.electronAPI.on(
+          'e2e:track-analytics-event',
+          ({ event, properties }) => {
+            trackEvent(event, properties)
+          }
+        )
+        if (disposed) {
+          unsubscribe()
+        } else {
+          unsubE2ETrackAnalytics = unsubscribe
+        }
+      })
+      .catch(() => {})
 
-    return unsubConsent
+    const handleBeforeUnload = () => {
+      void endAnalyticsSession()
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      void endAnalyticsSession()
+      unsubConsent()
+      disposed = true
+      unsubE2ETrackAnalytics?.()
+    }
   }, [])
 
   useEffect(() => {
@@ -125,25 +276,99 @@ export default function App() {
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
       if (payload.status !== 'failed') {
         delete transcriptionFailures.current[payload.meetingId]
+      }
+
+      if (
+        (payload.status === 'downloading' ||
+          payload.status === 'transcribing' ||
+          payload.status === 'diarizing') &&
+        transcriptionStarted.current[payload.meetingId] === undefined
+      ) {
+        transcriptionStarted.current[payload.meetingId] = performance.now()
+        trackEvent('transcription_started', {
+          backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+          model: runtimeInfoRef.current?.whisperModel ?? 'unknown'
+        })
+      }
+
+      if (payload.status === 'complete') {
+        if (!transcriptionCompletions.current.has(payload.meetingId)) {
+          transcriptionCompletions.current.add(payload.meetingId)
+          const startedAt = transcriptionStarted.current[payload.meetingId]
+          delete transcriptionStarted.current[payload.meetingId]
+          trackEvent('transcription_completed', {
+            backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+            model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
+            processing_time_bucket:
+              startedAt === undefined
+                ? undefined
+                : toDurationBucket((performance.now() - startedAt) / 1000)
+          })
+        }
         return
       }
+
+      if (payload.status !== 'failed') return
 
       const errorCode = payload.errorCode ?? 'unknown'
       if (transcriptionFailures.current[payload.meetingId] === errorCode) return
       transcriptionFailures.current[payload.meetingId] = errorCode
-      trackEvent('transcription_failed', { meetingId: payload.meetingId, errorCode })
+      delete transcriptionStarted.current[payload.meetingId]
+      trackEvent('transcription_failed', {
+        backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
+        model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
+        failure_code: errorCode
+      })
     })
 
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
       if (payload.status !== 'failed') {
         delete segmentationFailures.current[payload.meetingId]
+      }
+
+      if (
+        (payload.status === 'downloading-model' || payload.status === 'segmenting') &&
+        notesGenerationStarted.current[payload.meetingId] === undefined
+      ) {
+        notesGenerationStarted.current[payload.meetingId] = performance.now()
+        trackEvent('notes_generation_started')
+      }
+
+      if (payload.status === 'complete') {
+        if (!segmentationCompletions.current.has(payload.meetingId)) {
+          segmentationCompletions.current.add(payload.meetingId)
+          const startedAt = notesGenerationStarted.current[payload.meetingId]
+          delete notesGenerationStarted.current[payload.meetingId]
+          trackEvent('notes_generated', {
+            processing_time_bucket:
+              startedAt === undefined
+                ? undefined
+                : toDurationBucket((performance.now() - startedAt) / 1000)
+          })
+          void trackFirstEventOnce('notes_generated', 'first_notes_generated')
+          void trackFirstEventOnce('user_activated', 'user_activated', {
+            activation_reason: 'first_notes_generated'
+          })
+        }
         return
       }
+
+      if (payload.status === 'no-notes') {
+        if (!segmentationNoNotes.current.has(payload.meetingId)) {
+          segmentationNoNotes.current.add(payload.meetingId)
+          delete notesGenerationStarted.current[payload.meetingId]
+          trackEvent('notes_not_generated', { reason_code: 'no_notes_detected' })
+        }
+        return
+      }
+
+      if (payload.status !== 'failed') return
 
       const errorCode = payload.errorCode ?? 'unknown'
       if (segmentationFailures.current[payload.meetingId] === errorCode) return
       segmentationFailures.current[payload.meetingId] = errorCode
-      trackEvent('segmentation_failed', { meetingId: payload.meetingId, errorCode })
+      delete notesGenerationStarted.current[payload.meetingId]
+      trackEvent('notes_generation_failed', { failure_code: errorCode })
     })
 
     const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
@@ -156,7 +381,12 @@ export default function App() {
       const errorKey = `${failedStep}:${status.error ?? ''}`
       if (whisperFailureKey.current === errorKey) return
       whisperFailureKey.current = errorKey
-      trackEvent('whisper_setup_failed', { failed_step: failedStep })
+      trackEvent('setup_component_failed', {
+        component: 'whisper',
+        phase: failedStep,
+        failure_code: failedStep,
+        attempt_number: 1
+      })
     })
 
     const unsubOllama = window.electronAPI.on('ollama:setup-progress', (status) => {
@@ -169,14 +399,18 @@ export default function App() {
       const errorKey = `${failedStep}:${status.error ?? ''}`
       if (ollamaFailureKey.current === errorKey) return
       ollamaFailureKey.current = errorKey
-      trackEvent('ollama_setup_failed', { failed_step: failedStep })
+      trackEvent('setup_component_failed', {
+        component: 'ollama',
+        phase: failedStep,
+        failure_code: failedStep,
+        attempt_number: 1
+      })
     })
 
     const unsubSegmentationDiagnostic = window.electronAPI.on(
       'segmentation:diagnostic-event',
       (payload) => {
         trackEvent(`segmentation_${payload.event}`, {
-          meetingId: payload.meetingId,
           ...payload.properties
         })
       }
@@ -387,6 +621,7 @@ export default function App() {
           <MeetingDetectedBanner />
           <PermissionToast />
           <LowSpecMacProcessingBanner />
+          <UpdateReadyPrompt />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

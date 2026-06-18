@@ -191,7 +191,10 @@ remove_smoke_build_artifacts() {
     "${REPO_ROOT}/build-older-${STAMP}-dir" \
     "${REPO_ROOT}/build-newer-${STAMP}-dir"
   do
-    if [[ -d "$d" ]]; then
+    if [[ -L "$d" ]]; then
+      rm -f "$d"
+      echo "Removed smoke symlink: $d" >&2
+    elif [[ -d "$d" ]]; then
       rm -rf "$d"
       echo "Removed smoke build: $d" >&2
     fi
@@ -408,6 +411,34 @@ stop_all_autodoc() {
   rm -f "$HOME/Library/Application Support/autodoc/SingletonLock" 2>/dev/null || true
   rm -f "$HOME/Library/Application Support/autodoc/SingletonSocket" 2>/dev/null || true
   rm -f "$HOME/Library/Application Support/autodoc/SingletonCookie" 2>/dev/null || true
+}
+
+# Unsigned/adhoc local builds often fail to start via `open`; fall back to the binary.
+launch_app_bundle() {
+  local bundle="$1"
+  local wait_sec="${2:-15}"
+  local exe="${bundle}/Contents/MacOS/AutoDoc"
+  [[ -x "$exe" ]] || die "Missing executable: $exe"
+  open "$bundle" >/dev/null 2>&1 || true
+  local deadline=$((SECONDS + wait_sec))
+  while (( SECONDS < deadline )); do
+    if [[ "$(count_instance_roots)" -gt 0 ]]; then
+      vlog "launch_app_bundle: started via open ($bundle)"
+      return 0
+    fi
+    sleep 1
+  done
+  vlog "launch_app_bundle: open did not start AutoDoc; launching binary directly"
+  "$exe" >/dev/null 2>&1 &
+  deadline=$((SECONDS + wait_sec))
+  while (( SECONDS < deadline )); do
+    if [[ "$(count_instance_roots)" -gt 0 ]]; then
+      vlog "launch_app_bundle: started via binary ($bundle)"
+      return 0
+    fi
+    sleep 1
+  done
+  vlog "launch_app_bundle: no AutoDoc main process after ${wait_sec}s (open + binary)"
 }
 
 count_instance_roots() {
@@ -711,26 +742,22 @@ uninstall_installed
 echo ""
 echo "=== 1) Install $NEWER, launch installed — opens normally ==="
 install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
-open "$INSTALLED_APP"
-sleep 6
+launch_app_bundle "$INSTALLED_APP"
 c=$(count_instance_roots)
 record "1 installed launch" "$( [[ "$c" -eq 1 ]] && echo 1 || echo 0 )" "instances: $c"
 stop_all_autodoc
 
 echo ""
 echo "=== 2) Launch installed twice — single instance ==="
-open "$INSTALLED_APP"
-sleep 6
-open "$INSTALLED_APP"
-sleep 4
+launch_app_bundle "$INSTALLED_APP"
+launch_app_bundle "$INSTALLED_APP" 4
 c2=$(count_instance_roots)
 record "2 single instance" "$( [[ "$c2" -eq 1 ]] && echo 1 || echo 0 )" "instances: $c2"
 stop_all_autodoc
 
 echo ""
 echo "=== 3a) Same-version loose cold — redirects to /Applications, no dialog ==="
-open "$LOOSE_NEWER"
-sleep 12
+launch_app_bundle "$LOOSE_NEWER" 12
 dlg=0
 send_dialog_quiet Accept 3 && dlg=1 || true
 wait_apps_only_single_instance 45 || true
@@ -746,10 +773,8 @@ record "3a same-ver loose cold redirect" "$ok3a" "dialog detected: $dlg, instanc
 
 echo ""
 echo "=== 3b) Same-version loose while running — focus, no dialog ==="
-open "$INSTALLED_APP"
-sleep 6
-open "$LOOSE_NEWER"
-sleep 6
+launch_app_bundle "$INSTALLED_APP"
+launch_app_bundle "$LOOSE_NEWER"
 dlg3b=0
 send_dialog_quiet Accept 4 && dlg3b=1 || true
 wait_apps_only_single_instance 45 || true
@@ -766,8 +791,7 @@ echo "=== 4) Upgrade: install $OLDER, loose $NEWER cold — accept ==="
 uninstall_installed
 install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 v_pre="$(get_installed_version)"
-open "$LOOSE_NEWER"
-sleep 12
+launch_app_bundle "$LOOSE_NEWER" 12
 send_dialog Accept 90 || die "Upgrade dialog not found"
 wait_instance_count 1 120
 sleep 8
@@ -780,8 +804,7 @@ echo "=== 5) Downgrade: install $NEWER, loose $OLDER cold — accept ==="
 uninstall_installed
 install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 v_pre5="$(get_installed_version)"
-open "$LOOSE_OLDER"
-sleep 12
+launch_app_bundle "$LOOSE_OLDER" 12
 send_dialog Accept 90 || die "Downgrade dialog not found"
 wait_instance_count 1 120
 sleep 8
@@ -793,10 +816,8 @@ echo ""
 echo "=== 6) Upgrade warm: $OLDER running + loose $NEWER — accept ==="
 uninstall_installed
 install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
-open "$INSTALLED_APP"
-sleep 8
-open "$LOOSE_NEWER"
-sleep 10
+launch_app_bundle "$INSTALLED_APP" 8
+launch_app_bundle "$LOOSE_NEWER" 10
 send_dialog Accept 90 || die "Upgrade warm dialog not found"
 wait_instance_count 1 120
 sleep 8
@@ -808,10 +829,8 @@ echo ""
 echo "=== 7) Downgrade warm: $NEWER running + loose $OLDER — accept ==="
 uninstall_installed
 install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
-open "$INSTALLED_APP"
-sleep 8
-open "$LOOSE_OLDER"
-sleep 10
+launch_app_bundle "$INSTALLED_APP" 8
+launch_app_bundle "$LOOSE_OLDER" 10
 send_dialog Accept 90 || die "Downgrade warm dialog not found"
 wait_instance_count 1 120
 sleep 8

@@ -1,31 +1,27 @@
 import { useState, useEffect } from 'react'
+import { useCalendarConnect } from '../../hooks/useCalendarConnect'
 
 export function CalendarStep({ onNext }: { onNext: () => void }) {
-  const [connecting, setConnecting] = useState(false)
   const [connected, setConnected] = useState(false)
-  const [connectError, setConnectError] = useState<string | null>(null)
+
+  const {
+    connectingProvider,
+    error: connectError,
+    connect: handleConnect
+  } = useCalendarConnect({
+    onConnected: () => setConnected(true),
+    formatError: (provider) =>
+      `We couldn't connect ${
+        provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
+      }. Check the permission prompt and try again, or skip for now.`
+  })
+  const connecting = connectingProvider !== null
 
   useEffect(() => {
     window.electronAPI.invoke('calendar:get-accounts').then((accounts) => {
       if (accounts.length > 0) setConnected(true)
     })
   }, [])
-
-  const handleConnect = async (provider: 'google' | 'microsoft') => {
-    setConnecting(true)
-    setConnectError(null)
-    try {
-      await window.electronAPI.invoke('calendar:connect', provider)
-      setConnected(true)
-    } catch {
-      const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'
-      setConnectError(
-        `We couldn't connect ${providerName}. Check the permission prompt and try again, or skip for now.`
-      )
-    } finally {
-      setConnecting(false)
-    }
-  }
 
   return (
     <div className="text-center">

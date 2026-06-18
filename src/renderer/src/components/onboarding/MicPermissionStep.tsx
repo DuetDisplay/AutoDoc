@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { recordPersistentDiagnosticAction } from '../../services/diagnostic-trail'
+import { trackEvent } from '../../services/analytics'
 
 export function MicPermissionStep({
   onNext,
@@ -95,6 +96,7 @@ export function MicPermissionStep({
   }, [allowAutoAdvance, checkPermission, recordPermissionTrace])
 
   const handleEnable = async () => {
+    trackEvent('permission_requested', { permission_type: 'microphone' })
     recordPermissionTrace('microphone_permission_enable_clicked', {
       openedSettings,
       granted
@@ -116,6 +118,7 @@ export function MicPermissionStep({
       screenGranted: perms.screen
     })
     if (perms.microphone) {
+      trackEvent('permission_granted', { permission_type: 'microphone' })
       setGranted(true)
       await clearOpenedState()
       return
@@ -130,11 +133,13 @@ export function MicPermissionStep({
       screenGranted: requestedPerms.screen
     })
     if (requestedPerms.microphone) {
+      trackEvent('permission_granted', { permission_type: 'microphone' })
       setGranted(true)
       await clearOpenedState()
       return
     }
 
+    trackEvent('permission_denied', { permission_type: 'microphone' })
     await window.electronAPI.invoke(
       'prefs:set-onboarding-permission-settings-opened',
       'microphone',

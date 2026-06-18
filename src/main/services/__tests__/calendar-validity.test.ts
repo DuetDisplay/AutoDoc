@@ -105,30 +105,45 @@ describe('Calendar sync hardening', () => {
     expect(logAutodocFailure).not.toHaveBeenCalled()
   })
 
-  it('keeps a cancelled connect attempt locked until the provider promise settles', async () => {
+  it('supersedes an abandoned connect attempt when a new connection starts', async () => {
     const manager = new CalendarManager()
-    const deferredConnect = createDeferred<Awaited<ReturnType<CalendarManager['connect']>>>()
-    const cancelConnect = vi.fn()
-    const googleProvider = createProvider({
-      connect: vi.fn(() => deferredConnect.promise),
-      cancelConnect
+    const firstConnectDeferred = createDeferred<Awaited<ReturnType<CalendarManager['connect']>>>()
+    const secondConnectDeferred = createDeferred<Awaited<ReturnType<CalendarManager['connect']>>>()
+    const cancelConnect = vi.fn(() => {
+      // The provider aborts its pending OAuth wait when asked to cancel.
+      firstConnectDeferred.reject(new Error('Calendar connection cancelled'))
     })
+    const connect = vi
+      .fn()
+      .mockImplementationOnce(() => firstConnectDeferred.promise)
+      .mockImplementationOnce(() => secondConnectDeferred.promise)
+    const googleProvider = createProvider({ connect, cancelConnect })
 
     ;(manager as unknown as TestCalendarManagerAccess).providers = new Map([
       ['google', googleProvider as CalendarProvider]
     ])
 
     const firstConnect = manager.connect('google')
-    manager.cancelConnect()
-
-    await expect(manager.connect('google')).rejects.toThrow(
-      'Another calendar connection is already in progress'
+    // The abandoned first attempt is cancelled rather than rejecting the new one.
+    const firstOutcome = firstConnect.then(
+      () => 'resolved' as const,
+      (error: unknown) => error
     )
 
-    deferredConnect.reject(new Error('Calendar connection cancelled'))
+    const secondConnect = manager.connect('google')
 
-    await expect(firstConnect).rejects.toThrow('Calendar connection cancelled')
+    const account = {
+      id: 'google-account-1',
+      provider: 'google' as const,
+      email: '',
+      connectedAt: Date.now()
+    }
+    secondConnectDeferred.resolve(account)
+
+    await expect(secondConnect).resolves.toEqual(account)
+    await expect(firstOutcome).resolves.toBeInstanceOf(Error)
     expect(cancelConnect).toHaveBeenCalledTimes(1)
+    expect(connect).toHaveBeenCalledTimes(2)
   })
 
   it('disables unsupported Microsoft mailboxes after the first unsupported response', async () => {

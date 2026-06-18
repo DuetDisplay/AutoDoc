@@ -97,6 +97,7 @@ export function AskAI(): ReactElement {
       undefined,
       'timed_out'
     )
+    trackEvent('chat_response_failed', { failure_code: 'timed_out' })
     finishActiveRequest()
   }
 
@@ -134,7 +135,9 @@ export function AskAI(): ReactElement {
         questionLength: question.length
       }
     })
-    trackEvent('chat_message_sent')
+    trackEvent('chat_message_sent', {
+      selected_recording: Boolean(params.selectedMeetingId)
+    })
 
     const cleanupListeners = [
       window.electronAPI.on('chat:chunk', (payload) => {
@@ -150,6 +153,10 @@ export function AskAI(): ReactElement {
         if (payload.requestId !== requestId) return
         if (activeRequestIdRef.current !== requestId) return
         updateMessage(assistantMessageId, payload.content, payload.clarificationOptions, 'complete')
+        trackEvent('chat_response_completed', {
+          selected_recording: Boolean(params.selectedMeetingId),
+          clarification_options_count: payload.clarificationOptions?.length ?? 0
+        })
         finishActiveRequest()
       }),
       window.electronAPI.on('chat:error', (payload) => {
@@ -162,6 +169,7 @@ export function AskAI(): ReactElement {
           'failed'
         )
         console.error('Chat failed:', payload.error)
+        trackEvent('chat_response_failed', { failure_code: 'stream_error' })
         finishActiveRequest()
       }),
       window.electronAPI.on('chat:canceled', (payload) => {
@@ -169,6 +177,7 @@ export function AskAI(): ReactElement {
         if (activeRequestIdRef.current !== requestId) return
         setMessageStatus(assistantMessageId, 'canceled')
         removeEmptyInFlightAssistantMessages()
+        trackEvent('chat_response_failed', { failure_code: 'canceled' })
         finishActiveRequest()
       })
     ]
@@ -205,6 +214,7 @@ export function AskAI(): ReactElement {
         'failed'
       )
       console.error('Chat failed:', err)
+      trackEvent('chat_response_failed', { failure_code: 'invoke_failed' })
       finishActiveRequest()
     }
   }

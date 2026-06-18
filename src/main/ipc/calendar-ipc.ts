@@ -64,9 +64,9 @@ export function registerCalendarIpc(
     }
   })
 
-  ipcMain.handle('calendar:cancel-connect', () => {
+  ipcMain.handle('calendar:cancel-connect', async () => {
     if (isE2E) return
-    calendarManager.cancelConnect()
+    await calendarManager.cancelConnect()
   })
 
   ipcMain.handle('calendar:disconnect', async (_event, accountId: string) => {

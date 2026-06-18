@@ -22,23 +22,43 @@ function setPlistString(plistPath, key, value) {
   }
 }
 
-function tryGetSigningIdentity() {
-  if (process.env.CSC_NAME) {
-    return process.env.CSC_NAME
+function getConfiguredSigningIdentity(context) {
+  const identity =
+    context?.packager?.platformSpecificBuildOptions?.identity ??
+    context?.packager?.config?.mac?.identity
+
+  if (!identity || identity === '-') {
+    return null
   }
 
+  return identity
+}
+
+function findSigningIdentity(predicate) {
   try {
     const output = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
     })
-    const line = output.split(/\r?\n/).find((entry) => entry.includes('Developer ID Application:'))
+    const line = output.split(/\r?\n/).find(predicate)
 
     const match = line?.match(/"(.+)"/)
     return match?.[1] ?? null
   } catch {
     return null
   }
+}
+
+function tryGetSigningIdentity(context) {
+  if (process.env.CSC_NAME) {
+    return process.env.CSC_NAME
+  }
+
+  return (
+    getConfiguredSigningIdentity(context) ??
+    findSigningIdentity((entry) => entry.includes('Developer ID Application:')) ??
+    findSigningIdentity((entry) => entry.includes('Apple Development:'))
+  )
 }
 
 async function walk(dirPath) {
@@ -92,25 +112,20 @@ function isMachOBinary(filePath) {
   }
 }
 
-async function signBundledPythonRuntime(appBundlePath) {
-  const runtimeRoot = join(appBundlePath, 'Contents', 'Resources', 'python-runtime')
-  return await signMachOBinariesUnder(runtimeRoot, 'bundled macOS Python binaries')
+async function signBundledResourceMachOBinaries(appBundlePath, context) {
+  const resourcesRoot = join(appBundlePath, 'Contents', 'Resources')
+  return await signMachOBinariesUnder(resourcesRoot, 'bundled macOS resource Mach-O binaries', context)
 }
 
-async function signBundledWhisperRuntime(appBundlePath) {
-  const runtimeRoot = join(appBundlePath, 'Contents', 'Resources', 'macos-whisper-runtime')
-  return await signMachOBinariesUnder(runtimeRoot, 'bundled macOS Whisper runtime')
-}
-
-async function signMachOBinariesUnder(runtimeRoot, label) {
+async function signMachOBinariesUnder(runtimeRoot, label, context) {
   if (!existsSync(runtimeRoot)) {
     return 0
   }
 
-  const identity = tryGetSigningIdentity()
+  const identity = tryGetSigningIdentity(context)
   if (!identity) {
     console.log(
-      `[afterPack] Skipped signing ${label} because no Developer ID identity is available`
+      `[afterPack] Skipped signing ${label} because no macOS code signing identity is available`
     )
     return 0
   }
@@ -186,8 +201,7 @@ module.exports.default = async function afterPack(context) {
     join(appBundlePath, 'Contents', 'Resources', 'macos-whisper-runtime')
   )
   const patchedPlists = await patchNestedAppPrivacyStrings(appBundlePath)
-  const signedPythonBinaries = await signBundledPythonRuntime(appBundlePath)
-  const signedWhisperBinaries = await signBundledWhisperRuntime(appBundlePath)
+  const signedResourceBinaries = await signBundledResourceMachOBinaries(appBundlePath, context)
 
   if (patchedPlists.length > 0) {
     console.log(
@@ -199,14 +213,9 @@ module.exports.default = async function afterPack(context) {
       `[afterPack] Removed ${removedWhisperAppleDoubleFiles} AppleDouble files from bundled macOS Whisper runtime`
     )
   }
-  if (signedPythonBinaries > 0) {
+  if (signedResourceBinaries > 0) {
     console.log(
-      `[afterPack] Signed ${signedPythonBinaries} bundled macOS Python binaries before final app signing`
-    )
-  }
-  if (signedWhisperBinaries > 0) {
-    console.log(
-      `[afterPack] Signed ${signedWhisperBinaries} bundled macOS Whisper runtime binaries before final app signing`
+      `[afterPack] Signed ${signedResourceBinaries} bundled macOS resource Mach-O binaries before final app signing`
     )
   }
 }

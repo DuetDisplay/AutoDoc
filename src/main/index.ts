@@ -1,4 +1,12 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, powerMonitor } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  systemPreferences,
+  powerMonitor,
+  Notification
+} from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
@@ -41,6 +49,8 @@ import {
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { AnalyticsStateStore } from './services/analytics-state-store'
+import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import {
@@ -84,7 +94,7 @@ import {
   traceInstallPolicy,
   warnIfUnsupportedMacOS
 } from './services/application-install'
-import { focusMainWindow, registerMainWindow } from './services/main-window'
+import { focusMainWindow, getMainWindow, registerMainWindow } from './services/main-window'
 import {
   getE2EDetectionState,
   getE2EOllamaStatus,
@@ -108,6 +118,7 @@ import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
 import { shouldSuppressNotificationActivation } from './notification-window'
 import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
+import { isOfficialAutoDocBuild } from './services/distribution-config'
 
 // Ensure consistent app name for safeStorage keychain service across dev and production
 app.setName('AutoDoc')
@@ -499,6 +510,8 @@ app.whenReady().then(async () => {
   recordMainDiagnosticAction({ category: 'app', action: 'app_ready' })
 
   const prefsStore = new PrefsStore()
+  const analyticsStateStore = new AnalyticsStateStore()
+  registerAnalyticsIpc(analyticsStateStore)
   const runtimeContext = {
     platform: process.platform,
     arch: process.arch,
@@ -558,9 +571,52 @@ app.whenReady().then(async () => {
     return false
   }
 
+  const openSettingsFromUpdateNotification = (): void => {
+    if (!focusMainWindow()) {
+      createWindow()
+    }
+
+    const mainWindow = getMainWindow()
+    if (!mainWindow) {
+      return
+    }
+
+    const openSettings = (): void => {
+      mainWindow.webContents.send('updater:open-settings')
+    }
+
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', openSettings)
+      return
+    }
+
+    openSettings()
+  }
+
+  const notifyUpdateReadyIfHidden = (): void => {
+    const mainWindow = getMainWindow()
+    const isHidden = !mainWindow || !mainWindow.isVisible() || mainWindow.isMinimized()
+
+    if (!isHidden || !Notification.isSupported()) {
+      return
+    }
+
+    const notification = new Notification({
+      title: 'AutoDoc update ready',
+      body: 'Restart to install.'
+    })
+    notification.on('click', openSettingsFromUpdateNotification)
+    notification.show()
+  }
+
   // Auto-updater
   if (!isE2E) {
-    initAutoUpdater()
+    initAutoUpdater({
+      prepareForInstall: () => {
+        isQuitting = true
+      },
+      onUpdateDownloaded: notifyUpdateReadyIfHidden
+    })
   }
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
@@ -935,7 +991,11 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'app:get-runtime-info',
     (): AppRuntimeInfo => ({
+      appVersion: app.getVersion(),
       platform: isE2E ? getE2EPlatform() : process.platform,
+      arch: process.arch,
+      officialBuild: isOfficialAutoDocBuild(),
+      buildChannel: is.dev ? 'development' : isOfficialAutoDocBuild() ? 'official' : 'custom',
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),
@@ -1574,6 +1634,13 @@ app.on('before-quit', () => {
   ollamaManager?.stop()
   stopRecordingMediaHttpServer()
 })
+
+;(app as unknown as { on(event: 'before-quit-for-update', listener: () => void): void }).on(
+  'before-quit-for-update',
+  () => {
+    isQuitting = true
+  }
+)
 
 app.on('window-all-closed', () => {
   if (!isE2E && !isRealSetupTest) {

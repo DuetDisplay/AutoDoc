@@ -16,6 +16,7 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
+import { trackEvent } from '../services/analytics'
 
 type Tab = 'notes' | 'transcript' | 'settings'
 
@@ -711,6 +712,7 @@ export function MeetingDetail() {
   const handleDelete = async () => {
     if (!id) return
     await window.electronAPI.invoke('recording:delete', id)
+    trackEvent('recording_deleted')
     navigate('/recordings')
   }
 

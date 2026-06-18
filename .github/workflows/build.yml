@@ -110,6 +110,9 @@ jobs:
           }}
         run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
 
+      - name: Verify macOS update artifact integrity
+        run: bash scripts/verify-macos-update-artifact.sh dist
+
       - name: Upload macOS artifacts
         if: >-
           ${{

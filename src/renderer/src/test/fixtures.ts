@@ -213,7 +213,11 @@ export function createSearchResult(overrides: Partial<SearchResult> = {}): Searc
 
 export function createRuntimeInfo(overrides: Partial<AppRuntimeInfo> = {}): AppRuntimeInfo {
   return {
+    appVersion: '0.1.24',
     platform: 'darwin',
+    arch: 'arm64',
+    officialBuild: true,
+    buildChannel: 'official',
     storagePath: '/tmp/autodoc-tests',
     whisperModel: 'ggml-base.en.bin',
     ollamaModel: 'llama3.2:3b',

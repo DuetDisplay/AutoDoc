@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
+import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
 
 const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
@@ -26,6 +27,8 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoRetryAttempts = useRef(0)
   const hasSeenMeaningfulSetupProgress = useRef(false)
+  const setupStartedAt = useRef(performance.now())
+  const lastFailureKey = useRef<string | null>(null)
   const isLowSpecMac = setupStatus.macProcessingProfileId === 'mac-low-spec'
 
   const clearRetryTimer = () => {
@@ -43,7 +46,12 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     setIsAutoRetrying(false)
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
+    lastFailureKey.current = null
     clearRetryTimer()
+    void trackFirstEventOnce('whisper_setup_completed', 'setup_component_completed', {
+      component: 'whisper',
+      duration_bucket: toDurationBucket((performance.now() - setupStartedAt.current) / 1000)
+    })
   }
 
   const scheduleAutoRetry = () => {
@@ -75,6 +83,17 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     }
 
     if (status.phase === 'error') {
+      const failedStep = status.failedStep ?? 'unknown'
+      const failureKey = `${failedStep}:${status.error ?? ''}:${autoRetryAttempts.current}`
+      if (lastFailureKey.current !== failureKey) {
+        lastFailureKey.current = failureKey
+        trackEvent('setup_component_failed', {
+          component: 'whisper',
+          phase: failedStep,
+          failure_code: failedStep,
+          attempt_number: autoRetryAttempts.current + 1
+        })
+      }
       scheduleAutoRetry()
       if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
         setIsAutoRetrying(false)
@@ -101,6 +120,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   }
 
   useEffect(() => {
+    trackEvent('setup_component_started', { component: 'whisper', phase: 'checking' })
     window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
       await applyStatus(status, true)
     })

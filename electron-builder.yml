@@ -40,10 +40,13 @@ mac:
     - dmg
     - zip
   minimumSystemVersion: 14.0.0
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  signIgnore:
+    - '^.*?/Contents/Resources/.*$'
   extendInfo:
-    - NSMicrophoneUsageDescription: Application requires access to the microphone.
-    - NSAudioCaptureUsageDescription: Application requests access to capture system audio during screen recording.
+    NSMicrophoneUsageDescription: Application requires access to the microphone.
+    NSAudioCaptureUsageDescription: Application requests access to capture system audio during screen recording.
   extraResources:
     - from: vendor/mlx-python-runtime
       to: mlx-python-runtime
