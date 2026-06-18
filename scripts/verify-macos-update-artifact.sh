@@ -93,18 +93,28 @@ verify_app_entitlements() {
   if grep -qi 'invalid entitlements blob' <<<"$output"; then
     die "Extracted app has an invalid entitlements blob; ensure mac.entitlements points to ${MAC_ENTITLEMENTS_FILE}."
   fi
-  if grep -q 'com.apple.security.device.audio-input' <<<"$output"; then
-    die "Extracted app has com.apple.security.device.audio-input; ensure mac.entitlements points to ${MAC_ENTITLEMENTS_FILE}."
+  # The microphone is gated by the Hardened Runtime audio-input entitlement.
+  # Without it macOS auto-denies askForMediaAccess (no prompt) and AutoDoc never
+  # appears in Privacy > Microphone, so recordings capture no audio. Screen
+  # recording uses a different TCC path and is unaffected, which makes this easy
+  # to miss. Fail the build if it is ever dropped again.
+  if ! grep -q 'com.apple.security.device.audio-input' <<<"$output"; then
+    die "App is missing com.apple.security.device.audio-input; microphone access will be denied at runtime. Restore it in ${MAC_ENTITLEMENTS_FILE}."
   fi
 }
 
 verify_entitlement_config() {
   [[ -f "$MAC_ENTITLEMENTS_FILE" ]] || return 0
 
-  if /usr/libexec/PlistBuddy \
+  # com.apple.security.device.audio-input is the Hardened Runtime entitlement
+  # that authorizes microphone access for our Developer ID app. It is valid for
+  # notarized Developer ID builds (shipped in v0.1.21–v0.1.46 with working mics).
+  # It was removed in error chasing a misdiagnosed "invalid signature" report,
+  # which silently broke microphone capture. Require it so it cannot regress.
+  if ! /usr/libexec/PlistBuddy \
     -c 'Print :com.apple.security.device.audio-input' \
     "$MAC_ENTITLEMENTS_FILE" >/dev/null 2>&1; then
-    die "Remove com.apple.security.device.audio-input from ${MAC_ENTITLEMENTS_FILE}; it is an App Sandbox entitlement and makes Developer ID signatures invalid on newer macOS versions."
+    die "${MAC_ENTITLEMENTS_FILE} is missing com.apple.security.device.audio-input; microphone access will be denied at runtime. Restore it."
   fi
 }
 
