@@ -1,6 +1,6 @@
 const { readdir, rm, stat } = require('fs/promises')
 const { existsSync } = require('fs')
-const { join } = require('path')
+const { isAbsolute, join } = require('path')
 const { execFileSync } = require('child_process')
 
 const PRIVACY_STRINGS = {
@@ -59,6 +59,28 @@ function tryGetSigningIdentity(context) {
     findSigningIdentity((entry) => entry.includes('Developer ID Application:')) ??
     findSigningIdentity((entry) => entry.includes('Apple Development:'))
   )
+}
+
+// The bundled MLX/Python runtime allocates executable (JIT) memory at import
+// time. Because `mac.signIgnore` excludes Contents/Resources, electron-builder's
+// signer never applies the inherited entitlements to these binaries, so we must
+// sign them here with the same Hardened Runtime entitlements the main app uses
+// (allow-jit / allow-unsigned-executable-memory). Without them macOS SIGKILLs
+// the runtime with "Code Signature Invalid" the moment transcription starts.
+function resolveResourceEntitlementsPath(context) {
+  const configured =
+    context?.packager?.platformSpecificBuildOptions?.entitlements ??
+    context?.packager?.config?.mac?.entitlements ??
+    context?.packager?.platformSpecificBuildOptions?.entitlementsInherit ??
+    context?.packager?.config?.mac?.entitlementsInherit
+
+  const candidates = []
+  if (configured) {
+    candidates.push(isAbsolute(configured) ? configured : join(process.cwd(), configured))
+  }
+  candidates.push(join(__dirname, '..', 'build', 'entitlements.mac.plist'))
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
 async function walk(dirPath) {
@@ -130,6 +152,13 @@ async function signMachOBinariesUnder(runtimeRoot, label, context) {
     return 0
   }
 
+  const entitlementsPath = resolveResourceEntitlementsPath(context)
+  if (!entitlementsPath) {
+    console.warn(
+      `[afterPack] WARNING: no entitlements file found for ${label}; the bundled runtime may be SIGKILLed at runtime (missing allow-jit).`
+    )
+  }
+
   const files = await walk(runtimeRoot)
   const binaries = []
 
@@ -146,10 +175,17 @@ async function signMachOBinariesUnder(runtimeRoot, label, context) {
   binaries.sort((left, right) => right.split('/').length - left.split('/').length)
 
   for (const binaryPath of binaries) {
-    execFileSync(
-      'codesign',
-      ['--force', '--sign', identity, '--timestamp', '--options', 'runtime', binaryPath],
-      { stdio: 'inherit' }
+    const codesignArgs = ['--force', '--sign', identity, '--timestamp', '--options', 'runtime']
+    if (entitlementsPath) {
+      codesignArgs.push('--entitlements', entitlementsPath)
+    }
+    codesignArgs.push(binaryPath)
+    execFileSync('codesign', codesignArgs, { stdio: 'inherit' })
+  }
+
+  if (binaries.length > 0 && entitlementsPath) {
+    console.log(
+      `[afterPack] Applied Hardened Runtime entitlements (${entitlementsPath}) to ${binaries.length} ${label}`
     )
   }
 
