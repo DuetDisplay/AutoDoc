@@ -65,6 +65,7 @@ export function Settings() {
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false)
   const previousUpdateState = useRef<UpdateStatus['state']>('idle')
   const downloadStartedAt = useRef<number | null>(null)
 
@@ -100,6 +101,10 @@ export function Settings() {
   useEffect(() => {
     const previousState = previousUpdateState.current
     previousUpdateState.current = updateStatus.state
+
+    if (updateStatus.state !== 'installing') {
+      setIsInstallingUpdate(false)
+    }
 
     if (updateStatus.state === 'checking' && previousState !== 'checking') {
       trackEvent('update_check_started')
@@ -516,15 +521,26 @@ export function Settings() {
               {updateStatus.state === 'downloaded' && (
                 <button
                   onClick={() => {
+                    setIsInstallingUpdate(true)
                     trackEvent('update_install_requested', {
                       available_version: updateStatus.version ?? 'unknown'
                     })
-                    void window.electronAPI.invoke('updater:install')
+                    window.setTimeout(() => {
+                      void window.electronAPI.invoke('updater:install')
+                    }, 300)
                   }}
+                  disabled={isInstallingUpdate}
                   className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
                 >
-                  Restart to update to v{updateStatus.version}
+                  {isInstallingUpdate
+                    ? 'Restarting...'
+                    : `Restart to update to v${updateStatus.version}`}
                 </button>
+              )}
+              {updateStatus.state === 'installing' && (
+                <span className="text-[11px] text-sage font-medium animate-pulse">
+                  Restarting...
+                </span>
               )}
               {updateStatus.state === 'error' && (
                 <button

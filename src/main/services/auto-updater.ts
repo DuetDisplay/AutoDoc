@@ -4,7 +4,7 @@ import { is } from '@electron-toolkit/utils'
 import { logAutodocFailure } from './autodoc-log'
 
 export interface UpdateStatus {
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   version?: string
   percent?: number
   error?: string
@@ -12,6 +12,13 @@ export interface UpdateStatus {
 
 let currentStatus: UpdateStatus = { state: 'idle' }
 let errorResetToken = 0
+let prepareForInstall: (() => void) | undefined
+let onUpdateDownloaded: ((status: UpdateStatus) => void) | undefined
+
+interface AutoUpdaterOptions {
+  prepareForInstall?: () => void
+  onUpdateDownloaded?: (status: UpdateStatus) => void
+}
 
 function getUpdaterVersion(info: unknown): string | undefined {
   if (!info || typeof info !== 'object') {
@@ -123,11 +130,14 @@ function shouldQuitAndInstallAfterDownloadForSmoke(): boolean {
   )
 }
 
-export function initAutoUpdater(): void {
+export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
   if (is.dev) {
     console.log('Auto-updater disabled in dev')
     return
   }
+
+  prepareForInstall = options.prepareForInstall
+  onUpdateDownloaded = options.onUpdateDownloaded
 
   try {
     autoUpdater.autoDownload = true
@@ -156,7 +166,9 @@ export function initAutoUpdater(): void {
     })
 
     autoUpdater.on('update-downloaded', (info) => {
-      broadcast({ state: 'downloaded', version: getUpdaterVersion(info) })
+      const status: UpdateStatus = { state: 'downloaded', version: getUpdaterVersion(info) }
+      broadcast(status)
+      onUpdateDownloaded?.(status)
       if (shouldQuitAndInstallAfterDownloadForSmoke()) {
         console.log('Auto-updater smoke install: update downloaded, calling quitAndInstall')
         setTimeout(() => installUpdate(), 1_000)
@@ -183,6 +195,8 @@ export function checkForUpdates(): void {
 
 export function installUpdate(): void {
   try {
+    broadcast({ state: 'installing', version: currentStatus.version })
+    prepareForInstall?.()
     autoUpdater.quitAndInstall()
   } catch (err) {
     reportUpdaterError('Auto-updater failed to install update', err)

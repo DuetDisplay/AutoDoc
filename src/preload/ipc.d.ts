@@ -34,7 +34,7 @@ import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   version?: string
   percent?: number
   error?: string
@@ -324,6 +324,7 @@ export interface IpcOnEvents {
   'ollama:setup-progress': [status: OllamaSetupStatus]
   'whisper:setup-progress': [status: WhisperSetupStatus]
   'updater:status': [status: UpdateStatus]
+  'updater:open-settings': []
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]

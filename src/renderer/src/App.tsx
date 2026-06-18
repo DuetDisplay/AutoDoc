@@ -20,6 +20,7 @@ import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
 import { Onboarding } from './pages/Onboarding'
+import type { UpdateStatus } from '../../preload/ipc.d'
 import {
   endAnalyticsSession,
   identifyConsentedInstall,
@@ -53,6 +54,96 @@ function RouteDiagnosticTracker() {
   }, [location.pathname])
 
   return null
+}
+
+function UpdateReadyPrompt() {
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
+  const location = useLocation()
+
+  useEffect(() => {
+    let cancelled = false
+
+    window.electronAPI.invoke('updater:get-status').then((status) => {
+      if (!cancelled) {
+        setUpdateStatus(status)
+      }
+    })
+
+    const unsubscribeStatus = window.electronAPI.on('updater:status', (status) => {
+      setUpdateStatus(status)
+      if (status.state !== 'downloaded') {
+        setDismissedVersion(null)
+      }
+    })
+    const unsubscribeOpenSettings = window.electronAPI.on('updater:open-settings', () => {
+      window.location.hash = `#${ROUTES.settings}`
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribeStatus()
+      unsubscribeOpenSettings()
+    }
+  }, [])
+
+  if (
+    !updateStatus ||
+    (updateStatus.state !== 'downloaded' && updateStatus.state !== 'installing')
+  ) {
+    return null
+  }
+
+  const version = updateStatus.version ?? 'unknown'
+  const isInstalling = updateStatus.state === 'installing'
+
+  if (!isInstalling && dismissedVersion === version) {
+    return null
+  }
+
+  const handleRestart = () => {
+    setUpdateStatus({ state: 'installing', version: updateStatus.version })
+    trackEvent('update_install_requested', {
+      available_version: updateStatus.version ?? 'unknown',
+      surface: location.pathname === ROUTES.settings ? 'settings' : 'update_prompt'
+    })
+    window.setTimeout(() => {
+      void window.electronAPI.invoke('updater:install')
+    }, 300)
+  }
+
+  return (
+    <div className="mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 flex items-center gap-3 shadow-sm animate-[slideDown_300ms_ease]">
+      <span className="h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] font-semibold text-ink">
+          {isInstalling ? 'Restarting...' : 'Update ready'}
+        </p>
+        <p className="text-[11px] text-ink-muted">
+          {isInstalling
+            ? 'AutoDoc will reopen after the update installs.'
+            : `Restart AutoDoc to install v${version}.`}
+        </p>
+      </div>
+      {!isInstalling && (
+        <button
+          type="button"
+          onClick={() => setDismissedVersion(version)}
+          className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
+        >
+          Later
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={handleRestart}
+        disabled={isInstalling}
+        className="text-[12px] font-semibold text-white bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
+      >
+        {isInstalling ? 'Restarting...' : 'Restart'}
+      </button>
+    </div>
+  )
 }
 
 export default function App() {
@@ -530,6 +621,7 @@ export default function App() {
           <MeetingDetectedBanner />
           <PermissionToast />
           <LowSpecMacProcessingBanner />
+          <UpdateReadyPrompt />
           <div className="flex-1 overflow-hidden">
             <Routes>
               <Route path={ROUTES.upcoming} element={<Upcoming />} />

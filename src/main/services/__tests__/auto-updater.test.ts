@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { initAutoUpdater } from '../auto-updater'
+import { initAutoUpdater, installUpdate } from '../auto-updater'
 
 const {
   logAutodocFailure,
@@ -77,9 +77,9 @@ describe('Auto-updater validity characterization', () => {
   it('still reports inaccessible update feeds as application failures', () => {
     initAutoUpdater()
 
-    const errorHandler = on.mock.calls.find(
-      ([eventName]) => eventName === 'error'
-    )?.[1] as ((error: Error) => void) | undefined
+    const errorHandler = on.mock.calls.find(([eventName]) => eventName === 'error')?.[1] as
+      | ((error: Error) => void)
+      | undefined
 
     expect(errorHandler).toBeTypeOf('function')
 
@@ -152,8 +152,9 @@ describe('Auto-updater validity characterization', () => {
   it('can run the same install path as Settings after a smoke-test download', () => {
     process.env.AUTODOC_TEST_MODE = '1'
     process.env.AUTODOC_UPDATE_QUIT_AND_INSTALL_ON_DOWNLOAD = '1'
+    const prepareForInstall = vi.fn()
 
-    initAutoUpdater()
+    initAutoUpdater({ prepareForInstall })
 
     const downloadedHandler = on.mock.calls.find(
       ([eventName]) => eventName === 'update-downloaded'
@@ -165,6 +166,43 @@ describe('Auto-updater validity characterization', () => {
     vi.advanceTimersByTime(1_000)
 
     expect(quitAndInstall).toHaveBeenCalled()
+    expect(prepareForInstall.mock.invocationCallOrder[0]).toBeLessThan(
+      quitAndInstall.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('notifies the app shell when an update is downloaded', () => {
+    const onUpdateDownloaded = vi.fn()
+
+    initAutoUpdater({ onUpdateDownloaded })
+
+    const downloadedHandler = on.mock.calls.find(
+      ([eventName]) => eventName === 'update-downloaded'
+    )?.[1] as ((info: { version: string }) => void) | undefined
+
+    downloadedHandler?.({ version: '0.1.24' })
+
+    expect(onUpdateDownloaded).toHaveBeenCalledWith({
+      state: 'downloaded',
+      version: '0.1.24'
+    })
+  })
+
+  it('prepares the app to fully quit before installing an update', () => {
+    const prepareForInstall = vi.fn()
+
+    initAutoUpdater({ prepareForInstall })
+
+    installUpdate()
+
+    expect(quitAndInstall).toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'installing' })
+    )
+    expect(prepareForInstall.mock.invocationCallOrder[0]).toBeLessThan(
+      quitAndInstall.mock.invocationCallOrder[0]
+    )
   })
 
   it('does not auto-install after download outside smoke tests', () => {

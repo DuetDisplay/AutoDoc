@@ -1,4 +1,12 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, powerMonitor } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  systemPreferences,
+  powerMonitor,
+  Notification
+} from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
@@ -86,7 +94,7 @@ import {
   traceInstallPolicy,
   warnIfUnsupportedMacOS
 } from './services/application-install'
-import { focusMainWindow, registerMainWindow } from './services/main-window'
+import { focusMainWindow, getMainWindow, registerMainWindow } from './services/main-window'
 import {
   getE2EDetectionState,
   getE2EOllamaStatus,
@@ -563,9 +571,52 @@ app.whenReady().then(async () => {
     return false
   }
 
+  const openSettingsFromUpdateNotification = (): void => {
+    if (!focusMainWindow()) {
+      createWindow()
+    }
+
+    const mainWindow = getMainWindow()
+    if (!mainWindow) {
+      return
+    }
+
+    const openSettings = (): void => {
+      mainWindow.webContents.send('updater:open-settings')
+    }
+
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', openSettings)
+      return
+    }
+
+    openSettings()
+  }
+
+  const notifyUpdateReadyIfHidden = (): void => {
+    const mainWindow = getMainWindow()
+    const isHidden = !mainWindow || !mainWindow.isVisible() || mainWindow.isMinimized()
+
+    if (!isHidden || !Notification.isSupported()) {
+      return
+    }
+
+    const notification = new Notification({
+      title: 'AutoDoc update ready',
+      body: 'Restart to install.'
+    })
+    notification.on('click', openSettingsFromUpdateNotification)
+    notification.show()
+  }
+
   // Auto-updater
   if (!isE2E) {
-    initAutoUpdater()
+    initAutoUpdater({
+      prepareForInstall: () => {
+        isQuitting = true
+      },
+      onUpdateDownloaded: notifyUpdateReadyIfHidden
+    })
   }
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {

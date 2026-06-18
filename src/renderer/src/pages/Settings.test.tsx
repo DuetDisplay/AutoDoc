@@ -328,4 +328,33 @@ describe('Settings', () => {
 
     confirmSpy.mockRestore()
   })
+
+  it('shows Restarting immediately after starting an update install', async () => {
+    const api = installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus({ state: 'downloaded', version: '0.1.47' }),
+      'updater:install': undefined,
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    render(<Settings />)
+
+    const restartButton = await screen.findByRole('button', {
+      name: 'Restart to update to v0.1.47'
+    })
+
+    await user.click(restartButton)
+
+    expect(restartButton).toHaveTextContent('Restarting...')
+    expect(restartButton).toBeDisabled()
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('updater:install')
+    })
+  })
 })
