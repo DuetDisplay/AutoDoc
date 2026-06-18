@@ -9,7 +9,7 @@ import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
 import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
-import { buildRecordingTitle } from '../services/recording-title'
+import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
@@ -815,7 +815,7 @@ export function registerRecordingIpc(
 
         const events = await getRecentEventsForMatching()
         const matched = matchCalendarEvent(events, metadata.startedAt)
-        const calendarTitle = matched?.title?.trim() || null
+        const calendarTitle = getRecordingDisplayCalendarTitle(metadata, matched)
         if (!calendarTitle) {
           return
         }
@@ -848,22 +848,6 @@ export function registerRecordingIpc(
         windowsCalendarRefreshInFlight.delete(meetingId)
       }
     })()
-  }
-
-  function getRecordingDisplayCalendarTitle(
-    metadata: MeetingMetadata | null,
-    matchedEvent: CalendarEvent | null
-  ): string | null {
-    if (matchedEvent && !matchedEvent.isAllDay) {
-      return matchedEvent.title?.trim() || metadata?.calendarTitle?.trim() || null
-    }
-
-    const persistedCalendarTitle = metadata?.calendarTitle?.trim()
-    if (persistedCalendarTitle) {
-      return persistedCalendarTitle
-    }
-
-    return null
   }
 
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
