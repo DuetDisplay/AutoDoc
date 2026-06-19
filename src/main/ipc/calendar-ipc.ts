@@ -32,22 +32,40 @@ export function registerCalendarIpc(
     try {
       const account = await calendarManager.connect(providerType)
 
-      const events = await calendarManager.fetchAllUpcomingEvents()
-      const enriched = applyAutoRecordState(events)
-      pushEventsToRenderer(enriched)
-      onEventsUpdated?.(enriched)
-
-      // Start sync if this is the first account
-      if (calendarManager.getAccounts().length === 1) {
-        calendarManager.startSync((updatedEvents) => {
-          const enrichedUpdated = applyAutoRecordState(updatedEvents)
-          pushEventsToRenderer(enrichedUpdated)
-          onEventsUpdated?.(enrichedUpdated)
-        })
-      }
-
+      // Announce the connection and return as soon as the account is saved.
+      // Fetching upcoming events is a second network round-trip; if we block the
+      // IPC return (and the connection-changed broadcast) on it, the renderer's
+      // focus-abandon timer can fire first and discard the success, leaving
+      // onboarding stuck on the connect screen until relaunch. Events are pushed
+      // best-effort below and the renderer also listens for calendar:events-updated.
       pushConnectionStatus(true)
       onConnectionChanged?.(true)
+
+      void (async () => {
+        try {
+          const events = await calendarManager.fetchAllUpcomingEvents()
+          const enriched = applyAutoRecordState(events)
+          pushEventsToRenderer(enriched)
+          onEventsUpdated?.(enriched)
+
+          // Start sync if this is the first account
+          if (calendarManager.getAccounts().length === 1) {
+            calendarManager.startSync((updatedEvents) => {
+              const enrichedUpdated = applyAutoRecordState(updatedEvents)
+              pushEventsToRenderer(enrichedUpdated)
+              onEventsUpdated?.(enrichedUpdated)
+            })
+          }
+        } catch (err) {
+          logAutodocFailure({
+            area: 'calendar',
+            message: 'Failed to fetch events after calendar connection',
+            error: err,
+            context: { provider: providerType }
+          })
+        }
+      })()
+
       return account
     } catch (err) {
       logAutodocFailure({
