@@ -132,21 +132,25 @@ describe('Settings', () => {
     ).toBeChecked()
   })
 
-  it('cancels an abandoned calendar connection when the app regains focus', async () => {
+  it('keeps connecting while in the browser, clears it on return, and still surfaces a late success', async () => {
+    const existing = createCalendarAccount({
+      id: 'acct-existing',
+      email: 'existing@example.com',
+      connectedAt: new Date('2026-04-16T09:00:00Z').getTime()
+    })
+    const connectedAccount = createCalendarAccount({ id: 'acct-new', email: 'new@example.com' })
     const state = {
-      accounts: [createCalendarAccount({ email: 'existing@example.com' })],
+      accounts: [existing] as ReturnType<typeof createCalendarAccount>[],
       events: [] as any[],
       analyticsConsent: false,
       diagnosticLogUploadConsent: false
     }
-    const abandonedAccount = createCalendarAccount({ email: 'abandoned@example.com' })
-    let resolveConnect!: (account: typeof abandonedAccount) => void
-    const connectPromise = new Promise<typeof abandonedAccount>((resolve) => {
+    let resolveConnect!: (account: typeof connectedAccount) => void
+    const connectPromise = new Promise<typeof connectedAccount>((resolve) => {
       resolveConnect = resolve
     })
-    const getEvents = vi.fn(() => state.events)
 
-    const api = installMockElectronApi({
+    installMockElectronApi({
       'app:get-version': '0.1.11',
       'updater:get-status': createUpdateStatus(),
       'app:get-runtime-info': createRuntimeInfo(),
@@ -154,9 +158,9 @@ describe('Settings', () => {
       'prefs:get-analytics-consent': () => state.analyticsConsent,
       'prefs:get-diagnostic-log-upload-consent': () => state.diagnosticLogUploadConsent,
       'calendar:get-accounts': () => state.accounts,
-      'calendar:get-events': getEvents,
-      'calendar:connect': () => connectPromise,
-      'calendar:cancel-connect': undefined
+      'calendar:get-events': () => state.events,
+      // The OAuth flow is still in the external browser — the IPC hasn't resolved yet.
+      'calendar:connect': () => connectPromise
     })
 
     const user = userEvent.setup()
@@ -165,31 +169,35 @@ describe('Settings', () => {
     expect(await screen.findByText('existing@example.com')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /add google calendar/i }))
-
     expect(screen.getByRole('button', { name: /connecting/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeDisabled()
 
+    // Handing off to the OAuth browser (window `blur`) must NOT flip the button back —
+    // doing so caused a click-time flash. It stays "Connecting".
+    act(() => {
+      window.dispatchEvent(new Event('blur'))
+    })
+    expect(screen.getByRole('button', { name: /connecting/i })).toBeDisabled()
+
+    // Returning to the app (window `focus`) clears the disabled state so an abandoned
+    // attempt can be retried.
     act(() => {
       window.dispatchEvent(new Event('focus'))
     })
-
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /add google calendar/i })).toBeEnabled()
       expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeEnabled()
     })
     expect(screen.queryByRole('button', { name: /connecting/i })).not.toBeInTheDocument()
-    expect(api.invoke).toHaveBeenCalledWith('calendar:cancel-connect')
 
-    getEvents.mockClear()
+    // The user actually finished in the browser, so the awaited connection still
+    // resolves and surfaces the account even though we cleared the display on return.
+    state.accounts = [existing, connectedAccount]
     await act(async () => {
-      resolveConnect(abandonedAccount)
+      resolveConnect(connectedAccount)
       await connectPromise
     })
 
-    expect(screen.queryByText('abandoned@example.com')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /add google calendar/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /add microsoft outlook/i })).toBeEnabled()
-    expect(getEvents).not.toHaveBeenCalled()
+    expect(await screen.findByText('new@example.com')).toBeInTheDocument()
   })
 
   it('does not render the speaker diarization toggle', async () => {

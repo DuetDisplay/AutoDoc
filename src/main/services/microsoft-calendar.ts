@@ -96,12 +96,15 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     saveTokensForAccount(accountId, tokens)
     this.tokenCache.set(accountId, tokens)
 
-    const email = await this.fetchAccountEmail(accountId)
+    // The OAuth id_token already carries the account email, so read it locally to
+    // return immediately and only fall back to the network lookup when missing.
+    const idToken = (tokens as { id_token?: string }).id_token
+    const email = extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
 
     return {
       id: accountId,
       provider: 'microsoft',
-      email: email ?? '',
+      email,
       connectedAt: Date.now(),
     }
   }
@@ -173,6 +176,10 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         return new Promise((resolveClose) => {
           try {
             server.close(() => resolveClose())
+            // The browser keeps the loopback socket alive, so server.close() would
+            // otherwise wait for its idle timeout (the 2-3s "stuck connecting" lag).
+            // Drop those sockets so close() resolves right away.
+            ;(server as { closeAllConnections?: () => void }).closeAllConnections?.()
           } catch {
             // The server may not have started listening yet.
             resolveClose()
@@ -192,13 +199,17 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       function resolveAndClose(result: { tokens: OAuthTokens & { expires_in?: number } }): void {
         if (settled) return
         settled = true
-        void cleanup().then(() => resolve(result))
+        // Surface the result immediately; tokens are already in hand. Tearing down
+        // the loopback server is just cleanup and must not delay the UI.
+        resolve(result)
+        void cleanup()
       }
 
       function rejectAndClose(error: Error): void {
         if (settled) return
         settled = true
-        void cleanup().then(() => reject(error))
+        reject(error)
+        void cleanup()
       }
 
       server.listen(OAUTH_PORT, '127.0.0.1')

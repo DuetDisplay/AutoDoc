@@ -77,12 +77,17 @@ export class GoogleCalendarProvider implements CalendarProvider {
     this.clients.set(accountId, client)
     saveTokensForAccount(accountId, result.tokens)
 
-    const email = await this.fetchAccountEmail(accountId)
+    // The OAuth id_token already carries the account email, so read it locally to
+    // return immediately. Only fall back to the network lookup (calendar list /
+    // userinfo) when the token doesn't include it, so a successful sign-in surfaces
+    // to the UI without waiting on an extra round-trip.
+    const idToken = (result.tokens as { id_token?: string }).id_token
+    const email = extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
 
     return {
       id: accountId,
       provider: 'google',
-      email: email ?? '',
+      email,
       connectedAt: Date.now(),
     }
   }
@@ -159,6 +164,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
         return new Promise((resolveClose) => {
           try {
             server.close(() => resolveClose())
+            // The browser keeps the loopback socket alive, so server.close() would
+            // otherwise wait for its idle timeout (the 2-3s "stuck connecting" lag).
+            // Drop those sockets so close() resolves right away.
+            ;(server as { closeAllConnections?: () => void }).closeAllConnections?.()
           } catch {
             // The server may not have started listening yet.
             resolveClose()
@@ -178,13 +187,17 @@ export class GoogleCalendarProvider implements CalendarProvider {
       function resolveAndClose(result: { tokens: object }): void {
         if (settled) return
         settled = true
-        void cleanup().then(() => resolve(result))
+        // Surface the result immediately; tokens are already in hand. Tearing down
+        // the loopback server is just cleanup and must not delay the UI.
+        resolve(result)
+        void cleanup()
       }
 
       function rejectAndClose(error: Error): void {
         if (settled) return
         settled = true
-        void cleanup().then(() => reject(error))
+        reject(error)
+        void cleanup()
       }
 
       server.listen(OAUTH_PORT, '127.0.0.1')

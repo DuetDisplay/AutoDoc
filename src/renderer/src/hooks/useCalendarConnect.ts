@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CalendarAccount } from '../../../shared/types'
+import { recordPersistentDiagnosticAction } from '../services/diagnostic-trail'
 
 type CalendarProviderType = 'google' | 'microsoft'
 
 interface UseCalendarConnectOptions {
   /** Called after a connection completes and is still the active attempt. */
   onConnected?: (account: CalendarAccount, provider: CalendarProviderType) => void | Promise<void>
-  /** Called when an active attempt fails (cancelled/superseded attempts are ignored). */
+  /** Called when an active attempt fails (superseded attempts are ignored). */
   onError?: (provider: CalendarProviderType, error: unknown) => void
   /** Builds the user-facing error message for a failed attempt. */
   formatError?: (provider: CalendarProviderType) => string
@@ -27,52 +28,51 @@ const PROVIDER_LABEL: Record<CalendarProviderType, string> = {
 
 /**
  * Shared calendar-connect handling for every surface (onboarding, homepage banner,
- * settings).
+ * settings). There are exactly three states, driven directly by the OAuth result:
  *
- * The OAuth flow opens an external browser and the main process waits on a loopback
- * callback. If the user closes that tab without finishing, the attempt is abandoned
- * and the main-process `CalendarManager` stays "connecting". This hook recovers from
- * that in two ways:
+ *  1. Connecting — pressing connect opens the external OAuth browser and shows a
+ *     disabled "Connecting" button until the attempt settles. We intentionally do
+ *     NOT clear this when the browser opens (a window `blur`): doing so flips the
+ *     button back the instant it was pressed, which reads as a visual hitch. While
+ *     the user is off in the browser the app is backgrounded, so the disabled state
+ *     isn't even visible — and the connect IPC now resolves the moment tokens
+ *     arrive, so it clears on its own right as they return.
+ *  2. Success — the awaited `calendar:connect` resolves with the account, which we
+ *     surface through `onConnected` (e.g. onboarding shows Continue; settings adds
+ *     the account to the list).
+ *  3. Failure — the awaited `calendar:connect` rejects, which we surface as `error`.
  *
- *  - When the app window regains focus while an attempt is in flight (i.e. the user
- *    came back from the browser without completing the flow), it cancels the pending
- *    connection via `calendar:cancel-connect`.
- *  - It tracks the active attempt so a late-arriving resolution/rejection from a
- *    cancelled or superseded attempt is ignored instead of surfacing a spurious
- *    success or error.
- *
- * The main process additionally supersedes an in-flight attempt when a new one
- * starts, so pressing the button again from any surface also recovers.
+ * Abandoned OAuth (the user closes the tab without finishing) is the one case the
+ * IPC can't settle quickly, so we clear "Connecting" when the window regains focus
+ * — i.e. the user came back without completing the flow. That fires on return, not
+ * on hand-off, so it never causes the click-time flash. A successful attempt has
+ * already resolved by then, making this a no-op for the happy path. An `attemptId`
+ * token makes a superseded attempt's late resolution/rejection a no-op so it can't
+ * surface a stale success or error.
  */
 export function useCalendarConnect(options: UseCalendarConnectOptions = {}): UseCalendarConnectResult {
   const [connectingProvider, setConnectingProvider] = useState<CalendarProviderType | null>(null)
   const [error, setError] = useState<string | null>(null)
   const attemptRef = useRef<symbol | null>(null)
 
-  // Keep callbacks in a ref so the focus listener and connect callback stay stable.
+  // Keep callbacks in a ref so the connect callback stays stable.
   const optionsRef = useRef(options)
   optionsRef.current = options
 
   useEffect(() => {
-    const handleFocus = (): void => {
-      if (!attemptRef.current) return
-
-      // The user returned to the app without completing OAuth (e.g. closed the tab).
-      // Abandon the in-flight attempt so the next press isn't blocked.
-      attemptRef.current = null
-      setConnectingProvider(null)
-      void window.electronAPI.invoke('calendar:cancel-connect').catch((err) => {
-        console.error('Failed to cancel calendar connection:', err)
-      })
-    }
-
+    // Returning to the app while still "Connecting" means the user came back without
+    // finishing OAuth (a successful attempt would already have resolved). Drop the
+    // disabled state so they can retry. We only clear the display, NOT the attempt
+    // token: if the awaited IPC is about to resolve (they returned a beat early), the
+    // success still surfaces. A re-press supersedes any genuinely abandoned flow.
+    const handleFocus = (): void => setConnectingProvider(null)
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
   }, [])
 
   const connect = useCallback(async (provider: CalendarProviderType): Promise<void> => {
-    if (attemptRef.current) return
-
+    // A new attempt supersedes any previous one (the main process cancels the
+    // earlier loopback flow), so we don't block re-presses.
     const attemptId = Symbol(provider)
     attemptRef.current = attemptId
     setConnectingProvider(provider)
@@ -81,9 +81,15 @@ export function useCalendarConnect(options: UseCalendarConnectOptions = {}): Use
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
       if (attemptRef.current !== attemptId) return
+      // Definitive marker that the UI surfaced a connected calendar without a relaunch.
+      recordPersistentDiagnosticAction({
+        category: 'system',
+        action: 'calendar_connected',
+        details: { provider }
+      })
       await optionsRef.current.onConnected?.(account, provider)
     } catch (err) {
-      // A cancelled or superseded attempt is no longer the active one — stay quiet.
+      // A superseded attempt is no longer the active one — stay quiet.
       if (attemptRef.current !== attemptId) return
       console.error('Failed to connect calendar:', err)
       optionsRef.current.onError?.(provider, err)
