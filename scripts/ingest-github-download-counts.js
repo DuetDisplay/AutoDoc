@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 const DEFAULT_POSTHOG_HOST = 'https://us.i.posthog.com'
-const DEFAULT_REPO = 'DuetDisplay/AutoDoc-Local'
+const DEFAULT_REPO = 'DuetDisplay/AutoDoc'
 const EVENT_NAME = 'github_release_download_count'
 const BATCH_SIZE = 50
 

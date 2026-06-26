@@ -1,7 +1,7 @@
 {
   "version": 1,
   "releaseTag": "windows-transcription-v1",
-  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1",
+  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1",
   "profiles": [
     {
       "id": "faster-whisper-cuda",
@@ -15,7 +15,7 @@
         {
           "id": "runtime",
           "filename": "faster-whisper-runtime-cuda-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip",
           "sha256": "785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a",
           "expectedFiles": [
             "python.exe",
@@ -37,7 +37,7 @@
         {
           "id": "model",
           "filename": "faster-whisper-distil-large-v3-ct2.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-distil-large-v3-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-distil-large-v3-ct2.zip",
           "sha256": "81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064",
           "expectedFiles": [
             "config.json",
@@ -65,7 +65,7 @@
         {
           "id": "runtime",
           "filename": "faster-whisper-runtime-cpu-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip",
           "sha256": "63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9",
           "expectedFiles": [
             "python.exe",
@@ -87,7 +87,7 @@
         {
           "id": "model",
           "filename": "faster-whisper-small-en-ct2-int8.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1/faster-whisper-small-en-ct2-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-small-en-ct2-int8.zip",
           "sha256": "1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8",
           "expectedFiles": [
             "config.json",

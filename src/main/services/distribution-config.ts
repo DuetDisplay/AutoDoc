@@ -69,7 +69,7 @@ export function getConfiguredMacWhisperRuntimeAssetBaseUrl(): string | null {
       BUILD_TIME_MAC_WHISPER_RUNTIME_RELEASE_TAG
     ) ??
     DEFAULT_MAC_WHISPER_RUNTIME_RELEASE_TAG
-  return `https://github.com/DuetDisplay/AutoDoc-Local/releases/download/${releaseTag}`
+  return `https://github.com/DuetDisplay/AutoDoc/releases/download/${releaseTag}`
 }
 
 export function getConfiguredWindowsTranscriptionAssetBaseUrl(): string | null {
@@ -90,5 +90,5 @@ export function getConfiguredWindowsTranscriptionAssetBaseUrl(): string | null {
       BUILD_TIME_WINDOWS_TRANSCRIPTION_RELEASE_TAG
     ) ??
     DEFAULT_WINDOWS_TRANSCRIPTION_RELEASE_TAG
-  return `https://github.com/DuetDisplay/AutoDoc-Local/releases/download/${releaseTag}`
+  return `https://github.com/DuetDisplay/AutoDoc/releases/download/${releaseTag}`
 }

@@ -61,7 +61,7 @@ vitest.config.ts                 # Vitest config for renderer unit tests
 - [ ] **Step 1: Scaffold with electron-vite**
 
 ```bash
-cd /Users/rahuldewan/Documents/GitHub/AutoDoc-Local
+cd /Users/rahuldewan/Documents/GitHub/AutoDoc
 npx @electron-vite/create@latest . --template react-ts
 ```
 

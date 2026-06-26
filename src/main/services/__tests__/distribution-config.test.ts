@@ -28,10 +28,10 @@ describe('distribution config', () => {
 
     expect(getConfiguredAuthWorkerUrl()).toBe('https://autodoc-auth.duetdisplay.workers.dev')
     expect(getConfiguredMacWhisperRuntimeAssetBaseUrl()).toBe(
-      'https://github.com/DuetDisplay/AutoDoc-Local/releases/download/macos-whisper-runtime-v1'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/macos-whisper-runtime-v1'
     )
     expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
-      'https://github.com/DuetDisplay/AutoDoc-Local/releases/download/windows-transcription-v1'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1'
     )
   })
 

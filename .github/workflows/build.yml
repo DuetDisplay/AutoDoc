@@ -36,7 +36,7 @@ jobs:
       actions: write
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
-      AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc-Local' && '1' || '' }}
+      AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
@@ -143,8 +143,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Windows builds disabled — macOS-only for now. Re-enable by restoring the `if` below.
-  # if: (github.event_name == 'push' && github.ref_name != 'bugFixes0.1.27') || inputs.release_platform == 'all'
+  # Windows builds disabled — macOS-only for now. Re-enable with an explicit build condition when the Windows release path is ready.
   build-win:
     if: false
     runs-on: windows-2022
@@ -152,7 +151,7 @@ jobs:
       contents: read
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
-      AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc-Local' && '1' || '' }}
+      AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}

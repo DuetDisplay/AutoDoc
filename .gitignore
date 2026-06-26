@@ -5,6 +5,7 @@ out
 ._*
 .eslintcache
 *.log*
+*.tsbuildinfo
 .superpowers/
 .codex/
 .worktrees/

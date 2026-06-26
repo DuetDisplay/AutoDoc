@@ -11,8 +11,8 @@ participating, you agree to uphold it.
 
 ## Ways to contribute
 
-- **Report a bug** — open a [bug report](https://github.com/DuetDisplay/AutoDoc-Local/issues/new?template=bug.md).
-- **Request a feature** — open a [feature request](https://github.com/DuetDisplay/AutoDoc-Local/issues/new?template=feature.md).
+- **Report a bug** — open a [bug report](https://github.com/DuetDisplay/AutoDoc/issues/new?template=bug.md).
+- **Request a feature** — open a [feature request](https://github.com/DuetDisplay/AutoDoc/issues/new?template=feature.md).
 - **Improve docs** — typos, clarifications, and examples are always welcome.
 - **Submit code** — see the workflow below.
 
@@ -28,8 +28,8 @@ participating, you agree to uphold it.
 **Getting started**
 
 ```bash
-git clone https://github.com/DuetDisplay/AutoDoc-Local.git
-cd AutoDoc-Local
+git clone https://github.com/DuetDisplay/AutoDoc.git
+cd AutoDoc
 npm ci
 cp .env.example .env   # fill in values as needed; see docs/SELF_HOSTING.md
 npm run dev
@@ -71,5 +71,5 @@ Please **do not** file public issues for vulnerabilities. Follow
 
 ## Questions
 
-Open a [discussion or issue](https://github.com/DuetDisplay/AutoDoc-Local/issues),
+Open a [discussion or issue](https://github.com/DuetDisplay/AutoDoc/issues),
 or email **chris@duetdisplay.com**.

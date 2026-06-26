@@ -44,7 +44,7 @@ This formats each transcript line as `[00:12] [Speaker 1] Let's go over the spri
 
 - [ ] **Step 2: Verify the app builds**
 
-Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc-Local && npm run typecheck`
+Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc && npm run typecheck`
 Expected: No type errors.
 
 - [ ] **Step 3: Commit**
@@ -129,7 +129,7 @@ With:
 
 - [ ] **Step 4: Verify the app builds**
 
-Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc-Local && npm run typecheck`
+Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc && npm run typecheck`
 Expected: No type errors.
 
 - [ ] **Step 5: Commit**
@@ -230,7 +230,7 @@ The play button:
 
 - [ ] **Step 4: Verify the app builds**
 
-Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc-Local && npm run typecheck`
+Run: `cd /Users/rahuldewan/Documents/GitHub/AutoDoc && npm run typecheck`
 Expected: No type errors.
 
 - [ ] **Step 5: Manual test**
