@@ -1,0 +1,81 @@
+appId: com.kairos.autodoc
+productName: AutoDoc
+directories:
+  buildResources: build
+files:
+  - 'package.json'
+  - 'out/**/*'
+  - 'node_modules/**/*'
+  - 'resources/icon.png'
+  - 'resources/trayTemplate.png'
+  - 'resources/trayTemplate@2x.png'
+  - 'resources/trayRecording.png'
+  - 'resources/trayRecording@2x.png'
+  - 'resources/faster-whisper-transcribe.py'
+  - 'resources/windows-transcription-manifest.json'
+  - 'native/**/bin/**/*'
+  - '!**/__tests__/**'
+  - '!**/*.{map,md,markdown,tsbuildinfo}'
+  - '!**/.DS_Store'
+asarUnpack:
+  - 'resources/**'
+  - 'native/**'
+  - 'node_modules/ffmpeg-static/**'
+win:
+  target:
+    - nsis
+  executableName: autodoc
+  icon: build/icon.ico
+  forceCodeSigning: true
+  signtoolOptions:
+    sign: ./scripts/windows-sign.js
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  include: build/installer.nsh
+mac:
+  target:
+    - dmg
+    - zip
+  minimumSystemVersion: 14.0.0
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  signIgnore:
+    - '^.*?/Contents/Resources/.*$'
+  extendInfo:
+    NSMicrophoneUsageDescription: Application requires access to the microphone.
+    NSAudioCaptureUsageDescription: Application requests access to capture system audio during screen recording.
+  extraResources:
+    - from: vendor/mlx-python-runtime
+      to: mlx-python-runtime
+      filter:
+        - '**/*'
+        - '!**/._*'
+    - from: resources/mlx-whisper-transcribe.py
+      to: mlx-whisper-transcribe.py
+  notarize: true
+dmg:
+  artifactName: ${name}-${version}.${ext}
+  icon: null
+  window:
+    width: 540
+    height: 380
+  writeUpdateInfo: false
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: Duet Display, Inc.
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+afterPack: ./scripts/after-pack-mac-privacy.cjs
+npmRebuild: false
+publish:
+  provider: github
+  owner: DuetDisplay
+  repo: AutoDoc
+  releaseType: release

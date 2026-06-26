@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/DuetDisplay/AutoDoc/blob/main/SECURITY.md
+    about: Please report security issues privately — do not open a public issue.
+  - name: Self-hosting guide
+    url: https://github.com/DuetDisplay/AutoDoc/blob/main/docs/SELF_HOSTING.md
+    about: Setting up your own OAuth worker and runtime assets for a fork build.

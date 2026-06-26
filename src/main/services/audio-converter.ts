@@ -1,0 +1,166 @@
+import { spawn } from 'child_process'
+import { writeFile, unlink } from 'fs/promises'
+
+export class AudioConverter {
+  convert(inputPath: string, outputPath: string, ffmpegPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+
+      const proc = spawn(ffmpegPath, [
+        '-i', inputPath,
+        '-ar', '16000',
+        '-ac', '1',
+        '-f', 'wav',
+        '-y',
+        outputPath,
+      ])
+
+      proc.on('error', (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)))
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-500)}`))
+        }
+      })
+    })
+  }
+
+  /** Merge two audio files into one using amix filter */
+  mergeAudio(input1: string, input2: string, outputPath: string, ffmpegPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(ffmpegPath, [
+        '-i', input1,
+        '-i', input2,
+        '-filter_complex', 'amix=inputs=2:duration=longest',
+        '-y',
+        outputPath,
+      ])
+      let stderr = ''
+      proc.on('error', (err) => reject(new Error(`ffmpeg merge spawn failed: ${err.message}`)))
+      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg merge exited with code ${code}: ${stderr.slice(-500)}`))
+      })
+    })
+  }
+
+  extractClip(
+    inputPath: string,
+    outputPath: string,
+    ffmpegPath: string,
+    startSec: number,
+    durationSec: number,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+
+      const proc = spawn(ffmpegPath, [
+        '-ss', String(startSec),
+        '-t', String(durationSec),
+        '-i', inputPath,
+        '-ar', '16000',
+        '-ac', '1',
+        '-f', 'wav',
+        '-y',
+        outputPath,
+      ])
+
+      proc.on('error', (err) => reject(new Error(`ffmpeg extract spawn failed: ${err.message}`)))
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg extract exited with code ${code}: ${stderr.slice(-500)}`))
+        }
+      })
+    })
+  }
+
+  concatClips(
+    inputPaths: string[],
+    outputPath: string,
+    ffmpegPath: string,
+    concatListPath: string,
+  ): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      if (inputPaths.length === 0) {
+        reject(new Error('ffmpeg concat requires at least one input clip'))
+        return
+      }
+
+      const escapePath = (filePath: string) => filePath.replace(/'/g, "'\\''")
+
+      try {
+        await writeFile(
+          concatListPath,
+          inputPaths.map((filePath) => `file '${escapePath(filePath)}'`).join('\n'),
+          'utf-8',
+        )
+      } catch (err) {
+        reject(err)
+        return
+      }
+
+      let stderr = ''
+      const proc = spawn(ffmpegPath, [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-ar', '16000',
+        '-ac', '1',
+        '-f', 'wav',
+        '-y',
+        outputPath,
+      ])
+
+      proc.on('error', async (err) => {
+        await unlink(concatListPath).catch(() => {})
+        reject(new Error(`ffmpeg concat spawn failed: ${err.message}`))
+      })
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', async (code: number | null) => {
+        await unlink(concatListPath).catch(() => {})
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg concat exited with code ${code}: ${stderr.slice(-500)}`))
+        }
+      })
+    })
+  }
+
+  /** Get duration of audio file in seconds using ffprobe/ffmpeg */
+  getDuration(inputPath: string, ffmpegPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      let stderr = ''
+      const proc = spawn(ffmpegPath, ['-i', inputPath, '-f', 'null', '-'])
+      proc.on('error', (err) => reject(new Error(`ffmpeg duration spawn failed: ${err.message}`)))
+      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('close', () => {
+        // Parse "Duration: HH:MM:SS.ss" from ffmpeg output
+        const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/)
+        if (match) {
+          const hours = parseInt(match[1], 10)
+          const mins = parseInt(match[2], 10)
+          const secs = parseInt(match[3], 10)
+          resolve(hours * 3600 + mins * 60 + secs)
+        } else {
+          reject(new Error('Could not determine audio duration'))
+        }
+      })
+    })
+  }
+}

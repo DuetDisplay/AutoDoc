@@ -1,0 +1,45 @@
+node_modules
+dist
+out
+.DS_Store
+._*
+.eslintcache
+*.log*
+*.tsbuildinfo
+.superpowers/
+.codex/
+.worktrees/
+.codex/
+.env
+.env.local
+.env.production
+.env.development.local
+
+# Generated icons (built from SVGs via scripts/generate-icons.js)
+build/icon.png
+build/trayTemplate.png
+build/trayTemplate@2x.png
+resources/icon.png
+resources/trayTemplate.png
+resources/trayTemplate@2x.png
+
+# Generated native detector binaries
+native/*/bin/
+resources/certs/*.p12
+vendor/
+vendor/python-runtime/
+vendor/diarization-model/
+
+# Local electron-builder outputs for install-policy smoke tests (see scripts/*install-policy-smoke*)
+build-older-*
+build-newer-*
+build-update-*
+build-local-*
+update-feed-*
+build-[0-9][0-9][0-9]-*/
+build-out-*/
+build-output-*/
+test-builds/
+playwright-report/
+test-results/
+.benchmarks/

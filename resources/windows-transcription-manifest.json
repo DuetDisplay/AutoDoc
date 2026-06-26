@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "releaseTag": "windows-transcription-v1",
+  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1",
+  "profiles": [
+    {
+      "id": "faster-whisper-cuda",
+      "label": "NVIDIA accelerated transcription",
+      "modelName": "distil-large-v3",
+      "device": "cuda",
+      "computeType": "float16",
+      "minSystemMemoryGiB": 12,
+      "minVramGiB": 6,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "faster-whisper-runtime-cuda-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip",
+          "sha256": "785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/faster_whisper",
+            "Lib/site-packages/ctranslate2"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "faster-whisper",
+            "CTranslate2 CUDA runtime"
+          ],
+          "licenses": [
+            "MIT",
+            "Apache-2.0",
+            "BSD-3-Clause"
+          ],
+          "bytes": 1439431425
+        },
+        {
+          "id": "model",
+          "filename": "faster-whisper-distil-large-v3-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-distil-large-v3-ct2.zip",
+          "sha256": "81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064",
+          "expectedFiles": [
+            "config.json",
+            "model.bin",
+            "tokenizer.json"
+          ],
+          "sources": [
+            "distil-whisper/distil-large-v3 converted to CTranslate2"
+          ],
+          "licenses": [
+            "MIT"
+          ],
+          "bytes": 1397218990
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper-cpu",
+      "label": "CPU optimized transcription",
+      "modelName": "small.en",
+      "device": "cpu",
+      "computeType": "int8",
+      "minSystemMemoryGiB": 8,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "faster-whisper-runtime-cpu-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip",
+          "sha256": "63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/faster_whisper",
+            "Lib/site-packages/ctranslate2"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "faster-whisper",
+            "CTranslate2 CPU runtime"
+          ],
+          "licenses": [
+            "MIT",
+            "Apache-2.0",
+            "BSD-3-Clause"
+          ],
+          "bytes": 122910760
+        },
+        {
+          "id": "model",
+          "filename": "faster-whisper-small-en-ct2-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-small-en-ct2-int8.zip",
+          "sha256": "1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8",
+          "expectedFiles": [
+            "config.json",
+            "model.bin",
+            "tokenizer.json"
+          ],
+          "sources": [
+            "openai/whisper-small.en converted to CTranslate2 int8"
+          ],
+          "licenses": [
+            "MIT"
+          ],
+          "bytes": 445198952
+        }
+      ]
+    },
+    {
+      "id": "whisper-cpp",
+      "label": "compatible transcription",
+      "modelName": "distil-large-v3-ggml",
+      "device": "cpu",
+      "computeType": "int8",
+      "minSystemMemoryGiB": 8,
+      "assets": []
+    }
+  ]
+}

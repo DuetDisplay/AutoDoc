@@ -1,0 +1,23 @@
+name = "autodoc-auth"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[[ratelimits]]
+name = "AUTH_FLOW_RATE_LIMITER"
+namespace_id = "2026060801"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[ratelimits]]
+name = "TOKEN_EXCHANGE_RATE_LIMITER"
+namespace_id = "2026060802"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60

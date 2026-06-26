@@ -1,0 +1,8 @@
+# PyPI currently quarantines the "lightning" project, which breaks name-based
+# resolution in CI even though the wheel itself remains downloadable.
+lightning @ https://files.pythonhosted.org/packages/4a/6d/42640e15a8c34b57dc7ea922152440c0c6692214a08d5282b6e3eb46ddf4/lightning-2.6.1-py3-none-any.whl
+pyannote.audio==4.0.4
+torch
+torchaudio
+soundfile
+huggingface_hub
