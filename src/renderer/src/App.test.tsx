@@ -52,6 +52,7 @@ describe('App', () => {
 
   afterEach(() => {
     window.location.hash = '#/'
+    vi.useRealTimers()
   })
 
   it('shows onboarding when the first-run flow is not complete yet', async () => {
@@ -192,6 +193,83 @@ describe('App', () => {
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('updater:install')
     })
+  })
+
+  it('shows the up to date banner in the app banner stack after a manual update check finds no updates', async () => {
+    window.location.hash = '#/settings'
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus(),
+      'updater:check': undefined,
+      'app:get-version': '0.1.11',
+      'app:get-runtime-info': undefined,
+      'app:get-storage-info': undefined,
+      'prefs:get-diagnostic-log-upload-consent': false
+    })
+
+    render(<App />)
+
+    const settingsHeading = await screen.findByRole('heading', { name: 'Settings' })
+    await userEvent.click(screen.getByRole('button', { name: /check for updates/i }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('updater:check')
+    })
+
+    expect(screen.queryByText("You're up to date")).not.toBeInTheDocument()
+
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'checking' }))
+    })
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'idle' }))
+    })
+
+    const bannerTitle = await screen.findByText("You're up to date")
+    expect(screen.getByText('AutoDoc is running the latest available version.')).toBeInTheDocument()
+    expect(
+      Boolean(bannerTitle.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ).toBe(true)
+
+    await userEvent.click(screen.getByRole('button', { name: /dismiss up to date message/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText("You're up to date")).not.toBeInTheDocument()
+    })
+  })
+
+  it('auto dismisses the up to date banner from the app banner stack', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus()
+    })
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Upcoming' })).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    act(() => {
+      window.dispatchEvent(new Event('autodoc:manual-update-check'))
+      api.emit('updater:status', createUpdateStatus({ state: 'checking' }))
+    })
+    act(() => {
+      api.emit('updater:status', createUpdateStatus({ state: 'idle' }))
+    })
+
+    expect(screen.getByText("You're up to date")).toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(6_000)
+    })
+
+    expect(screen.queryByText("You're up to date")).not.toBeInTheDocument()
   })
 
   it('opens Settings when the update notification is clicked', async () => {

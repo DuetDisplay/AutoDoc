@@ -14,6 +14,7 @@ import {
   trackEvent
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
+import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
   const email = account.email.trim()
@@ -186,6 +187,11 @@ export function Settings() {
     removeAccount(accountId)
     const events = await window.electronAPI.invoke('calendar:get-events')
     setEvents(events)
+  }
+
+  const handleCheckForUpdates = () => {
+    notifyManualUpdateCheckStarted()
+    void window.electronAPI.invoke('updater:check')
   }
 
   const handleToggleAnalytics = async () => {
@@ -499,7 +505,7 @@ export function Settings() {
               <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
               {updateStatus.state === 'idle' && (
                 <button
-                  onClick={() => window.electronAPI.invoke('updater:check')}
+                  onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors"
                 >
                   Check for updates
@@ -544,7 +550,7 @@ export function Settings() {
               )}
               {updateStatus.state === 'error' && (
                 <button
-                  onClick={() => window.electronAPI.invoke('updater:check')}
+                  onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
                 >
                   Update Failed. Retry

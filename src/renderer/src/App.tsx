@@ -35,6 +35,7 @@ import {
 } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
+import { onManualUpdateCheckStarted } from './services/update-check-events'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 import { useRecordingPickerStore } from './stores/recording-picker'
@@ -59,33 +60,119 @@ function RouteDiagnosticTracker() {
 function UpdateReadyPrompt() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
+  const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
   const location = useLocation()
+  const previousUpdateState = useRef<UpdateStatus['state']>('idle')
+  const manualUpdateCheckPending = useRef(false)
 
   useEffect(() => {
     let cancelled = false
 
-    window.electronAPI.invoke('updater:get-status').then((status) => {
-      if (!cancelled) {
-        setUpdateStatus(status)
+    const applyUpdateStatus = (status: UpdateStatus | undefined) => {
+      if (cancelled || !status) {
+        return
       }
-    })
 
-    const unsubscribeStatus = window.electronAPI.on('updater:status', (status) => {
       setUpdateStatus(status)
       if (status.state !== 'downloaded') {
         setDismissedVersion(null)
       }
+
+      const previousState = previousUpdateState.current
+      previousUpdateState.current = status.state
+
+      if (
+        status.state === 'idle' &&
+        previousState === 'checking' &&
+        manualUpdateCheckPending.current
+      ) {
+        manualUpdateCheckPending.current = false
+        setShowUpToDateBanner(true)
+        return
+      }
+
+      if (status.state === 'checking') {
+        setShowUpToDateBanner(false)
+        return
+      }
+
+      if (status.state !== 'idle') {
+        manualUpdateCheckPending.current = false
+        setShowUpToDateBanner(false)
+      }
+    }
+
+    window.electronAPI.invoke('updater:get-status').then(applyUpdateStatus)
+
+    const unsubscribeManualCheck = onManualUpdateCheckStarted(() => {
+      manualUpdateCheckPending.current = true
+      setShowUpToDateBanner(false)
     })
+    const unsubscribeStatus = window.electronAPI.on('updater:status', applyUpdateStatus)
     const unsubscribeOpenSettings = window.electronAPI.on('updater:open-settings', () => {
       window.location.hash = `#${ROUTES.settings}`
     })
 
     return () => {
       cancelled = true
+      unsubscribeManualCheck()
       unsubscribeStatus()
       unsubscribeOpenSettings()
     }
   }, [])
+
+  useEffect(() => {
+    if (!showUpToDateBanner) {
+      return
+    }
+
+    const dismissTimer = window.setTimeout(() => setShowUpToDateBanner(false), 6_000)
+    return () => window.clearTimeout(dismissTimer)
+  }, [showUpToDateBanner])
+
+  if (showUpToDateBanner) {
+    return (
+      <div className="mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 flex items-start gap-3 shadow-sm animate-[slideDown_300ms_ease]">
+        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-sage shadow-[inset_0_0_0_1px_rgba(122,158,126,0.34)] [animation:checkCirclePop_420ms_ease-out]">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 20 20"
+            className="size-3.5 [animation:checkStroke_520ms_ease-out_120ms_both]"
+            fill="none"
+          >
+            <path
+              d="M5 10.3 8.3 13.5 15.2 6.5"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-semibold leading-5 text-sage-dark">You're up to date</p>
+          <p className="text-[11px] leading-5 text-ink-muted">
+            AutoDoc is running the latest available version.
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss up to date message"
+          onClick={() => setShowUpToDateBanner(false)}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark/70 transition-colors hover:bg-white/70 hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none">
+            <path
+              d="M4 4 12 12M12 4 4 12"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </div>
+    )
+  }
 
   if (
     !updateStatus ||
