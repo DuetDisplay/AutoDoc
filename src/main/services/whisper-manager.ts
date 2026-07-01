@@ -14,7 +14,7 @@ import {
   rename,
   stat
 } from 'fs/promises'
-import { basename, delimiter, dirname, join } from 'path'
+import { basename, delimiter, dirname, join, sep } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
@@ -262,7 +262,7 @@ export class WhisperManager extends EventEmitter {
 
   getFasterWhisperScriptPath(): string {
     if (app.isPackaged) {
-      return join(process.resourcesPath, 'faster-whisper-transcribe.py')
+      return this.getPackagedResourcePath('faster-whisper-transcribe.py')
     }
     return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
   }
@@ -271,8 +271,27 @@ export class WhisperManager extends EventEmitter {
     return this.getSelectedWindowsProfile().device
   }
 
-  getFasterWhisperComputeType(): 'float16' | 'int8' {
+  getFasterWhisperComputeType(): 'float16' | 'int8_float16' | 'int8_float32' | 'int8' {
     return this.getSelectedWindowsProfile().computeType
+  }
+
+  getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
+    const runtimeDir = this.getFasterWhisperRuntimeDir()
+    const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
+    const pathAdditions = [
+      runtimeDir,
+      join(runtimeDir, 'DLLs'),
+      join(sitePackagesDir, 'ctranslate2'),
+      join(sitePackagesDir, 'nvidia', 'cublas', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cuda_runtime', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cuda_nvrtc', 'bin'),
+      join(sitePackagesDir, 'nvidia', 'cudnn', 'bin')
+    ].filter((candidate) => existsSync(candidate))
+
+    return {
+      ...process.env,
+      PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+    }
   }
 
   getSetupStatus(): WhisperSetupStatus {
@@ -430,10 +449,7 @@ export class WhisperManager extends EventEmitter {
 
   private getWindowsTranscriptionManifestPath(): string {
     if (app.isPackaged) {
-      return join(
-        process.resourcesPath ?? this.getDevelopmentAppPath(),
-        'windows-transcription-manifest.json'
-      )
+      return this.getPackagedResourcePath('windows-transcription-manifest.json')
     }
 
     return this.getDevelopmentResourcePath('windows-transcription-manifest.json')
@@ -783,6 +799,7 @@ export class WhisperManager extends EventEmitter {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
     const targetDir = this.getFasterWhisperAssetRoot(profile, asset.id)
+    let extractDir: string | null = null
 
     logAutodocEvent({
       area: 'whisper',
@@ -798,7 +815,7 @@ export class WhisperManager extends EventEmitter {
         targetDir
       }
     })
-    await mkdir(targetDir, { recursive: true })
+    await mkdir(dirname(targetDir), { recursive: true })
     await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
       this.setupStatus = this.withBackendStatus({
         phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
@@ -822,37 +839,54 @@ export class WhisperManager extends EventEmitter {
       }
     })
 
-    await rm(targetDir, { recursive: true, force: true })
-    await mkdir(targetDir, { recursive: true })
+    try {
+      extractDir = await mkdtemp(join(dirname(targetDir), '_extract-'))
+      await this.extractWindowsTranscriptionAsset(archivePath, extractDir, asset.filename)
 
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          `Expand-Archive -Force -Path '${archivePath}' -DestinationPath '${targetDir}'`
-        ],
-        (err) => {
-          if (err) reject(new Error(`Failed to extract ${asset.filename}: ${err.message}`))
-          else resolve()
-        }
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        extractDir,
+        asset.expectedFiles
       )
-    })
-
-    await rm(archivePath, { force: true })
-    const missingExpectedFiles = await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)
-    logAutodocEvent({
-      area: 'whisper',
-      message: 'Windows transcription asset extracted',
-      context: {
-        backend: profile.id,
-        assetId: asset.id,
-        filename: asset.filename,
-        targetDir,
-        expectedFiles: asset.expectedFiles,
-        missingExpectedFiles
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset extracted',
+        context: {
+          backend: profile.id,
+          assetId: asset.id,
+          filename: asset.filename,
+          extractDir,
+          targetDir,
+          expectedFiles: asset.expectedFiles,
+          missingExpectedFiles
+        }
+      })
+      if (missingExpectedFiles.length > 0) {
+        throw new Error(
+          `Extracted ${asset.filename} is missing expected files: ${missingExpectedFiles.join(', ')}.`
+        )
       }
+
+      await rm(targetDir, { recursive: true, force: true })
+      await rename(extractDir, targetDir)
+      extractDir = null
+    } finally {
+      await rm(archivePath, { force: true })
+      if (extractDir) {
+        await rm(extractDir, { recursive: true, force: true })
+      }
+    }
+  }
+
+  private async extractWindowsTranscriptionAsset(
+    archivePath: string,
+    targetDir: string,
+    filename: string
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      execFile('tar', ['-xf', archivePath, '-C', targetDir], (err) => {
+        if (err) reject(new Error(`Failed to extract ${filename}: ${err.message}`))
+        else resolve()
+      })
     })
   }
 
@@ -1293,7 +1327,8 @@ export class WhisperManager extends EventEmitter {
   private async installMacWhisperRuntimeFromDir(sourceDir: string): Promise<void> {
     const modelsDir = this.getModelsDir()
     const extractDir = join(modelsDir, '_whisper_extract')
-    const preserveExtractDir = sourceDir === extractDir || sourceDir.startsWith(`${extractDir}/`)
+    const preserveExtractDir =
+      sourceDir === extractDir || sourceDir.startsWith(`${extractDir}${sep}`)
     await mkdir(modelsDir, { recursive: true })
     await this.removeMacWhisperRuntimeFiles({ preserveExtractDir })
 
@@ -1612,7 +1647,11 @@ export class WhisperManager extends EventEmitter {
             '--threads',
             '2'
           ],
-          { windowsHide: true, timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS },
+          {
+            windowsHide: true,
+            timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS,
+            env: this.getFasterWhisperProcessEnv()
+          },
           (err, stdout, stderr) => {
             if (err) {
               logAutodocFailure({

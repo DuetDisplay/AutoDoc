@@ -4,6 +4,8 @@ import {
   MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
+  WINDOWS_CHUNK_CHARS,
+  WINDOWS_MAX_OUTPUT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
 } from '../llm'
 
@@ -298,7 +300,7 @@ describe('OllamaProvider grounding', () => {
       return
     }
 
-    expect(chunks).toHaveLength(3)
+    expect(chunks).toHaveLength(process.platform === 'win32' ? 2 : 3)
     expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
@@ -661,5 +663,92 @@ describe('OllamaProvider grounding', () => {
         event: 'ollama_low_memory_fallback_triggered'
       })
     )
+  })
+
+  it('uses constrained shorter notes generation on Windows', async () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const requestBodies: Array<{
+      format?: unknown
+      messages?: Array<{ role: string; content: string }>
+      options?: { num_predict?: number }
+    }> = []
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body ?? '{}')))
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder()
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    message: {
+                      content: JSON.stringify({
+                        decisions: [],
+                        action_items: [],
+                        information: [
+                          {
+                            topic: 'Windows Performance',
+                            title: 'CPU notes path was optimized',
+                            content:
+                              'The Windows notes generation path now uses a stricter response format.',
+                            sourceStartMs: 0,
+                            sourceEndMs: 0
+                          }
+                        ],
+                        discussion: [],
+                        status_updates: []
+                      })
+                    }
+                  })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    const result = await windowsProvider.summarize(
+      'meeting-windows-schema',
+      '[00:00] [Chris] The Windows notes generation path now uses a stricter response format.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(requestBodies[0].format).toMatchObject({
+      type: 'object',
+      properties: {
+        decisions: expect.objectContaining({ type: 'array' }),
+        action_items: expect.objectContaining({ type: 'array' }),
+        information: expect.objectContaining({ type: 'array' }),
+        discussion: expect.objectContaining({ type: 'array' }),
+        status_updates: expect.objectContaining({ type: 'array' })
+      }
+    })
+    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
+    expect(requestBodies[0].messages?.[1]?.content).toContain(
+      'It is okay for action_items or status_updates to be empty'
+    )
+  })
+
+  it('uses larger transcript chunks on Windows to reduce notes calls', () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
   })
 })

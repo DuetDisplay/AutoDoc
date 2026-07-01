@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { join } from 'path'
+import { BrowserWindow } from 'electron'
 import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
@@ -570,5 +571,32 @@ describe('SegmentationService', () => {
     expect(provider.setLowMemoryMode).toHaveBeenCalledWith(true)
     expect(provider.setModel).toHaveBeenCalledWith(LOW_SPEC_MAC_OLLAMA_MODEL)
     expect(provider.summarize).toHaveBeenCalledOnce()
+  })
+
+  it('keeps notes progress monotonic across retries', () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    ;(service as any).broadcastStatus('meeting-123', 'segmenting', 44)
+    ;(service as any).broadcastStatus('meeting-123', 'segmenting', 33)
+    ;(service as any).broadcastStatus('meeting-123', 'segmenting', 45)
+
+    expect(send).toHaveBeenNthCalledWith(1, 'segmentation:status-changed', {
+      meetingId: 'meeting-123',
+      status: 'segmenting',
+      progress: 44,
+      errorCode: undefined
+    })
+    expect(send).toHaveBeenNthCalledWith(2, 'segmentation:status-changed', {
+      meetingId: 'meeting-123',
+      status: 'segmenting',
+      progress: 44,
+      errorCode: undefined
+    })
+    expect(send).toHaveBeenNthCalledWith(3, 'segmentation:status-changed', {
+      meetingId: 'meeting-123',
+      status: 'segmenting',
+      progress: 45,
+      errorCode: undefined
+    })
   })
 })

@@ -3,9 +3,13 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
+  applyNvidiaSmiMemory,
   classifyWindowsGpuVendor,
+  electronMemoryKbToGiB,
   loadWindowsTranscriptionProfiles,
+  parseNvidiaSmiGpuRows,
   selectWindowsTranscriptionProfile,
+  WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile
 } from '../windows-transcription-runtime'
 
@@ -24,6 +28,20 @@ afterEach(() => {
 })
 
 describe('Windows transcription runtime selection', () => {
+  it('uses the public asset-only repository for fallback asset URLs', () => {
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip'
+    )
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip'
+    )
+  })
+
+  it('converts Electron memory snapshots from kilobytes to GiB', () => {
+    expect(electronMemoryKbToGiB(33_554_432)).toBe(32)
+    expect(electronMemoryKbToGiB(1_048_576)).toBe(1)
+  })
+
   it('selects CUDA faster-whisper for supported NVIDIA systems', () => {
     const profile = selectWindowsTranscriptionProfile({
       ...baseHardware,
@@ -37,6 +55,7 @@ describe('Windows transcription runtime selection', () => {
     })
 
     expect(profile.id).toBe('faster-whisper-cuda')
+    expect(profile.computeType).toBe('int8_float32')
     expect(profile.assets.map((asset) => asset.filename)).toEqual([
       'faster-whisper-runtime-cuda-win-x64.zip',
       'faster-whisper-distil-large-v3-ct2.zip'
@@ -75,6 +94,28 @@ describe('Windows transcription runtime selection', () => {
     })
 
     expect(profile.id).toBe('faster-whisper-cpu')
+  })
+
+  it('uses nvidia-smi VRAM when WMI underreports NVIDIA laptop GPU memory', () => {
+    const gpus = applyNvidiaSmiMemory(
+      [
+        {
+          name: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+          vendor: 'nvidia',
+          adapterRamGiB: 4
+        }
+      ],
+      parseNvidiaSmiGpuRows('NVIDIA GeForce RTX 4060 Laptop GPU, 8188 MiB, 581.95')
+    )
+
+    expect(gpus[0].adapterRamGiB).toBe(8)
+
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      gpus
+    })
+
+    expect(profile.id).toBe('faster-whisper-cuda')
   })
 
   it('allows an explicit whisper.cpp override for compatibility and tests', () => {

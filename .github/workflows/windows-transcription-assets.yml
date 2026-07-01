@@ -9,6 +9,11 @@ on:
         required: true
         default: windows-transcription-v1
         type: string
+      asset_repo:
+        description: GitHub repository that hosts the public transcription asset release.
+        required: true
+        default: DuetDisplay/AutoDoc-Windows-Assets
+        type: string
       publish_assets:
         description: Upload generated assets to the GitHub release.
         required: true
@@ -23,6 +28,7 @@ jobs:
       contents: write
     env:
       ASSET_TAG: ${{ inputs.asset_tag }}
+      ASSET_REPO: ${{ inputs.asset_repo }}
       AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ inputs.asset_tag }}
       AUTODOC_PYTHON_BUNDLE_TARGETS: win32-x64
       PIP_CACHE_DIR: ${{ github.workspace }}\.benchmarks\pip-cache
@@ -47,8 +53,9 @@ jobs:
           if ($manifest.releaseTag -ne $env:ASSET_TAG) {
             throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow asset tag '$env:ASSET_TAG'."
           }
-          if ($manifest.artifactBaseUrl -notmatch [regex]::Escape("/$env:ASSET_TAG")) {
-            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not point at '$env:ASSET_TAG'."
+          $expectedArtifactBaseUrl = "https://github.com/$env:ASSET_REPO/releases/download/$env:ASSET_TAG"
+          if ($manifest.artifactBaseUrl -ne $expectedArtifactBaseUrl) {
+            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not match expected public asset URL '$expectedArtifactBaseUrl'."
           }
 
       - name: Restore Python archive cache
@@ -93,18 +100,31 @@ jobs:
         if: ${{ inputs.publish_assets }}
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WINDOWS_TRANSCRIPTION_ASSET_REPO_TOKEN || github.token }}
         run: |
           $tag = $env:ASSET_TAG
+          $repo = $env:ASSET_REPO
           $assetDir = Join-Path $PWD ".benchmarks/windows-transcription-assets/$tag"
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --title "Windows transcription assets $tag" `
-              --notes "Versioned faster-whisper runtime and model assets for Windows onboarding." `
-              --target $env:GITHUB_SHA
+            $createArgs = @(
+              'release',
+              'create',
+              $tag,
+              '--repo',
+              $repo,
+              '--title',
+              "Windows transcription assets $tag",
+              '--notes',
+              'Versioned faster-whisper runtime and model assets for Windows onboarding.'
+            )
+
+            if ($repo -eq $env:GITHUB_REPOSITORY) {
+              $createArgs += @('--target', $env:GITHUB_SHA)
+            }
+
+            & gh @createArgs
           }
 
           gh release upload $tag `
@@ -113,5 +133,5 @@ jobs:
             (Join-Path $assetDir 'faster-whisper-small-en-ct2-int8.zip') `
             (Join-Path $assetDir 'faster-whisper-distil-large-v3-ct2.zip') `
             (Join-Path $assetDir 'SHA256SUMS.md') `
-            --repo $env:GITHUB_REPOSITORY `
+            --repo $repo `
             --clobber

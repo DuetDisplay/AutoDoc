@@ -23,9 +23,11 @@ export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
+export const WINDOWS_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+export const WINDOWS_MAX_OUTPUT_TOKENS = 4096
 const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
 const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
@@ -71,6 +73,34 @@ const MAC_TOPIC_FAMILIES: Array<{ topic: string; pattern: RegExp }> = [
       /\b(documentation|docs|prioritize|priority|plan|planning|follow.?up|estimate|ownership|assign|task|refactor|discussion)\b/i
   }
 ]
+const WINDOWS_CATEGORY_GUIDANCE =
+  'It is okay for action_items or status_updates to be empty. Put factual details, product capabilities, costs, timelines, and explanations under information unless the transcript explicitly assigns work or makes a decision.'
+
+const NOTES_RESPONSE_ITEM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    topic: { type: 'string' },
+    title: { type: 'string' },
+    content: { type: 'string' },
+    sourceStartMs: { type: 'number' },
+    sourceEndMs: { type: 'number' }
+  },
+  required: ['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs']
+} as const
+
+const NOTES_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    decisions: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    action_items: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    information: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    discussion: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    status_updates: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA }
+  },
+  required: ['decisions', 'action_items', 'information', 'discussion', 'status_updates']
+} as const
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -646,7 +676,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    return CHUNK_CHARS
+    return process.platform === 'win32' ? WINDOWS_CHUNK_CHARS : CHUNK_CHARS
   }
 
   private getSystemPrompt(): string {
@@ -663,20 +693,21 @@ export class OllamaProvider implements LLMProvider {
     itemGuidance: string,
     knownTopics: string[]
   ): string {
+    const windowsCategoryGuidance = this.getWindowsCategoryGuidance()
     const knownTopicGuidance =
       knownTopics.length > 0
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
         : ''
 
     if (chunkCount <= 1) {
-      return `\n\n${itemGuidance}${knownTopicGuidance}`
+      return `\n\n${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
     }
 
     if (process.platform === 'darwin') {
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
     }
 
-    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${knownTopicGuidance}`
+    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
   }
 
   private async callOllama(
@@ -729,10 +760,10 @@ export class OllamaProvider implements LLMProvider {
             { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` }
           ],
           stream: true,
-          format: 'json',
+          format: this.getNotesResponseFormat(),
           options: {
             num_ctx: contextTokens,
-            num_predict: MAX_OUTPUT_TOKENS,
+            num_predict: this.getMaxOutputTokens(),
             temperature: 0,
             repeat_penalty: 1.3
           }
@@ -882,6 +913,18 @@ export class OllamaProvider implements LLMProvider {
       evalCount: data.eval_count,
       evalDurationMs: nsToMs(data.eval_duration)
     }
+  }
+
+  private getNotesResponseFormat(): 'json' | typeof NOTES_RESPONSE_SCHEMA {
+    return process.platform === 'win32' ? NOTES_RESPONSE_SCHEMA : 'json'
+  }
+
+  private getMaxOutputTokens(): number {
+    return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
+  }
+
+  private getWindowsCategoryGuidance(): string {
+    return process.platform === 'win32' ? ` ${WINDOWS_CATEGORY_GUIDANCE}` : ''
   }
 
   private enableLowMemoryContext(

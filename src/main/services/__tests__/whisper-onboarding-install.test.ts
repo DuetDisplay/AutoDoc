@@ -1,13 +1,15 @@
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
-import { dirname, join } from 'path'
+import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
+import { constants } from 'fs'
+import { delimiter, dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
 const originalArch = process.arch
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const originalWindowsAssetBaseUrl = process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
 type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
 
 function getExecFileCallback(
@@ -62,11 +64,9 @@ async function loadWhisperManager(
   vi.resetModules()
 
   const execSyncMock = vi.fn()
-  const execFileMock = vi.fn((...args: unknown[]) => {
-    const callback = args.at(-1)
-    if (typeof callback === 'function') {
-      callback(null)
-    }
+  const execFileMock = vi.fn((_file, _args, optionsOrCallback, callback) => {
+    const resolvedCallback = getExecFileCallback(optionsOrCallback, callback)
+    resolvedCallback(null)
     return {} as never
   })
 
@@ -115,6 +115,11 @@ afterEach(async () => {
     delete process.env.AUTODOC_TEST_USER_DATA_DIR
   } else {
     process.env.AUTODOC_TEST_USER_DATA_DIR = originalTestUserDataDir
+  }
+  if (originalResourcesPathDescriptor) {
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPathDescriptor)
+  } else {
+    Reflect.deleteProperty(process, 'resourcesPath')
   }
   vi.resetModules()
   setPlatform(originalPlatform)
@@ -381,7 +386,9 @@ describe('Whisper onboarding dependency installation', () => {
       await writeFile(join(installedModelsDir, 'ffmpeg.exe'), 'ffmpeg')
       await writeFile(join(installedModelsDir, 'ggml-distil-large-v3.bin'), 'model')
 
-      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir)
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'whisper-cpp'
+      })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be needed when installed assets exist')
       })
@@ -398,6 +405,37 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves packaged Windows transcription resources from app.asar.unpacked', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-packaged-resources-'))
+    const resourcesPath = join(rootDir, 'resources')
+    const unpackedResourcesPath = join(resourcesPath, 'app.asar.unpacked', 'resources')
+
+    try {
+      await mkdir(unpackedResourcesPath, { recursive: true })
+      await writeFile(join(unpackedResourcesPath, 'windows-transcription-manifest.json'), '{}')
+      await writeFile(join(unpackedResourcesPath, 'faster-whisper-transcribe.py'), 'print("ok")')
+      Object.defineProperty(process, 'resourcesPath', {
+        configurable: true,
+        value: resourcesPath
+      })
+
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+
+      expect((manager as any).getWindowsTranscriptionManifestPath()).toBe(
+        join(unpackedResourcesPath, 'windows-transcription-manifest.json')
+      )
+      expect(manager.getFasterWhisperScriptPath()).toBe(
+        join(unpackedResourcesPath, 'faster-whisper-transcribe.py')
+      )
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -558,7 +596,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -636,6 +675,15 @@ describe('Whisper onboarding dependency installation', () => {
             await mkdir(dirname(target), { recursive: true })
             await writeFile(target, `${asset.id} file`)
           }
+          if (profile.id === 'faster-whisper-cuda' && asset.id === 'runtime') {
+            await mkdir(join(assetRoot, 'DLLs'), { recursive: true })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cublas', 'bin'), {
+              recursive: true
+            })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cudnn', 'bin'), {
+              recursive: true
+            })
+          }
         }
       )
       vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
@@ -657,6 +705,27 @@ describe('Whisper onboarding dependency installation', () => {
         access(join(manager.getFasterWhisperModelPath(), 'model.bin'))
       ).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      const fasterWhisperEnvPath = manager.getFasterWhisperProcessEnv().PATH?.split(delimiter)
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cublas',
+          'bin'
+        )
+      )
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cudnn',
+          'bin'
+        )
+      )
       expect(statuses).toContainEqual({
         phase: 'downloading-whisper',
         backend: 'faster-whisper-cuda',
@@ -807,6 +876,61 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('fails Windows faster-whisper extraction when expected files are missing after archive extraction', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-missing-extract-'))
+
+    try {
+      const { WhisperManager, execFileMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'faster-whisper-cpu'
+      })
+      const manager = new WhisperManager()
+      const payload = 'known payload'
+      const expectedSha256 = createHash('sha256').update(payload).digest('hex')
+      const existingRuntimeFile = join(
+        manager.getModelsDir(),
+        'transcription-runtimes',
+        'faster-whisper-cpu',
+        'existing.txt'
+      )
+      await mkdir(dirname(existingRuntimeFile), { recursive: true })
+      await writeFile(existingRuntimeFile, 'existing runtime')
+      vi.spyOn(manager as any, 'downloadFile').mockImplementation(async (...args: unknown[]) => {
+        const destPath = String(args[1])
+        await mkdir(dirname(destPath), { recursive: true })
+        await writeFile(destPath, payload)
+      })
+
+      await expect(
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          {
+            id: 'faster-whisper-cpu',
+            label: 'CPU optimized transcription',
+            modelName: 'small.en',
+            device: 'cpu',
+            computeType: 'int8',
+            minSystemMemoryGiB: 8,
+            assets: []
+          },
+          {
+            id: 'runtime',
+            filename: 'faster-whisper-runtime-cpu-win-x64.zip',
+            url: 'https://example.invalid/faster-whisper-runtime-cpu-win-x64.zip',
+            sha256: expectedSha256,
+            expectedFiles: ['python.exe']
+          }
+        )
+      ).rejects.toThrow(/missing expected files/i)
+      expect(execFileMock).toHaveBeenCalledWith(
+        'tar',
+        expect.arrayContaining(['-xf', '-C']),
+        expect.any(Function)
+      )
+      await expect(readFile(existingRuntimeFile, 'utf8')).resolves.toBe('existing runtime')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('resolves packaged Windows FFmpeg from the unpacked app asset path', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-unpacked-'))
     const packagedFfmpeg = join(
@@ -831,7 +955,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: packagedFfmpeg
+        ffmpegStaticPath: packagedFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -924,7 +1049,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {
@@ -985,7 +1111,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -1028,7 +1155,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {
@@ -1104,7 +1232,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {

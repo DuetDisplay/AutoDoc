@@ -69,6 +69,7 @@ const DIARIZATION_WINDOW_CONTEXT_SEC = 0.75
 const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
 const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
+const WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES = new Set([3221226505, -1073740791])
 type EnqueueSource = 'direct' | 'recovery-scan'
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
@@ -1351,7 +1352,12 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     concurrentSources = 1
   ): Promise<WhisperOutput> {
-    if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
+    const shouldPreChunk =
+      audioDurationSec &&
+      audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC &&
+      !this.shouldTrySinglePassForLongRecording()
+
+    if (shouldPreChunk) {
       console.log(
         `[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`
       )
@@ -1390,6 +1396,15 @@ export class TranscriptionService {
     }
 
     return output
+  }
+
+  private shouldTrySinglePassForLongRecording(): boolean {
+    if (process.platform !== 'win32') return false
+    if (typeof this.whisperManager.isFasterWhisperSelected !== 'function') return false
+    if (!this.whisperManager.isFasterWhisperSelected()) return false
+    if (typeof this.whisperManager.getFasterWhisperDevice !== 'function') return false
+
+    return this.whisperManager.getFasterWhisperDevice() === 'cuda'
   }
 
   private async runWhisperChunked(
@@ -1762,7 +1777,10 @@ export class TranscriptionService {
         args.push('--threads', String(threadCount))
       }
 
-      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args)
+      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args, {
+        env: this.whisperManager.getFasterWhisperProcessEnv(),
+        windowsHide: true
+      })
       if (threadCount !== null) {
         console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
       }
@@ -1787,9 +1805,32 @@ export class TranscriptionService {
         stderr += data.toString()
       })
 
-      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      proc.on('close', async (code: number | null, signal: NodeJS.Signals | null) => {
         if (progressTimer) clearInterval(progressTimer)
         if (code === 0) {
+          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+          resolve()
+          return
+        }
+
+        if (
+          process.platform === 'win32' &&
+          code != null &&
+          WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES.has(code) &&
+          (await this.hasValidFasterWhisperJson(jsonPath))
+        ) {
+          logAutodocEvent({
+            area: 'transcription',
+            message: 'Faster Whisper exited with a Windows native crash after writing valid output',
+            meetingId,
+            context: {
+              exitCode: code,
+              signal,
+              backend: this.whisperManager.getTranscriptionBackend(),
+              computeType: this.whisperManager.getFasterWhisperComputeType(),
+              audioDurationSec: audioDurationSec ?? null
+            }
+          })
           this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
           resolve()
           return
@@ -1801,6 +1842,16 @@ export class TranscriptionService {
         )
       })
     })
+  }
+
+  private async hasValidFasterWhisperJson(jsonPath: string): Promise<boolean> {
+    try {
+      const raw = await readFile(jsonPath, 'utf-8')
+      const parsed = JSON.parse(raw) as Partial<WhisperOutput>
+      return Array.isArray(parsed.transcription)
+    } catch {
+      return false
+    }
   }
 
   private getWhisperThreadCount(concurrentSources = 1): number | null {

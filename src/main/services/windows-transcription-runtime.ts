@@ -19,6 +19,12 @@ export interface WindowsGpuInfo {
   adapterRamGiB: number | null
 }
 
+export interface NvidiaSmiGpuInfo {
+  name: string
+  memoryTotalMiB: number | null
+  driverVersion: string | null
+}
+
 export interface WindowsHardwareProfile {
   platform: NodeJS.Platform
   arch: NodeJS.Architecture
@@ -44,7 +50,7 @@ export interface WindowsTranscriptionProfile {
   label: string
   modelName: string
   device: 'cuda' | 'cpu'
-  computeType: 'float16' | 'int8'
+  computeType: 'float16' | 'int8_float16' | 'int8_float32' | 'int8'
   minSystemMemoryGiB: number
   minVramGiB?: number
   assets: WindowsTranscriptionAsset[]
@@ -68,7 +74,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     label: 'NVIDIA accelerated transcription',
     modelName: 'distil-large-v3',
     device: 'cuda',
-    computeType: 'float16',
+    computeType: 'int8_float32',
     minSystemMemoryGiB: 12,
     minVramGiB: 6,
     assets: [
@@ -268,12 +274,14 @@ function getSystemMemorySnapshot(): Pick<
   }
 
   return {
-    freeMemoryGiB: typeof info.free === 'number' ? bytesToGiB(info.free) : null,
-    totalMemoryGiB: typeof info.total === 'number' ? bytesToGiB(info.total) : null
+    freeMemoryGiB: typeof info.free === 'number' ? electronMemoryKbToGiB(info.free) : null,
+    totalMemoryGiB: typeof info.total === 'number' ? electronMemoryKbToGiB(info.total) : null
   }
 }
 
 async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
+  let gpus: WindowsGpuInfo[] = []
+
   try {
     const { stdout } = await execFileAsync('powershell', [
       '-NoProfile',
@@ -282,12 +290,121 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
     ])
     const parsed = JSON.parse(stdout.trim()) as unknown
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
-    return rows
+    gpus = rows
       .map((row) => parseWindowsGpuRow(row))
       .filter((gpu): gpu is WindowsGpuInfo => gpu !== null)
   } catch {
-    return []
+    gpus = []
   }
+
+  try {
+    const nvidiaGpus = await queryNvidiaSmiGpus()
+    return applyNvidiaSmiMemory(gpus, nvidiaGpus)
+  } catch {
+    return gpus
+  }
+}
+
+async function queryNvidiaSmiGpus(): Promise<NvidiaSmiGpuInfo[]> {
+  const { stdout } = await execFileAsync('nvidia-smi', [
+    '--query-gpu=name,memory.total,driver_version',
+    '--format=csv,noheader,nounits'
+  ])
+
+  return parseNvidiaSmiGpuRows(stdout)
+}
+
+export function parseNvidiaSmiGpuRows(stdout: string): NvidiaSmiGpuInfo[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [nameRaw, memoryRaw, driverRaw] = line.split(',').map((part) => part.trim())
+      if (!nameRaw) return null
+
+      return {
+        name: nameRaw,
+        memoryTotalMiB: parseNvidiaSmiMemoryMiB(memoryRaw),
+        driverVersion: driverRaw || null
+      }
+    })
+    .filter((gpu): gpu is NvidiaSmiGpuInfo => gpu !== null)
+}
+
+export function applyNvidiaSmiMemory(
+  gpus: WindowsGpuInfo[],
+  nvidiaGpus: NvidiaSmiGpuInfo[]
+): WindowsGpuInfo[] {
+  if (nvidiaGpus.length === 0) {
+    return gpus
+  }
+
+  const next = [...gpus]
+  const usedIndexes = new Set<number>()
+
+  for (const nvidiaGpu of nvidiaGpus) {
+    const adapterRamGiB =
+      nvidiaGpu.memoryTotalMiB != null ? mibToGiB(nvidiaGpu.memoryTotalMiB) : null
+    const matchIndex = findNvidiaGpuMatchIndex(next, nvidiaGpu.name, usedIndexes)
+
+    if (matchIndex >= 0) {
+      usedIndexes.add(matchIndex)
+      next[matchIndex] = {
+        ...next[matchIndex],
+        adapterRamGiB: adapterRamGiB ?? next[matchIndex].adapterRamGiB
+      }
+      continue
+    }
+
+    next.push({
+      name: nvidiaGpu.name,
+      vendor: 'nvidia',
+      adapterRamGiB
+    })
+    usedIndexes.add(next.length - 1)
+  }
+
+  return next
+}
+
+function findNvidiaGpuMatchIndex(
+  gpus: WindowsGpuInfo[],
+  nvidiaSmiName: string,
+  usedIndexes: Set<number>
+): number {
+  const normalizedNvidiaName = normalizeGpuName(nvidiaSmiName)
+  const exactNameMatch = gpus.findIndex(
+    (gpu, index) =>
+      !usedIndexes.has(index) &&
+      gpu.vendor === 'nvidia' &&
+      namesLikelyReferToSameGpu(normalizeGpuName(gpu.name), normalizedNvidiaName)
+  )
+
+  if (exactNameMatch >= 0) {
+    return exactNameMatch
+  }
+
+  return gpus.findIndex((gpu, index) => !usedIndexes.has(index) && gpu.vendor === 'nvidia')
+}
+
+function normalizeGpuName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(nvidia|geforce|laptop|gpu|graphics)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function namesLikelyReferToSameGpu(left: string, right: string): boolean {
+  return left.length > 0 && right.length > 0 && (left.includes(right) || right.includes(left))
+}
+
+function parseNvidiaSmiMemoryMiB(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = Number.parseFloat(value.replace(/\s*MiB$/i, ''))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
 function parseWindowsGpuRow(row: unknown): WindowsGpuInfo | null {
@@ -315,4 +432,12 @@ function parseWindowsGpuRow(row: unknown): WindowsGpuInfo | null {
 
 function bytesToGiB(bytes: number): number {
   return Number((bytes / 1024 / 1024 / 1024).toFixed(2))
+}
+
+function mibToGiB(mebibytes: number): number {
+  return Number((mebibytes / 1024).toFixed(2))
+}
+
+export function electronMemoryKbToGiB(kilobytes: number): number {
+  return Number((kilobytes / 1024 / 1024).toFixed(2))
 }

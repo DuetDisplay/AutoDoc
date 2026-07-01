@@ -580,6 +580,13 @@ export class SegmentationService {
     progress?: number,
     errorCode?: string
   ): void {
+    if (
+      status === 'segmenting' &&
+      typeof progress === 'number' &&
+      typeof this.activeProgress === 'number'
+    ) {
+      progress = Math.max(progress, this.activeProgress)
+    }
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
