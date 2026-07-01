@@ -16,11 +16,13 @@ afterEach(() => {
 })
 
 describe('distribution config', () => {
-  it('fails closed for fork and dev builds without explicit infrastructure config', () => {
+  it('fails closed for private infrastructure while allowing public Windows assets', () => {
     expect(isOfficialAutoDocBuild()).toBe(false)
     expect(getConfiguredAuthWorkerUrl()).toBeNull()
     expect(getConfiguredMacWhisperRuntimeAssetBaseUrl()).toBeNull()
-    expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBeNull()
+    expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1'
+    )
   })
 
   it('uses official infrastructure defaults for official builds', () => {
@@ -31,7 +33,7 @@ describe('distribution config', () => {
       'https://github.com/DuetDisplay/AutoDoc/releases/download/macos-whisper-runtime-v1'
     )
     expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1'
+      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1'
     )
   })
 
@@ -39,13 +41,10 @@ describe('distribution config', () => {
     process.env.AUTODOC_OFFICIAL_BUILD = '1'
     process.env.AUTODOC_AUTH_WORKER_URL = 'https://fork.example.com/auth'
     process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL = 'https://fork.example.com/macos'
-    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL =
-      'https://fork.example.com/windows'
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = 'https://fork.example.com/windows'
 
     expect(getConfiguredAuthWorkerUrl()).toBe('https://fork.example.com/auth')
     expect(getConfiguredMacWhisperRuntimeAssetBaseUrl()).toBe('https://fork.example.com/macos')
-    expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
-      'https://fork.example.com/windows'
-    )
+    expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe('https://fork.example.com/windows')
   })
 })
