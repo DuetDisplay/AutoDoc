@@ -67,13 +67,13 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource/instrument-serif": "^5.2.8",
-    "@sentry/electron": "^7.10.0",
+    "@sentry/electron": "^7.15.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
     "ffmpeg-static": "^5.3.0",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
-    "posthog-js": "^1.369.3"
+    "posthog-js": "^1.396.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260610.1",
