@@ -246,6 +246,7 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 }
 
 let ollamaManager: OllamaManager | null = null
+let shutdownTranscriptionWorker: (() => void) | null = null
 let isQuitting = false
 let mainSentry: MainSentryRuntimeModule | null = null
 let mainSentryEnabled = false
@@ -838,6 +839,7 @@ app.whenReady().then(async () => {
     localProcessingCoordinator,
     () => prefsStore.getTranscriptionPerformanceMode()
   )
+  shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({
     resolveModel: async () =>
       (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
@@ -1664,6 +1666,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
   ollamaManager?.stop()
+  shutdownTranscriptionWorker?.()
   stopRecordingMediaHttpServer()
 })
 ;(app as unknown as { on(event: 'before-quit-for-update', listener: () => void): void }).on(

@@ -44,6 +44,23 @@ vi.mock('child_process', () => ({
   execFile: vi.fn()
 }))
 
+const workerClientMock = vi.hoisted(() => ({
+  isLoaded: false,
+  load: vi.fn(),
+  transcribe: vi.fn(),
+  unload: vi.fn(),
+  ping: vi.fn(),
+  dispose: vi.fn(),
+  lastOptions: null as Record<string, unknown> | null
+}))
+
+vi.mock('../transcription-worker-client', () => ({
+  TranscriptionWorkerClient: vi.fn((options: Record<string, unknown>) => {
+    workerClientMock.lastOptions = options
+    return workerClientMock
+  })
+}))
+
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
   decryptJSON: vi.fn(),
@@ -122,8 +139,20 @@ describe('TranscriptionService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    workerClientMock.isLoaded = false
+    workerClientMock.lastOptions = null
+    workerClientMock.load.mockImplementation(async () => {
+      workerClientMock.isLoaded = true
+    })
+    workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+    workerClientMock.unload.mockResolvedValue(undefined)
+    workerClientMock.ping.mockResolvedValue(undefined)
+    workerClientMock.dispose.mockImplementation(() => {
+      workerClientMock.isLoaded = false
+    })
     setPlatform(originalPlatform)
     fsMock.unlink.mockResolvedValue(undefined as any)
+    fsMock.writeFile.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
@@ -896,17 +925,18 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount()).toBe(4)
   })
 
-  it('passes --no-eco to faster-whisper in fast mode', async () => {
+  it('passes --no-eco to the transcription worker in fast mode', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
-      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
       getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
       getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
       getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
       getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
       getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
       getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
     } as unknown as WhisperManager
     service = new TranscriptionService(
@@ -922,31 +952,33 @@ describe('TranscriptionService', () => {
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
     )
-    const child = new MockChildProcess()
-    childProcessMock.spawn.mockReturnValue(child as any)
 
-    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    child.emit('close', 0)
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
 
-    await expect(promise).resolves.toBeUndefined()
-    expect(childProcessMock.spawn).toHaveBeenCalledWith(
-      '/mock/python.exe',
-      expect.arrayContaining(['--no-eco']),
-      expect.any(Object)
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    expect(workerClientMock.load).toHaveBeenCalled()
+    expect(workerClientMock.transcribe).toHaveBeenCalled()
+    expect(fsMock.writeFile).toHaveBeenCalledWith(
+      '/mock/tmp/audio.wav.json',
+      JSON.stringify({ transcription: [] }),
+      'utf-8'
     )
   })
 
-  it('does not pass --no-eco to faster-whisper in balanced mode', async () => {
+  it('does not pass --no-eco to the transcription worker in balanced mode', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
-      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
       getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
       getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
       getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
       getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
       getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
       getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
     } as unknown as WhisperManager
     service = new TranscriptionService(
@@ -962,18 +994,12 @@ describe('TranscriptionService', () => {
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
     )
-    const child = new MockChildProcess()
-    childProcessMock.spawn.mockReturnValue(child as any)
 
-    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    child.emit('close', 0)
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
 
-    await expect(promise).resolves.toBeUndefined()
-    expect(childProcessMock.spawn).toHaveBeenCalledWith(
-      '/mock/python.exe',
-      expect.not.arrayContaining(['--no-eco']),
-      expect.any(Object)
-    )
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual([])
   })
 
   it('uses idle priority in balanced mode and below-normal in fast mode', async () => {
@@ -1191,12 +1217,12 @@ describe('TranscriptionService', () => {
     )
   })
 
-  it('accepts valid faster-whisper output after a Windows CUDA native crash', async () => {
+  it('maps transcription worker failures to faster-whisper exit errors', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
-      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
       getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
       getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
       getFasterWhisperDevice: vi.fn().mockReturnValue('cuda'),
@@ -1211,15 +1237,13 @@ describe('TranscriptionService', () => {
       mockCalendar,
       () => false
     )
-    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
-    const child = new MockChildProcess()
-    childProcessMock.spawn.mockReturnValue(child as any)
+    workerClientMock.transcribe.mockRejectedValueOnce(
+      new Error('Transcription worker crashed repeatedly: native crash')
+    )
 
-    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    child.emit('close', 3221226505)
-
-    await expect(promise).resolves.toBeUndefined()
-    expect(fsMock.readFile).toHaveBeenCalledWith('/mock/tmp/audio.wav.json', 'utf-8')
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).rejects.toThrow(/faster-whisper exited with code 1/)
   })
 
   it('classifies Metal aborts as whisper-metal-crash', () => {

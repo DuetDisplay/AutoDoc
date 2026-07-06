@@ -12,6 +12,7 @@ files:
   - 'resources/trayRecording.png'
   - 'resources/trayRecording@2x.png'
   - 'resources/faster-whisper-transcribe.py'
+  - 'resources/transcription-worker.py'
   - 'resources/windows-transcription-manifest.json'
   - 'native/**/bin/**/*'
   - '!**/__tests__/**'

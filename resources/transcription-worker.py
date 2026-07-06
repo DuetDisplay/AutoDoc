@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""
+JSON-lines-over-stdio protocol for the persistent transcription worker.
+
+Requests (one JSON object per line on stdin):
+- load: {"id", "op": "load", "engine": "faster-whisper", "model", "device": "cuda"|"cpu", "computeType", "threads": number|null}
+- transcribe: {"id", "op": "transcribe", "audio", "language", "window": {"startSec", "endSec"} | null}
+- unload: {"id", "op": "unload"}
+- ping: {"id", "op": "ping"}
+
+Responses on stdout (one JSON object per line):
+- success: {"id", "ok": true, "result": ...}
+- failure: {"id", "ok": false, "error": string}
+
+transcribe result shape:
+{"transcription": [{"offsets": {"from": ms, "to": ms}, "text": string}]}
+
+When window is set, segment offsets in transcribe results and segment events are
+RELATIVE TO THE WINDOW START (the caller adds chunkStart * 1000, matching existing chunk logic).
+
+Unsolicited progress events on stdout:
+{"event": "segment", "id", "startMs", "endMs", "text"}
+Emitted as each segment decodes. Window-relative when windowed.
+"""
+
+import argparse
+import ctypes
+import gc
+import json
+import sys
+import wave
+from ctypes import wintypes
+
+PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
+PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
+ProcessPowerThrottling = 4
+
+
+class PROCESS_POWER_THROTTLING_STATE(ctypes.Structure):
+    _fields_ = [
+        ("Version", wintypes.ULONG),
+        ("ControlMask", wintypes.ULONG),
+        ("StateMask", wintypes.ULONG),
+    ]
+
+
+def _enable_eco_qos() -> None:
+    # Same mechanism Defender/OneDrive use (routes to E-cores, green-leaf in Task Manager).
+    try:
+        state = PROCESS_POWER_THROTTLING_STATE()
+        state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION
+        state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        state.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Without explicit argtypes/restype the 64-bit pseudo-handle from
+        # GetCurrentProcess is truncated and SetProcessInformation fails
+        # with ERROR_INVALID_HANDLE.
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.SetProcessInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetProcessInformation.restype = wintypes.BOOL
+        if (
+            kernel32.SetProcessInformation(
+                kernel32.GetCurrentProcess(),
+                ProcessPowerThrottling,
+                ctypes.byref(state),
+                ctypes.sizeof(state),
+            )
+            == 0
+        ):
+            error = ctypes.get_last_error()
+            print(
+                f"EcoQoS unavailable: SetProcessInformation failed (error {error})",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        print(f"EcoQoS unavailable: {exc}", file=sys.stderr)
+
+
+def _respond(request_id: int, ok: bool, result=None, error: str | None = None) -> None:
+    payload = {"id": request_id, "ok": ok}
+    if ok:
+        payload["result"] = result
+    else:
+        payload["error"] = error or "request failed"
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def _emit_segment(request_id: int, start_ms: int, end_ms: int, text: str) -> None:
+    print(
+        json.dumps(
+            {
+                "event": "segment",
+                "id": request_id,
+                "startMs": start_ms,
+                "endMs": end_ms,
+                "text": text,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+
+
+class TranscriptionWorker:
+    def __init__(self) -> None:
+        self.model = None
+        self.loaded_model_name: str | None = None
+        self.loaded_device: str | None = None
+
+    def handle_load(self, request_id: int, request: dict) -> None:
+        from faster_whisper import WhisperModel
+
+        model_name = request["model"]
+        device = request["device"]
+        compute_type = request["computeType"]
+        threads = request.get("threads")
+
+        model_kwargs = {
+            "device": device,
+            "compute_type": compute_type,
+        }
+        if device == "cpu" and isinstance(threads, int) and threads > 0:
+            model_kwargs["cpu_threads"] = threads
+
+        self.model = WhisperModel(model_name, **model_kwargs)
+        self.loaded_model_name = model_name
+        self.loaded_device = device
+        print(
+            f"model loaded: {model_name} device={device}",
+            file=sys.stderr,
+            flush=True,
+        )
+        _respond(request_id, True, {"loaded": True})
+
+    def handle_transcribe(self, request_id: int, request: dict) -> None:
+        if self.model is None:
+            raise RuntimeError("No model loaded")
+
+        audio_path = request["audio"]
+        language = request.get("language", "en")
+        window = request.get("window")
+
+        transcribe_kwargs = {
+            "language": language,
+            "beam_size": 1,
+            "vad_filter": True,
+            "word_timestamps": False,
+        }
+
+        if window:
+            import numpy as np
+
+            start_sec = float(window["startSec"])
+            end_sec = float(window["endSec"])
+            with wave.open(audio_path, "rb") as handle:
+                framerate = handle.getframerate()
+                start_frame = int(start_sec * framerate)
+                end_frame = int(end_sec * framerate)
+                handle.setpos(start_frame)
+                raw_frames = handle.readframes(max(0, end_frame - start_frame))
+
+            audio = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
+            segments, _info = self.model.transcribe(audio, **transcribe_kwargs)
+        else:
+            segments, _info = self.model.transcribe(audio_path, **transcribe_kwargs)
+
+        transcription = []
+        for segment in segments:
+            start_ms = int(segment.start * 1000)
+            end_ms = int(segment.end * 1000)
+            text = segment.text
+            _emit_segment(request_id, start_ms, end_ms, text)
+            transcription.append(
+                {
+                    "offsets": {"from": start_ms, "to": end_ms},
+                    "text": text,
+                }
+            )
+
+        _respond(request_id, True, {"transcription": transcription})
+
+    def handle_unload(self, request_id: int) -> None:
+        self.model = None
+        self.loaded_model_name = None
+        self.loaded_device = None
+        gc.collect()
+        _respond(request_id, True, {"loaded": False})
+
+    def handle_ping(self, request_id: int) -> None:
+        _respond(request_id, True, {"pong": True})
+
+    def dispatch(self, request: dict) -> None:
+        request_id = request["id"]
+        op = request.get("op")
+
+        try:
+            if op == "load":
+                self.handle_load(request_id, request)
+            elif op == "transcribe":
+                self.handle_transcribe(request_id, request)
+            elif op == "unload":
+                self.handle_unload(request_id)
+            elif op == "ping":
+                self.handle_ping(request_id)
+            else:
+                _respond(request_id, False, error=f"unknown op: {op}")
+        except Exception as exc:
+            _respond(request_id, False, error=str(exc))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AutoDoc persistent transcription worker")
+    parser.add_argument("--no-eco", action="store_true")
+    args = parser.parse_args()
+
+    if sys.platform == "win32" and not args.no_eco:
+        _enable_eco_qos()
+
+    worker = TranscriptionWorker()
+
+    for line in sys.stdin:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            request = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            print(f"invalid request json: {exc}", file=sys.stderr, flush=True)
+            continue
+
+        worker.dispatch(request)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

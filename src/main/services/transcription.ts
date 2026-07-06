@@ -31,6 +31,7 @@ import {
   isMemoryHealthyForConcurrentProcessing
 } from './mac-processing-profile'
 import { shouldSerializeWindowsLocalProcessing } from './windows-transcription-runtime'
+import { TranscriptionWorkerClient } from './transcription-worker-client'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -50,6 +51,8 @@ const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
+const WORKER_CHUNK_WINDOW_SEC = 600
+const WORKER_CHUNK_OVERLAP_SEC = 15
 const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 120
 const REPETITION_WINDOW_SEGMENTS = 24
 const REPETITION_WINDOW_MAX_UNIQUE = 4
@@ -73,7 +76,6 @@ const DIARIZATION_WINDOW_CONTEXT_SEC = 0.75
 const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
 const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
-const WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES = new Set([3221226505, -1073740791])
 type EnqueueSource = 'direct' | 'recovery-scan'
 type TranscriptionPerformanceMode = 'balanced' | 'fast'
 
@@ -118,6 +120,9 @@ export class TranscriptionService {
   private getPerformanceMode: () => TranscriptionPerformanceMode
   private memoryGateDelay: (ms: number) => Promise<void>
   private readSystemMemoryInfo: () => SystemMemorySnapshot
+  private transcriptionWorkerClient: TranscriptionWorkerClient | null = null
+  private transcriptionWorkerClientFingerprint: string | null = null
+  private workerLoadedFingerprint: string | null = null
 
   constructor(
     private whisperManager: WhisperManager,
@@ -140,6 +145,13 @@ export class TranscriptionService {
 
   onComplete(callback: (meetingId: string) => void): void {
     this.onCompleteCallback = callback
+  }
+
+  shutdown(): void {
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = null
+    this.transcriptionWorkerClientFingerprint = null
+    this.workerLoadedFingerprint = null
   }
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
@@ -1412,7 +1424,8 @@ export class TranscriptionService {
         tempPrefix,
         tempFiles,
         progressRange,
-        concurrentSources
+        concurrentSources,
+        true
       )
     }
 
@@ -1435,12 +1448,20 @@ export class TranscriptionService {
     tempPrefix: string,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    concurrentSources = 1
+    concurrentSources = 1,
+    useNarrowWindows = false
   ): Promise<WhisperOutput> {
-    const stepSec = Math.max(
-      1,
-      CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC
-    )
+    const useWorkerWindows =
+      !useNarrowWindows &&
+      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
+      this.whisperManager.isFasterWhisperSelected()
+    const chunkWindowSec = useWorkerWindows
+      ? WORKER_CHUNK_WINDOW_SEC
+      : CHUNKED_TRANSCRIPTION_WINDOW_SEC
+    const chunkOverlapSec = useWorkerWindows
+      ? WORKER_CHUNK_OVERLAP_SEC
+      : CHUNKED_TRANSCRIPTION_OVERLAP_SEC
+    const stepSec = Math.max(1, chunkWindowSec - chunkOverlapSec)
     const transcription: WhisperSegment[] = []
     let lastAcceptedTo = 0
     let chunkIndex = 0
@@ -1449,20 +1470,18 @@ export class TranscriptionService {
 
     for (let chunkStart = 0; chunkStart < audioDurationSec; chunkStart += stepSec) {
       const chunkStartedAt = Date.now()
-      const chunkDuration = Math.min(
-        CHUNKED_TRANSCRIPTION_WINDOW_SEC,
-        audioDurationSec - chunkStart
-      )
+      const chunkDuration = Math.min(chunkWindowSec, audioDurationSec - chunkStart)
       const chunkPath = `${tempPrefix}-chunk-${chunkIndex}.wav`
-      tempFiles.push(chunkPath)
-
-      await this.audioConverter.extractClip(
-        audioWavPath,
-        chunkPath,
-        this.whisperManager.getFfmpegPath(),
-        chunkStart,
-        chunkDuration
-      )
+      if (!useWorkerWindows) {
+        tempFiles.push(chunkPath)
+        await this.audioConverter.extractClip(
+          audioWavPath,
+          chunkPath,
+          this.whisperManager.getFfmpegPath(),
+          chunkStart,
+          chunkDuration
+        )
+      }
       const extractElapsedMs = Date.now() - chunkStartedAt
 
       const whisperStartedAt = Date.now()
@@ -1473,7 +1492,7 @@ export class TranscriptionService {
         )
       }
       const chunkOutput = await this.runWhisperPassAndRead(
-        chunkPath,
+        useWorkerWindows ? audioWavPath : chunkPath,
         meetingId,
         chunkDuration,
         tempFiles,
@@ -1484,7 +1503,8 @@ export class TranscriptionService {
             }
           : chunkProgressRange,
         ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
-        concurrentSources
+        concurrentSources,
+        useWorkerWindows ? { startSec: chunkStart, endSec: chunkStart + chunkDuration } : null
       )
       const whisperElapsedMs = Date.now() - whisperStartedAt
       logAutodocEvent({
@@ -1546,6 +1566,17 @@ export class TranscriptionService {
     return 'single'
   }
 
+  private getFasterWhisperJsonPath(
+    audioWavPath: string,
+    window: { startSec: number; endSec: number } | null
+  ): string {
+    if (window) {
+      return `${audioWavPath}.window-${window.startSec}-${window.endSec}.json`
+    }
+
+    return `${audioWavPath}.json`
+  }
+
   private async runWhisperPassAndRead(
     audioWavPath: string,
     meetingId: string,
@@ -1553,9 +1584,10 @@ export class TranscriptionService {
     tempFiles: string[],
     progressRange?: { start: number; end: number },
     extraArgs: string[] = [],
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<WhisperOutput> {
-    const jsonPath = `${audioWavPath}.json`
+    const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
     tempFiles.push(jsonPath)
     if (process.platform === 'win32') {
       await this.waitForWindowsTranscriptionMemory(meetingId)
@@ -1566,7 +1598,8 @@ export class TranscriptionService {
       audioDurationSec,
       progressRange,
       extraArgs,
-      concurrentSources
+      concurrentSources,
+      window
     )
     const whisperJson = await readFile(jsonPath, 'utf-8')
     return JSON.parse(whisperJson) as WhisperOutput
@@ -1578,7 +1611,8 @@ export class TranscriptionService {
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
     extraArgs: string[] = [],
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
     if (
       typeof this.whisperManager.isMlxWhisperSelected === 'function' &&
@@ -1596,7 +1630,8 @@ export class TranscriptionService {
         meetingId,
         audioDurationSec,
         progressRange,
-        concurrentSources
+        concurrentSources,
+        window
       )
     }
 
@@ -1770,115 +1805,105 @@ export class TranscriptionService {
     })
   }
 
-  private runFasterWhisperPass(
+  private getTranscriptionWorkerClientFingerprint(): string {
+    return [
+      this.whisperManager.getFasterWhisperPythonPath(),
+      this.whisperManager.getFasterWhisperModelPath(),
+      this.whisperManager.getFasterWhisperDevice(),
+      this.whisperManager.getFasterWhisperComputeType(),
+      // EcoQoS is decided at spawn time (--no-eco), so a performance-mode
+      // change must recreate the worker process.
+      this.getPerformanceMode()
+    ].join('|')
+  }
+
+  private getOrCreateTranscriptionWorkerClient(): TranscriptionWorkerClient {
+    const fingerprint = this.getTranscriptionWorkerClientFingerprint()
+    if (
+      this.transcriptionWorkerClient &&
+      this.transcriptionWorkerClientFingerprint === fingerprint
+    ) {
+      return this.transcriptionWorkerClient
+    }
+
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = new TranscriptionWorkerClient({
+      pythonPath: this.whisperManager.getFasterWhisperPythonPath(),
+      scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
+      processEnv: this.whisperManager.getFasterWhisperProcessEnv(),
+      applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
+      extraArgs: this.getPerformanceMode() === 'fast' ? ['--no-eco'] : []
+    })
+    this.transcriptionWorkerClientFingerprint = fingerprint
+    this.workerLoadedFingerprint = null
+    return this.transcriptionWorkerClient
+  }
+
+  private async ensureWorkerLoaded(concurrentSources: number): Promise<void> {
+    const client = this.getOrCreateTranscriptionWorkerClient()
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    // cpu_threads is fixed when the model loads, so a thread-count change
+    // (e.g. concurrent dual-source vs single source) requires a reload.
+    const fingerprint = `${this.getTranscriptionWorkerClientFingerprint()}|threads=${threadCount}`
+    if (client.isLoaded && this.workerLoadedFingerprint === fingerprint) {
+      return
+    }
+
+    await client.load({
+      engine: 'faster-whisper',
+      model: this.whisperManager.getFasterWhisperModelPath(),
+      device: this.whisperManager.getFasterWhisperDevice(),
+      computeType: this.whisperManager.getFasterWhisperComputeType(),
+      threads: threadCount
+    })
+    this.workerLoadedFingerprint = fingerprint
+  }
+
+  private async runFasterWhisperPass(
     audioWavPath: string,
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let stderr = ''
-      const threadCount = this.getWhisperThreadCount(concurrentSources)
-      const jsonPath = `${audioWavPath}.json`
-      const args = [
-        this.whisperManager.getFasterWhisperScriptPath(),
-        '--model',
-        this.whisperManager.getFasterWhisperModelPath(),
-        '--audio',
-        audioWavPath,
-        '--output',
-        jsonPath,
-        '--device',
-        this.whisperManager.getFasterWhisperDevice(),
-        '--compute-type',
-        this.whisperManager.getFasterWhisperComputeType(),
-        '--language',
-        'en'
-      ]
+    const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    if (threadCount !== null) {
+      console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
+    }
+    console.log(
+      `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+    )
 
-      if (threadCount !== null) {
-        args.push('--threads', String(threadCount))
-      }
-
-      if (this.getPerformanceMode() === 'fast') {
-        args.push('--no-eco')
-      }
-
-      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args, {
-        env: this.whisperManager.getFasterWhisperProcessEnv(),
-        windowsHide: true
-      })
-      if (threadCount !== null) {
-        console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
-      }
-      console.log(
-        `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
-      )
-      this.lowerWhisperPriority(proc.pid, meetingId)
-
-      const progressTimer =
-        audioDurationSec && audioDurationSec > 0
-          ? setInterval(() => {
-              this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(50, progressRange))
-            }, 1500)
-          : null
-
-      proc.on('error', (err) => {
-        if (progressTimer) clearInterval(progressTimer)
-        reject(new Error(`faster-whisper spawn failed: ${err.message}`))
-      })
-
-      proc.stderr.on('data', (data: Buffer) => {
-        stderr += data.toString()
-      })
-
-      proc.on('close', async (code: number | null, signal: NodeJS.Signals | null) => {
-        if (progressTimer) clearInterval(progressTimer)
-        if (code === 0) {
-          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
-          resolve()
-          return
-        }
-
-        if (
-          process.platform === 'win32' &&
-          code != null &&
-          WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES.has(code) &&
-          (await this.hasValidFasterWhisperJson(jsonPath))
-        ) {
-          logAutodocEvent({
-            area: 'transcription',
-            message: 'Faster Whisper exited with a Windows native crash after writing valid output',
-            meetingId,
-            context: {
-              exitCode: code,
-              signal,
-              backend: this.whisperManager.getTranscriptionBackend(),
-              computeType: this.whisperManager.getFasterWhisperComputeType(),
-              audioDurationSec: audioDurationSec ?? null
-            }
-          })
-          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
-          resolve()
-          return
-        }
-
-        const signalSuffix = signal ? ` (signal ${signal})` : ''
-        reject(
-          new Error(`faster-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
-        )
-      })
-    })
-  }
-
-  private async hasValidFasterWhisperJson(jsonPath: string): Promise<boolean> {
     try {
-      const raw = await readFile(jsonPath, 'utf-8')
-      const parsed = JSON.parse(raw) as Partial<WhisperOutput>
-      return Array.isArray(parsed.transcription)
-    } catch {
-      return false
+      await this.ensureWorkerLoaded(concurrentSources)
+      const client = this.getOrCreateTranscriptionWorkerClient()
+      const result = await client.transcribe(
+        {
+          audio: audioWavPath,
+          language: 'en',
+          window
+        },
+        (segment) => {
+          if (audioDurationSec && audioDurationSec > 0) {
+            const progress = Math.min(
+              99,
+              Math.round((segment.endMs / (audioDurationSec * 1000)) * 100)
+            )
+            this.broadcastStatus(
+              meetingId,
+              'transcribing',
+              this.scaleProgress(progress, progressRange)
+            )
+          }
+        }
+      )
+      await writeFile(jsonPath, JSON.stringify(result), 'utf-8')
+      this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`faster-whisper exited with code 1: ${message.slice(-500)}`)
     }
   }
 

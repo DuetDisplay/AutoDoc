@@ -23,6 +23,7 @@ import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { TranscriptionWorkerClient } from './transcription-worker-client'
 import { getInstalledModelsDir } from './dev-runtime-paths'
 import { getStorageDiagnostics } from './storage-manager'
 import {
@@ -58,6 +59,7 @@ const FFMPEG_WIN_URL =
 const WHISPER_PROBE_TIMEOUT_MS = 30_000
 const WHISPER_PROBE_RETRY_DELAYS_MS = [500, 1_500]
 const FASTER_WHISPER_PROBE_TIMEOUT_MS = 45_000
+const FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS = 3 * 60_000
 const MLX_WHISPER_PROBE_TIMEOUT_MS = 10 * 60_000
 const MLX_WHISPER_MODEL = 'mlx-community/distil-whisper-large-v3'
 const MLX_WHISPER_LABEL = 'Apple Silicon optimized transcription'
@@ -265,6 +267,13 @@ export class WhisperManager extends EventEmitter {
       return this.getPackagedResourcePath('faster-whisper-transcribe.py')
     }
     return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
+  }
+
+  getTranscriptionWorkerScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('transcription-worker.py')
+    }
+    return this.getDevelopmentResourcePath('transcription-worker.py')
   }
 
   getFasterWhisperDevice(): 'cuda' | 'cpu' {
@@ -1624,65 +1633,75 @@ export class WhisperManager extends EventEmitter {
     if (!(await this.fileExists(this.getFasterWhisperModelPath()))) {
       return false
     }
-    if (!(await this.fileExists(this.getFasterWhisperScriptPath()))) {
+    if (!(await this.fileExists(this.getTranscriptionWorkerScriptPath()))) {
       return false
     }
 
     const profile = this.getSelectedWindowsProfile()
     const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-faster-whisper-probe-'))
     const probeWavPath = join(probeDir, 'probe.wav')
-    const probeJsonPath = join(probeDir, 'probe.json')
 
     try {
       await writeFile(probeWavPath, this.createSilentProbeWav())
-      return await new Promise<boolean>((resolve) => {
-        execFile(
-          this.getFasterWhisperPythonPath(),
-          [
-            this.getFasterWhisperScriptPath(),
-            '--model',
-            this.getFasterWhisperModelPath(),
-            '--audio',
-            probeWavPath,
-            '--output',
-            probeJsonPath,
-            '--device',
-            profile.device,
-            '--compute-type',
-            profile.computeType,
-            '--language',
-            'en',
-            '--threads',
-            '2'
-          ],
-          {
-            windowsHide: true,
-            timeout: FASTER_WHISPER_PROBE_TIMEOUT_MS,
-            env: this.getFasterWhisperProcessEnv()
-          },
-          (err, stdout, stderr) => {
-            if (err) {
-              logAutodocFailure({
-                area: 'whisper',
-                message: 'Faster Whisper probe validation failed',
-                error: err,
-                context: {
-                  backend: profile.id,
-                  backendLabel: profile.label,
-                  pythonPath: this.getFasterWhisperPythonPath(),
-                  modelPath: this.getFasterWhisperModelPath(),
-                  stdoutTail: String(stdout ?? '').slice(-1000),
-                  stderrTail: String(stderr ?? '').slice(-1000)
-                }
-              })
-              resolve(false)
-              return
-            }
-
-            resolve(true)
-          }
-        )
+      const client = new TranscriptionWorkerClient({
+        pythonPath: this.getFasterWhisperPythonPath(),
+        scriptPath: this.getTranscriptionWorkerScriptPath(),
+        processEnv: this.getFasterWhisperProcessEnv(),
+        extraArgs: []
       })
+
+      try {
+        await Promise.race([
+          client.load({
+            engine: 'faster-whisper',
+            model: this.getFasterWhisperModelPath(),
+            device: profile.device,
+            computeType: profile.computeType,
+            threads: 2
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('Faster Whisper probe load timed out')),
+              FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS
+            )
+          })
+        ])
+
+        await Promise.race([
+          (async () => {
+            await client.transcribe({
+              audio: probeWavPath,
+              language: 'en',
+              window: null
+            })
+            await client.unload()
+          })(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('Faster Whisper probe transcribe timed out'))
+            }, FASTER_WHISPER_PROBE_TIMEOUT_MS)
+          })
+        ])
+
+        return true
+      } catch (error) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Faster Whisper probe validation failed',
+          error,
+          context: {
+            backend: profile.id,
+            backendLabel: profile.label,
+            pythonPath: this.getFasterWhisperPythonPath(),
+            modelPath: this.getFasterWhisperModelPath(),
+            probeTimeoutMs: FASTER_WHISPER_PROBE_TIMEOUT_MS,
+            probeLoadTimeoutMs: FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS
+          }
+        })
+        return false
+      } finally {
+        client.dispose()
+      }
     } finally {
       await rm(probeDir, { recursive: true, force: true })
     }
