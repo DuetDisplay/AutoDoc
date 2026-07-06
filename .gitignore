@@ -42,4 +42,8 @@ build-output-*/
 test-builds/
 playwright-report/
 test-results/
-.benchmarks/
+# Benchmarks: fixtures/audio stay local, committed baseline JSONs are kept
+.benchmarks/*
+!.benchmarks/windows-transcription-results/
+.benchmarks/windows-transcription-results/*
+!.benchmarks/windows-transcription-results/*.json
