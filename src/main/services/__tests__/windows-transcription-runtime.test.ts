@@ -9,6 +9,7 @@ import {
   loadWindowsTranscriptionProfiles,
   parseNvidiaSmiGpuRows,
   selectWindowsTranscriptionProfile,
+  shouldSerializeWindowsLocalProcessing,
   WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile
 } from '../windows-transcription-runtime'
@@ -28,6 +29,22 @@ afterEach(() => {
 })
 
 describe('Windows transcription runtime selection', () => {
+  it('serializes local processing on low-core Windows machines', () => {
+    expect(shouldSerializeWindowsLocalProcessing(4, 16)).toBe(true)
+  })
+
+  it('serializes local processing when free memory is below the floor', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, 3)).toBe(true)
+  })
+
+  it('allows concurrent local processing on capable Windows machines', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, 16)).toBe(false)
+  })
+
+  it('allows concurrent local processing when free memory is unknown', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, null)).toBe(false)
+  })
+
   it('uses the public asset-only repository for fallback asset URLs', () => {
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
       'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip'

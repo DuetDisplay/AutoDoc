@@ -14,6 +14,7 @@ interface PrefsSchema {
   diagnosticLogUploadConsent: boolean
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
+  transcriptionPerformanceMode: 'balanced' | 'fast'
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
@@ -28,7 +29,8 @@ function createPrefsStore(): Store<PrefsSchema> {
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
       experimentalSpeakerDiarization: false,
-      lowSpecMacProcessingBannerDismissed: false
+      lowSpecMacProcessingBannerDismissed: false,
+      transcriptionPerformanceMode: 'balanced'
     }
   })
 }
@@ -128,6 +130,15 @@ export class PrefsStore {
 
   setLowSpecMacProcessingBannerDismissed(dismissed: boolean): void {
     this.store.set('lowSpecMacProcessingBannerDismissed', dismissed)
+  }
+
+  getTranscriptionPerformanceMode(): 'balanced' | 'fast' {
+    const mode = this.store.get('transcriptionPerformanceMode')
+    return mode === 'fast' ? 'fast' : 'balanced'
+  }
+
+  setTranscriptionPerformanceMode(mode: 'balanced' | 'fast'): void {
+    this.store.set('transcriptionPerformanceMode', mode === 'fast' ? 'fast' : 'balanced')
   }
 
   private applyLaunchAtLogin(): void {

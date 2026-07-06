@@ -10,6 +10,7 @@
       "device": "cuda",
       "computeType": "int8_float32",
       "minSystemMemoryGiB": 12,
+      "estimatedMemoryGiB": 3.5,
       "minVramGiB": 6,
       "assets": [
         {
@@ -49,6 +50,7 @@
       "device": "cpu",
       "computeType": "int8",
       "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 1.5,
       "assets": [
         {
           "id": "runtime",
@@ -87,6 +89,7 @@
       "device": "cpu",
       "computeType": "int8",
       "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 2.5,
       "assets": []
     }
   ]

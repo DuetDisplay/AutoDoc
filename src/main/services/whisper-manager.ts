@@ -275,6 +275,14 @@ export class WhisperManager extends EventEmitter {
     return this.getSelectedWindowsProfile().computeType
   }
 
+  getSelectedWindowsProfileEstimatedMemoryGiB(): number | null {
+    if (process.platform !== 'win32') {
+      return null
+    }
+
+    return this.getSelectedWindowsProfile().estimatedMemoryGiB
+  }
+
   getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
     const runtimeDir = this.getFasterWhisperRuntimeDir()
     const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')

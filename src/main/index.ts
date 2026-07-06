@@ -8,7 +8,7 @@ import {
   Notification
 } from 'electron'
 import { join } from 'path'
-import { homedir } from 'os'
+import { homedir, availableParallelism, cpus } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { createRequire } from 'module'
 import { readdirSync, rmSync } from 'fs'
@@ -38,6 +38,10 @@ import { OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
+import {
+  getSystemMemorySnapshot,
+  shouldSerializeWindowsLocalProcessing
+} from './services/windows-transcription-runtime'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
@@ -336,9 +340,9 @@ function initializeMainSentry(): void {
     const sentryRuntime = mainSentry
     const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
     const integrations =
-      sentryRuntime.getDefaultIntegrations?.({ sendDefaultPii: false }).filter(
-        (integration) => integration.name !== 'MainProcessSession'
-      ) ?? []
+      sentryRuntime
+        .getDefaultIntegrations?.({ sendDefaultPii: false })
+        .filter((integration) => integration.name !== 'MainProcessSession') ?? []
 
     const initOptions = {
       dsn: SENTRY_DSN ?? 'stub://autodoc',
@@ -565,6 +569,22 @@ app.whenReady().then(async () => {
     applyCurrentSentryContext()
   }
 
+  const getWindowsLogicalProcessorCount = (): number => {
+    try {
+      if (typeof availableParallelism === 'function') {
+        return Math.max(1, availableParallelism())
+      }
+    } catch {
+      // Fall back to cpu count below.
+    }
+
+    try {
+      return Math.max(1, cpus().length)
+    } catch {
+      return 1
+    }
+  }
+
   const isExperimentalSpeakerDiarizationEnabled = (): boolean => {
     // Speaker diarization is intentionally hard-disabled for now, so release
     // builds skip bundling the pyannote/lightning runtime until we re-enable it.
@@ -786,10 +806,21 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
-  const localProcessingCoordinator = new LocalProcessingCoordinator(
-    async () =>
-      (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
-  )
+  const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
+    if (process.platform === 'darwin') {
+      return (
+        (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
+      )
+    }
+
+    if (process.platform === 'win32') {
+      const logicalProcessors = getWindowsLogicalProcessorCount()
+      const { freeMemoryGiB } = getSystemMemorySnapshot()
+      return shouldSerializeWindowsLocalProcessing(logicalProcessors, freeMemoryGiB)
+    }
+
+    return false
+  })
   const audioConverter = new AudioConverter()
   const diarizationService =
     isE2E || isExperimentalSpeakerDiarizationEnabled() ? new DiarizationService() : null
@@ -804,7 +835,8 @@ app.whenReady().then(async () => {
     },
     diarizationService,
     isExperimentalSpeakerDiarizationEnabled,
-    localProcessingCoordinator
+    localProcessingCoordinator,
+    () => prefsStore.getTranscriptionPerformanceMode()
   )
   ollamaManager = new OllamaManager({
     resolveModel: async () =>
@@ -1634,7 +1666,6 @@ app.on('before-quit', () => {
   ollamaManager?.stop()
   stopRecordingMediaHttpServer()
 })
-
 ;(app as unknown as { on(event: 'before-quit-for-update', listener: () => void): void }).on(
   'before-quit-for-update',
   () => {

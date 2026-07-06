@@ -19,9 +19,15 @@ vi.mock('os', () => ({
   setPriority: vi.fn(),
   constants: {
     priority: {
-      PRIORITY_BELOW_NORMAL: 10
+      PRIORITY_BELOW_NORMAL: 10,
+      PRIORITY_LOW: 19
     }
   }
+}))
+
+vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: vi.fn(),
+  logAutodocFailure: vi.fn()
 }))
 
 vi.mock('fs/promises', () => ({
@@ -50,6 +56,7 @@ const fsMock = vi.mocked(await import('fs/promises'))
 const childProcessMock = vi.mocked(await import('child_process'))
 const osMock = vi.mocked(await import('os'))
 const cryptoMock = vi.mocked(await import('../crypto'))
+const autodocLogMock = vi.mocked(await import('../autodoc-log'))
 
 class MockChildProcess extends EventEmitter {
   pid = 1234
@@ -843,6 +850,20 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount()).toBe(10)
   })
 
+  it('chooses 2 whisper threads on a 4-core machine', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(4)
+
+    expect((service as any).getWhisperThreadCount()).toBe(2)
+  })
+
+  it('chooses 2 whisper threads on an 8-core machine', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(8)
+
+    expect((service as any).getWhisperThreadCount()).toBe(2)
+  })
+
   it('splits whisper threads across concurrent Windows sources', () => {
     setPlatform('win32')
     osMock.availableParallelism.mockReturnValue(20)
@@ -850,8 +871,292 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount(2)).toBe(7)
   })
 
+  it('uses 5 whisper threads per source on a 16-core machine with 2 sources', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(16)
+
+    expect((service as any).getWhisperThreadCount(2)).toBe(5)
+  })
+
+  it('uses 4 whisper threads on a 4-core machine in fast mode', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(4)
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast'
+    )
+
+    expect((service as any).getWhisperThreadCount()).toBe(4)
+  })
+
+  it('passes --no-eco to faster-whisper in fast mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
+      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
+      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast',
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    child.emit('close', 0)
+
+    await expect(promise).resolves.toBeUndefined()
+    expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      '/mock/python.exe',
+      expect.arrayContaining(['--no-eco']),
+      expect.any(Object)
+    )
+  })
+
+  it('does not pass --no-eco to faster-whisper in balanced mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getFasterWhisperScriptPath: vi.fn().mockReturnValue('/mock/faster-whisper-transcribe.py'),
+      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
+      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
+      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    child.emit('close', 0)
+
+    await expect(promise).resolves.toBeUndefined()
+    expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      '/mock/python.exe',
+      expect.not.arrayContaining(['--no-eco']),
+      expect.any(Object)
+    )
+  })
+
+  it('uses idle priority in balanced mode and below-normal in fast mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(null)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const balancedPromise = (service as any).runWhisperPass(
+      '/mock/tmp/audio.wav',
+      'meeting-balanced',
+      60
+    )
+    child.emit('close', 0)
+    await balancedPromise
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 19)
+
+    osMock.setPriority.mockClear()
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast'
+    )
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const fastPromise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-fast', 60)
+    child.emit('close', 0)
+    await fastPromise
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it('waits for free memory before whisper pass then proceeds when memory frees', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    let freeGiB = 2
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      async (ms) => {
+        freeGiB = 16
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-memory',
+      60,
+      []
+    )
+    await vi.runAllTimersAsync()
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Waiting for free memory before starting transcription pass',
+        meetingId: 'meeting-memory'
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('proceeds after memory wait timeout when memory never frees', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      async (ms) => {
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB: 2, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-timeout',
+      60,
+      []
+    )
+    for (let i = 0; i < 13; i += 1) {
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Proceeding with transcription pass after memory wait timeout',
+        meetingId: 'meeting-timeout'
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('skips the Windows memory gate on macOS', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      async () => {
+        throw new Error('memory gate delay should not run on macOS')
+      },
+      () => ({ freeGiB: 2, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-macos',
+      60,
+      []
+    )
+    child.emit('close', 0)
+    await expect(promise).resolves.toEqual({ transcription: [] })
+  })
+
   it('passes the computed thread count to whisper-cli', async () => {
     setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(20)
     const child = new MockChildProcess()
     childProcessMock.spawn.mockReturnValue(child as any)
 
@@ -863,7 +1168,7 @@ describe('TranscriptionService', () => {
       '/mock/whisper',
       expect.arrayContaining(['-t', '10'])
     )
-    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 19)
   })
 
   it('passes short-segmentation flags when requested', async () => {

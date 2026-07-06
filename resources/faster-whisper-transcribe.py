@@ -1,6 +1,57 @@
 import argparse
+import ctypes
 import json
 import sys
+from ctypes import wintypes
+
+PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
+PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
+ProcessPowerThrottling = 4
+
+
+class PROCESS_POWER_THROTTLING_STATE(ctypes.Structure):
+    _fields_ = [
+        ("Version", wintypes.ULONG),
+        ("ControlMask", wintypes.ULONG),
+        ("StateMask", wintypes.ULONG),
+    ]
+
+
+def _enable_eco_qos() -> None:
+    # Same mechanism Defender/OneDrive use (routes to E-cores, green-leaf in Task Manager).
+    try:
+        state = PROCESS_POWER_THROTTLING_STATE()
+        state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION
+        state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        state.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Without explicit argtypes/restype the 64-bit pseudo-handle from
+        # GetCurrentProcess is truncated and SetProcessInformation fails
+        # with ERROR_INVALID_HANDLE.
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.SetProcessInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetProcessInformation.restype = wintypes.BOOL
+        if (
+            kernel32.SetProcessInformation(
+                kernel32.GetCurrentProcess(),
+                ProcessPowerThrottling,
+                ctypes.byref(state),
+                ctypes.sizeof(state),
+            )
+            == 0
+        ):
+            error = ctypes.get_last_error()
+            print(
+                f"EcoQoS unavailable: SetProcessInformation failed (error {error})",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        print(f"EcoQoS unavailable: {exc}", file=sys.stderr)
 
 
 def main() -> int:
@@ -12,7 +63,11 @@ def main() -> int:
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--language", default="en")
     parser.add_argument("--threads", type=int, default=0)
+    parser.add_argument("--no-eco", action="store_true")
     args = parser.parse_args()
+
+    if sys.platform == "win32" and not args.no_eco:
+        _enable_eco_qos()
 
     try:
         from faster_whisper import WhisperModel

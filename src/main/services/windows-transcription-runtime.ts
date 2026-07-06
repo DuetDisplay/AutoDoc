@@ -52,8 +52,30 @@ export interface WindowsTranscriptionProfile {
   device: 'cuda' | 'cpu'
   computeType: 'float16' | 'int8_float16' | 'int8_float32' | 'int8'
   minSystemMemoryGiB: number
+  estimatedMemoryGiB: number
   minVramGiB?: number
   assets: WindowsTranscriptionAsset[]
+}
+
+export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_LOGICAL_PROCESSORS = 12
+export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_FREE_MEMORY_GIB = 6
+
+export function shouldSerializeWindowsLocalProcessing(
+  logicalProcessors: number,
+  freeMemoryGiB: number | null
+): boolean {
+  if (logicalProcessors < WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_LOGICAL_PROCESSORS) {
+    return true
+  }
+
+  if (
+    freeMemoryGiB != null &&
+    freeMemoryGiB < WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_FREE_MEMORY_GIB
+  ) {
+    return true
+  }
+
+  return false
 }
 
 export interface WindowsTranscriptionManifest {
@@ -76,6 +98,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     device: 'cuda',
     computeType: 'int8_float32',
     minSystemMemoryGiB: 12,
+    estimatedMemoryGiB: 3.5,
     minVramGiB: 6,
     assets: [
       {
@@ -107,6 +130,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     device: 'cpu',
     computeType: 'int8',
     minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 1.5,
     assets: [
       {
         id: 'runtime',
@@ -137,6 +161,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     device: 'cpu',
     computeType: 'int8',
     minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 2.5,
     assets: []
   }
 }
@@ -171,6 +196,8 @@ export function normalizeWindowsTranscriptionProfiles(
 
     profiles[profile.id] = {
       ...profile,
+      estimatedMemoryGiB:
+        profile.estimatedMemoryGiB ?? WINDOWS_TRANSCRIPTION_PROFILES[profile.id].estimatedMemoryGiB,
       assets: profile.assets.map((asset) => ({
         ...asset,
         url: artifactBaseUrl ? `${artifactBaseUrl.replace(/\/$/, '')}/${asset.filename}` : asset.url
@@ -261,7 +288,7 @@ function normalizeForcedBackend(value: string | undefined): WindowsTranscription
   return null
 }
 
-function getSystemMemorySnapshot(): Pick<
+export function getSystemMemorySnapshot(): Pick<
   WindowsHardwareProfile,
   'freeMemoryGiB' | 'totalMemoryGiB'
 > {

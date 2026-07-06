@@ -30,6 +30,7 @@ import {
   detectMacHardwareSnapshot,
   isMemoryHealthyForConcurrentProcessing
 } from './mac-processing-profile'
+import { shouldSerializeWindowsLocalProcessing } from './windows-transcription-runtime'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -43,6 +44,9 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
+const WINDOWS_MEMORY_GATE_HEADROOM_GIB = 1
+const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
+const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
@@ -71,6 +75,12 @@ const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
 const WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES = new Set([3221226505, -1073740791])
 type EnqueueSource = 'direct' | 'recovery-scan'
+type TranscriptionPerformanceMode = 'balanced' | 'fast'
+
+interface SystemMemorySnapshot {
+  freeGiB: number | null
+  totalGiB: number | null
+}
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -105,6 +115,9 @@ export class TranscriptionService {
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private enqueueSource = new Map<string, EnqueueSource>()
+  private getPerformanceMode: () => TranscriptionPerformanceMode
+  private memoryGateDelay: (ms: number) => Promise<void>
+  private readSystemMemoryInfo: () => SystemMemorySnapshot
 
   constructor(
     private whisperManager: WhisperManager,
@@ -114,8 +127,16 @@ export class TranscriptionService {
     private isMeetingActive: (meetingId: string) => boolean = () => false,
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
     private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false,
-    private localProcessingCoordinator: LocalProcessingCoordinator | null = null
-  ) {}
+    private localProcessingCoordinator: LocalProcessingCoordinator | null = null,
+    getPerformanceMode: () => TranscriptionPerformanceMode = () => 'balanced',
+    memoryGateDelay: (ms: number) => Promise<void> = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms)),
+    readSystemMemoryInfo?: () => SystemMemorySnapshot
+  ) {
+    this.getPerformanceMode = getPerformanceMode
+    this.memoryGateDelay = memoryGateDelay
+    this.readSystemMemoryInfo = readSystemMemoryInfo ?? (() => this.getSystemMemoryInfo())
+  }
 
   onComplete(callback: (meetingId: string) => void): void {
     this.onCompleteCallback = callback
@@ -1536,6 +1557,9 @@ export class TranscriptionService {
   ): Promise<WhisperOutput> {
     const jsonPath = `${audioWavPath}.json`
     tempFiles.push(jsonPath)
+    if (process.platform === 'win32') {
+      await this.waitForWindowsTranscriptionMemory(meetingId)
+    }
     await this.runWhisperPass(
       audioWavPath,
       meetingId,
@@ -1777,6 +1801,10 @@ export class TranscriptionService {
         args.push('--threads', String(threadCount))
       }
 
+      if (this.getPerformanceMode() === 'fast') {
+        args.push('--no-eco')
+      }
+
       const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args, {
         env: this.whisperManager.getFasterWhisperProcessEnv(),
         windowsHide: true
@@ -1863,7 +1891,11 @@ export class TranscriptionService {
     const reservedProcessors = Math.min(RESERVED_LOGICAL_CPUS, Math.max(2, logicalProcessors - 2))
     const availableProcessors = Math.max(1, logicalProcessors - reservedProcessors)
     const perSourceProcessors = Math.max(1, Math.floor(availableProcessors / concurrentSources))
-    return Math.max(MIN_WHISPER_THREADS, Math.min(MAX_WHISPER_THREADS, perSourceProcessors))
+    const floorCap = this.getPerformanceMode() === 'fast' ? logicalProcessors : availableProcessors
+    return Math.min(
+      MAX_WHISPER_THREADS,
+      Math.max(Math.min(MIN_WHISPER_THREADS, floorCap), perSourceProcessors)
+    )
   }
 
   private async getDualSourceMode(): Promise<'concurrent' | 'sequential'> {
@@ -1895,16 +1927,8 @@ export class TranscriptionService {
     }
 
     const logicalProcessors = this.getLogicalProcessorCount()
-    if (logicalProcessors < 12) {
-      return false
-    }
-
-    const memoryInfo = this.getSystemMemoryInfo()
-    if (memoryInfo.freeGiB != null && memoryInfo.freeGiB < 6) {
-      return false
-    }
-
-    return true
+    const memoryInfo = this.readSystemMemoryInfo()
+    return !shouldSerializeWindowsLocalProcessing(logicalProcessors, memoryInfo.freeGiB)
   }
 
   private getProcessingProfileLogContext(): Record<string, unknown> | null {
@@ -1927,7 +1951,7 @@ export class TranscriptionService {
     }
   }
 
-  private getSystemMemoryInfo(): { freeGiB: number | null; totalGiB: number | null } {
+  private getSystemMemoryInfo(): SystemMemorySnapshot {
     const processWithMemory = process as NodeJS.Process & {
       getSystemMemoryInfo?: () => { free?: number; total?: number }
     }
@@ -1964,12 +1988,66 @@ export class TranscriptionService {
       return
     }
 
+    const isFastMode = this.getPerformanceMode() === 'fast'
+    const priority = isFastMode
+      ? osConstants.priority.PRIORITY_BELOW_NORMAL
+      : osConstants.priority.PRIORITY_LOW
+    const label = isFastMode ? 'BelowNormal' : 'Low'
+
     try {
-      setPriority(pid, osConstants.priority.PRIORITY_BELOW_NORMAL)
-      console.log(`[perf] Whisper priority: BelowNormal (${meetingId})`)
+      setPriority(pid, priority)
+      console.log(`[perf] Whisper priority: ${label} (pid ${pid}, ${meetingId})`)
     } catch (err) {
-      console.warn(`Failed to lower whisper priority for ${meetingId}:`, err)
+      console.warn(`Failed to lower whisper priority for ${meetingId} (pid ${pid}):`, err)
     }
+  }
+
+  private async waitForWindowsTranscriptionMemory(meetingId: string): Promise<void> {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const estimatedGiB = this.whisperManager.getSelectedWindowsProfileEstimatedMemoryGiB?.()
+    if (estimatedGiB == null) {
+      return
+    }
+
+    const requiredGiB = estimatedGiB + WINDOWS_MEMORY_GATE_HEADROOM_GIB
+    const readFreeGiB = (): number | null => this.readSystemMemoryInfo().freeGiB
+    const initialFreeGiB = readFreeGiB()
+    if (initialFreeGiB != null && initialFreeGiB >= requiredGiB) {
+      return
+    }
+
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Waiting for free memory before starting transcription pass',
+      meetingId,
+      context: {
+        freeGiB: initialFreeGiB,
+        requiredGiB
+      }
+    })
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WINDOWS_MEMORY_GATE_MAX_WAIT_MS) {
+      await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
+      const freeGiB = readFreeGiB()
+      if (freeGiB == null || freeGiB >= requiredGiB) {
+        return
+      }
+    }
+
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Proceeding with transcription pass after memory wait timeout',
+      meetingId,
+      context: {
+        freeGiB: readFreeGiB(),
+        requiredGiB,
+        waitedMs: WINDOWS_MEMORY_GATE_MAX_WAIT_MS
+      }
+    })
   }
 
   private shouldRetryWhisperWithoutGpu(error: unknown, extraArgs: string[]): boolean {
