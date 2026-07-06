@@ -45,7 +45,13 @@ async function loadWhisperManager(
     isPackaged?: boolean
     ffmpegStaticPath?: string | null
     macBackend?: 'mlx-whisper' | 'whisper-cpp' | 'auto'
-    windowsBackend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp' | 'auto'
+    windowsBackend?:
+      | 'faster-whisper-cuda'
+      | 'faster-whisper-cpu'
+      | 'parakeet-gpu'
+      | 'parakeet-cpu'
+      | 'whisper-cpp'
+      | 'auto'
   }
 ) {
   setPlatform(platform)
@@ -384,7 +390,7 @@ describe('Whisper onboarding dependency installation', () => {
       await mkdir(installedModelsDir, { recursive: true })
       await writeFile(join(installedModelsDir, 'whisper-cli.exe'), 'whisper')
       await writeFile(join(installedModelsDir, 'ffmpeg.exe'), 'ffmpeg')
-      await writeFile(join(installedModelsDir, 'ggml-distil-large-v3.bin'), 'model')
+      await writeFile(join(installedModelsDir, 'ggml-base.en.bin'), 'model')
 
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         windowsBackend: 'whisper-cpp'
@@ -669,7 +675,7 @@ describe('Whisper onboarding dependency installation', () => {
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
           assetDownloads.push(asset.filename)
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })
@@ -757,7 +763,7 @@ describe('Whisper onboarding dependency installation', () => {
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
           assetDownloads.push(asset.filename)
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })
@@ -784,6 +790,129 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('installs the parakeet-gpu profile on supported Windows hardware', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-gpu-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+      expect(manager.getModelName()).toBe('parakeet-tdt-0.6b-v3')
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-fp32.zip'
+      ])
+      await expect(access(manager.getParakeetPythonPath())).resolves.toBeUndefined()
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.onnx'))
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs the parakeet-cpu profile on Windows', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-int8.zip'
+      ])
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('downgrades parakeet-gpu to parakeet-cpu when GPU validation fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-gpu-fallback-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      const usabilitySpy = vi
+        .spyOn(manager as any, 'isParakeetUsableWithRetry')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+
+      await manager.ensureReady()
+
+      expect(usabilitySpy).toHaveBeenCalledTimes(2)
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('falls back to whisper.cpp when the selected faster-whisper profile fails validation', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-fw-fallback-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
@@ -799,7 +928,7 @@ describe('Whisper onboarding dependency installation', () => {
       const manager = new WhisperManager()
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })

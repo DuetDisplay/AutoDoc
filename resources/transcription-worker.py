@@ -3,7 +3,7 @@
 JSON-lines-over-stdio protocol for the persistent transcription worker.
 
 Requests (one JSON object per line on stdin):
-- load: {"id", "op": "load", "engine": "faster-whisper", "model", "device": "cuda"|"cpu", "computeType", "threads": number|null}
+- load: {"id", "op": "load", "engine": "faster-whisper"|"parakeet", "model", "device": "cuda"|"cpu"|"dml", "computeType", "threads": number|null}
 - transcribe: {"id", "op": "transcribe", "audio", "language", "window": {"startSec", "endSec"} | null}
 - unload: {"id", "op": "unload"}
 - ping: {"id", "op": "ping"}
@@ -106,13 +106,38 @@ def _emit_segment(request_id: int, start_ms: int, end_ms: int, text: str) -> Non
     )
 
 
+def _read_window_audio(audio_path: str, window: dict):
+    import numpy as np
+
+    start_sec = float(window["startSec"])
+    end_sec = float(window["endSec"])
+    with wave.open(audio_path, "rb") as handle:
+        framerate = handle.getframerate()
+        start_frame = int(start_sec * framerate)
+        end_frame = int(end_sec * framerate)
+        handle.setpos(start_frame)
+        raw_frames = handle.readframes(max(0, end_frame - start_frame))
+
+    return np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 class TranscriptionWorker:
     def __init__(self) -> None:
         self.model = None
+        self.vad = None
         self.loaded_model_name: str | None = None
         self.loaded_device: str | None = None
+        self.engine: str | None = None
 
     def handle_load(self, request_id: int, request: dict) -> None:
+        engine = request.get("engine", "faster-whisper")
+        if engine == "parakeet":
+            self._handle_load_parakeet(request_id, request)
+            return
+
+        self._handle_load_faster_whisper(request_id, request)
+
+    def _handle_load_faster_whisper(self, request_id: int, request: dict) -> None:
         from faster_whisper import WhisperModel
 
         model_name = request["model"]
@@ -128,10 +153,50 @@ class TranscriptionWorker:
             model_kwargs["cpu_threads"] = threads
 
         self.model = WhisperModel(model_name, **model_kwargs)
+        self.vad = None
         self.loaded_model_name = model_name
         self.loaded_device = device
+        self.engine = "faster-whisper"
         print(
             f"model loaded: {model_name} device={device}",
+            file=sys.stderr,
+            flush=True,
+        )
+        _respond(request_id, True, {"loaded": True})
+
+    def _handle_load_parakeet(self, request_id: int, request: dict) -> None:
+        import onnx_asr
+        import onnxruntime as rt
+
+        model_dir = request["model"]
+        device = request["device"]
+        compute_type = request["computeType"]
+        threads = request.get("threads")
+
+        quantization = None if compute_type == "fp32" else "int8"
+        providers = (
+            ["DmlExecutionProvider", "CPUExecutionProvider"]
+            if device == "dml"
+            else ["CPUExecutionProvider"]
+        )
+
+        sess_options = rt.SessionOptions()
+        if device == "cpu" and isinstance(threads, int) and threads > 0:
+            sess_options.intra_op_num_threads = threads
+
+        self.vad = onnx_asr.load_vad("silero", model_dir)
+        self.model = onnx_asr.load_model(
+            "nemo-parakeet-tdt-0.6b-v3",
+            model_dir,
+            quantization=quantization,
+            providers=providers,
+            sess_options=sess_options,
+        ).with_vad(self.vad, max_speech_duration_s=25)
+        self.loaded_model_name = model_dir
+        self.loaded_device = device
+        self.engine = "parakeet"
+        print(
+            f"model loaded: parakeet-tdt-0.6b-v3 device={device}",
             file=sys.stderr,
             flush=True,
         )
@@ -145,6 +210,19 @@ class TranscriptionWorker:
         language = request.get("language", "en")
         window = request.get("window")
 
+        if self.engine == "parakeet":
+            self._handle_transcribe_parakeet(request_id, audio_path, language, window)
+            return
+
+        self._handle_transcribe_faster_whisper(request_id, audio_path, language, window)
+
+    def _handle_transcribe_faster_whisper(
+        self,
+        request_id: int,
+        audio_path: str,
+        language: str,
+        window: dict | None,
+    ) -> None:
         transcribe_kwargs = {
             "language": language,
             "beam_size": 1,
@@ -153,18 +231,7 @@ class TranscriptionWorker:
         }
 
         if window:
-            import numpy as np
-
-            start_sec = float(window["startSec"])
-            end_sec = float(window["endSec"])
-            with wave.open(audio_path, "rb") as handle:
-                framerate = handle.getframerate()
-                start_frame = int(start_sec * framerate)
-                end_frame = int(end_sec * framerate)
-                handle.setpos(start_frame)
-                raw_frames = handle.readframes(max(0, end_frame - start_frame))
-
-            audio = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
+            audio = _read_window_audio(audio_path, window)
             segments, _info = self.model.transcribe(audio, **transcribe_kwargs)
         else:
             segments, _info = self.model.transcribe(audio_path, **transcribe_kwargs)
@@ -184,10 +251,40 @@ class TranscriptionWorker:
 
         _respond(request_id, True, {"transcription": transcription})
 
+    def _handle_transcribe_parakeet(
+        self,
+        request_id: int,
+        audio_path: str,
+        language: str,
+        window: dict | None,
+    ) -> None:
+        if window:
+            audio = _read_window_audio(audio_path, window)
+            segments = self.model.recognize(audio, language=language)
+        else:
+            segments = self.model.recognize(audio_path, language=language)
+
+        transcription = []
+        for segment in segments:
+            start_ms = round(segment.start * 1000)
+            end_ms = round(segment.end * 1000)
+            text = segment.text
+            _emit_segment(request_id, start_ms, end_ms, text)
+            transcription.append(
+                {
+                    "offsets": {"from": start_ms, "to": end_ms},
+                    "text": text,
+                }
+            )
+
+        _respond(request_id, True, {"transcription": transcription})
+
     def handle_unload(self, request_id: int) -> None:
         self.model = None
+        self.vad = None
         self.loaded_model_name = None
         self.loaded_device = None
+        self.engine = None
         gc.collect()
         _respond(request_id, True, {"loaded": False})
 

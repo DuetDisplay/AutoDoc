@@ -88,7 +88,7 @@ describe('WhisperManager', () => {
   it('returns correct model path', () => {
     expect(manager.getModelPath()).toBe(
       process.platform === 'win32'
-        ? join('/mock/home', 'models', 'ggml-distil-large-v3.bin')
+        ? join('/mock/home', 'models', 'ggml-base.en.bin')
         : join('/mock/home', 'models', 'ggml-large-v3.bin')
     )
   })

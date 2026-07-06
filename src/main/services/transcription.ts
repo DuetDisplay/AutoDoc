@@ -45,6 +45,7 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
+const TRANSCRIPTION_LANGUAGE = 'en'
 const WINDOWS_MEMORY_GATE_HEADROOM_GIB = 1
 const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
 const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
@@ -1436,9 +1437,9 @@ export class TranscriptionService {
     if (process.platform !== 'win32') return false
     if (typeof this.whisperManager.isFasterWhisperSelected !== 'function') return false
     if (!this.whisperManager.isFasterWhisperSelected()) return false
-    if (typeof this.whisperManager.getFasterWhisperDevice !== 'function') return false
+    if (typeof this.whisperManager.getWorkerDevice !== 'function') return false
 
-    return this.whisperManager.getFasterWhisperDevice() === 'cuda'
+    return this.whisperManager.getWorkerDevice() === 'cuda'
   }
 
   private async runWhisperChunked(
@@ -1453,8 +1454,8 @@ export class TranscriptionService {
   ): Promise<WhisperOutput> {
     const useWorkerWindows =
       !useNarrowWindows &&
-      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
-      this.whisperManager.isFasterWhisperSelected()
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected()
     const chunkWindowSec = useWorkerWindows
       ? WORKER_CHUNK_WINDOW_SEC
       : CHUNKED_TRANSCRIPTION_WINDOW_SEC
@@ -1622,10 +1623,10 @@ export class TranscriptionService {
     }
 
     if (
-      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
-      this.whisperManager.isFasterWhisperSelected()
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected()
     ) {
-      return this.runFasterWhisperPass(
+      return this.runWorkerEnginePass(
         audioWavPath,
         meetingId,
         audioDurationSec,
@@ -1646,7 +1647,7 @@ export class TranscriptionService {
           audioWavPath,
           '-oj',
           '-l',
-          'en',
+          TRANSCRIPTION_LANGUAGE,
           '-pp'
         ]
 
@@ -1753,7 +1754,7 @@ export class TranscriptionService {
         '--output',
         jsonPath,
         '--language',
-        'en'
+        TRANSCRIPTION_LANGUAGE
       ]
 
       const proc = spawn(this.whisperManager.getMlxWhisperPythonPath(), args, {
@@ -1807,10 +1808,11 @@ export class TranscriptionService {
 
   private getTranscriptionWorkerClientFingerprint(): string {
     return [
-      this.whisperManager.getFasterWhisperPythonPath(),
-      this.whisperManager.getFasterWhisperModelPath(),
-      this.whisperManager.getFasterWhisperDevice(),
-      this.whisperManager.getFasterWhisperComputeType(),
+      this.whisperManager.getWorkerPythonPath(),
+      this.whisperManager.getWorkerModelPath(),
+      this.whisperManager.getWorkerDevice(),
+      this.whisperManager.getWorkerComputeType(),
+      this.whisperManager.getWorkerEngine(),
       // EcoQoS is decided at spawn time (--no-eco), so a performance-mode
       // change must recreate the worker process.
       this.getPerformanceMode()
@@ -1828,9 +1830,9 @@ export class TranscriptionService {
 
     this.transcriptionWorkerClient?.dispose()
     this.transcriptionWorkerClient = new TranscriptionWorkerClient({
-      pythonPath: this.whisperManager.getFasterWhisperPythonPath(),
+      pythonPath: this.whisperManager.getWorkerPythonPath(),
       scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
-      processEnv: this.whisperManager.getFasterWhisperProcessEnv(),
+      processEnv: this.whisperManager.getWorkerProcessEnv(),
       applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
       extraArgs: this.getPerformanceMode() === 'fast' ? ['--no-eco'] : []
     })
@@ -1850,16 +1852,16 @@ export class TranscriptionService {
     }
 
     await client.load({
-      engine: 'faster-whisper',
-      model: this.whisperManager.getFasterWhisperModelPath(),
-      device: this.whisperManager.getFasterWhisperDevice(),
-      computeType: this.whisperManager.getFasterWhisperComputeType(),
+      engine: this.whisperManager.getWorkerEngine(),
+      model: this.whisperManager.getWorkerModelPath(),
+      device: this.whisperManager.getWorkerDevice(),
+      computeType: this.whisperManager.getWorkerComputeType(),
       threads: threadCount
     })
     this.workerLoadedFingerprint = fingerprint
   }
 
-  private async runFasterWhisperPass(
+  private async runWorkerEnginePass(
     audioWavPath: string,
     meetingId: string,
     audioDurationSec?: number,
@@ -1873,7 +1875,7 @@ export class TranscriptionService {
       console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
     }
     console.log(
-      `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+      `[perf] Worker transcription backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
     )
 
     try {
@@ -1882,7 +1884,7 @@ export class TranscriptionService {
       const result = await client.transcribe(
         {
           audio: audioWavPath,
-          language: 'en',
+          language: TRANSCRIPTION_LANGUAGE,
           window
         },
         (segment) => {

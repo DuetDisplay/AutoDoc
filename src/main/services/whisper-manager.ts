@@ -84,9 +84,8 @@ type WhisperUsabilityResult =
 
 const DEFAULT_MODEL = IS_WIN
   ? {
-      filename: 'ggml-distil-large-v3.bin',
-      downloadUrl:
-        'https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin'
+      filename: 'ggml-base.en.bin',
+      downloadUrl: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin'
     }
   : {
       filename: 'ggml-large-v3.bin',
@@ -224,7 +223,47 @@ export class WhisperManager extends EventEmitter {
   }
 
   isFasterWhisperSelected(): boolean {
-    return IS_WIN && this.getTranscriptionBackend() !== 'whisper-cpp'
+    const backend = this.getTranscriptionBackend()
+    return IS_WIN && (backend === 'faster-whisper-cuda' || backend === 'faster-whisper-cpu')
+  }
+
+  isParakeetSelected(): boolean {
+    const backend = this.getTranscriptionBackend()
+    return IS_WIN && (backend === 'parakeet-gpu' || backend === 'parakeet-cpu')
+  }
+
+  isWorkerEngineSelected(): boolean {
+    return this.isFasterWhisperSelected() || this.isParakeetSelected()
+  }
+
+  getWorkerEngine(): 'faster-whisper' | 'parakeet' {
+    return this.getSelectedWindowsProfile().engine === 'parakeet' ? 'parakeet' : 'faster-whisper'
+  }
+
+  getWorkerPythonPath(): string {
+    return this.isParakeetSelected()
+      ? this.getParakeetPythonPath()
+      : this.getFasterWhisperPythonPath()
+  }
+
+  getWorkerModelPath(): string {
+    return this.isParakeetSelected()
+      ? this.getParakeetModelPath()
+      : this.getFasterWhisperModelPath()
+  }
+
+  getWorkerDevice(): 'cuda' | 'cpu' | 'dml' {
+    return this.getSelectedWindowsProfile().device
+  }
+
+  getWorkerComputeType(): WindowsTranscriptionProfile['computeType'] {
+    return this.getSelectedWindowsProfile().computeType
+  }
+
+  getWorkerProcessEnv(): NodeJS.ProcessEnv {
+    return this.isParakeetSelected()
+      ? this.getParakeetProcessEnv()
+      : this.getFasterWhisperProcessEnv()
   }
 
   getMlxWhisperPythonPath(): string {
@@ -277,10 +316,10 @@ export class WhisperManager extends EventEmitter {
   }
 
   getFasterWhisperDevice(): 'cuda' | 'cpu' {
-    return this.getSelectedWindowsProfile().device
+    return this.getSelectedWindowsProfile().device === 'cuda' ? 'cuda' : 'cpu'
   }
 
-  getFasterWhisperComputeType(): 'float16' | 'int8_float16' | 'int8_float32' | 'int8' {
+  getFasterWhisperComputeType(): 'float16' | 'int8_float16' | 'int8_float32' | 'int8' | 'fp32' {
     return this.getSelectedWindowsProfile().computeType
   }
 
@@ -303,6 +342,34 @@ export class WhisperManager extends EventEmitter {
       join(sitePackagesDir, 'nvidia', 'cuda_runtime', 'bin'),
       join(sitePackagesDir, 'nvidia', 'cuda_nvrtc', 'bin'),
       join(sitePackagesDir, 'nvidia', 'cudnn', 'bin')
+    ].filter((candidate) => existsSync(candidate))
+
+    return {
+      ...process.env,
+      PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+    }
+  }
+
+  getParakeetPythonPath(): string {
+    return join(this.getParakeetRuntimeDir(), 'python.exe')
+  }
+
+  getParakeetModelPath(): string {
+    const profile = this.getSelectedWindowsProfile()
+    return join(
+      this.getModelsDir(),
+      'parakeet-models',
+      `${profile.modelName}-${profile.computeType}`
+    )
+  }
+
+  getParakeetProcessEnv(): NodeJS.ProcessEnv {
+    const runtimeDir = this.getParakeetRuntimeDir()
+    const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
+    const pathAdditions = [
+      runtimeDir,
+      join(runtimeDir, 'DLLs'),
+      join(sitePackagesDir, 'onnxruntime', 'capi')
     ].filter((candidate) => existsSync(candidate))
 
     return {
@@ -371,10 +438,24 @@ export class WhisperManager extends EventEmitter {
     return join(this.getModelsDir(), 'transcription-runtimes', profile.id)
   }
 
-  private getFasterWhisperAssetRoot(
+  private getParakeetRuntimeDir(): string {
+    return join(this.getModelsDir(), 'transcription-runtimes', 'parakeet')
+  }
+
+  private getWindowsTranscriptionAssetRoot(
     profile: WindowsTranscriptionProfile,
     assetId: 'runtime' | 'model'
   ): string {
+    if (profile.engine === 'parakeet') {
+      return assetId === 'runtime'
+        ? this.getParakeetRuntimeDir()
+        : join(
+            this.getModelsDir(),
+            'parakeet-models',
+            `${profile.modelName}-${profile.computeType}`
+          )
+    }
+
     return assetId === 'runtime'
       ? this.getFasterWhisperRuntimeDir(profile)
       : join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
@@ -506,9 +587,9 @@ export class WhisperManager extends EventEmitter {
         return this.runtimeValidated
       }
 
-      if (this.isFasterWhisperSelected()) {
-        await access(this.getFasterWhisperPythonPath())
-        await access(this.getFasterWhisperModelPath())
+      if (this.isWorkerEngineSelected()) {
+        await access(this.getWorkerPythonPath())
+        await access(this.getWorkerModelPath())
         await access(this.getFfmpegPath())
         return this.runtimeValidated
       }
@@ -580,7 +661,15 @@ export class WhisperManager extends EventEmitter {
         }
       }
 
-      if (this.isFasterWhisperSelected()) {
+      if (this.isParakeetSelected()) {
+        const parakeetReady = await this.ensureParakeetWithFallback()
+        if (parakeetReady) {
+          return
+        }
+        this.runtimeValidated = false
+        this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
+        this.emit('setup-status', this.getSetupStatus())
+      } else if (this.isFasterWhisperSelected()) {
         try {
           await this.ensureFasterWhisperReady()
           return
@@ -687,6 +776,159 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
+  private async ensureParakeetWithFallback(): Promise<boolean> {
+    const initialProfile = this.getSelectedWindowsProfile()
+    if (initialProfile.id === 'parakeet-gpu') {
+      try {
+        await this.ensureParakeetReady()
+        return true
+      } catch (err) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Parakeet GPU setup failed; downgrading to parakeet-cpu',
+          error: err,
+          context: {
+            backend: initialProfile.id,
+            backendLabel: initialProfile.label
+          }
+        })
+        this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
+        this.runtimeValidated = false
+      }
+    }
+
+    try {
+      await this.ensureParakeetReady()
+      return true
+    } catch (err) {
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Parakeet CPU setup failed; evaluating faster-whisper fallback',
+        error: err,
+        context: {
+          backend: this.getTranscriptionBackend(),
+          backendLabel: this.getTranscriptionBackendLabel()
+        }
+      })
+    }
+
+    if (await this.areFasterWhisperCpuAssetsPresent()) {
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Downgrading Windows transcription backend to faster-whisper-cpu',
+        context: {
+          previousBackend: this.getTranscriptionBackend(),
+          nextBackend: 'faster-whisper-cpu'
+        }
+      })
+      this.selectedWindowsProfile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+      this.runtimeValidated = false
+      try {
+        await this.ensureFasterWhisperReady()
+        return true
+      } catch (err) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Faster Whisper CPU fallback failed; downgrading to whisper.cpp',
+          error: err,
+          context: {
+            backend: 'faster-whisper-cpu',
+            backendLabel: this.windowsTranscriptionProfiles['faster-whisper-cpu'].label
+          }
+        })
+      }
+    }
+
+    logAutodocEvent({
+      area: 'whisper',
+      message: 'Downgrading Windows transcription backend to whisper.cpp',
+      context: {
+        previousBackend: initialProfile.id,
+        nextBackend: 'whisper-cpp'
+      }
+    })
+    this.selectedWindowsProfile = this.windowsTranscriptionProfiles['whisper-cpp']
+    this.runtimeValidated = false
+    return false
+  }
+
+  private async ensureParakeetReady(): Promise<void> {
+    const profile = this.getSelectedWindowsProfile()
+    await this.ensureFfmpegForSelectedRuntime()
+
+    if (profile.assets.some((asset) => !asset.url)) {
+      throw new Error(
+        'Managed Windows transcription assets are not configured for this build. Set AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL or use an official AutoDoc build.'
+      )
+    }
+
+    for (const asset of profile.assets) {
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length === 0) {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset already present',
+          context: {
+            backend: profile.id,
+            assetId: asset.id,
+            filename: asset.filename,
+            targetDir: assetRoot
+          }
+        })
+        continue
+      }
+
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset missing expected files before download',
+        context: {
+          backend: profile.id,
+          assetId: asset.id,
+          filename: asset.filename,
+          targetDir: assetRoot,
+          missingExpectedFiles
+        }
+      })
+      this.setupStatus = this.withBackendStatus({
+        phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
+        percent: 0
+      })
+      this.emit('setup-status', this.getSetupStatus())
+      await this.downloadWithRetry(
+        () => this.downloadAndExtractWindowsTranscriptionAsset(profile, asset),
+        asset.id
+      )
+    }
+
+    if (!(await this.isParakeetUsableWithRetry())) {
+      throw new Error(`${profile.label} failed startup validation after setup.`)
+    }
+
+    this.runtimeValidated = true
+    this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
+    this.emit('setup-status', this.getSetupStatus())
+  }
+
+  private async areFasterWhisperCpuAssetsPresent(): Promise<boolean> {
+    const profile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+    for (const asset of profile.assets) {
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length > 0) {
+        return false
+      }
+    }
+
+    return true
+  }
+
   private async ensureFasterWhisperReady(): Promise<void> {
     const profile = this.getSelectedWindowsProfile()
     await this.ensureFfmpegForSelectedRuntime()
@@ -698,7 +940,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetRoot = this.getFasterWhisperAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -815,7 +1057,7 @@ export class WhisperManager extends EventEmitter {
   ): Promise<void> {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
-    const targetDir = this.getFasterWhisperAssetRoot(profile, asset.id)
+    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
     let extractDir: string | null = null
 
     logAutodocEvent({
@@ -1707,6 +1949,87 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
+  private async isParakeetUsable(): Promise<boolean> {
+    if (!(await this.fileExists(this.getParakeetPythonPath()))) {
+      return false
+    }
+    if (!(await this.fileExists(this.getParakeetModelPath()))) {
+      return false
+    }
+    if (!(await this.fileExists(this.getTranscriptionWorkerScriptPath()))) {
+      return false
+    }
+
+    const profile = this.getSelectedWindowsProfile()
+    const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-parakeet-probe-'))
+    const probeWavPath = join(probeDir, 'probe.wav')
+
+    try {
+      await writeFile(probeWavPath, this.createSilentProbeWav())
+      const client = new TranscriptionWorkerClient({
+        pythonPath: this.getParakeetPythonPath(),
+        scriptPath: this.getTranscriptionWorkerScriptPath(),
+        processEnv: this.getParakeetProcessEnv(),
+        extraArgs: []
+      })
+
+      try {
+        await Promise.race([
+          client.load({
+            engine: 'parakeet',
+            model: this.getParakeetModelPath(),
+            device: profile.device,
+            computeType: profile.computeType,
+            threads: 2
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('Parakeet probe load timed out')),
+              FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS
+            )
+          })
+        ])
+
+        await Promise.race([
+          (async () => {
+            await client.transcribe({
+              audio: probeWavPath,
+              language: 'en',
+              window: null
+            })
+            await client.unload()
+          })(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('Parakeet probe transcribe timed out'))
+            }, FASTER_WHISPER_PROBE_TIMEOUT_MS)
+          })
+        ])
+
+        return true
+      } catch (error) {
+        logAutodocFailure({
+          area: 'whisper',
+          message: 'Parakeet probe validation failed',
+          error,
+          context: {
+            backend: profile.id,
+            backendLabel: profile.label,
+            pythonPath: this.getParakeetPythonPath(),
+            modelPath: this.getParakeetModelPath(),
+            probeTimeoutMs: FASTER_WHISPER_PROBE_TIMEOUT_MS,
+            probeLoadTimeoutMs: FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS
+          }
+        })
+        return false
+      } finally {
+        client.dispose()
+      }
+    } finally {
+      await rm(probeDir, { recursive: true, force: true })
+    }
+  }
+
   private async isMlxWhisperUsable(): Promise<boolean> {
     if (!(await this.fileExists(this.getMlxWhisperPythonPath()))) {
       return false
@@ -1798,6 +2121,21 @@ export class WhisperManager extends EventEmitter {
     for (const delayMs of WHISPER_PROBE_RETRY_DELAYS_MS) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))
       if (await this.isFasterWhisperUsable()) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  private async isParakeetUsableWithRetry(): Promise<boolean> {
+    if (await this.isParakeetUsable()) {
+      return true
+    }
+
+    for (const delayMs of WHISPER_PROBE_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      if (await this.isParakeetUsable()) {
         return true
       }
     }

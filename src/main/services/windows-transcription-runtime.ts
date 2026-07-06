@@ -9,7 +9,11 @@ const execFileAsync = promisify(execFile)
 export type WindowsTranscriptionBackendId =
   | 'faster-whisper-cuda'
   | 'faster-whisper-cpu'
+  | 'parakeet-gpu'
+  | 'parakeet-cpu'
   | 'whisper-cpp'
+
+export type WindowsTranscriptionEngine = 'faster-whisper' | 'parakeet' | 'whisper-cpp'
 
 export type WindowsGpuVendor = 'nvidia' | 'intel' | 'amd' | 'unknown'
 
@@ -23,6 +27,18 @@ export interface NvidiaSmiGpuInfo {
   name: string
   memoryTotalMiB: number | null
   driverVersion: string | null
+}
+
+export interface WindowsRegistryGpuRow {
+  Description?: string
+  AdapterString?: string
+  DriverDesc?: string
+  qwMemorySize?: number | string | null
+}
+
+export interface WindowsRegistryGpuEntry {
+  name: string
+  vramGiB: number | null
 }
 
 export interface WindowsHardwareProfile {
@@ -49,8 +65,9 @@ export interface WindowsTranscriptionProfile {
   id: WindowsTranscriptionBackendId
   label: string
   modelName: string
-  device: 'cuda' | 'cpu'
-  computeType: 'float16' | 'int8_float16' | 'int8_float32' | 'int8'
+  engine: WindowsTranscriptionEngine
+  device: 'cuda' | 'cpu' | 'dml'
+  computeType: 'float16' | 'int8_float16' | 'int8_float32' | 'int8' | 'fp32'
   minSystemMemoryGiB: number
   estimatedMemoryGiB: number
   minVramGiB?: number
@@ -59,6 +76,14 @@ export interface WindowsTranscriptionProfile {
 
 export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_LOGICAL_PROCESSORS = 12
 export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_FREE_MEMORY_GIB = 6
+
+const KNOWN_WINDOWS_TRANSCRIPTION_PROFILE_IDS: WindowsTranscriptionBackendId[] = [
+  'faster-whisper-cuda',
+  'faster-whisper-cpu',
+  'parakeet-gpu',
+  'parakeet-cpu',
+  'whisper-cpp'
+]
 
 export function shouldSerializeWindowsLocalProcessing(
   logicalProcessors: number,
@@ -82,7 +107,11 @@ export interface WindowsTranscriptionManifest {
   version: number
   releaseTag: string
   artifactBaseUrl?: string
-  profiles: WindowsTranscriptionProfile[]
+  profiles: Array<
+    Partial<WindowsTranscriptionProfile> & {
+      id: WindowsTranscriptionBackendId
+    }
+  >
 }
 
 const ASSET_BASE_URL = getConfiguredWindowsTranscriptionAssetBaseUrl()
@@ -95,6 +124,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     id: 'faster-whisper-cuda',
     label: 'NVIDIA accelerated transcription',
     modelName: 'distil-large-v3',
+    engine: 'faster-whisper',
     device: 'cuda',
     computeType: 'int8_float32',
     minSystemMemoryGiB: 12,
@@ -127,6 +157,7 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     id: 'faster-whisper-cpu',
     label: 'CPU optimized transcription',
     modelName: 'small.en',
+    engine: 'faster-whisper',
     device: 'cpu',
     computeType: 'int8',
     minSystemMemoryGiB: 8,
@@ -154,10 +185,79 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
       }
     ]
   },
+  'parakeet-gpu': {
+    id: 'parakeet-gpu',
+    label: 'GPU accelerated transcription',
+    modelName: 'parakeet-tdt-0.6b-v3',
+    engine: 'parakeet',
+    device: 'dml',
+    computeType: 'fp32',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 4,
+    minVramGiB: 4,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'parakeet-runtime-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
+        sha256: '',
+        expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
+      },
+      {
+        id: 'model',
+        filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-fp32.zip` : '',
+        sha256: '',
+        expectedFiles: [
+          'encoder-model.onnx',
+          'encoder-model.onnx.data',
+          'decoder_joint-model.onnx',
+          'vocab.txt',
+          'config.json',
+          'nemo128.onnx',
+          'silero_vad.onnx'
+        ]
+      }
+    ]
+  },
+  'parakeet-cpu': {
+    id: 'parakeet-cpu',
+    label: 'CPU optimized transcription',
+    modelName: 'parakeet-tdt-0.6b-v3',
+    engine: 'parakeet',
+    device: 'cpu',
+    computeType: 'int8',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 2,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'parakeet-runtime-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
+        sha256: '',
+        expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
+      },
+      {
+        id: 'model',
+        filename: 'parakeet-tdt-0.6b-v3-int8.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-int8.zip` : '',
+        sha256: '',
+        expectedFiles: [
+          'encoder-model.int8.onnx',
+          'decoder_joint-model.int8.onnx',
+          'vocab.txt',
+          'config.json',
+          'nemo128.onnx',
+          'silero_vad.onnx'
+        ]
+      }
+    ]
+  },
   'whisper-cpp': {
     id: 'whisper-cpp',
     label: 'compatible transcription',
-    modelName: 'distil-large-v3-ggml',
+    modelName: 'base.en',
+    engine: 'whisper-cpp',
     device: 'cpu',
     computeType: 'int8',
     minSystemMemoryGiB: 8,
@@ -186,19 +286,18 @@ export function normalizeWindowsTranscriptionProfiles(
     getConfiguredWindowsTranscriptionAssetBaseUrl() ?? manifest.artifactBaseUrl ?? null
 
   for (const profile of manifest.profiles) {
-    if (
-      profile.id !== 'faster-whisper-cuda' &&
-      profile.id !== 'faster-whisper-cpu' &&
-      profile.id !== 'whisper-cpp'
-    ) {
+    if (!KNOWN_WINDOWS_TRANSCRIPTION_PROFILE_IDS.includes(profile.id)) {
       continue
     }
 
+    const defaults = WINDOWS_TRANSCRIPTION_PROFILES[profile.id]
     profiles[profile.id] = {
+      ...defaults,
       ...profile,
-      estimatedMemoryGiB:
-        profile.estimatedMemoryGiB ?? WINDOWS_TRANSCRIPTION_PROFILES[profile.id].estimatedMemoryGiB,
-      assets: profile.assets.map((asset) => ({
+      engine: profile.engine ?? defaults.engine,
+      estimatedMemoryGiB: profile.estimatedMemoryGiB ?? defaults.estimatedMemoryGiB,
+      assets: (profile.assets ?? defaults.assets).map((asset, index) => ({
+        ...(defaults.assets[index] ?? asset),
         ...asset,
         url: artifactBaseUrl ? `${artifactBaseUrl.replace(/\/$/, '')}/${asset.filename}` : asset.url
       }))
@@ -230,6 +329,96 @@ export function classifyWindowsGpuVendor(name: string): WindowsGpuVendor {
   return 'unknown'
 }
 
+export function parseWindowsRegistryGpuRows(rows: unknown[]): WindowsRegistryGpuEntry[] {
+  return rows
+    .map((row) => parseWindowsRegistryGpuRow(row))
+    .filter((entry): entry is WindowsRegistryGpuEntry => entry !== null)
+}
+
+function parseWindowsRegistryGpuRow(row: unknown): WindowsRegistryGpuEntry | null {
+  if (!row || typeof row !== 'object') {
+    return null
+  }
+
+  const record = row as WindowsRegistryGpuRow
+  const nameCandidate =
+    typeof record.AdapterString === 'string' && record.AdapterString.trim()
+      ? record.AdapterString
+      : typeof record.DriverDesc === 'string' && record.DriverDesc.trim()
+        ? record.DriverDesc
+        : typeof record.Description === 'string' && record.Description.trim()
+          ? record.Description
+          : null
+
+  if (!nameCandidate) {
+    return null
+  }
+
+  return {
+    name: nameCandidate,
+    vramGiB: parseRegistryMemorySizeGiB(record.qwMemorySize)
+  }
+}
+
+function parseRegistryMemorySizeGiB(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return bytesToGiB(value)
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+
+    const parsed = Number.parseInt(trimmed, 10)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return bytesToGiB(parsed)
+    }
+  }
+
+  return null
+}
+
+export function applyRegistryGpuMemory(
+  gpus: WindowsGpuInfo[],
+  registryEntries: WindowsRegistryGpuEntry[]
+): WindowsGpuInfo[] {
+  if (registryEntries.length === 0) {
+    return gpus
+  }
+
+  const next = [...gpus]
+  const usedIndexes = new Set<number>()
+
+  for (const registryGpu of registryEntries) {
+    const normalizedRegistryName = normalizeGpuName(registryGpu.name)
+    const matchIndex = next.findIndex(
+      (gpu, index) =>
+        !usedIndexes.has(index) &&
+        namesLikelyReferToSameGpu(normalizeGpuName(gpu.name), normalizedRegistryName)
+    )
+
+    if (matchIndex >= 0) {
+      usedIndexes.add(matchIndex)
+      next[matchIndex] = {
+        ...next[matchIndex],
+        adapterRamGiB: registryGpu.vramGiB ?? next[matchIndex].adapterRamGiB
+      }
+      continue
+    }
+
+    next.push({
+      name: registryGpu.name,
+      vendor: classifyWindowsGpuVendor(registryGpu.name),
+      adapterRamGiB: registryGpu.vramGiB
+    })
+    usedIndexes.add(next.length - 1)
+  }
+
+  return next
+}
+
 export function selectWindowsTranscriptionProfile(
   hardware: WindowsHardwareProfile,
   profiles: Record<
@@ -246,20 +435,24 @@ export function selectWindowsTranscriptionProfile(
     return profiles['whisper-cpp']
   }
 
-  const totalMemoryGiB = hardware.totalMemoryGiB ?? Number.POSITIVE_INFINITY
-  const nvidiaGpu = hardware.gpus.find((gpu) => gpu.vendor === 'nvidia')
-  const cudaProfile = profiles['faster-whisper-cuda']
-  if (
-    nvidiaGpu &&
-    totalMemoryGiB >= cudaProfile.minSystemMemoryGiB &&
-    (nvidiaGpu.adapterRamGiB == null ||
-      cudaProfile.minVramGiB == null ||
-      nvidiaGpu.adapterRamGiB >= cudaProfile.minVramGiB)
-  ) {
-    return cudaProfile
+  const totalMemoryGiB = hardware.totalMemoryGiB ?? 0
+  const eligibleGpus = hardware.gpus.filter((gpu) => gpu.vendor !== 'unknown')
+  const gpuProfile = profiles['parakeet-gpu']
+  const hasEligibleGpu = eligibleGpus.some(
+    (gpu) =>
+      gpu.adapterRamGiB != null &&
+      gpuProfile.minVramGiB != null &&
+      gpu.adapterRamGiB >= gpuProfile.minVramGiB
+  )
+  const hasUnknownVramWithEnoughRam = eligibleGpus.some(
+    (gpu) => gpu.adapterRamGiB == null && totalMemoryGiB >= 16
+  )
+
+  if (hasEligibleGpu || hasUnknownVramWithEnoughRam) {
+    return gpuProfile
   }
 
-  return profiles['faster-whisper-cpu']
+  return profiles['parakeet-cpu']
 }
 
 export async function detectWindowsHardwareProfile(): Promise<WindowsHardwareProfile> {
@@ -280,6 +473,8 @@ function normalizeForcedBackend(value: string | undefined): WindowsTranscription
   if (
     value === 'faster-whisper-cuda' ||
     value === 'faster-whisper-cpu' ||
+    value === 'parakeet-gpu' ||
+    value === 'parakeet-cpu' ||
     value === 'whisper-cpp'
   ) {
     return value
@@ -322,6 +517,19 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
       .filter((gpu): gpu is WindowsGpuInfo => gpu !== null)
   } catch {
     gpus = []
+  }
+
+  try {
+    const { stdout } = await execFileAsync('powershell', [
+      '-NoProfile',
+      '-Command',
+      `$base='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'; Get-ChildItem "$base\\0*" | ForEach-Object { Get-ItemProperty $_.PSPath | Select-Object Description,DriverDesc,@{Name='AdapterString';Expression={$_.'HardwareInformation.AdapterString'}},@{Name='qwMemorySize';Expression={$_.'HardwareInformation.qwMemorySize'}} } | ConvertTo-Json -Compress`
+    ])
+    const parsed = JSON.parse(stdout.trim() || '[]') as unknown
+    const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
+    gpus = applyRegistryGpuMemory(gpus, parseWindowsRegistryGpuRows(rows))
+  } catch {
+    // Registry VRAM is best-effort; keep WMI-only results.
   }
 
   try {

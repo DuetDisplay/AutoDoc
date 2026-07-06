@@ -1,6 +1,6 @@
 const OFFICIAL_AUTH_WORKER_URL = 'https://autodoc-auth.duetdisplay.workers.dev'
 const DEFAULT_MAC_WHISPER_RUNTIME_RELEASE_TAG = 'macos-whisper-runtime-v1'
-const DEFAULT_WINDOWS_TRANSCRIPTION_RELEASE_TAG = 'windows-transcription-v1'
+const DEFAULT_WINDOWS_TRANSCRIPTION_RELEASE_TAG = 'windows-transcription-v2'
 const DEFAULT_WINDOWS_TRANSCRIPTION_ASSET_REPO = 'DuetDisplay/AutoDoc-Windows-Assets'
 
 const BUILD_TIME_AUTODOC_OFFICIAL_BUILD = process.env.AUTODOC_OFFICIAL_BUILD

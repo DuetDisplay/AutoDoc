@@ -5,7 +5,7 @@ import { logAutodocEvent } from './autodoc-log'
  * JSON-lines-over-stdio protocol for the persistent transcription worker.
  *
  * Requests (one JSON object per line on stdin):
- * - load: {"id", "op": "load", "engine": "faster-whisper", "model", "device": "cuda"|"cpu", "computeType", "threads": number|null}
+ * - load: {"id", "op": "load", "engine": "faster-whisper"|"parakeet", "model", "device": "cuda"|"cpu"|"dml", "computeType", "threads": number|null}
  * - transcribe: {"id", "op": "transcribe", "audio", "language", "window": {"startSec", "endSec"} | null}
  * - unload: {"id", "op": "unload"}
  * - ping: {"id", "op": "ping"}
@@ -25,7 +25,9 @@ import { logAutodocEvent } from './autodoc-log'
  * Emitted as each segment decodes. Window-relative when windowed.
  */
 
-export type TranscriptionWorkerDevice = 'cuda' | 'cpu'
+export type TranscriptionWorkerEngine = 'faster-whisper' | 'parakeet'
+
+export type TranscriptionWorkerDevice = 'cuda' | 'cpu' | 'dml'
 
 export interface TranscriptionWorkerWindow {
   startSec: number
@@ -33,7 +35,7 @@ export interface TranscriptionWorkerWindow {
 }
 
 export interface TranscriptionWorkerLoadParams {
-  engine: 'faster-whisper'
+  engine: TranscriptionWorkerEngine
   model: string
   device: TranscriptionWorkerDevice
   computeType: string

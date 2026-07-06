@@ -95,6 +95,14 @@ function createMockWhisperManager(ready = true): WhisperManager {
     getMacProcessingProfile: vi.fn().mockReturnValue(null),
     isMlxWhisperSelected: vi.fn().mockReturnValue(false),
     isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+    isWorkerEngineSelected: vi.fn().mockReturnValue(false),
+    getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+    getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+    getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+    getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+    getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+    getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+    getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
     emit: vi.fn(),
     on: vi.fn()
   } as unknown as WhisperManager
@@ -929,13 +937,15 @@ describe('TranscriptionService', () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
       getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
-      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
-      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
-      getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
-      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
-      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
       getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
       getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
     } as unknown as WhisperManager
@@ -971,13 +981,15 @@ describe('TranscriptionService', () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
       getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
-      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
-      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
-      getFasterWhisperDevice: vi.fn().mockReturnValue('cpu'),
-      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8'),
-      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
       getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
       getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
     } as unknown as WhisperManager
@@ -1221,13 +1233,15 @@ describe('TranscriptionService', () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
       getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
-      getFasterWhisperModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
-      getFasterWhisperPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
-      getFasterWhisperDevice: vi.fn().mockReturnValue('cuda'),
-      getFasterWhisperComputeType: vi.fn().mockReturnValue('int8_float32'),
-      getFasterWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cuda'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8_float32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
       getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cuda')
     } as unknown as WhisperManager
     service = new TranscriptionService(
@@ -1344,8 +1358,9 @@ describe('TranscriptionService', () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
       isFasterWhisperSelected: vi.fn().mockReturnValue(true),
-      getFasterWhisperDevice: vi.fn().mockReturnValue('cuda')
+      getWorkerDevice: vi.fn().mockReturnValue('cuda')
     } as unknown as WhisperManager
     service = new TranscriptionService(
       mockWhisper,
