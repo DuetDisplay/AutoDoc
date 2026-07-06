@@ -68,7 +68,11 @@ const CUDA_PACKAGES = [
 const PARAKEET_RUNTIME_PACKAGES = [
   'numpy==2.4.4',
   'onnx-asr==0.11.0',
-  'onnxruntime-directml==1.24.4'
+  'onnxruntime-directml==1.24.4',
+  // Build-time only: resolveParakeetModelSnapshot/resolveSileroVadSnapshot run
+  // huggingface_hub downloads through this staged runtime (onnx-asr does not
+  // depend on it, unlike faster-whisper which pulls it in transitively).
+  'huggingface_hub==1.22.0'
 ]
 
 const MODELS = [
@@ -280,7 +284,9 @@ async function resolveSileroVadSnapshot() {
 
   const pythonPath = path.join(STAGING_DIR, 'runtime-parakeet', 'python.exe')
   if (!(await exists(pythonPath))) {
-    throw new Error('Parakeet runtime is required to download silero VAD. Run without --skip-runtime.')
+    throw new Error(
+      'Parakeet runtime is required to download silero VAD. Run without --skip-runtime.'
+    )
   }
 
   run(pythonPath, [
