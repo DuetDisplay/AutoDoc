@@ -1806,6 +1806,20 @@ export class TranscriptionService {
     })
   }
 
+  /**
+   * The DML (GPU) worker must not be throttled: the heavy compute runs on the
+   * GPU, but the parakeet TDT decode loop that feeds it is CPU-side Python.
+   * EcoQoS pins that loop to efficiency cores (~5x slowdown measured in
+   * Phase 1/3), which defeats the GPU tier's purpose while buying little
+   * responsiveness. CPU tiers keep EcoQoS + Low priority in balanced mode.
+   */
+  private isDmlWorkerSelected(): boolean {
+    return (
+      typeof this.whisperManager.getWorkerDevice === 'function' &&
+      this.whisperManager.getWorkerDevice() === 'dml'
+    )
+  }
+
   private getTranscriptionWorkerClientFingerprint(): string {
     return [
       this.whisperManager.getWorkerPythonPath(),
@@ -1834,7 +1848,8 @@ export class TranscriptionService {
       scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
       processEnv: this.whisperManager.getWorkerProcessEnv(),
       applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
-      extraArgs: this.getPerformanceMode() === 'fast' ? ['--no-eco'] : []
+      extraArgs:
+        this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected() ? ['--no-eco'] : []
     })
     this.transcriptionWorkerClientFingerprint = fingerprint
     this.workerLoadedFingerprint = null
@@ -2015,11 +2030,11 @@ export class TranscriptionService {
       return
     }
 
-    const isFastMode = this.getPerformanceMode() === 'fast'
-    const priority = isFastMode
+    const useBelowNormal = this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected()
+    const priority = useBelowNormal
       ? osConstants.priority.PRIORITY_BELOW_NORMAL
       : osConstants.priority.PRIORITY_LOW
-    const label = isFastMode ? 'BelowNormal' : 'Low'
+    const label = useBelowNormal ? 'BelowNormal' : 'Low'
 
     try {
       setPriority(pid, priority)

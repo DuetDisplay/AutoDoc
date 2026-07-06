@@ -1014,6 +1014,45 @@ describe('TranscriptionService', () => {
     expect(workerClientMock.lastOptions?.extraArgs).toEqual([])
   })
 
+  it('disables EcoQoS and uses below-normal priority for the DML worker even in balanced mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('dml'),
+      getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(4)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
+
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    ;(service as any).lowerWhisperPriority(1234, 'meeting-123')
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
   it('uses idle priority in balanced mode and below-normal in fast mode', async () => {
     setPlatform('win32')
     mockWhisper = {
