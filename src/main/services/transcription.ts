@@ -46,6 +46,7 @@ const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
 const TRANSCRIPTION_LANGUAGE = 'en'
+const PARAKEET_SINGLE_PASS_MAX_DURATION_SEC = 3 * 60 * 60
 const WINDOWS_MEMORY_GATE_HEADROOM_GIB = 1
 const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
 const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
@@ -1389,7 +1390,7 @@ export class TranscriptionService {
     const shouldPreChunk =
       audioDurationSec &&
       audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC &&
-      !this.shouldTrySinglePassForLongRecording()
+      !this.shouldTrySinglePassForLongRecording(audioDurationSec)
 
     if (shouldPreChunk) {
       console.log(
@@ -1433,8 +1434,24 @@ export class TranscriptionService {
     return output
   }
 
-  private shouldTrySinglePassForLongRecording(): boolean {
+  private shouldTrySinglePassForLongRecording(audioDurationSec?: number): boolean {
     if (process.platform !== 'win32') return false
+
+    // Parakeet segments long audio internally via its VAD, so worker chunk
+    // windows only add per-window overhead (measured ~6-7 s x 14 windows on a
+    // 60-min dual-source run). The repetition fallback below still re-chunks
+    // if a single pass produces degenerate output. Whole-file passes load the
+    // full waveform into worker RAM (~230 MB/hour), so marathon recordings
+    // stay on the windowed path.
+    if (
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected() &&
+      typeof this.whisperManager.getWorkerEngine === 'function' &&
+      this.whisperManager.getWorkerEngine() === 'parakeet'
+    ) {
+      return audioDurationSec == null || audioDurationSec <= PARAKEET_SINGLE_PASS_MAX_DURATION_SEC
+    }
+
     if (typeof this.whisperManager.isFasterWhisperSelected !== 'function') return false
     if (!this.whisperManager.isFasterWhisperSelected()) return false
     if (typeof this.whisperManager.getWorkerDevice !== 'function') return false

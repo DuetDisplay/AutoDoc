@@ -1430,6 +1430,44 @@ describe('TranscriptionService', () => {
     expect(chunkedSpy).not.toHaveBeenCalled()
   })
 
+  it('uses a single whole-file pass for long recordings on parakeet (any device)', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+
+    const singlePassOutput = {
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'parakeet single pass' }]
+    }
+    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked')
+    const singlePassSpy = vi
+      .spyOn(service as any, 'runWhisperPassAndRead')
+      .mockResolvedValue(singlePassOutput)
+
+    const result = await (service as any).transcribeWithFallback(
+      '/mock/tmp/audio.wav',
+      'meeting-parakeet',
+      60 * 60,
+      '/mock/tmp/audio',
+      []
+    )
+
+    expect(result).toEqual(singlePassOutput)
+    expect(singlePassSpy).toHaveBeenCalled()
+    expect(chunkedSpy).not.toHaveBeenCalled()
+  })
+
   it('keeps transcription progress monotonic when concurrent sources report out of order', () => {
     ;(service as any).activeJobId = 'meeting-123'
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 50)
