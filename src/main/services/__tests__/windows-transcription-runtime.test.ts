@@ -7,6 +7,7 @@ import {
   applyRegistryGpuMemory,
   classifyWindowsGpuVendor,
   electronMemoryKbToGiB,
+  getUsableLogicalProcessorCount,
   loadWindowsTranscriptionProfiles,
   parseNvidiaSmiGpuRows,
   parseWindowsRegistryGpuRows,
@@ -28,6 +29,7 @@ const baseHardware: WindowsHardwareProfile = {
 afterEach(() => {
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
+  delete process.env.AUTODOC_TEST_LOGICAL_PROCESSORS
 })
 
 describe('Windows transcription runtime selection', () => {
@@ -45,6 +47,19 @@ describe('Windows transcription runtime selection', () => {
 
   it('allows concurrent local processing when free memory is unknown', () => {
     expect(shouldSerializeWindowsLocalProcessing(20, null)).toBe(false)
+  })
+
+  it('honors the logical-processor test override', () => {
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = '4'
+    expect(getUsableLogicalProcessorCount()).toBe(4)
+  })
+
+  it('ignores invalid logical-processor overrides', () => {
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = 'not-a-number'
+    expect(getUsableLogicalProcessorCount()).toBeGreaterThanOrEqual(1)
+
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = '0'
+    expect(getUsableLogicalProcessorCount()).toBeGreaterThanOrEqual(1)
   })
 
   it('uses the public asset-only repository for fallback asset URLs', () => {

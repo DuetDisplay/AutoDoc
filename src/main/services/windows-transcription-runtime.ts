@@ -470,8 +470,17 @@ export async function detectWindowsHardwareProfile(): Promise<WindowsHardwarePro
  * selection sees the processors actually usable by this process (and its
  * children) rather than the machine's raw core count. This also matches how
  * getWhisperThreadCount counts processors.
+ *
+ * AUTODOC_TEST_LOGICAL_PROCESSORS exists for QA staging (e.g. exercising the
+ * win-low-spec profile on a high-core dev machine where launch-time affinity
+ * is blocked by the harness job object).
  */
-function getUsableLogicalProcessorCount(): number {
+export function getUsableLogicalProcessorCount(): number {
+  const override = Number.parseInt(process.env.AUTODOC_TEST_LOGICAL_PROCESSORS ?? '', 10)
+  if (Number.isFinite(override) && override > 0) {
+    return override
+  }
+
   try {
     if (typeof availableParallelism === 'function') {
       return Math.max(1, availableParallelism())
