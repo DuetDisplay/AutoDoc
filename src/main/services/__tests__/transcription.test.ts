@@ -92,6 +92,7 @@ function createMockWhisperManager(ready = true): WhisperManager {
     getModelsDir: vi.fn().mockReturnValue('/mock/home/AutoDoc/models'),
     getTranscriptionBackend: vi.fn().mockReturnValue('whisper-cpp'),
     getTranscriptionBackendLabel: vi.fn().mockReturnValue('compatible transcription'),
+    getDowngradesTaken: vi.fn().mockReturnValue([]),
     getMacProcessingProfile: vi.fn().mockReturnValue(null),
     isMlxWhisperSelected: vi.fn().mockReturnValue(false),
     isFasterWhisperSelected: vi.fn().mockReturnValue(false),
@@ -959,6 +960,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'fast',
+      () => 'balanced',
+      async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
     )
@@ -1003,6 +1006,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'balanced',
+      () => 'balanced',
+      async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
     )
@@ -1040,6 +1045,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'balanced',
+      () => 'balanced',
+      async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
     )
@@ -1116,6 +1123,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'balanced',
+      () => 'balanced',
+      async () => null,
       async (ms) => {
         freeGiB = 16
         await vi.advanceTimersByTimeAsync(ms)
@@ -1164,6 +1173,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'balanced',
+      () => 'balanced',
+      async () => null,
       async (ms) => {
         await vi.advanceTimersByTimeAsync(ms)
       },
@@ -1212,6 +1223,8 @@ describe('TranscriptionService', () => {
       () => false,
       null,
       () => 'balanced',
+      () => 'balanced',
+      async () => null,
       async () => {
         throw new Error('memory gate delay should not run on macOS')
       },

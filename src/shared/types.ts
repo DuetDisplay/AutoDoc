@@ -156,6 +156,9 @@ export interface TranscriptionStatusPayload {
   status: TranscriptionStatus
   progress?: number
   errorCode?: string
+  backendLabel?: string
+  qualityMode?: 'fast' | 'balanced'
+  etaSeconds?: number | null
 }
 
 export type TranscriptionStatus =
@@ -229,6 +232,8 @@ export interface WhisperSetupStatus {
   backendLabel?: string
   macProcessingProfileId?: 'mac-normal' | 'mac-low-spec'
   macProcessingProfileReason?: string
+  windowsProcessingProfileId?: 'win-gpu' | 'win-cpu-normal' | 'win-low-spec'
+  windowsProcessingProfileReason?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'

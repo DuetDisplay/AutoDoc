@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { TranscriptionStatus, WhisperSetupStatus } from '../../../shared/types'
+import type { TranscriptionStatus, TranscriptionStatusPayload } from '../../../shared/types'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
+import { formatTranscriptionStatusText } from '../services/transcription-status-labels'
 
 const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: string }> = {
   pending: {
@@ -36,12 +37,24 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: str
 interface TranscriptionBadgeProps {
   status: TranscriptionStatus
   progress?: number
+  backendLabel?: string
+  qualityMode?: 'fast' | 'balanced'
+  etaSeconds?: number | null
   onRetry?: () => void
 }
 
-export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionBadgeProps) {
+export function TranscriptionBadge({
+  status,
+  progress,
+  backendLabel,
+  qualityMode,
+  etaSeconds,
+  onRetry
+}: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
-  const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus | null>(null)
+  const [setupStatus, setSetupStatus] = useState<
+    import('../../../shared/types').WhisperSetupStatus | null
+  >(null)
 
   useEffect(() => {
     if (status !== 'downloading') {
@@ -56,6 +69,19 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
 
   const showProgress = status === 'transcribing' && progress != null
   const setupLabel = status === 'downloading' ? getWhisperSetupLabel(setupStatus) : null
+  const transcribingLabel =
+    status === 'transcribing'
+      ? formatTranscriptionStatusText({
+          status,
+          progress,
+          backendLabel,
+          qualityMode,
+          etaSeconds
+        } satisfies Pick<
+          TranscriptionStatusPayload,
+          'status' | 'progress' | 'backendLabel' | 'qualityMode' | 'etaSeconds'
+        >)
+      : null
 
   return (
     <span
@@ -69,7 +95,8 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
         />
       )}
       <span className="relative">
-        {showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label)}
+        {transcribingLabel ??
+          (showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label))}
       </span>
     </span>
   )

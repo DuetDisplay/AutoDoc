@@ -106,4 +106,26 @@ export function registerPrefsIpc(
       prefsStore.setLowSpecMacProcessingBannerDismissed(dismissed)
     }
   )
+
+  ipcMain.handle('prefs:get-transcription-performance-mode', (): 'balanced' | 'fast' => {
+    return prefsStore.getTranscriptionPerformanceMode()
+  })
+
+  ipcMain.handle(
+    'prefs:set-transcription-performance-mode',
+    (_event, mode: 'balanced' | 'fast'): void => {
+      prefsStore.setTranscriptionPerformanceMode(mode)
+    }
+  )
+
+  ipcMain.handle('prefs:get-transcription-quality-mode', (): 'balanced' | 'fast' => {
+    return prefsStore.getTranscriptionQualityMode()
+  })
+
+  ipcMain.handle(
+    'prefs:set-transcription-quality-mode',
+    (_event, mode: 'balanced' | 'fast' | 'accurate'): void => {
+      prefsStore.setTranscriptionQualityMode(mode)
+    }
+  )
 }

@@ -145,6 +145,13 @@ export function MeetingDetail() {
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
+  const [transcriptionBackendLabel, setTranscriptionBackendLabel] = useState<string | undefined>()
+  const [transcriptionQualityMode, setTranscriptionQualityMode] = useState<
+    'fast' | 'balanced' | undefined
+  >()
+  const [transcriptionEtaSeconds, setTranscriptionEtaSeconds] = useState<
+    number | null | undefined
+  >()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
@@ -545,6 +552,9 @@ export function MeetingDetail() {
         setTranscriptionProgress((current) =>
           mergeProgress(payload.status, current, payload.progress)
         )
+        setTranscriptionBackendLabel(payload.backendLabel)
+        setTranscriptionQualityMode(payload.qualityMode)
+        setTranscriptionEtaSeconds(payload.etaSeconds)
         if (payload.status === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
           window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -806,6 +816,9 @@ export function MeetingDetail() {
           <TranscriptionBadge
             status={transcriptionStatus}
             progress={transcriptionProgress}
+            backendLabel={transcriptionBackendLabel}
+            qualityMode={transcriptionQualityMode}
+            etaSeconds={transcriptionEtaSeconds}
             onRetry={handleRetryTranscription}
           />
           <SegmentationBadge
@@ -1012,6 +1025,10 @@ export function MeetingDetail() {
               segments={transcript}
               status={transcriptionStatus}
               speakers={speakers}
+              transcriptionProgress={transcriptionProgress}
+              transcriptionBackendLabel={transcriptionBackendLabel}
+              transcriptionQualityMode={transcriptionQualityMode}
+              transcriptionEtaSeconds={transcriptionEtaSeconds}
               onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
             />
           </div>

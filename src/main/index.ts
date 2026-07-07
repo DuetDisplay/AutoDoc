@@ -8,7 +8,7 @@ import {
   Notification
 } from 'electron'
 import { join } from 'path'
-import { homedir, availableParallelism, cpus } from 'os'
+import { homedir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { createRequire } from 'module'
 import { readdirSync, rmSync } from 'fs'
@@ -38,10 +38,6 @@ import { OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
-import {
-  getSystemMemorySnapshot,
-  shouldSerializeWindowsLocalProcessing
-} from './services/windows-transcription-runtime'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
 import { registerSearchIpc } from './ipc/search-ipc'
@@ -570,22 +566,6 @@ app.whenReady().then(async () => {
     applyCurrentSentryContext()
   }
 
-  const getWindowsLogicalProcessorCount = (): number => {
-    try {
-      if (typeof availableParallelism === 'function') {
-        return Math.max(1, availableParallelism())
-      }
-    } catch {
-      // Fall back to cpu count below.
-    }
-
-    try {
-      return Math.max(1, cpus().length)
-    } catch {
-      return 1
-    }
-  }
-
   const isExperimentalSpeakerDiarizationEnabled = (): boolean => {
     // Speaker diarization is intentionally hard-disabled for now, so release
     // builds skip bundling the pyannote/lightning runtime until we re-enable it.
@@ -807,6 +787,7 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
+  whisperManager.setTranscriptionQualityModeGetter(() => prefsStore.getTranscriptionQualityMode())
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -815,9 +796,17 @@ app.whenReady().then(async () => {
     }
 
     if (process.platform === 'win32') {
-      const logicalProcessors = getWindowsLogicalProcessorCount()
-      const { freeMemoryGiB } = getSystemMemorySnapshot()
-      return shouldSerializeWindowsLocalProcessing(logicalProcessors, freeMemoryGiB)
+      const profile = await whisperManager.getEffectiveWindowsProcessingProfile()
+      if (!profile) {
+        return false
+      }
+      if (profile.id === 'win-gpu') {
+        return false
+      }
+      if (profile.id === 'win-low-spec') {
+        return true
+      }
+      return profile.serializeLocalProcessing
     }
 
     return false
@@ -837,7 +826,9 @@ app.whenReady().then(async () => {
     diarizationService,
     isExperimentalSpeakerDiarizationEnabled,
     localProcessingCoordinator,
-    () => prefsStore.getTranscriptionPerformanceMode()
+    () => prefsStore.getTranscriptionPerformanceMode(),
+    () => prefsStore.getTranscriptionQualityMode(),
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
   shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({

@@ -3,6 +3,7 @@ import * as childProcess from 'child_process'
 import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { WhisperManager } from '../whisper-manager'
+import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
 
 let isPackaged = false
 
@@ -285,5 +286,24 @@ describe('WhisperManager', () => {
 
     expect(resolveWhisperSpy).toHaveBeenCalled()
     expect(mockExecSync).not.toHaveBeenCalled()
+  })
+
+  it('forces int8 worker compute type in fast quality mode without changing backend id', () => {
+    manager.setTranscriptionQualityModeGetter(() => 'fast')
+    ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']
+
+    expect(manager.getWorkerComputeType()).toBe('int8')
+    expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+    expect(manager.getWorkerDevice()).toBe('dml')
+  })
+
+  it('records downgrade chain entries', () => {
+    ;(manager as any).recordDowngrade('parakeet-gpu', 'parakeet-cpu')
+    ;(manager as any).recordDowngrade('parakeet-cpu', 'whisper-cpp')
+
+    expect(manager.getDowngradesTaken()).toEqual([
+      'parakeet-gpu→parakeet-cpu',
+      'parakeet-cpu→whisper-cpp'
+    ])
   })
 })

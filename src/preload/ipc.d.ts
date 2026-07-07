@@ -171,6 +171,10 @@ export interface IpcInvokeEvents {
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
   'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
+  'prefs:get-transcription-performance-mode': []
+  'prefs:set-transcription-performance-mode': [mode: 'balanced' | 'fast']
+  'prefs:get-transcription-quality-mode': []
+  'prefs:set-transcription-quality-mode': [mode: 'balanced' | 'fast' | 'accurate']
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -280,6 +284,10 @@ export interface IpcInvokeReturns {
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
   'prefs:set-low-spec-mac-processing-banner-dismissed': void
+  'prefs:get-transcription-performance-mode': 'balanced' | 'fast'
+  'prefs:set-transcription-performance-mode': void
+  'prefs:get-transcription-quality-mode': 'balanced' | 'fast'
+  'prefs:set-transcription-quality-mode': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus

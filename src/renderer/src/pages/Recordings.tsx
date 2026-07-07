@@ -5,8 +5,17 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import type { RecordingEntry, SegmentationStatus, TranscriptionStatus } from '../../../shared/types'
 
-const ACTIVE_TRANSCRIPTION_STATUSES: TranscriptionStatus[] = ['queued', 'downloading', 'transcribing', 'diarizing']
-const ACTIVE_SEGMENTATION_STATUSES: SegmentationStatus[] = ['queued', 'downloading-model', 'segmenting']
+const ACTIVE_TRANSCRIPTION_STATUSES: TranscriptionStatus[] = [
+  'queued',
+  'downloading',
+  'transcribing',
+  'diarizing'
+]
+const ACTIVE_SEGMENTATION_STATUSES: SegmentationStatus[] = [
+  'queued',
+  'downloading-model',
+  'segmenting'
+]
 
 function formatDuration(seconds: number): string {
   const mins = Math.ceil(seconds / 60)
@@ -20,7 +29,7 @@ function formatDuration(seconds: number): string {
 
 function mergeRecordIfChanged<T>(
   prev: Record<string, T>,
-  updates: Record<string, T>,
+  updates: Record<string, T>
 ): Record<string, T> {
   const changed = Object.entries(updates).some(([key, value]) => prev[key] !== value)
   if (!changed) return prev
@@ -29,7 +38,7 @@ function mergeRecordIfChanged<T>(
 
 function mergeTranscriptionProgress(
   prev: Record<string, number | undefined>,
-  updates: Record<string, { status: TranscriptionStatus; progress?: number }>,
+  updates: Record<string, { status: TranscriptionStatus; progress?: number }>
 ): Record<string, number | undefined> {
   let changed = false
   const next = { ...prev }
@@ -60,7 +69,8 @@ function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boo
   if (prev.length !== next.length) return false
   return prev.every((recording, index) => {
     const other = next[index]
-    return recording.meetingId === other.meetingId &&
+    return (
+      recording.meetingId === other.meetingId &&
       recording.title === other.title &&
       recording.date === other.date &&
       recording.duration === other.duration &&
@@ -68,15 +78,34 @@ function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boo
       recording.hasAudio === other.hasAudio &&
       recording.isFinalizing === other.isFinalizing &&
       recording.transcriptionStatus === other.transcriptionStatus
+    )
   })
 }
 
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
-  const [segmentationStatuses, setSegmentationStatuses] = useState<Record<string, SegmentationStatus>>({})
-  const [segmentationProgress, setSegmentationProgress] = useState<Record<string, number | undefined>>({})
-  const [segmentationErrorCodes, setSegmentationErrorCodes] = useState<Record<string, string | undefined>>({})
-  const [transcriptionProgress, setTranscriptionProgress] = useState<Record<string, number | undefined>>({})
+  const [segmentationStatuses, setSegmentationStatuses] = useState<
+    Record<string, SegmentationStatus>
+  >({})
+  const [segmentationProgress, setSegmentationProgress] = useState<
+    Record<string, number | undefined>
+  >({})
+  const [segmentationErrorCodes, setSegmentationErrorCodes] = useState<
+    Record<string, string | undefined>
+  >({})
+  const [transcriptionProgress, setTranscriptionProgress] = useState<
+    Record<string, number | undefined>
+  >({})
+  const [transcriptionStatusDetails, setTranscriptionStatusDetails] = useState<
+    Record<
+      string,
+      {
+        backendLabel?: string
+        qualityMode?: 'fast' | 'balanced'
+        etaSeconds?: number | null
+      }
+    >
+  >({})
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const knownMeetingIdsRef = useRef<Set<string>>(new Set())
@@ -88,7 +117,9 @@ export function Recordings() {
       at: new Date().toISOString(),
       elapsedMs: Math.round(performance.now() - refreshStartedAt),
       entryCount: entries.length,
-      finalizingMeetingIds: entries.filter((entry) => entry.isFinalizing).map((entry) => entry.meetingId),
+      finalizingMeetingIds: entries
+        .filter((entry) => entry.isFinalizing)
+        .map((entry) => entry.meetingId)
     })
 
     setRecordings((prev) => (areRecordingsEqual(prev, entries) ? prev : entries))
@@ -101,56 +132,54 @@ export function Recordings() {
         meetingId: entry.meetingId,
         transcriptionProgress: await window.electronAPI.invoke(
           'transcription:get-progress',
-          entry.meetingId,
+          entry.meetingId
         ),
         segmentationStatus: await window.electronAPI.invoke(
           'segmentation:get-status',
-          entry.meetingId,
+          entry.meetingId
         ),
         segmentationProgress: await window.electronAPI.invoke(
           'segmentation:get-progress',
-          entry.meetingId,
+          entry.meetingId
         ),
         segmentationErrorCode: await window.electronAPI.invoke(
           'segmentation:get-error-code',
-          entry.meetingId,
-        ),
-      })),
+          entry.meetingId
+        )
+      }))
     )
 
     const transcriptionProgressByMeetingId = Object.fromEntries(
       updates.map((update) => [
         update.meetingId,
         {
-          status: entries.find((entry) => entry.meetingId === update.meetingId)?.transcriptionStatus ?? 'pending',
-          progress: update.transcriptionProgress,
-        },
-      ]),
+          status:
+            entries.find((entry) => entry.meetingId === update.meetingId)?.transcriptionStatus ??
+            'pending',
+          progress: update.transcriptionProgress
+        }
+      ])
     )
     const segmentationStatusesByMeetingId = Object.fromEntries(
-      updates.map((update) => [update.meetingId, update.segmentationStatus]),
+      updates.map((update) => [update.meetingId, update.segmentationStatus])
     )
     const segmentationProgressByMeetingId = Object.fromEntries(
-      updates.map((update) => [update.meetingId, update.segmentationProgress]),
+      updates.map((update) => [update.meetingId, update.segmentationProgress])
     )
     const segmentationErrorCodesByMeetingId = Object.fromEntries(
       updates.map((update) => [
         update.meetingId,
-        update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined,
-      ]),
+        update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined
+      ])
     )
 
     setTranscriptionProgress((prev) =>
-      mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
+      mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId)
     )
-    setSegmentationStatuses((prev) =>
-      mergeRecordIfChanged(prev, segmentationStatusesByMeetingId),
-    )
-    setSegmentationProgress((prev) =>
-      mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
-    )
+    setSegmentationStatuses((prev) => mergeRecordIfChanged(prev, segmentationStatusesByMeetingId))
+    setSegmentationProgress((prev) => mergeRecordIfChanged(prev, segmentationProgressByMeetingId))
     setSegmentationErrorCodes((prev) =>
-      mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId),
+      mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId)
     )
   }, [])
 
@@ -184,42 +213,44 @@ export function Recordings() {
       })
     })
 
-    const unsubTranscription = window.electronAPI.on(
-      'transcription:status-changed',
-      (payload) => {
-        setRecordings((prev) =>
-          prev.map((rec) =>
-            rec.meetingId === payload.meetingId
-              ? { ...rec, transcriptionStatus: payload.status }
-              : rec
-          )
+    const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
+      setRecordings((prev) =>
+        prev.map((rec) =>
+          rec.meetingId === payload.meetingId
+            ? { ...rec, transcriptionStatus: payload.status }
+            : rec
         )
-        setTranscriptionProgress((prev) =>
-          mergeTranscriptionProgress(prev, {
-            [payload.meetingId]: { status: payload.status, progress: payload.progress },
-          }),
-        )
-        refreshIfUnknownMeeting(payload.meetingId)
-      }
-    )
-    const unsubSegmentation = window.electronAPI.on(
-      'segmentation:status-changed',
-      (payload) => {
-        setSegmentationStatuses((prev) => ({
-          ...prev,
-          [payload.meetingId]: payload.status,
-        }))
-        setSegmentationProgress((prev) => ({
-          ...prev,
-          [payload.meetingId]: payload.progress,
-        }))
-        setSegmentationErrorCodes((prev) => ({
-          ...prev,
-          [payload.meetingId]: payload.status === 'failed' ? payload.errorCode : undefined,
-        }))
-        refreshIfUnknownMeeting(payload.meetingId)
-      }
-    )
+      )
+      setTranscriptionProgress((prev) =>
+        mergeTranscriptionProgress(prev, {
+          [payload.meetingId]: { status: payload.status, progress: payload.progress }
+        })
+      )
+      setTranscriptionStatusDetails((prev) => ({
+        ...prev,
+        [payload.meetingId]: {
+          backendLabel: payload.backendLabel,
+          qualityMode: payload.qualityMode,
+          etaSeconds: payload.etaSeconds
+        }
+      }))
+      refreshIfUnknownMeeting(payload.meetingId)
+    })
+    const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
+      setSegmentationStatuses((prev) => ({
+        ...prev,
+        [payload.meetingId]: payload.status
+      }))
+      setSegmentationProgress((prev) => ({
+        ...prev,
+        [payload.meetingId]: payload.progress
+      }))
+      setSegmentationErrorCodes((prev) => ({
+        ...prev,
+        [payload.meetingId]: payload.status === 'failed' ? payload.errorCode : undefined
+      }))
+      refreshIfUnknownMeeting(payload.meetingId)
+    })
 
     const interval = setInterval(() => {
       void refreshRecordings().catch((err) => {
@@ -240,8 +271,10 @@ export function Recordings() {
     const activeMeetingIds = recordings
       .filter((rec) => {
         const segmentationStatus = segmentationStatuses[rec.meetingId]
-        return ACTIVE_TRANSCRIPTION_STATUSES.includes(rec.transcriptionStatus) ||
+        return (
+          ACTIVE_TRANSCRIPTION_STATUSES.includes(rec.transcriptionStatus) ||
           (segmentationStatus != null && ACTIVE_SEGMENTATION_STATUSES.includes(segmentationStatus))
+        )
       })
       .map((rec) => rec.meetingId)
 
@@ -254,69 +287,82 @@ export function Recordings() {
         const updates = await Promise.all(
           activeMeetingIds.map(async (meetingId) => ({
             meetingId,
-            transcriptionStatus: await window.electronAPI.invoke('transcription:get-status', meetingId),
-            transcriptionProgress: await window.electronAPI.invoke('transcription:get-progress', meetingId),
-            segmentationStatus: await window.electronAPI.invoke('segmentation:get-status', meetingId),
-            segmentationProgress: await window.electronAPI.invoke('segmentation:get-progress', meetingId),
-            segmentationErrorCode: await window.electronAPI.invoke('segmentation:get-error-code', meetingId),
-          })),
+            transcriptionStatus: await window.electronAPI.invoke(
+              'transcription:get-status',
+              meetingId
+            ),
+            transcriptionProgress: await window.electronAPI.invoke(
+              'transcription:get-progress',
+              meetingId
+            ),
+            segmentationStatus: await window.electronAPI.invoke(
+              'segmentation:get-status',
+              meetingId
+            ),
+            segmentationProgress: await window.electronAPI.invoke(
+              'segmentation:get-progress',
+              meetingId
+            ),
+            segmentationErrorCode: await window.electronAPI.invoke(
+              'segmentation:get-error-code',
+              meetingId
+            )
+          }))
         )
 
         if (cancelled) return
 
         const updatesByMeetingId = new Map(updates.map((update) => [update.meetingId, update]))
 
-        setRecordings((prev) =>
-          {
-            let changed = false
-            const next = prev.map((rec) => {
-              const update = updatesByMeetingId.get(rec.meetingId)
-              if (!update || rec.transcriptionStatus === update.transcriptionStatus) {
-                return rec
-              }
-              changed = true
-              return {
-                ...rec,
-                transcriptionStatus: update.transcriptionStatus,
-              }
-            })
-            return changed ? next : prev
-          }
-        )
+        setRecordings((prev) => {
+          let changed = false
+          const next = prev.map((rec) => {
+            const update = updatesByMeetingId.get(rec.meetingId)
+            if (!update || rec.transcriptionStatus === update.transcriptionStatus) {
+              return rec
+            }
+            changed = true
+            return {
+              ...rec,
+              transcriptionStatus: update.transcriptionStatus
+            }
+          })
+          return changed ? next : prev
+        })
 
         const transcriptionProgressByMeetingId = Object.fromEntries(
           updates.map((update) => [
             update.meetingId,
-            { status: update.transcriptionStatus, progress: update.transcriptionProgress },
-          ]),
+            { status: update.transcriptionStatus, progress: update.transcriptionProgress }
+          ])
         )
         const segmentationStatusesByMeetingId = Object.fromEntries(
-          updates.map((update) => [update.meetingId, update.segmentationStatus]),
+          updates.map((update) => [update.meetingId, update.segmentationStatus])
         )
         const segmentationProgressByMeetingId = Object.fromEntries(
-          updates.map((update) => [update.meetingId, update.segmentationProgress]),
+          updates.map((update) => [update.meetingId, update.segmentationProgress])
         )
         const segmentationErrorCodesByMeetingId = Object.fromEntries(
           updates.map((update) => [
             update.meetingId,
-            update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined,
-          ]),
+            update.segmentationStatus === 'failed' ? update.segmentationErrorCode : undefined
+          ])
         )
 
         setTranscriptionProgress((prev) =>
-          mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId),
+          mergeTranscriptionProgress(prev, transcriptionProgressByMeetingId)
         )
 
         setSegmentationStatuses((prev) =>
-          mergeRecordIfChanged(prev, segmentationStatusesByMeetingId),
+          mergeRecordIfChanged(prev, segmentationStatusesByMeetingId)
         )
 
         setSegmentationProgress((prev) =>
-          mergeRecordIfChanged(prev, segmentationProgressByMeetingId),
+          mergeRecordIfChanged(prev, segmentationProgressByMeetingId)
         )
 
         setSegmentationErrorCodes((prev) =>
-          mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId),
+          mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId)
         )
       } catch (err) {
         console.error('Failed to refresh recording processing state:', err)
@@ -353,9 +399,7 @@ export function Recordings() {
         </div>
       ) : recordings.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
-          <p className="text-ink-muted text-[13px]">
-            No notes yet. Start a meeting to begin.
-          </p>
+          <p className="text-ink-muted text-[13px]">No notes yet. Start a meeting to begin.</p>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
@@ -376,7 +420,7 @@ export function Recordings() {
                         {new Date(rec.date).toLocaleDateString('en-US', {
                           weekday: 'short',
                           month: 'short',
-                          day: 'numeric',
+                          day: 'numeric'
                         })}
                       </span>
                       <span className="text-border">|</span>
@@ -401,6 +445,9 @@ export function Recordings() {
                         <TranscriptionBadge
                           status={rec.transcriptionStatus}
                           progress={transcriptionProgress[rec.meetingId]}
+                          backendLabel={transcriptionStatusDetails[rec.meetingId]?.backendLabel}
+                          qualityMode={transcriptionStatusDetails[rec.meetingId]?.qualityMode}
+                          etaSeconds={transcriptionStatusDetails[rec.meetingId]?.etaSeconds}
                           onRetry={() => handleRetryTranscription(rec.meetingId)}
                         />
                         {segmentationStatuses[rec.meetingId] && (
