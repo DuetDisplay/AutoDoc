@@ -184,7 +184,9 @@ class TranscriptionWorker:
         if device == "cpu" and isinstance(threads, int) and threads > 0:
             sess_options.intra_op_num_threads = threads
 
-        self.vad = onnx_asr.load_vad("silero", model_dir)
+        # Pin the VAD to the same providers as the model: without this it picks
+        # up every registered provider (including DML) even on the CPU tier.
+        self.vad = onnx_asr.load_vad("silero", model_dir, providers=providers)
         self.model = onnx_asr.load_model(
             "nemo-parakeet-tdt-0.6b-v3",
             model_dir,
