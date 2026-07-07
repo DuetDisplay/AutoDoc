@@ -64,10 +64,10 @@ describe('Windows transcription runtime selection', () => {
 
   it('uses the public asset-only repository for fallback asset URLs', () => {
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip'
     )
     expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc-Windows-Assets/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip'
     )
   })
 

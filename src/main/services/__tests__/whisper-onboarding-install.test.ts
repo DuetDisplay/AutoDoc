@@ -424,7 +424,7 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       await mkdir(unpackedResourcesPath, { recursive: true })
       await writeFile(join(unpackedResourcesPath, 'windows-transcription-manifest.json'), '{}')
-      await writeFile(join(unpackedResourcesPath, 'faster-whisper-transcribe.py'), 'print("ok")')
+      await writeFile(join(unpackedResourcesPath, 'transcription-worker.py'), 'print("ok")')
       Object.defineProperty(process, 'resourcesPath', {
         configurable: true,
         value: resourcesPath
@@ -439,8 +439,8 @@ describe('Whisper onboarding dependency installation', () => {
       expect((manager as any).getWindowsTranscriptionManifestPath()).toBe(
         join(unpackedResourcesPath, 'windows-transcription-manifest.json')
       )
-      expect(manager.getFasterWhisperScriptPath()).toBe(
-        join(unpackedResourcesPath, 'faster-whisper-transcribe.py')
+      expect(manager.getTranscriptionWorkerScriptPath()).toBe(
+        join(unpackedResourcesPath, 'transcription-worker.py')
       )
     } finally {
       await rm(rootDir, { recursive: true, force: true })

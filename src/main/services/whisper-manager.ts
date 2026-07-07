@@ -348,13 +348,6 @@ export class WhisperManager extends EventEmitter {
     return join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
   }
 
-  getFasterWhisperScriptPath(): string {
-    if (app.isPackaged) {
-      return this.getPackagedResourcePath('faster-whisper-transcribe.py')
-    }
-    return this.getDevelopmentResourcePath('faster-whisper-transcribe.py')
-  }
-
   getTranscriptionWorkerScriptPath(): string {
     if (app.isPackaged) {
       return this.getPackagedResourcePath('transcription-worker.py')

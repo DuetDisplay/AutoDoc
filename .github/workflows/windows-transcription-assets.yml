@@ -1,4 +1,4 @@
-# Windows-only asset pipeline — disabled while we ship macOS-only.
+# Windows transcription asset pipeline.
 name: Windows Transcription Assets
 
 on:
@@ -7,12 +7,12 @@ on:
       asset_tag:
         description: Versioned release tag for the transcription asset bundle.
         required: true
-        default: windows-transcription-v1
+        default: windows-transcription-v2
         type: string
       asset_repo:
         description: GitHub repository that hosts the public transcription asset release.
         required: true
-        default: DuetDisplay/AutoDoc-Windows-Assets
+        default: DuetDisplay/AutoDoc
         type: string
       publish_assets:
         description: Upload generated assets to the GitHub release.
@@ -22,7 +22,6 @@ on:
 
 jobs:
   build-windows-transcription-assets:
-    if: false # macOS-only for now — re-enable when Windows shipping resumes
     runs-on: windows-2022
     permissions:
       contents: write
@@ -53,9 +52,9 @@ jobs:
           if ($manifest.releaseTag -ne $env:ASSET_TAG) {
             throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow asset tag '$env:ASSET_TAG'."
           }
-          $expectedArtifactBaseUrl = "https://github.com/$env:ASSET_REPO/releases/download/$env:ASSET_TAG"
-          if ($manifest.artifactBaseUrl -ne $expectedArtifactBaseUrl) {
-            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not match expected public asset URL '$expectedArtifactBaseUrl'."
+          $expectedArtifactBaseUrlSuffix = "/releases/download/$env:ASSET_TAG"
+          if (-not $manifest.artifactBaseUrl.EndsWith($expectedArtifactBaseUrlSuffix)) {
+            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' must end with '$expectedArtifactBaseUrlSuffix'."
           }
 
       - name: Restore Python archive cache
@@ -132,6 +131,9 @@ jobs:
             (Join-Path $assetDir 'faster-whisper-runtime-cuda-win-x64.zip') `
             (Join-Path $assetDir 'faster-whisper-small-en-ct2-int8.zip') `
             (Join-Path $assetDir 'faster-whisper-distil-large-v3-ct2.zip') `
+            (Join-Path $assetDir 'parakeet-runtime-win-x64.zip') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-int8.zip') `
             (Join-Path $assetDir 'SHA256SUMS.md') `
             --repo $repo `
             --clobber
