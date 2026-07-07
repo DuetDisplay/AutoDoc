@@ -30,10 +30,7 @@ import {
   detectMacHardwareSnapshot,
   isMemoryHealthyForConcurrentProcessing
 } from './mac-processing-profile'
-import {
-  isMemoryHealthyForConcurrentDualSource,
-  type WindowsProcessingProfile
-} from './windows-processing-profile'
+import { type WindowsProcessingProfile } from './windows-processing-profile'
 import { computeRealtimeFactor } from './transcription-metrics'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
 
@@ -2050,15 +2047,10 @@ export class TranscriptionService {
     if (process.platform === 'win32') {
       const effectiveProfile = await this.getEffectiveWindowsProcessingProfileForJob()
       if (effectiveProfile) {
-        if (effectiveProfile.id === 'win-gpu') {
-          return true
-        }
-        if (effectiveProfile.id === 'win-low-spec') {
-          return false
-        }
-
-        const memoryInfo = this.readSystemMemoryInfo()
-        return isMemoryHealthyForConcurrentDualSource({ freeMemoryGiB: memoryInfo.freeGiB })
+        // The effective profile already applies the runtime free-memory rule
+        // (win-cpu-normal degrades to sequential under pressure). Re-sampling
+        // memory here would let the mode disagree with the logged profile.
+        return effectiveProfile.dualSourceMode === 'concurrent'
       }
     }
 

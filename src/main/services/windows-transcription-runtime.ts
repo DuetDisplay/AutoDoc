@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { readFile } from 'fs/promises'
-import { cpus } from 'os'
+import { availableParallelism, cpus } from 'os'
 import { promisify } from 'util'
 import { getConfiguredWindowsTranscriptionAssetBaseUrl } from './distribution-config'
 
@@ -459,10 +459,28 @@ export async function detectWindowsHardwareProfile(): Promise<WindowsHardwarePro
   return {
     platform: process.platform,
     arch: process.arch,
-    logicalProcessors: cpus().length,
+    logicalProcessors: getUsableLogicalProcessorCount(),
     ...getSystemMemorySnapshot(),
     gpus: process.platform === 'win32' ? await queryWindowsGpus() : []
   }
+}
+
+/**
+ * availableParallelism respects the process affinity mask, so profile
+ * selection sees the processors actually usable by this process (and its
+ * children) rather than the machine's raw core count. This also matches how
+ * getWhisperThreadCount counts processors.
+ */
+function getUsableLogicalProcessorCount(): number {
+  try {
+    if (typeof availableParallelism === 'function') {
+      return Math.max(1, availableParallelism())
+    }
+  } catch {
+    // Fall through to the raw cpu count.
+  }
+
+  return Math.max(1, cpus().length)
 }
 
 function normalizeForcedBackend(value: string | undefined): WindowsTranscriptionBackendId | null {

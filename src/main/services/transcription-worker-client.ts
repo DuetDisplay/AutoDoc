@@ -329,6 +329,26 @@ export class TranscriptionWorkerClient {
 
   private appendStderrTail(chunk: string): void {
     this.stderrTail = `${this.stderrTail}${chunk}`.slice(-STDERR_TAIL_MAX_CHARS)
+    this.forwardStderrLines(chunk)
+  }
+
+  /**
+   * Surface worker stderr (e.g. "model loaded: ...") on the app console so
+   * live verification and diagnostics don't require attaching to the child.
+   */
+  private stderrLineBuffer = ''
+
+  private forwardStderrLines(chunk: string): void {
+    this.stderrLineBuffer += chunk
+    let newlineIndex = this.stderrLineBuffer.indexOf('\n')
+    while (newlineIndex >= 0) {
+      const line = this.stderrLineBuffer.slice(0, newlineIndex).trim()
+      this.stderrLineBuffer = this.stderrLineBuffer.slice(newlineIndex + 1)
+      if (line) {
+        console.log(`[transcription-worker] ${line}`)
+      }
+      newlineIndex = this.stderrLineBuffer.indexOf('\n')
+    }
   }
 
   private handleProcessFailure(error: Error): void {
