@@ -72,7 +72,7 @@ jobs:
           retention-days: 14
 
   build-mac-release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: macos-latest
     environment: release-signing
     permissions:
@@ -185,7 +185,7 @@ jobs:
           cache: npm
 
       - name: Resolve release metadata
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         id: release_meta
         shell: bash
         env:
@@ -209,7 +209,7 @@ jobs:
           }
 
       - name: Materialize DigiCert client certificate
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
@@ -219,7 +219,7 @@ jobs:
           "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert signing tools
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: digicert/code-signing-software-trust-action@v1.2.1
         with:
           use-github-caching-service: true
@@ -230,7 +230,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $candidatePaths = @()
@@ -315,7 +315,7 @@ jobs:
           "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check DigiCert signing health
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -329,7 +329,7 @@ jobs:
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
@@ -343,7 +343,7 @@ jobs:
           npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Verify Windows signatures
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $files = @(
@@ -380,7 +380,7 @@ jobs:
           }
 
       - name: Capture DigiCert signing diagnostics
-        if: startsWith(github.ref, 'refs/tags/') && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         shell: pwsh
         run: |
           $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
@@ -391,7 +391,6 @@ jobs:
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smksp.log')
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smcsp.log')
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smpkcs11.log')
-            $env:SM_CLIENT_CERT_FILE
           ) | Where-Object { $_ }
 
           foreach ($candidate in $candidateFiles) {
@@ -408,7 +407,7 @@ jobs:
           } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
 
       - name: Upload DigiCert signing diagnostics
-        if: startsWith(github.ref, 'refs/tags/') && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digicert-signing-diagnostics-${{ github.run_number }}
@@ -431,7 +430,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Windows release assets
-        if: startsWith(github.ref, 'refs/tags/') && success()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && success()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: release-windows-${{ steps.release_meta.outputs.release_tag }}
@@ -445,7 +444,9 @@ jobs:
     if: >-
       ${{
         always() &&
-        startsWith(github.ref, 'refs/tags/') &&
+        github.event_name == 'push' &&
+        github.ref_type == 'tag' &&
+        startsWith(github.ref_name, 'v') &&
         needs.build-mac-release.result == 'success'
       }}
     runs-on: ubuntu-latest
@@ -477,7 +478,7 @@ jobs:
           path: release-assets/mac
 
       # - name: Download Windows release assets
-      #   if: (startsWith(github.ref, 'refs/tags/') || inputs.release_platform == 'all') && needs.build-win.result == 'success'
+      #   if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.build-win.result == 'success'
       #   uses: actions/download-artifact@v8.0.1
       #   with:
       #     name: release-windows-${{ steps.release_meta.outputs.release_tag }}
