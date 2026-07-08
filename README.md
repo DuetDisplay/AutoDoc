@@ -8,9 +8,9 @@
 
 AutoDoc lives in your menu bar, notices when a meeting starts, and hands you a clean transcript and structured notes the moment it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No AutoDoc account. No AI API keys necessary.
 
-[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.0/autodoc-1.0.0.dmg) <img src="docs/assets/badges/windows-coming-soon.svg" alt="Windows Coming Soon!" />
+[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.1-internal.1/autodoc-1.0.1-internal.1.dmg) <img src="docs/assets/badges/windows-coming-soon.svg" alt="Windows Coming Soon!" />
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platform](https://img.shields.io/badge/macOS-14%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/badge/release-v1.0.0-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platform](https://img.shields.io/badge/macOS-14%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/badge/release-v1.0.1--internal.1-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 </div>
 
@@ -115,7 +115,7 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 
 <div align="center">
 
-## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.0/autodoc-1.0.0.dmg)
+## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.1-internal.1/autodoc-1.0.1-internal.1.dmg)
 
 **Apple Silicon · macOS 14+**
 
@@ -123,7 +123,7 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 
 Then:
 
-1. **Download** `autodoc-1.0.0.dmg`, or browse the [Releases](https://github.com/DuetDisplay/AutoDoc/releases/latest) page for a specific version.
+1. **Download** `autodoc-1.0.1-internal.1.dmg`, or browse the [Releases](https://github.com/DuetDisplay/AutoDoc/releases/latest) page for a specific version.
 2. **Open** the `.dmg` and drag **AutoDoc** into your **Applications** folder.
 3. **Launch** AutoDoc from Applications. On first run it walks you through granting **Screen Recording** and **Microphone** permissions, then downloads its local transcription and AI models (~10 GB, one time).
 
