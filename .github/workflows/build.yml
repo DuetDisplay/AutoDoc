@@ -18,19 +18,63 @@ on:
         options:
           - mac
           # - all  # Windows builds disabled — macOS-only for now
-      release_tag:
-        description: Tag name for release assets (leave blank for non-release runs)
-        required: false
-        default: ''
-        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
-  build-mac:
-    if: github.event_name == 'push' || inputs.release_platform == 'mac' || inputs.release_platform == 'all'
+  build-mac-ci:
+    if: >-
+      ${{
+        (github.event_name == 'push' && github.ref_type == 'branch') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.release_platform == 'mac' || inputs.release_platform == 'all'))
+      }}
     runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
+      AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
+      AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
+      AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
+      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run bootstrap tests
+        run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
+
+      - name: Build macOS CI artifacts (unsigned)
+        run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false -c.mac.identity=null
+
+      - name: Upload macOS artifacts
+        if: success()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: autodoc-macos-${{ github.run_number }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: warn
+          retention-days: 14
+
+  build-mac-release:
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: macos-latest
+    environment: release-signing
     permissions:
       contents: read
       actions: write
@@ -54,11 +98,10 @@ jobs:
           cache: npm
 
       - name: Resolve release metadata
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         id: release_meta
         shell: bash
         env:
-          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RAW_TAG: ${{ github.ref_name }}
         run: |
           raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
@@ -92,7 +135,6 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build macOS release (signed + notarized)
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
@@ -102,37 +144,11 @@ jobs:
           npm run build
           npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
-      - name: Build macOS artifacts (signed, no notarization)
-        if: >-
-          ${{
-            (github.event_name == 'push' && github.ref_type == 'branch') ||
-            (github.event_name == 'workflow_dispatch' && inputs.release_tag == '')
-          }}
-        run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false
-
-      - name: Verify macOS artifacts (signature, entitlements, runtime)
+      - name: Verify macOS release artifacts (signature, entitlements, runtime)
         run: bash scripts/verify-macos-update-artifact.sh dist
 
-      - name: Upload macOS artifacts
-        if: >-
-          ${{
-            success() &&
-            (
-              (github.event_name == 'push' && github.ref_type == 'branch') ||
-              (github.event_name == 'workflow_dispatch' && inputs.release_tag == '')
-            )
-          }}
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: autodoc-macos-${{ github.run_number }}
-          path: |
-            dist/*.dmg
-            dist/*.zip
-          if-no-files-found: warn
-          retention-days: 14
-
       - name: Upload macOS release assets
-        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
+        if: success()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: release-macos-${{ steps.release_meta.outputs.release_tag }}
@@ -169,11 +185,11 @@ jobs:
           cache: npm
 
       - name: Resolve release metadata
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         id: release_meta
         shell: bash
         env:
-          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RAW_TAG: ${{ github.ref_name }}
         run: |
           raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
@@ -193,7 +209,7 @@ jobs:
           }
 
       - name: Materialize DigiCert client certificate
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
@@ -203,7 +219,7 @@ jobs:
           "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert signing tools
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: digicert/code-signing-software-trust-action@v1.2.1
         with:
           use-github-caching-service: true
@@ -214,7 +230,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $candidatePaths = @()
@@ -299,7 +315,7 @@ jobs:
           "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check DigiCert signing health
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -313,7 +329,7 @@ jobs:
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
@@ -327,7 +343,7 @@ jobs:
           npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Verify Windows signatures
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $files = @(
@@ -364,7 +380,7 @@ jobs:
           }
 
       - name: Capture DigiCert signing diagnostics
-        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         shell: pwsh
         run: |
           $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
@@ -375,7 +391,6 @@ jobs:
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smksp.log')
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smcsp.log')
             (Join-Path $env:USERPROFILE '.signingmanager\logs\smpkcs11.log')
-            $env:SM_CLIENT_CERT_FILE
           ) | Where-Object { $_ }
 
           foreach ($candidate in $candidateFiles) {
@@ -392,7 +407,7 @@ jobs:
           } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
 
       - name: Upload DigiCert signing diagnostics
-        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digicert-signing-diagnostics-${{ github.run_number }}
@@ -415,7 +430,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Windows release assets
-        if: (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && success()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && success()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: release-windows-${{ steps.release_meta.outputs.release_tag }}
@@ -429,15 +444,14 @@ jobs:
     if: >-
       ${{
         always() &&
-        (
-          startsWith(github.ref, 'refs/tags/') ||
-          (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-        ) &&
-        needs.build-mac.result == 'success'
+        github.event_name == 'push' &&
+        github.ref_type == 'tag' &&
+        startsWith(github.ref_name, 'v') &&
+        needs.build-mac-release.result == 'success'
       }}
     runs-on: ubuntu-latest
     needs:
-      - build-mac
+      - build-mac-release
       # - build-win  # Windows builds disabled — macOS-only for now
     permissions:
       contents: write
@@ -448,7 +462,7 @@ jobs:
         id: release_meta
         shell: bash
         env:
-          RAW_TAG: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          RAW_TAG: ${{ github.ref_name }}
         run: |
           raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
@@ -457,14 +471,14 @@ jobs:
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Download macOS release assets
-        if: needs.build-mac.result == 'success'
+        if: needs.build-mac-release.result == 'success'
         uses: actions/download-artifact@v8.0.1
         with:
           name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/mac
 
       # - name: Download Windows release assets
-      #   if: (startsWith(github.ref, 'refs/tags/') || inputs.release_platform == 'all') && needs.build-win.result == 'success'
+      #   if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.build-win.result == 'success'
       #   uses: actions/download-artifact@v8.0.1
       #   with:
       #     name: release-windows-${{ steps.release_meta.outputs.release_tag }}
