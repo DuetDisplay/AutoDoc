@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="230" height="44" viewBox="0 0 230 44" role="img" aria-label="Windows Coming Soon!">
+  <defs>
+    <linearGradient id="windows-badge-fill" x1="0" y1="0" x2="230" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2B2D2A"/>
+      <stop offset="0.56" stop-color="#4B5049"/>
+      <stop offset="1" stop-color="#73786F"/>
+    </linearGradient>
+    <filter id="windows-badge-shadow" x="-8" y="-8" width="246" height="60" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#2B2D2A" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <g opacity="0.72">
+    <rect x="1" y="1" width="228" height="42" rx="12" fill="url(#windows-badge-fill)" filter="url(#windows-badge-shadow)"/>
+    <rect x="1.5" y="1.5" width="227" height="41" rx="11.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.24"/>
+    <rect x="1" y="1" width="228" height="42" rx="12" fill="#FFFFFF" opacity="0.10"/>
+    <g opacity="0.78" fill="#FFFFFF">
+      <rect x="18" y="11" width="10.2" height="10.2" rx="0.9"/>
+      <rect x="30.2" y="11" width="10.2" height="10.2" rx="0.9"/>
+      <rect x="18" y="23.2" width="10.2" height="10.2" rx="0.9"/>
+      <rect x="30.2" y="23.2" width="10.2" height="10.2" rx="0.9"/>
+    </g>
+    <text x="54" y="20" fill="#D7DBD4" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif" font-size="11" font-weight="600" letter-spacing="0.6">WINDOWS</text>
+    <text x="54" y="33" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif" font-size="15" font-weight="700">Coming Soon!</text>
+  </g>
+</svg>
