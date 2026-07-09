@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { registerRecordingIpc } from '../recording-ipc'
 import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
+import { encryptJSON } from '../../services/crypto'
 import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
 
 const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage } = vi.hoisted(() => ({
@@ -515,4 +516,183 @@ describe('recording IPC source handling', () => {
     }
   })
 
+})
+
+describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings', () => {
+  const startedAt = Date.now() - 60_000
+  const stoppedAt = Date.now() - 5_000
+
+  function createFinalizingMetadata(): MeetingMetadata {
+    return {
+      sourceName: 'Entire screen',
+      startedAt,
+      stoppedAt,
+      durationSeconds: 55,
+      isFinalizing: true
+    }
+  }
+
+  function createCompletedMetadata(): MeetingMetadata {
+    return {
+      sourceName: 'Entire screen',
+      startedAt,
+      stoppedAt,
+      durationSeconds: 55,
+      isFinalizing: false
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(matchCalendarEvent).mockReturnValue(null)
+    delete process.env.AUTODOC_E2E
+  })
+
+  it('re-runs post-processing for meetings stuck in finalizing state', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recovery-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-finalizing'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const finalizingMetadata = createFinalizingMetadata()
+    const enqueue = vi.fn()
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic-0000.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === meetingId) return finalizingMetadata
+        return null
+      })
+
+      const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      await recoverWindowsFinalizingMeetings()
+
+      await vi.waitFor(() => {
+        expect(enqueue).toHaveBeenCalledWith(meetingId)
+      })
+      await vi.waitFor(() => {
+        expect(encryptJSON).toHaveBeenCalledWith(
+          expect.objectContaining({ isFinalizing: false }),
+          expect.stringContaining('metadata.json')
+        )
+      })
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'recording',
+          message: 'windows finalizing recovery: re-running post-processing',
+          meetingId
+        })
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not recover meetings that are not finalizing', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recovery-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-complete'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const enqueue = vi.fn()
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === meetingId) return createCompletedMetadata()
+        return null
+      })
+
+      const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      await recoverWindowsFinalizingMeetings()
+
+      expect(enqueue).not.toHaveBeenCalled()
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('skips the actively recording meeting even if metadata says finalizing', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recovery-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-active'
+    const meetingDir = path.join(recordingsDir, meetingId)
+    const enqueue = vi.fn()
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'mic-0000.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === meetingId) return createFinalizingMetadata()
+        return null
+      })
+
+      const { recoverWindowsFinalizingMeetings } = registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: true, meetingId })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn(),
+          enqueue
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      await recoverWindowsFinalizingMeetings()
+
+      expect(enqueue).not.toHaveBeenCalled()
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
 })

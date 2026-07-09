@@ -1,5 +1,6 @@
 // src/main/ipc/recording-ipc.ts
 import { ipcMain, desktopCapturer, BrowserWindow } from 'electron'
+import type { Dirent } from 'fs'
 import { appendFile, readFile, readdir, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { spawn } from 'child_process'
@@ -509,7 +510,10 @@ export function registerRecordingIpc(
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
   calendarManager: CalendarManager
-): { stopActiveRecording: () => ReturnType<RecordingService['stopRecording']> } {
+): {
+  stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
+  recoverWindowsFinalizingMeetings: () => Promise<void>
+} {
   let cachedRecentEvents: {
     fetchedAt: number
     events: CalendarEvent[]
@@ -1429,7 +1433,52 @@ export function registerRecordingIpc(
     })
   })
 
-  return { stopActiveRecording }
+  async function recoverWindowsFinalizingMeetings(): Promise<void> {
+    if (!isWindows) return
+
+    const baseDir = recordingService.getRecordingsBaseDir()
+    let entries: Dirent[]
+    try {
+      entries = await readdir(baseDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    const currentState = recordingService.getState()
+    const activeMeetingId =
+      currentState.isRecording && currentState.meetingId ? currentState.meetingId : null
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const meetingId = entry.name
+
+      try {
+        if (windowsPendingFinalization.has(meetingId)) continue
+        if (activeMeetingId && meetingId === activeMeetingId) continue
+
+        const meetingDir = join(baseDir, meetingId)
+        const metadata = await readMetadata(meetingDir)
+        if (metadata?.isFinalizing !== true) continue
+
+        logRecordingDebug('windows finalizing recovery: re-running post-processing', meetingId, {
+          startedAt: metadata.startedAt,
+          stoppedAt: metadata.stoppedAt
+        })
+
+        windowsPendingFinalization.set(meetingId, metadata)
+        runRecordingPostProcessing(meetingId, metadata)
+      } catch (err) {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to recover Windows finalizing meeting',
+          error: err,
+          meetingId
+        })
+      }
+    }
+  }
+
+  return { stopActiveRecording, recoverWindowsFinalizingMeetings }
 }
 
 function broadcastState(state: RecordingState): void {

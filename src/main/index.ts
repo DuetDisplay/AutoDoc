@@ -1108,13 +1108,15 @@ app.whenReady().then(async () => {
     setTimeout(() => app.exit(0), 100)
   })
   let pendingRecoveryPromise: Promise<unknown> | null = null
+  let recoverWindowsFinalizingMeetings: () => Promise<void> = async () => {}
 
   const recoverPendingWork = (): void => {
     if (pendingRecoveryPromise) return
 
     pendingRecoveryPromise = Promise.all([
       transcriptionService.scanAndEnqueuePending(),
-      segmentationService.scanAndEnqueuePending()
+      segmentationService.scanAndEnqueuePending(),
+      recoverWindowsFinalizingMeetings()
     ])
       .catch((err) => {
         logAutodocFailure({
@@ -1463,12 +1465,14 @@ app.whenReady().then(async () => {
     })
   }
 
-  const { stopActiveRecording } = registerRecordingIpc(
-    recordingService,
-    transcriptionService,
-    whisperManager,
-    calendarManager
-  )
+  const { stopActiveRecording, recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl } =
+    registerRecordingIpc(
+      recordingService,
+      transcriptionService,
+      whisperManager,
+      calendarManager
+    )
+  recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
   registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,
