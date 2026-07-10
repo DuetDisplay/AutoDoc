@@ -2,32 +2,29 @@ import { describe, expect, it } from 'vitest'
 import { formatTranscriptionStatusText } from '../transcription-status-labels'
 
 describe('formatTranscriptionStatusText', () => {
-  it('formats transcribing status with progress and ETA', () => {
+  it('formats transcribing status with progress only (no ETA copy)', () => {
     expect(
       formatTranscriptionStatusText({
         status: 'transcribing',
-        progress: 42,
-        etaSeconds: 240
+        progress: 42
       })
-    ).toBe('Transcribing 42% — about 4 minutes left')
-  })
-
-  it('uses less than a minute copy for short ETAs', () => {
-    expect(
-      formatTranscriptionStatusText({
-        status: 'transcribing',
-        progress: 80,
-        etaSeconds: 45
-      })
-    ).toBe('Transcribing 80% — less than a minute left')
+    ).toBe('Transcribing 42%')
   })
 
   it('omits progress when it is unknown', () => {
     expect(
       formatTranscriptionStatusText({
-        status: 'transcribing',
-        etaSeconds: 120
+        status: 'transcribing'
       })
-    ).toBe('Transcribing... — about 2 minutes left')
+    ).toBe('Transcribing...')
+  })
+
+  it('returns null for non-transcribing statuses', () => {
+    expect(
+      formatTranscriptionStatusText({
+        status: 'completed',
+        progress: 100
+      })
+    ).toBeNull()
   })
 })

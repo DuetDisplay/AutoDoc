@@ -39,16 +39,10 @@ interface TranscriptionBadgeProps {
   progress?: number
   backendLabel?: string
   qualityMode?: 'fast' | 'balanced'
-  etaSeconds?: number | null
   onRetry?: () => void
 }
 
-export function TranscriptionBadge({
-  status,
-  progress,
-  etaSeconds,
-  onRetry
-}: TranscriptionBadgeProps) {
+export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
   const [setupStatus, setSetupStatus] = useState<
     import('../../../shared/types').WhisperSetupStatus | null
@@ -71,9 +65,8 @@ export function TranscriptionBadge({
     status === 'transcribing'
       ? formatTranscriptionStatusText({
           status,
-          progress,
-          etaSeconds
-        } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress' | 'etaSeconds'>)
+          progress
+        } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress'>)
       : null
 
   return (

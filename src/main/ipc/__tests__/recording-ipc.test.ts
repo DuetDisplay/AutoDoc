@@ -696,3 +696,124 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
     }
   })
 })
+
+describe.runIf(process.platform === 'win32')('windows finalize-stop robustness', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(matchCalendarEvent).mockReturnValue(null)
+    delete process.env.AUTODOC_E2E
+  })
+
+  function register(options: { recordingsDir: string; stopResult?: Record<string, unknown> }) {
+    return registerRecordingIpc(
+      {
+        stopRecording: vi.fn(() => options.stopResult),
+        getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
+        getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
+        startRecording: vi.fn()
+      } as any,
+      {
+        getStatus: vi.fn(),
+        enqueue: enqueueMock
+      } as any,
+      {
+        ensureReady: vi.fn(),
+        getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+      } as any,
+      {
+        isConnected: vi.fn(() => false),
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+      } as any
+    )
+  }
+
+  const enqueueMock = vi.fn()
+
+  it('runs post-processing even when persisting finalizing metadata fails', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-finalize-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-persist-fails'
+    const meetingDir = path.join(recordingsDir, meetingId)
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === meetingId) {
+          return {
+            sourceName: 'Entire screen',
+            startedAt: Date.now() - 30_000,
+            stoppedAt: Date.now() - 1_000,
+            durationSeconds: 29,
+            isFinalizing: true
+          }
+        }
+        return null
+      })
+      vi.mocked(encryptJSON).mockRejectedValue(new Error('EPERM: rename collision'))
+
+      register({ recordingsDir })
+
+      const finalizeHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:finalize-stop'
+      )?.[1] as ((event: unknown, meetingId: string) => Promise<void>) | undefined
+      expect(finalizeHandler).toBeTypeOf('function')
+
+      await finalizeHandler?.(null, meetingId)
+
+      await vi.waitFor(() => {
+        expect(enqueueMock).toHaveBeenCalledWith(meetingId)
+      })
+      expect(logAutodocFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Failed to persist finalizing metadata during finalize-stop; continuing',
+          meetingId
+        })
+      )
+    } finally {
+      vi.mocked(encryptJSON).mockReset()
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('watchdog finalizes a stopped recording when finalize-stop never arrives', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-watchdog-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-no-finalize'
+    const meetingDir = path.join(recordingsDir, meetingId)
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+
+      const { stopActiveRecording } = register({
+        recordingsDir,
+        stopResult: {
+          meetingId,
+          startedAt: Date.now() - 10_000,
+          sourceId: 'window:1:0',
+          sourceName: null,
+          recordingIntent: 'general'
+        }
+      })
+
+      vi.useFakeTimers()
+      try {
+        stopActiveRecording()
+        expect(enqueueMock).not.toHaveBeenCalled()
+
+        // Fire the watchdog (60s) and the post-processing startup delay (100ms).
+        await vi.advanceTimersByTimeAsync(61_000)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      // The rest of post-processing does real file I/O, so poll with real timers.
+      await vi.waitFor(() => {
+        expect(enqueueMock).toHaveBeenCalledWith(meetingId)
+      })
+    } finally {
+      vi.mocked(encryptJSON).mockReset()
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+})

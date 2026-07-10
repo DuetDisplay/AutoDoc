@@ -34,6 +34,10 @@ const CALENDAR_MATCH_LOOKBACK_DAYS = 30
 const WINDOWS_CALENDAR_CACHE_TTL_MS = 30_000
 const RECORDING_DEBUG_PREFIX = '[recording-debug]'
 const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
+// If the renderer never sends recording:finalize-stop after a stop (crash, early
+// bail on a zero-length recording, IPC failure), run post-processing anyway so
+// the meeting cannot wedge in the "wrapping up" state until the next app launch.
+const WINDOWS_FINALIZE_WATCHDOG_MS = 60_000
 const segmentTimingWriteQueues = new Map<string, Promise<void>>()
 
 interface SegmentTimingEntry {
@@ -522,6 +526,7 @@ export function registerRecordingIpc(
   let recentEventsPromise: Promise<CalendarEvent[]> | null = null
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
   const windowsCalendarRefreshInFlight = new Set<string>()
+  const windowsPostProcessingInFlight = new Set<string>()
 
   async function persistRecordingMetadata(
     meetingDir: string,
@@ -584,6 +589,11 @@ export function registerRecordingIpc(
   }
 
   function runRecordingPostProcessing(meetingId: string, metadata: MeetingMetadata): void {
+    if (windowsPostProcessingInFlight.has(meetingId)) {
+      logRecordingDebug('post-processing already in flight; skipping duplicate run', meetingId)
+      return
+    }
+    windowsPostProcessingInFlight.add(meetingId)
     void (async () => {
       const postProcessStartedAt = Date.now()
       const baseDir = recordingService.getRecordingsBaseDir()
@@ -718,7 +728,9 @@ export function registerRecordingIpc(
         elapsedMs: Date.now() - postProcessStartedAt,
         isFinalizing: finalizedMetadata.isFinalizing ?? false
       })
+      windowsPostProcessingInFlight.delete(meetingId)
     })().catch((err) => {
+      windowsPostProcessingInFlight.delete(meetingId)
       void (async () => {
         logAutodocFailure({
           area: 'recording',
@@ -1007,6 +1019,21 @@ export function registerRecordingIpc(
       logRecordingDebug('windows finalizing entry created', result.meetingId, {
         pendingFinalizationCount: windowsPendingFinalization.size
       })
+      const watchdog = setTimeout(() => {
+        const pending = windowsPendingFinalization.get(result.meetingId)
+        if (!pending || windowsPostProcessingInFlight.has(result.meetingId)) {
+          return
+        }
+        logRecordingDebug(
+          'windows finalize watchdog: finalize-stop never ran post-processing; running now',
+          result.meetingId
+        )
+        const finalizingMetadata: MeetingMetadata = { ...pending, isFinalizing: true }
+        windowsPendingFinalization.set(result.meetingId, finalizingMetadata)
+        void persistRecordingMetadata(meetingDir, finalizingMetadata).catch(() => {})
+        runRecordingPostProcessing(result.meetingId, finalizingMetadata)
+      }, WINDOWS_FINALIZE_WATCHDOG_MS)
+      watchdog.unref?.()
       void persistRecordingMetadata(meetingDir, metadata)
         .then(() => {
           logRecordingDebug('windows finalizing metadata persisted', result.meetingId, {
@@ -1244,7 +1271,19 @@ export function registerRecordingIpc(
     }
 
     windowsPendingFinalization.set(meetingId, finalizingMetadata)
-    await persistRecordingMetadata(meetingDir, finalizingMetadata)
+    try {
+      await persistRecordingMetadata(meetingDir, finalizingMetadata)
+    } catch (err) {
+      // A concurrent metadata write (e.g. the stop handler's persist) must not
+      // prevent post-processing from running, or the meeting wedges in
+      // "wrapping up" forever.
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to persist finalizing metadata during finalize-stop; continuing',
+        error: err,
+        meetingId
+      })
+    }
     broadcastEntryUpdated(meetingId)
     logRecordingDebug(
       'recording:finalize-stop keeping finalizing state until post-processing completes',

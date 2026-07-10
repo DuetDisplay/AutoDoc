@@ -33,7 +33,6 @@ interface TranscriptViewProps {
   transcriptionProgress?: number
   transcriptionBackendLabel?: string
   transcriptionQualityMode?: 'fast' | 'balanced'
-  transcriptionEtaSeconds?: number | null
 }
 
 export function TranscriptView({
@@ -41,8 +40,7 @@ export function TranscriptView({
   status,
   onSeek,
   speakers,
-  transcriptionProgress,
-  transcriptionEtaSeconds
+  transcriptionProgress
 }: TranscriptViewProps) {
   const [setupStatus, setSetupStatus] = useState<
     import('../../../shared/types').WhisperSetupStatus | null
@@ -82,8 +80,7 @@ export function TranscriptView({
     const statusText =
       formatTranscriptionStatusText({
         status,
-        progress: transcriptionProgress,
-        etaSeconds: transcriptionEtaSeconds
+        progress: transcriptionProgress
       }) ?? 'Transcribing audio...'
 
     return (

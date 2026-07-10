@@ -267,9 +267,16 @@ export async function encryptJSON(data: unknown, filePath: string): Promise<void
 
   // Format: [4-byte ADOC][12-byte IV][16-byte tag][ciphertext]
   const output = Buffer.concat([MAGIC, iv, tag, encrypted])
-  const tempPath = filePath + '.enc'
+  // Unique temp name so concurrent writers to the same file cannot steal or
+  // rename each other's temp file out from under them.
+  const tempPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.enc`
   await fsp.writeFile(tempPath, output)
-  await renameWithRetry(tempPath, filePath)
+  try {
+    await renameWithRetry(tempPath, filePath)
+  } catch (err) {
+    await fsp.unlink(tempPath).catch(() => {})
+    throw err
+  }
 }
 
 export async function decryptJSON<T>(filePath: string): Promise<T> {

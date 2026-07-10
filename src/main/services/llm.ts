@@ -27,7 +27,11 @@ export const WINDOWS_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
-export const WINDOWS_MAX_OUTPUT_TOKENS = 4096
+// Healthy chunks produce well under 1K tokens; runaway generations otherwise ramble
+// to the cap at ~9 tok/s on CPU inference (4096 tokens ≈ 7.5 min stuck at 99%).
+// 2048 bounds that tail while leaving generous headroom, and parseResponse already
+// repairs JSON truncated by the num_predict cap.
+export const WINDOWS_MAX_OUTPUT_TOKENS = 2048
 const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
 const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6

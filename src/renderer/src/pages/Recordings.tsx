@@ -102,7 +102,6 @@ export function Recordings() {
       {
         backendLabel?: string
         qualityMode?: 'fast' | 'balanced'
-        etaSeconds?: number | null
       }
     >
   >({})
@@ -230,8 +229,7 @@ export function Recordings() {
         ...prev,
         [payload.meetingId]: {
           backendLabel: payload.backendLabel,
-          qualityMode: payload.qualityMode,
-          etaSeconds: payload.etaSeconds
+          qualityMode: payload.qualityMode
         }
       }))
       refreshIfUnknownMeeting(payload.meetingId)
@@ -447,7 +445,6 @@ export function Recordings() {
                           progress={transcriptionProgress[rec.meetingId]}
                           backendLabel={transcriptionStatusDetails[rec.meetingId]?.backendLabel}
                           qualityMode={transcriptionStatusDetails[rec.meetingId]?.qualityMode}
-                          etaSeconds={transcriptionStatusDetails[rec.meetingId]?.etaSeconds}
                           onRetry={() => handleRetryTranscription(rec.meetingId)}
                         />
                         {segmentationStatuses[rec.meetingId] && (
