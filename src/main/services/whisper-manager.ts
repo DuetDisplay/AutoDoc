@@ -53,6 +53,10 @@ import {
   type MacProcessingProfile
 } from './mac-processing-profile'
 import { getManagedPythonTarget } from './managed-python'
+import {
+  classifyWindowsTranscriptionTier,
+  logQaGateFirstRunSetup
+} from './qa-gate-log'
 
 const IS_WIN = process.platform === 'win32'
 const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
@@ -131,6 +135,9 @@ export class WhisperManager extends EventEmitter {
   private selectedMacProfile: MacProcessingProfile | null = null
   private mlxWhisperDisabledForSession = false
   private downgradeChain: string[] = []
+  private inFirstRunSetup = false
+  private firstRunSetupStartedAt: number | null = null
+  private firstRunDownloadedBytes = 0
   private getTranscriptionQualityMode: () => TranscriptionQualityMode = () => 'balanced'
   private windowsTranscriptionProfiles: Record<
     WindowsTranscriptionBackendId,
@@ -716,10 +723,14 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async runSetup(): Promise<void> {
+    this.inFirstRunSetup = true
+    this.firstRunSetupStartedAt = Date.now()
+    this.firstRunDownloadedBytes = 0
     try {
       await this.ensureReady({ allowBackendInstall: true })
       this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
       this.emit('setup-status', this.getSetupStatus())
+      await this.logFirstRunSetupGateIfNeeded()
     } catch (err) {
       this.setupStatus = this.withBackendStatus({
         phase: 'error',
@@ -728,7 +739,48 @@ export class WhisperManager extends EventEmitter {
       })
       this.emit('setup-status', this.getSetupStatus())
       throw err
+    } finally {
+      this.inFirstRunSetup = false
     }
+  }
+
+  private async logFirstRunSetupGateIfNeeded(): Promise<void> {
+    if (!IS_WIN || this.firstRunSetupStartedAt == null) {
+      return
+    }
+
+    const profile = this.getSelectedWindowsProfile()
+    const workerProfile = this.getWorkerProfile()
+    const hardware = await detectWindowsHardwareProfile()
+    const setupElapsedMs = Date.now() - this.firstRunSetupStartedAt
+    const totalDownloadedBytes = this.firstRunDownloadedBytes
+
+    logQaGateFirstRunSetup({
+      tier: classifyWindowsTranscriptionTier({
+        backendId: profile.id,
+        device: profile.device
+      }),
+      backend: profile.id,
+      backendLabel: profile.label,
+      modelName: profile.modelName,
+      device: profile.device,
+      computeType: workerProfile.computeType,
+      setupElapsedMs,
+      totalDownloadedBytes,
+      hardware: {
+        logicalProcessors: hardware.logicalProcessors,
+        totalMemoryGiB: hardware.totalMemoryGiB,
+        freeMemoryGiB: hardware.freeMemoryGiB,
+        gpus: hardware.gpus.map((gpu) => ({
+          name: gpu.name,
+          vendor: gpu.vendor,
+          adapterRamGiB: gpu.adapterRamGiB
+        }))
+      }
+    })
+
+    this.firstRunSetupStartedAt = null
+    this.firstRunDownloadedBytes = 0
   }
 
   async ensureReady(options: { allowBackendInstall?: boolean } = {}): Promise<void> {
@@ -1234,6 +1286,9 @@ export class WhisperManager extends EventEmitter {
     })
     const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
     const archiveStats = await stat(archivePath)
+    if (this.inFirstRunSetup) {
+      this.firstRunDownloadedBytes += archiveStats.size
+    }
     logAutodocEvent({
       area: 'whisper',
       message: 'Windows transcription asset download verified',

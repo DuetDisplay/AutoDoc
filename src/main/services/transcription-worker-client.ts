@@ -1,5 +1,6 @@
 import { spawn as defaultSpawn, type ChildProcess, type SpawnOptions } from 'child_process'
 import { logAutodocEvent } from './autodoc-log'
+import { logQaGateWorkerLifecycle } from './qa-gate-log'
 
 /**
  * JSON-lines-over-stdio protocol for the persistent transcription worker.
@@ -433,6 +434,12 @@ export class TranscriptionWorkerClient {
       // worker, so any later load/transcribe is ordered after the unload and
       // callers must re-load rather than assume the model is still resident.
       this.loaded = false
+      logQaGateWorkerLifecycle({
+        event: 'idle-unload',
+        pid: this.process?.pid ?? null,
+        idleUnloadMs: this.idleUnloadMs,
+        idleKillMs: this.idleKillMs
+      })
       void this.request('unload', {}, undefined, true)
         .catch((error) => {
           console.warn('[transcription-worker] Idle unload failed:', error)
@@ -451,6 +458,12 @@ export class TranscriptionWorkerClient {
 
               this.idleKilled = true
               this.idleLifecycleActive = false
+              logQaGateWorkerLifecycle({
+                event: 'idle-kill',
+                pid: this.process?.pid ?? null,
+                idleUnloadMs: this.idleUnloadMs,
+                idleKillMs: this.idleKillMs
+              })
               this.process.kill()
               this.process = null
               this.loaded = false

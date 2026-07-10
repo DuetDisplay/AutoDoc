@@ -32,6 +32,12 @@ import {
 } from './mac-processing-profile'
 import { type WindowsProcessingProfile } from './windows-processing-profile'
 import { computeRealtimeFactor } from './transcription-metrics'
+import {
+  classifyWindowsTranscriptionTier,
+  logQaGateStopToTranscript,
+  logQaGateWindowsResources,
+  logQaGateWorkerPriority
+} from './qa-gate-log'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
 
 interface WhisperSegment {
@@ -134,6 +140,7 @@ export class TranscriptionService {
   private transcriptionJobStartedAt: number | null = null
   private lastEtaSeconds: number | null = null
   private jobAudioDurationSec = 0
+  private jobDualSource = false
 
   constructor(
     private whisperManager: WhisperManager,
@@ -347,6 +354,7 @@ export class TranscriptionService {
     this.transcriptionJobStartedAt = transcriptionStartedAt
     this.lastEtaSeconds = null
     this.jobAudioDurationSec = 0
+    this.jobDualSource = false
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
 
@@ -378,9 +386,17 @@ export class TranscriptionService {
           hasMic,
           hasSystem,
           hasLegacy,
+          dualSource: hasMic && hasSystem,
+          qualityMode: this.getQualityMode(),
+          performanceMode: this.getPerformanceMode(),
+          backend: this.whisperManager.getTranscriptionBackend(),
+          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+          modelName: this.whisperManager.getModelName(),
           processingProfile
         }
       })
+      this.jobDualSource = hasMic && hasSystem
+      await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
       if (!(await this.whisperManager.isReady())) {
         this.activeStatus = 'downloading'
@@ -527,6 +543,22 @@ export class TranscriptionService {
       console.log(
         `[perf] Transcription total: ${((Date.now() - transcriptionStartedAt) / 1000).toFixed(1)}s (${meetingId})`
       )
+      const metadata = await readMetadata(meetingDir)
+      const transcriptionWallSec = (Date.now() - transcriptionStartedAt) / 1000
+      const stopToTranscriptWallSec =
+        metadata?.stoppedAt != null ? (Date.now() - metadata.stoppedAt) / 1000 : null
+      const postProcessingWallSec =
+        metadata?.stoppedAt != null
+          ? (transcriptionStartedAt - metadata.stoppedAt) / 1000
+          : null
+      const realtimeFactor = computeRealtimeFactor(this.jobAudioDurationSec, transcriptionWallSec)
+      const completedProcessingProfile = await this.getProcessingProfileLogContext()
+      const processingProfileId =
+        (await this.getEffectiveWindowsProcessingProfileForJob())?.id ?? null
+      const backend = this.whisperManager.getTranscriptionBackend()
+      const workerDevice = this.whisperManager.getWorkerDevice?.() ?? null
+      const workerComputeType = this.whisperManager.getWorkerComputeType?.() ?? null
+
       logAutodocEvent({
         area: 'transcription',
         message: 'transcription completed',
@@ -534,19 +566,50 @@ export class TranscriptionService {
         context: {
           elapsedMs: Date.now() - transcriptionStartedAt,
           transcriptCount: transcripts.length,
-          processingProfile: await this.getProcessingProfileLogContext(),
-          processingProfileId:
-            (await this.getEffectiveWindowsProcessingProfileForJob())?.id ?? null,
+          audioDurationSec: this.jobAudioDurationSec,
+          dualSource: this.jobDualSource,
+          recordingDurationSec: metadata?.durationSeconds ?? null,
+          stopToTranscriptWallSec,
+          postProcessingWallSec,
+          transcriptionWallSec,
+          processingProfile: completedProcessingProfile,
+          processingProfileId,
           qualityMode: this.getQualityMode(),
           performanceMode: this.getPerformanceMode(),
           workerReuseCount: this.workerJobsServed,
-          realtimeFactor: computeRealtimeFactor(
-            this.jobAudioDurationSec,
-            (Date.now() - transcriptionStartedAt) / 1000
-          ),
+          realtimeFactor,
           downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? []
         }
       })
+
+      if (process.platform === 'win32' && metadata?.stoppedAt != null && stopToTranscriptWallSec != null) {
+        logQaGateStopToTranscript(meetingId, {
+          tier: classifyWindowsTranscriptionTier({
+            backendId: backend,
+            device: workerDevice
+          }),
+          backend,
+          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+          modelName: this.whisperManager.getModelName(),
+          device: workerDevice ?? 'unknown',
+          computeType: workerComputeType ?? 'unknown',
+          qualityMode: this.getQualityMode(),
+          performanceMode: this.getPerformanceMode(),
+          dualSource: this.jobDualSource,
+          recordingDurationSec: metadata.durationSeconds,
+          audioDurationSec: this.jobAudioDurationSec,
+          stopToTranscriptWallSec,
+          transcriptionWallSec,
+          postProcessingWallSec,
+          realtimeFactor,
+          workerReuseCount: this.workerJobsServed,
+          downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? [],
+          processingProfileId,
+          processingProfile: completedProcessingProfile
+        })
+      }
+
+      await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -561,6 +624,28 @@ export class TranscriptionService {
         tempFileCount: tempFiles.length
       })
     }
+  }
+
+  private async logWindowsResourceSnapshot(
+    phase: 'transcription-start' | 'transcription-complete',
+    meetingId: string
+  ): Promise<void> {
+    if (process.platform !== 'win32') {
+      return
+    }
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+      return
+    }
+
+    const memory = this.getSystemMemoryInfo()
+    logQaGateWindowsResources(meetingId, phase, {
+      logicalProcessors: this.getLogicalProcessorCount(),
+      freeMemoryGiB: memory.freeGiB,
+      totalMemoryGiB: memory.totalGiB,
+      backend: this.whisperManager.getTranscriptionBackend(),
+      performanceMode: this.getPerformanceMode(),
+      qualityMode: this.getQualityMode()
+    })
   }
 
   private async logMacResourceSnapshot(
@@ -2142,6 +2227,13 @@ export class TranscriptionService {
     try {
       setPriority(pid, priority)
       console.log(`[perf] Whisper priority: ${label} (pid ${pid}, ${meetingId})`)
+      logQaGateWorkerPriority(meetingId, {
+        pid,
+        priorityLabel: label,
+        performanceMode: this.getPerformanceMode(),
+        device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
+        backend: this.whisperManager.getTranscriptionBackend()
+      })
     } catch (err) {
       console.warn(`Failed to lower whisper priority for ${meetingId} (pid ${pid}):`, err)
     }

@@ -12,6 +12,7 @@ import { encryptJSON } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
+import { logQaGateFinalizingRecovery } from '../services/qa-gate-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
@@ -1471,6 +1472,11 @@ export function registerRecordingIpc(
         logRecordingDebug('windows finalizing recovery: re-running post-processing', meetingId, {
           startedAt: metadata.startedAt,
           stoppedAt: metadata.stoppedAt
+        })
+        logQaGateFinalizingRecovery(meetingId, {
+          startedAt: metadata.startedAt,
+          stoppedAt: metadata.stoppedAt,
+          recordingDurationSec: metadata.durationSeconds
         })
 
         windowsPendingFinalization.set(meetingId, metadata)

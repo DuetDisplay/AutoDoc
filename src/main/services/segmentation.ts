@@ -10,6 +10,8 @@ import type {
 import type { LLMProvider } from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { readMetadata } from './calendar-matcher'
+import { logQaGateStopToNotes } from './qa-gate-log'
 import { classifyError } from './error-classification'
 import {
   hasUsableTranscriptContent,
@@ -414,6 +416,18 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
+
+    if (process.platform === 'win32') {
+      const metadata = await readMetadata(meetingDir)
+      if (metadata?.stoppedAt != null) {
+        logQaGateStopToNotes(meetingId, {
+          recordingDurationSec: metadata.durationSeconds,
+          stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
+          transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
+          notesItemCount: totalItems
+        })
+      }
+    }
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')

@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
+import { logQaGateSettingsChanged } from '../services/qa-gate-log'
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -115,6 +116,10 @@ export function registerPrefsIpc(
     'prefs:set-transcription-performance-mode',
     (_event, mode: 'balanced' | 'fast'): void => {
       prefsStore.setTranscriptionPerformanceMode(mode)
+      logQaGateSettingsChanged({
+        setting: 'transcription-performance-mode',
+        mode
+      })
     }
   )
 
@@ -126,6 +131,10 @@ export function registerPrefsIpc(
     'prefs:set-transcription-quality-mode',
     (_event, mode: 'balanced' | 'fast' | 'accurate'): void => {
       prefsStore.setTranscriptionQualityMode(mode)
+      logQaGateSettingsChanged({
+        setting: 'transcription-quality-mode',
+        mode
+      })
     }
   )
 }
