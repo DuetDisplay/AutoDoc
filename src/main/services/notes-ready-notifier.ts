@@ -46,7 +46,13 @@ export async function notifyNotesReady(
   const wasMainWindowVisible = mainWindow?.isVisible() ?? false
   const wasMainWindowMinimized = mainWindow?.isMinimized() ?? false
   const wasMainWindowFocused = mainWindow?.isFocused() ?? false
-  if (mainWindow && wasMainWindowVisible && !wasMainWindowFocused && !wasMainWindowMinimized) {
+  if (
+    process.platform === 'darwin' &&
+    mainWindow &&
+    wasMainWindowVisible &&
+    !wasMainWindowFocused &&
+    !wasMainWindowMinimized
+  ) {
     mainWindow.hide()
   }
 
@@ -70,16 +76,18 @@ export async function notifyNotesReady(
         }
         return
       }
-      if (!wasMainWindowFocused) {
-        if (wasMainWindowMinimized) {
+      if (process.platform === 'darwin') {
+        if (!wasMainWindowFocused) {
+          if (wasMainWindowMinimized) {
+            window.minimize()
+          } else {
+            window.hide()
+          }
+        } else if (wasMainWindowMinimized) {
           window.minimize()
-        } else {
+        } else if (!wasMainWindowVisible) {
           window.hide()
         }
-      } else if (wasMainWindowMinimized) {
-        window.minimize()
-      } else if (!wasMainWindowVisible) {
-        window.hide()
       }
       if (!wasMainWindowFocused && process.platform === 'darwin') {
         app.hide()

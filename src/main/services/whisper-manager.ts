@@ -717,7 +717,7 @@ export class WhisperManager extends EventEmitter {
 
   private async runSetup(): Promise<void> {
     try {
-      await this.ensureReady()
+      await this.ensureReady({ allowBackendInstall: true })
       this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
       this.emit('setup-status', this.getSetupStatus())
     } catch (err) {
@@ -731,7 +731,8 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  async ensureReady(): Promise<void> {
+  async ensureReady(options: { allowBackendInstall?: boolean } = {}): Promise<void> {
+    const { allowBackendInstall = false } = options
     try {
       await mkdir(this.getModelsDir(), { recursive: true })
       await this.selectMacProfile()
@@ -740,6 +741,27 @@ export class WhisperManager extends EventEmitter {
       this.emit('setup-status', this.getSetupStatus())
 
       await this.adoptInstalledAssetsIfAvailable()
+
+      if (
+        !allowBackendInstall &&
+        this.isParakeetSelected() &&
+        !(await this.areWindowsProfileAssetsPresent(this.getSelectedWindowsProfile())) &&
+        (await this.areFasterWhisperCpuAssetsPresent())
+      ) {
+        const previousBackend = this.getSelectedWindowsProfile().id
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Preferring installed faster-whisper-cpu over uninstalled parakeet at runtime',
+          context: {
+            previousBackend,
+            nextBackend: 'faster-whisper-cpu'
+          }
+        })
+        this.recordDowngrade(previousBackend, 'faster-whisper-cpu')
+        this.selectedWindowsProfile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+        this.runtimeValidated = false
+        await this.refreshWindowsProcessingProfile()
+      }
 
       if (this.isMlxWhisperSelected()) {
         try {
@@ -1034,8 +1056,9 @@ export class WhisperManager extends EventEmitter {
     this.emit('setup-status', this.getSetupStatus())
   }
 
-  private async areFasterWhisperCpuAssetsPresent(): Promise<boolean> {
-    const profile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+  private async areWindowsProfileAssetsPresent(
+    profile: WindowsTranscriptionProfile
+  ): Promise<boolean> {
     for (const asset of profile.assets) {
       const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
@@ -1048,6 +1071,12 @@ export class WhisperManager extends EventEmitter {
     }
 
     return true
+  }
+
+  private async areFasterWhisperCpuAssetsPresent(): Promise<boolean> {
+    return this.areWindowsProfileAssetsPresent(
+      this.windowsTranscriptionProfiles['faster-whisper-cpu']
+    )
   }
 
   private async ensureFasterWhisperReady(): Promise<void> {

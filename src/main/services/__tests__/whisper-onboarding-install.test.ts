@@ -1,7 +1,6 @@
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readlink, rm, writeFile, access, chmod, readFile } from 'fs/promises'
-import { constants } from 'fs'
+import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
 import { delimiter, dirname, join } from 'path'
 import { tmpdir } from 'os'
 
@@ -871,6 +870,106 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(
         access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
       ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('prefers installed faster-whisper-cpu over missing parakeet at runtime', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+      for (const asset of fasterWhisperProfile.assets) {
+        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+          fasterWhisperProfile,
+          asset.id
+        )
+        for (const expectedFile of asset.expectedFiles) {
+          const target = join(assetRoot, ...expectedFile.split('/'))
+          await mkdir(dirname(target), { recursive: true })
+          await writeFile(target, `${asset.id} file`)
+        }
+      }
+
+      const downloadSpy = vi.spyOn(
+        manager as any,
+        'downloadAndExtractWindowsTranscriptionAsset'
+      )
+      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(downloadSpy).not.toHaveBeenCalled()
+      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('attempts parakeet install during setup when faster-whisper is already present', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-setup-install-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+      for (const asset of fasterWhisperProfile.assets) {
+        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+          fasterWhisperProfile,
+          asset.id
+        )
+        for (const expectedFile of asset.expectedFiles) {
+          const target = join(assetRoot, ...expectedFile.split('/'))
+          await mkdir(dirname(target), { recursive: true })
+          await writeFile(target, `${asset.id} file`)
+        }
+      }
+
+      const assetDownloads: string[] = []
+      const downloadSpy = vi
+        .spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
+        .mockImplementation(async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        })
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady({ allowBackendInstall: true })
+
+      expect(downloadSpy).toHaveBeenCalled()
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-int8.zip'
+      ])
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      await expect(manager.isReady()).resolves.toBe(true)
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

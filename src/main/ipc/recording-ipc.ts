@@ -1011,6 +1011,14 @@ export function registerRecordingIpc(
           logRecordingDebug('windows finalizing metadata persisted', result.meetingId, {
             elapsedMs: Date.now() - stopRequestedAt
           })
+          void maybeReportRapidAbortWithoutMedia({
+            meetingDir,
+            meetingId: result.meetingId,
+            durationSeconds: metadata.durationSeconds,
+            sourceId: result.sourceId,
+            sourceName: result.sourceName,
+            recordingIntent: result.recordingIntent
+          })
           scheduleWindowsCalendarTitleRefresh(result.meetingId, meetingDir, metadata)
           broadcastEntryUpdated(result.meetingId)
         })

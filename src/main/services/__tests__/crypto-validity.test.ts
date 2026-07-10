@@ -1,14 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { renameMock, readFileMock, openMock, writeFileSyncMock, readFileSyncMock, renameSyncMock } =
-  vi.hoisted(() => ({
-    renameMock: vi.fn(),
-    readFileMock: vi.fn(),
-    openMock: vi.fn(),
-    writeFileSyncMock: vi.fn(),
-    readFileSyncMock: vi.fn(),
-    renameSyncMock: vi.fn()
-  }))
+const {
+  renameMock,
+  readFileMock,
+  writeFileMock,
+  openMock,
+  writeFileSyncMock,
+  readFileSyncMock,
+  renameSyncMock
+} = vi.hoisted(() => ({
+  renameMock: vi.fn(),
+  readFileMock: vi.fn(),
+  writeFileMock: vi.fn(),
+  openMock: vi.fn(),
+  writeFileSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
+  renameSyncMock: vi.fn()
+}))
 
 vi.mock('electron', () => ({
   app: {
@@ -26,6 +34,7 @@ vi.mock('electron', () => ({
 
 vi.mock('fs/promises', () => ({
   readFile: readFileMock,
+  writeFile: writeFileMock,
   open: openMock,
   unlink: vi.fn().mockResolvedValue(undefined),
   rename: renameMock
@@ -60,6 +69,7 @@ describe('Crypto file replacement retries', () => {
       })
     )
     readFileMock.mockResolvedValue(Buffer.from('plain-data'))
+    writeFileMock.mockResolvedValue(undefined)
     openMock.mockResolvedValue({
       write: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined)
@@ -75,6 +85,19 @@ describe('Crypto file replacement retries', () => {
 
     await expect(
       encryptFileInPlace('/mock/recordings/meeting-1/screen.webm')
+    ).resolves.toBeUndefined()
+    expect(renameMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries replacing encrypted JSON metadata when Windows reports EPERM', async () => {
+    const { encryptJSON } = await freshImport()
+    renameMock
+      .mockRejectedValueOnce(Object.assign(new Error('EPERM: file is locked'), { code: 'EPERM' }))
+      .mockRejectedValueOnce(Object.assign(new Error('EPERM: file is locked'), { code: 'EPERM' }))
+      .mockResolvedValue(undefined)
+
+    await expect(
+      encryptJSON({ isFinalizing: false }, '/mock/recordings/meeting-1/metadata.json')
     ).resolves.toBeUndefined()
     expect(renameMock).toHaveBeenCalledTimes(3)
   })

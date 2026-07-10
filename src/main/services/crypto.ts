@@ -269,7 +269,7 @@ export async function encryptJSON(data: unknown, filePath: string): Promise<void
   const output = Buffer.concat([MAGIC, iv, tag, encrypted])
   const tempPath = filePath + '.enc'
   await fsp.writeFile(tempPath, output)
-  await fsp.rename(tempPath, filePath)
+  await renameWithRetry(tempPath, filePath)
 }
 
 export async function decryptJSON<T>(filePath: string): Promise<T> {
