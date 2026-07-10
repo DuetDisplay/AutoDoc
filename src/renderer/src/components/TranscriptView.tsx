@@ -42,8 +42,6 @@ export function TranscriptView({
   onSeek,
   speakers,
   transcriptionProgress,
-  transcriptionBackendLabel,
-  transcriptionQualityMode,
   transcriptionEtaSeconds
 }: TranscriptViewProps) {
   const [setupStatus, setSetupStatus] = useState<
@@ -85,8 +83,6 @@ export function TranscriptView({
       formatTranscriptionStatusText({
         status,
         progress: transcriptionProgress,
-        backendLabel: transcriptionBackendLabel,
-        qualityMode: transcriptionQualityMode,
         etaSeconds: transcriptionEtaSeconds
       }) ?? 'Transcribing audio...'
 

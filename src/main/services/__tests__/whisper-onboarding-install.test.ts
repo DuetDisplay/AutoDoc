@@ -1159,6 +1159,97 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('downloads multipart Windows transcription assets part-by-part and verifies the whole archive', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-multipart-'))
+
+    try {
+      const { WhisperManager, execFileMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'parakeet-gpu'
+      })
+      const manager = new WhisperManager()
+      const part1 = 'multipart-part-one'
+      const part2 = 'multipart-part-two'
+      const fullPayload = `${part1}${part2}`
+      const expectedSha256 = createHash('sha256').update(fullPayload).digest('hex')
+      const part1Sha256 = createHash('sha256').update(part1).digest('hex')
+      const part2Sha256 = createHash('sha256').update(part2).digest('hex')
+      const downloadFileSpy = vi
+        .spyOn(manager as any, 'downloadFile')
+        .mockImplementation(async (...args: unknown[]) => {
+          const destPath = String(args[1])
+          await mkdir(dirname(destPath), { recursive: true })
+          if (destPath.endsWith('.part1')) {
+            await writeFile(destPath, part1)
+            return
+          }
+          if (destPath.endsWith('.part2')) {
+            await writeFile(destPath, part2)
+            return
+          }
+          await writeFile(destPath, fullPayload)
+        })
+
+      await expect(
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          {
+            id: 'parakeet-gpu',
+            label: 'GPU accelerated transcription',
+            modelName: 'parakeet-tdt-0.6b-v3',
+            device: 'dml',
+            computeType: 'fp32',
+            minSystemMemoryGiB: 8,
+            assets: []
+          },
+          {
+            id: 'model',
+            filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+            url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip',
+            sha256: expectedSha256,
+            bytes: fullPayload.length,
+            expectedFiles: ['encoder-model.onnx'],
+            parts: [
+              {
+                filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                sha256: part1Sha256,
+                bytes: part1.length
+              },
+              {
+                filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                sha256: part2Sha256,
+                bytes: part2.length
+              }
+            ]
+          }
+        )
+      ).rejects.toThrow(/missing expected files/i)
+
+      expect(downloadFileSpy).toHaveBeenCalledTimes(2)
+      expect(downloadFileSpy).toHaveBeenNthCalledWith(
+        1,
+        'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+        expect.stringMatching(/\.part1$/),
+        'parakeet-tdt-0.6b-v3-fp32.zip (part 1)',
+        expect.any(Function)
+      )
+      expect(downloadFileSpy).toHaveBeenNthCalledWith(
+        2,
+        'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+        expect.stringMatching(/\.part2$/),
+        'parakeet-tdt-0.6b-v3-fp32.zip (part 2)',
+        expect.any(Function)
+      )
+      expect(execFileMock).toHaveBeenCalledWith(
+        'tar',
+        expect.arrayContaining(['-xf', '-C']),
+        expect.any(Function)
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('resolves packaged Windows FFmpeg from the unpacked app asset path', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-unpacked-'))
     const packagedFfmpeg = join(

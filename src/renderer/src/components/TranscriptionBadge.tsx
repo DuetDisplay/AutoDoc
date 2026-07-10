@@ -46,8 +46,6 @@ interface TranscriptionBadgeProps {
 export function TranscriptionBadge({
   status,
   progress,
-  backendLabel,
-  qualityMode,
   etaSeconds,
   onRetry
 }: TranscriptionBadgeProps) {
@@ -74,13 +72,8 @@ export function TranscriptionBadge({
       ? formatTranscriptionStatusText({
           status,
           progress,
-          backendLabel,
-          qualityMode,
           etaSeconds
-        } satisfies Pick<
-          TranscriptionStatusPayload,
-          'status' | 'progress' | 'backendLabel' | 'qualityMode' | 'etaSeconds'
-        >)
+        } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress' | 'etaSeconds'>)
       : null
 
   return (

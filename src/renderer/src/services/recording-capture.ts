@@ -488,7 +488,10 @@ async function waitForPendingChunkWrites(pendingChunkWrites: Set<Promise<void>>)
   }
 }
 
-async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
+async function createCaptureStreams(
+  sourceId: string,
+  context: 'initial' | 'recovery' = 'initial'
+): Promise<CaptureStreams> {
   const videoStream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -504,16 +507,18 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
   // rather than the thumbnail heuristic which can false-positive
   const videoTrack = videoStream.getVideoTracks()[0]
   if (!videoTrack || videoTrack.readyState !== 'live') {
-    useToastStore.getState().showToast({
-      type: 'screen',
-      message:
-        'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
-      action: {
-        label: 'Enable',
-        type: 'open-settings',
-        target: 'screen'
-      }
-    })
+    if (context === 'initial') {
+      useToastStore.getState().showToast({
+        type: 'screen',
+        message:
+          'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
+        action: {
+          label: 'Enable',
+          type: 'open-settings',
+          target: 'screen'
+        }
+      })
+    }
     stopStream(videoStream)
     throw new Error(
       'Screen capture stream is not live. Screen recording permission may be missing.'
@@ -522,19 +527,26 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
 
   const audioStream = await createSystemAudioStream(sourceId)
   if (audioStream.getAudioTracks().length === 0) {
-    useToastStore.getState().showToast({
-      type: 'screen',
-      message:
-        'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
-    })
+    if (context === 'initial') {
+      useToastStore.getState().showToast({
+        type: 'screen',
+        message:
+          'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
+      })
+    }
   }
 
-  const micStream = await createMicStream({ notifyOnFailure: true, context: 'initial' })
+  const micStream = await createMicStream({
+    notifyOnFailure: context === 'initial',
+    context
+  })
 
   if (micStream && micStream.getAudioTracks().length === 0) {
     const error = { name: 'NoAudioTrackError', message: 'Microphone stream has no audio tracks.' }
-    recordMicrophoneCaptureFailure(error, 'initial')
-    showMicrophoneCaptureFailureToast(error)
+    recordMicrophoneCaptureFailure(error, context)
+    if (context === 'initial') {
+      showMicrophoneCaptureFailureToast(error)
+    }
   }
 
   return {
@@ -937,7 +949,8 @@ async function createCaptureSegment(
   recoverySequence = 0,
   expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null = null
 ): Promise<CaptureHandles> {
-  const streams = await createCaptureStreams(sourceId)
+  const captureContext = recoverySequence > 0 ? 'recovery' : 'initial'
+  const streams = await createCaptureStreams(sourceId, captureContext)
 
   try {
     const deviceSnapshot = await getDefaultDeviceSnapshot()

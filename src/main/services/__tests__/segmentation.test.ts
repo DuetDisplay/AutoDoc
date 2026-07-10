@@ -599,4 +599,21 @@ describe('SegmentationService', () => {
       errorCode: undefined
     })
   })
+
+  it('clears activeProgress after a job finishes', () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    ;(service as any).activeProgress = 99
+    ;(service as any).activeJobId = null
+    ;(service as any).activeStatus = null
+    ;(service as any).activeProgress = undefined
+    ;(service as any).broadcastStatus('meeting-new', 'segmenting', 10)
+
+    expect(send).toHaveBeenCalledWith('segmentation:status-changed', {
+      meetingId: 'meeting-new',
+      status: 'segmenting',
+      progress: 10,
+      errorCode: undefined
+    })
+  })
 })

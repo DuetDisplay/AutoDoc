@@ -50,12 +50,20 @@ export interface WindowsHardwareProfile {
   gpus: WindowsGpuInfo[]
 }
 
+export interface WindowsTranscriptionAssetPart {
+  filename: string
+  url: string
+  sha256: string
+  bytes: number
+}
+
 export interface WindowsTranscriptionAsset {
   id: 'runtime' | 'model'
   filename: string
   url: string
   sha256: string
   bytes?: number
+  parts?: WindowsTranscriptionAssetPart[]
   expectedFiles: string[]
   sources?: string[]
   licenses?: string[]
@@ -296,11 +304,22 @@ export function normalizeWindowsTranscriptionProfiles(
       ...profile,
       engine: profile.engine ?? defaults.engine,
       estimatedMemoryGiB: profile.estimatedMemoryGiB ?? defaults.estimatedMemoryGiB,
-      assets: (profile.assets ?? defaults.assets).map((asset, index) => ({
-        ...(defaults.assets[index] ?? asset),
-        ...asset,
-        url: artifactBaseUrl ? `${artifactBaseUrl.replace(/\/$/, '')}/${asset.filename}` : asset.url
-      }))
+      assets: (profile.assets ?? defaults.assets).map((asset, index) => {
+        const merged = {
+          ...(defaults.assets[index] ?? asset),
+          ...asset,
+          url: artifactBaseUrl
+            ? `${artifactBaseUrl.replace(/\/$/, '')}/${asset.filename}`
+            : asset.url
+        }
+        if (artifactBaseUrl && asset.parts?.length) {
+          merged.parts = asset.parts.map((part) => ({
+            ...part,
+            url: `${artifactBaseUrl.replace(/\/$/, '')}/${part.filename}`
+          }))
+        }
+        return merged
+      })
     }
   }
 

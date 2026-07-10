@@ -229,6 +229,7 @@ export class SegmentationService {
       this.activeJobId = null
       this.activeJobSource = null
       this.activeStatus = null
+      this.activeProgress = undefined
       this.processing = false
       this.enqueueSource.delete(meetingId)
       this.processNext()

@@ -18,6 +18,7 @@ import { basename, delimiter, dirname, join, sep } from 'path'
 import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
+import { pipeline } from 'stream/promises'
 import { tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
@@ -1261,6 +1262,7 @@ export class WhisperManager extends EventEmitter {
     const archivePath = join(modelsDir, asset.filename)
     const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
     let extractDir: string | null = null
+    const partPaths: string[] = []
 
     logAutodocEvent({
       area: 'whisper',
@@ -1270,6 +1272,7 @@ export class WhisperManager extends EventEmitter {
         assetId: asset.id,
         filename: asset.filename,
         url: asset.url,
+        partCount: asset.parts?.length ?? 0,
         expectedBytes: asset.bytes,
         expectedSha256: asset.sha256,
         archivePath,
@@ -1277,33 +1280,81 @@ export class WhisperManager extends EventEmitter {
       }
     })
     await mkdir(dirname(targetDir), { recursive: true })
-    await this.downloadFile(asset.url, archivePath, asset.filename, (p) => {
+
+    const reportDownloadProgress = (percent: number): void => {
       this.setupStatus = this.withBackendStatus({
         phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
-        percent: p
+        percent
       })
       this.emit('setup-status', this.getSetupStatus())
-    })
-    const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
-    const archiveStats = await stat(archivePath)
-    if (this.inFirstRunSetup) {
-      this.firstRunDownloadedBytes += archiveStats.size
     }
-    logAutodocEvent({
-      area: 'whisper',
-      message: 'Windows transcription asset download verified',
-      context: {
-        backend: profile.id,
-        assetId: asset.id,
-        filename: asset.filename,
-        expectedBytes: asset.bytes,
-        actualBytes: archiveStats.size,
-        expectedSha256: asset.sha256,
-        actualSha256
-      }
-    })
 
     try {
+      if (asset.parts?.length) {
+        const totalBytes = asset.parts.reduce((sum, part) => sum + part.bytes, 0)
+        let completedBytes = 0
+
+        for (let index = 0; index < asset.parts.length; index += 1) {
+          const part = asset.parts[index]
+          const partPath = `${archivePath}.part${index + 1}`
+          partPaths.push(partPath)
+
+          await this.downloadFile(
+            part.url,
+            partPath,
+            `${asset.filename} (part ${index + 1})`,
+            (partPercent) => {
+              const partProgressBytes = (partPercent / 100) * part.bytes
+              const overallPercent = Math.round(
+                ((completedBytes + partProgressBytes) / totalBytes) * 100
+              )
+              reportDownloadProgress(overallPercent)
+            }
+          )
+          await this.verifyFileSha256(partPath, part.sha256, part.filename)
+          completedBytes += part.bytes
+        }
+
+        await rm(archivePath, { force: true })
+        const writeStream = createWriteStream(archivePath)
+        try {
+          for (const partPath of partPaths) {
+            await pipeline(createReadStream(partPath), writeStream, { end: false })
+          }
+          writeStream.end()
+          await once(writeStream, 'finish')
+        } catch (err) {
+          writeStream.destroy()
+          throw err
+        }
+
+        for (const partPath of partPaths) {
+          await rm(partPath, { force: true })
+        }
+        partPaths.length = 0
+      } else {
+        await this.downloadFile(asset.url, archivePath, asset.filename, reportDownloadProgress)
+      }
+
+      const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+      const archiveStats = await stat(archivePath)
+      if (this.inFirstRunSetup) {
+        this.firstRunDownloadedBytes += archiveStats.size
+      }
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset download verified',
+        context: {
+          backend: profile.id,
+          assetId: asset.id,
+          filename: asset.filename,
+          expectedBytes: asset.bytes,
+          actualBytes: archiveStats.size,
+          expectedSha256: asset.sha256,
+          actualSha256
+        }
+      })
+
       extractDir = await mkdtemp(join(dirname(targetDir), '_extract-'))
       await this.extractWindowsTranscriptionAsset(archivePath, extractDir, asset.filename)
 
@@ -1335,6 +1386,9 @@ export class WhisperManager extends EventEmitter {
       extractDir = null
     } finally {
       await rm(archivePath, { force: true })
+      for (const partPath of partPaths) {
+        await rm(partPath, { force: true })
+      }
       if (extractDir) {
         await rm(extractDir, { recursive: true, force: true })
       }

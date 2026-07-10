@@ -129,7 +129,21 @@
           ],
           "sources": ["istupakov/parakeet-tdt-0.6b-v3-onnx fp32", "istupakov/silero-vad-onnx"],
           "licenses": ["MIT", "Apache-2.0"],
-          "bytes": 2370811633
+          "bytes": 2370811633,
+          "parts": [
+            {
+              "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part1",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part1",
+              "sha256": "e0f7ef1d42db37c3d2866d13bd68d251697e50ba877a3c39375ee1df005f0bf1",
+              "bytes": 1185405817
+            },
+            {
+              "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part2",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part2",
+              "sha256": "b2e1f79ab9e2467617dae80709646621b470a3e0343f63b332a2c6addfe2a298",
+              "bytes": 1185405816
+            }
+          ]
         }
       ]
     },

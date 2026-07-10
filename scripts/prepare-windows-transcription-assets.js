@@ -1,6 +1,7 @@
 const { createHash } = require('node:crypto')
 const { spawnSync } = require('node:child_process')
-const { createReadStream } = require('node:fs')
+const { createReadStream, createWriteStream } = require('node:fs')
+const { open } = require('node:fs/promises')
 const { cp, mkdir, readFile, readdir, rm, stat, writeFile } = require('node:fs/promises')
 const path = require('node:path')
 
@@ -131,6 +132,8 @@ const SILERO_VAD = {
   filename: 'silero_vad.onnx'
 }
 
+const MAX_RELEASE_PART_BYTES = 2_000_000_000
+
 async function main() {
   if (process.platform !== 'win32') {
     throw new Error('Windows transcription assets must be prepared on Windows.')
@@ -197,7 +200,7 @@ async function prepareRuntime(kind, zipName, packages) {
 
   await pruneRuntime(runtimeDir)
   await zipDirectory(runtimeDir, zipPath)
-  return await describeArtifact(zipPath)
+  return await describeArtifact(zipPath, zipName)
 }
 
 async function prepareModel(model) {
@@ -212,7 +215,7 @@ async function prepareModel(model) {
     filter: (source) => !source.includes(`${path.sep}.cache${path.sep}`)
   })
   await zipDirectory(stagingDir, zipPath)
-  return await describeArtifact(zipPath)
+  return await describeArtifact(zipPath, model.zipName)
 }
 
 async function prepareParakeetModel(model) {
@@ -230,7 +233,7 @@ async function prepareParakeetModel(model) {
   await cp(sileroVadPath, path.join(stagingDir, SILERO_VAD.filename))
 
   await zipDirectory(stagingDir, zipPath)
-  return await describeArtifact(zipPath)
+  return await describeArtifact(zipPath, model.zipName)
 }
 
 async function resolveParakeetModelSnapshot(model) {
@@ -447,13 +450,72 @@ async function zipDirectory(sourceDir, zipPath) {
   run('powershell', ['-NoProfile', '-Command', command])
 }
 
-async function describeArtifact(filePath) {
+async function describeArtifact(filePath, zipName = path.basename(filePath)) {
   const info = await stat(filePath)
-  return {
+  const artifact = {
     filePath,
     filename: path.basename(filePath),
     bytes: info.size,
     sha256: await hashFile(filePath)
+  }
+
+  if (info.size <= MAX_RELEASE_PART_BYTES) {
+    return artifact
+  }
+
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'))
+  const artifactBaseUrl = (manifest.artifactBaseUrl ?? '').replace(/\/$/, '')
+  const parts = []
+  const handle = await open(filePath, 'r')
+  let offset = 0
+  let partIndex = 1
+
+  try {
+    while (offset < info.size) {
+      const partBytes = Math.min(MAX_RELEASE_PART_BYTES, info.size - offset)
+      const partFilename = `${zipName}.part${partIndex}`
+      const partPath = path.join(OUT_DIR, partFilename)
+      const writeStream = createWriteStream(partPath)
+      let written = 0
+
+      while (written < partBytes) {
+        const chunkSize = Math.min(8 * 1024 * 1024, partBytes - written)
+        const buffer = Buffer.allocUnsafe(chunkSize)
+        const { bytesRead } = await handle.read(buffer, 0, chunkSize, offset + written)
+        if (bytesRead <= 0) {
+          throw new Error(`Unexpected EOF while splitting ${zipName} at offset ${offset + written}.`)
+        }
+        if (!writeStream.write(buffer.subarray(0, bytesRead))) {
+          await new Promise((resolve, reject) => {
+            writeStream.once('drain', resolve)
+            writeStream.once('error', reject)
+          })
+        }
+        written += bytesRead
+      }
+
+      await new Promise((resolve, reject) => {
+        writeStream.end(resolve)
+        writeStream.once('error', reject)
+      })
+
+      const partInfo = await describeArtifact(partPath)
+      parts.push({
+        filename: partFilename,
+        url: `${artifactBaseUrl}/${partFilename}`,
+        sha256: partInfo.sha256,
+        bytes: partInfo.bytes
+      })
+      offset += partBytes
+      partIndex += 1
+    }
+  } finally {
+    await handle.close()
+  }
+
+  return {
+    ...artifact,
+    parts
   }
 }
 
@@ -465,6 +527,11 @@ async function updateManifest(artifacts) {
       if (!artifact) continue
       asset.sha256 = artifact.sha256
       asset.bytes = artifact.bytes
+      if (artifact.parts?.length) {
+        asset.parts = artifact.parts
+      } else {
+        delete asset.parts
+      }
     }
   }
   await writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`)
@@ -476,6 +543,11 @@ async function writeSummary(artifacts) {
     lines.push(`- ${artifact.filename}`)
     lines.push(`  - bytes: ${artifact.bytes}`)
     lines.push(`  - sha256: ${artifact.sha256}`)
+    for (const part of artifact.parts ?? []) {
+      lines.push(`  - part: ${part.filename}`)
+      lines.push(`    - bytes: ${part.bytes}`)
+      lines.push(`    - sha256: ${part.sha256}`)
+    }
   }
   await writeFile(path.join(OUT_DIR, 'SHA256SUMS.md'), `${lines.join('\n')}\n`)
 }

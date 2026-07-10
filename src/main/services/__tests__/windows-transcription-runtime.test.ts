@@ -428,4 +428,78 @@ describe('Windows transcription runtime selection', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
+
+  it('rewrites multipart asset part URLs from artifactBaseUrl', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-win-manifest-parts-'))
+    const manifestPath = join(rootDir, 'manifest.json')
+
+    try {
+      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = 'http://127.0.0.1:8765/assets/'
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          version: 2,
+          releaseTag: 'test-release',
+          artifactBaseUrl: 'https://example.test/release',
+          profiles: [
+            {
+              id: 'parakeet-gpu',
+              label: 'Test GPU backend',
+              modelName: 'parakeet-tdt-0.6b-v3',
+              device: 'dml',
+              computeType: 'fp32',
+              minSystemMemoryGiB: 8,
+              assets: [
+                {
+                  id: 'model',
+                  filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+                  url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip',
+                  sha256: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                  bytes: 2370811633,
+                  expectedFiles: ['encoder-model.onnx'],
+                  parts: [
+                    {
+                      filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                      url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                      sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                      bytes: 1185405817
+                    },
+                    {
+                      filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                      url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                      sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                      bytes: 1185405816
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        })
+      )
+
+      const profiles = await loadWindowsTranscriptionProfiles(manifestPath)
+      const modelAsset = profiles['parakeet-gpu'].assets.find((asset) => asset.id === 'model')
+      expect(modelAsset?.url).toBe(
+        'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip'
+      )
+      expect(modelAsset?.parts).toEqual([
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+          url: 'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+          sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          bytes: 1185405817
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+          url: 'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+          sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          bytes: 1185405816
+        }
+      ])
+    } finally {
+      delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
 })

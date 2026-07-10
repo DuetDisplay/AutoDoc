@@ -91,6 +91,7 @@ jobs:
           name: windows-transcription-assets-${{ env.ASSET_TAG }}
           path: |
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip.part*
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/SHA256SUMS.md
           if-no-files-found: error
           retention-days: 14
@@ -132,7 +133,8 @@ jobs:
             (Join-Path $assetDir 'faster-whisper-small-en-ct2-int8.zip') `
             (Join-Path $assetDir 'faster-whisper-distil-large-v3-ct2.zip') `
             (Join-Path $assetDir 'parakeet-runtime-win-x64.zip') `
-            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part1') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part2') `
             (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-int8.zip') `
             (Join-Path $assetDir 'SHA256SUMS.md') `
             --repo $repo `
