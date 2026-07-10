@@ -651,7 +651,18 @@ app.whenReady().then(async () => {
       })
       return { screen, microphone }
     }
-    // On Windows/Linux, permissions are generally granted by default
+
+    if (process.platform === 'win32') {
+      const microphoneStatus = systemPreferences.getMediaAccessStatus('microphone')
+      const microphone = microphoneStatus !== 'denied' && microphoneStatus !== 'restricted'
+      logPermissionEvent('permissions_check_windows_completed', {
+        microphoneStatus,
+        microphoneGranted: microphone,
+        screenGranted: true
+      })
+      return { screen: true, microphone }
+    }
+
     logPermissionEvent('permissions_check_non_darwin_default_granted')
     return { screen: true, microphone: true }
   })
@@ -689,6 +700,16 @@ app.whenReady().then(async () => {
       }
     }
 
+    if (process.platform === 'win32') {
+      const microphoneStatus = systemPreferences.getMediaAccessStatus('microphone')
+      const granted = microphoneStatus !== 'denied' && microphoneStatus !== 'restricted'
+      logPermissionEvent('microphone_access_request_windows_status_checked', {
+        microphoneStatus,
+        granted
+      })
+      return granted
+    }
+
     logPermissionEvent('microphone_access_request_non_darwin_default_granted')
     return true
   })
@@ -710,6 +731,10 @@ app.whenReady().then(async () => {
       } else {
         shell.openExternal(url)
       }
+    } else if (process.platform === 'win32' && panel === 'microphone') {
+      const url = 'ms-settings:privacy-microphone'
+      logPermissionEvent('permissions_open_settings_requested', { panel, url })
+      shell.openExternal(url)
     }
   })
 

@@ -1,5 +1,11 @@
 import { useToastStore } from '../stores/toast'
 import { recordPersistentDiagnosticAction } from './diagnostic-trail'
+import {
+  getMicrophoneCaptureFailureMessage,
+  isWindowsRenderer,
+  type MicrophoneAccessErrorDetails,
+  probeMicrophoneStream
+} from './microphone-access'
 import { captureRecordingRecoveryFailure } from './renderer-sentry'
 
 interface CaptureStreams {
@@ -523,19 +529,12 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
     })
   }
 
-  const micStream = await createMicStream()
+  const micStream = await createMicStream({ notifyOnFailure: true, context: 'initial' })
 
-  if (!micStream || micStream.getAudioTracks().length === 0) {
-    useToastStore.getState().showToast({
-      type: 'microphone',
-      message:
-        'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
-      action: {
-        label: 'Enable',
-        type: 'open-settings',
-        target: 'microphone'
-      }
-    })
+  if (micStream && micStream.getAudioTracks().length === 0) {
+    const error = { name: 'NoAudioTrackError', message: 'Microphone stream has no audio tracks.' }
+    recordMicrophoneCaptureFailure(error, 'initial')
+    showMicrophoneCaptureFailureToast(error)
   }
 
   return {
@@ -570,14 +569,50 @@ async function createSystemAudioStream(sourceId: string): Promise<MediaStream> {
   }
 }
 
-async function createMicStream(): Promise<MediaStream | null> {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true }
-    })
-  } catch {
-    return null
+function recordMicrophoneCaptureFailure(
+  error: MicrophoneAccessErrorDetails,
+  context: 'initial' | 'recovery'
+): void {
+  console.warn('Microphone capture failed:', error)
+  recordPersistentDiagnosticAction({
+    category: 'recording',
+    action: 'microphone_capture_failed',
+    details: {
+      context,
+      error
+    }
+  })
+}
+
+function showMicrophoneCaptureFailureToast(error: MicrophoneAccessErrorDetails): void {
+  useToastStore.getState().showToast({
+    type: 'microphone',
+    message: getMicrophoneCaptureFailureMessage(error, isWindowsRenderer()),
+    action: {
+      label: 'Enable',
+      type: 'open-settings',
+      target: 'microphone'
+    }
+  })
+}
+
+async function createMicStream({
+  notifyOnFailure,
+  context
+}: {
+  notifyOnFailure: boolean
+  context: 'initial' | 'recovery'
+}): Promise<MediaStream | null> {
+  const result = await probeMicrophoneStream()
+  if (result.ok) {
+    return result.stream
   }
+
+  recordMicrophoneCaptureFailure(result.error, context)
+  if (notifyOnFailure) {
+    showMicrophoneCaptureFailureToast(result.error)
+  }
+  return null
 }
 
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
@@ -1072,7 +1107,7 @@ async function recoverAudioCapture(
       let systemStream: MediaStream | null = null
       try {
         if (plan.recoverMic) {
-          micStream = await createMicStream()
+          micStream = await createMicStream({ notifyOnFailure: false, context: 'recovery' })
         }
         if (plan.recoverSystem) {
           systemStream = await createSystemAudioStream(capture.sourceId)
@@ -1088,8 +1123,7 @@ async function recoverAudioCapture(
         }
         const missingSources = getMissingRecoverySources(expectedAudio, actualAudio).filter(
           (source) =>
-            (source === 'mic' && plan.recoverMic) ||
-            (source === 'system' && plan.recoverSystem)
+            (source === 'mic' && plan.recoverMic) || (source === 'system' && plan.recoverSystem)
         )
 
         if (missingSources.length > 0) {
@@ -1218,8 +1252,7 @@ async function recoverAudioCapture(
           capture
         ).filter(
           (source) =>
-            (source === 'mic' && plan.recoverMic) ||
-            (source === 'system' && plan.recoverSystem)
+            (source === 'mic' && plan.recoverMic) || (source === 'system' && plan.recoverSystem)
         )
 
         if (pendingValidationSources.length > 0) {
