@@ -394,6 +394,8 @@ export class WhisperManager extends EventEmitter {
 
     return {
       ...process.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
       PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
     }
   }
@@ -422,6 +424,8 @@ export class WhisperManager extends EventEmitter {
 
     return {
       ...process.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
       PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
     }
   }

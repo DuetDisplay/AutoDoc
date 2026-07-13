@@ -31,6 +31,10 @@ import sys
 import wave
 from ctypes import wintypes
 
+for stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8")
+
 PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
 PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
 ProcessPowerThrottling = 4

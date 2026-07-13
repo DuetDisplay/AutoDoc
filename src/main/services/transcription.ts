@@ -2059,7 +2059,8 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`faster-whisper exited with code 1: ${message.slice(-500)}`)
+      const engine = this.whisperManager.getWorkerEngine()
+      throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
     }
   }
 
