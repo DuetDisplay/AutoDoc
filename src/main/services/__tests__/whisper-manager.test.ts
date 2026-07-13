@@ -306,4 +306,21 @@ describe('WhisperManager', () => {
       'parakeet-cpu→whisper-cpp'
     ])
   })
+
+  it('resolves and broadcasts Windows transcription backend without asset setup', async () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'parakeet-gpu'
+    const ensureReadySpy = vi.spyOn(manager, 'ensureReady')
+    const setupStatuses: Array<{ backend?: string }> = []
+    manager.on('setup-status', (status) => setupStatuses.push(status))
+
+    await manager.resolveWindowsTranscriptionBackend()
+
+    expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+    expect(setupStatuses.some((status) => status.backend === 'parakeet-gpu')).toBe(true)
+    expect(ensureReadySpy).not.toHaveBeenCalled()
+  })
 })

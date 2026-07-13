@@ -3,7 +3,8 @@ import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
-import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
+import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount, WhisperSetupStatus } from '../../../shared/types'
+import { supportsWindowsTranscriptionQualityFastMode } from '../../../shared/windows-transcription-settings'
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -68,6 +69,7 @@ export function Settings() {
   const [transcriptionPerformanceMode, setTranscriptionPerformanceModeState] = useState<
     'balanced' | 'fast'
   >('balanced')
+  const [transcriptionBackend, setTranscriptionBackend] = useState<string | undefined>()
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -114,7 +116,21 @@ export function Settings() {
     void window.electronAPI
       .invoke('prefs:get-transcription-performance-mode')
       .then(setTranscriptionPerformanceModeState)
-  }, [runtimeInfo?.platform])
+    void window.electronAPI.invoke('whisper:get-setup-status').then((status: WhisperSetupStatus) => {
+      setTranscriptionBackend(status.backend ?? runtimeInfo?.transcriptionBackend)
+    })
+    const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
+      if (status.backend) {
+        setTranscriptionBackend(status.backend)
+      }
+    })
+
+    return unsubWhisper
+  }, [runtimeInfo?.platform, runtimeInfo?.transcriptionBackend])
+
+  const showTranscriptionQualityControls = supportsWindowsTranscriptionQualityFastMode(
+    transcriptionBackend ?? runtimeInfo?.transcriptionBackend
+  )
 
   useEffect(() => {
     const previousState = previousUpdateState.current
@@ -480,35 +496,45 @@ export function Settings() {
             <div>
               <h3 className="text-[13px] font-semibold text-ink mb-2">Transcription</h3>
               <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4 space-y-4">
-                <div>
-                  <p className="text-[12px] font-semibold text-ink mb-1">Transcription quality</p>
-                  <p className="text-[12px] text-ink-muted mb-3">
-                    Balanced prioritizes accuracy. Fast uses a lighter model on the same backend.
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {renderModeChoice(
-                      'transcription-quality',
-                      'Balanced',
-                      'Recommended for most meetings.',
-                      'balanced',
-                      transcriptionQualityMode,
-                      handleSetTranscriptionQualityMode
-                    )}
-                    {renderModeChoice(
-                      'transcription-quality',
-                      'Fast',
-                      'Uses a lighter model for quicker turnaround.',
-                      'fast',
-                      transcriptionQualityMode,
-                      handleSetTranscriptionQualityMode
-                    )}
+                {showTranscriptionQualityControls && (
+                  <div>
+                    <p className="text-[12px] font-semibold text-ink mb-1">Transcription quality</p>
+                    <p className="text-[12px] text-ink-muted mb-3">
+                      Balanced gives the most accurate transcripts. Fast trades a little accuracy for
+                      quicker turnaround.
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {renderModeChoice(
+                        'transcription-quality',
+                        'Balanced',
+                        'Most accurate. Recommended for most meetings.',
+                        'balanced',
+                        transcriptionQualityMode,
+                        handleSetTranscriptionQualityMode
+                      )}
+                      {renderModeChoice(
+                        'transcription-quality',
+                        'Fast',
+                        'Noticeably faster, slightly less accurate.',
+                        'fast',
+                        transcriptionQualityMode,
+                        handleSetTranscriptionQualityMode
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="border-t border-border-subtle pt-4">
+                )}
+                <div
+                  className={
+                    showTranscriptionQualityControls
+                      ? 'border-t border-border-subtle pt-4'
+                      : undefined
+                  }
+                >
                   <p className="text-[12px] font-semibold text-ink mb-1">System impact</p>
                   <p className="text-[12px] text-ink-muted mb-3">
                     Balanced keeps transcription gentler on CPU and battery. Fast gives
-                    transcription more room to run.
+                    transcription more room to run. Neither affects transcript accuracy — only how
+                    much of your computer transcription can use.
                   </p>
                   <div className="flex flex-col gap-2">
                     {renderModeChoice(

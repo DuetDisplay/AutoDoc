@@ -1656,6 +1656,7 @@ app.whenReady().then(async () => {
     recoverPendingWork()
     if (process.platform === 'win32' && !isRealSetupTest) {
       ensureOllamaRunning()
+      void whisperManager.resolveWindowsTranscriptionBackend()
     }
     if (!isRealSetupTest) {
       detectionService.start()

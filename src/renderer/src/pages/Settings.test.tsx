@@ -365,4 +365,60 @@ describe('Settings', () => {
       expect(api.invoke).toHaveBeenCalledWith('updater:install')
     })
   })
+
+  it('shows transcription quality controls only for Parakeet GPU on Windows', async () => {
+    installMockElectronApi({
+      'app:get-version': '1.1.0-internal.3',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo({
+        platform: 'win32',
+        transcriptionBackend: 'parakeet-gpu'
+      }),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-transcription-quality-mode': 'balanced',
+      'prefs:get-transcription-performance-mode': 'balanced',
+      'whisper:get-setup-status': {
+        phase: 'ready',
+        percent: 100,
+        backend: 'parakeet-gpu'
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    expect(await screen.findByText('Transcription quality')).toBeInTheDocument()
+    expect(screen.getByText('System impact')).toBeInTheDocument()
+  })
+
+  it('hides transcription quality controls on Windows CPU Parakeet tiers', async () => {
+    installMockElectronApi({
+      'app:get-version': '1.1.0-internal.3',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo({
+        platform: 'win32',
+        transcriptionBackend: 'parakeet-cpu'
+      }),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-transcription-quality-mode': 'balanced',
+      'prefs:get-transcription-performance-mode': 'balanced',
+      'whisper:get-setup-status': {
+        phase: 'ready',
+        percent: 100,
+        backend: 'parakeet-cpu'
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    await screen.findByText('System impact')
+    expect(screen.queryByText('Transcription quality')).not.toBeInTheDocument()
+  })
 })

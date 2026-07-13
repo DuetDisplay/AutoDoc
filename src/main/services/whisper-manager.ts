@@ -633,6 +633,28 @@ export class WhisperManager extends EventEmitter {
     })
   }
 
+  /**
+   * Detect hardware and select the Windows transcription backend without
+   * downloading assets or validating the runtime. Safe to call at startup.
+   */
+  async resolveWindowsTranscriptionBackend(): Promise<void> {
+    if (!IS_WIN) {
+      return
+    }
+
+    try {
+      await this.selectWindowsProfile()
+      this.setupStatus = this.withBackendStatus(this.setupStatus)
+      this.emit('setup-status', this.getSetupStatus())
+    } catch (err) {
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Failed to resolve Windows transcription backend at startup',
+        error: err
+      })
+    }
+  }
+
   private async selectMacProfile(): Promise<void> {
     if (!this.isMlxWhisperSelected()) {
       this.selectedMacProfile = null
