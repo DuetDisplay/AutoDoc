@@ -316,7 +316,11 @@ export class SegmentationService {
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
-    this.broadcastStatus(meetingId, 'segmenting', 0)
+    if (process.platform === 'win32') {
+      this.broadcastStatus(meetingId, 'segmenting')
+    } else {
+      this.broadcastStatus(meetingId, 'segmenting', 0)
+    }
 
     const t0 = Date.now()
     logAutodocEvent({

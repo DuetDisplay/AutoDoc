@@ -1649,6 +1649,9 @@ app.whenReady().then(async () => {
     }
 
     recoverPendingWork()
+    if (process.platform === 'win32' && !isRealSetupTest) {
+      ensureOllamaRunning()
+    }
     if (!isRealSetupTest) {
       detectionService.start()
     }

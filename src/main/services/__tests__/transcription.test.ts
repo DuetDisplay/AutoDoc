@@ -1281,7 +1281,7 @@ describe('TranscriptionService', () => {
     )
   })
 
-  it('maps transcription worker failures to faster-whisper exit errors', async () => {
+  it('maps transcription worker failures to engine-specific worker errors', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -1309,7 +1309,7 @@ describe('TranscriptionService', () => {
 
     await expect(
       (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    ).rejects.toThrow(/faster-whisper exited with code 1/)
+    ).rejects.toThrow(/faster-whisper worker failed/)
   })
 
   it('classifies Metal aborts as whisper-metal-crash', () => {
@@ -1488,6 +1488,70 @@ describe('TranscriptionService', () => {
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 57)
 
     expect(service.getProgress('meeting-123')).toBe(57)
+  })
+
+  it('advances worker transcription progress using elapsed time when segment timestamps lag', async () => {
+    vi.useFakeTimers()
+    try {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+        getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced'
+      )
+
+      const broadcastSpy = vi.spyOn(service as any, 'broadcastStatus')
+
+      workerClientMock.transcribe.mockImplementation(
+        async (_req, onSegment?: (segment: { endMs: number }) => void) => {
+          onSegment?.({ endMs: 42_000 })
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 60_000)
+          })
+          return { transcription: [] }
+        }
+      )
+
+      const passPromise = (service as any).runWorkerEnginePass(
+        '/mock/tmp/audio.wav',
+        'meeting-elapsed',
+        300,
+        { start: 0, end: 50 }
+      )
+
+      await vi.advanceTimersByTimeAsync(45_000)
+
+      const scaledProgress = broadcastSpy.mock.calls
+        .filter((call) => call[1] === 'transcribing')
+        .map((call) => call[2] as number)
+
+      expect(Math.max(...scaledProgress)).toBeGreaterThan(7)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await passPromise
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('runs acoustic echo suppression before merging dual-channel transcripts', async () => {

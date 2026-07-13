@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
+import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
   LOW_MEMORY_CONTEXT_TOKENS,
   MAC_CONTEXT_TOKENS,
@@ -8,6 +9,45 @@ import {
   WINDOWS_MAX_OUTPUT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
 } from '../llm'
+
+const originalPlatform = process.platform
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    value: platform
+  })
+}
+
+function makeSegment(
+  overrides: Partial<Segment> & Pick<Segment, 'id' | 'category' | 'title' | 'content'>
+): Segment {
+  return {
+    meetingId: 'meeting-1',
+    topic: 'General',
+    assignee: null,
+    deadline: null,
+    sourceStartMs: 0,
+    sourceEndMs: 0,
+    ...overrides
+  }
+}
+
+function makeSegments(items: {
+  decisions?: Segment[]
+  actionItems?: Segment[]
+  information?: Segment[]
+  discussion?: Segment[]
+  statusUpdates?: Segment[]
+}): MeetingSegments {
+  return {
+    decisions: items.decisions ?? [],
+    actionItems: items.actionItems ?? [],
+    information: items.information ?? [],
+    discussion: items.discussion ?? [],
+    statusUpdates: items.statusUpdates ?? []
+  }
+}
 
 const mocks = vi.hoisted(() => ({
   logAutodocEvent: vi.fn(),
@@ -26,6 +66,7 @@ describe('OllamaProvider grounding', () => {
   const provider = new OllamaProvider('http://localhost:11434', 'test-model')
 
   afterEach(() => {
+    setPlatform(originalPlatform)
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -750,5 +791,177 @@ describe('OllamaProvider grounding', () => {
     const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
 
     expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
+  })
+
+  describe('Windows near-duplicate item dedup', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    it('collapses exact duplicate titles across categories on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot timeline confirmed',
+            content: 'Hands-off driving expected in two years.'
+          })
+        ],
+        discussion: [
+          makeSegment({
+            id: 'd1',
+            category: 'discussion',
+            title: 'Autopilot timeline confirmed',
+            content: 'The team debated the two-year autopilot timeline.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(0)
+      expect(segments.discussion).toHaveLength(1)
+      expect(segments.discussion[0].content).toContain('debated')
+    })
+
+    it('collapses substring near-duplicate titles like the Autopilot example on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot Expected in Two Years for Hands-Off Driving Capability',
+            content: 'Hands-off driving is expected in about two years.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title:
+              'Autopilot Expected in Two Years for Hands-Off Driving Capability with Crash Rate of One-in-a-Thousand or Less',
+            content:
+              'Hands-off driving is expected in about two years with a projected crash rate of one in a thousand or less, including additional safety context.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(1)
+      expect(segments.information[0].title).toContain('Crash Rate')
+      expect(segments.information[0].content.length).toBeGreaterThan(80)
+    })
+
+    it('collapses cross-category near-duplicates and keeps the richer item in its original category', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        decisions: [
+          makeSegment({
+            id: 'd1',
+            category: 'decision',
+            title: 'Ship billing API migration before launch',
+            content: 'Approved.',
+            sourceStartMs: 60_000,
+            sourceEndMs: 90_000
+          })
+        ],
+        actionItems: [
+          makeSegment({
+            id: 'a1',
+            category: 'action_item',
+            title: 'Ship billing API migration before launch next quarter',
+            content:
+              'Chris will migrate the billing API before launch next quarter and document the rollout plan.',
+            sourceStartMs: 60_000,
+            sourceEndMs: 180_000
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.decisions).toHaveLength(0)
+      expect(segments.actionItems).toHaveLength(1)
+      expect(segments.actionItems[0].content).toContain('Chris')
+    })
+
+    it('preserves distinct titles on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Windows rollout split remains 30% and 70%',
+            content: 'Rewrite stays at 30% while legacy Windows remains at 70%.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title: 'Latest Windows desktop installs are 73 for this build',
+            content: 'Install count for the current build is 73.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(2)
+    })
+
+    it('does not dedupe near-duplicate items on macOS', () => {
+      setPlatform('darwin')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot Expected in Two Years for Hands-Off Driving Capability',
+            content: 'Hands-off driving is expected in about two years.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title:
+              'Autopilot Expected in Two Years for Hands-Off Driving Capability with Crash Rate of One-in-a-Thousand or Less',
+            content:
+              'Hands-off driving is expected in about two years with a projected crash rate of one in a thousand or less.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(2)
+    })
+  })
+
+  describe('Windows chunk label guidance', () => {
+    it('includes per-chunk item cap, anti-duplication guidance, and known item titles on later chunks', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const label = (windowsProvider as any).buildChunkLabel(
+        1,
+        3,
+        'Aim for 8-12 items total across all categories.',
+        ['Product Planning'],
+        ['Autopilot timeline confirmed', 'Billing API migration plan']
+      ) as string
+
+      expect(label).toContain('at most 8 total items across all categories')
+      expect(label).toContain('Avoid near-duplicate titles')
+      expect(label).toContain('Do not re-create notes already captured')
+      expect(label).toContain('Autopilot timeline confirmed')
+      expect(label).toContain('Billing API migration plan')
+    })
+
+    it('adds Windows anti-duplication guidance to the system prompt', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
+
+      expect(systemPrompt).toContain('WINDOWS QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).toContain('Avoid near-duplicate titles across all categories')
+    })
   })
 })

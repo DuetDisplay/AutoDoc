@@ -37,6 +37,9 @@ const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
+const WINDOWS_ITEM_DEDUP_THRESHOLD = 0.85
+const MAX_KNOWN_ITEM_TITLES = 20
+const WINDOWS_CHUNK_ITEM_CAP = 8
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const PRICING_TOPIC_SIGNAL =
   /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$)\b/i
@@ -233,6 +236,15 @@ MAC QUALITY TUNING OVERRIDE:
 - If a point is already captured as a decision, only add context as information when it includes a distinct durable fact someone would search for later.
 - Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
 - Prefer empty arrays over weak, repeated, speculative, or low-signal notes.`
+
+const WINDOWS_NOTES_PROMPT_SUFFIX = `
+
+WINDOWS QUALITY TUNING OVERRIDE:
+- Avoid near-duplicate titles across all categories. If two items describe the same underlying point, keep only the stronger one.
+- Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
+- If a point is already captured, do not re-create it with a slightly different title.
+- Skip content already captured in earlier chunks when processing later sections.
+- Prefer empty arrays over weak, repeated, or low-signal notes.`
 
 interface RawSegment {
   topic?: string
@@ -482,11 +494,22 @@ export class OllamaProvider implements LLMProvider {
 
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
+    const capturedItemTitles: string[] = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const knownTopics = this.extractKnownTopics(merged)
-      const chunkLabel = this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics)
+      const knownItemTitles =
+        process.platform === 'win32' && i > 0
+          ? this.extractKnownItemTitles(capturedItemTitles)
+          : []
+      const chunkLabel = this.buildChunkLabel(
+        i,
+        chunks.length,
+        itemGuidance,
+        knownTopics,
+        knownItemTitles
+      )
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -613,11 +636,19 @@ export class OllamaProvider implements LLMProvider {
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
 
+      if (process.platform === 'win32') {
+        for (const item of this.flattenSegments(chunkResult)) {
+          const title = item.title?.trim()
+          if (title) capturedItemTitles.push(title)
+        }
+      }
+
       const percent = Math.min(99, Math.round(((i + 1) / chunks.length) * 100))
       onProgress?.(percent)
     }
 
     this.normalizeMergedTopics(merged)
+    this.dedupeNearDuplicateItems(merged)
     this.consolidateMacTopicFamilies(merged)
     if (lowMemoryFallbackActivated) {
       this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
@@ -659,6 +690,10 @@ export class OllamaProvider implements LLMProvider {
     return topics.slice(0, MAX_UNIQUE_TOPICS)
   }
 
+  private extractKnownItemTitles(capturedTitles: string[]): string[] {
+    return capturedTitles.slice(-MAX_KNOWN_ITEM_TITLES)
+  }
+
   private chunkTranscript(transcript: string): string[] {
     const chunkChars = this.getChunkChars()
     if (transcript.length <= chunkChars) return [transcript]
@@ -688,6 +723,10 @@ export class OllamaProvider implements LLMProvider {
       return `${SYSTEM_PROMPT}${MAC_NOTES_PROMPT_SUFFIX}`
     }
 
+    if (process.platform === 'win32') {
+      return `${SYSTEM_PROMPT}${WINDOWS_NOTES_PROMPT_SUFFIX}`
+    }
+
     return SYSTEM_PROMPT
   }
 
@@ -695,12 +734,17 @@ export class OllamaProvider implements LLMProvider {
     chunkIndex: number,
     chunkCount: number,
     itemGuidance: string,
-    knownTopics: string[]
+    knownTopics: string[],
+    knownItemTitles: string[] = []
   ): string {
     const windowsCategoryGuidance = this.getWindowsCategoryGuidance()
     const knownTopicGuidance =
       knownTopics.length > 0
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
+        : ''
+    const knownItemGuidance =
+      process.platform === 'win32' && knownItemTitles.length > 0
+        ? ` Do not re-create notes already captured: ${knownItemTitles.join('; ')}.`
         : ''
 
     if (chunkCount <= 1) {
@@ -709,6 +753,10 @@ export class OllamaProvider implements LLMProvider {
 
     if (process.platform === 'darwin') {
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
+    }
+
+    if (process.platform === 'win32') {
+      return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy NEW items from THIS section, at most ${WINDOWS_CHUNK_ITEM_CAP} total items across all categories. Be concise. Avoid near-duplicate titles; prefer one strong item over overlapping items about the same point. Skip content already captured.${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}${knownItemGuidance}`
     }
 
     return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
@@ -1224,6 +1272,83 @@ export class OllamaProvider implements LLMProvider {
         segment.topic = canonical
       }
     }
+  }
+
+  private dedupeNearDuplicateItems(segments: MeetingSegments): void {
+    if (process.platform !== 'win32') return
+
+    const items = this.flattenSegments(segments)
+    if (items.length <= 1) return
+
+    const parent = items.map((_, index) => index)
+    const find = (index: number): number => {
+      while (parent[index] !== index) {
+        parent[index] = parent[parent[index]]
+        index = parent[index]
+      }
+      return index
+    }
+    const union = (left: number, right: number) => {
+      const rootLeft = find(left)
+      const rootRight = find(right)
+      if (rootLeft !== rootRight) parent[rootRight] = rootLeft
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (
+          this.getItemTitleSimilarity(items[i].title, items[j].title) >= WINDOWS_ITEM_DEDUP_THRESHOLD
+        ) {
+          union(i, j)
+        }
+      }
+    }
+
+    const clusters = new Map<number, Segment[]>()
+    for (let i = 0; i < items.length; i++) {
+      const root = find(i)
+      const cluster = clusters.get(root) ?? []
+      cluster.push(items[i])
+      clusters.set(root, cluster)
+    }
+
+    const keptSegments = new Set<Segment>()
+    for (const cluster of clusters.values()) {
+      keptSegments.add(cluster.length === 1 ? cluster[0] : this.pickRicherSegment(cluster))
+    }
+
+    const categoryKeys: Array<keyof MeetingSegments> = [
+      'decisions',
+      'actionItems',
+      'information',
+      'discussion',
+      'statusUpdates'
+    ]
+    for (const categoryKey of categoryKeys) {
+      segments[categoryKey] = segments[categoryKey].filter((segment) => keptSegments.has(segment))
+    }
+  }
+
+  private getItemTitleSimilarity(left: string, right: string): number {
+    return this.getTopicTextSimilarity(left, right)
+  }
+
+  private pickRicherSegment(segments: Segment[]): Segment {
+    return segments.reduce((best, candidate) => {
+      const bestContentLength = best.content?.length ?? 0
+      const candidateContentLength = candidate.content?.length ?? 0
+      if (candidateContentLength !== bestContentLength) {
+        return candidateContentLength > bestContentLength ? candidate : best
+      }
+
+      const bestRange = Math.abs(best.sourceEndMs - best.sourceStartMs)
+      const candidateRange = Math.abs(candidate.sourceEndMs - candidate.sourceStartMs)
+      if (candidateRange !== bestRange) {
+        return candidateRange > bestRange ? candidate : best
+      }
+
+      return best
+    })
   }
 
   private consolidateMacTopicFamilies(segments: MeetingSegments): void {

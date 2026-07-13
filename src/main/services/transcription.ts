@@ -2032,6 +2032,54 @@ export class TranscriptionService {
       `[perf] Worker transcription backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
     )
 
+    const startedAt = Date.now()
+    let lastTimestampProgress = 0
+    let progressTimer: ReturnType<typeof setInterval> | null = null
+
+    // Expected pass duration as a fraction of audio duration, per backend.
+    // Parakeet GPU runs ~15-35x realtime; CPU backends are far slower.
+    const expectedDurationRatio = ((): number => {
+      switch (this.whisperManager.getTranscriptionBackend()) {
+        case 'parakeet-gpu':
+          return 0.08
+        case 'faster-whisper-cuda':
+          return 0.12
+        case 'parakeet-cpu':
+          return 0.2
+        default:
+          return 0.3
+      }
+    })()
+
+    const getElapsedProgress = (): number => {
+      if (!audioDurationSec || audioDurationSec <= 0) return 0
+      const elapsedSec = (Date.now() - startedAt) / 1000
+      const estimatedRatio = Math.min(
+        0.95,
+        elapsedSec / Math.max(audioDurationSec * expectedDurationRatio, 30)
+      )
+      return Math.round(estimatedRatio * 100)
+    }
+
+    const broadcastBestProgress = (timestampProgress?: number): void => {
+      if (!audioDurationSec || audioDurationSec <= 0) return
+      if (timestampProgress !== undefined) {
+        lastTimestampProgress = Math.max(lastTimestampProgress, timestampProgress)
+      }
+      const progress = Math.max(lastTimestampProgress, getElapsedProgress())
+      this.broadcastStatus(
+        meetingId,
+        'transcribing',
+        this.scaleProgress(progress, progressRange)
+      )
+    }
+
+    if (audioDurationSec && audioDurationSec > 0) {
+      progressTimer = setInterval(() => {
+        broadcastBestProgress()
+      }, 1500)
+    }
+
     try {
       await this.ensureWorkerLoaded(concurrentSources)
       const client = this.getOrCreateTranscriptionWorkerClient()
@@ -2047,11 +2095,7 @@ export class TranscriptionService {
               99,
               Math.round((segment.endMs / (audioDurationSec * 1000)) * 100)
             )
-            this.broadcastStatus(
-              meetingId,
-              'transcribing',
-              this.scaleProgress(progress, progressRange)
-            )
+            broadcastBestProgress(progress)
           }
         }
       )
@@ -2061,6 +2105,8 @@ export class TranscriptionService {
       const message = error instanceof Error ? error.message : String(error)
       const engine = this.whisperManager.getWorkerEngine()
       throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
+    } finally {
+      if (progressTimer) clearInterval(progressTimer)
     }
   }
 
