@@ -910,19 +910,23 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-start', () => {
+  managedOllamaManager.on('pull-start', (model: string) => {
     lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    ollamaSetupState.pullModel = model
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('pull-progress', (data: { percent: number; model?: string }) => {
     lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = data.percent
+    if (data.model) {
+      ollamaSetupState.pullModel = data.model
+    }
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
@@ -932,6 +936,7 @@ app.whenReady().then(async () => {
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
+    delete ollamaSetupState.pullModel
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()

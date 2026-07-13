@@ -205,6 +205,8 @@ export type SegmentationStatus =
 export interface OllamaSetupStatus {
   phase: 'starting' | 'downloading' | 'pulling' | 'ready' | 'error'
   percent: number
+  /** Model name when phase is pulling (e.g. llama3.1 vs qwen3-embedding:0.6b). */
+  pullModel?: string
   error?: string
   failedStep?: 'starting' | 'downloading' | 'pulling' | 'ready'
 }
