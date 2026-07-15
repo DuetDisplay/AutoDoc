@@ -215,6 +215,7 @@ if (process.platform === 'darwin' && is.dev) {
 
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
 const SENTRY_STUB_PATH = process.env.AUTODOC_SENTRY_STUB_PATH
+const shouldRunSentryQaProbe = process.env.AUTODOC_SENTRY_QA_PROBE === '1'
 const shouldAllowSentryInEnv =
   !!SENTRY_STUB_PATH || (!isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
 const homeDir = homedir()
@@ -249,6 +250,7 @@ let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
 let diagnosticLogUploadConsentEnabled = false
+let sentryQaProbeSent = false
 
 function syncDiagnosticLogUploadForErrors(): void {
   setDiagnosticLogUploadForErrorsEnabled(
@@ -315,6 +317,7 @@ type MainSentryRuntimeModule = {
   withScope(callback: (scope: unknown) => void): void
   captureException(error: Error): void
   captureMessage?: (message: string, level?: 'info' | 'warning' | 'error') => void
+  flush?: (timeout?: number) => Promise<boolean>
   setContext(key: string, data: Record<string, unknown>): void
   setTag(key: string, value: string): void
   getIsolationScope(): { clear(): void }
@@ -361,9 +364,52 @@ function initializeMainSentry(): void {
     sentryRuntime.init(initOptions)
     initSentryReporter(mainSentry as unknown as typeof import('@sentry/electron/main'))
     mainSentryEnabled = true
+    logAutodocEvent({
+      area: 'app',
+      message: 'Sentry initialized',
+      context: {
+        environment: initOptions.environment,
+        release: initOptions.release,
+        qaProbeEnabled: shouldRunSentryQaProbe
+      }
+    })
     onMainSentryReady?.()
   } catch (err) {
     console.warn('Failed to initialize Sentry:', err)
+    logAutodocEvent({
+      area: 'app',
+      level: 'warn',
+      message: 'Sentry initialization failed',
+      context: {
+        error: err instanceof Error ? err.message : String(err)
+      }
+    })
+  }
+}
+
+async function runSentryQaProbe(): Promise<void> {
+  if (!shouldRunSentryQaProbe || !analyticsConsentEnabled || !mainSentryEnabled || sentryQaProbeSent) {
+    return
+  }
+
+  sentryQaProbeSent = true
+  try {
+    mainSentry?.captureMessage?.('AutoDoc QA Sentry delivery probe', 'info')
+    const flushed = mainSentry?.flush ? await mainSentry.flush(5_000) : null
+    logAutodocEvent({
+      area: 'app',
+      message: 'Sentry QA delivery probe completed',
+      context: { flushed }
+    })
+  } catch (err) {
+    logAutodocEvent({
+      area: 'app',
+      level: 'warn',
+      message: 'Sentry QA delivery probe failed',
+      context: {
+        error: err instanceof Error ? err.message : String(err)
+      }
+    })
   }
 }
 
@@ -451,6 +497,7 @@ app.whenReady().then(async () => {
   }
 
   initializeMainSentry()
+  void runSentryQaProbe()
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
 
@@ -1588,6 +1635,9 @@ app.whenReady().then(async () => {
       if (mainSentryEnabled) {
         resetSentryScopes()
         applyCurrentSentryContext()
+      }
+      if (enabled) {
+        void runSentryQaProbe()
       }
     },
     (enabled) => {
