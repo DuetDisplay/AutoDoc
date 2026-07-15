@@ -368,7 +368,7 @@ describe('Settings', () => {
 
   it('shows transcription quality controls only for Parakeet GPU on Windows', async () => {
     installMockElectronApi({
-      'app:get-version': '1.1.0-internal.3',
+      'app:get-version': '1.1.0-internal.4',
       'updater:get-status': createUpdateStatus(),
       'app:get-runtime-info': createRuntimeInfo({
         platform: 'win32',
@@ -412,7 +412,7 @@ describe('Settings', () => {
 
   it('hides transcription quality controls on Windows CPU Parakeet tiers', async () => {
     installMockElectronApi({
-      'app:get-version': '1.1.0-internal.3',
+      'app:get-version': '1.1.0-internal.4',
       'updater:get-status': createUpdateStatus(),
       'app:get-runtime-info': createRuntimeInfo({
         platform: 'win32',

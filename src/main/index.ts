@@ -979,7 +979,7 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-complete', () => {
+  const markOllamaSetupReady = (): void => {
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
@@ -987,6 +987,10 @@ app.whenReady().then(async () => {
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
+  }
+
+  managedOllamaManager.on('pull-complete', () => {
+    markOllamaSetupReady()
   })
 
   const markOllamaSetupStarting = (): void => {
@@ -1028,7 +1032,12 @@ app.whenReady().then(async () => {
   // path keeps its existing single recovery flow unchanged.
   const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
     if (windowsOllamaSetupCoordinator) {
-      void windowsOllamaSetupCoordinator.ensureRunning(options).catch(() => {})
+      void windowsOllamaSetupCoordinator
+        .ensureRunning(options)
+        .then(() => {
+          markOllamaSetupReady()
+        })
+        .catch(() => {})
       return
     }
 
@@ -1040,12 +1049,7 @@ app.whenReady().then(async () => {
     ollamaRecoveryPromise = managedOllamaManager
       .startAndPull()
       .then(() => {
-        lastSuccessfulOllamaPhase = 'ready'
-        ollamaSetupState.phase = 'ready'
-        ollamaSetupState.percent = 100
-        delete ollamaSetupState.error
-        delete ollamaSetupState.failedStep
-        broadcastOllamaStatus()
+        markOllamaSetupReady()
       })
       .catch((err) => {
         markOllamaSetupFailed(err)
