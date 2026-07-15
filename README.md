@@ -8,7 +8,7 @@
 
 AutoDoc lives in your menu bar, notices when a meeting starts, and hands you a clean transcript and structured notes the moment it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No AutoDoc account. No AI API keys necessary.
 
-[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.0/autodoc-1.0.0.dmg)
+[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.0.0/autodoc-1.0.0.dmg) <img src="docs/assets/badges/windows-coming-soon.svg" alt="Windows Coming Soon!" />
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platform](https://img.shields.io/badge/macOS-14%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/badge/release-v1.0.0-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
