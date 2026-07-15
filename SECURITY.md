@@ -17,7 +17,7 @@ Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Instead, report privately through either channel:
 
-- **Email:** chris@duetdisplay.com
+- **Email:** team@getautodoc.com
 - **GitHub:** open a private [security advisory](https://github.com/DuetDisplay/AutoDoc/security/advisories/new)
 
 Please include:
