@@ -343,6 +343,19 @@ export class OllamaProvider implements LLMProvider {
     }
 
     if (process.platform === 'win32') {
+      // Same hardware gate as setInitialContextProfile — do not clobber low-memory
+      // hosts when callers pass false (e.g. Windows notes path in segmentation).
+      const memory = this.getHostMemorySnapshot()
+      const shouldUseLowMemory =
+        (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+        (memory.totalGiB != null && memory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
+
+      if (shouldUseLowMemory) {
+        this.contextProfile = 'low-memory'
+        this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
+        return
+      }
+
       this.contextProfile = 'windows-balanced'
       this.contextTokens = WINDOWS_CONTEXT_TOKENS
       return

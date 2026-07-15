@@ -3,6 +3,7 @@ import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
 import type { CalendarManager } from '../calendar-manager'
+import { TranscriptionWorkerClient } from '../transcription-worker-client'
 import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
@@ -1207,6 +1208,146 @@ describe('TranscriptionService', () => {
     vi.useRealTimers()
   })
 
+  it('extends the memory wait on low-spec when free memory stays below 1 GiB, then eventually proceeds', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    try {
+      mockWhisper = {
+        ...mockWhisper,
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => ({
+          id: 'win-low-spec',
+          label: 'Low-spec Windows processing',
+          reason: 'test',
+          hardware: { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 0.94 },
+          dualSourceMode: 'sequential',
+          serializeLocalProcessing: true,
+          notesAfterTranscriptionOnly: true,
+          threadPolicy: 'min'
+        }),
+        async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms)
+        },
+        () => ({ freeGiB: 0.94, totalGiB: 8 })
+      )
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValue(child as any)
+      fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+      const promise = (service as any).runWhisperPassAndRead(
+        '/mock/tmp/audio.wav',
+        'meeting-low-mem',
+        60,
+        []
+      )
+
+      for (let i = 0; i < 13; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: 'Proceeding with transcription pass after memory wait timeout',
+          meetingId: 'meeting-low-mem'
+        })
+      )
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: expect.stringMatching(/extended memory wait/i),
+          meetingId: 'meeting-low-mem'
+        })
+      )
+      expect(childProcessMock.spawn).not.toHaveBeenCalled()
+
+      for (let i = 0; i < 50; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      child.emit('close', 0)
+      await promise
+      expect(childProcessMock.spawn).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not extend the memory wait when free memory is at least 1 GiB after the normal timeout', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => ({
+        id: 'win-low-spec',
+        label: 'Low-spec Windows processing',
+        reason: 'test',
+        hardware: { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 1.2 },
+        dualSourceMode: 'sequential',
+        serializeLocalProcessing: true,
+        notesAfterTranscriptionOnly: true,
+        threadPolicy: 'min'
+      }),
+      async (ms) => {
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB: 1.2, totalGiB: 8 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-1gib',
+      60,
+      []
+    )
+    for (let i = 0; i < 13; i += 1) {
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Proceeding with transcription pass after memory wait timeout',
+        meetingId: 'meeting-1gib'
+      })
+    )
+    expect(autodocLogMock.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringMatching(/extended memory wait/i)
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
   it('skips the Windows memory gate on macOS', async () => {
     setPlatform('darwin')
     mockWhisper = {
@@ -1310,6 +1451,135 @@ describe('TranscriptionService', () => {
     await expect(
       (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
     ).rejects.toThrow(/faster-whisper worker failed/)
+  })
+
+  it.each(['887A0005', '887A0006'] as const)(
+    'disposes the transcription worker client after DML device-loss %s so the next pass gets a fresh client',
+    async (deviceLossCode) => {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+        isParakeetSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('dml'),
+        getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5),
+        downgradeParakeetGpuToCpuForSession: vi.fn()
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => null,
+        async () => undefined,
+        () => ({ freeGiB: 16, totalGiB: 32 })
+      )
+
+      workerClientMock.transcribe.mockRejectedValueOnce(
+        new Error(
+          `[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider ... ${deviceLossCode} The GPU device instance has been suspended.`
+        )
+      )
+
+      await expect(
+        (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-loss', 60)
+      ).rejects.toThrow(/parakeet worker failed/)
+
+      expect(workerClientMock.dispose).toHaveBeenCalled()
+      expect((service as any).transcriptionWorkerClient).toBeNull()
+      expect((service as any).transcriptionWorkerClientFingerprint).toBeNull()
+
+      const clientCallsAfterFailure = vi.mocked(TranscriptionWorkerClient).mock.calls.length
+      workerClientMock.transcribe.mockResolvedValueOnce({ transcription: [] })
+      await (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-loss', 60)
+
+      expect(vi.mocked(TranscriptionWorkerClient).mock.calls.length).toBeGreaterThan(
+        clientCallsAfterFailure
+      )
+    }
+  )
+
+  it('falls back to the CPU backend after 2 consecutive DML device-loss failures', async () => {
+    setPlatform('win32')
+    let device: 'dml' | 'cpu' = 'dml'
+    let backend: 'parakeet-gpu' | 'parakeet-cpu' = 'parakeet-gpu'
+    const downgradeParakeetGpuToCpuForSession = vi.fn(() => {
+      device = 'cpu'
+      backend = 'parakeet-cpu'
+    })
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      isParakeetSelected: vi.fn().mockReturnValue(true),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn(() => device),
+      getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getTranscriptionBackend: vi.fn(() => backend),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5),
+      downgradeParakeetGpuToCpuForSession
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    const deviceLoss = new Error(
+      '[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider ... 887A0005 The GPU device instance has been suspended.'
+    )
+    workerClientMock.transcribe
+      .mockRejectedValueOnce(deviceLoss)
+      .mockRejectedValueOnce(deviceLoss)
+      .mockResolvedValueOnce({ transcription: [] })
+
+    await expect(
+      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-1', 60)
+    ).rejects.toThrow(/parakeet worker failed/)
+    expect(downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+
+    await expect(
+      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-2', 60)
+    ).rejects.toThrow(/parakeet worker failed/)
+    expect(downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+
+    workerClientMock.load.mockClear()
+    await (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-3', 60)
+    expect(workerClientMock.load).toHaveBeenCalledWith(
+      expect.objectContaining({
+        device: 'cpu',
+        engine: 'parakeet'
+      })
+    )
+    expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
   })
 
   it('classifies Metal aborts as whisper-metal-crash', () => {

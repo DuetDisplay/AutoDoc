@@ -793,6 +793,28 @@ describe('OllamaProvider grounding', () => {
     expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
   })
 
+  it('keeps low-memory context when setLowMemoryMode(false) runs on a low-RAM Windows host', () => {
+    setPlatform('win32')
+    const lowRamProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(lowRamProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 2.5, totalGiB: 7.77 })
+
+    lowRamProvider.setLowMemoryMode(false)
+
+    expect((lowRamProvider as any).contextProfile).toBe('low-memory')
+    expect((lowRamProvider as any).contextTokens).toBe(LOW_MEMORY_CONTEXT_TOKENS)
+  })
+
+  it('uses windows-balanced context when setLowMemoryMode(false) runs on a high-RAM Windows host', () => {
+    setPlatform('win32')
+    const highRamProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(highRamProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 16, totalGiB: 32 })
+
+    highRamProvider.setLowMemoryMode(false)
+
+    expect((highRamProvider as any).contextProfile).toBe('windows-balanced')
+    expect((highRamProvider as any).contextTokens).toBe(WINDOWS_CONTEXT_TOKENS)
+  })
+
   describe('Windows near-duplicate item dedup', () => {
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
 

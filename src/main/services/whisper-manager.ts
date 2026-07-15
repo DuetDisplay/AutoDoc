@@ -131,6 +131,7 @@ export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private runtimeValidated = false
+  private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
   private selectedWindowsProcessingProfile: WindowsProcessingProfile | null = null
   private selectedMacProfile: MacProcessingProfile | null = null
@@ -376,7 +377,31 @@ export class WhisperManager extends EventEmitter {
       return null
     }
 
-    return this.getSelectedWindowsProfile().estimatedMemoryGiB
+    const profile = this.getSelectedWindowsProfile()
+    const workerProfile = this.getWorkerProfile()
+    if (profile.id === 'parakeet-gpu' && workerProfile.computeType === 'int8') {
+      return this.windowsTranscriptionProfiles['parakeet-cpu'].estimatedMemoryGiB
+    }
+
+    return profile.estimatedMemoryGiB
+  }
+
+  /** Session-only fallback after repeated DirectML device-loss failures. */
+  downgradeParakeetGpuToCpuForSession(): void {
+    if (!IS_WIN) {
+      return
+    }
+
+    const current = this.getSelectedWindowsProfile()
+    if (current.id !== 'parakeet-gpu') {
+      return
+    }
+
+    this.recordDowngrade('parakeet-gpu', 'parakeet-cpu')
+    this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
+    this.runtimeValidated = false
+    this.validatedWorkerFingerprint = null
+    void this.refreshWindowsProcessingProfile()
   }
 
   getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
@@ -461,6 +486,62 @@ export class WhisperManager extends EventEmitter {
     }
 
     return base
+  }
+
+  private getWorkerProfileFingerprint(): string {
+    const profile = this.getWorkerProfile()
+    return `${profile.id}:${profile.computeType}:${this.getWorkerModelPath()}`
+  }
+
+  private markRuntimeValidated(): void {
+    this.runtimeValidated = true
+    this.validatedWorkerFingerprint = this.getWorkerProfileFingerprint()
+  }
+
+  private syncRuntimeValidatedWithWorkerProfile(): void {
+    if (!this.runtimeValidated) {
+      return
+    }
+
+    const current = this.getWorkerProfileFingerprint()
+    if (this.validatedWorkerFingerprint == null) {
+      this.validatedWorkerFingerprint = current
+      return
+    }
+
+    if (this.validatedWorkerFingerprint !== current) {
+      this.runtimeValidated = false
+      this.validatedWorkerFingerprint = null
+    }
+  }
+
+  private async areSelectedWorkerAssetsPresent(): Promise<boolean> {
+    if (!this.isWorkerEngineSelected()) {
+      return false
+    }
+
+    const profile = this.getSelectedWindowsProfile()
+    const workerProfile = this.getWorkerProfile()
+    for (const asset of profile.assets) {
+      const resolvedAsset =
+        asset.id === 'model' &&
+        workerProfile.computeType === 'int8' &&
+        profile.id === 'parakeet-gpu'
+          ? (this.windowsTranscriptionProfiles['parakeet-cpu'].assets.find(
+              (candidate) => candidate.id === 'model'
+            ) ?? asset)
+          : asset
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(workerProfile, asset.id)
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        resolvedAsset.expectedFiles
+      )
+      if (missingExpectedFiles.length > 0) {
+        return false
+      }
+    }
+
+    return true
   }
 
   private recordDowngrade(
@@ -716,6 +797,8 @@ export class WhisperManager extends EventEmitter {
 
   async isReady(): Promise<boolean> {
     try {
+      this.syncRuntimeValidatedWithWorkerProfile()
+
       if (this.isMlxWhisperSelected()) {
         await access(this.getMlxWhisperPythonPath())
         await access(this.getMlxWhisperScriptPath())
@@ -725,8 +808,10 @@ export class WhisperManager extends EventEmitter {
 
       if (this.isWorkerEngineSelected()) {
         await access(this.getWorkerPythonPath())
-        await access(this.getWorkerModelPath())
         await access(this.getFfmpegPath())
+        if (!(await this.areSelectedWorkerAssetsPresent())) {
+          return false
+        }
         return this.runtimeValidated
       }
 
@@ -816,6 +901,7 @@ export class WhisperManager extends EventEmitter {
       await mkdir(this.getModelsDir(), { recursive: true })
       await this.selectMacProfile()
       await this.selectWindowsProfile()
+      this.syncRuntimeValidatedWithWorkerProfile()
       this.setupStatus = this.withBackendStatus({ phase: 'checking', percent: 0 })
       this.emit('setup-status', this.getSetupStatus())
 
@@ -963,7 +1049,7 @@ export class WhisperManager extends EventEmitter {
         }
       }
 
-      this.runtimeValidated = true
+      this.markRuntimeValidated()
 
       this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
       this.emit('setup-status', this.getSetupStatus())
@@ -1097,7 +1183,7 @@ export class WhisperManager extends EventEmitter {
           context: {
             backend: profile.id,
             assetId: asset.id,
-            filename: asset.filename,
+            filename: resolvedAsset.filename,
             targetDir: assetRoot
           }
         })
@@ -1110,7 +1196,7 @@ export class WhisperManager extends EventEmitter {
         context: {
           backend: profile.id,
           assetId: asset.id,
-          filename: asset.filename,
+          filename: resolvedAsset.filename,
           targetDir: assetRoot,
           missingExpectedFiles
         }
@@ -1130,7 +1216,7 @@ export class WhisperManager extends EventEmitter {
       throw new Error(`${profile.label} failed startup validation after setup.`)
     }
 
-    this.runtimeValidated = true
+    this.markRuntimeValidated()
     this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
     this.emit('setup-status', this.getSetupStatus())
   }
@@ -1214,7 +1300,7 @@ export class WhisperManager extends EventEmitter {
       throw new Error(`${profile.label} failed startup validation after setup.`)
     }
 
-    this.runtimeValidated = true
+    this.markRuntimeValidated()
     this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
     this.emit('setup-status', this.getSetupStatus())
   }
@@ -1258,7 +1344,7 @@ export class WhisperManager extends EventEmitter {
       throw new Error('MLX Whisper failed startup validation after setup.')
     }
 
-    this.runtimeValidated = true
+    this.markRuntimeValidated()
     this.setupStatus = this.withBackendStatus({ phase: 'ready', percent: 100 })
     this.emit('setup-status', this.getSetupStatus())
   }

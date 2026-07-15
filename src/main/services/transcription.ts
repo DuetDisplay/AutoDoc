@@ -57,6 +57,9 @@ const PARAKEET_SINGLE_PASS_MAX_DURATION_SEC = 3 * 60 * 60
 const WINDOWS_MEMORY_GATE_HEADROOM_GIB = 1
 const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
 const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
+const WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS = 4 * 60 * 1000
+const WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB = 1
+const DML_DEVICE_LOSS_FAILURE_THRESHOLD = 2
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
@@ -137,6 +140,7 @@ export class TranscriptionService {
   private workerLoadedFingerprint: string | null = null
   private workerJobsServed = 0
   private workerJobsServedClient: TranscriptionWorkerClient | null = null
+  private consecutiveDmlDeviceLossFailures = 0
   private transcriptionJobStartedAt: number | null = null
   private lastEtaSeconds: number | null = null
   private jobAudioDurationSec = 0
@@ -1959,6 +1963,21 @@ export class TranscriptionService {
     )
   }
 
+  private isDmlDeviceLossError(message: string): boolean {
+    return (
+      message.includes('887A0005') ||
+      message.includes('887A0006') ||
+      message.includes('DmlExecutionProvider')
+    )
+  }
+
+  private disposeTranscriptionWorkerClient(): void {
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = null
+    this.transcriptionWorkerClientFingerprint = null
+    this.workerLoadedFingerprint = null
+  }
+
   private getTranscriptionWorkerClientFingerprint(): string {
     return [
       this.whisperManager.getWorkerPythonPath(),
@@ -2100,9 +2119,26 @@ export class TranscriptionService {
         }
       )
       await writeFile(jsonPath, JSON.stringify(result), 'utf-8')
+      this.consecutiveDmlDeviceLossFailures = 0
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (this.isDmlDeviceLossError(message)) {
+        this.disposeTranscriptionWorkerClient()
+        this.consecutiveDmlDeviceLossFailures += 1
+        if (this.consecutiveDmlDeviceLossFailures === DML_DEVICE_LOSS_FAILURE_THRESHOLD) {
+          this.whisperManager.downgradeParakeetGpuToCpuForSession?.()
+          logAutodocEvent({
+            area: 'transcription',
+            message: 'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures',
+            meetingId,
+            context: {
+              consecutiveFailures: this.consecutiveDmlDeviceLossFailures,
+              backend: this.whisperManager.getTranscriptionBackend()
+            }
+          })
+        }
+      }
       const engine = this.whisperManager.getWorkerEngine()
       throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
     } finally {
@@ -2322,16 +2358,49 @@ export class TranscriptionService {
       }
     }
 
+    const freeAfterTimeoutGiB = readFreeGiB()
     logAutodocEvent({
       area: 'transcription',
       message: 'Proceeding with transcription pass after memory wait timeout',
       meetingId,
       context: {
-        freeGiB: readFreeGiB(),
+        freeGiB: freeAfterTimeoutGiB,
         requiredGiB,
         waitedMs: WINDOWS_MEMORY_GATE_MAX_WAIT_MS
       }
     })
+
+    const profile = await this.getEffectiveWindowsProcessingProfileForJob()
+    const isCpuTierProfile =
+      profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
+    if (
+      !isCpuTierProfile ||
+      freeAfterTimeoutGiB == null ||
+      freeAfterTimeoutGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB
+    ) {
+      return
+    }
+
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Starting extended memory wait on low-spec/CPU profile after timeout with low free memory',
+      meetingId,
+      context: {
+        freeGiB: freeAfterTimeoutGiB,
+        requiredGiB,
+        minFreeGiB: WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB,
+        maxExtraWaitMs: WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
+      }
+    })
+
+    const extendedStartedAt = Date.now()
+    while (Date.now() - extendedStartedAt < WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS) {
+      await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
+      const freeGiB = readFreeGiB()
+      if (freeGiB == null || freeGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB) {
+        return
+      }
+    }
   }
 
   private shouldRetryWhisperWithoutGpu(error: unknown, extraArgs: string[]): boolean {

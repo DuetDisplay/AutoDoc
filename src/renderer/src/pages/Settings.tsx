@@ -500,8 +500,8 @@ export function Settings() {
                   <div>
                     <p className="text-[12px] font-semibold text-ink mb-1">Transcription quality</p>
                     <p className="text-[12px] text-ink-muted mb-3">
-                      Balanced gives the most accurate transcripts. Fast trades a little accuracy for
-                      quicker turnaround.
+                      Balanced gives the most accurate transcripts. Fast uses a smaller, more
+                      efficient model that may be slightly less accurate.
                     </p>
                     <div className="flex flex-col gap-2">
                       {renderModeChoice(
@@ -515,7 +515,7 @@ export function Settings() {
                       {renderModeChoice(
                         'transcription-quality',
                         'Fast',
-                        'Noticeably faster, slightly less accurate.',
+                        'Smaller model, lighter on memory. May be slightly less accurate; speed varies by hardware.',
                         'fast',
                         transcriptionQualityMode,
                         handleSetTranscriptionQualityMode
@@ -534,7 +534,8 @@ export function Settings() {
                   <p className="text-[12px] text-ink-muted mb-3">
                     Balanced keeps transcription gentler on CPU and battery. Fast gives
                     transcription more room to run. Neither affects transcript accuracy — only how
-                    much of your computer transcription can use.
+                    much of your computer transcription can use. On GPU-accelerated transcription
+                    this setting has little effect.
                   </p>
                   <div className="flex flex-col gap-2">
                     {renderModeChoice(

@@ -392,6 +392,22 @@ describe('Settings', () => {
 
     expect(await screen.findByText('Transcription quality')).toBeInTheDocument()
     expect(screen.getByText('System impact')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Balanced gives the most accurate transcripts. Fast uses a smaller, more efficient model that may be slightly less accurate.'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Smaller model, lighter on memory. May be slightly less accurate; speed varies by hardware.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Noticeably faster/i)).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /On GPU-accelerated transcription this setting has little effect\./
+      )
+    ).toBeInTheDocument()
   })
 
   it('hides transcription quality controls on Windows CPU Parakeet tiers', async () => {

@@ -297,6 +297,22 @@ describe('WhisperManager', () => {
     expect(manager.getWorkerDevice()).toBe('dml')
   })
 
+  it('reports parakeet-cpu estimated memory for parakeet-gpu in fast quality mode', () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']
+    ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+
+    expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(4)
+
+    manager.setTranscriptionQualityModeGetter(() => 'fast')
+    expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].estimatedMemoryGiB
+    )
+  })
+
   it('records downgrade chain entries', () => {
     ;(manager as any).recordDowngrade('parakeet-gpu', 'parakeet-cpu')
     ;(manager as any).recordDowngrade('parakeet-cpu', 'whisper-cpp')

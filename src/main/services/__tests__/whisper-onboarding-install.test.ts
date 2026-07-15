@@ -875,6 +875,116 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('does not treat empty int8 model dir as ready after switching parakeet-gpu to fast quality', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-revalidate-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      let qualityMode: 'balanced' | 'fast' = 'balanced'
+      manager.setTranscriptionQualityModeGetter(() => qualityMode)
+
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-fp32.zip'
+      ])
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      qualityMode = 'fast'
+      const int8ModelDir = manager.getParakeetModelPath()
+      expect(int8ModelDir).toContain('parakeet-tdt-0.6b-v3-int8')
+      await mkdir(int8ModelDir, { recursive: true })
+
+      // Directory exists but expected int8 files are missing — must not short-circuit as ready
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      assetDownloads.length = 0
+      // Match transcription.ts: only call ensureReady when isReady is false
+      if (!(await manager.isReady())) {
+        await manager.ensureReady()
+      }
+
+      expect(assetDownloads).toContain('parakeet-tdt-0.6b-v3-int8.zip')
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
+      ).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('ready-check requires int8 expected files for fast parakeet-gpu, not bare model directory', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+      ;(manager as any).runtimeValidated = true
+
+      manager.setTranscriptionQualityModeGetter(() => 'fast')
+      const int8ModelDir = manager.getParakeetModelPath()
+      await mkdir(int8ModelDir, { recursive: true })
+      // Place a non-expected file so the directory is non-empty but still incomplete
+      await writeFile(join(int8ModelDir, 'README.txt'), 'partial')
+
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      const missing = await (manager as any).getMissingExpectedFiles(
+        int8ModelDir,
+        WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].assets.find(
+          (asset: { id: string }) => asset.id === 'model'
+        )!.expectedFiles
+      )
+      expect(missing).toContain('encoder-model.int8.onnx')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('prefers installed faster-whisper-cpu over missing parakeet at runtime', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
