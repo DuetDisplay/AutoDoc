@@ -72,4 +72,4 @@ Please **do not** file public issues for vulnerabilities. Follow
 ## Questions
 
 Open a [discussion or issue](https://github.com/DuetDisplay/AutoDoc/issues),
-or email **chris@duetdisplay.com**.
+or email **team@getautodoc.com**.
