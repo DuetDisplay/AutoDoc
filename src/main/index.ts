@@ -415,7 +415,17 @@ async function runSentryQaProbe(): Promise<void> {
 
 if (!gotSingleInstanceLock) {
   traceInstallPolicy('index: secondary instance exiting (lock failed)')
-  app.exit(0)
+  // This exit must be visible in QA logs: flush the async log queue before dying, or
+  // launch-failure investigations see nothing (log writes are queued and app.exit kills them).
+  logAutodocEvent({
+    area: 'app',
+    level: 'warn',
+    message: 'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
+    context: { pid: process.pid, execPath: process.execPath }
+  })
+  void flushAutodocLogWrites()
+    .catch(() => {})
+    .finally(() => app.exit(0))
   // app.exit(0) may not terminate on macOS when app.whenReady() hasn't fired yet
   setTimeout(() => process.exit(0), 2000).unref()
 } else {
@@ -509,6 +519,7 @@ app.whenReady().then(async () => {
   void runSentryQaProbe()
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
+  logAutodocEvent({ area: 'app', message: 'startup: install policy passed; continuing launch' })
 
   const buildPermissionLogContext = (
     context?: Record<string, unknown>

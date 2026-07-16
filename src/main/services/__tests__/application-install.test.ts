@@ -15,6 +15,8 @@ const mockGetName = vi.fn()
 const mockGetPath = vi.fn()
 const mockUnref = vi.fn()
 const mockLogAutodocEvent = vi.fn()
+const mockFlushLogWrites = vi.fn(async () => {})
+const mockReleaseSingleInstanceLock = vi.fn()
 
 type MockChildProcess = EventEmitter & { pid?: number; unref: () => void }
 
@@ -76,7 +78,7 @@ vi.mock('node:fs', () => ({
 
 vi.mock('../autodoc-log', () => ({
   logAutodocEvent: mockLogAutodocEvent,
-  flushAutodocLogWrites: vi.fn(async () => {}),
+  flushAutodocLogWrites: mockFlushLogWrites,
 }))
 
 vi.mock('electron', () => ({
@@ -87,6 +89,7 @@ vi.mock('electron', () => ({
     getPath: mockGetPath,
     exit: mockExit,
     quit: mockQuit,
+    releaseSingleInstanceLock: mockReleaseSingleInstanceLock,
   },
   dialog: {
     showMessageBox: mockShowMessageBox,
@@ -259,7 +262,35 @@ describe('application-install', () => {
     const [command, , opts] = mockSpawn.mock.calls[0]
     expect(command).toBe('C:\\Users\\chris\\AppData\\Local\\Programs\\AutoDoc\\autodoc.exe')
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    // The child must be marked as a redirect target so it can never redirect again (loop breaker),
+    // and the single-instance lock must be released so the child can't lose the lock race and die.
+    expect(opts.env).toMatchObject({ AUTODOC_INSTALL_REDIRECT_CHILD: '1' })
+    expect(mockReleaseSingleInstanceLock).toHaveBeenCalled()
+    // Queued log writes must be flushed before the process exits or the decision lines are lost.
+    expect(mockFlushLogWrites).toHaveBeenCalled()
     expect(mockExit).toHaveBeenCalledWith(0)
+  })
+
+  it('never redirects again when this process was itself spawned by a same-version redirect', async () => {
+    // Loop breaker: two copies pointing at each other would otherwise hand off forever
+    // with no window ever appearing.
+    mockWindowsPaths()
+    mockWindowsRegistryInstall('0.1.5')
+    process.env.AUTODOC_INSTALL_REDIRECT_CHILD = '1'
+    try {
+      const { enforceInstalledApplicationPolicy } = await loadModule()
+
+      await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(true)
+
+      expect(mockSpawn).not.toHaveBeenCalled()
+      expect(mockExit).not.toHaveBeenCalled()
+      expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+        level: 'warn',
+        message: expect.stringContaining('redirect child'),
+      }))
+    } finally {
+      delete process.env.AUTODOC_INSTALL_REDIRECT_CHILD
+    }
   })
 
   it('fails open when enforcement itself throws unexpectedly', async () => {

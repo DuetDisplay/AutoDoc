@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve, win32 as pathWin32 } from 'node:path'
 import { promisify } from 'node:util'
 import type { ChildProcess } from 'node:child_process'
 import { app, dialog } from 'electron'
-import { logAutodocEvent } from './autodoc-log'
+import { flushAutodocLogWrites, logAutodocEvent } from './autodoc-log'
 
 const execFile = promisify(execFileCallback)
 const APPLICATIONS_DIR = '/Applications'
@@ -46,6 +46,11 @@ interface WindowsReplacementOptions {
 let secondInstancePromptOpen = false
 
 const REDIRECT_SPAWN_CONFIRMATION_TIMEOUT_MS = 5000
+/**
+ * Set on processes spawned by the same-version redirect so the child never redirects again.
+ * Breaks any redirect ping-pong loop where two copies keep handing off to each other.
+ */
+export const INSTALL_REDIRECT_CHILD_ENV = 'AUTODOC_INSTALL_REDIRECT_CHILD'
 
 /**
  * Unconditional structured logging of install-policy decisions to the standard app log.
@@ -57,6 +62,19 @@ function logInstallPolicy(message: string, context?: Record<string, unknown>, le
     logAutodocEvent({ area: 'app', level, message: `install-policy: ${message}`, context })
   } catch {
     // Logging must never break launch.
+  }
+}
+
+/**
+ * Log writes are queued asynchronously; every install-policy exit path must flush the queue
+ * first or the decision lines are lost when app.exit(0) kills the process. QA logs from
+ * launch-failure machines contained no install-policy lines for exactly this reason.
+ */
+async function flushInstallPolicyLogs(): Promise<void> {
+  try {
+    await flushAutodocLogWrites()
+  } catch {
+    // Best-effort; never block the exit on logging.
   }
 }
 
@@ -137,6 +155,15 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
   }
 
   if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
+    if (process.env[INSTALL_REDIRECT_CHILD_ENV] === '1') {
+      // This process was itself spawned by a same-version redirect. Redirecting again would
+      // ping-pong forever with nothing ever reaching a window; launch this copy instead.
+      logInstallPolicy('redirect child detected; skipping same-version redirect and continuing launch', {
+        current: currentApplication.containerPath,
+        installed: installedApplication.containerPath,
+      }, 'warn')
+      return true
+    }
     traceInstallPolicy('enforce: same-version redirect', {
       source: currentApplication.containerPath,
       target: installedApplication.containerPath,
@@ -180,6 +207,7 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
   })
   if (!userAcceptedReplacement) {
     logInstallPolicy('user declined replacement; quitting', { platform })
+    await flushInstallPolicyLogs()
     quitForInstalledCopyPolicy(platform)
     return false
   }
@@ -214,6 +242,7 @@ export async function warnIfUnsupportedMacOS(
     noLink: true,
   })
 
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
   return false
 }
@@ -845,6 +874,7 @@ async function replaceInstalledCopyAndRelaunch(
     await showReplacementError(platform, error)
   }
 
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
 }
 
@@ -1149,6 +1179,15 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
     return false
   }
 
+  // Release the single-instance lock before handing off, otherwise the spawned copy can
+  // reach its own requestSingleInstanceLock while this process is still exiting, lose the
+  // race, and silently quit — leaving the user with no window at all.
+  try {
+    ;(app as { releaseSingleInstanceLock?: () => void }).releaseSingleInstanceLock?.()
+  } catch {
+    // Best-effort; proceed with the handoff either way.
+  }
+
   let child: ChildProcess
   try {
     if (platform === 'darwin') {
@@ -1158,6 +1197,7 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
         detached: true,
         stdio: 'ignore',
         cwd: platformDirname(installedApplication.launchPath, platform),
+        env: { ...process.env, [INSTALL_REDIRECT_CHILD_ENV]: '1' },
       })
     } else {
       return false
@@ -1191,6 +1231,7 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
     target: installedApplication.launchPath,
     childPid: child.pid ?? null,
   })
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
   return true
 }
