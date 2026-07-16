@@ -433,6 +433,22 @@ if (!gotSingleInstanceLock) {
   })
 }
 
+// Sentry must be initialized before the app 'ready' event fires —
+// @sentry/electron v7 throws if init() runs after 'ready', which previously
+// left Sentry permanently disabled in packaged builds. Consent is read here
+// too (safe pre-ready: the prefs store only depends on
+// app.getPath('userData'), which is available before 'ready') so early crash
+// events from consenting users aren't dropped. The beforeSend hook still
+// gates every outgoing event on analyticsConsentEnabled.
+try {
+  analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+  diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
+  syncDiagnosticLogUploadForErrors()
+} catch (err) {
+  console.warn('Failed to read initial diagnostics consent for Sentry:', err)
+}
+initializeMainSentry()
+
 function createWindow(): void {
   recordMainDiagnosticAction({ category: 'app', action: 'main_window_created' })
   const windowIcon = is.dev
@@ -488,15 +504,8 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   if (!(await warnIfUnsupportedMacOS())) return
 
-  try {
-    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
-    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
-    syncDiagnosticLogUploadForErrors()
-  } catch (err) {
-    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
-  }
-
-  initializeMainSentry()
+  // Consent was read and Sentry was initialized at module evaluation time
+  // (before 'ready'); the QA probe only fires once consent + init are known.
   void runSentryQaProbe()
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
