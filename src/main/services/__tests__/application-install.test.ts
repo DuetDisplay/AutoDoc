@@ -142,7 +142,7 @@ describe('application-install', () => {
     expect(mockExit).toHaveBeenCalledWith(0)
   })
 
-  it('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
+  it.skipIf(process.platform === 'win32')('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
     mockGetName.mockReturnValue('autodoc')
     mockAccess.mockImplementation((targetPath: string) => {
       if (targetPath.includes('/Applications/autodoc.app/')) {
@@ -377,7 +377,7 @@ describe('application-install', () => {
     expect(replacementScript).toContain('/XF $uninstallExeName')
   })
 
-  it('resolves macOS second-instance from argv when additionalData is missing', async () => {
+  it.skipIf(process.platform === 'win32')('resolves macOS second-instance from argv when additionalData is missing', async () => {
     mockGetPath.mockImplementation((name: string) => {
       if (name === 'exe') {
         return '/Applications/AutoDoc.app/Contents/MacOS/AutoDoc'

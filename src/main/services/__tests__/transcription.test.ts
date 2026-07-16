@@ -556,6 +556,61 @@ describe('TranscriptionService', () => {
     })
   })
 
+  it('encrypts mic and system audio but not screen.webm after transcription', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (
+        String(path).endsWith('mic.webm') ||
+        String(path).endsWith('system.webm') ||
+        String(path).endsWith('screen.webm')
+      ) {
+        return undefined
+      }
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 3 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }]
+      })
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 500, to: 1200 }, text: 'Remote speaker words' }]
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-encrypt-0',
+          meetingId: 'meeting-encrypt',
+          speaker: 'Speaker',
+          text: 'My microphone words',
+          startMs: 0,
+          endMs: 900,
+          confidence: -1
+        }
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-encrypt-1',
+          meetingId: 'meeting-encrypt',
+          speaker: 'Speaker',
+          text: 'Remote speaker words',
+          startMs: 500,
+          endMs: 1200,
+          confidence: -1
+        }
+      ])
+
+    await expect((service as any).processJob('meeting-encrypt')).resolves.toBeUndefined()
+
+    const encryptedPaths = cryptoMock.encryptFileInPlace.mock.calls.map(([filePath]) =>
+      String(filePath)
+    )
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('mic.webm'))).toBe(true)
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('system.webm'))).toBe(true)
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('screen.webm'))).toBe(false)
+  })
+
   it('compacts diarization audio to transcript windows and remaps speaker timings back to the original meeting', async () => {
     const mockDiarization = createMockDiarizationService()
     mockDiarization.diarize.mockResolvedValue({

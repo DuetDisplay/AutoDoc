@@ -1,19 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'events'
 import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
-import { registerRecordingIpc } from '../recording-ipc'
+import { registerRecordingIpc, spawnFfmpegWithStallDetection } from '../recording-ipc'
 import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
 import { encryptJSON } from '../../services/crypto'
 import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
 
-const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage } = vi.hoisted(() => ({
+const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage, spawnBehavior } =
+  vi.hoisted(() => ({
   handle: vi.fn(),
   getSources: vi.fn(),
   appGetPath: vi.fn(),
   logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn(),
   captureMessage: vi.fn(),
+  spawnBehavior: { current: 'success' as 'success' | 'stall' | 'fail' }
+}))
+
+class MockFfmpegProcess extends EventEmitter {
+  pid = 1
+  stderr = new EventEmitter()
+  stdout = new EventEmitter()
+  kill = vi.fn(() => {
+    this.emit('close', null)
+  })
+}
+
+vi.mock('child_process', () => ({
+  spawn: vi.fn(() => {
+    const proc = new MockFfmpegProcess()
+    if (spawnBehavior.current === 'success') {
+      setTimeout(() => {
+        proc.stdout.emit('data', Buffer.from('progress=continue\n'))
+        proc.emit('close', 0)
+      }, 0)
+    } else if (spawnBehavior.current === 'fail') {
+      setTimeout(() => {
+        proc.stderr.emit('data', Buffer.from('encode error'))
+        proc.emit('close', 1)
+      }, 0)
+    }
+    return proc
+  })
 }))
 
 vi.mock('electron', () => ({
@@ -24,7 +54,9 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../../services/crypto', () => ({
-  encryptJSON: vi.fn()
+  encryptJSON: vi.fn(),
+  encryptFileInPlace: vi.fn().mockResolvedValue(undefined),
+  isEncrypted: vi.fn().mockResolvedValue(false)
 }))
 
 vi.mock('../../services/calendar-matcher', () => ({
@@ -52,6 +84,7 @@ vi.mock('../../services/e2e-fixtures', () => ({
 describe('recording IPC source handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    spawnBehavior.current = 'success'
     vi.mocked(readMetadata).mockResolvedValue(null)
     vi.mocked(matchCalendarEvent).mockReturnValue(null)
     delete process.env.AUTODOC_E2E
@@ -544,6 +577,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 
   beforeEach(() => {
     vi.clearAllMocks()
+    spawnBehavior.current = 'success'
     vi.mocked(matchCalendarEvent).mockReturnValue(null)
     delete process.env.AUTODOC_E2E
   })
@@ -700,6 +734,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
 describe.runIf(process.platform === 'win32')('windows finalize-stop robustness', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    spawnBehavior.current = 'success'
     vi.mocked(matchCalendarEvent).mockReturnValue(null)
     delete process.env.AUTODOC_E2E
   })
@@ -812,6 +847,82 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
         expect(enqueueMock).toHaveBeenCalledWith(meetingId)
       })
     } finally {
+      vi.mocked(encryptJSON).mockReset()
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('kills stalled ffmpeg processes when no progress is received', async () => {
+    spawnBehavior.current = 'stall'
+
+    vi.useFakeTimers()
+    try {
+      const promise = spawnFfmpegWithStallDetection('video concat', '/mock/ffmpeg', ['-i', 'input.webm'], {
+        meetingId: 'meeting-stall',
+        stallTimeoutMs: 1_000
+      })
+      const assertion = expect(promise).rejects.toThrow('ffmpeg video concat stalled after 1000ms')
+      await vi.advanceTimersByTimeAsync(1_001)
+      await assertion
+    } finally {
+      spawnBehavior.current = 'success'
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears finalizing state and sets videoProcessingFailed when video concat fails', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-video-fail-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingId = 'meeting-video-fail'
+    const meetingDir = path.join(recordingsDir, meetingId)
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+      await fsp.writeFile(path.join(meetingDir, 'screen-0000.webm'), Buffer.alloc(8))
+      await fsp.writeFile(path.join(meetingDir, 'screen-0001.webm'), Buffer.alloc(8))
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === meetingId) {
+          return {
+            sourceName: 'Entire screen',
+            startedAt: Date.now() - 30_000,
+            stoppedAt: Date.now() - 1_000,
+            durationSeconds: 29,
+            isFinalizing: true
+          }
+        }
+        return null
+      })
+      vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+      spawnBehavior.current = 'fail'
+
+      register({ recordingsDir })
+
+      const finalizeHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:finalize-stop'
+      )?.[1] as ((event: unknown, meetingId: string) => Promise<void>) | undefined
+      expect(finalizeHandler).toBeTypeOf('function')
+
+      await finalizeHandler?.(null, meetingId)
+
+      await vi.waitFor(() => {
+        expect(encryptJSON).toHaveBeenCalledWith(
+          expect.objectContaining({
+            isFinalizing: false,
+            videoProcessingFailed: true
+          }),
+          expect.stringContaining('metadata.json')
+        )
+      })
+      expect(logAutodocFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Failed to assemble segmented recording video',
+          meetingId
+        })
+      )
+      await expect(fsp.access(path.join(meetingDir, 'screen-0000.webm'))).resolves.toBeUndefined()
+      await expect(fsp.access(path.join(meetingDir, 'screen-0001.webm'))).resolves.toBeUndefined()
+    } finally {
+      spawnBehavior.current = 'success'
       vi.mocked(encryptJSON).mockReset()
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }

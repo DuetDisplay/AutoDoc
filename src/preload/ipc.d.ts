@@ -258,6 +258,7 @@ export interface IpcInvokeReturns {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    videoProcessingFailed?: boolean
   }
   'search:query': SearchResult[]
   'chat:send': string

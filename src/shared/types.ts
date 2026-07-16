@@ -104,6 +104,7 @@ export interface MeetingMetadata {
   calendarTitle?: string
   customTitle?: string
   notesReadyNotificationSentAt?: number
+  videoProcessingFailed?: boolean
 }
 
 export interface RecordingSource {

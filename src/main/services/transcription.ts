@@ -527,7 +527,7 @@ export class TranscriptionService {
       await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
-      for (const filename of ['mic.webm', 'system.webm', 'screen.webm']) {
+      for (const filename of ['mic.webm', 'system.webm']) {
         const filePath = join(meetingDir, filename)
         try {
           if ((await this.fileExists(filePath)) && !(await isEncrypted(filePath))) {

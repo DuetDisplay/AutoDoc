@@ -159,6 +159,7 @@ export function MeetingDetail() {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    videoProcessingFailed?: boolean
   } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
