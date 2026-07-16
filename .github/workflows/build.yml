@@ -19,11 +19,6 @@ on:
           - mac
           - windows
           - all
-      sign_windows:
-        description: Authenticode-sign the Windows QA build (requires DigiCert secrets)
-        required: false
-        default: false
-        type: boolean
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -219,9 +214,7 @@ jobs:
           }
 
       - name: Materialize DigiCert client certificate
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
@@ -231,9 +224,7 @@ jobs:
           "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert signing tools
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: digicert/code-signing-software-trust-action@v1.2.1
         with:
           use-github-caching-service: true
@@ -244,9 +235,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $candidatePaths = @()
@@ -331,9 +320,7 @@ jobs:
           "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check DigiCert signing health
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -347,10 +334,7 @@ jobs:
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows release
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
-        shell: pwsh
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
@@ -361,16 +345,10 @@ jobs:
           SM_LOG_LEVEL: TRACE
         run: |
           npm run build
-          if ("${{ steps.release_meta.outputs.release_version }}" -ne "") {
-            npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
-          } else {
-            npx electron-builder --win --publish never
-          }
+          npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.release_meta.outputs.release_version }}"
 
       - name: Verify Windows signatures
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         shell: pwsh
         run: |
           $files = @(
@@ -407,11 +385,7 @@ jobs:
           }
 
       - name: Capture DigiCert signing diagnostics
-        if: >-
-          (
-            (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-            (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
-          ) && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         shell: pwsh
         run: |
           $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
@@ -438,11 +412,7 @@ jobs:
           } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
 
       - name: Upload DigiCert signing diagnostics
-        if: >-
-          (
-            (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-            (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
-          ) && failure()
+        if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digicert-signing-diagnostics-${{ github.run_number }}
@@ -451,21 +421,14 @@ jobs:
           retention-days: 14
 
       - name: Build Windows artifacts
-        if: >-
-          (github.event_name == 'push' && github.ref_type == 'branch') ||
-          (github.event_name == 'workflow_dispatch' && inputs.sign_windows != true)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'branch')
         run: npm run build && npx electron-builder --win --publish never --config.win.forceCodeSigning=false
 
       - name: Upload Windows artifacts
-        if: >-
-          (
-            (github.event_name == 'push' && github.ref_type == 'branch') ||
-            (github.event_name == 'workflow_dispatch' && inputs.sign_windows != true) ||
-            (github.event_name == 'workflow_dispatch' && inputs.sign_windows == true)
-          ) && success()
+        if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'branch')) && success()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: autodoc-windows-${{ github.run_number }}${{ inputs.sign_windows == true && '-signed' || '' }}
+          name: autodoc-windows-${{ github.run_number }}
           path: |
             dist/*-setup.exe
           if-no-files-found: warn
