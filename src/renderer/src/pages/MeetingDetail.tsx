@@ -160,13 +160,16 @@ export function MeetingDetail() {
     durationSeconds: number | null
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
+    videoStatus?: 'processing' | 'ready' | 'failed'
   } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
     hasAudio: boolean
     audioFile?: string
+    videoStatus?: 'processing' | 'ready' | 'failed'
     mediaBaseUrl?: string
   } | null>(null)
+  const [videoRetryPending, setVideoRetryPending] = useState(false)
   const [speakers, setSpeakers] = useState<SpeakerMap>({})
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const transcriptTopRef = useRef<HTMLDivElement | null>(null)
@@ -505,9 +508,13 @@ export function MeetingDetail() {
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
-          isFinalizing: nextDetail?.isFinalizing ?? false
+          isFinalizing: nextDetail?.isFinalizing ?? false,
+          videoStatus: nextDetail?.videoStatus ?? null
         })
         setDetail(nextDetail)
+        if (nextDetail?.videoStatus === 'ready' || nextDetail?.videoStatus === 'failed') {
+          setVideoRetryPending(false)
+        }
       })
     const refreshMedia = () => window.electronAPI.invoke('recording:get-media', id).then(setMedia)
 
@@ -616,6 +623,17 @@ export function MeetingDetail() {
 
   const handleRetrySegmentation = () => {
     if (id) window.electronAPI.invoke('segmentation:retry', id)
+  }
+
+  const handleRetryVideo = () => {
+    if (!id) return
+    setVideoRetryPending(true)
+    void window.electronAPI.invoke('recording:retry-video', id).then(() => {
+      setDetail((current) =>
+        current ? { ...current, videoStatus: 'processing', videoProcessingFailed: undefined } : current
+      )
+      setMedia((current) => (current ? { ...current, hasVideo: false, videoStatus: 'processing' } : current))
+    })
   }
 
   const handleReprocessTranscript = () => {
@@ -972,6 +990,27 @@ export function MeetingDetail() {
           </div>
         ) : activeTab === 'transcript' ? (
           <div className="flex flex-col gap-4">
+            {(detail?.videoStatus === 'processing' || videoRetryPending) && (
+              <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
+                <p className="text-[13px] text-ink-muted animate-pulse">
+                  Finishing up your video…
+                </p>
+                <p className="text-[11.5px] text-ink-faint mt-1">
+                  Your transcript and notes are ready to use.
+                </p>
+              </div>
+            )}
+            {detail?.videoStatus === 'failed' && !videoRetryPending && (
+              <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
+                <p className="text-[13px] text-ink-muted">Video processing failed</p>
+                <button
+                  onClick={handleRetryVideo}
+                  className="mt-3 text-[11.5px] font-semibold text-sage hover:text-ink transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
             {media?.hasVideo && media.mediaBaseUrl && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
                 <video

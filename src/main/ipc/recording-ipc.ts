@@ -8,7 +8,7 @@ import { RecordingService } from '../services/recording'
 import { TranscriptionService } from '../services/transcription'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { CalendarManager } from '../services/calendar-manager'
-import { encryptFileInPlace, encryptJSON, isEncrypted } from '../services/crypto'
+import { decryptFileToTemp, encryptFileInPlace, encryptJSON, isEncrypted } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
@@ -40,6 +40,9 @@ const RAPID_ABORT_WITHOUT_MEDIA_MAX_DURATION_SECONDS = 5
 const WINDOWS_FINALIZE_WATCHDOG_MS = 60_000
 const FFMPEG_STALL_TIMEOUT_MS = 10 * 60_000
 const segmentTimingWriteQueues = new Map<string, Promise<void>>()
+const windowsVideoJobQueue: string[] = []
+const windowsVideoJobInFlight = new Set<string>()
+let windowsVideoJobProcessing = false
 
 interface SegmentTimingEntry {
   type: 'video' | 'mic' | 'system'
@@ -348,6 +351,36 @@ function mixAudioSegmentsWithOffsets(
   })
 }
 
+function concatVideoSegmentsCopy(
+  ffmpegPath: string,
+  listPath: string,
+  outputPath: string,
+  meetingId?: string
+): Promise<void> {
+  return spawnFfmpegWithStallDetection(
+    'video concat copy',
+    ffmpegPath,
+    [
+      '-fflags',
+      '+genpts',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      listPath,
+      '-map',
+      '0:v:0',
+      '-an',
+      '-c',
+      'copy',
+      '-y',
+      outputPath
+    ],
+    { meetingId }
+  )
+}
+
 function concatVideoSegments(
   ffmpegPath: string,
   listPath: string,
@@ -388,6 +421,60 @@ function concatVideoSegments(
   )
 }
 
+async function validateConcatenatedVideo(
+  ffmpegPath: string,
+  outputPath: string,
+  segmentPaths: string[]
+): Promise<boolean> {
+  const outputStat = await stat(outputPath).catch(() => null)
+  if (!outputStat || outputStat.size === 0) {
+    return false
+  }
+
+  let totalSegmentSize = 0
+  for (const segmentPath of segmentPaths) {
+    const segmentStat = await stat(segmentPath).catch(() => null)
+    if (!segmentStat) {
+      return false
+    }
+    totalSegmentSize += segmentStat.size
+  }
+
+  if (outputStat.size < totalSegmentSize * 0.5) {
+    return false
+  }
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, [
+        '-v',
+        'error',
+        '-ss',
+        '0',
+        '-t',
+        '1',
+        '-i',
+        outputPath,
+        '-f',
+        'null',
+        '-'
+      ])
+      let stderr = ''
+      proc.on('error', (err) => reject(err))
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg validation exited with code ${code}: ${stderr.slice(-500)}`))
+      })
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function assembleSegmentedCaptureFile(
   meetingDir: string,
   type: 'video' | 'mic' | 'system',
@@ -426,11 +513,39 @@ async function assembleSegmentedCaptureFile(
 
   try {
     if (type === 'video') {
-      await concatVideoSegments(ffmpegPath, listPath, finalPath, meetingId)
-      logRecordingDebug('assembled segmented video with VP9 re-encode concat', undefined, {
-        segmentCount: segmentNames.length,
-        finalFilename
-      })
+      const copyStartedAt = Date.now()
+      let usedCopyPath = false
+      try {
+        await concatVideoSegmentsCopy(ffmpegPath, listPath, finalPath, meetingId)
+        const valid = await validateConcatenatedVideo(ffmpegPath, finalPath, segmentPaths)
+        if (!valid) {
+          await unlink(finalPath).catch(() => {})
+          throw new Error('stream-copy concat validation failed')
+        }
+        usedCopyPath = true
+        logRecordingDebug('assembled segmented video with stream-copy concat', meetingId, {
+          segmentCount: segmentNames.length,
+          finalFilename,
+          elapsedMs: Date.now() - copyStartedAt
+        })
+      } catch (copyErr) {
+        logRecordingDebug(
+          'stream-copy video concat failed or invalid; falling back to VP9 re-encode',
+          meetingId,
+          {
+            error: copyErr instanceof Error ? copyErr.message : String(copyErr),
+            segmentCount: segmentNames.length
+          }
+        )
+        const reencodeStartedAt = Date.now()
+        await concatVideoSegments(ffmpegPath, listPath, finalPath, meetingId)
+        logRecordingDebug('assembled segmented video with VP9 re-encode concat', meetingId, {
+          segmentCount: segmentNames.length,
+          finalFilename,
+          elapsedMs: Date.now() - reencodeStartedAt,
+          copyAttempted: !usedCopyPath
+        })
+      }
     } else {
       const timingOffsets = await readSegmentTimings(meetingDir, type)
       const segmentOffsets = segmentNames.map((name) => {
@@ -521,6 +636,24 @@ async function getSegmentedCapturePresence(
     ),
     hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm'))
   }
+}
+
+async function isWindowsVideoWorkNeeded(meetingDir: string): Promise<boolean> {
+  const segmentedPresence = await getSegmentedCapturePresence(meetingDir)
+  if (segmentedPresence.hasSegmentedVideo) {
+    return true
+  }
+  const videoStat = await stat(join(meetingDir, 'screen.webm')).catch(() => null)
+  return videoStat !== null
+}
+
+async function decryptAudioForMux(filePath: string, tempFiles: string[]): Promise<string> {
+  if (await isEncrypted(filePath)) {
+    const temp = await decryptFileToTemp(filePath)
+    tempFiles.push(temp)
+    return temp
+  }
+  return filePath
 }
 
 async function maybeReportRapidAbortWithoutMedia(params: {
@@ -714,6 +847,230 @@ export function registerRecordingIpc(
     return finalizedMetadata
   }
 
+  async function resolveFfmpegPath(meetingId: string): Promise<string | null> {
+    const e2eFfmpegPath = isE2E ? process.env.AUTODOC_E2E_FFMPEG_PATH : undefined
+    if (e2eFfmpegPath) {
+      return e2eFfmpegPath
+    }
+
+    try {
+      await whisperManager.ensureReady()
+      return whisperManager.getFfmpegPath()
+    } catch (err) {
+      const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
+        .then(() => whisperManager.getFfmpegPath())
+        .catch(() => null)
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to ensure whisper tools are ready during recording post-processing',
+        error: err,
+        meetingId,
+        context: { ffmpegPathAvailable: Boolean(existingFfmpeg) }
+      })
+      console.error('whisperManager.ensureReady() failed — skipping video post-processing:', err)
+      return existingFfmpeg
+    }
+  }
+
+  async function runWindowsVideoMuxRemuxEncrypt(
+    meetingDir: string,
+    meetingId: string,
+    ffmpegPath: string | null
+  ): Promise<boolean> {
+    const micPath = join(meetingDir, 'mic.webm')
+    const systemPath = join(meetingDir, 'system.webm')
+    const videoPath = join(meetingDir, 'screen.webm')
+    const tempFiles: string[] = []
+    let videoProcessingFailed = false
+
+    try {
+      const micStat = await stat(micPath).catch(() => null)
+      const systemStat = await stat(systemPath).catch(() => null)
+      const videoStat = await stat(videoPath).catch(() => null)
+      if (videoStat && (micStat || systemStat)) {
+        const muxedPath = join(meetingDir, 'screen-muxed.webm')
+        const audioInputs: string[] = []
+        if (micStat) audioInputs.push(micPath)
+        if (systemStat) audioInputs.push(systemPath)
+        if (!ffmpegPath) {
+          throw new Error('ffmpeg path unavailable for audio mux')
+        }
+        if (audioInputs.length === 2) {
+          const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
+          const micInput = await decryptAudioForMux(micPath, tempFiles)
+          const systemInput = await decryptAudioForMux(systemPath, tempFiles)
+          await mergeAudioFiles(ffmpegPath, micInput, systemInput, mergedAudioPath)
+          await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath, meetingId)
+          await unlink(mergedAudioPath).catch(() => {})
+        } else {
+          const audioInput = await decryptAudioForMux(audioInputs[0], tempFiles)
+          await muxAudioIntoVideo(ffmpegPath, videoPath, audioInput, muxedPath, meetingId)
+        }
+        await replaceFileWithRetry(muxedPath, videoPath)
+      }
+    } catch (err) {
+      videoProcessingFailed = true
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to mux audio into recorded video',
+        error: err,
+        meetingId
+      })
+      console.error('Failed to mux audio into video:', err)
+    } finally {
+      await Promise.all(tempFiles.map((tempPath) => unlink(tempPath).catch(() => {})))
+    }
+
+    try {
+      const videoExists = await stat(videoPath).catch(() => null)
+      if (videoExists) {
+        if (!ffmpegPath) {
+          throw new Error('ffmpeg path unavailable for remux')
+        }
+        const seekablePath = join(meetingDir, 'screen-seekable.webm')
+        await remuxForSeeking(ffmpegPath, videoPath, seekablePath, meetingId)
+        await replaceFileWithRetry(seekablePath, videoPath)
+        const finalStat = await stat(videoPath).catch(() => null)
+        console.log('[recording post-process] remux for seeking OK', {
+          meetingId,
+          bytes: finalStat?.size,
+          path: videoPath
+        })
+      }
+    } catch (err) {
+      videoProcessingFailed = true
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Failed to remux recorded video for seeking',
+        error: err,
+        meetingId
+      })
+      console.error('Failed to remux for seeking (video will still play but may not seek):', err)
+    }
+
+    if (!videoProcessingFailed) {
+      await encryptScreenWebmIfNeeded(meetingDir, meetingId)
+    }
+
+    return !videoProcessingFailed
+  }
+
+  async function runWindowsVideoPostProcessingJob(meetingId: string): Promise<void> {
+    const jobStartedAt = Date.now()
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    logRecordingDebug('windows video job started', meetingId)
+
+    let videoProcessingFailed = false
+    const ffmpegPath = await resolveFfmpegPath(meetingId)
+
+    try {
+      try {
+        await assembleRecordingVideoSegment(meetingDir, ffmpegPath, meetingId)
+      } catch (err) {
+        videoProcessingFailed = true
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Failed to assemble segmented recording video',
+          error: err,
+          meetingId
+        })
+        console.error('Failed to assemble segmented recording video:', err)
+      }
+
+      if (!videoProcessingFailed) {
+        const muxRemuxOk = await runWindowsVideoMuxRemuxEncrypt(meetingDir, meetingId, ffmpegPath)
+        videoProcessingFailed = !muxRemuxOk
+      }
+
+      const latestMetadata = (await readMetadata(meetingDir)) ?? {
+        sourceName: null,
+        startedAt: Date.now(),
+        stoppedAt: Date.now(),
+        durationSeconds: 0
+      }
+
+      if (videoProcessingFailed) {
+        await persistRecordingMetadata(meetingDir, {
+          ...latestMetadata,
+          videoStatus: 'failed',
+          videoProcessingFailed: true
+        })
+      } else {
+        await persistRecordingMetadata(meetingDir, {
+          ...latestMetadata,
+          videoStatus: 'ready',
+          videoProcessingFailed: undefined
+        })
+      }
+    } catch (err) {
+      logAutodocFailure({
+        area: 'recording',
+        message: 'Windows video post-processing job failed',
+        error: err,
+        meetingId
+      })
+      const latestMetadata = (await readMetadata(meetingDir)) ?? {
+        sourceName: null,
+        startedAt: Date.now(),
+        stoppedAt: Date.now(),
+        durationSeconds: 0
+      }
+      await persistRecordingMetadata(meetingDir, {
+        ...latestMetadata,
+        videoStatus: 'failed',
+        videoProcessingFailed: true
+      }).catch(() => {})
+    } finally {
+      scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir)
+      broadcastEntryUpdated(meetingId)
+      logRecordingDebug('windows video job finished', meetingId, {
+        elapsedMs: Date.now() - jobStartedAt,
+        videoProcessingFailed
+      })
+    }
+  }
+
+  function enqueueWindowsVideoJob(meetingId: string): void {
+    if (windowsVideoJobInFlight.has(meetingId)) {
+      logRecordingDebug('windows video job already in flight; skipping duplicate enqueue', meetingId)
+      return
+    }
+    if (windowsVideoJobQueue.includes(meetingId)) {
+      logRecordingDebug('windows video job already queued; skipping duplicate enqueue', meetingId)
+      return
+    }
+    windowsVideoJobQueue.push(meetingId)
+    logRecordingDebug('windows video job enqueued', meetingId, {
+      queueLength: windowsVideoJobQueue.length
+    })
+    processNextWindowsVideoJob()
+  }
+
+  function processNextWindowsVideoJob(): void {
+    if (windowsVideoJobProcessing) return
+    if (windowsVideoJobQueue.length === 0) return
+
+    windowsVideoJobProcessing = true
+    const meetingId = windowsVideoJobQueue.shift()!
+    windowsVideoJobInFlight.add(meetingId)
+
+    void runWindowsVideoPostProcessingJob(meetingId)
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Windows video post-processing job crashed',
+          error: err,
+          meetingId
+        })
+      })
+      .finally(() => {
+        windowsVideoJobInFlight.delete(meetingId)
+        windowsVideoJobProcessing = false
+        processNextWindowsVideoJob()
+      })
+  }
+
   function runRecordingPostProcessing(meetingId: string, metadata: MeetingMetadata): void {
     if (windowsPostProcessingInFlight.has(meetingId)) {
       logRecordingDebug('post-processing already in flight; skipping duplicate run', meetingId)
@@ -725,41 +1082,15 @@ export function registerRecordingIpc(
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, meetingId)
       let workingMetadata = metadata
-      let videoProcessingFailed = false
       logRecordingDebug('post-processing started', meetingId, {
         startedAt: metadata.startedAt,
         stoppedAt: metadata.stoppedAt,
         isFinalizing: metadata.isFinalizing ?? false
       })
       await new Promise((resolve) => setTimeout(resolve, 100))
-      const micPath = join(meetingDir, 'mic.webm')
-      const systemPath = join(meetingDir, 'system.webm')
-      const videoPath = join(meetingDir, 'screen.webm')
-      let ffmpegPath: string | null = null
 
       try {
-        const e2eFfmpegPath = isE2E ? process.env.AUTODOC_E2E_FFMPEG_PATH : undefined
-        if (e2eFfmpegPath) {
-          ffmpegPath = e2eFfmpegPath
-        } else {
-          try {
-            await whisperManager.ensureReady()
-            ffmpegPath = whisperManager.getFfmpegPath()
-          } catch (err) {
-            const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
-              .then(() => whisperManager.getFfmpegPath())
-              .catch(() => null)
-            ffmpegPath = existingFfmpeg
-            logAutodocFailure({
-              area: 'recording',
-              message: 'Failed to ensure whisper tools are ready during recording post-processing',
-              error: err,
-              meetingId,
-              context: { ffmpegPathAvailable: Boolean(existingFfmpeg) }
-            })
-            console.error('whisperManager.ensureReady() failed — skipping mux:', err)
-          }
-        }
+        const ffmpegPath = await resolveFfmpegPath(meetingId)
 
         try {
           await assembleRecordingAudioSegments(meetingDir, ffmpegPath)
@@ -781,102 +1112,45 @@ export function registerRecordingIpc(
           skippedForE2E: isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1'
         })
 
-        try {
-          await assembleRecordingVideoSegment(meetingDir, ffmpegPath, meetingId)
-        } catch (err) {
-          videoProcessingFailed = true
-          logAutodocFailure({
-            area: 'recording',
-            message: 'Failed to assemble segmented recording video',
-            error: err,
-            meetingId
-          })
-          console.error('Failed to assemble segmented recording video:', err)
-        }
-
-        try {
-          const micStat = await stat(micPath).catch(() => null)
-          const systemStat = await stat(systemPath).catch(() => null)
-          const videoStat = await stat(videoPath).catch(() => null)
-          if (videoStat && (micStat || systemStat)) {
-            const muxedPath = join(meetingDir, 'screen-muxed.webm')
-            const audioInputs: string[] = []
-            if (micStat) audioInputs.push(micPath)
-            if (systemStat) audioInputs.push(systemPath)
-            if (audioInputs.length === 2) {
-              const mergedAudioPath = join(meetingDir, 'merged-audio-tmp.webm')
-              if (!ffmpegPath) {
-                throw new Error('ffmpeg path unavailable for merged audio mux')
-              }
-              await mergeAudioFiles(ffmpegPath, micPath, systemPath, mergedAudioPath)
-              await muxAudioIntoVideo(ffmpegPath, videoPath, mergedAudioPath, muxedPath, meetingId)
-              await unlink(mergedAudioPath)
-            } else {
-              if (!ffmpegPath) {
-                throw new Error('ffmpeg path unavailable for audio mux')
-              }
-              await muxAudioIntoVideo(ffmpegPath, videoPath, audioInputs[0], muxedPath, meetingId)
-            }
-            await replaceFileWithRetry(muxedPath, videoPath)
+        const videoWorkNeeded = await isWindowsVideoWorkNeeded(meetingDir)
+        if (videoWorkNeeded) {
+          workingMetadata = {
+            ...workingMetadata,
+            isFinalizing: false,
+            videoStatus: 'processing'
           }
-        } catch (err) {
-          videoProcessingFailed = true
-          logAutodocFailure({
-            area: 'recording',
-            message: 'Failed to mux audio into recorded video',
-            error: err,
-            meetingId
-          })
-          console.error('Failed to mux audio into video:', err)
-        }
-
-        try {
-          const videoExists = await stat(videoPath).catch(() => null)
-          if (videoExists) {
-            if (!ffmpegPath) {
-              throw new Error('ffmpeg path unavailable for remux')
-            }
-            const seekablePath = join(meetingDir, 'screen-seekable.webm')
-            await remuxForSeeking(ffmpegPath, videoPath, seekablePath, meetingId)
-            await replaceFileWithRetry(seekablePath, videoPath)
-            const finalStat = await stat(videoPath).catch(() => null)
-            console.log('[recording post-process] remux for seeking OK', {
-              meetingId,
-              bytes: finalStat?.size,
-              path: videoPath
+          windowsPendingFinalization.delete(meetingId)
+          try {
+            await persistRecordingMetadata(meetingDir, workingMetadata)
+            logRecordingDebug('windows finalizing state cleared for background video job', meetingId, {
+              reason: 'post-processing-finished',
+              pendingAfterCount: windowsPendingFinalization.size
+            })
+          } catch (err) {
+            logAutodocFailure({
+              area: 'recording',
+              message: 'Failed to persist video processing state during Phase 1 post-processing',
+              error: err,
+              meetingId
             })
           }
-        } catch (err) {
-          videoProcessingFailed = true
-          logAutodocFailure({
-            area: 'recording',
-            message: 'Failed to remux recorded video for seeking',
-            error: err,
-            meetingId
-          })
-          console.error(
-            'Failed to remux for seeking (video will still play but may not seek):',
-            err
+          scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, workingMetadata)
+          broadcastEntryUpdated(meetingId)
+          enqueueWindowsVideoJob(meetingId)
+        } else {
+          workingMetadata = await clearWindowsFinalizingState(
+            meetingId,
+            workingMetadata,
+            'post-processing-finished'
           )
+          scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, workingMetadata)
+          broadcastEntryUpdated(meetingId)
         }
-
-        await encryptScreenWebmIfNeeded(meetingDir, meetingId)
       } finally {
-        if (videoProcessingFailed) {
-          workingMetadata = { ...workingMetadata, videoProcessingFailed: true }
-        }
-
-        const finalizedMetadata = await clearWindowsFinalizingState(
-          meetingId,
-          workingMetadata,
-          videoProcessingFailed ? 'post-processing-failed' : 'post-processing-finished'
-        )
-        scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, finalizedMetadata)
-        broadcastEntryUpdated(meetingId)
         logRecordingDebug('post-processing finished', meetingId, {
           elapsedMs: Date.now() - postProcessStartedAt,
-          isFinalizing: finalizedMetadata.isFinalizing ?? false,
-          videoProcessingFailed: finalizedMetadata.videoProcessingFailed ?? false
+          isFinalizing: workingMetadata.isFinalizing ?? false,
+          videoStatus: workingMetadata.videoStatus ?? null
         })
         windowsPostProcessingInFlight.delete(meetingId)
       }
@@ -892,7 +1166,7 @@ export function registerRecordingIpc(
 
         const finalizedMetadata = await clearWindowsFinalizingState(
           meetingId,
-          { ...metadata, videoProcessingFailed: true },
+          { ...metadata, videoProcessingFailed: true, videoStatus: 'failed' },
           'post-processing-failed'
         )
         scheduleWindowsCalendarTitleRefresh(
@@ -1059,10 +1333,20 @@ export function registerRecordingIpc(
         systemStat !== null ||
         legacyAudioStat !== null ||
         segmentedPresence.hasSegmentedAudio
-      const hasVideo = videoStat !== null || segmentedPresence.hasSegmentedVideo
+      const hasVideo =
+        videoStat !== null || segmentedPresence.hasSegmentedVideo
       const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
       const isFinalizing = metadata?.isFinalizing === true
-      if (!hasAudio && !hasVideo && !isFinalizing) continue
+      const videoStatus = metadata?.videoStatus
+      if (
+        !hasAudio &&
+        !hasVideo &&
+        !isFinalizing &&
+        videoStatus !== 'processing' &&
+        videoStatus !== 'failed'
+      ) {
+        continue
+      }
       const startedAt = metadata?.startedAt ?? dirStat.birthtime.getTime()
 
       const calendarTitle = getRecordingDisplayCalendarTitle(
@@ -1087,14 +1371,18 @@ export function registerRecordingIpc(
         }
       }
 
+      const hasVideoResolved =
+        videoStatus === 'processing' ? false : hasVideo
+
       entries.push({
         meetingId,
         title,
         date: startedAt,
         duration,
-        hasVideo,
+        hasVideo: hasVideoResolved,
         hasAudio,
         isFinalizing,
+        videoStatus,
         transcriptionStatus
       })
     }
@@ -1539,8 +1827,36 @@ export function registerRecordingIpc(
       date: startedAt,
       durationSeconds,
       isFinalizing,
-      videoProcessingFailed: metadata?.videoProcessingFailed
+      videoProcessingFailed: metadata?.videoProcessingFailed,
+      videoStatus: metadata?.videoStatus
     }
+  })
+
+  ipcMain.handle('recording:retry-video', async (_event, meetingId: string) => {
+    if (!isWindows) {
+      return
+    }
+
+    const baseDir = recordingService.getRecordingsBaseDir()
+    const meetingDir = join(baseDir, meetingId)
+    const dirStat = await stat(meetingDir).catch(() => null)
+    if (!dirStat?.isDirectory()) {
+      throw new Error(`Recording not found: ${meetingId}`)
+    }
+
+    const metadata = await readMetadata(meetingDir)
+    if (!metadata) {
+      throw new Error(`Recording metadata not found: ${meetingId}`)
+    }
+
+    const updatedMetadata: MeetingMetadata = {
+      ...metadata,
+      videoStatus: 'processing',
+      videoProcessingFailed: undefined
+    }
+    await persistRecordingMetadata(meetingDir, updatedMetadata)
+    broadcastEntryUpdated(meetingId)
+    enqueueWindowsVideoJob(meetingId)
   })
 
   ipcMain.handle(
@@ -1648,7 +1964,8 @@ export function registerRecordingIpc(
         isFinalizing: metadata?.isFinalizing,
         calendarTitle: metadata?.calendarTitle,
         customTitle: customTitle.trim() || undefined,
-        videoProcessingFailed: metadata?.videoProcessingFailed
+        videoProcessingFailed: metadata?.videoProcessingFailed,
+        videoStatus: metadata?.videoStatus
       }
       await encryptJSON(updated, join(meetingDir, 'metadata.json'))
       if (windowsPendingFinalization.has(meetingId)) {
@@ -1698,25 +2015,42 @@ export function registerRecordingIpc(
       const meetingId = entry.name
 
       try {
-        if (windowsPendingFinalization.has(meetingId)) continue
         if (activeMeetingId && meetingId === activeMeetingId) continue
 
         const meetingDir = join(baseDir, meetingId)
         const metadata = await readMetadata(meetingDir)
-        if (metadata?.isFinalizing !== true) continue
+        if (
+          windowsPendingFinalization.has(meetingId) ||
+          windowsPostProcessingInFlight.has(meetingId) ||
+          windowsVideoJobInFlight.has(meetingId) ||
+          windowsVideoJobQueue.includes(meetingId)
+        ) {
+          continue
+        }
 
-        logRecordingDebug('windows finalizing recovery: re-running post-processing', meetingId, {
-          startedAt: metadata.startedAt,
-          stoppedAt: metadata.stoppedAt
-        })
-        logQaGateFinalizingRecovery(meetingId, {
-          startedAt: metadata.startedAt,
-          stoppedAt: metadata.stoppedAt,
-          recordingDurationSec: metadata.durationSeconds
-        })
+        if (metadata?.isFinalizing === true) {
+          logRecordingDebug('windows finalizing recovery: re-running post-processing', meetingId, {
+            startedAt: metadata.startedAt,
+            stoppedAt: metadata.stoppedAt
+          })
+          logQaGateFinalizingRecovery(meetingId, {
+            startedAt: metadata.startedAt,
+            stoppedAt: metadata.stoppedAt,
+            recordingDurationSec: metadata.durationSeconds
+          })
 
-        windowsPendingFinalization.set(meetingId, metadata)
-        runRecordingPostProcessing(meetingId, metadata)
+          windowsPendingFinalization.set(meetingId, metadata)
+          runRecordingPostProcessing(meetingId, metadata)
+          continue
+        }
+
+        if (metadata?.videoStatus === 'processing') {
+          logRecordingDebug('windows video recovery: re-enqueueing interrupted video job', meetingId, {
+            startedAt: metadata.startedAt,
+            stoppedAt: metadata.stoppedAt
+          })
+          enqueueWindowsVideoJob(meetingId)
+        }
       } catch (err) {
         logAutodocFailure({
           area: 'recording',

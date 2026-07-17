@@ -835,13 +835,17 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
-    const videoPath = join(baseDir, meetingId, 'screen.webm')
-    const micPath = join(baseDir, meetingId, 'mic.webm')
-    const systemPath = join(baseDir, meetingId, 'system.webm')
-    const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
-    const hasVideo = await stat(videoPath)
+    const meetingDir = join(baseDir, meetingId)
+    const videoPath = join(meetingDir, 'screen.webm')
+    const micPath = join(meetingDir, 'mic.webm')
+    const systemPath = join(meetingDir, 'system.webm')
+    const legacyAudioPath = join(meetingDir, 'audio.webm')
+    const metadata = await readMetadata(meetingDir)
+    const videoStatus = metadata?.videoStatus
+    const hasVideoFile = await stat(videoPath)
       .then(() => true)
       .catch(() => false)
+    const hasVideo = videoStatus === 'processing' ? false : hasVideoFile
     const hasMicAudio = await stat(micPath)
       .then(() => true)
       .catch(() => false)
@@ -862,6 +866,7 @@ app.whenReady().then(async () => {
       hasVideo,
       hasAudio: Boolean(audioFile),
       audioFile,
+      videoStatus,
       mediaBaseUrl: recordingMediaBaseUrl ?? undefined
     }
   })

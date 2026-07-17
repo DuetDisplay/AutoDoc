@@ -110,13 +110,24 @@ test('Greg video concat stall clears finalizing and leaves transcript openable',
 
     await expect(page.getByText('Wrapping up recording...')).toBeHidden({ timeout: 10_000 })
     await expect(page.getByText(MEETING_TITLE)).toBeVisible()
-    const detail = await page.evaluate(async (meetingId) => {
-      return await window.electronAPI.invoke('recording:get-detail', meetingId)
-    }, MEETING_ID)
-    expect(detail).toMatchObject({
-      isFinalizing: false,
-      videoProcessingFailed: true
-    })
+
+    await expect
+      .poll(
+        async () => {
+          const detail = await page.evaluate(async (meetingId) => {
+            return await window.electronAPI.invoke('recording:get-detail', meetingId)
+          }, MEETING_ID)
+          return detail
+        },
+        { timeout: 15_000 }
+      )
+      .toMatchObject({
+        isFinalizing: false,
+        videoStatus: 'failed',
+        videoProcessingFailed: true
+      })
+
+    await expect(page.getByText('Video failed')).toBeVisible({ timeout: 5_000 })
     await page.reload()
     await installStableScreenshotBackground(page)
     await expect(page.getByText(MEETING_TITLE)).toBeVisible()

@@ -28,7 +28,8 @@ import type {
   DetectionAutoStopCancelledPayload,
   TranscriptionStatusPayload,
   SegmentationStatusPayload,
-  SegmentationDiagnosticPayload
+  SegmentationDiagnosticPayload,
+  VideoStatus
 } from '../shared/types'
 import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
@@ -123,6 +124,7 @@ export interface IpcInvokeEvents {
   ]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
+  'recording:retry-video': [meetingId: string]
   'transcription:get-status': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
@@ -233,6 +235,7 @@ export interface IpcInvokeReturns {
   'recording:save-segment-timing': void
   'recording:update-title': void
   'recording:delete': void
+  'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
@@ -249,6 +252,7 @@ export interface IpcInvokeReturns {
     hasVideo: boolean
     hasAudio: boolean
     audioFile?: string
+    videoStatus?: VideoStatus
     mediaBaseUrl?: string
   }
   'recording:report-media-player-error': void
@@ -259,6 +263,7 @@ export interface IpcInvokeReturns {
     durationSeconds: number | null
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
+    videoStatus?: VideoStatus
   }
   'search:query': SearchResult[]
   'chat:send': string

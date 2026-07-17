@@ -84,6 +84,8 @@ export interface OAuthTokens {
   scope?: string
 }
 
+export type VideoStatus = 'processing' | 'ready' | 'failed'
+
 export interface RecordingEntry {
   meetingId: string
   title: string
@@ -92,6 +94,7 @@ export interface RecordingEntry {
   hasVideo: boolean
   hasAudio: boolean
   isFinalizing?: boolean
+  videoStatus?: VideoStatus
   transcriptionStatus: TranscriptionStatus
 }
 
@@ -105,6 +108,7 @@ export interface MeetingMetadata {
   customTitle?: string
   notesReadyNotificationSentAt?: number
   videoProcessingFailed?: boolean
+  videoStatus?: VideoStatus
 }
 
 export interface RecordingSource {

@@ -412,4 +412,31 @@ describe('MeetingDetail', () => {
       screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')
     ).toBeInTheDocument()
   })
+
+  it('shows a video processing placeholder while videoStatus is processing', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        isFinalizing: false,
+        videoStatus: 'processing'
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, audioFile: 'mic.webm' },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+
+    expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
+    expect(screen.getByText('Your transcript and notes are ready to use.')).toBeInTheDocument()
+  })
 })

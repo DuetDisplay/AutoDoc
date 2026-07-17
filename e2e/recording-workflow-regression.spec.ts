@@ -175,13 +175,23 @@ test('device-change multi-segment recording succeeds and clears finalizing', asy
     const detail = await page.evaluate(async (meetingId) => {
       return await window.electronAPI.invoke('recording:get-detail', meetingId)
     }, recording.meetingId)
-    const media = await page.evaluate(async (meetingId) => {
-      return await window.electronAPI.invoke('recording:get-media', meetingId)
-    }, recording.meetingId)
 
     expect(detail).toMatchObject({ isFinalizing: false })
     expect(detail.videoProcessingFailed).not.toBe(true)
-    expect(media.hasVideo).toBe(true)
+
+    // Video finalization now runs as a background job after finalizing clears;
+    // poll until it reports ready before asserting playable media.
+    await expect
+      .poll(
+        async () => {
+          return await page.evaluate(async (meetingId) => {
+            const media = await window.electronAPI.invoke('recording:get-media', meetingId)
+            return { hasVideo: media.hasVideo, videoStatus: media.videoStatus ?? null }
+          }, recording.meetingId)
+        },
+        { timeout: 60_000 }
+      )
+      .toMatchObject({ hasVideo: true })
     await expect(page.getByText(recording.title)).toBeVisible()
     await expect(page.getByText('Wrapping up recording...')).toBeHidden()
     await page.screenshot({

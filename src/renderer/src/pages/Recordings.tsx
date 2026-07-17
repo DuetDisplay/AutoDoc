@@ -77,6 +77,7 @@ function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boo
       recording.hasVideo === other.hasVideo &&
       recording.hasAudio === other.hasAudio &&
       recording.isFinalizing === other.isFinalizing &&
+      recording.videoStatus === other.videoStatus &&
       recording.transcriptionStatus === other.transcriptionStatus
     )
   })
@@ -454,6 +455,14 @@ export function Recordings() {
                             errorCode={segmentationErrorCodes[rec.meetingId]}
                             onRetry={() => handleRetrySegmentation(rec.meetingId)}
                           />
+                        )}
+                        {rec.videoStatus === 'processing' && (
+                          <span className="text-[11px] text-ink-faint animate-pulse">
+                            Processing video…
+                          </span>
+                        )}
+                        {rec.videoStatus === 'failed' && (
+                          <span className="text-[11px] text-ink-faint">Video failed</span>
                         )}
                       </>
                     )}
