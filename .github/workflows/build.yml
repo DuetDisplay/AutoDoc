@@ -22,6 +22,9 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Internal repo QA builds use the internal flavor config so their baked
+  # app-update.yml points at the internal update feed. Empty in the public repo.
+  AUTODOC_BUILDER_CONFIG_ARGS: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '--config electron-builder.internal.yml' || '' }}
 
 jobs:
   build-mac-ci:
@@ -60,7 +63,7 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Build macOS CI artifacts (unsigned)
-        run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false -c.mac.identity=null
+        run: npm run prepare:macos-mlx-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false -c.mac.identity=null $AUTODOC_BUILDER_CONFIG_ARGS
 
       - name: Upload macOS artifacts
         if: success()
@@ -422,7 +425,10 @@ jobs:
 
       - name: Build Windows artifacts
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'branch')
-        run: npm run build && npx electron-builder --win --publish never --config.win.forceCodeSigning=false
+        # bash (not the default pwsh) so the optional $AUTODOC_BUILDER_CONFIG_ARGS
+        # expands to separate arguments (or nothing when empty).
+        shell: bash
+        run: npm run build && npx electron-builder --win --publish never --config.win.forceCodeSigning=false $AUTODOC_BUILDER_CONFIG_ARGS
 
       - name: Upload Windows artifacts
         if: (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'branch')) && success()

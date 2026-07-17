@@ -9,9 +9,12 @@ const {
   quitAndInstall,
   setFeedURL,
   autoUpdater,
-  setThrowOnConfigure
+  setThrowOnConfigure,
+  setAppVersion,
+  getAppVersion
 } = vi.hoisted(() => {
   let throwOnConfigure = false
+  let appVersion = '0.1.19'
   return {
     logAutodocFailure: vi.fn(),
     checkForUpdates: vi.fn(),
@@ -22,6 +25,10 @@ const {
     setThrowOnConfigure: (enabled: boolean) => {
       throwOnConfigure = enabled
     },
+    setAppVersion: (version: string) => {
+      appVersion = version
+    },
+    getAppVersion: () => appVersion,
     autoUpdater: {
       get autoDownload() {
         return false
@@ -33,6 +40,8 @@ const {
       },
       autoInstallOnAppQuit: false,
       disableDifferentialDownload: false,
+      allowPrerelease: false,
+      channel: null as string | null,
       on: (...args: unknown[]) => on(...args),
       setFeedURL: (...args: unknown[]) => setFeedURL(...args),
       checkForUpdates: (...args: unknown[]) => checkForUpdates(...args),
@@ -50,7 +59,7 @@ vi.mock('electron', () => ({
     getAllWindows: () => [{ webContents: { send } }]
   },
   app: {
-    getVersion: () => '0.1.19'
+    getVersion: () => getAppVersion()
   }
 }))
 
@@ -69,6 +78,9 @@ describe('Auto-updater validity characterization', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     setThrowOnConfigure(false)
+    setAppVersion('0.1.19')
+    autoUpdater.allowPrerelease = false
+    autoUpdater.channel = null
     delete process.env.AUTODOC_TEST_MODE
     delete process.env.AUTODOC_UPDATE_FEED_URL
     delete process.env.AUTODOC_UPDATE_QUIT_AND_INSTALL_ON_DOWNLOAD
@@ -136,6 +148,27 @@ describe('Auto-updater validity characterization', () => {
         error: expect.any(Error)
       })
     )
+  })
+
+  it('pins prerelease updates for internal-flavor builds', () => {
+    setAppVersion('1.1.0-internal.7')
+
+    initAutoUpdater()
+
+    expect(autoUpdater.allowPrerelease).toBe(true)
+    // channel must stay unset: electron-builder bakes channel "internal" (derived
+    // from the prerelease tag) into app-update.yml, and overriding it in code
+    // would make the updater request the wrong feed file.
+    expect(autoUpdater.channel).toBeNull()
+  })
+
+  it('keeps default prerelease behavior for public builds', () => {
+    setAppVersion('1.1.0')
+
+    initAutoUpdater()
+
+    expect(autoUpdater.allowPrerelease).toBe(false)
+    expect(autoUpdater.channel).toBeNull()
   })
 
   it('uses a generic update feed override for smoke tests', () => {
