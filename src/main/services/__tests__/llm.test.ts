@@ -706,6 +706,68 @@ describe('OllamaProvider grounding', () => {
     )
   })
 
+  it('preserves assignee and deadline from model JSON in parseResponse', () => {
+    const transcript = '[00:00] [Speaker] Chris will own the billing API migration by Friday.'
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        decisions: [],
+        action_items: [
+          {
+            topic: 'Billing API',
+            title: 'Prepare billing API migration',
+            content: 'Chris will own the billing API migration by Friday.',
+            assignee: 'Chris',
+            deadline: 'Friday',
+            sourceStartMs: 0,
+            sourceEndMs: 0
+          }
+        ],
+        information: [],
+        discussion: [],
+        status_updates: []
+      }),
+      undefined,
+      5_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.actionItems[0].assignee).toBe('Chris')
+    expect(result.actionItems[0].deadline).toBe('Friday')
+  })
+
+  it('includes optional assignee and deadline in the Windows structured-output schema', () => {
+    setPlatform('win32')
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const format = (windowsProvider as any).getNotesResponseFormat() as {
+      properties: {
+        action_items: {
+          items: {
+            properties: Record<string, { type: string }>
+            required: string[]
+            additionalProperties: boolean
+          }
+        }
+      }
+    }
+
+    expect(format).not.toBe('json')
+    const itemSchema = format.properties.action_items.items
+    // Grammar-constrained Ollama format + additionalProperties:false drops any key
+    // not listed here, so assignee/deadline must be present as optional properties.
+    expect(itemSchema.additionalProperties).toBe(false)
+    expect(itemSchema.properties.assignee).toEqual({ type: 'string' })
+    expect(itemSchema.properties.deadline).toEqual({ type: 'string' })
+    expect(itemSchema.required).toEqual(
+      expect.arrayContaining(['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs'])
+    )
+    expect(itemSchema.required).not.toContain('assignee')
+    expect(itemSchema.required).not.toContain('deadline')
+  })
+
   it('uses constrained shorter notes generation on Windows', async () => {
     if (process.platform !== 'win32') {
       return

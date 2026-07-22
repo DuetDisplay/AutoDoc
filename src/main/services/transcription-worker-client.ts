@@ -240,6 +240,7 @@ export class TranscriptionWorkerClient {
   private attachProcessHandlers(proc: ChildProcess): void {
     proc.stdout?.removeAllListeners('data')
     proc.stderr?.removeAllListeners('data')
+    proc.stdin?.removeAllListeners('error')
     proc.removeAllListeners('error')
     proc.removeAllListeners('close')
 
@@ -249,6 +250,12 @@ export class TranscriptionWorkerClient {
 
     proc.stderr?.on('data', (chunk: Buffer) => {
       this.appendStderrTail(chunk.toString())
+    })
+
+    // Broken-pipe / EPIPE on stdin is emitted asynchronously; without a listener
+    // Node surfaces it as an unhandled 'error' and can crash the main process.
+    proc.stdin?.on('error', (error) => {
+      this.handleProcessFailure(error)
     })
 
     proc.on('error', (error) => {

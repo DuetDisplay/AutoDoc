@@ -628,12 +628,22 @@ export function MeetingDetail() {
   const handleRetryVideo = () => {
     if (!id) return
     setVideoRetryPending(true)
-    void window.electronAPI.invoke('recording:retry-video', id).then(() => {
-      setDetail((current) =>
-        current ? { ...current, videoStatus: 'processing', videoProcessingFailed: undefined } : current
-      )
-      setMedia((current) => (current ? { ...current, hasVideo: false, videoStatus: 'processing' } : current))
-    })
+    void window.electronAPI
+      .invoke('recording:retry-video', id)
+      .then(() => {
+        setDetail((current) =>
+          current
+            ? { ...current, videoStatus: 'processing', videoProcessingFailed: undefined }
+            : current
+        )
+        setMedia((current) =>
+          current ? { ...current, hasVideo: false, videoStatus: 'processing' } : current
+        )
+      })
+      .catch((error) => {
+        console.error('Failed to retry video processing:', error)
+        setVideoRetryPending(false)
+      })
   }
 
   const handleReprocessTranscript = () => {

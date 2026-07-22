@@ -90,6 +90,10 @@ const NOTES_RESPONSE_ITEM_SCHEMA = {
     topic: { type: 'string' },
     title: { type: 'string' },
     content: { type: 'string' },
+    // Optional: Windows Ollama structured outputs grammar-forbid any key not listed
+    // here (additionalProperties: false). parseResponse already reads both fields.
+    assignee: { type: 'string' },
+    deadline: { type: 'string' },
     sourceStartMs: { type: 'number' },
     sourceEndMs: { type: 'number' }
   },

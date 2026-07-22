@@ -289,4 +289,16 @@ describe('TranscriptionWorkerClient', () => {
       expect.any(Object)
     )
   })
+
+  it('routes stdin pipe errors through handleProcessFailure without crashing', async () => {
+    const client = createClient()
+    const pingPromise = client.ping()
+    await waitForRequestCount(1)
+
+    const pipeError = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    // Without a stdin 'error' listener this throws as an unhandled EventEmitter error.
+    // With the listener, the in-flight request is rejected cleanly via handleProcessFailure.
+    expect(() => mockProcess.stdin.emit('error', pipeError)).not.toThrow()
+    await expect(pingPromise).rejects.toThrow(/Transcription worker process error/)
+  })
 })
