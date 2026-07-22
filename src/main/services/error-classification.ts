@@ -55,6 +55,9 @@ export function classifyError(rawError: string): string {
   if (error.includes('llm returned empty')) {
     return 'llm-empty-output'
   }
+  if (error.includes('ollama unavailable for notes generation')) {
+    return 'ollama-unavailable'
+  }
   if (error.includes('context overflow') || error.includes('model issue')) {
     return 'llm-context-overflow'
   }

@@ -507,4 +507,38 @@ describe('MeetingDetail', () => {
     consoleError.mockRestore()
   })
 
+  it('explains when screen video ended early but meeting content was saved', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        videoCaptureEndedEarly: true,
+        videoStatus: 'processing'
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, audioFile: 'mic.webm' },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+
+    expect(screen.queryByText('Screen recording ended early')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+
+    expect(screen.getByText('Screen recording ended early')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'The screen video may be incomplete. Audio, transcript, and notes were saved.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
+  })
 })

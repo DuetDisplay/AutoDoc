@@ -1,6 +1,11 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useRecordingStore } from '../stores/recording'
-import { startCapture, stopCapture } from '../services/recording-capture'
+import {
+  startCapture,
+  stopCapture,
+  setUnrecoverableCaptureHandler,
+  setVideoDisabledHandler
+} from '../services/recording-capture'
 import { detectMeetingWindow } from '../services/window-detection'
 import {
   getDaysSinceFirstLaunch,
@@ -47,10 +52,12 @@ export function useRecording() {
     isRecording,
     meetingId,
     sourceName,
+    videoDisabled,
     elapsedSeconds,
     sources,
     isLoadingSources,
     setRecordingState,
+    setVideoDisabled,
     tick,
     reset,
     setSources,
@@ -129,7 +136,7 @@ export function useRecording() {
             sourceNameParam,
             trackingContext ?? null
           )
-          await startCapture(sourceId, paths.meetingId)
+          await startCapture(sourceId, paths.meetingId, sourceNameParam)
           recordDiagnosticAction({
             category: 'recording',
             action: 'recording_started'
@@ -231,10 +238,29 @@ export function useRecording() {
     }
   }, [reset])
 
+  useEffect(() => {
+    setUnrecoverableCaptureHandler(handleStop)
+    return () => setUnrecoverableCaptureHandler(null)
+  }, [handleStop])
+
+  useEffect(() => {
+    setVideoDisabledHandler(async (disabledMeetingId) => {
+      const currentState = useRecordingStore.getState()
+      if (!currentState.isRecording || currentState.meetingId !== disabledMeetingId) {
+        return
+      }
+
+      setVideoDisabled(true)
+      await window.electronAPI.invoke('recording:video-capture-ended-early', disabledMeetingId)
+    })
+    return () => setVideoDisabledHandler(null)
+  }, [setVideoDisabled])
+
   return {
     isRecording,
     meetingId,
     sourceName,
+    videoDisabled,
     elapsedSeconds,
     sources,
     isLoadingSources,
@@ -291,7 +317,7 @@ export function useRecordingActions() {
             sourceNameParam,
             trackingContext ?? null
           )
-          await startCapture(sourceId, paths.meetingId)
+          await startCapture(sourceId, paths.meetingId, sourceNameParam)
           if (selectionContext) {
             saveSourcePreference(selectionContext, {
               id: sourceId,

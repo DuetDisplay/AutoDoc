@@ -303,10 +303,16 @@ describe('recording-capture', () => {
   }, 20_000)
 
   it('captures a terminal recovery failure after the final retry', async () => {
+    let currentVideoTrack: MockTrack | null = null
+
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
       const callNumber = getUserMediaMock.mock.calls.length + 1
       if (callNumber <= 3) {
-        return Promise.resolve(createMockStreamForConstraints(constraints))
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
       }
 
       return Promise.reject(new Error('route switch failed'))
@@ -316,9 +322,9 @@ describe('recording-capture', () => {
 
     await startCapture('window:1', 'meeting-1')
 
-    deviceChangeListeners.forEach((listener) => listener())
+    currentVideoTrack?.stop()
 
-    await vi.advanceTimersByTimeAsync(15_750)
+    await vi.advanceTimersByTimeAsync(20_000)
     await Promise.resolve()
 
     expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
@@ -339,9 +345,17 @@ describe('recording-capture', () => {
   })
 
   it('retries capture recovery after a transient device-switch failure', async () => {
+    let currentVideoTrack: MockTrack | null = null
     let getUserMediaCallCount = 0
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
       getUserMediaCallCount += 1
+      if (getUserMediaCallCount <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
       if (getUserMediaCallCount === 4) {
         return Promise.reject(new Error('device route still switching'))
       }
@@ -352,7 +366,7 @@ describe('recording-capture', () => {
 
     await startCapture('window:1', 'meeting-1')
 
-    deviceChangeListeners.forEach((listener) => listener())
+    currentVideoTrack?.stop()
 
     await vi.advanceTimersByTimeAsync(2_250)
     await Promise.resolve()
@@ -362,7 +376,7 @@ describe('recording-capture', () => {
       'Capture recovery attempt failed, retrying',
       expect.objectContaining({
         attempt: 1,
-        reason: 'devicechange',
+        reason: 'video:ended',
         error: 'device route still switching'
       })
     )
@@ -372,6 +386,26 @@ describe('recording-capture', () => {
   })
 
   it('retries recovery until the microphone stream returns after a route change', async () => {
+    let currentMicGroupId = 'mic-default'
+
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      enumerateDevices: ReturnType<typeof vi.fn>
+    }
+    mediaDevices.enumerateDevices = vi.fn().mockImplementation(async () => [
+      {
+        kind: 'audioinput',
+        deviceId: 'default',
+        groupId: currentMicGroupId,
+        label: `Mic ${currentMicGroupId}`
+      },
+      {
+        kind: 'audiooutput',
+        deviceId: 'default',
+        groupId: 'speaker-default',
+        label: 'Speaker'
+      }
+    ])
+
     let getUserMediaCallCount = 0
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
       getUserMediaCallCount += 1
@@ -380,15 +414,7 @@ describe('recording-capture', () => {
         return Promise.resolve(createMockStreamForConstraints(constraints))
       }
 
-      if (getUserMediaCallCount <= 6) {
-        if (constraints.audio === false) {
-          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
-        }
-        if (constraints.audio && constraints.video) {
-          return Promise.resolve(
-            new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
-          )
-        }
+      if (getUserMediaCallCount === 4) {
         return Promise.resolve(new MockMediaStream())
       }
 
@@ -399,24 +425,27 @@ describe('recording-capture', () => {
 
     await startCapture('window:1', 'meeting-1')
 
+    currentMicGroupId = 'mic-switched'
     deviceChangeListeners.forEach((listener) => listener())
 
     await vi.advanceTimersByTimeAsync(2_250)
     await Promise.resolve()
 
-    expect(getUserMediaMock).toHaveBeenCalledTimes(9)
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Capture recovery is waiting for audio routes to settle',
+    expect(getUserMediaMock.mock.calls.length).toBeGreaterThan(3)
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        attempt: 1,
-        reason: 'devicechange',
-        missingSources: ['mic']
+        category: 'recording',
+        action: 'capture_recovery_recovered',
+        details: expect.objectContaining({
+          reason: 'devicechange',
+          segmentIndex: 1
+        })
       })
     )
     expect(isCapturing()).toBe(true)
 
     await stopCapture()
-  })
+  }, 15_000)
 
   it('recovers an ended mic track without restarting video capture', async () => {
     let initialMicStream: MockMediaStream | null = null
@@ -607,6 +636,26 @@ describe('recording-capture', () => {
   })
 
   it('reports degraded recovery when expected audio never returns', async () => {
+    let currentMicGroupId = 'mic-default'
+
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      enumerateDevices: ReturnType<typeof vi.fn>
+    }
+    mediaDevices.enumerateDevices = vi.fn().mockImplementation(async () => [
+      {
+        kind: 'audioinput',
+        deviceId: 'default',
+        groupId: currentMicGroupId,
+        label: `Mic ${currentMicGroupId}`
+      },
+      {
+        kind: 'audiooutput',
+        deviceId: 'default',
+        groupId: 'speaker-default',
+        label: 'Speaker'
+      }
+    ])
+
     let getUserMediaCallCount = 0
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
       getUserMediaCallCount += 1
@@ -615,14 +664,6 @@ describe('recording-capture', () => {
         return Promise.resolve(createMockStreamForConstraints(constraints))
       }
 
-      if (constraints.audio === false) {
-        return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
-      }
-      if (constraints.audio && constraints.video) {
-        return Promise.resolve(
-          new MockMediaStream([new MockTrack('audio'), new MockTrack('video')])
-        )
-      }
       return Promise.resolve(new MockMediaStream())
     })
 
@@ -630,6 +671,7 @@ describe('recording-capture', () => {
 
     await startCapture('window:1', 'meeting-1')
 
+    currentMicGroupId = 'mic-switched'
     deviceChangeListeners.forEach((listener) => listener())
 
     await vi.advanceTimersByTimeAsync(9_750)
@@ -727,6 +769,201 @@ describe('recording-capture', () => {
 
     await startCapture('window:1', 'meeting-1')
     await expect(startCapture('window:2', 'meeting-2')).rejects.toThrow('Capture already active')
+
+    await stopCapture()
+  })
+
+  it('stops video recovery spirals after consecutive cycles and continues audio-only', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let recoveryPhase: 'idle' | 'recovering' = 'idle'
+    let recoveryVideoAttempt = 0
+    let completedVideoRecoveries = 0
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const callNumber = getUserMediaMock.mock.calls.length + 1
+
+      if (callNumber <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      if (constraints.audio === false && recoveryPhase === 'recovering') {
+        recoveryVideoAttempt += 1
+        if (recoveryVideoAttempt <= 3) {
+          return Promise.reject(new Error('AbortError: Timeout starting video source'))
+        }
+
+        recoveryPhase = 'idle'
+        recoveryVideoAttempt = 0
+        completedVideoRecoveries += 1
+        const stream = new MockMediaStream([new MockTrack('video')])
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        return Promise.resolve(stream)
+      }
+
+      return Promise.resolve(createMockStreamForConstraints(constraints))
+    })
+
+    const { isCapturing, setVideoDisabledHandler, startCapture, stopCapture } =
+      await import('../recording-capture')
+    const videoDisabledHandler = vi.fn().mockResolvedValue(undefined)
+    setVideoDisabledHandler(videoDisabledHandler)
+
+    await startCapture('window:1', 'meeting-spiral', 'Zoom Meeting')
+
+    const triggerVideoEndedRecovery = async (): Promise<void> => {
+      recoveryPhase = 'recovering'
+      recoveryVideoAttempt = 0
+      currentVideoTrack?.stop()
+      await vi.advanceTimersByTimeAsync(15_000)
+      await Promise.resolve()
+    }
+
+    await triggerVideoEndedRecovery()
+    await triggerVideoEndedRecovery()
+    await triggerVideoEndedRecovery()
+
+    expect(completedVideoRecoveries).toBe(3)
+
+    const videoRecoveryStartedCalls = recordPersistentDiagnosticAction.mock.calls.filter(
+      ([payload]) =>
+        payload.action === 'capture_recovery_started' &&
+        String(payload.details?.reason).startsWith('video:')
+    )
+    expect(videoRecoveryStartedCalls).toHaveLength(3)
+
+    recordPersistentDiagnosticAction.mockClear()
+    getUserMediaMock.mockClear()
+
+    await triggerVideoEndedRecovery()
+
+    expect(getUserMediaMock).not.toHaveBeenCalled()
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_video_disabled_after_repeated_recovery'
+      })
+    )
+    expect(videoDisabledHandler).toHaveBeenCalledOnce()
+    expect(videoDisabledHandler).toHaveBeenCalledWith('meeting-spiral')
+    expect(isCapturing()).toBe(true)
+
+    setVideoDisabledHandler(null)
+    await stopCapture()
+  }, 120_000)
+
+  it('does not burn segment indices on failed video recovery attempts', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let recoveryPhase: 'idle' | 'recovering' = 'idle'
+    let recoveryVideoAttempt = 0
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const callNumber = getUserMediaMock.mock.calls.length + 1
+
+      if (callNumber <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      if (constraints.audio === false && recoveryPhase === 'recovering') {
+        recoveryVideoAttempt += 1
+        if (recoveryVideoAttempt <= 3) {
+          return Promise.reject(new Error('AbortError: Timeout starting video source'))
+        }
+
+        recoveryPhase = 'idle'
+        recoveryVideoAttempt = 0
+        const stream = new MockMediaStream([new MockTrack('video')])
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        return Promise.resolve(stream)
+      }
+
+      return Promise.resolve(createMockStreamForConstraints(constraints))
+    })
+
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-indices', 'Zoom Meeting')
+
+    recoveryPhase = 'recovering'
+    recoveryVideoAttempt = 0
+    currentVideoTrack?.stop()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await Promise.resolve()
+
+    expect(
+      recordPersistentDiagnosticAction.mock.calls.some(
+        ([payload]) =>
+          payload.action === 'capture_recovery_recovered' && payload.details?.segmentIndex === 1
+      )
+    ).toBe(true)
+    expect(
+      recordPersistentDiagnosticAction.mock.calls.some(
+        ([payload]) =>
+          payload.action === 'capture_recovery_recovered' &&
+          typeof payload.details?.segmentIndex === 'number' &&
+          payload.details.segmentIndex > 1
+      )
+    ).toBe(false)
+
+    await stopCapture()
+  }, 30_000)
+
+  it('clears active capture after terminal video recovery failure instead of leaving a zombie', async () => {
+    let currentVideoTrack: MockTrack | null = null
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const callNumber = getUserMediaMock.mock.calls.length + 1
+
+      if (callNumber <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      return Promise.reject(new Error('NotReadableError: Could not start video source'))
+    })
+
+    const { isCapturing, startCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-zombie', 'Zoom Meeting')
+
+    currentVideoTrack?.stop()
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    await Promise.resolve()
+
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'recording',
+        action: 'capture_recovery_failed'
+      })
+    )
+    expect(isCapturing()).toBe(false)
+  }, 30_000)
+
+  it('skips full recovery for devicechange when audio routes are unchanged and video is healthy', async () => {
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-devicechange', 'Zoom Meeting')
+    const callsAfterStart = getUserMediaMock.mock.calls.length
+
+    deviceChangeListeners.forEach((listener) => listener())
+
+    await vi.advanceTimersByTimeAsync(750)
+    await Promise.resolve()
+
+    expect(getUserMediaMock.mock.calls.length).toBe(callsAfterStart)
+    expect(isCapturing()).toBe(true)
 
     await stopCapture()
   })

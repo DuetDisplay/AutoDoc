@@ -600,6 +600,47 @@ describe('SegmentationService', () => {
     })
   })
 
+  it('defers notes generation when Ollama is not ready without consuming recovery retries', async () => {
+    vi.useFakeTimers()
+    const notReadyOllama = {
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      isReadyForGeneration: vi.fn().mockResolvedValue(false)
+    }
+    provider = createMockProvider()
+    service = new SegmentationService(provider, notReadyOllama, '/mock/home/AutoDoc/recordings')
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-ollama-0',
+          meetingId: 'm-ollama',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+    const processing = (service as any).processJobExclusive('m-ollama')
+    await vi.advanceTimersByTimeAsync(0)
+    await processing
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(notReadyOllama.waitUntilReady).toHaveBeenCalled()
+    expect(notReadyOllama.isReadyForGeneration).toHaveBeenCalled()
+    expect(provider.summarize).not.toHaveBeenCalled()
+    expect(fsMock.writeFile).not.toHaveBeenCalled()
+    expect(enqueueSpy).toHaveBeenCalledWith('m-ollama', 'direct')
+    vi.useRealTimers()
+  })
+
   it('clears activeProgress after a job finishes', () => {
     const send = vi.fn()
     vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)

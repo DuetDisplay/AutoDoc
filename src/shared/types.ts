@@ -109,6 +109,7 @@ export interface MeetingMetadata {
   notesReadyNotificationSentAt?: number
   videoProcessingFailed?: boolean
   videoStatus?: VideoStatus
+  videoCaptureEndedEarly?: boolean
 }
 
 export interface RecordingSource {

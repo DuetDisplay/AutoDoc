@@ -786,6 +786,7 @@ export function registerRecordingIpc(
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
   const windowsCalendarRefreshInFlight = new Set<string>()
   const windowsPostProcessingInFlight = new Set<string>()
+  const videoCaptureEndedEarlyMeetings = new Set<string>()
 
   async function persistRecordingMetadata(
     meetingDir: string,
@@ -1033,7 +1034,10 @@ export function registerRecordingIpc(
 
   function enqueueWindowsVideoJob(meetingId: string): void {
     if (windowsVideoJobInFlight.has(meetingId)) {
-      logRecordingDebug('windows video job already in flight; skipping duplicate enqueue', meetingId)
+      logRecordingDebug(
+        'windows video job already in flight; skipping duplicate enqueue',
+        meetingId
+      )
       return
     }
     if (windowsVideoJobQueue.includes(meetingId)) {
@@ -1122,10 +1126,14 @@ export function registerRecordingIpc(
           windowsPendingFinalization.delete(meetingId)
           try {
             await persistRecordingMetadata(meetingDir, workingMetadata)
-            logRecordingDebug('windows finalizing state cleared for background video job', meetingId, {
-              reason: 'post-processing-finished',
-              pendingAfterCount: windowsPendingFinalization.size
-            })
+            logRecordingDebug(
+              'windows finalizing state cleared for background video job',
+              meetingId,
+              {
+                reason: 'post-processing-finished',
+                pendingAfterCount: windowsPendingFinalization.size
+              }
+            )
           } catch (err) {
             logAutodocFailure({
               area: 'recording',
@@ -1333,8 +1341,7 @@ export function registerRecordingIpc(
         systemStat !== null ||
         legacyAudioStat !== null ||
         segmentedPresence.hasSegmentedAudio
-      const hasVideo =
-        videoStat !== null || segmentedPresence.hasSegmentedVideo
+      const hasVideo = videoStat !== null || segmentedPresence.hasSegmentedVideo
       const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
       const isFinalizing = metadata?.isFinalizing === true
       const videoStatus = metadata?.videoStatus
@@ -1371,8 +1378,7 @@ export function registerRecordingIpc(
         }
       }
 
-      const hasVideoResolved =
-        videoStatus === 'processing' ? false : hasVideo
+      const hasVideoResolved = videoStatus === 'processing' ? false : hasVideo
 
       entries.push({
         meetingId,
@@ -1443,7 +1449,8 @@ export function registerRecordingIpc(
       startedAt: result.startedAt,
       stoppedAt,
       durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000),
-      isFinalizing: isWindows
+      isFinalizing: isWindows,
+      videoCaptureEndedEarly: videoCaptureEndedEarlyMeetings.delete(result.meetingId) || undefined
     }
     logRecordingDebug('recording:stop completed in main process', result.meetingId, {
       elapsedMs: Date.now() - stopRequestedAt,
@@ -1783,6 +1790,32 @@ export function registerRecordingIpc(
     return recordingService.getState()
   })
 
+  ipcMain.handle('recording:video-capture-ended-early', async (_event, meetingId: string) => {
+    const currentState = recordingService.getState()
+    if (
+      !currentState.isRecording ||
+      currentState.meetingId !== meetingId ||
+      currentState.startedAt == null
+    ) {
+      return
+    }
+
+    videoCaptureEndedEarlyMeetings.add(meetingId)
+    const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
+    const existingMetadata = await readMetadata(meetingDir)
+    const observedAt = Date.now()
+    const updatedMetadata: MeetingMetadata = {
+      sourceName: currentState.sourceName,
+      startedAt: currentState.startedAt,
+      stoppedAt: observedAt,
+      durationSeconds: Math.max(0, Math.round((observedAt - currentState.startedAt) / 1000)),
+      ...existingMetadata,
+      videoCaptureEndedEarly: true
+    }
+    await persistRecordingMetadata(meetingDir, updatedMetadata)
+    broadcastEntryUpdated(meetingId)
+  })
+
   ipcMain.handle('recording:get-detail', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
@@ -1828,7 +1861,8 @@ export function registerRecordingIpc(
       durationSeconds,
       isFinalizing,
       videoProcessingFailed: metadata?.videoProcessingFailed,
-      videoStatus: metadata?.videoStatus
+      videoStatus: metadata?.videoStatus,
+      videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
     }
   })
 
@@ -1965,7 +1999,8 @@ export function registerRecordingIpc(
         calendarTitle: metadata?.calendarTitle,
         customTitle: customTitle.trim() || undefined,
         videoProcessingFailed: metadata?.videoProcessingFailed,
-        videoStatus: metadata?.videoStatus
+        videoStatus: metadata?.videoStatus,
+        videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
       }
       await encryptJSON(updated, join(meetingDir, 'metadata.json'))
       if (windowsPendingFinalization.has(meetingId)) {
@@ -2045,10 +2080,14 @@ export function registerRecordingIpc(
         }
 
         if (metadata?.videoStatus === 'processing') {
-          logRecordingDebug('windows video recovery: re-enqueueing interrupted video job', meetingId, {
-            startedAt: metadata.startedAt,
-            stoppedAt: metadata.stoppedAt
-          })
+          logRecordingDebug(
+            'windows video recovery: re-enqueueing interrupted video job',
+            meetingId,
+            {
+              startedAt: metadata.startedAt,
+              stoppedAt: metadata.stoppedAt
+            }
+          )
           enqueueWindowsVideoJob(meetingId)
         }
       } catch (err) {
