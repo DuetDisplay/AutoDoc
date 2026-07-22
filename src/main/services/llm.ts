@@ -23,14 +23,23 @@ export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
+export const WINDOWS_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
-const REQUEST_TIMEOUT_MS = 300_000 // 5 minute timeout for entire request
+const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+// Healthy chunks produce well under 1K tokens; runaway generations otherwise ramble
+// to the cap at ~9 tok/s on CPU inference (4096 tokens ≈ 7.5 min stuck at 99%).
+// 2048 bounds that tail while leaving generous headroom, and parseResponse already
+// repairs JSON truncated by the num_predict cap.
+export const WINDOWS_MAX_OUTPUT_TOKENS = 2048
 const LOW_MEMORY_FREE_GIB_THRESHOLD = 8
 const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
+const WINDOWS_ITEM_DEDUP_THRESHOLD = 0.85
+const MAX_KNOWN_ITEM_TITLES = 20
+const WINDOWS_CHUNK_ITEM_CAP = 8
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const PRICING_TOPIC_SIGNAL =
   /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$)\b/i
@@ -71,6 +80,38 @@ const MAC_TOPIC_FAMILIES: Array<{ topic: string; pattern: RegExp }> = [
       /\b(documentation|docs|prioritize|priority|plan|planning|follow.?up|estimate|ownership|assign|task|refactor|discussion)\b/i
   }
 ]
+const WINDOWS_CATEGORY_GUIDANCE =
+  'It is okay for action_items or status_updates to be empty. Put factual details, product capabilities, costs, timelines, and explanations under information unless the transcript explicitly assigns work or makes a decision.'
+
+const NOTES_RESPONSE_ITEM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    topic: { type: 'string' },
+    title: { type: 'string' },
+    content: { type: 'string' },
+    // Optional: Windows Ollama structured outputs grammar-forbid any key not listed
+    // here (additionalProperties: false). parseResponse already reads both fields.
+    assignee: { type: 'string' },
+    deadline: { type: 'string' },
+    sourceStartMs: { type: 'number' },
+    sourceEndMs: { type: 'number' }
+  },
+  required: ['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs']
+} as const
+
+const NOTES_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    decisions: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    action_items: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    information: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    discussion: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
+    status_updates: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA }
+  },
+  required: ['decisions', 'action_items', 'information', 'discussion', 'status_updates']
+} as const
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -200,6 +241,15 @@ MAC QUALITY TUNING OVERRIDE:
 - Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
 - Prefer empty arrays over weak, repeated, speculative, or low-signal notes.`
 
+const WINDOWS_NOTES_PROMPT_SUFFIX = `
+
+WINDOWS QUALITY TUNING OVERRIDE:
+- Avoid near-duplicate titles across all categories. If two items describe the same underlying point, keep only the stronger one.
+- Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
+- If a point is already captured, do not re-create it with a slightly different title.
+- Skip content already captured in earlier chunks when processing later sections.
+- Prefer empty arrays over weak, repeated, or low-signal notes.`
+
 interface RawSegment {
   topic?: string
   title?: string
@@ -297,6 +347,19 @@ export class OllamaProvider implements LLMProvider {
     }
 
     if (process.platform === 'win32') {
+      // Same hardware gate as setInitialContextProfile — do not clobber low-memory
+      // hosts when callers pass false (e.g. Windows notes path in segmentation).
+      const memory = this.getHostMemorySnapshot()
+      const shouldUseLowMemory =
+        (memory.freeGiB != null && memory.freeGiB < LOW_MEMORY_FREE_GIB_THRESHOLD) ||
+        (memory.totalGiB != null && memory.totalGiB < LOW_MEMORY_TOTAL_GIB_THRESHOLD)
+
+      if (shouldUseLowMemory) {
+        this.contextProfile = 'low-memory'
+        this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
+        return
+      }
+
       this.contextProfile = 'windows-balanced'
       this.contextTokens = WINDOWS_CONTEXT_TOKENS
       return
@@ -448,11 +511,22 @@ export class OllamaProvider implements LLMProvider {
 
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
+    const capturedItemTitles: string[] = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const knownTopics = this.extractKnownTopics(merged)
-      const chunkLabel = this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics)
+      const knownItemTitles =
+        process.platform === 'win32' && i > 0
+          ? this.extractKnownItemTitles(capturedItemTitles)
+          : []
+      const chunkLabel = this.buildChunkLabel(
+        i,
+        chunks.length,
+        itemGuidance,
+        knownTopics,
+        knownItemTitles
+      )
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -579,11 +653,19 @@ export class OllamaProvider implements LLMProvider {
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
 
+      if (process.platform === 'win32') {
+        for (const item of this.flattenSegments(chunkResult)) {
+          const title = item.title?.trim()
+          if (title) capturedItemTitles.push(title)
+        }
+      }
+
       const percent = Math.min(99, Math.round(((i + 1) / chunks.length) * 100))
       onProgress?.(percent)
     }
 
     this.normalizeMergedTopics(merged)
+    this.dedupeNearDuplicateItems(merged)
     this.consolidateMacTopicFamilies(merged)
     if (lowMemoryFallbackActivated) {
       this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
@@ -625,6 +707,10 @@ export class OllamaProvider implements LLMProvider {
     return topics.slice(0, MAX_UNIQUE_TOPICS)
   }
 
+  private extractKnownItemTitles(capturedTitles: string[]): string[] {
+    return capturedTitles.slice(-MAX_KNOWN_ITEM_TITLES)
+  }
+
   private chunkTranscript(transcript: string): string[] {
     const chunkChars = this.getChunkChars()
     if (transcript.length <= chunkChars) return [transcript]
@@ -646,12 +732,16 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    return CHUNK_CHARS
+    return process.platform === 'win32' ? WINDOWS_CHUNK_CHARS : CHUNK_CHARS
   }
 
   private getSystemPrompt(): string {
     if (process.platform === 'darwin') {
       return `${SYSTEM_PROMPT}${MAC_NOTES_PROMPT_SUFFIX}`
+    }
+
+    if (process.platform === 'win32') {
+      return `${SYSTEM_PROMPT}${WINDOWS_NOTES_PROMPT_SUFFIX}`
     }
 
     return SYSTEM_PROMPT
@@ -661,22 +751,32 @@ export class OllamaProvider implements LLMProvider {
     chunkIndex: number,
     chunkCount: number,
     itemGuidance: string,
-    knownTopics: string[]
+    knownTopics: string[],
+    knownItemTitles: string[] = []
   ): string {
+    const windowsCategoryGuidance = this.getWindowsCategoryGuidance()
     const knownTopicGuidance =
       knownTopics.length > 0
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
         : ''
+    const knownItemGuidance =
+      process.platform === 'win32' && knownItemTitles.length > 0
+        ? ` Do not re-create notes already captured: ${knownItemTitles.join('; ')}.`
+        : ''
 
     if (chunkCount <= 1) {
-      return `\n\n${itemGuidance}${knownTopicGuidance}`
+      return `\n\n${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
     }
 
     if (process.platform === 'darwin') {
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
     }
 
-    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${knownTopicGuidance}`
+    if (process.platform === 'win32') {
+      return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy NEW items from THIS section, at most ${WINDOWS_CHUNK_ITEM_CAP} total items across all categories. Be concise. Avoid near-duplicate titles; prefer one strong item over overlapping items about the same point. Skip content already captured.${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}${knownItemGuidance}`
+    }
+
+    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
   }
 
   private async callOllama(
@@ -729,10 +829,10 @@ export class OllamaProvider implements LLMProvider {
             { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` }
           ],
           stream: true,
-          format: 'json',
+          format: this.getNotesResponseFormat(),
           options: {
             num_ctx: contextTokens,
-            num_predict: MAX_OUTPUT_TOKENS,
+            num_predict: this.getMaxOutputTokens(),
             temperature: 0,
             repeat_penalty: 1.3
           }
@@ -882,6 +982,18 @@ export class OllamaProvider implements LLMProvider {
       evalCount: data.eval_count,
       evalDurationMs: nsToMs(data.eval_duration)
     }
+  }
+
+  private getNotesResponseFormat(): 'json' | typeof NOTES_RESPONSE_SCHEMA {
+    return process.platform === 'win32' ? NOTES_RESPONSE_SCHEMA : 'json'
+  }
+
+  private getMaxOutputTokens(): number {
+    return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
+  }
+
+  private getWindowsCategoryGuidance(): string {
+    return process.platform === 'win32' ? ` ${WINDOWS_CATEGORY_GUIDANCE}` : ''
   }
 
   private enableLowMemoryContext(
@@ -1177,6 +1289,83 @@ export class OllamaProvider implements LLMProvider {
         segment.topic = canonical
       }
     }
+  }
+
+  private dedupeNearDuplicateItems(segments: MeetingSegments): void {
+    if (process.platform !== 'win32') return
+
+    const items = this.flattenSegments(segments)
+    if (items.length <= 1) return
+
+    const parent = items.map((_, index) => index)
+    const find = (index: number): number => {
+      while (parent[index] !== index) {
+        parent[index] = parent[parent[index]]
+        index = parent[index]
+      }
+      return index
+    }
+    const union = (left: number, right: number) => {
+      const rootLeft = find(left)
+      const rootRight = find(right)
+      if (rootLeft !== rootRight) parent[rootRight] = rootLeft
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (
+          this.getItemTitleSimilarity(items[i].title, items[j].title) >= WINDOWS_ITEM_DEDUP_THRESHOLD
+        ) {
+          union(i, j)
+        }
+      }
+    }
+
+    const clusters = new Map<number, Segment[]>()
+    for (let i = 0; i < items.length; i++) {
+      const root = find(i)
+      const cluster = clusters.get(root) ?? []
+      cluster.push(items[i])
+      clusters.set(root, cluster)
+    }
+
+    const keptSegments = new Set<Segment>()
+    for (const cluster of clusters.values()) {
+      keptSegments.add(cluster.length === 1 ? cluster[0] : this.pickRicherSegment(cluster))
+    }
+
+    const categoryKeys: Array<keyof MeetingSegments> = [
+      'decisions',
+      'actionItems',
+      'information',
+      'discussion',
+      'statusUpdates'
+    ]
+    for (const categoryKey of categoryKeys) {
+      segments[categoryKey] = segments[categoryKey].filter((segment) => keptSegments.has(segment))
+    }
+  }
+
+  private getItemTitleSimilarity(left: string, right: string): number {
+    return this.getTopicTextSimilarity(left, right)
+  }
+
+  private pickRicherSegment(segments: Segment[]): Segment {
+    return segments.reduce((best, candidate) => {
+      const bestContentLength = best.content?.length ?? 0
+      const candidateContentLength = candidate.content?.length ?? 0
+      if (candidateContentLength !== bestContentLength) {
+        return candidateContentLength > bestContentLength ? candidate : best
+      }
+
+      const bestRange = Math.abs(best.sourceEndMs - best.sourceStartMs)
+      const candidateRange = Math.abs(candidate.sourceEndMs - candidate.sourceStartMs)
+      if (candidateRange !== bestRange) {
+        return candidateRange > bestRange ? candidate : best
+      }
+
+      return best
+    })
   }
 
   private consolidateMacTopicFamilies(segments: MeetingSegments): void {

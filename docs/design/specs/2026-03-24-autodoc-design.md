@@ -12,7 +12,7 @@ AutoDoc is a cross-platform, local-first meeting assistant that records meetings
 - **State Management:** Zustand
 - **Storage:** better-sqlite3 (SQLite with FTS5 for full-text search)
 - **Local LLM:** Ollama via HTTP API (localhost:11434)
-- **Transcription:** whisper.cpp via Node bindings
+- **Transcription:** macOS: MLX Whisper (Apple Silicon) with whisper.cpp fallback; Windows: tiered backend (Parakeet ONNX via DirectML/CPU → faster-whisper → whisper.cpp fallback) in a persistent Python worker over JSON-lines stdio
 - **Screen/Audio Capture:** Electron desktopCapturer API + native addons for system audio
 - **Calendar:** Google Calendar API via googleapis npm package
 
@@ -151,7 +151,7 @@ Recordings stored in `~/AutoDoc/recordings/{meeting_id}/` with `screen.webm` and
 
 ### TranscriptionService
 
-- After recording stops, sends audio to local Whisper (whisper.cpp via Node bindings)
+- After recording stops, sends audio to the local transcription backend (macOS: MLX Whisper or whisper.cpp; Windows: persistent Python worker running Parakeet/faster-whisper, falling back to the whisper.cpp CLI)
 - Produces timestamped transcript segments. Speaker diarization is v1-simple: all segments labeled "Speaker 1" (single-speaker assumption). Multi-speaker diarization (via pyannote or similar) is a future enhancement.
 - Stores results in `transcripts` table
 

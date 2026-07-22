@@ -1,21 +1,23 @@
 {
-  "version": 1,
-  "releaseTag": "windows-transcription-v1",
-  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1",
+  "version": 2,
+  "releaseTag": "windows-transcription-v2",
+  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2",
   "profiles": [
     {
       "id": "faster-whisper-cuda",
       "label": "NVIDIA accelerated transcription",
       "modelName": "distil-large-v3",
+      "engine": "faster-whisper",
       "device": "cuda",
-      "computeType": "float16",
+      "computeType": "int8_float32",
       "minSystemMemoryGiB": 12,
+      "estimatedMemoryGiB": 3.5,
       "minVramGiB": 6,
       "assets": [
         {
           "id": "runtime",
           "filename": "faster-whisper-runtime-cuda-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cuda-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cuda-win-x64.zip",
           "sha256": "785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a",
           "expectedFiles": [
             "python.exe",
@@ -27,29 +29,17 @@
             "faster-whisper",
             "CTranslate2 CUDA runtime"
           ],
-          "licenses": [
-            "MIT",
-            "Apache-2.0",
-            "BSD-3-Clause"
-          ],
+          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
           "bytes": 1439431425
         },
         {
           "id": "model",
           "filename": "faster-whisper-distil-large-v3-ct2.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-distil-large-v3-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-distil-large-v3-ct2.zip",
           "sha256": "81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064",
-          "expectedFiles": [
-            "config.json",
-            "model.bin",
-            "tokenizer.json"
-          ],
-          "sources": [
-            "distil-whisper/distil-large-v3 converted to CTranslate2"
-          ],
-          "licenses": [
-            "MIT"
-          ],
+          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
+          "sources": ["distil-whisper/distil-large-v3 converted to CTranslate2"],
+          "licenses": ["MIT"],
           "bytes": 1397218990
         }
       ]
@@ -58,14 +48,16 @@
       "id": "faster-whisper-cpu",
       "label": "CPU optimized transcription",
       "modelName": "small.en",
+      "engine": "faster-whisper",
       "device": "cpu",
       "computeType": "int8",
       "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 1.5,
       "assets": [
         {
           "id": "runtime",
           "filename": "faster-whisper-runtime-cpu-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-runtime-cpu-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip",
           "sha256": "63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9",
           "expectedFiles": [
             "python.exe",
@@ -77,40 +69,140 @@
             "faster-whisper",
             "CTranslate2 CPU runtime"
           ],
-          "licenses": [
-            "MIT",
-            "Apache-2.0",
-            "BSD-3-Clause"
-          ],
+          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
           "bytes": 122910760
         },
         {
           "id": "model",
           "filename": "faster-whisper-small-en-ct2-int8.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v1/faster-whisper-small-en-ct2-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-small-en-ct2-int8.zip",
           "sha256": "1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8",
+          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
+          "sources": ["openai/whisper-small.en converted to CTranslate2 int8"],
+          "licenses": ["MIT"],
+          "bytes": 445198952
+        }
+      ]
+    },
+    {
+      "id": "parakeet-gpu",
+      "label": "GPU accelerated transcription",
+      "modelName": "parakeet-tdt-0.6b-v3",
+      "engine": "parakeet",
+      "device": "dml",
+      "computeType": "fp32",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 4,
+      "minVramGiB": 4,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "parakeet-runtime-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip",
+          "sha256": "e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3",
           "expectedFiles": [
-            "config.json",
-            "model.bin",
-            "tokenizer.json"
+            "python.exe",
+            "Lib/site-packages/onnx_asr",
+            "Lib/site-packages/onnxruntime"
           ],
           "sources": [
-            "openai/whisper-small.en converted to CTranslate2 int8"
+            "Python 3.11 standalone runtime",
+            "onnx-asr 0.11.0",
+            "onnxruntime-directml 1.24.4"
           ],
-          "licenses": [
-            "MIT"
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 87511283
+        },
+        {
+          "id": "model",
+          "filename": "parakeet-tdt-0.6b-v3-fp32.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip",
+          "sha256": "ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23",
+          "expectedFiles": [
+            "encoder-model.onnx",
+            "encoder-model.onnx.data",
+            "decoder_joint-model.onnx",
+            "vocab.txt",
+            "config.json",
+            "nemo128.onnx",
+            "silero_vad.onnx"
           ],
-          "bytes": 445198952
+          "sources": ["istupakov/parakeet-tdt-0.6b-v3-onnx fp32", "istupakov/silero-vad-onnx"],
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 2370811633,
+          "parts": [
+            {
+              "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part1",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part1",
+              "sha256": "e0f7ef1d42db37c3d2866d13bd68d251697e50ba877a3c39375ee1df005f0bf1",
+              "bytes": 1185405817
+            },
+            {
+              "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part2",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part2",
+              "sha256": "b2e1f79ab9e2467617dae80709646621b470a3e0343f63b332a2c6addfe2a298",
+              "bytes": 1185405816
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "parakeet-cpu",
+      "label": "CPU optimized transcription",
+      "modelName": "parakeet-tdt-0.6b-v3",
+      "engine": "parakeet",
+      "device": "cpu",
+      "computeType": "int8",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 2,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "parakeet-runtime-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip",
+          "sha256": "e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/onnx_asr",
+            "Lib/site-packages/onnxruntime"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "onnx-asr 0.11.0",
+            "onnxruntime-directml 1.24.4"
+          ],
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 87511283
+        },
+        {
+          "id": "model",
+          "filename": "parakeet-tdt-0.6b-v3-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-int8.zip",
+          "sha256": "656335b7d7a4e1c6ecb3d78f2ac2ad342ae7865e34ec9d21905ea8c1a5e65733",
+          "expectedFiles": [
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+            "vocab.txt",
+            "config.json",
+            "nemo128.onnx",
+            "silero_vad.onnx"
+          ],
+          "sources": ["istupakov/parakeet-tdt-0.6b-v3-onnx int8", "istupakov/silero-vad-onnx"],
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 480454890
         }
       ]
     },
     {
       "id": "whisper-cpp",
       "label": "compatible transcription",
-      "modelName": "distil-large-v3-ggml",
+      "modelName": "base.en",
+      "engine": "whisper-cpp",
       "device": "cpu",
       "computeType": "int8",
       "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 2.5,
       "assets": []
     }
   ]

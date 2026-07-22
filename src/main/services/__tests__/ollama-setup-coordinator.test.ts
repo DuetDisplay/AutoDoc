@@ -71,4 +71,24 @@ describe('OllamaSetupCoordinator', () => {
     await expect(coordinator.ensureRunning({ force: true })).resolves.toBeUndefined()
     expect(manager.startAndPull).toHaveBeenCalledTimes(2)
   })
+
+  it('documents cached startAndPull finishing without a fresh pull-complete event', async () => {
+    const manager = {
+      startAndPull: vi.fn().mockResolvedValue(undefined)
+    }
+    const onAttemptStart = vi.fn()
+    const coordinator = new OllamaSetupCoordinator(manager, {
+      retryDelaysMs: [0],
+      onAttemptStart
+    })
+
+    await coordinator.ensureRunning()
+    expect(onAttemptStart).toHaveBeenCalledTimes(1)
+
+    // A later recovery re-enters setup, but startAndPull may resolve from cache without
+    // emitting pull-complete — the parent must mark ready on ensureRunning().then(...).
+    await coordinator.ensureRunning()
+    expect(manager.startAndPull).toHaveBeenCalledTimes(2)
+    expect(onAttemptStart).toHaveBeenCalledTimes(2)
+  })
 })

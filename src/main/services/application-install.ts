@@ -3,7 +3,9 @@ import { access, readFile } from 'node:fs/promises'
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, win32 as pathWin32 } from 'node:path'
 import { promisify } from 'node:util'
+import type { ChildProcess } from 'node:child_process'
 import { app, dialog } from 'electron'
+import { flushAutodocLogWrites, logAutodocEvent } from './autodoc-log'
 
 const execFile = promisify(execFileCallback)
 const APPLICATIONS_DIR = '/Applications'
@@ -43,6 +45,39 @@ interface WindowsReplacementOptions {
 
 let secondInstancePromptOpen = false
 
+const REDIRECT_SPAWN_CONFIRMATION_TIMEOUT_MS = 5000
+/**
+ * Set on processes spawned by the same-version redirect so the child never redirects again.
+ * Breaks any redirect ping-pong loop where two copies keep handing off to each other.
+ */
+export const INSTALL_REDIRECT_CHILD_ENV = 'AUTODOC_INSTALL_REDIRECT_CHILD'
+
+/**
+ * Unconditional structured logging of install-policy decisions to the standard app log.
+ * `traceInstallPolicy` (below) stays opt-in via env var; this one must always record why the
+ * app did or did not continue launching, so silent-exit bugs are visible in QA logs.
+ */
+function logInstallPolicy(message: string, context?: Record<string, unknown>, level: 'info' | 'warn' = 'info'): void {
+  try {
+    logAutodocEvent({ area: 'app', level, message: `install-policy: ${message}`, context })
+  } catch {
+    // Logging must never break launch.
+  }
+}
+
+/**
+ * Log writes are queued asynchronously; every install-policy exit path must flush the queue
+ * first or the decision lines are lost when app.exit(0) kills the process. QA logs from
+ * launch-failure machines contained no install-policy lines for exactly this reason.
+ */
+async function flushInstallPolicyLogs(): Promise<void> {
+  try {
+    await flushAutodocLogWrites()
+  } catch {
+    // Best-effort; never block the exit on logging.
+  }
+}
+
 export function traceInstallPolicy(message: string, data?: Record<string, unknown>): void {
   if (!INSTALL_POLICY_TRACE_ENABLED) return
   const timestamp = new Date().toISOString()
@@ -67,8 +102,26 @@ export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = proces
 }
 
 export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  try {
+    return await enforceInstalledApplicationPolicyUnsafe(platform)
+  } catch (error) {
+    // Fail open: an unexpected policy error must never prevent the app from launching.
+    logInstallPolicy('enforcement failed unexpectedly; continuing launch of current copy', {
+      platform,
+      error: error instanceof Error ? error.message : String(error),
+    }, 'warn')
+    traceInstallPolicy('enforce: unexpected error, failing open', {
+      platform,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return true
+  }
+}
+
+async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform): Promise<boolean> {
   if (!shouldEnforceInstalledCopyPolicy(platform)) {
     traceInstallPolicy('enforce: skipped policy', { platform, packaged: app.isPackaged })
+    logInstallPolicy('policy skipped', { platform, packaged: app.isPackaged })
     return true
   }
 
@@ -81,21 +134,56 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
     installedContainer: installedApplication?.containerPath ?? null,
     installedVersion: installedApplication?.version ?? null,
   })
+  logInstallPolicy('resolved current vs installed copies', {
+    platform,
+    currentContainer: currentApplication.containerPath,
+    currentExecutable: currentApplication.executablePath,
+    currentVersion: currentApplication.version,
+    installedContainer: installedApplication?.containerPath ?? null,
+    installedExecutable: installedApplication?.executablePath ?? null,
+    installedVersion: installedApplication?.version ?? null,
+  })
   if (!installedApplication || sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
     traceInstallPolicy('enforce: no installed conflict', {
       hasInstalled: Boolean(installedApplication),
       sameCopy: installedApplication ? sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform) : null,
     })
+    logInstallPolicy('no installed conflict; continuing launch', {
+      hasInstalled: Boolean(installedApplication),
+    })
     return true
   }
 
   if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
+    if (process.env[INSTALL_REDIRECT_CHILD_ENV] === '1') {
+      // This process was itself spawned by a same-version redirect. Redirecting again would
+      // ping-pong forever with nothing ever reaching a window; launch this copy instead.
+      logInstallPolicy('redirect child detected; skipping same-version redirect and continuing launch', {
+        current: currentApplication.containerPath,
+        installed: installedApplication.containerPath,
+      }, 'warn')
+      return true
+    }
     traceInstallPolicy('enforce: same-version redirect', {
       source: currentApplication.containerPath,
       target: installedApplication.containerPath,
       version: currentApplication.version ?? app.getVersion(),
     })
-    launchInstalledCopyAndQuit(installedApplication, platform)
+    logInstallPolicy('same-version redirect attempt', {
+      source: currentApplication.containerPath,
+      target: installedApplication.containerPath,
+      targetLaunchPath: installedApplication.launchPath,
+      version: currentApplication.version ?? app.getVersion(),
+    })
+    const redirected = await launchInstalledCopyAndQuit(installedApplication, platform)
+    if (!redirected) {
+      // Fail open: the registry/install-dir pointer is stale or the target copy is broken.
+      // Launching the current copy is strictly better than exiting with nothing on screen.
+      logInstallPolicy('same-version redirect failed; continuing launch of current copy', {
+        target: installedApplication.launchPath,
+      }, 'warn')
+      return true
+    }
     return false
   }
 
@@ -111,11 +199,24 @@ export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platfor
     installedVersion: installedApplication.version,
     platform,
   })
+  logInstallPolicy('replacement prompt shown', {
+    accepted: userAcceptedReplacement,
+    sourceVersion: currentApplication.version ?? app.getVersion(),
+    installedVersion: installedApplication.version,
+    platform,
+  })
   if (!userAcceptedReplacement) {
+    logInstallPolicy('user declined replacement; quitting', { platform })
+    await flushInstallPolicyLogs()
     quitForInstalledCopyPolicy(platform)
     return false
   }
 
+  logInstallPolicy('replacement started; installed copy will relaunch', {
+    source: currentApplication.containerPath,
+    target: installedApplication.containerPath,
+    platform,
+  })
   replaceInstalledCopyAndRelaunch(currentApplication, installedApplication, platform)
   return false
 }
@@ -141,6 +242,7 @@ export async function warnIfUnsupportedMacOS(
     noLink: true,
   })
 
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
   return false
 }
@@ -772,6 +874,7 @@ async function replaceInstalledCopyAndRelaunch(
     await showReplacementError(platform, error)
   }
 
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
 }
 
@@ -1056,22 +1159,110 @@ try {
   })
 }
 
-function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, platform: NodeJS.Platform): void {
+/**
+ * Redirect to the installed copy, but only quit this process once the redirect is verified:
+ * the target executable must exist and the spawn must be confirmed (`spawn` event / pid) rather
+ * than assumed. Returns true when the installed copy was launched and this process should quit;
+ * false means the redirect failed and the caller should fail open (keep launching this copy).
+ */
+async function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, platform: NodeJS.Platform): Promise<boolean> {
+  try {
+    await access(installedApplication.executablePath)
+  } catch (error) {
+    logInstallPolicy('same-version redirect target executable is missing; not quitting', {
+      target: installedApplication.executablePath,
+      error: error instanceof Error ? error.message : String(error),
+    }, 'warn')
+    traceInstallPolicy('launchInstalledCopyAndQuit: target executable missing', {
+      target: installedApplication.executablePath,
+    })
+    return false
+  }
+
+  // Release the single-instance lock before handing off, otherwise the spawned copy can
+  // reach its own requestSingleInstanceLock while this process is still exiting, lose the
+  // race, and silently quit — leaving the user with no window at all.
+  try {
+    ;(app as { releaseSingleInstanceLock?: () => void }).releaseSingleInstanceLock?.()
+  } catch {
+    // Best-effort; proceed with the handoff either way.
+  }
+
+  let child: ChildProcess
   try {
     if (platform === 'darwin') {
-      spawn('/usr/bin/open', [installedApplication.launchPath], { detached: true, stdio: 'ignore' }).unref()
+      child = spawn('/usr/bin/open', [installedApplication.launchPath], { detached: true, stdio: 'ignore' })
     } else if (platform === 'win32') {
-      spawn(installedApplication.launchPath, [], {
+      child = spawn(installedApplication.launchPath, [], {
         detached: true,
         stdio: 'ignore',
         cwd: platformDirname(installedApplication.launchPath, platform),
-      }).unref()
+        env: { ...process.env, [INSTALL_REDIRECT_CHILD_ENV]: '1' },
+      })
+    } else {
+      return false
     }
-  } catch {
-    // If we can't launch the installed copy, fall through to quit silently.
+  } catch (error) {
+    logInstallPolicy('same-version redirect spawn threw synchronously; not quitting', {
+      target: installedApplication.launchPath,
+      error: error instanceof Error ? error.message : String(error),
+    }, 'warn')
+    traceInstallPolicy('launchInstalledCopyAndQuit: spawn threw', {
+      target: installedApplication.launchPath,
+    })
+    return false
   }
 
+  const spawnConfirmed = await waitForSpawnConfirmation(child, REDIRECT_SPAWN_CONFIRMATION_TIMEOUT_MS)
+  if (!spawnConfirmed.ok) {
+    logInstallPolicy('same-version redirect spawn failed; not quitting', {
+      target: installedApplication.launchPath,
+      reason: spawnConfirmed.reason,
+    }, 'warn')
+    traceInstallPolicy('launchInstalledCopyAndQuit: spawn not confirmed', {
+      target: installedApplication.launchPath,
+      reason: spawnConfirmed.reason,
+    })
+    return false
+  }
+
+  child.unref()
+  logInstallPolicy('same-version redirect succeeded; quitting so installed copy takes over', {
+    target: installedApplication.launchPath,
+    childPid: child.pid ?? null,
+  })
+  await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
+  return true
+}
+
+/**
+ * Node emits spawn errors (e.g. ENOENT, EACCES) asynchronously via the `error` event; a
+ * successful spawn emits `spawn` and assigns `pid`. Wait for whichever comes first, with a
+ * timeout fallback: if `pid` is already set treat the spawn as successful, otherwise fail.
+ */
+function waitForSpawnConfirmation(child: ChildProcess, timeoutMs: number): Promise<{ ok: boolean; reason?: string }> {
+  return new Promise((resolveConfirmation) => {
+    let settled = false
+    const settle = (result: { ok: boolean; reason?: string }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      child.removeListener('spawn', onSpawn)
+      child.removeListener('error', onError)
+      resolveConfirmation(result)
+    }
+
+    const onSpawn = (): void => settle({ ok: true })
+    const onError = (error: Error): void => settle({ ok: false, reason: error.message })
+    const timeout = setTimeout(() => {
+      settle(child.pid ? { ok: true } : { ok: false, reason: `spawn not confirmed within ${timeoutMs}ms` })
+    }, timeoutMs)
+    timeout.unref?.()
+
+    child.once('spawn', onSpawn)
+    child.once('error', onError)
+  })
 }
 
 function quitForInstalledCopyPolicy(_platform: NodeJS.Platform): void {

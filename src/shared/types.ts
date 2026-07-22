@@ -84,6 +84,8 @@ export interface OAuthTokens {
   scope?: string
 }
 
+export type VideoStatus = 'processing' | 'ready' | 'failed'
+
 export interface RecordingEntry {
   meetingId: string
   title: string
@@ -92,6 +94,7 @@ export interface RecordingEntry {
   hasVideo: boolean
   hasAudio: boolean
   isFinalizing?: boolean
+  videoStatus?: VideoStatus
   transcriptionStatus: TranscriptionStatus
 }
 
@@ -104,6 +107,8 @@ export interface MeetingMetadata {
   calendarTitle?: string
   customTitle?: string
   notesReadyNotificationSentAt?: number
+  videoProcessingFailed?: boolean
+  videoStatus?: VideoStatus
 }
 
 export interface RecordingSource {
@@ -156,6 +161,9 @@ export interface TranscriptionStatusPayload {
   status: TranscriptionStatus
   progress?: number
   errorCode?: string
+  backendLabel?: string
+  qualityMode?: 'fast' | 'balanced'
+  etaSeconds?: number | null
 }
 
 export type TranscriptionStatus =
@@ -202,6 +210,8 @@ export type SegmentationStatus =
 export interface OllamaSetupStatus {
   phase: 'starting' | 'downloading' | 'pulling' | 'ready' | 'error'
   percent: number
+  /** Model name when phase is pulling (e.g. llama3.1 vs qwen3-embedding:0.6b). */
+  pullModel?: string
   error?: string
   failedStep?: 'starting' | 'downloading' | 'pulling' | 'ready'
 }
@@ -219,10 +229,18 @@ export interface WhisperSetupStatus {
     | 'error'
   percent: number
   error?: string
-  backend?: 'mlx-whisper' | 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp'
+  backend?:
+    | 'mlx-whisper'
+    | 'faster-whisper-cuda'
+    | 'faster-whisper-cpu'
+    | 'parakeet-gpu'
+    | 'parakeet-cpu'
+    | 'whisper-cpp'
   backendLabel?: string
   macProcessingProfileId?: 'mac-normal' | 'mac-low-spec'
   macProcessingProfileReason?: string
+  windowsProcessingProfileId?: 'win-gpu' | 'win-cpu-normal' | 'win-low-spec'
+  windowsProcessingProfileReason?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'

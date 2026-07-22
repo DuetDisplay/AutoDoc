@@ -1,11 +1,53 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
+import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
   LOW_MEMORY_CONTEXT_TOKENS,
   MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
+  WINDOWS_CHUNK_CHARS,
+  WINDOWS_MAX_OUTPUT_TOKENS,
   WINDOWS_CONTEXT_TOKENS
 } from '../llm'
+
+const originalPlatform = process.platform
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    value: platform
+  })
+}
+
+function makeSegment(
+  overrides: Partial<Segment> & Pick<Segment, 'id' | 'category' | 'title' | 'content'>
+): Segment {
+  return {
+    meetingId: 'meeting-1',
+    topic: 'General',
+    assignee: null,
+    deadline: null,
+    sourceStartMs: 0,
+    sourceEndMs: 0,
+    ...overrides
+  }
+}
+
+function makeSegments(items: {
+  decisions?: Segment[]
+  actionItems?: Segment[]
+  information?: Segment[]
+  discussion?: Segment[]
+  statusUpdates?: Segment[]
+}): MeetingSegments {
+  return {
+    decisions: items.decisions ?? [],
+    actionItems: items.actionItems ?? [],
+    information: items.information ?? [],
+    discussion: items.discussion ?? [],
+    statusUpdates: items.statusUpdates ?? []
+  }
+}
 
 const mocks = vi.hoisted(() => ({
   logAutodocEvent: vi.fn(),
@@ -24,6 +66,7 @@ describe('OllamaProvider grounding', () => {
   const provider = new OllamaProvider('http://localhost:11434', 'test-model')
 
   afterEach(() => {
+    setPlatform(originalPlatform)
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -298,7 +341,7 @@ describe('OllamaProvider grounding', () => {
       return
     }
 
-    expect(chunks).toHaveLength(3)
+    expect(chunks).toHaveLength(process.platform === 'win32' ? 2 : 3)
     expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
@@ -661,5 +704,348 @@ describe('OllamaProvider grounding', () => {
         event: 'ollama_low_memory_fallback_triggered'
       })
     )
+  })
+
+  it('preserves assignee and deadline from model JSON in parseResponse', () => {
+    const transcript = '[00:00] [Speaker] Chris will own the billing API migration by Friday.'
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        decisions: [],
+        action_items: [
+          {
+            topic: 'Billing API',
+            title: 'Prepare billing API migration',
+            content: 'Chris will own the billing API migration by Friday.',
+            assignee: 'Chris',
+            deadline: 'Friday',
+            sourceStartMs: 0,
+            sourceEndMs: 0
+          }
+        ],
+        information: [],
+        discussion: [],
+        status_updates: []
+      }),
+      undefined,
+      5_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.actionItems[0].assignee).toBe('Chris')
+    expect(result.actionItems[0].deadline).toBe('Friday')
+  })
+
+  it('includes optional assignee and deadline in the Windows structured-output schema', () => {
+    setPlatform('win32')
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const format = (windowsProvider as any).getNotesResponseFormat() as {
+      properties: {
+        action_items: {
+          items: {
+            properties: Record<string, { type: string }>
+            required: string[]
+            additionalProperties: boolean
+          }
+        }
+      }
+    }
+
+    expect(format).not.toBe('json')
+    const itemSchema = format.properties.action_items.items
+    // Grammar-constrained Ollama format + additionalProperties:false drops any key
+    // not listed here, so assignee/deadline must be present as optional properties.
+    expect(itemSchema.additionalProperties).toBe(false)
+    expect(itemSchema.properties.assignee).toEqual({ type: 'string' })
+    expect(itemSchema.properties.deadline).toEqual({ type: 'string' })
+    expect(itemSchema.required).toEqual(
+      expect.arrayContaining(['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs'])
+    )
+    expect(itemSchema.required).not.toContain('assignee')
+    expect(itemSchema.required).not.toContain('deadline')
+  })
+
+  it('uses constrained shorter notes generation on Windows', async () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const requestBodies: Array<{
+      format?: unknown
+      messages?: Array<{ role: string; content: string }>
+      options?: { num_predict?: number }
+    }> = []
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body ?? '{}')))
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder()
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    message: {
+                      content: JSON.stringify({
+                        decisions: [],
+                        action_items: [],
+                        information: [
+                          {
+                            topic: 'Windows Performance',
+                            title: 'CPU notes path was optimized',
+                            content:
+                              'The Windows notes generation path now uses a stricter response format.',
+                            sourceStartMs: 0,
+                            sourceEndMs: 0
+                          }
+                        ],
+                        discussion: [],
+                        status_updates: []
+                      })
+                    }
+                  })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    const result = await windowsProvider.summarize(
+      'meeting-windows-schema',
+      '[00:00] [Chris] The Windows notes generation path now uses a stricter response format.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(requestBodies[0].format).toMatchObject({
+      type: 'object',
+      properties: {
+        decisions: expect.objectContaining({ type: 'array' }),
+        action_items: expect.objectContaining({ type: 'array' }),
+        information: expect.objectContaining({ type: 'array' }),
+        discussion: expect.objectContaining({ type: 'array' }),
+        status_updates: expect.objectContaining({ type: 'array' })
+      }
+    })
+    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
+    expect(requestBodies[0].messages?.[1]?.content).toContain(
+      'It is okay for action_items or status_updates to be empty'
+    )
+  })
+
+  it('uses larger transcript chunks on Windows to reduce notes calls', () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
+  })
+
+  it('keeps low-memory context when setLowMemoryMode(false) runs on a low-RAM Windows host', () => {
+    setPlatform('win32')
+    const lowRamProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(lowRamProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 2.5, totalGiB: 7.77 })
+
+    lowRamProvider.setLowMemoryMode(false)
+
+    expect((lowRamProvider as any).contextProfile).toBe('low-memory')
+    expect((lowRamProvider as any).contextTokens).toBe(LOW_MEMORY_CONTEXT_TOKENS)
+  })
+
+  it('uses windows-balanced context when setLowMemoryMode(false) runs on a high-RAM Windows host', () => {
+    setPlatform('win32')
+    const highRamProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(highRamProvider as any).getHostMemorySnapshot = () => ({ freeGiB: 16, totalGiB: 32 })
+
+    highRamProvider.setLowMemoryMode(false)
+
+    expect((highRamProvider as any).contextProfile).toBe('windows-balanced')
+    expect((highRamProvider as any).contextTokens).toBe(WINDOWS_CONTEXT_TOKENS)
+  })
+
+  describe('Windows near-duplicate item dedup', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    it('collapses exact duplicate titles across categories on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot timeline confirmed',
+            content: 'Hands-off driving expected in two years.'
+          })
+        ],
+        discussion: [
+          makeSegment({
+            id: 'd1',
+            category: 'discussion',
+            title: 'Autopilot timeline confirmed',
+            content: 'The team debated the two-year autopilot timeline.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(0)
+      expect(segments.discussion).toHaveLength(1)
+      expect(segments.discussion[0].content).toContain('debated')
+    })
+
+    it('collapses substring near-duplicate titles like the Autopilot example on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot Expected in Two Years for Hands-Off Driving Capability',
+            content: 'Hands-off driving is expected in about two years.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title:
+              'Autopilot Expected in Two Years for Hands-Off Driving Capability with Crash Rate of One-in-a-Thousand or Less',
+            content:
+              'Hands-off driving is expected in about two years with a projected crash rate of one in a thousand or less, including additional safety context.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(1)
+      expect(segments.information[0].title).toContain('Crash Rate')
+      expect(segments.information[0].content.length).toBeGreaterThan(80)
+    })
+
+    it('collapses cross-category near-duplicates and keeps the richer item in its original category', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        decisions: [
+          makeSegment({
+            id: 'd1',
+            category: 'decision',
+            title: 'Ship billing API migration before launch',
+            content: 'Approved.',
+            sourceStartMs: 60_000,
+            sourceEndMs: 90_000
+          })
+        ],
+        actionItems: [
+          makeSegment({
+            id: 'a1',
+            category: 'action_item',
+            title: 'Ship billing API migration before launch next quarter',
+            content:
+              'Chris will migrate the billing API before launch next quarter and document the rollout plan.',
+            sourceStartMs: 60_000,
+            sourceEndMs: 180_000
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.decisions).toHaveLength(0)
+      expect(segments.actionItems).toHaveLength(1)
+      expect(segments.actionItems[0].content).toContain('Chris')
+    })
+
+    it('preserves distinct titles on Windows', () => {
+      setPlatform('win32')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Windows rollout split remains 30% and 70%',
+            content: 'Rewrite stays at 30% while legacy Windows remains at 70%.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title: 'Latest Windows desktop installs are 73 for this build',
+            content: 'Install count for the current build is 73.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(2)
+    })
+
+    it('does not dedupe near-duplicate items on macOS', () => {
+      setPlatform('darwin')
+      const segments = makeSegments({
+        information: [
+          makeSegment({
+            id: 'i1',
+            category: 'information',
+            title: 'Autopilot Expected in Two Years for Hands-Off Driving Capability',
+            content: 'Hands-off driving is expected in about two years.'
+          }),
+          makeSegment({
+            id: 'i2',
+            category: 'information',
+            title:
+              'Autopilot Expected in Two Years for Hands-Off Driving Capability with Crash Rate of One-in-a-Thousand or Less',
+            content:
+              'Hands-off driving is expected in about two years with a projected crash rate of one in a thousand or less.'
+          })
+        ]
+      })
+
+      ;(provider as any).dedupeNearDuplicateItems(segments)
+
+      expect(segments.information).toHaveLength(2)
+    })
+  })
+
+  describe('Windows chunk label guidance', () => {
+    it('includes per-chunk item cap, anti-duplication guidance, and known item titles on later chunks', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const label = (windowsProvider as any).buildChunkLabel(
+        1,
+        3,
+        'Aim for 8-12 items total across all categories.',
+        ['Product Planning'],
+        ['Autopilot timeline confirmed', 'Billing API migration plan']
+      ) as string
+
+      expect(label).toContain('at most 8 total items across all categories')
+      expect(label).toContain('Avoid near-duplicate titles')
+      expect(label).toContain('Do not re-create notes already captured')
+      expect(label).toContain('Autopilot timeline confirmed')
+      expect(label).toContain('Billing API migration plan')
+    })
+
+    it('adds Windows anti-duplication guidance to the system prompt', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
+
+      expect(systemPrompt).toContain('WINDOWS QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).toContain('Avoid near-duplicate titles across all categories')
+    })
   })
 })

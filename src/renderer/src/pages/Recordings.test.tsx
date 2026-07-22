@@ -224,4 +224,47 @@ describe('Recordings', () => {
     expect(screen.getByText('Wrapping up recording...')).toBeInTheDocument()
     expect(screen.getByText(/Zoom/i)).toBeInTheDocument()
   })
+
+  it('shows a processing video badge after finalizing clears', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'recording:list') {
+          return Promise.resolve([
+            {
+              meetingId: 'meeting-4',
+              title: 'Teams — Apr 21 at 8:00 PM',
+              date: Date.now(),
+              duration: 20,
+              hasVideo: false,
+              hasAudio: true,
+              isFinalizing: false,
+              videoStatus: 'processing',
+              transcriptionStatus: 'complete'
+            }
+          ])
+        }
+        if (channel === 'segmentation:get-status') return Promise.resolve('complete')
+        if (channel === 'segmentation:get-progress') return Promise.resolve(undefined)
+        if (channel === 'transcription:get-status') return Promise.resolve('complete')
+        if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as any
+
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <Recordings />
+        </MemoryRouter>
+      )
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Processing video…')).toBeInTheDocument()
+  })
 })

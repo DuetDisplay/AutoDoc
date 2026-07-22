@@ -1,12 +1,13 @@
 const { createHash } = require('node:crypto')
 const { spawnSync } = require('node:child_process')
-const { createReadStream } = require('node:fs')
+const { createReadStream, createWriteStream } = require('node:fs')
+const { open } = require('node:fs/promises')
 const { cp, mkdir, readFile, readdir, rm, stat, writeFile } = require('node:fs/promises')
 const path = require('node:path')
 
 const ROOT = process.cwd()
 const RELEASE_TAG =
-  process.env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG ?? 'windows-transcription-v1'
+  process.env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG ?? 'windows-transcription-v2'
 const OUT_DIR = path.join(ROOT, '.benchmarks', 'windows-transcription-assets', RELEASE_TAG)
 const STAGING_DIR = path.join(OUT_DIR, '_staging')
 const MANIFEST_PATH = path.join(ROOT, 'resources', 'windows-transcription-manifest.json')
@@ -17,6 +18,8 @@ const PYTHON_ARCHIVE = path.join(
   'cpython-3.11.15+20260414-x86_64-pc-windows-msvc-install_only.tar.gz'
 )
 const MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'faster-whisper-models')
+const PARAKEET_MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'parakeet-models')
+const SILERO_VAD_CACHE_DIR = path.join(ROOT, '.benchmarks', 'silero-vad-onnx')
 const BUILD_ENV = {
   ...process.env,
   PYTHONDONTWRITEBYTECODE: '1',
@@ -63,6 +66,15 @@ const CUDA_PACKAGES = [
   'nvidia-cudnn-cu12==9.21.1.3',
   'nvidia-cuda-nvrtc-cu12==12.9.86'
 ]
+const PARAKEET_RUNTIME_PACKAGES = [
+  'numpy==2.4.4',
+  'onnx-asr==0.11.0',
+  'onnxruntime-directml==1.24.4',
+  // Build-time only: resolveParakeetModelSnapshot/resolveSileroVadSnapshot run
+  // huggingface_hub downloads through this staged runtime (onnx-asr does not
+  // depend on it, unlike faster-whisper which pulls it in transitively).
+  'huggingface_hub==1.22.0'
+]
 
 const MODELS = [
   {
@@ -80,6 +92,47 @@ const MODELS = [
     zipName: 'faster-whisper-small-en-ct2-int8.zip'
   }
 ]
+
+const PARAKEET_MODELS = [
+  {
+    id: 'parakeet-tdt-0.6b-v3-fp32',
+    repoId: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
+    revision: '8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce',
+    cacheDirName: 'models--istupakov--parakeet-tdt-0.6b-v3-onnx',
+    zipName: 'parakeet-tdt-0.6b-v3-fp32.zip',
+    files: [
+      'encoder-model.onnx',
+      'encoder-model.onnx.data',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+      'config.json',
+      'nemo128.onnx'
+    ]
+  },
+  {
+    id: 'parakeet-tdt-0.6b-v3-int8',
+    repoId: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
+    revision: '8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce',
+    cacheDirName: 'models--istupakov--parakeet-tdt-0.6b-v3-onnx',
+    zipName: 'parakeet-tdt-0.6b-v3-int8.zip',
+    files: [
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+      'config.json',
+      'nemo128.onnx'
+    ]
+  }
+]
+
+const SILERO_VAD = {
+  repoId: 'istupakov/silero-vad-onnx',
+  revision: null,
+  cacheDirName: 'models--istupakov--silero-vad-onnx',
+  filename: 'silero_vad.onnx'
+}
+
+const MAX_RELEASE_PART_BYTES = 2_000_000_000
 
 async function main() {
   if (process.platform !== 'win32') {
@@ -107,11 +160,18 @@ async function main() {
         ...CUDA_PACKAGES
       ])
     )
+    artifacts.set(
+      'parakeet-runtime-win-x64.zip',
+      await prepareRuntime('parakeet', 'parakeet-runtime-win-x64.zip', PARAKEET_RUNTIME_PACKAGES)
+    )
   }
 
   if (!skipModels) {
     for (const model of MODELS) {
       artifacts.set(model.zipName, await prepareModel(model))
+    }
+    for (const model of PARAKEET_MODELS) {
+      artifacts.set(model.zipName, await prepareParakeetModel(model))
     }
   }
 
@@ -140,7 +200,7 @@ async function prepareRuntime(kind, zipName, packages) {
 
   await pruneRuntime(runtimeDir)
   await zipDirectory(runtimeDir, zipPath)
-  return await describeArtifact(zipPath)
+  return await describeArtifact(zipPath, zipName)
 }
 
 async function prepareModel(model) {
@@ -155,7 +215,102 @@ async function prepareModel(model) {
     filter: (source) => !source.includes(`${path.sep}.cache${path.sep}`)
   })
   await zipDirectory(stagingDir, zipPath)
-  return await describeArtifact(zipPath)
+  return await describeArtifact(zipPath, model.zipName)
+}
+
+async function prepareParakeetModel(model) {
+  const sourceDir = await resolveParakeetModelSnapshot(model)
+  const sileroVadPath = await resolveSileroVadSnapshot()
+  const stagingDir = path.join(STAGING_DIR, `model-${model.id}`)
+  const zipPath = path.join(OUT_DIR, model.zipName)
+
+  await rm(stagingDir, { recursive: true, force: true })
+  await mkdir(stagingDir, { recursive: true })
+
+  for (const filename of model.files) {
+    await cp(path.join(sourceDir, filename), path.join(stagingDir, filename))
+  }
+  await cp(sileroVadPath, path.join(stagingDir, SILERO_VAD.filename))
+
+  await zipDirectory(stagingDir, zipPath)
+  return await describeArtifact(zipPath, model.zipName)
+}
+
+async function resolveParakeetModelSnapshot(model) {
+  const snapshotsDir = path.join(PARAKEET_MODEL_CACHE_DIR, model.cacheDirName, 'snapshots')
+  if (model.revision) {
+    const pinnedSnapshot = path.join(snapshotsDir, model.revision)
+    if (await exists(pinnedSnapshot)) {
+      return pinnedSnapshot
+    }
+  }
+
+  const existing = await getNewestDirectory(snapshotsDir)
+  if (existing && !model.revision) {
+    return existing
+  }
+
+  const pythonPath = path.join(STAGING_DIR, 'runtime-parakeet', 'python.exe')
+  if (!(await exists(pythonPath))) {
+    throw new Error(
+      `Parakeet runtime is required to download ${model.repoId}. Run without --skip-runtime.`
+    )
+  }
+
+  run(pythonPath, [
+    '-c',
+    [
+      'from huggingface_hub import snapshot_download',
+      `snapshot_download(repo_id=${JSON.stringify(model.repoId)}, revision=${JSON.stringify(model.revision)}, cache_dir=${JSON.stringify(PARAKEET_MODEL_CACHE_DIR)})`
+    ].join('; ')
+  ])
+
+  const downloaded = model.revision
+    ? path.join(snapshotsDir, model.revision)
+    : await getNewestDirectory(snapshotsDir)
+  if (!downloaded || !(await exists(downloaded))) {
+    throw new Error(`Could not locate downloaded snapshot for ${model.repoId}.`)
+  }
+
+  return downloaded
+}
+
+async function resolveSileroVadSnapshot() {
+  const snapshotsDir = path.join(SILERO_VAD_CACHE_DIR, SILERO_VAD.cacheDirName, 'snapshots')
+  const existing = await getNewestDirectory(snapshotsDir)
+  if (existing) {
+    const candidate = path.join(existing, SILERO_VAD.filename)
+    if (await exists(candidate)) {
+      return candidate
+    }
+  }
+
+  const pythonPath = path.join(STAGING_DIR, 'runtime-parakeet', 'python.exe')
+  if (!(await exists(pythonPath))) {
+    throw new Error(
+      'Parakeet runtime is required to download silero VAD. Run without --skip-runtime.'
+    )
+  }
+
+  run(pythonPath, [
+    '-c',
+    [
+      'from huggingface_hub import hf_hub_download',
+      `print(hf_hub_download(repo_id=${JSON.stringify(SILERO_VAD.repoId)}, filename=${JSON.stringify(SILERO_VAD.filename)}, cache_dir=${JSON.stringify(SILERO_VAD_CACHE_DIR)}))`
+    ].join('; ')
+  ])
+
+  const downloaded = await getNewestDirectory(snapshotsDir)
+  if (!downloaded) {
+    throw new Error(`Could not locate downloaded silero VAD snapshot for ${SILERO_VAD.repoId}.`)
+  }
+
+  const candidate = path.join(downloaded, SILERO_VAD.filename)
+  if (!(await exists(candidate))) {
+    throw new Error(`Downloaded silero VAD is missing ${SILERO_VAD.filename}.`)
+  }
+
+  return candidate
 }
 
 async function resolveModelSnapshot(model) {
@@ -295,13 +450,72 @@ async function zipDirectory(sourceDir, zipPath) {
   run('powershell', ['-NoProfile', '-Command', command])
 }
 
-async function describeArtifact(filePath) {
+async function describeArtifact(filePath, zipName = path.basename(filePath)) {
   const info = await stat(filePath)
-  return {
+  const artifact = {
     filePath,
     filename: path.basename(filePath),
     bytes: info.size,
     sha256: await hashFile(filePath)
+  }
+
+  if (info.size <= MAX_RELEASE_PART_BYTES) {
+    return artifact
+  }
+
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'))
+  const artifactBaseUrl = (manifest.artifactBaseUrl ?? '').replace(/\/$/, '')
+  const parts = []
+  const handle = await open(filePath, 'r')
+  let offset = 0
+  let partIndex = 1
+
+  try {
+    while (offset < info.size) {
+      const partBytes = Math.min(MAX_RELEASE_PART_BYTES, info.size - offset)
+      const partFilename = `${zipName}.part${partIndex}`
+      const partPath = path.join(OUT_DIR, partFilename)
+      const writeStream = createWriteStream(partPath)
+      let written = 0
+
+      while (written < partBytes) {
+        const chunkSize = Math.min(8 * 1024 * 1024, partBytes - written)
+        const buffer = Buffer.allocUnsafe(chunkSize)
+        const { bytesRead } = await handle.read(buffer, 0, chunkSize, offset + written)
+        if (bytesRead <= 0) {
+          throw new Error(`Unexpected EOF while splitting ${zipName} at offset ${offset + written}.`)
+        }
+        if (!writeStream.write(buffer.subarray(0, bytesRead))) {
+          await new Promise((resolve, reject) => {
+            writeStream.once('drain', resolve)
+            writeStream.once('error', reject)
+          })
+        }
+        written += bytesRead
+      }
+
+      await new Promise((resolve, reject) => {
+        writeStream.end(resolve)
+        writeStream.once('error', reject)
+      })
+
+      const partInfo = await describeArtifact(partPath)
+      parts.push({
+        filename: partFilename,
+        url: `${artifactBaseUrl}/${partFilename}`,
+        sha256: partInfo.sha256,
+        bytes: partInfo.bytes
+      })
+      offset += partBytes
+      partIndex += 1
+    }
+  } finally {
+    await handle.close()
+  }
+
+  return {
+    ...artifact,
+    parts
   }
 }
 
@@ -313,6 +527,11 @@ async function updateManifest(artifacts) {
       if (!artifact) continue
       asset.sha256 = artifact.sha256
       asset.bytes = artifact.bytes
+      if (artifact.parts?.length) {
+        asset.parts = artifact.parts
+      } else {
+        delete asset.parts
+      }
     }
   }
   await writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`)
@@ -324,6 +543,11 @@ async function writeSummary(artifacts) {
     lines.push(`- ${artifact.filename}`)
     lines.push(`  - bytes: ${artifact.bytes}`)
     lines.push(`  - sha256: ${artifact.sha256}`)
+    for (const part of artifact.parts ?? []) {
+      lines.push(`  - part: ${part.filename}`)
+      lines.push(`    - bytes: ${part.bytes}`)
+      lines.push(`    - sha256: ${part.sha256}`)
+    }
   }
   await writeFile(path.join(OUT_DIR, 'SHA256SUMS.md'), `${lines.join('\n')}\n`)
 }

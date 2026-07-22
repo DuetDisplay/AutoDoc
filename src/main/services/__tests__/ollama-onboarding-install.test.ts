@@ -232,7 +232,7 @@ describe('Ollama onboarding dependency installation', () => {
     }
   })
 
-  it('marks copied macOS installed runtime sidecars executable', async () => {
+  it.skipIf(process.platform === 'win32')('marks copied macOS installed runtime sidecars executable', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
     const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
     const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
