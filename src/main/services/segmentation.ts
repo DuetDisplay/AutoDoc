@@ -28,10 +28,15 @@ type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
+  isReadyForGeneration?(): Promise<boolean>
 }
 
 const EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
+const OLLAMA_UNAVAILABLE_ERROR =
+  'Ollama unavailable for notes generation — model runtime never became ready'
+const OLLAMA_GENERATION_DEFER_MAX = 5
+const OLLAMA_GENERATION_DEFER_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 
 interface SegmentationDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -62,6 +67,7 @@ export class SegmentationService {
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private baselineLlmModel: string | null = null
   private lastAppliedMacModel: string | null = null
+  private ollamaGenerationDeferCounts = new Map<string, number>()
 
   constructor(
     private llmProvider: LLMProvider,
@@ -313,7 +319,10 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
       }
     })
-    await this.ollamaManager.waitUntilReady()
+    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId)
+    if (!readyForGeneration) {
+      return
+    }
 
     this.activeStatus = 'segmenting'
     if (process.platform === 'win32') {
@@ -452,6 +461,46 @@ export class SegmentationService {
         meetingId
       })
     }
+  }
+
+  private async ensureOllamaReadyForGeneration(meetingId: string): Promise<boolean> {
+    await this.ollamaManager.waitUntilReady()
+
+    if (!this.ollamaManager.isReadyForGeneration) {
+      return true
+    }
+
+    const ready = await this.ollamaManager.isReadyForGeneration()
+    if (ready) {
+      this.ollamaGenerationDeferCounts.delete(meetingId)
+      return true
+    }
+
+    const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
+    if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
+      throw new Error(OLLAMA_UNAVAILABLE_ERROR)
+    }
+
+    this.ollamaGenerationDeferCounts.set(meetingId, deferCount + 1)
+    const source = this.enqueueSource.get(meetingId) ?? 'direct'
+    const delayMs = OLLAMA_GENERATION_DEFER_DELAYS_MS[deferCount] ?? 30_000
+
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes generation deferred waiting for Ollama readiness',
+      meetingId,
+      context: {
+        deferCount: deferCount + 1,
+        deferDelayMs: delayMs,
+        source
+      }
+    })
+
+    setTimeout(() => {
+      this.enqueue(meetingId, source)
+    }, delayMs)
+
+    return false
   }
 
   private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {

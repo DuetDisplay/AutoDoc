@@ -1072,6 +1072,11 @@ app.whenReady().then(async () => {
     })
   })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
+  const segmentationOllamaReadiness = {
+    waitUntilReady: () => ollamaReadiness.waitUntilReady(),
+    isReadyForGeneration: async () =>
+      ollamaSetupState.phase === 'ready' && (await managedOllamaManager.isServerRunning())
+  }
   const ollamaRuntime = {
     waitUntilReady: () => ollamaReadiness.waitUntilReady(),
     isServerRunning: () => managedOllamaManager.isServerRunning(),
@@ -1079,7 +1084,7 @@ app.whenReady().then(async () => {
   }
   const segmentationService = new SegmentationService(
     ollamaProvider,
-    ollamaReadiness,
+    segmentationOllamaReadiness,
     recordingService.getRecordingsBaseDir(),
     localProcessingCoordinator,
     () => whisperManager.getMacProcessingProfile(),

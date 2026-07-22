@@ -15,6 +15,7 @@ import { TranscriptView } from '../components/TranscriptView'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
+import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
 
@@ -161,6 +162,7 @@ export function MeetingDetail() {
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
+    videoCaptureEndedEarly?: boolean
   } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
@@ -1002,9 +1004,7 @@ export function MeetingDetail() {
           <div className="flex flex-col gap-4">
             {(detail?.videoStatus === 'processing' || videoRetryPending) && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted animate-pulse">
-                  Finishing up your video…
-                </p>
+                <p className="text-[13px] text-ink-muted animate-pulse">Finishing up your video…</p>
                 <p className="text-[11.5px] text-ink-faint mt-1">
                   Your transcript and notes are ready to use.
                 </p>
@@ -1059,6 +1059,7 @@ export function MeetingDetail() {
                 </div>
               </div>
             )}
+            {detail?.videoCaptureEndedEarly && <VideoCaptureWarning variant="saved" />}
             {Object.keys(speakers).length > 0 && (
               <SpeakerLegend
                 speakers={speakers}

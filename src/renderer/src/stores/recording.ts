@@ -3,10 +3,12 @@ import type { RecordingState, RecordingSource } from '../../../shared/types'
 
 interface RecordingStore extends RecordingState {
   elapsedSeconds: number
+  videoDisabled: boolean
   sources: RecordingSource[]
   isLoadingSources: boolean
 
   setRecordingState: (state: RecordingState) => void
+  setVideoDisabled: (disabled: boolean) => void
   tick: () => void
   setSources: (sources: RecordingSource[]) => void
   setLoadingSources: (loading: boolean) => void
@@ -24,14 +26,21 @@ export const useRecordingStore = create<RecordingStore>((set) => ({
   trackedMeetingSourceName: null,
   trackedMeetingProviderId: null,
   elapsedSeconds: 0,
+  videoDisabled: false,
   sources: [],
   isLoadingSources: false,
 
   setRecordingState: (state) =>
-    set({
+    set((current) => ({
       ...state,
-      elapsedSeconds: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0
-    }),
+      elapsedSeconds: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0,
+      videoDisabled:
+        state.isRecording && current.isRecording && state.meetingId === current.meetingId
+          ? current.videoDisabled
+          : false
+    })),
+
+  setVideoDisabled: (disabled) => set({ videoDisabled: disabled }),
 
   tick: () =>
     set((s) => ({
@@ -54,6 +63,7 @@ export const useRecordingStore = create<RecordingStore>((set) => ({
       trackedMeetingSourceId: null,
       trackedMeetingSourceName: null,
       trackedMeetingProviderId: null,
-      elapsedSeconds: 0
+      elapsedSeconds: 0,
+      videoDisabled: false
     })
 }))

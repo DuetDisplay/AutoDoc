@@ -16,6 +16,7 @@ import {
   findActiveCalendarEvent
 } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
+import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
@@ -235,8 +236,16 @@ function UpdateReadyPrompt() {
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
-  const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } =
-    useRecording()
+  const {
+    isRecording,
+    sourceName,
+    videoDisabled,
+    elapsedSeconds,
+    handleStop,
+    fetchSources,
+    handleStart
+  } = useRecording()
+
   const { events, setAccounts, setEvents } = useCalendarStore()
   const transcriptionFailures = useRef<Record<string, string>>({})
   const transcriptionCompletions = useRef<Set<string>>(new Set())
@@ -701,10 +710,16 @@ export default function App() {
         <main className="flex-1 overflow-hidden flex flex-col pt-[52px]">
           <RecordingBanner
             isRecording={isRecording}
+            videoDisabled={videoDisabled}
             elapsedSeconds={elapsedSeconds}
             sourceName={sourceName}
             onStop={handleStop}
           />
+          {isRecording && videoDisabled && (
+            <div className="px-5 pt-3">
+              <VideoCaptureWarning variant="live" />
+            </div>
+          )}
           <MeetingDetectedBanner />
           <PermissionToast />
           <LowSpecMacProcessingBanner />

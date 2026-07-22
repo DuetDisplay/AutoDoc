@@ -41,6 +41,7 @@ interface RecoveryValidationState {
 
 interface CaptureHandles {
   sourceId: string
+  sourceName: string | null
   meetingId: string
   segmentIndex: number
   nextSegmentIndex: number
@@ -49,6 +50,9 @@ interface CaptureHandles {
   createdAt: number
   stopping: boolean
   recoverySequence: number
+  consecutiveVideoRecoveries: number
+  videoDisabled: boolean
+  videoStabilityTimer: ReturnType<typeof setTimeout> | null
   expectedAudio: {
     hasMic: boolean
     hasSystemAudio: boolean
@@ -73,10 +77,14 @@ interface CaptureHandles {
 }
 
 let activeCapture: CaptureHandles | null = null
+let unrecoverableCaptureHandler: (() => Promise<void>) | null = null
+let videoDisabledHandler: ((meetingId: string) => Promise<void> | void) | null = null
 const RECORDER_STOP_TIMEOUT_MS = 5_000
 const RECOVERY_DEBOUNCE_MS = 750
 const RECOVERY_RETRY_DELAY_MS = 1_500
 const MAX_RECOVERY_ATTEMPTS = 4
+const MAX_CONSECUTIVE_VIDEO_RECOVERIES = 3
+const VIDEO_RECOVERY_STABILITY_MS = 60_000
 const AUDIO_WATCHDOG_INTERVAL_MS = 5_000
 const AUDIO_WATCHDOG_SILENCE_MS = 20_000
 const AUDIO_WATCHDOG_STARTUP_GRACE_MS = 12_000
@@ -262,6 +270,146 @@ function getSourceType(sourceId: string): string {
   return sourceId.split(':', 1)[0] ?? 'unknown'
 }
 
+function normalizeSourceName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+function sourceNamesMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeSourceName(left)
+  const normalizedRight = normalizeSourceName(right)
+  if (!normalizedLeft || !normalizedRight) {
+    return false
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  )
+}
+
+async function resolveRecoverySourceId(capture: CaptureHandles): Promise<string | null> {
+  if (!capture.sourceId.startsWith('window:')) {
+    return capture.sourceId
+  }
+
+  try {
+    const sources = await window.electronAPI.invoke('recording:get-sources')
+    const directMatch = sources.find((source) => source.id === capture.sourceId)
+    if (directMatch) {
+      return directMatch.id
+    }
+
+    if (!capture.sourceName) {
+      return null
+    }
+
+    const refreshedMatch = sources.find((source) =>
+      sourceNamesMatch(source.name, capture.sourceName!)
+    )
+    return refreshedMatch?.id ?? null
+  } catch (err) {
+    console.warn(
+      'Failed to refresh capture source before recovery, reusing original source id:',
+      err
+    )
+    return capture.sourceId
+  }
+}
+
+function clearVideoRecoveryStabilityTimer(capture: CaptureHandles): void {
+  if (!capture.videoStabilityTimer) {
+    return
+  }
+
+  clearTimeout(capture.videoStabilityTimer)
+  capture.videoStabilityTimer = null
+}
+
+function scheduleVideoRecoveryStabilityReset(capture: CaptureHandles): void {
+  clearVideoRecoveryStabilityTimer(capture)
+  capture.videoStabilityTimer = setTimeout(() => {
+    capture.videoStabilityTimer = null
+    if (activeCapture !== capture || capture.stopping || capture.finalized) {
+      return
+    }
+
+    capture.consecutiveVideoRecoveries = 0
+  }, VIDEO_RECOVERY_STABILITY_MS)
+}
+
+async function disableVideoCapture(capture: CaptureHandles, reason: string): Promise<void> {
+  if (capture.videoDisabled || activeCapture !== capture || capture.stopping || capture.finalized) {
+    return
+  }
+
+  clearVideoRecoveryStabilityTimer(capture)
+  capture.videoDisabled = true
+  recordCaptureRecoveryDiagnostic('capture_video_disabled_after_repeated_recovery', {
+    meetingId: capture.meetingId,
+    sourceType: getSourceType(capture.sourceId),
+    segmentIndex: capture.segmentIndex,
+    reason,
+    consecutiveVideoRecoveries: capture.consecutiveVideoRecoveries,
+    expectedAudio: capture.expectedAudio,
+    actualAudio: getCaptureAudioAvailability(capture)
+  })
+
+  try {
+    await videoDisabledHandler?.(capture.meetingId)
+  } catch (err) {
+    console.warn('Failed to report audio-only recording fallback:', err)
+  }
+
+  await waitForRecorderStop(capture.videoRecorder, 'video')
+  capture.videoStream.getTracks().forEach((track) => track.stop())
+
+  capture.cleanupMonitoring?.()
+  installCaptureMonitoring(capture)
+}
+
+async function abandonCapture(capture: CaptureHandles, reason: string): Promise<void> {
+  capture.stopping = true
+  if (activeCapture === capture) {
+    activeCapture = null
+  }
+
+  clearVideoRecoveryStabilityTimer(capture)
+  recordCaptureRecoveryDiagnostic('capture_unrecoverable', {
+    meetingId: capture.meetingId,
+    sourceType: getSourceType(capture.sourceId),
+    segmentIndex: capture.segmentIndex,
+    reason,
+    expectedAudio: capture.expectedAudio,
+    actualAudio: getCaptureAudioAvailability(capture)
+  })
+
+  if (!capture.finalized) {
+    await finalizeCapture(capture)
+  }
+
+  if (unrecoverableCaptureHandler) {
+    void unrecoverableCaptureHandler().catch((err) => {
+      console.error('Failed to stop recording after unrecoverable capture failure:', err)
+    })
+  }
+}
+
+async function handleCaptureRecoveryTerminalFailure(
+  capture: CaptureHandles,
+  reason: string
+): Promise<void> {
+  const actualAudio = getCaptureAudioAvailability(capture)
+  const hasHealthyAudio = actualAudio.hasMic || actualAudio.hasSystemAudio
+
+  if (hasHealthyAudio && !capture.videoDisabled && reason.startsWith('video:')) {
+    await disableVideoCapture(capture, reason)
+    return
+  }
+
+  await abandonCapture(capture, reason)
+}
+
 function didDefaultRouteChange(
   previousKey: string | null | undefined,
   nextKey: string | null | undefined
@@ -276,7 +424,10 @@ function recordCaptureRecoveryDiagnostic(
     | 'capture_recovery_waiting_for_routes'
     | 'capture_recovery_failed'
     | 'capture_recovery_recovered'
-    | 'capture_recovery_recovered_degraded',
+    | 'capture_recovery_recovered_degraded'
+    | 'capture_recovery_skipped'
+    | 'capture_video_disabled_after_repeated_recovery'
+    | 'capture_unrecoverable',
   details: Record<string, unknown>
 ): void {
   recordPersistentDiagnosticAction({
@@ -638,6 +789,10 @@ function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
     return
   }
 
+  if (capture.videoDisabled && reason.startsWith('video:')) {
+    return
+  }
+
   if (capture.recoveryTimer) {
     return
   }
@@ -680,7 +835,11 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
     }
   }
 
-  capture.videoStream.getTracks().forEach((track) => watchTrack(track, 'video', ['ended']))
+  capture.videoStream.getTracks().forEach((track) => {
+    if (!capture.videoDisabled) {
+      watchTrack(track, 'video', ['ended'])
+    }
+  })
   capture.audioStream.getTracks().forEach((track) => watchTrack(track, 'system', ['ended', 'mute']))
   capture.micStream?.getTracks().forEach((track) => watchTrack(track, 'mic', ['ended', 'mute']))
 
@@ -852,12 +1011,17 @@ function installCaptureMonitoring(capture: CaptureHandles): void {
 
 function buildCaptureHandles(
   sourceId: string,
+  sourceName: string | null,
   meetingId: string,
   segmentIndex: number,
   recoverySequence: number,
   expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null,
   deviceSnapshot: DeviceSnapshot | null,
-  streams: CaptureStreams
+  streams: CaptureStreams,
+  options: {
+    consecutiveVideoRecoveries?: number
+    videoDisabled?: boolean
+  } = {}
 ): CaptureHandles {
   const { videoStream, audioStream, micStream } = streams
   const hasSystemAudio = audioStream.getAudioTracks().length > 0
@@ -913,6 +1077,7 @@ function buildCaptureHandles(
 
   return {
     sourceId,
+    sourceName,
     meetingId,
     segmentIndex,
     nextSegmentIndex: segmentIndex + 1,
@@ -921,6 +1086,9 @@ function buildCaptureHandles(
     createdAt,
     stopping: false,
     recoverySequence,
+    consecutiveVideoRecoveries: options.consecutiveVideoRecoveries ?? 0,
+    videoDisabled: options.videoDisabled ?? false,
+    videoStabilityTimer: null,
     expectedAudio: expectedAudio ?? { hasMic, hasSystemAudio },
     deviceSnapshot,
     videoRecorder,
@@ -947,7 +1115,12 @@ async function createCaptureSegment(
   meetingId: string,
   segmentIndex: number,
   recoverySequence = 0,
-  expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null = null
+  expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null = null,
+  options: {
+    sourceName?: string | null
+    consecutiveVideoRecoveries?: number
+    videoDisabled?: boolean
+  } = {}
 ): Promise<CaptureHandles> {
   const captureContext = recoverySequence > 0 ? 'recovery' : 'initial'
   const streams = await createCaptureStreams(sourceId, captureContext)
@@ -956,12 +1129,17 @@ async function createCaptureSegment(
     const deviceSnapshot = await getDefaultDeviceSnapshot()
     const capture = buildCaptureHandles(
       sourceId,
+      options.sourceName ?? null,
       meetingId,
       segmentIndex,
       recoverySequence,
       expectedAudio,
       deviceSnapshot,
-      streams
+      streams,
+      {
+        consecutiveVideoRecoveries: options.consecutiveVideoRecoveries,
+        videoDisabled: options.videoDisabled
+      }
     )
 
     installCaptureMonitoring(capture)
@@ -1184,7 +1362,7 @@ async function recoverAudioCapture(
           return
         }
 
-        const segmentIndex = capture.nextSegmentIndex++
+        const segmentIndex = capture.nextSegmentIndex
         let micRecorder: MediaRecorder | null = null
         let systemRecorder: MediaRecorder | null = null
         if (plan.recoverMic && micStream) {
@@ -1239,6 +1417,7 @@ async function recoverAudioCapture(
             }
           )
         }
+        capture.nextSegmentIndex = segmentIndex + 1
         const nextSnapshot = (await getDefaultDeviceSnapshot()) ?? plan.nextSnapshot
 
         capture.cleanupMonitoring?.()
@@ -1326,6 +1505,7 @@ async function recoverAudioCapture(
             failureKind: 'failed'
           })
           console.error('Failed to recover audio capture after device change:', err)
+          await handleCaptureRecoveryTerminalFailure(capture, reason)
           return
         }
 
@@ -1368,6 +1548,29 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
     return recoverAudioCapture(capture, reason, audioRecoveryPlan)
   }
 
+  if (reason === 'devicechange') {
+    recordCaptureRecoveryDiagnostic('capture_recovery_skipped', {
+      meetingId: capture.meetingId,
+      sourceType: getSourceType(capture.sourceId),
+      segmentIndex: capture.segmentIndex,
+      reason,
+      expectedAudio: capture.expectedAudio,
+      actualAudio: getCaptureAudioAvailability(capture)
+    })
+    return
+  }
+
+  if (reason.startsWith('video:')) {
+    if (capture.videoDisabled) {
+      return
+    }
+
+    if (capture.consecutiveVideoRecoveries >= MAX_CONSECUTIVE_VIDEO_RECOVERIES) {
+      await disableVideoCapture(capture, reason)
+      return
+    }
+  }
+
   capture.recoveryPromise = (async () => {
     console.warn(`Capture source changed during recording, attempting recovery (${reason})`)
     const expectedAudio = capture.expectedAudio
@@ -1391,15 +1594,26 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
         }
 
         let replacement: CaptureHandles | null = null
-        const segmentIndex = capture.nextSegmentIndex++
+        const segmentIndex = capture.nextSegmentIndex
         try {
+          const resolvedSourceId = await resolveRecoverySourceId(capture)
+          if (!resolvedSourceId) {
+            throw new Error('Capture source no longer available')
+          }
+
           replacement = await createCaptureSegment(
-            capture.sourceId,
+            resolvedSourceId,
             capture.meetingId,
             segmentIndex,
             capture.recoverySequence + 1,
-            expectedAudio
+            expectedAudio,
+            {
+              sourceName: capture.sourceName,
+              consecutiveVideoRecoveries: capture.consecutiveVideoRecoveries,
+              videoDisabled: capture.videoDisabled
+            }
           )
+          capture.nextSegmentIndex = segmentIndex + 1
           const actualAudio = getCaptureAudioAvailability(replacement)
           const missingSources = getMissingRecoverySources(expectedAudio, actualAudio)
 
@@ -1488,6 +1702,13 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
             }
           }
 
+          if (reason.startsWith('video:')) {
+            replacement.consecutiveVideoRecoveries = capture.consecutiveVideoRecoveries + 1
+            scheduleVideoRecoveryStabilityReset(replacement)
+          } else {
+            replacement.consecutiveVideoRecoveries = capture.consecutiveVideoRecoveries
+          }
+
           activeCapture = replacement
           console.log(
             replacement.recoveryValidation
@@ -1503,6 +1724,11 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
           )
           return
         } catch (err) {
+          if (replacement) {
+            await finalizeCapture(replacement)
+            replacement = null
+          }
+
           const canRetry =
             attempt < MAX_RECOVERY_ATTEMPTS && activeCapture === capture && !capture.stopping
 
@@ -1526,6 +1752,7 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
               failureKind: 'failed'
             })
             console.error('Failed to recover capture after device change:', err)
+            await handleCaptureRecoveryTerminalFailure(capture, reason)
             return
           }
 
@@ -1555,12 +1782,26 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
   return capture.recoveryPromise
 }
 
-export async function startCapture(sourceId: string, meetingId: string): Promise<void> {
+export async function startCapture(
+  sourceId: string,
+  meetingId: string,
+  sourceName: string | null = null
+): Promise<void> {
   if (activeCapture) {
     throw new Error('Capture already active')
   }
 
-  activeCapture = await createCaptureSegment(sourceId, meetingId, 0)
+  activeCapture = await createCaptureSegment(sourceId, meetingId, 0, 0, null, { sourceName })
+}
+
+export function setUnrecoverableCaptureHandler(handler: (() => Promise<void>) | null): void {
+  unrecoverableCaptureHandler = handler
+}
+
+export function setVideoDisabledHandler(
+  handler: ((meetingId: string) => Promise<void> | void) | null
+): void {
+  videoDisabledHandler = handler
 }
 
 export async function stopCapture(): Promise<void> {
@@ -1568,6 +1809,7 @@ export async function stopCapture(): Promise<void> {
 
   const capture = activeCapture
   capture.stopping = true
+  clearVideoRecoveryStabilityTimer(capture)
   activeCapture = null
 
   await capture.recoveryPromise?.catch(() => {})
