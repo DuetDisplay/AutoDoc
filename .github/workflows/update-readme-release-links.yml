@@ -1,0 +1,86 @@
+name: Update README Release Links
+
+on:
+  workflow_run:
+    workflows:
+      - Build & Release
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish in README, for example v1.0.0. Leave blank for latest.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: main
+
+      - name: Resolve release DMG
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUESTED_TAG: ${{ github.event.inputs.release_tag || '' }}
+        run: |
+          if [ -n "$REQUESTED_TAG" ]; then
+            release_json="$(gh api "repos/${GH_REPO}/releases/tags/${REQUESTED_TAG}")"
+          else
+            release_json="$(gh api "repos/${GH_REPO}/releases/latest")"
+          fi
+
+          tag="$(jq -r '.tag_name' <<<"$release_json")"
+          version="${tag#v}"
+          dmg_asset="$(jq -r --arg version "$version" '
+            .assets
+            | map(select(.name == ("autodoc-" + $version + ".dmg")))
+            | .[0].name // empty
+          ' <<<"$release_json")"
+
+          if [ -z "$dmg_asset" ]; then
+            dmg_asset="$(jq -r '
+              .assets
+              | map(select(.name | test("^autodoc-[0-9].*\\.dmg$")))
+              | .[0].name // empty
+            ' <<<"$release_json")"
+          fi
+
+          if [ -z "$dmg_asset" ]; then
+            echo "::error::No versioned AutoDoc DMG asset found for ${tag}"
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "dmg_asset=$dmg_asset" >> "$GITHUB_OUTPUT"
+
+      - name: Update README
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          DMG_ASSET: ${{ steps.release.outputs.dmg_asset }}
+        run: node scripts/update-readme-release-links.mjs
+
+      - name: Commit README update
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README already points to ${RELEASE_TAG}; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Update README release links for ${RELEASE_TAG} [skip ci]"
+          git push
