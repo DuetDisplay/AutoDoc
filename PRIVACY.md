@@ -99,4 +99,4 @@ fetches and do not transmit your meeting data.
 
 ## Contact
 
-Questions about privacy? Email **chris@duetdisplay.com**.
+Questions about privacy? Email **team@getautodoc.com**.
