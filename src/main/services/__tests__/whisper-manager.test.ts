@@ -3,6 +3,7 @@ import * as childProcess from 'child_process'
 import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { WhisperManager } from '../whisper-manager'
+import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
 
 let isPackaged = false
 
@@ -88,7 +89,7 @@ describe('WhisperManager', () => {
   it('returns correct model path', () => {
     expect(manager.getModelPath()).toBe(
       process.platform === 'win32'
-        ? join('/mock/home', 'models', 'ggml-distil-large-v3.bin')
+        ? join('/mock/home', 'models', 'ggml-base.en.bin')
         : join('/mock/home', 'models', 'ggml-large-v3.bin')
     )
   })
@@ -285,5 +286,57 @@ describe('WhisperManager', () => {
 
     expect(resolveWhisperSpy).toHaveBeenCalled()
     expect(mockExecSync).not.toHaveBeenCalled()
+  })
+
+  it('forces int8 worker compute type in fast quality mode without changing backend id', () => {
+    manager.setTranscriptionQualityModeGetter(() => 'fast')
+    ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']
+
+    expect(manager.getWorkerComputeType()).toBe('int8')
+    expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+    expect(manager.getWorkerDevice()).toBe('dml')
+  })
+
+  it('reports parakeet-cpu estimated memory for parakeet-gpu in fast quality mode', () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']
+    ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+
+    expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(4)
+
+    manager.setTranscriptionQualityModeGetter(() => 'fast')
+    expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].estimatedMemoryGiB
+    )
+  })
+
+  it('records downgrade chain entries', () => {
+    ;(manager as any).recordDowngrade('parakeet-gpu', 'parakeet-cpu')
+    ;(manager as any).recordDowngrade('parakeet-cpu', 'whisper-cpp')
+
+    expect(manager.getDowngradesTaken()).toEqual([
+      'parakeet-gpu→parakeet-cpu',
+      'parakeet-cpu→whisper-cpp'
+    ])
+  })
+
+  it('resolves and broadcasts Windows transcription backend without asset setup', async () => {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'parakeet-gpu'
+    const ensureReadySpy = vi.spyOn(manager, 'ensureReady')
+    const setupStatuses: Array<{ backend?: string }> = []
+    manager.on('setup-status', (status) => setupStatuses.push(status))
+
+    await manager.resolveWindowsTranscriptionBackend()
+
+    expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+    expect(setupStatuses.some((status) => status.backend === 'parakeet-gpu')).toBe(true)
+    expect(ensureReadySpy).not.toHaveBeenCalled()
   })
 })

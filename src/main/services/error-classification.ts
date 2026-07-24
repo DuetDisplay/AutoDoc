@@ -23,6 +23,12 @@ export function classifyError(rawError: string): string {
   if (error.includes('whisper') && error.includes('exited with code')) {
     return 'whisper-crash'
   }
+  if (
+    (error.includes('whisper') || error.includes('parakeet')) &&
+    error.includes('worker failed')
+  ) {
+    return 'whisper-crash'
+  }
   if (error.includes('ffmpeg')) {
     return 'ffmpeg-error'
   }

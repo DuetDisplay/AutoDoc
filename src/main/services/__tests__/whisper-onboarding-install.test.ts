@@ -1,13 +1,14 @@
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile, access, readFile } from 'fs/promises'
-import { dirname, join } from 'path'
+import { delimiter, dirname, join } from 'path'
 import { tmpdir } from 'os'
 
 const originalPlatform = process.platform
 const originalArch = process.arch
 const originalTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR
 const originalWindowsAssetBaseUrl = process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
 type ExecFileCallback = (error: Error | null, stdout?: string, stderr?: string) => void
 
 function getExecFileCallback(
@@ -43,7 +44,13 @@ async function loadWhisperManager(
     isPackaged?: boolean
     ffmpegStaticPath?: string | null
     macBackend?: 'mlx-whisper' | 'whisper-cpp' | 'auto'
-    windowsBackend?: 'faster-whisper-cuda' | 'faster-whisper-cpu' | 'whisper-cpp' | 'auto'
+    windowsBackend?:
+      | 'faster-whisper-cuda'
+      | 'faster-whisper-cpu'
+      | 'parakeet-gpu'
+      | 'parakeet-cpu'
+      | 'whisper-cpp'
+      | 'auto'
   }
 ) {
   setPlatform(platform)
@@ -62,11 +69,9 @@ async function loadWhisperManager(
   vi.resetModules()
 
   const execSyncMock = vi.fn()
-  const execFileMock = vi.fn((...args: unknown[]) => {
-    const callback = args.at(-1)
-    if (typeof callback === 'function') {
-      callback(null)
-    }
+  const execFileMock = vi.fn((_file, _args, optionsOrCallback, callback) => {
+    const resolvedCallback = getExecFileCallback(optionsOrCallback, callback)
+    resolvedCallback(null)
     return {} as never
   })
 
@@ -115,6 +120,11 @@ afterEach(async () => {
     delete process.env.AUTODOC_TEST_USER_DATA_DIR
   } else {
     process.env.AUTODOC_TEST_USER_DATA_DIR = originalTestUserDataDir
+  }
+  if (originalResourcesPathDescriptor) {
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPathDescriptor)
+  } else {
+    Reflect.deleteProperty(process, 'resourcesPath')
   }
   vi.resetModules()
   setPlatform(originalPlatform)
@@ -379,9 +389,11 @@ describe('Whisper onboarding dependency installation', () => {
       await mkdir(installedModelsDir, { recursive: true })
       await writeFile(join(installedModelsDir, 'whisper-cli.exe'), 'whisper')
       await writeFile(join(installedModelsDir, 'ffmpeg.exe'), 'ffmpeg')
-      await writeFile(join(installedModelsDir, 'ggml-distil-large-v3.bin'), 'model')
+      await writeFile(join(installedModelsDir, 'ggml-base.en.bin'), 'model')
 
-      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir)
+      const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'whisper-cpp'
+      })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be needed when installed assets exist')
       })
@@ -398,6 +410,37 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves packaged Windows transcription resources from app.asar.unpacked', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-packaged-resources-'))
+    const resourcesPath = join(rootDir, 'resources')
+    const unpackedResourcesPath = join(resourcesPath, 'app.asar.unpacked', 'resources')
+
+    try {
+      await mkdir(unpackedResourcesPath, { recursive: true })
+      await writeFile(join(unpackedResourcesPath, 'windows-transcription-manifest.json'), '{}')
+      await writeFile(join(unpackedResourcesPath, 'transcription-worker.py'), 'print("ok")')
+      Object.defineProperty(process, 'resourcesPath', {
+        configurable: true,
+        value: resourcesPath
+      })
+
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        windowsBackend: 'whisper-cpp'
+      })
+      const manager = new WhisperManager()
+
+      expect((manager as any).getWindowsTranscriptionManifestPath()).toBe(
+        join(unpackedResourcesPath, 'windows-transcription-manifest.json')
+      )
+      expect(manager.getTranscriptionWorkerScriptPath()).toBe(
+        join(unpackedResourcesPath, 'transcription-worker.py')
+      )
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -558,7 +601,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -630,11 +674,20 @@ describe('Whisper onboarding dependency installation', () => {
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
           assetDownloads.push(asset.filename)
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })
             await writeFile(target, `${asset.id} file`)
+          }
+          if (profile.id === 'faster-whisper-cuda' && asset.id === 'runtime') {
+            await mkdir(join(assetRoot, 'DLLs'), { recursive: true })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cublas', 'bin'), {
+              recursive: true
+            })
+            await mkdir(join(assetRoot, 'Lib', 'site-packages', 'nvidia', 'cudnn', 'bin'), {
+              recursive: true
+            })
           }
         }
       )
@@ -657,6 +710,27 @@ describe('Whisper onboarding dependency installation', () => {
         access(join(manager.getFasterWhisperModelPath(), 'model.bin'))
       ).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
+      const fasterWhisperEnvPath = manager.getFasterWhisperProcessEnv().PATH?.split(delimiter)
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cublas',
+          'bin'
+        )
+      )
+      expect(fasterWhisperEnvPath).toContain(
+        join(
+          (manager as any).getFasterWhisperRuntimeDir(),
+          'Lib',
+          'site-packages',
+          'nvidia',
+          'cudnn',
+          'bin'
+        )
+      )
       expect(statuses).toContainEqual({
         phase: 'downloading-whisper',
         backend: 'faster-whisper-cuda',
@@ -688,7 +762,7 @@ describe('Whisper onboarding dependency installation', () => {
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
           assetDownloads.push(asset.filename)
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })
@@ -715,6 +789,339 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('installs the parakeet-gpu profile on supported Windows hardware', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-gpu-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+      expect(manager.getModelName()).toBe('parakeet-tdt-0.6b-v3')
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-fp32.zip'
+      ])
+      await expect(access(manager.getParakeetPythonPath())).resolves.toBeUndefined()
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.onnx'))
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('installs the parakeet-cpu profile on Windows', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-int8.zip'
+      ])
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat empty int8 model dir as ready after switching parakeet-gpu to fast quality', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-revalidate-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      let qualityMode: 'balanced' | 'fast' = 'balanced'
+      manager.setTranscriptionQualityModeGetter(() => qualityMode)
+
+      const assetDownloads: string[] = []
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-fp32.zip'
+      ])
+      await expect(manager.isReady()).resolves.toBe(true)
+
+      qualityMode = 'fast'
+      const int8ModelDir = manager.getParakeetModelPath()
+      expect(int8ModelDir).toContain('parakeet-tdt-0.6b-v3-int8')
+      await mkdir(int8ModelDir, { recursive: true })
+
+      // Directory exists but expected int8 files are missing — must not short-circuit as ready
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      assetDownloads.length = 0
+      // Match transcription.ts: only call ensureReady when isReady is false
+      if (!(await manager.isReady())) {
+        await manager.ensureReady()
+      }
+
+      expect(assetDownloads).toContain('parakeet-tdt-0.6b-v3-int8.zip')
+      await expect(
+        access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
+      ).resolves.toBeUndefined()
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('ready-check requires int8 expected files for fast parakeet-gpu, not bare model directory', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+      ;(manager as any).runtimeValidated = true
+
+      manager.setTranscriptionQualityModeGetter(() => 'fast')
+      const int8ModelDir = manager.getParakeetModelPath()
+      await mkdir(int8ModelDir, { recursive: true })
+      // Place a non-expected file so the directory is non-empty but still incomplete
+      await writeFile(join(int8ModelDir, 'README.txt'), 'partial')
+
+      await expect(manager.isReady()).resolves.toBe(false)
+
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      const missing = await (manager as any).getMissingExpectedFiles(
+        int8ModelDir,
+        WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].assets.find(
+          (asset: { id: string }) => asset.id === 'model'
+        )!.expectedFiles
+      )
+      expect(missing).toContain('encoder-model.int8.onnx')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('prefers installed faster-whisper-cpu over missing parakeet at runtime', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+      for (const asset of fasterWhisperProfile.assets) {
+        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+          fasterWhisperProfile,
+          asset.id
+        )
+        for (const expectedFile of asset.expectedFiles) {
+          const target = join(assetRoot, ...expectedFile.split('/'))
+          await mkdir(dirname(target), { recursive: true })
+          await writeFile(target, `${asset.id} file`)
+        }
+      }
+
+      const downloadSpy = vi.spyOn(
+        manager as any,
+        'downloadAndExtractWindowsTranscriptionAsset'
+      )
+      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady()
+
+      expect(downloadSpy).not.toHaveBeenCalled()
+      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('attempts parakeet install during setup when faster-whisper is already present', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-setup-install-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-cpu'
+      })
+
+      const manager = new WhisperManager()
+      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+      for (const asset of fasterWhisperProfile.assets) {
+        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+          fasterWhisperProfile,
+          asset.id
+        )
+        for (const expectedFile of asset.expectedFiles) {
+          const target = join(assetRoot, ...expectedFile.split('/'))
+          await mkdir(dirname(target), { recursive: true })
+          await writeFile(target, `${asset.id} file`)
+        }
+      }
+
+      const assetDownloads: string[] = []
+      const downloadSpy = vi
+        .spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
+        .mockImplementation(async (profile: any, asset: any) => {
+          assetDownloads.push(asset.filename)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        })
+      vi.spyOn(manager as any, 'isParakeetUsableWithRetry').mockResolvedValue(true)
+
+      await manager.ensureReady({ allowBackendInstall: true })
+
+      expect(downloadSpy).toHaveBeenCalled()
+      expect(assetDownloads).toEqual([
+        'parakeet-runtime-win-x64.zip',
+        'parakeet-tdt-0.6b-v3-int8.zip'
+      ])
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      await expect(manager.isReady()).resolves.toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('downgrades parakeet-gpu to parakeet-cpu when GPU validation fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-gpu-fallback-'))
+    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+        isPackaged: true,
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'parakeet-gpu'
+      })
+
+      const manager = new WhisperManager()
+      vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
+        async (profile: any, asset: any) => {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+      )
+      const usabilitySpy = vi
+        .spyOn(manager as any, 'isParakeetUsableWithRetry')
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+
+      await manager.ensureReady()
+
+      expect(usabilitySpy).toHaveBeenCalledTimes(2)
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('falls back to whisper.cpp when the selected faster-whisper profile fails validation', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-fw-fallback-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
@@ -730,7 +1137,7 @@ describe('Whisper onboarding dependency installation', () => {
       const manager = new WhisperManager()
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
         async (profile: any, asset: any) => {
-          const assetRoot = (manager as any).getFasterWhisperAssetRoot(profile, asset.id)
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(profile, asset.id)
           for (const expectedFile of asset.expectedFiles) {
             const target = join(assetRoot, ...expectedFile.split('/'))
             await mkdir(dirname(target), { recursive: true })
@@ -807,6 +1214,152 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
+  it('fails Windows faster-whisper extraction when expected files are missing after archive extraction', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-missing-extract-'))
+
+    try {
+      const { WhisperManager, execFileMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'faster-whisper-cpu'
+      })
+      const manager = new WhisperManager()
+      const payload = 'known payload'
+      const expectedSha256 = createHash('sha256').update(payload).digest('hex')
+      const existingRuntimeFile = join(
+        manager.getModelsDir(),
+        'transcription-runtimes',
+        'faster-whisper-cpu',
+        'existing.txt'
+      )
+      await mkdir(dirname(existingRuntimeFile), { recursive: true })
+      await writeFile(existingRuntimeFile, 'existing runtime')
+      vi.spyOn(manager as any, 'downloadFile').mockImplementation(async (...args: unknown[]) => {
+        const destPath = String(args[1])
+        await mkdir(dirname(destPath), { recursive: true })
+        await writeFile(destPath, payload)
+      })
+
+      await expect(
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          {
+            id: 'faster-whisper-cpu',
+            label: 'CPU optimized transcription',
+            modelName: 'small.en',
+            device: 'cpu',
+            computeType: 'int8',
+            minSystemMemoryGiB: 8,
+            assets: []
+          },
+          {
+            id: 'runtime',
+            filename: 'faster-whisper-runtime-cpu-win-x64.zip',
+            url: 'https://example.invalid/faster-whisper-runtime-cpu-win-x64.zip',
+            sha256: expectedSha256,
+            expectedFiles: ['python.exe']
+          }
+        )
+      ).rejects.toThrow(/missing expected files/i)
+      expect(execFileMock).toHaveBeenCalledWith(
+        'tar',
+        expect.arrayContaining(['-xf', '-C']),
+        expect.any(Function)
+      )
+      await expect(readFile(existingRuntimeFile, 'utf8')).resolves.toBe('existing runtime')
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('downloads multipart Windows transcription assets part-by-part and verifies the whole archive', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-multipart-'))
+
+    try {
+      const { WhisperManager, execFileMock } = await loadWhisperManager('win32', rootDir, {
+        windowsBackend: 'parakeet-gpu'
+      })
+      const manager = new WhisperManager()
+      const part1 = 'multipart-part-one'
+      const part2 = 'multipart-part-two'
+      const fullPayload = `${part1}${part2}`
+      const expectedSha256 = createHash('sha256').update(fullPayload).digest('hex')
+      const part1Sha256 = createHash('sha256').update(part1).digest('hex')
+      const part2Sha256 = createHash('sha256').update(part2).digest('hex')
+      const downloadFileSpy = vi
+        .spyOn(manager as any, 'downloadFile')
+        .mockImplementation(async (...args: unknown[]) => {
+          const destPath = String(args[1])
+          await mkdir(dirname(destPath), { recursive: true })
+          if (destPath.endsWith('.part1')) {
+            await writeFile(destPath, part1)
+            return
+          }
+          if (destPath.endsWith('.part2')) {
+            await writeFile(destPath, part2)
+            return
+          }
+          await writeFile(destPath, fullPayload)
+        })
+
+      await expect(
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          {
+            id: 'parakeet-gpu',
+            label: 'GPU accelerated transcription',
+            modelName: 'parakeet-tdt-0.6b-v3',
+            device: 'dml',
+            computeType: 'fp32',
+            minSystemMemoryGiB: 8,
+            assets: []
+          },
+          {
+            id: 'model',
+            filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+            url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip',
+            sha256: expectedSha256,
+            bytes: fullPayload.length,
+            expectedFiles: ['encoder-model.onnx'],
+            parts: [
+              {
+                filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                sha256: part1Sha256,
+                bytes: part1.length
+              },
+              {
+                filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                url: 'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                sha256: part2Sha256,
+                bytes: part2.length
+              }
+            ]
+          }
+        )
+      ).rejects.toThrow(/missing expected files/i)
+
+      expect(downloadFileSpy).toHaveBeenCalledTimes(2)
+      expect(downloadFileSpy).toHaveBeenNthCalledWith(
+        1,
+        'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+        expect.stringMatching(/\.part1$/),
+        'parakeet-tdt-0.6b-v3-fp32.zip (part 1)',
+        expect.any(Function)
+      )
+      expect(downloadFileSpy).toHaveBeenNthCalledWith(
+        2,
+        'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+        expect.stringMatching(/\.part2$/),
+        'parakeet-tdt-0.6b-v3-fp32.zip (part 2)',
+        expect.any(Function)
+      )
+      expect(execFileMock).toHaveBeenCalledWith(
+        'tar',
+        expect.arrayContaining(['-xf', '-C']),
+        expect.any(Function)
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('resolves packaged Windows FFmpeg from the unpacked app asset path', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-unpacked-'))
     const packagedFfmpeg = join(
@@ -831,7 +1384,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: packagedFfmpeg
+        ffmpegStaticPath: packagedFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -924,7 +1478,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {
@@ -985,7 +1540,8 @@ describe('Whisper onboarding dependency installation', () => {
     try {
       const { WhisperManager, execSyncMock } = await loadWhisperManager('win32', rootDir, {
         isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg
+        ffmpegStaticPath: bundledFfmpeg,
+        windowsBackend: 'whisper-cpp'
       })
       execSyncMock.mockImplementation(() => {
         throw new Error('system lookup should not be used in packaged mode')
@@ -1028,7 +1584,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {
@@ -1104,7 +1661,8 @@ describe('Whisper onboarding dependency installation', () => {
         rootDir,
         {
           isPackaged: true,
-          ffmpegStaticPath: bundledFfmpeg
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: 'whisper-cpp'
         }
       )
       execSyncMock.mockImplementation(() => {

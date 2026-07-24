@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockAccess = vi.fn()
@@ -13,6 +14,40 @@ const mockGetVersion = vi.fn()
 const mockGetName = vi.fn()
 const mockGetPath = vi.fn()
 const mockUnref = vi.fn()
+const mockLogAutodocEvent = vi.fn()
+const mockFlushLogWrites = vi.fn(async () => {})
+const mockReleaseSingleInstanceLock = vi.fn()
+
+type MockChildProcess = EventEmitter & { pid?: number; unref: () => void }
+
+function createSpawnedChild(options: { failWith?: Error; silent?: boolean; pid?: number } = {}): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess
+  child.pid = options.failWith || options.silent ? undefined : (options.pid ?? 4242)
+  child.unref = mockUnref
+  if (!options.silent) {
+    queueMicrotask(() => {
+      if (options.failWith) {
+        child.emit('error', options.failWith)
+      } else {
+        child.emit('spawn')
+      }
+    })
+  }
+  return child
+}
+
+function mockWindowsRegistryInstall(displayVersion: string): void {
+  mockExecFile.mockImplementation((command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+    if (command === 'powershell.exe') {
+      callback(null, {
+        stdout: `{"DisplayVersion":"${displayVersion}","InstallLocation":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc","DisplayIcon":"C:\\\\Users\\\\chris\\\\AppData\\\\Local\\\\Programs\\\\AutoDoc\\\\autodoc.exe,0"}`,
+        stderr: '',
+      })
+      return
+    }
+    callback(null, { stdout: '', stderr: '' })
+  })
+}
 
 function mockWindowsPaths(exePath = 'D:\\Builds\\AutoDoc\\autodoc.exe', tempPath = 'C:\\Temp') {
   mockGetPath.mockImplementation((name: string) => {
@@ -41,6 +76,11 @@ vi.mock('node:fs', () => ({
   writeFileSync: mockWriteFileSync,
 }))
 
+vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: mockLogAutodocEvent,
+  flushAutodocLogWrites: mockFlushLogWrites,
+}))
+
 vi.mock('electron', () => ({
   app: {
     isPackaged: true,
@@ -49,6 +89,7 @@ vi.mock('electron', () => ({
     getPath: mockGetPath,
     exit: mockExit,
     quit: mockQuit,
+    releaseSingleInstanceLock: mockReleaseSingleInstanceLock,
   },
   dialog: {
     showMessageBox: mockShowMessageBox,
@@ -77,7 +118,7 @@ describe('application-install', () => {
     mockShowMessageBox.mockResolvedValue({ response: 0 })
     mockAccess.mockResolvedValue(undefined)
     mockReadFile.mockRejectedValue(new Error('missing package.json'))
-    mockSpawn.mockReturnValue({ unref: mockUnref })
+    mockSpawn.mockImplementation(() => createSpawnedChild())
     mockExecFile.mockImplementation((_command: string, _args: string[], _options: unknown, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
       callback(null, { stdout: '0.1.5\n', stderr: '' })
     })
@@ -142,7 +183,132 @@ describe('application-install', () => {
     expect(mockExit).toHaveBeenCalledWith(0)
   })
 
-  it('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
+  it('fails open when the same-version Windows redirect target cannot be spawned', async () => {
+    // QA repro: stale registry entry points at a broken copy with the same version.
+    // The spawn of that copy fails; the current copy must keep launching instead of dying silently.
+    mockWindowsPaths()
+    mockWindowsRegistryInstall('0.1.5')
+    mockSpawn.mockImplementation(() => createSpawnedChild({ failWith: new Error('ENOENT: broken target copy') }))
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(true)
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1)
+    expect(mockExit).not.toHaveBeenCalled()
+    expect(mockShowMessageBox).not.toHaveBeenCalled()
+    expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'warn',
+      message: expect.stringContaining('redirect'),
+    }))
+  })
+
+  it('fails open when the same-version Windows redirect target executable is missing at launch time', async () => {
+    mockWindowsPaths()
+    mockWindowsRegistryInstall('0.1.5')
+    // First access() call is the install-candidate probe; later calls simulate the target
+    // disappearing (or being unreadable) by the time we try to launch it.
+    let accessCalls = 0
+    mockAccess.mockImplementation(() => {
+      accessCalls += 1
+      return accessCalls === 1 ? Promise.resolve(undefined) : Promise.reject(new Error('missing'))
+    })
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(true)
+
+    expect(mockSpawn).not.toHaveBeenCalled()
+    expect(mockExit).not.toHaveBeenCalled()
+    expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'warn',
+      message: expect.stringContaining('redirect'),
+    }))
+  })
+
+  it('fails open when the same-version redirect spawn never confirms within the timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      mockWindowsPaths()
+      mockWindowsRegistryInstall('0.1.5')
+      mockSpawn.mockImplementation(() => createSpawnedChild({ silent: true }))
+
+      const { enforceInstalledApplicationPolicy } = await loadModule()
+
+      const resultPromise = enforceInstalledApplicationPolicy('win32')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(resultPromise).resolves.toBe(true)
+
+      expect(mockExit).not.toHaveBeenCalled()
+      expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+        level: 'warn',
+        message: expect.stringContaining('redirect'),
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still redirects and quits when the same-version Windows target is healthy', async () => {
+    mockWindowsPaths()
+    mockWindowsRegistryInstall('0.1.5')
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(false)
+
+    expect(mockShowMessageBox).not.toHaveBeenCalled()
+    expect(mockSpawn).toHaveBeenCalledTimes(1)
+    const [command, , opts] = mockSpawn.mock.calls[0]
+    expect(command).toBe('C:\\Users\\chris\\AppData\\Local\\Programs\\AutoDoc\\autodoc.exe')
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    // The child must be marked as a redirect target so it can never redirect again (loop breaker),
+    // and the single-instance lock must be released so the child can't lose the lock race and die.
+    expect(opts.env).toMatchObject({ AUTODOC_INSTALL_REDIRECT_CHILD: '1' })
+    expect(mockReleaseSingleInstanceLock).toHaveBeenCalled()
+    // Queued log writes must be flushed before the process exits or the decision lines are lost.
+    expect(mockFlushLogWrites).toHaveBeenCalled()
+    expect(mockExit).toHaveBeenCalledWith(0)
+  })
+
+  it('never redirects again when this process was itself spawned by a same-version redirect', async () => {
+    // Loop breaker: two copies pointing at each other would otherwise hand off forever
+    // with no window ever appearing.
+    mockWindowsPaths()
+    mockWindowsRegistryInstall('0.1.5')
+    process.env.AUTODOC_INSTALL_REDIRECT_CHILD = '1'
+    try {
+      const { enforceInstalledApplicationPolicy } = await loadModule()
+
+      await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(true)
+
+      expect(mockSpawn).not.toHaveBeenCalled()
+      expect(mockExit).not.toHaveBeenCalled()
+      expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+        level: 'warn',
+        message: expect.stringContaining('redirect child'),
+      }))
+    } finally {
+      delete process.env.AUTODOC_INSTALL_REDIRECT_CHILD
+    }
+  })
+
+  it('fails open when enforcement itself throws unexpectedly', async () => {
+    mockGetPath.mockImplementation(() => {
+      throw new Error('registry exploded')
+    })
+
+    const { enforceInstalledApplicationPolicy } = await loadModule()
+
+    await expect(enforceInstalledApplicationPolicy('win32')).resolves.toBe(true)
+
+    expect(mockExit).not.toHaveBeenCalled()
+    expect(mockLogAutodocEvent).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'warn',
+    }))
+  })
+
+  it.skipIf(process.platform === 'win32')('falls back to AutoDoc.app when app.getName() does not match the product bundle name on macOS', async () => {
     mockGetName.mockReturnValue('autodoc')
     mockAccess.mockImplementation((targetPath: string) => {
       if (targetPath.includes('/Applications/autodoc.app/')) {
@@ -377,7 +543,7 @@ describe('application-install', () => {
     expect(replacementScript).toContain('/XF $uninstallExeName')
   })
 
-  it('resolves macOS second-instance from argv when additionalData is missing', async () => {
+  it.skipIf(process.platform === 'win32')('resolves macOS second-instance from argv when additionalData is missing', async () => {
     mockGetPath.mockImplementation((name: string) => {
       if (name === 'exe') {
         return '/Applications/AutoDoc.app/Contents/MacOS/AutoDoc'

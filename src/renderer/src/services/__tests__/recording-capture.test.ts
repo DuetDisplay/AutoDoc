@@ -247,6 +247,61 @@ describe('recording-capture', () => {
     expect(useToastStore.getState().activeToast).toBeNull()
   })
 
+  it('does not show permission toasts during full capture recovery', async () => {
+    const { startCapture, stopCapture } = await import('../recording-capture')
+    const { useToastStore } = await import('../../stores/toast')
+    const showToastSpy = vi.spyOn(useToastStore.getState(), 'showToast')
+
+    useToastStore.setState({ activeToast: null })
+
+    let getUserMediaCallCount = 0
+    let initialVideoTrack: MockTrack | null = null
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      getUserMediaCallCount += 1
+
+      if (getUserMediaCallCount <= 3) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          initialVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      if (getUserMediaCallCount <= 6) {
+        if (constraints.audio === false) {
+          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+        }
+
+        if (constraints.audio && constraints.video) {
+          return Promise.resolve(new MockMediaStream([new MockTrack('video')]))
+        }
+
+        return Promise.resolve(new MockMediaStream())
+      }
+
+      return Promise.resolve(createMockStreamForConstraints(constraints))
+    })
+
+    await startCapture('window:1', 'meeting-1')
+    showToastSpy.mockClear()
+
+    initialVideoTrack?.stop()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await Promise.resolve()
+
+    expect(showToastSpy).not.toHaveBeenCalled()
+    expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'microphone_capture_failed',
+        details: expect.objectContaining({ context: 'recovery' })
+      })
+    )
+
+    await stopCapture()
+  }, 20_000)
+
   it('captures a terminal recovery failure after the final retry', async () => {
     getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
       const callNumber = getUserMediaMock.mock.calls.length + 1

@@ -18,6 +18,37 @@ If Electron launch fails before assertions:
 1. Re-run the same command with outside-sandbox / GUI approval enabled.
 2. Verify a minimal Electron app can launch before treating the failure as an AutoDoc regression.
 
+## Greg Windows video-stall repro
+
+This headed spec seeds the two-video-segment device-change condition, forces the real
+post-processing control flow to receive a bounded no-progress video-concat failure, and verifies
+that the recordings UI leaves `Wrapping up recording...`, preserves the transcript, and records
+`videoProcessingFailed: true`.
+
+```powershell
+npm run build; npm run test:e2e:headed -- e2e/greg-video-stall-repro.spec.ts
+```
+
+Screenshots are written to `artifacts/greg-repro/`.
+
+The helper-level process-kill behavior is covered separately with a 1-second injected stall:
+
+```powershell
+npm run test:main:run -- src/main/ipc/__tests__/recording-ipc.test.ts
+```
+
+## Windows recording workflow regression
+
+This headed suite uses Chromium's real `MediaRecorder`, the repository's bundled ffmpeg, and
+isolated user-data directories. It covers manual stop/finalize, rapid abort, reopen after finalize,
+and a successful device-change multi-segment recording.
+
+```powershell
+npm run build; npm run test:e2e:headed -- e2e/recording-workflow-regression.spec.ts
+```
+
+Screenshots are written to `artifacts/recording-regression/`.
+
 ## AD-60 real macOS verification
 
 `npm run test:smoke:mac:microphone` is the host-machine repro for the Tahoe microphone-list bug.

@@ -143,6 +143,18 @@ export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.disableDifferentialDownload = true
+
+    // Internal-flavor builds use prerelease versions (e.g. 1.1.0-internal.7).
+    // electron-updater only defaults allowPrerelease to true because the running
+    // version happens to have a prerelease component; pin it explicitly so an
+    // internal build never silently refuses an internal update. Do NOT set
+    // autoUpdater.channel here: electron-builder derives the channel ("internal")
+    // from the version's prerelease tag and bakes it into app-update.yml, so the
+    // updater already requests internal.yml / internal-mac.yml from the feed.
+    if (app.getVersion().includes('-internal')) {
+      autoUpdater.allowPrerelease = true
+    }
+
     configureUpdateFeedOverride()
 
     autoUpdater.on('checking-for-update', () => {

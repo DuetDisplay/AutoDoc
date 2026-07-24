@@ -242,6 +242,7 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 }
 
 let ollamaManager: OllamaManager | null = null
+let shutdownTranscriptionWorker: (() => void) | null = null
 let isQuitting = false
 let mainSentry: MainSentryRuntimeModule | null = null
 let mainSentryEnabled = false
@@ -336,9 +337,9 @@ function initializeMainSentry(): void {
     const sentryRuntime = mainSentry
     const scrubString = (input: string): string => input.replaceAll(homeDir, '[home]')
     const integrations =
-      sentryRuntime.getDefaultIntegrations?.({ sendDefaultPii: false }).filter(
-        (integration) => integration.name !== 'MainProcessSession'
-      ) ?? []
+      sentryRuntime
+        .getDefaultIntegrations?.({ sendDefaultPii: false })
+        .filter((integration) => integration.name !== 'MainProcessSession') ?? []
 
     const initOptions = {
       dsn: SENTRY_DSN ?? 'stub://autodoc',
@@ -360,15 +361,41 @@ function initializeMainSentry(): void {
     sentryRuntime.init(initOptions)
     initSentryReporter(mainSentry as unknown as typeof import('@sentry/electron/main'))
     mainSentryEnabled = true
+    logAutodocEvent({
+      area: 'app',
+      message: 'Sentry initialized',
+      context: {
+        environment: initOptions.environment,
+        release: initOptions.release
+      }
+    })
     onMainSentryReady?.()
   } catch (err) {
     console.warn('Failed to initialize Sentry:', err)
+    logAutodocEvent({
+      area: 'app',
+      level: 'warn',
+      message: 'Sentry initialization failed',
+      context: {
+        error: err instanceof Error ? err.message : String(err)
+      }
+    })
   }
 }
 
 if (!gotSingleInstanceLock) {
   traceInstallPolicy('index: secondary instance exiting (lock failed)')
-  app.exit(0)
+  // This exit must be visible in QA logs: flush the async log queue before dying, or
+  // launch-failure investigations see nothing (log writes are queued and app.exit kills them).
+  logAutodocEvent({
+    area: 'app',
+    level: 'warn',
+    message: 'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
+    context: { pid: process.pid, execPath: process.execPath }
+  })
+  void flushAutodocLogWrites()
+    .catch(() => {})
+    .finally(() => app.exit(0))
   // app.exit(0) may not terminate on macOS when app.whenReady() hasn't fired yet
   setTimeout(() => process.exit(0), 2000).unref()
 } else {
@@ -385,6 +412,22 @@ if (!gotSingleInstanceLock) {
       })
   })
 }
+
+// Sentry must be initialized before the app 'ready' event fires —
+// @sentry/electron v7 throws if init() runs after 'ready', which previously
+// left Sentry permanently disabled in packaged builds. Consent is read here
+// too (safe pre-ready: the prefs store only depends on
+// app.getPath('userData'), which is available before 'ready') so early crash
+// events from consenting users aren't dropped. The beforeSend hook still
+// gates every outgoing event on analyticsConsentEnabled.
+try {
+  analyticsConsentEnabled = readInitialAnalyticsConsent() === true
+  diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
+  syncDiagnosticLogUploadForErrors()
+} catch (err) {
+  console.warn('Failed to read initial diagnostics consent for Sentry:', err)
+}
+initializeMainSentry()
 
 function createWindow(): void {
   recordMainDiagnosticAction({ category: 'app', action: 'main_window_created' })
@@ -441,17 +484,8 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   if (!(await warnIfUnsupportedMacOS())) return
 
-  try {
-    analyticsConsentEnabled = readInitialAnalyticsConsent() === true
-    diagnosticLogUploadConsentEnabled = readInitialDiagnosticLogUploadConsent()
-    syncDiagnosticLogUploadForErrors()
-  } catch (err) {
-    console.warn('Failed to read initial diagnostics consent for Sentry:', err)
-  }
-
-  initializeMainSentry()
-
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
+  logAutodocEvent({ area: 'app', message: 'startup: install policy passed; continuing launch' })
 
   const buildPermissionLogContext = (
     context?: Record<string, unknown>
@@ -650,7 +684,18 @@ app.whenReady().then(async () => {
       })
       return { screen, microphone }
     }
-    // On Windows/Linux, permissions are generally granted by default
+
+    if (process.platform === 'win32') {
+      const microphoneStatus = systemPreferences.getMediaAccessStatus('microphone')
+      const microphone = microphoneStatus !== 'denied' && microphoneStatus !== 'restricted'
+      logPermissionEvent('permissions_check_windows_completed', {
+        microphoneStatus,
+        microphoneGranted: microphone,
+        screenGranted: true
+      })
+      return { screen: true, microphone }
+    }
+
     logPermissionEvent('permissions_check_non_darwin_default_granted')
     return { screen: true, microphone: true }
   })
@@ -688,6 +733,16 @@ app.whenReady().then(async () => {
       }
     }
 
+    if (process.platform === 'win32') {
+      const microphoneStatus = systemPreferences.getMediaAccessStatus('microphone')
+      const granted = microphoneStatus !== 'denied' && microphoneStatus !== 'restricted'
+      logPermissionEvent('microphone_access_request_windows_status_checked', {
+        microphoneStatus,
+        granted
+      })
+      return granted
+    }
+
     logPermissionEvent('microphone_access_request_non_darwin_default_granted')
     return true
   })
@@ -709,6 +764,10 @@ app.whenReady().then(async () => {
       } else {
         shell.openExternal(url)
       }
+    } else if (process.platform === 'win32' && panel === 'microphone') {
+      const url = 'ms-settings:privacy-microphone'
+      logPermissionEvent('permissions_open_settings_requested', { panel, url })
+      shell.openExternal(url)
     }
   })
 
@@ -742,13 +801,17 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('recording:get-media', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
-    const videoPath = join(baseDir, meetingId, 'screen.webm')
-    const micPath = join(baseDir, meetingId, 'mic.webm')
-    const systemPath = join(baseDir, meetingId, 'system.webm')
-    const legacyAudioPath = join(baseDir, meetingId, 'audio.webm')
-    const hasVideo = await stat(videoPath)
+    const meetingDir = join(baseDir, meetingId)
+    const videoPath = join(meetingDir, 'screen.webm')
+    const micPath = join(meetingDir, 'mic.webm')
+    const systemPath = join(meetingDir, 'system.webm')
+    const legacyAudioPath = join(meetingDir, 'audio.webm')
+    const metadata = await readMetadata(meetingDir)
+    const videoStatus = metadata?.videoStatus
+    const hasVideoFile = await stat(videoPath)
       .then(() => true)
       .catch(() => false)
+    const hasVideo = videoStatus === 'processing' ? false : hasVideoFile
     const hasMicAudio = await stat(micPath)
       .then(() => true)
       .catch(() => false)
@@ -769,6 +832,7 @@ app.whenReady().then(async () => {
       hasVideo,
       hasAudio: Boolean(audioFile),
       audioFile,
+      videoStatus,
       mediaBaseUrl: recordingMediaBaseUrl ?? undefined
     }
   })
@@ -786,10 +850,30 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
-  const localProcessingCoordinator = new LocalProcessingCoordinator(
-    async () =>
-      (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
-  )
+  whisperManager.setTranscriptionQualityModeGetter(() => prefsStore.getTranscriptionQualityMode())
+  const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
+    if (process.platform === 'darwin') {
+      return (
+        (await whisperManager.getEffectiveMacProcessingProfile())?.serializeLocalProcessing === true
+      )
+    }
+
+    if (process.platform === 'win32') {
+      const profile = await whisperManager.getEffectiveWindowsProcessingProfile()
+      if (!profile) {
+        return false
+      }
+      if (profile.id === 'win-gpu') {
+        return false
+      }
+      if (profile.id === 'win-low-spec') {
+        return true
+      }
+      return profile.serializeLocalProcessing
+    }
+
+    return false
+  })
   const audioConverter = new AudioConverter()
   const diarizationService =
     isE2E || isExperimentalSpeakerDiarizationEnabled() ? new DiarizationService() : null
@@ -804,8 +888,12 @@ app.whenReady().then(async () => {
     },
     diarizationService,
     isExperimentalSpeakerDiarizationEnabled,
-    localProcessingCoordinator
+    localProcessingCoordinator,
+    () => prefsStore.getTranscriptionPerformanceMode(),
+    () => prefsStore.getTranscriptionQualityMode(),
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
+  shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({
     resolveModel: async () =>
       (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
@@ -860,31 +948,40 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-start', () => {
+  managedOllamaManager.on('pull-start', (model: string) => {
     lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = 0
+    ollamaSetupState.pullModel = model
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-progress', (data: { percent: number }) => {
+  managedOllamaManager.on('pull-progress', (data: { percent: number; model?: string }) => {
     lastSuccessfulOllamaPhase = 'pulling'
     ollamaSetupState.phase = 'pulling'
     ollamaSetupState.percent = data.percent
+    if (data.model) {
+      ollamaSetupState.pullModel = data.model
+    }
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
   })
 
-  managedOllamaManager.on('pull-complete', () => {
+  const markOllamaSetupReady = (): void => {
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
+    delete ollamaSetupState.pullModel
     delete ollamaSetupState.error
     delete ollamaSetupState.failedStep
     broadcastOllamaStatus()
+  }
+
+  managedOllamaManager.on('pull-complete', () => {
+    markOllamaSetupReady()
   })
 
   const markOllamaSetupStarting = (): void => {
@@ -926,7 +1023,12 @@ app.whenReady().then(async () => {
   // path keeps its existing single recovery flow unchanged.
   const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
     if (windowsOllamaSetupCoordinator) {
-      void windowsOllamaSetupCoordinator.ensureRunning(options).catch(() => {})
+      void windowsOllamaSetupCoordinator
+        .ensureRunning(options)
+        .then(() => {
+          markOllamaSetupReady()
+        })
+        .catch(() => {})
       return
     }
 
@@ -938,12 +1040,7 @@ app.whenReady().then(async () => {
     ollamaRecoveryPromise = managedOllamaManager
       .startAndPull()
       .then(() => {
-        lastSuccessfulOllamaPhase = 'ready'
-        ollamaSetupState.phase = 'ready'
-        ollamaSetupState.percent = 100
-        delete ollamaSetupState.error
-        delete ollamaSetupState.failedStep
-        broadcastOllamaStatus()
+        markOllamaSetupReady()
       })
       .catch((err) => {
         markOllamaSetupFailed(err)
@@ -1083,13 +1180,15 @@ app.whenReady().then(async () => {
     setTimeout(() => app.exit(0), 100)
   })
   let pendingRecoveryPromise: Promise<unknown> | null = null
+  let recoverWindowsFinalizingMeetings: () => Promise<void> = async () => {}
 
   const recoverPendingWork = (): void => {
     if (pendingRecoveryPromise) return
 
     pendingRecoveryPromise = Promise.all([
       transcriptionService.scanAndEnqueuePending(),
-      segmentationService.scanAndEnqueuePending()
+      segmentationService.scanAndEnqueuePending(),
+      recoverWindowsFinalizingMeetings()
     ])
       .catch((err) => {
         logAutodocFailure({
@@ -1438,12 +1537,14 @@ app.whenReady().then(async () => {
     })
   }
 
-  const { stopActiveRecording } = registerRecordingIpc(
-    recordingService,
-    transcriptionService,
-    whisperManager,
-    calendarManager
-  )
+  const { stopActiveRecording, recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl } =
+    registerRecordingIpc(
+      recordingService,
+      transcriptionService,
+      whisperManager,
+      calendarManager
+    )
+  recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
   registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,
@@ -1595,6 +1696,10 @@ app.whenReady().then(async () => {
     }
 
     recoverPendingWork()
+    if (process.platform === 'win32' && !isRealSetupTest) {
+      ensureOllamaRunning()
+      void whisperManager.resolveWindowsTranscriptionBackend()
+    }
     if (!isRealSetupTest) {
       detectionService.start()
     }
@@ -1632,9 +1737,9 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
   ollamaManager?.stop()
+  shutdownTranscriptionWorker?.()
   stopRecordingMediaHttpServer()
 })
-
 ;(app as unknown as { on(event: 'before-quit-for-update', listener: () => void): void }).on(
   'before-quit-for-update',
   () => {

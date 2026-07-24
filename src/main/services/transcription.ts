@@ -30,6 +30,15 @@ import {
   detectMacHardwareSnapshot,
   isMemoryHealthyForConcurrentProcessing
 } from './mac-processing-profile'
+import { type WindowsProcessingProfile } from './windows-processing-profile'
+import { computeRealtimeFactor } from './transcription-metrics'
+import {
+  classifyWindowsTranscriptionTier,
+  logQaGateStopToTranscript,
+  logQaGateWindowsResources,
+  logQaGateWorkerPriority
+} from './qa-gate-log'
+import { TranscriptionWorkerClient } from './transcription-worker-client'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -43,9 +52,19 @@ interface WhisperOutput {
 const MIN_WHISPER_THREADS = 4
 const MAX_WHISPER_THREADS = 10
 const RESERVED_LOGICAL_CPUS = 6
+const TRANSCRIPTION_LANGUAGE = 'en'
+const PARAKEET_SINGLE_PASS_MAX_DURATION_SEC = 3 * 60 * 60
+const WINDOWS_MEMORY_GATE_HEADROOM_GIB = 1
+const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
+const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
+const WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS = 4 * 60 * 1000
+const WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB = 1
+const DML_DEVICE_LOSS_FAILURE_THRESHOLD = 2
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
+const WORKER_CHUNK_WINDOW_SEC = 600
+const WORKER_CHUNK_OVERLAP_SEC = 15
 const CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS = 120
 const REPETITION_WINDOW_SEGMENTS = 24
 const REPETITION_WINDOW_MAX_UNIQUE = 4
@@ -70,6 +89,13 @@ const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
 const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
 type EnqueueSource = 'direct' | 'recovery-scan'
+type TranscriptionPerformanceMode = 'balanced' | 'fast'
+type TranscriptionQualityMode = 'balanced' | 'fast'
+
+interface SystemMemorySnapshot {
+  freeGiB: number | null
+  totalGiB: number | null
+}
 
 interface TranscriptionDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -104,6 +130,21 @@ export class TranscriptionService {
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private enqueueSource = new Map<string, EnqueueSource>()
+  private getPerformanceMode: () => TranscriptionPerformanceMode
+  private getQualityMode: () => TranscriptionQualityMode
+  private getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>
+  private memoryGateDelay: (ms: number) => Promise<void>
+  private readSystemMemoryInfo: () => SystemMemorySnapshot
+  private transcriptionWorkerClient: TranscriptionWorkerClient | null = null
+  private transcriptionWorkerClientFingerprint: string | null = null
+  private workerLoadedFingerprint: string | null = null
+  private workerJobsServed = 0
+  private workerJobsServedClient: TranscriptionWorkerClient | null = null
+  private consecutiveDmlDeviceLossFailures = 0
+  private transcriptionJobStartedAt: number | null = null
+  private lastEtaSeconds: number | null = null
+  private jobAudioDurationSec = 0
+  private jobDualSource = false
 
   constructor(
     private whisperManager: WhisperManager,
@@ -113,11 +154,30 @@ export class TranscriptionService {
     private isMeetingActive: (meetingId: string) => boolean = () => false,
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
     private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false,
-    private localProcessingCoordinator: LocalProcessingCoordinator | null = null
-  ) {}
+    private localProcessingCoordinator: LocalProcessingCoordinator | null = null,
+    getPerformanceMode: () => TranscriptionPerformanceMode = () => 'balanced',
+    getQualityMode: () => TranscriptionQualityMode = () => 'balanced',
+    getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>,
+    memoryGateDelay: (ms: number) => Promise<void> = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms)),
+    readSystemMemoryInfo?: () => SystemMemorySnapshot
+  ) {
+    this.getPerformanceMode = getPerformanceMode
+    this.getQualityMode = getQualityMode
+    this.getEffectiveWindowsProcessingProfile = getEffectiveWindowsProcessingProfile
+    this.memoryGateDelay = memoryGateDelay
+    this.readSystemMemoryInfo = readSystemMemoryInfo ?? (() => this.getSystemMemoryInfo())
+  }
 
   onComplete(callback: (meetingId: string) => void): void {
     this.onCompleteCallback = callback
+  }
+
+  shutdown(): void {
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = null
+    this.transcriptionWorkerClientFingerprint = null
+    this.workerLoadedFingerprint = null
   }
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
@@ -295,6 +355,10 @@ export class TranscriptionService {
     }
 
     const transcriptionStartedAt = Date.now()
+    this.transcriptionJobStartedAt = transcriptionStartedAt
+    this.lastEtaSeconds = null
+    this.jobAudioDurationSec = 0
+    this.jobDualSource = false
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
 
@@ -315,6 +379,8 @@ export class TranscriptionService {
 
     try {
       const source = this.enqueueSource.get(meetingId) ?? 'direct'
+      await this.refreshWindowsThreadPolicy()
+      const processingProfile = await this.getProcessingProfileLogContext()
       logAutodocEvent({
         area: 'transcription',
         message: 'transcription started',
@@ -324,9 +390,17 @@ export class TranscriptionService {
           hasMic,
           hasSystem,
           hasLegacy,
-          processingProfile: this.getProcessingProfileLogContext()
+          dualSource: hasMic && hasSystem,
+          qualityMode: this.getQualityMode(),
+          performanceMode: this.getPerformanceMode(),
+          backend: this.whisperManager.getTranscriptionBackend(),
+          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+          modelName: this.whisperManager.getModelName(),
+          processingProfile
         }
       })
+      this.jobDualSource = hasMic && hasSystem
+      await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
       if (!(await this.whisperManager.isReady())) {
         this.activeStatus = 'downloading'
@@ -336,6 +410,9 @@ export class TranscriptionService {
 
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
+      if (this.whisperManager.isWorkerEngineSelected?.()) {
+        this.trackWorkerReuse()
+      }
 
       const shouldUseExperimentalDiarization =
         this.diarizationService != null && this.isExperimentalSpeakerDiarizationEnabled()
@@ -351,7 +428,7 @@ export class TranscriptionService {
           meetingId,
           context: {
             mode: dualSourceMode,
-            processingProfile: this.getProcessingProfileLogContext()
+            processingProfile: await this.getProcessingProfileLogContext()
           }
         })
         if (dualSourceMode === 'concurrent') {
@@ -450,7 +527,7 @@ export class TranscriptionService {
       await unlink(join(meetingDir, 'transcript.error')).catch(() => {})
 
       // Encrypt raw media files
-      for (const filename of ['mic.webm', 'system.webm', 'screen.webm']) {
+      for (const filename of ['mic.webm', 'system.webm']) {
         const filePath = join(meetingDir, filename)
         try {
           if ((await this.fileExists(filePath)) && !(await isEncrypted(filePath))) {
@@ -470,6 +547,22 @@ export class TranscriptionService {
       console.log(
         `[perf] Transcription total: ${((Date.now() - transcriptionStartedAt) / 1000).toFixed(1)}s (${meetingId})`
       )
+      const metadata = await readMetadata(meetingDir)
+      const transcriptionWallSec = (Date.now() - transcriptionStartedAt) / 1000
+      const stopToTranscriptWallSec =
+        metadata?.stoppedAt != null ? (Date.now() - metadata.stoppedAt) / 1000 : null
+      const postProcessingWallSec =
+        metadata?.stoppedAt != null
+          ? (transcriptionStartedAt - metadata.stoppedAt) / 1000
+          : null
+      const realtimeFactor = computeRealtimeFactor(this.jobAudioDurationSec, transcriptionWallSec)
+      const completedProcessingProfile = await this.getProcessingProfileLogContext()
+      const processingProfileId =
+        (await this.getEffectiveWindowsProcessingProfileForJob())?.id ?? null
+      const backend = this.whisperManager.getTranscriptionBackend()
+      const workerDevice = this.whisperManager.getWorkerDevice?.() ?? null
+      const workerComputeType = this.whisperManager.getWorkerComputeType?.() ?? null
+
       logAutodocEvent({
         area: 'transcription',
         message: 'transcription completed',
@@ -477,14 +570,57 @@ export class TranscriptionService {
         context: {
           elapsedMs: Date.now() - transcriptionStartedAt,
           transcriptCount: transcripts.length,
-          processingProfile: this.getProcessingProfileLogContext()
+          audioDurationSec: this.jobAudioDurationSec,
+          dualSource: this.jobDualSource,
+          recordingDurationSec: metadata?.durationSeconds ?? null,
+          stopToTranscriptWallSec,
+          postProcessingWallSec,
+          transcriptionWallSec,
+          processingProfile: completedProcessingProfile,
+          processingProfileId,
+          qualityMode: this.getQualityMode(),
+          performanceMode: this.getPerformanceMode(),
+          workerReuseCount: this.workerJobsServed,
+          realtimeFactor,
+          downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? []
         }
       })
+
+      if (process.platform === 'win32' && metadata?.stoppedAt != null && stopToTranscriptWallSec != null) {
+        logQaGateStopToTranscript(meetingId, {
+          tier: classifyWindowsTranscriptionTier({
+            backendId: backend,
+            device: workerDevice
+          }),
+          backend,
+          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+          modelName: this.whisperManager.getModelName(),
+          device: workerDevice ?? 'unknown',
+          computeType: workerComputeType ?? 'unknown',
+          qualityMode: this.getQualityMode(),
+          performanceMode: this.getPerformanceMode(),
+          dualSource: this.jobDualSource,
+          recordingDurationSec: metadata.durationSeconds,
+          audioDurationSec: this.jobAudioDurationSec,
+          stopToTranscriptWallSec,
+          transcriptionWallSec,
+          postProcessingWallSec,
+          realtimeFactor,
+          workerReuseCount: this.workerJobsServed,
+          downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? [],
+          processingProfileId,
+          processingProfile: completedProcessingProfile
+        })
+      }
+
+      await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
 
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
       this.onCompleteCallback?.(meetingId)
     } finally {
+      this.transcriptionJobStartedAt = null
+      this.lastEtaSeconds = null
       for (const f of tempFiles) {
         await unlink(f).catch(() => {})
       }
@@ -492,6 +628,28 @@ export class TranscriptionService {
         tempFileCount: tempFiles.length
       })
     }
+  }
+
+  private async logWindowsResourceSnapshot(
+    phase: 'transcription-start' | 'transcription-complete',
+    meetingId: string
+  ): Promise<void> {
+    if (process.platform !== 'win32') {
+      return
+    }
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+      return
+    }
+
+    const memory = this.getSystemMemoryInfo()
+    logQaGateWindowsResources(meetingId, phase, {
+      logicalProcessors: this.getLogicalProcessorCount(),
+      freeMemoryGiB: memory.freeGiB,
+      totalMemoryGiB: memory.totalGiB,
+      backend: this.whisperManager.getTranscriptionBackend(),
+      performanceMode: this.getPerformanceMode(),
+      qualityMode: this.getQualityMode()
+    })
   }
 
   private async logMacResourceSnapshot(
@@ -543,6 +701,9 @@ export class TranscriptionService {
     const audioDuration = await this.audioConverter
       .getDuration(tempAudioWav, this.whisperManager.getFfmpegPath())
       .catch(() => undefined)
+    if (audioDuration != null) {
+      this.jobAudioDurationSec += audioDuration
+    }
     const speechActivity = await this.detectAudioActivity(tempAudioWav).catch((err) => {
       console.warn(`[transcription] Failed to detect audio activity (${meetingId}):`, err)
       return []
@@ -561,7 +722,7 @@ export class TranscriptionService {
         audioDurationSec: audioDuration ?? null,
         audioConversionElapsedMs: Date.now() - t0,
         speechSignal,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile: await this.getProcessingProfileLogContext()
       }
     })
 
@@ -573,6 +734,7 @@ export class TranscriptionService {
     }
 
     const whisperStart = Date.now()
+    const processingProfile = await this.getProcessingProfileLogContext()
     logAutodocEvent({
       area: 'transcription',
       message: 'transcription source started',
@@ -584,7 +746,7 @@ export class TranscriptionService {
         model: this.whisperManager.getModelName(),
         audioDurationSec: audioDuration ?? null,
         concurrentSources,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile
       }
     })
     const whisperOutput = await this.transcribeWithFallback(
@@ -609,7 +771,7 @@ export class TranscriptionService {
         model: this.whisperManager.getModelName(),
         elapsedMs: Date.now() - whisperStart,
         rawSegmentCount: whisperOutput.transcription.length,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile
       }
     })
 
@@ -1351,7 +1513,12 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     concurrentSources = 1
   ): Promise<WhisperOutput> {
-    if (audioDurationSec && audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC) {
+    const shouldPreChunk =
+      audioDurationSec &&
+      audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC &&
+      !this.shouldTrySinglePassForLongRecording(audioDurationSec)
+
+    if (shouldPreChunk) {
       console.log(
         `[transcription] Using chunked whisper for long recording (${meetingId}, ${audioDurationSec.toFixed(1)}s)`
       )
@@ -1385,11 +1552,37 @@ export class TranscriptionService {
         tempPrefix,
         tempFiles,
         progressRange,
-        concurrentSources
+        concurrentSources,
+        true
       )
     }
 
     return output
+  }
+
+  private shouldTrySinglePassForLongRecording(audioDurationSec?: number): boolean {
+    if (process.platform !== 'win32') return false
+
+    // Parakeet segments long audio internally via its VAD, so worker chunk
+    // windows only add per-window overhead (measured ~6-7 s x 14 windows on a
+    // 60-min dual-source run). The repetition fallback below still re-chunks
+    // if a single pass produces degenerate output. Whole-file passes load the
+    // full waveform into worker RAM (~230 MB/hour), so marathon recordings
+    // stay on the windowed path.
+    if (
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected() &&
+      typeof this.whisperManager.getWorkerEngine === 'function' &&
+      this.whisperManager.getWorkerEngine() === 'parakeet'
+    ) {
+      return audioDurationSec == null || audioDurationSec <= PARAKEET_SINGLE_PASS_MAX_DURATION_SEC
+    }
+
+    if (typeof this.whisperManager.isFasterWhisperSelected !== 'function') return false
+    if (!this.whisperManager.isFasterWhisperSelected()) return false
+    if (typeof this.whisperManager.getWorkerDevice !== 'function') return false
+
+    return this.whisperManager.getWorkerDevice() === 'cuda'
   }
 
   private async runWhisperChunked(
@@ -1399,12 +1592,20 @@ export class TranscriptionService {
     tempPrefix: string,
     tempFiles: string[],
     progressRange?: { start: number; end: number },
-    concurrentSources = 1
+    concurrentSources = 1,
+    useNarrowWindows = false
   ): Promise<WhisperOutput> {
-    const stepSec = Math.max(
-      1,
-      CHUNKED_TRANSCRIPTION_WINDOW_SEC - CHUNKED_TRANSCRIPTION_OVERLAP_SEC
-    )
+    const useWorkerWindows =
+      !useNarrowWindows &&
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected()
+    const chunkWindowSec = useWorkerWindows
+      ? WORKER_CHUNK_WINDOW_SEC
+      : CHUNKED_TRANSCRIPTION_WINDOW_SEC
+    const chunkOverlapSec = useWorkerWindows
+      ? WORKER_CHUNK_OVERLAP_SEC
+      : CHUNKED_TRANSCRIPTION_OVERLAP_SEC
+    const stepSec = Math.max(1, chunkWindowSec - chunkOverlapSec)
     const transcription: WhisperSegment[] = []
     let lastAcceptedTo = 0
     let chunkIndex = 0
@@ -1413,20 +1614,18 @@ export class TranscriptionService {
 
     for (let chunkStart = 0; chunkStart < audioDurationSec; chunkStart += stepSec) {
       const chunkStartedAt = Date.now()
-      const chunkDuration = Math.min(
-        CHUNKED_TRANSCRIPTION_WINDOW_SEC,
-        audioDurationSec - chunkStart
-      )
+      const chunkDuration = Math.min(chunkWindowSec, audioDurationSec - chunkStart)
       const chunkPath = `${tempPrefix}-chunk-${chunkIndex}.wav`
-      tempFiles.push(chunkPath)
-
-      await this.audioConverter.extractClip(
-        audioWavPath,
-        chunkPath,
-        this.whisperManager.getFfmpegPath(),
-        chunkStart,
-        chunkDuration
-      )
+      if (!useWorkerWindows) {
+        tempFiles.push(chunkPath)
+        await this.audioConverter.extractClip(
+          audioWavPath,
+          chunkPath,
+          this.whisperManager.getFfmpegPath(),
+          chunkStart,
+          chunkDuration
+        )
+      }
       const extractElapsedMs = Date.now() - chunkStartedAt
 
       const whisperStartedAt = Date.now()
@@ -1437,7 +1636,7 @@ export class TranscriptionService {
         )
       }
       const chunkOutput = await this.runWhisperPassAndRead(
-        chunkPath,
+        useWorkerWindows ? audioWavPath : chunkPath,
         meetingId,
         chunkDuration,
         tempFiles,
@@ -1448,7 +1647,8 @@ export class TranscriptionService {
             }
           : chunkProgressRange,
         ['-ml', String(CHUNKED_TRANSCRIPTION_MAX_SEGMENT_CHARS), '-sow'],
-        concurrentSources
+        concurrentSources,
+        useWorkerWindows ? { startSec: chunkStart, endSec: chunkStart + chunkDuration } : null
       )
       const whisperElapsedMs = Date.now() - whisperStartedAt
       logAutodocEvent({
@@ -1510,6 +1710,17 @@ export class TranscriptionService {
     return 'single'
   }
 
+  private getFasterWhisperJsonPath(
+    audioWavPath: string,
+    window: { startSec: number; endSec: number } | null
+  ): string {
+    if (window) {
+      return `${audioWavPath}.window-${window.startSec}-${window.endSec}.json`
+    }
+
+    return `${audioWavPath}.json`
+  }
+
   private async runWhisperPassAndRead(
     audioWavPath: string,
     meetingId: string,
@@ -1517,17 +1728,22 @@ export class TranscriptionService {
     tempFiles: string[],
     progressRange?: { start: number; end: number },
     extraArgs: string[] = [],
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<WhisperOutput> {
-    const jsonPath = `${audioWavPath}.json`
+    const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
     tempFiles.push(jsonPath)
+    if (process.platform === 'win32') {
+      await this.waitForWindowsTranscriptionMemory(meetingId)
+    }
     await this.runWhisperPass(
       audioWavPath,
       meetingId,
       audioDurationSec,
       progressRange,
       extraArgs,
-      concurrentSources
+      concurrentSources,
+      window
     )
     const whisperJson = await readFile(jsonPath, 'utf-8')
     return JSON.parse(whisperJson) as WhisperOutput
@@ -1539,7 +1755,8 @@ export class TranscriptionService {
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
     extraArgs: string[] = [],
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
     if (
       typeof this.whisperManager.isMlxWhisperSelected === 'function' &&
@@ -1549,15 +1766,16 @@ export class TranscriptionService {
     }
 
     if (
-      typeof this.whisperManager.isFasterWhisperSelected === 'function' &&
-      this.whisperManager.isFasterWhisperSelected()
+      typeof this.whisperManager.isWorkerEngineSelected === 'function' &&
+      this.whisperManager.isWorkerEngineSelected()
     ) {
-      return this.runFasterWhisperPass(
+      return this.runWorkerEnginePass(
         audioWavPath,
         meetingId,
         audioDurationSec,
         progressRange,
-        concurrentSources
+        concurrentSources,
+        window
       )
     }
 
@@ -1572,7 +1790,7 @@ export class TranscriptionService {
           audioWavPath,
           '-oj',
           '-l',
-          'en',
+          TRANSCRIPTION_LANGUAGE,
           '-pp'
         ]
 
@@ -1679,7 +1897,7 @@ export class TranscriptionService {
         '--output',
         jsonPath,
         '--language',
-        'en'
+        TRANSCRIPTION_LANGUAGE
       ]
 
       const proc = spawn(this.whisperManager.getMlxWhisperPythonPath(), args, {
@@ -1731,76 +1949,201 @@ export class TranscriptionService {
     })
   }
 
-  private runFasterWhisperPass(
+  /**
+   * The DML (GPU) worker must not be throttled: the heavy compute runs on the
+   * GPU, but the parakeet TDT decode loop that feeds it is CPU-side Python.
+   * EcoQoS pins that loop to efficiency cores (~5x slowdown measured in
+   * Phase 1/3), which defeats the GPU tier's purpose while buying little
+   * responsiveness. CPU tiers keep EcoQoS + Low priority in balanced mode.
+   */
+  private isDmlWorkerSelected(): boolean {
+    return (
+      typeof this.whisperManager.getWorkerDevice === 'function' &&
+      this.whisperManager.getWorkerDevice() === 'dml'
+    )
+  }
+
+  private isDmlDeviceLossError(message: string): boolean {
+    return (
+      message.includes('887A0005') ||
+      message.includes('887A0006') ||
+      message.includes('DmlExecutionProvider')
+    )
+  }
+
+  private disposeTranscriptionWorkerClient(): void {
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = null
+    this.transcriptionWorkerClientFingerprint = null
+    this.workerLoadedFingerprint = null
+  }
+
+  private getTranscriptionWorkerClientFingerprint(): string {
+    return [
+      this.whisperManager.getWorkerPythonPath(),
+      this.whisperManager.getWorkerModelPath(),
+      this.whisperManager.getWorkerDevice(),
+      this.whisperManager.getWorkerComputeType(),
+      this.whisperManager.getWorkerEngine(),
+      // EcoQoS is decided at spawn time (--no-eco), so a performance-mode
+      // change must recreate the worker process.
+      this.getPerformanceMode()
+    ].join('|')
+  }
+
+  private getOrCreateTranscriptionWorkerClient(): TranscriptionWorkerClient {
+    const fingerprint = this.getTranscriptionWorkerClientFingerprint()
+    if (
+      this.transcriptionWorkerClient &&
+      this.transcriptionWorkerClientFingerprint === fingerprint
+    ) {
+      return this.transcriptionWorkerClient
+    }
+
+    this.transcriptionWorkerClient?.dispose()
+    this.transcriptionWorkerClient = new TranscriptionWorkerClient({
+      pythonPath: this.whisperManager.getWorkerPythonPath(),
+      scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
+      processEnv: this.whisperManager.getWorkerProcessEnv(),
+      applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
+      extraArgs:
+        this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected() ? ['--no-eco'] : []
+    })
+    this.transcriptionWorkerClientFingerprint = fingerprint
+    this.workerLoadedFingerprint = null
+    return this.transcriptionWorkerClient
+  }
+
+  private async ensureWorkerLoaded(concurrentSources: number): Promise<void> {
+    const client = this.getOrCreateTranscriptionWorkerClient()
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    // cpu_threads is fixed when the model loads, so a thread-count change
+    // (e.g. concurrent dual-source vs single source) requires a reload.
+    const fingerprint = `${this.getTranscriptionWorkerClientFingerprint()}|threads=${threadCount}`
+    if (client.isLoaded && this.workerLoadedFingerprint === fingerprint) {
+      return
+    }
+
+    await client.load({
+      engine: this.whisperManager.getWorkerEngine(),
+      model: this.whisperManager.getWorkerModelPath(),
+      device: this.whisperManager.getWorkerDevice(),
+      computeType: this.whisperManager.getWorkerComputeType(),
+      threads: threadCount
+    })
+    this.workerLoadedFingerprint = fingerprint
+  }
+
+  private async runWorkerEnginePass(
     audioWavPath: string,
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number },
-    concurrentSources = 1
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let stderr = ''
-      const threadCount = this.getWhisperThreadCount(concurrentSources)
-      const jsonPath = `${audioWavPath}.json`
-      const args = [
-        this.whisperManager.getFasterWhisperScriptPath(),
-        '--model',
-        this.whisperManager.getFasterWhisperModelPath(),
-        '--audio',
-        audioWavPath,
-        '--output',
-        jsonPath,
-        '--device',
-        this.whisperManager.getFasterWhisperDevice(),
-        '--compute-type',
-        this.whisperManager.getFasterWhisperComputeType(),
-        '--language',
-        'en'
-      ]
+    const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    if (threadCount !== null) {
+      console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
+    }
+    console.log(
+      `[perf] Worker transcription backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+    )
 
-      if (threadCount !== null) {
-        args.push('--threads', String(threadCount))
-      }
+    const startedAt = Date.now()
+    let lastTimestampProgress = 0
+    let progressTimer: ReturnType<typeof setInterval> | null = null
 
-      const proc = spawn(this.whisperManager.getFasterWhisperPythonPath(), args)
-      if (threadCount !== null) {
-        console.log(`[perf] Faster Whisper threads: ${threadCount} (${meetingId})`)
+    // Expected pass duration as a fraction of audio duration, per backend.
+    // Parakeet GPU runs ~15-35x realtime; CPU backends are far slower.
+    const expectedDurationRatio = ((): number => {
+      switch (this.whisperManager.getTranscriptionBackend()) {
+        case 'parakeet-gpu':
+          return 0.08
+        case 'faster-whisper-cuda':
+          return 0.12
+        case 'parakeet-cpu':
+          return 0.2
+        default:
+          return 0.3
       }
-      console.log(
-        `[perf] Faster Whisper backend: ${this.whisperManager.getTranscriptionBackend()} (${meetingId})`
+    })()
+
+    const getElapsedProgress = (): number => {
+      if (!audioDurationSec || audioDurationSec <= 0) return 0
+      const elapsedSec = (Date.now() - startedAt) / 1000
+      const estimatedRatio = Math.min(
+        0.95,
+        elapsedSec / Math.max(audioDurationSec * expectedDurationRatio, 30)
       )
-      this.lowerWhisperPriority(proc.pid, meetingId)
+      return Math.round(estimatedRatio * 100)
+    }
 
-      const progressTimer =
-        audioDurationSec && audioDurationSec > 0
-          ? setInterval(() => {
-              this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(50, progressRange))
-            }, 1500)
-          : null
+    const broadcastBestProgress = (timestampProgress?: number): void => {
+      if (!audioDurationSec || audioDurationSec <= 0) return
+      if (timestampProgress !== undefined) {
+        lastTimestampProgress = Math.max(lastTimestampProgress, timestampProgress)
+      }
+      const progress = Math.max(lastTimestampProgress, getElapsedProgress())
+      this.broadcastStatus(
+        meetingId,
+        'transcribing',
+        this.scaleProgress(progress, progressRange)
+      )
+    }
 
-      proc.on('error', (err) => {
-        if (progressTimer) clearInterval(progressTimer)
-        reject(new Error(`faster-whisper spawn failed: ${err.message}`))
-      })
+    if (audioDurationSec && audioDurationSec > 0) {
+      progressTimer = setInterval(() => {
+        broadcastBestProgress()
+      }, 1500)
+    }
 
-      proc.stderr.on('data', (data: Buffer) => {
-        stderr += data.toString()
-      })
-
-      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-        if (progressTimer) clearInterval(progressTimer)
-        if (code === 0) {
-          this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
-          resolve()
-          return
+    try {
+      await this.ensureWorkerLoaded(concurrentSources)
+      const client = this.getOrCreateTranscriptionWorkerClient()
+      const result = await client.transcribe(
+        {
+          audio: audioWavPath,
+          language: TRANSCRIPTION_LANGUAGE,
+          window
+        },
+        (segment) => {
+          if (audioDurationSec && audioDurationSec > 0) {
+            const progress = Math.min(
+              99,
+              Math.round((segment.endMs / (audioDurationSec * 1000)) * 100)
+            )
+            broadcastBestProgress(progress)
+          }
         }
-
-        const signalSuffix = signal ? ` (signal ${signal})` : ''
-        reject(
-          new Error(`faster-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
-        )
-      })
-    })
+      )
+      await writeFile(jsonPath, JSON.stringify(result), 'utf-8')
+      this.consecutiveDmlDeviceLossFailures = 0
+      this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (this.isDmlDeviceLossError(message)) {
+        this.disposeTranscriptionWorkerClient()
+        this.consecutiveDmlDeviceLossFailures += 1
+        if (this.consecutiveDmlDeviceLossFailures === DML_DEVICE_LOSS_FAILURE_THRESHOLD) {
+          this.whisperManager.downgradeParakeetGpuToCpuForSession?.()
+          logAutodocEvent({
+            area: 'transcription',
+            message: 'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures',
+            meetingId,
+            context: {
+              consecutiveFailures: this.consecutiveDmlDeviceLossFailures,
+              backend: this.whisperManager.getTranscriptionBackend()
+            }
+          })
+        }
+      }
+      const engine = this.whisperManager.getWorkerEngine()
+      throw new Error(`${engine} worker failed: ${message.slice(-500)}`)
+    } finally {
+      if (progressTimer) clearInterval(progressTimer)
+    }
   }
 
   private getWhisperThreadCount(concurrentSources = 1): number | null {
@@ -1812,7 +2155,37 @@ export class TranscriptionService {
     const reservedProcessors = Math.min(RESERVED_LOGICAL_CPUS, Math.max(2, logicalProcessors - 2))
     const availableProcessors = Math.max(1, logicalProcessors - reservedProcessors)
     const perSourceProcessors = Math.max(1, Math.floor(availableProcessors / concurrentSources))
-    return Math.max(MIN_WHISPER_THREADS, Math.min(MAX_WHISPER_THREADS, perSourceProcessors))
+    const floorCap = this.getPerformanceMode() === 'fast' ? logicalProcessors : availableProcessors
+    let threadCount = Math.min(
+      MAX_WHISPER_THREADS,
+      Math.max(Math.min(MIN_WHISPER_THREADS, floorCap), perSourceProcessors)
+    )
+
+    if (this.getCachedWindowsThreadPolicy() === 'min') {
+      threadCount = Math.min(threadCount, MIN_WHISPER_THREADS)
+    }
+
+    return threadCount
+  }
+
+  private cachedWindowsThreadPolicy: WindowsProcessingProfile['threadPolicy'] | null = null
+
+  private getCachedWindowsThreadPolicy(): WindowsProcessingProfile['threadPolicy'] | null {
+    return this.cachedWindowsThreadPolicy
+  }
+
+  private async refreshWindowsThreadPolicy(): Promise<void> {
+    if (process.platform !== 'win32') {
+      this.cachedWindowsThreadPolicy = null
+      return
+    }
+
+    const profile = await this.getEffectiveWindowsProcessingProfileForJob()
+    this.cachedWindowsThreadPolicy = profile?.threadPolicy ?? null
+  }
+
+  private async getEffectiveWindowsProcessingProfileForJob(): Promise<WindowsProcessingProfile | null> {
+    return (await this.getEffectiveWindowsProcessingProfile?.()) ?? null
   }
 
   private async getDualSourceMode(): Promise<'concurrent' | 'sequential'> {
@@ -1839,44 +2212,59 @@ export class TranscriptionService {
       return isMemoryHealthyForConcurrentProcessing(hardware)
     }
 
+    if (process.platform === 'win32') {
+      const effectiveProfile = await this.getEffectiveWindowsProcessingProfileForJob()
+      if (effectiveProfile) {
+        // The effective profile already applies the runtime free-memory rule
+        // (win-cpu-normal degrades to sequential under pressure). Re-sampling
+        // memory here would let the mode disagree with the logged profile.
+        return effectiveProfile.dualSourceMode === 'concurrent'
+      }
+    }
+
     if (process.platform !== 'win32') {
       return true
     }
 
-    const logicalProcessors = this.getLogicalProcessorCount()
-    if (logicalProcessors < 12) {
-      return false
-    }
-
-    const memoryInfo = this.getSystemMemoryInfo()
-    if (memoryInfo.freeGiB != null && memoryInfo.freeGiB < 6) {
-      return false
-    }
-
-    return true
+    return false
   }
 
-  private getProcessingProfileLogContext(): Record<string, unknown> | null {
-    const profile = this.whisperManager.getMacProcessingProfile?.()
-    if (!profile) {
+  private async getProcessingProfileLogContext(): Promise<Record<string, unknown> | null> {
+    const macProfile = this.whisperManager.getMacProcessingProfile?.()
+    if (macProfile) {
+      return {
+        profileId: macProfile.id,
+        reason: macProfile.reason,
+        hardware: macProfile.hardware,
+        settings: {
+          transcriptionBackend: macProfile.transcriptionBackend,
+          transcriptionModel: macProfile.transcriptionModel,
+          dualSourceMode: macProfile.dualSourceMode,
+          notesAfterTranscriptionOnly: macProfile.notesAfterTranscriptionOnly,
+          serializeLocalProcessing: macProfile.serializeLocalProcessing
+        }
+      }
+    }
+
+    const windowsProfile = await this.getEffectiveWindowsProcessingProfileForJob()
+    if (!windowsProfile) {
       return null
     }
 
     return {
-      profileId: profile.id,
-      reason: profile.reason,
-      hardware: profile.hardware,
+      profileId: windowsProfile.id,
+      reason: windowsProfile.reason,
+      hardware: windowsProfile.hardware,
       settings: {
-        transcriptionBackend: profile.transcriptionBackend,
-        transcriptionModel: profile.transcriptionModel,
-        dualSourceMode: profile.dualSourceMode,
-        notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
-        serializeLocalProcessing: profile.serializeLocalProcessing
+        dualSourceMode: windowsProfile.dualSourceMode,
+        notesAfterTranscriptionOnly: windowsProfile.notesAfterTranscriptionOnly,
+        serializeLocalProcessing: windowsProfile.serializeLocalProcessing,
+        threadPolicy: windowsProfile.threadPolicy
       }
     }
   }
 
-  private getSystemMemoryInfo(): { freeGiB: number | null; totalGiB: number | null } {
+  private getSystemMemoryInfo(): SystemMemorySnapshot {
     const processWithMemory = process as NodeJS.Process & {
       getSystemMemoryInfo?: () => { free?: number; total?: number }
     }
@@ -1913,11 +2301,105 @@ export class TranscriptionService {
       return
     }
 
+    const useBelowNormal = this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected()
+    const priority = useBelowNormal
+      ? osConstants.priority.PRIORITY_BELOW_NORMAL
+      : osConstants.priority.PRIORITY_LOW
+    const label = useBelowNormal ? 'BelowNormal' : 'Low'
+
     try {
-      setPriority(pid, osConstants.priority.PRIORITY_BELOW_NORMAL)
-      console.log(`[perf] Whisper priority: BelowNormal (${meetingId})`)
+      setPriority(pid, priority)
+      console.log(`[perf] Whisper priority: ${label} (pid ${pid}, ${meetingId})`)
+      logQaGateWorkerPriority(meetingId, {
+        pid,
+        priorityLabel: label,
+        performanceMode: this.getPerformanceMode(),
+        device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
+        backend: this.whisperManager.getTranscriptionBackend()
+      })
     } catch (err) {
-      console.warn(`Failed to lower whisper priority for ${meetingId}:`, err)
+      console.warn(`Failed to lower whisper priority for ${meetingId} (pid ${pid}):`, err)
+    }
+  }
+
+  private async waitForWindowsTranscriptionMemory(meetingId: string): Promise<void> {
+    if (process.platform !== 'win32') {
+      return
+    }
+
+    const estimatedGiB = this.whisperManager.getSelectedWindowsProfileEstimatedMemoryGiB?.()
+    if (estimatedGiB == null) {
+      return
+    }
+
+    const requiredGiB = estimatedGiB + WINDOWS_MEMORY_GATE_HEADROOM_GIB
+    const readFreeGiB = (): number | null => this.readSystemMemoryInfo().freeGiB
+    const initialFreeGiB = readFreeGiB()
+    if (initialFreeGiB != null && initialFreeGiB >= requiredGiB) {
+      return
+    }
+
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Waiting for free memory before starting transcription pass',
+      meetingId,
+      context: {
+        freeGiB: initialFreeGiB,
+        requiredGiB
+      }
+    })
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WINDOWS_MEMORY_GATE_MAX_WAIT_MS) {
+      await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
+      const freeGiB = readFreeGiB()
+      if (freeGiB == null || freeGiB >= requiredGiB) {
+        return
+      }
+    }
+
+    const freeAfterTimeoutGiB = readFreeGiB()
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Proceeding with transcription pass after memory wait timeout',
+      meetingId,
+      context: {
+        freeGiB: freeAfterTimeoutGiB,
+        requiredGiB,
+        waitedMs: WINDOWS_MEMORY_GATE_MAX_WAIT_MS
+      }
+    })
+
+    const profile = await this.getEffectiveWindowsProcessingProfileForJob()
+    const isCpuTierProfile =
+      profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
+    if (
+      !isCpuTierProfile ||
+      freeAfterTimeoutGiB == null ||
+      freeAfterTimeoutGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB
+    ) {
+      return
+    }
+
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Starting extended memory wait on low-spec/CPU profile after timeout with low free memory',
+      meetingId,
+      context: {
+        freeGiB: freeAfterTimeoutGiB,
+        requiredGiB,
+        minFreeGiB: WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB,
+        maxExtraWaitMs: WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
+      }
+    })
+
+    const extendedStartedAt = Date.now()
+    while (Date.now() - extendedStartedAt < WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS) {
+      await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
+      const freeGiB = readFreeGiB()
+      if (freeGiB == null || freeGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB) {
+        return
+      }
     }
   }
 
@@ -2039,7 +2521,7 @@ export class TranscriptionService {
       meetingId,
       context: {
         ...context,
-        processingProfile: this.getProcessingProfileLogContext()
+        processingProfile: await this.getProcessingProfileLogContext()
       }
     })
     this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
@@ -2061,6 +2543,41 @@ export class TranscriptionService {
     }
   }
 
+  private computeEtaSeconds(progress: number): number | null {
+    if (progress < 5 || this.transcriptionJobStartedAt == null) {
+      return null
+    }
+
+    const elapsed = (Date.now() - this.transcriptionJobStartedAt) / 1000
+    if (elapsed <= 0) {
+      return null
+    }
+
+    const raw = (elapsed * (100 - progress)) / progress
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return null
+    }
+
+    if (this.lastEtaSeconds == null) {
+      this.lastEtaSeconds = raw
+    } else {
+      this.lastEtaSeconds = Math.max(this.lastEtaSeconds * 0.7 + raw * 0.3, raw * 0.5)
+    }
+
+    return Math.round(this.lastEtaSeconds)
+  }
+
+  private trackWorkerReuse(): void {
+    const client = this.getOrCreateTranscriptionWorkerClient()
+    if (client === this.workerJobsServedClient) {
+      this.workerJobsServed += 1
+      return
+    }
+
+    this.workerJobsServedClient = client
+    this.workerJobsServed = 1
+  }
+
   private broadcastStatus(
     meetingId: string,
     status: TranscriptionStatus,
@@ -2075,7 +2592,16 @@ export class TranscriptionService {
       meetingId,
       status,
       progress: nextProgress,
-      errorCode
+      errorCode,
+      backendLabel:
+        status === 'transcribing'
+          ? this.whisperManager.getTranscriptionBackendLabel?.()
+          : undefined,
+      qualityMode: status === 'transcribing' ? this.getQualityMode() : undefined,
+      etaSeconds:
+        status === 'transcribing' && nextProgress != null
+          ? this.computeEtaSeconds(nextProgress)
+          : undefined
     }
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', payload)

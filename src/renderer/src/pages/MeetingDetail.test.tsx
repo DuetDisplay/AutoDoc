@@ -412,4 +412,99 @@ describe('MeetingDetail', () => {
       screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')
     ).toBeInTheDocument()
   })
+
+  it('shows a video processing placeholder while videoStatus is processing', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        isFinalizing: false,
+        videoStatus: 'processing'
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, audioFile: 'mic.webm' },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+
+    expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
+    expect(screen.getByText('Your transcript and notes are ready to use.')).toBeInTheDocument()
+  })
+
+  it('keeps the Retry button after a successful video retry request moves to processing', async () => {
+    const api = installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        videoStatus: 'failed'
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, audioFile: 'mic.webm' },
+      'speakers:get': {},
+      'recording:retry-video': undefined
+    })
+
+    await renderMeetingDetail()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('recording:retry-video', 'test-123')
+      expect(screen.getByText('Finishing up your video…')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  })
+
+  it('restores the Retry button when recording:retry-video rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const api = installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Zoom — Apr 21 at 7:32 PM',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 12,
+        videoStatus: 'failed'
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true, audioFile: 'mic.webm' },
+      'speakers:get': {},
+      'recording:retry-video': () => Promise.reject(new Error('persist failed'))
+    })
+
+    await renderMeetingDetail()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('recording:retry-video', 'test-123')
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Finishing up your video…')).not.toBeInTheDocument()
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
 })

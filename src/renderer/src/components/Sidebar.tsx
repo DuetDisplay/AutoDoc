@@ -73,7 +73,13 @@ export function Sidebar() {
 
   useEffect(() => {
     const check = () => {
-      window.electronAPI.invoke('ollama:check-status').then(setOllamaConnected)
+      window.electronAPI.invoke('ollama:check-status').then((connected) => {
+        setOllamaConnected(connected)
+        if (connected) {
+          setSetupPhase('ready')
+          setSetupPercent(100)
+        }
+      })
     }
     check()
     const interval = setInterval(check, 10_000)

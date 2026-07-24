@@ -3,9 +3,17 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
+  applyNvidiaSmiMemory,
+  applyRegistryGpuMemory,
   classifyWindowsGpuVendor,
+  electronMemoryKbToGiB,
+  getUsableLogicalProcessorCount,
   loadWindowsTranscriptionProfiles,
+  parseNvidiaSmiGpuRows,
+  parseWindowsRegistryGpuRows,
   selectWindowsTranscriptionProfile,
+  shouldSerializeWindowsLocalProcessing,
+  WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile
 } from '../windows-transcription-runtime'
 
@@ -21,55 +29,211 @@ const baseHardware: WindowsHardwareProfile = {
 afterEach(() => {
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
   delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND
+  delete process.env.AUTODOC_TEST_LOGICAL_PROCESSORS
 })
 
 describe('Windows transcription runtime selection', () => {
-  it('selects CUDA faster-whisper for supported NVIDIA systems', () => {
+  it('serializes local processing on low-core Windows machines', () => {
+    expect(shouldSerializeWindowsLocalProcessing(4, 16)).toBe(true)
+  })
+
+  it('serializes local processing when free memory is below the floor', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, 3)).toBe(true)
+  })
+
+  it('allows concurrent local processing on capable Windows machines', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, 16)).toBe(false)
+  })
+
+  it('allows concurrent local processing when free memory is unknown', () => {
+    expect(shouldSerializeWindowsLocalProcessing(20, null)).toBe(false)
+  })
+
+  it('honors the logical-processor test override', () => {
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = '4'
+    expect(getUsableLogicalProcessorCount()).toBe(4)
+  })
+
+  it('ignores invalid logical-processor overrides', () => {
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = 'not-a-number'
+    expect(getUsableLogicalProcessorCount()).toBeGreaterThanOrEqual(1)
+
+    process.env.AUTODOC_TEST_LOGICAL_PROCESSORS = '0'
+    expect(getUsableLogicalProcessorCount()).toBeGreaterThanOrEqual(1)
+  })
+
+  it('uses the public asset-only repository for fallback asset URLs', () => {
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip'
+    )
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets[0].url).toBe(
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip'
+    )
+  })
+
+  it('converts Electron memory snapshots from kilobytes to GiB', () => {
+    expect(electronMemoryKbToGiB(33_554_432)).toBe(32)
+    expect(electronMemoryKbToGiB(1_048_576)).toBe(1)
+  })
+
+  it('selects parakeet-gpu for AMD GPUs with enough VRAM', () => {
     const profile = selectWindowsTranscriptionProfile({
       ...baseHardware,
       gpus: [
         {
-          name: 'NVIDIA GeForce RTX 4050 Laptop GPU',
-          vendor: 'nvidia',
-          adapterRamGiB: 6
+          name: 'AMD Radeon RX 6800',
+          vendor: 'amd',
+          adapterRamGiB: 8
         }
       ]
     })
 
-    expect(profile.id).toBe('faster-whisper-cuda')
-    expect(profile.assets.map((asset) => asset.filename)).toEqual([
-      'faster-whisper-runtime-cuda-win-x64.zip',
-      'faster-whisper-distil-large-v3-ct2.zip'
-    ])
+    expect(profile.id).toBe('parakeet-gpu')
+    expect(profile.engine).toBe('parakeet')
+    expect(profile.computeType).toBe('fp32')
   })
 
-  it('selects CPU faster-whisper when NVIDIA is unavailable', () => {
+  it('selects parakeet-gpu for Intel iGPU with unknown VRAM and 16 GiB RAM', () => {
     const profile = selectWindowsTranscriptionProfile({
       ...baseHardware,
+      totalMemoryGiB: 16,
       gpus: [
         {
-          name: 'Intel Iris Xe Graphics',
+          name: 'Intel(R) Arc(TM) Graphics',
           vendor: 'intel',
           adapterRamGiB: null
         }
       ]
     })
 
-    expect(profile.id).toBe('faster-whisper-cpu')
-    expect(profile.assets.map((asset) => asset.filename)).toEqual([
-      'faster-whisper-runtime-cpu-win-x64.zip',
-      'faster-whisper-small-en-ct2-int8.zip'
-    ])
+    expect(profile.id).toBe('parakeet-gpu')
   })
 
-  it('falls back to CPU faster-whisper when NVIDIA VRAM is below the CUDA floor', () => {
+  it('selects parakeet-cpu for Intel iGPU with unknown VRAM and 8 GiB RAM', () => {
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      totalMemoryGiB: 8,
+      gpus: [
+        {
+          name: 'Intel(R) UHD Graphics',
+          vendor: 'intel',
+          adapterRamGiB: null
+        }
+      ]
+    })
+
+    expect(profile.id).toBe('parakeet-cpu')
+    expect(profile.computeType).toBe('int8')
+  })
+
+  it('selects parakeet-cpu when no GPUs are present', () => {
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      gpus: []
+    })
+
+    expect(profile.id).toBe('parakeet-cpu')
+  })
+
+  it('ignores unknown-vendor virtual display adapters when selecting parakeet-gpu', () => {
     const profile = selectWindowsTranscriptionProfile({
       ...baseHardware,
       gpus: [
         {
-          name: 'NVIDIA GeForce GTX 1650',
+          name: 'Parsec Virtual Display Adapter',
+          vendor: 'unknown',
+          adapterRamGiB: 16
+        }
+      ]
+    })
+
+    expect(profile.id).toBe('parakeet-cpu')
+  })
+
+  it('uses nvidia-smi VRAM when WMI underreports NVIDIA laptop GPU memory', () => {
+    const gpus = applyNvidiaSmiMemory(
+      [
+        {
+          name: 'NVIDIA GeForce RTX 4060 Laptop GPU',
           vendor: 'nvidia',
           adapterRamGiB: 4
+        }
+      ],
+      parseNvidiaSmiGpuRows('NVIDIA GeForce RTX 4060 Laptop GPU, 8188 MiB, 581.95')
+    )
+
+    expect(gpus[0].adapterRamGiB).toBe(8)
+
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      gpus
+    })
+
+    expect(profile.id).toBe('parakeet-gpu')
+  })
+
+  it('parses registry GPU rows with QWORD memory sizes above 4 GiB', () => {
+    const entries = parseWindowsRegistryGpuRows([
+      {
+        AdapterString: 'NVIDIA GeForce RTX 4090',
+        qwMemorySize: 25_769_803_776
+      }
+    ])
+
+    expect(entries).toEqual([
+      {
+        name: 'NVIDIA GeForce RTX 4090',
+        vramGiB: 24
+      }
+    ])
+  })
+
+  it('handles registry GPU rows with missing memory values', () => {
+    const entries = parseWindowsRegistryGpuRows([
+      {
+        DriverDesc: 'Intel(R) UHD Graphics 770',
+        qwMemorySize: null
+      }
+    ])
+
+    expect(entries).toEqual([
+      {
+        name: 'Intel(R) UHD Graphics 770',
+        vramGiB: null
+      }
+    ])
+  })
+
+  it('merges registry VRAM into WMI GPU rows by adapter name', () => {
+    const gpus = applyRegistryGpuMemory(
+      [
+        {
+          name: 'NVIDIA GeForce RTX 4090',
+          vendor: 'nvidia',
+          adapterRamGiB: 4
+        }
+      ],
+      parseWindowsRegistryGpuRows([
+        {
+          AdapterString: 'NVIDIA GeForce RTX 4090',
+          qwMemorySize: 25_769_803_776
+        }
+      ])
+    )
+
+    expect(gpus[0].adapterRamGiB).toBe(24)
+  })
+
+  it('honors a forced faster-whisper-cpu override', () => {
+    process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'faster-whisper-cpu'
+
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      gpus: [
+        {
+          name: 'NVIDIA GeForce RTX 4090',
+          vendor: 'nvidia',
+          adapterRamGiB: 24
         }
       ]
     })
@@ -87,6 +251,23 @@ describe('Windows transcription runtime selection', () => {
           name: 'NVIDIA GeForce RTX 4090',
           vendor: 'nvidia',
           adapterRamGiB: 24
+        }
+      ]
+    })
+
+    expect(profile.id).toBe('whisper-cpp')
+  })
+
+  it('selects whisper.cpp on non-Windows platforms', () => {
+    const profile = selectWindowsTranscriptionProfile({
+      ...baseHardware,
+      platform: 'darwin',
+      arch: 'arm64',
+      gpus: [
+        {
+          name: 'Apple M3 GPU',
+          vendor: 'unknown',
+          adapterRamGiB: 16
         }
       ]
     })
@@ -139,10 +320,61 @@ describe('Windows transcription runtime selection', () => {
       expect(profiles['faster-whisper-cpu']).toMatchObject({
         label: 'Test CPU backend',
         modelName: 'tiny.en',
+        engine: 'faster-whisper',
         assets: [
           {
             filename: 'test-runtime.zip',
             sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+          }
+        ]
+      })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts version 2 manifests with parakeet profiles and engine metadata', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-win-manifest-v2-'))
+    const manifestPath = join(rootDir, 'manifest.json')
+
+    try {
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          version: 2,
+          releaseTag: 'test-release-v2',
+          profiles: [
+            {
+              id: 'parakeet-cpu',
+              label: 'Test Parakeet CPU',
+              modelName: 'parakeet-tdt-0.6b-v3',
+              engine: 'parakeet',
+              device: 'cpu',
+              computeType: 'int8',
+              minSystemMemoryGiB: 8,
+              estimatedMemoryGiB: 2,
+              assets: [
+                {
+                  id: 'runtime',
+                  filename: 'parakeet-runtime-win-x64.zip',
+                  url: 'https://example.test/parakeet-runtime-win-x64.zip',
+                  sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                  expectedFiles: ['python.exe']
+                }
+              ]
+            }
+          ]
+        })
+      )
+
+      const profiles = await loadWindowsTranscriptionProfiles(manifestPath)
+      expect(profiles['parakeet-cpu']).toMatchObject({
+        label: 'Test Parakeet CPU',
+        engine: 'parakeet',
+        assets: [
+          {
+            filename: 'parakeet-runtime-win-x64.zip',
+            sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
           }
         ]
       })
@@ -191,6 +423,80 @@ describe('Windows transcription runtime selection', () => {
       expect(profiles['faster-whisper-cpu'].assets[0].url).toBe(
         'http://127.0.0.1:8765/assets/test-runtime.zip'
       )
+    } finally {
+      delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rewrites multipart asset part URLs from artifactBaseUrl', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-win-manifest-parts-'))
+    const manifestPath = join(rootDir, 'manifest.json')
+
+    try {
+      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL = 'http://127.0.0.1:8765/assets/'
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          version: 2,
+          releaseTag: 'test-release',
+          artifactBaseUrl: 'https://example.test/release',
+          profiles: [
+            {
+              id: 'parakeet-gpu',
+              label: 'Test GPU backend',
+              modelName: 'parakeet-tdt-0.6b-v3',
+              device: 'dml',
+              computeType: 'fp32',
+              minSystemMemoryGiB: 8,
+              assets: [
+                {
+                  id: 'model',
+                  filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+                  url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip',
+                  sha256: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                  bytes: 2370811633,
+                  expectedFiles: ['encoder-model.onnx'],
+                  parts: [
+                    {
+                      filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                      url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+                      sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                      bytes: 1185405817
+                    },
+                    {
+                      filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                      url: 'https://example.test/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+                      sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                      bytes: 1185405816
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        })
+      )
+
+      const profiles = await loadWindowsTranscriptionProfiles(manifestPath)
+      const modelAsset = profiles['parakeet-gpu'].assets.find((asset) => asset.id === 'model')
+      expect(modelAsset?.url).toBe(
+        'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip'
+      )
+      expect(modelAsset?.parts).toEqual([
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+          url: 'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip.part1',
+          sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          bytes: 1185405817
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+          url: 'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip.part2',
+          sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          bytes: 1185405816
+        }
+      ])
     } finally {
       delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
       await rm(rootDir, { recursive: true, force: true })

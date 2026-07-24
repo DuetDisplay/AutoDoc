@@ -88,4 +88,32 @@ describe('PrefsStore', () => {
 
     expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(true)
   })
+
+  it('defaults transcription performance mode to balanced', () => {
+    expect(store.getTranscriptionPerformanceMode()).toBe('balanced')
+  })
+
+  it('persists transcription performance mode', () => {
+    store.setTranscriptionPerformanceMode('fast')
+    expect(store.getTranscriptionPerformanceMode()).toBe('fast')
+  })
+
+  it('defaults transcription quality mode to balanced', () => {
+    expect(store.getTranscriptionQualityMode()).toBe('balanced')
+  })
+
+  it('persists transcription quality mode', () => {
+    store.setTranscriptionQualityMode('fast')
+    expect(store.getTranscriptionQualityMode()).toBe('fast')
+  })
+
+  it('rejects accurate transcription quality mode for now', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store.setTranscriptionQualityMode('accurate')
+
+    expect(store.getTranscriptionQualityMode()).toBe('balanced')
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    warnSpy.mockRestore()
+  })
 })

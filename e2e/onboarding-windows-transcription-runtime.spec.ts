@@ -14,7 +14,7 @@ async function reachTranscriptionStep(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
 }
 
-test('Windows onboarding reports the selected NVIDIA accelerated transcription runtime', async () => {
+test('Windows onboarding reports the selected GPU accelerated transcription runtime', async () => {
   test.slow()
 
   const electronApp = await launchE2EApp({
@@ -23,8 +23,8 @@ test('Windows onboarding reports the selected NVIDIA accelerated transcription r
       status: {
         phase: 'downloading-whisper',
         percent: 17,
-        backend: 'faster-whisper-cuda',
-        backendLabel: 'NVIDIA accelerated transcription'
+        backend: 'parakeet-gpu',
+        backendLabel: 'GPU accelerated transcription'
       }
     }
   })
@@ -34,17 +34,17 @@ test('Windows onboarding reports the selected NVIDIA accelerated transcription r
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
     await reachTranscriptionStep(page)
     await expect(
-      page.getByText(/downloading NVIDIA accelerated transcription\.\.\. 17%/i)
+      page.getByText(/downloading GPU accelerated transcription\.\.\. 17%/i)
     ).toBeVisible()
 
     await setWhisperStatus(page, {
       phase: 'downloading-model',
       percent: 64,
-      backend: 'faster-whisper-cuda',
-      backendLabel: 'NVIDIA accelerated transcription'
+      backend: 'parakeet-gpu',
+      backendLabel: 'GPU accelerated transcription'
     })
     await expect(
-      page.getByText(/downloading speech model for NVIDIA accelerated transcription\.\.\. 64%/i)
+      page.getByText(/downloading speech model for GPU accelerated transcription\.\.\. 64%/i)
     ).toBeVisible()
   } finally {
     await electronApp.close()
@@ -60,7 +60,7 @@ test('Windows onboarding reports the selected CPU optimized transcription runtim
       status: {
         phase: 'downloading-whisper',
         percent: 23,
-        backend: 'faster-whisper-cpu',
+        backend: 'parakeet-cpu',
         backendLabel: 'CPU optimized transcription'
       }
     }

@@ -10,6 +10,8 @@ import type {
 import type { LLMProvider } from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { readMetadata } from './calendar-matcher'
+import { logQaGateStopToNotes } from './qa-gate-log'
 import { classifyError } from './error-classification'
 import {
   hasUsableTranscriptContent,
@@ -227,6 +229,7 @@ export class SegmentationService {
       this.activeJobId = null
       this.activeJobSource = null
       this.activeStatus = null
+      this.activeProgress = undefined
       this.processing = false
       this.enqueueSource.delete(meetingId)
       this.processNext()
@@ -313,7 +316,11 @@ export class SegmentationService {
     await this.ollamaManager.waitUntilReady()
 
     this.activeStatus = 'segmenting'
-    this.broadcastStatus(meetingId, 'segmenting', 0)
+    if (process.platform === 'win32') {
+      this.broadcastStatus(meetingId, 'segmenting')
+    } else {
+      this.broadcastStatus(meetingId, 'segmenting', 0)
+    }
 
     const t0 = Date.now()
     logAutodocEvent({
@@ -414,6 +421,18 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
+
+    if (process.platform === 'win32') {
+      const metadata = await readMetadata(meetingDir)
+      if (metadata?.stoppedAt != null) {
+        logQaGateStopToNotes(meetingId, {
+          recordingDurationSec: metadata.durationSeconds,
+          stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
+          transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
+          notesItemCount: totalItems
+        })
+      }
+    }
 
     this.activeStatus = 'complete'
     this.broadcastStatus(meetingId, 'complete')
@@ -580,6 +599,13 @@ export class SegmentationService {
     progress?: number,
     errorCode?: string
   ): void {
+    if (
+      status === 'segmenting' &&
+      typeof progress === 'number' &&
+      typeof this.activeProgress === 'number'
+    ) {
+      progress = Math.max(progress, this.activeProgress)
+    }
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
     const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }

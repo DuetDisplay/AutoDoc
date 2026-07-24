@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react'
-import type {
-  Transcript,
-  TranscriptionStatus,
-  SpeakerMap,
-  WhisperSetupStatus
-} from '../../../shared/types'
+import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../../shared/types'
 import { SPEAKER_COLORS } from '../../../shared/constants'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
+import { formatTranscriptionStatusText } from '../services/transcription-status-labels'
 
 function formatTimestamp(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -34,10 +30,21 @@ interface TranscriptViewProps {
   status: TranscriptionStatus
   onSeek?: (ms: number) => void
   speakers?: SpeakerMap
+  transcriptionProgress?: number
+  transcriptionBackendLabel?: string
+  transcriptionQualityMode?: 'fast' | 'balanced'
 }
 
-export function TranscriptView({ segments, status, onSeek, speakers }: TranscriptViewProps) {
-  const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus | null>(null)
+export function TranscriptView({
+  segments,
+  status,
+  onSeek,
+  speakers,
+  transcriptionProgress
+}: TranscriptViewProps) {
+  const [setupStatus, setSetupStatus] = useState<
+    import('../../../shared/types').WhisperSetupStatus | null
+  >(null)
 
   useEffect(() => {
     if (status !== 'downloading') {
@@ -70,10 +77,16 @@ export function TranscriptView({ segments, status, onSeek, speakers }: Transcrip
   }
 
   if (status === 'transcribing') {
+    const statusText =
+      formatTranscriptionStatusText({
+        status,
+        progress: transcriptionProgress
+      }) ?? 'Transcribing audio...'
+
     return (
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
-        <p className="text-[12px] text-ink-muted">Transcribing audio...</p>
+        <p className="text-[12px] text-ink-muted">{statusText}</p>
       </div>
     )
   }

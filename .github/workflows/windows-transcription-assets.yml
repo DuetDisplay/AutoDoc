@@ -1,4 +1,4 @@
-# Windows-only asset pipeline — disabled while we ship macOS-only.
+# Windows transcription asset pipeline.
 name: Windows Transcription Assets
 
 on:
@@ -7,7 +7,12 @@ on:
       asset_tag:
         description: Versioned release tag for the transcription asset bundle.
         required: true
-        default: windows-transcription-v1
+        default: windows-transcription-v2
+        type: string
+      asset_repo:
+        description: GitHub repository that hosts the public transcription asset release.
+        required: true
+        default: DuetDisplay/AutoDoc
         type: string
       publish_assets:
         description: Upload generated assets to the GitHub release.
@@ -17,12 +22,12 @@ on:
 
 jobs:
   build-windows-transcription-assets:
-    if: false # macOS-only for now — re-enable when Windows shipping resumes
     runs-on: windows-2022
     permissions:
       contents: write
     env:
       ASSET_TAG: ${{ inputs.asset_tag }}
+      ASSET_REPO: ${{ inputs.asset_repo }}
       AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ inputs.asset_tag }}
       AUTODOC_PYTHON_BUNDLE_TARGETS: win32-x64
       PIP_CACHE_DIR: ${{ github.workspace }}\.benchmarks\pip-cache
@@ -47,8 +52,9 @@ jobs:
           if ($manifest.releaseTag -ne $env:ASSET_TAG) {
             throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow asset tag '$env:ASSET_TAG'."
           }
-          if ($manifest.artifactBaseUrl -notmatch [regex]::Escape("/$env:ASSET_TAG")) {
-            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' does not point at '$env:ASSET_TAG'."
+          $expectedArtifactBaseUrlSuffix = "/releases/download/$env:ASSET_TAG"
+          if (-not $manifest.artifactBaseUrl.EndsWith($expectedArtifactBaseUrlSuffix)) {
+            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' must end with '$expectedArtifactBaseUrlSuffix'."
           }
 
       - name: Restore Python archive cache
@@ -85,6 +91,7 @@ jobs:
           name: windows-transcription-assets-${{ env.ASSET_TAG }}
           path: |
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip.part*
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/SHA256SUMS.md
           if-no-files-found: error
           retention-days: 14
@@ -93,18 +100,31 @@ jobs:
         if: ${{ inputs.publish_assets }}
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WINDOWS_TRANSCRIPTION_ASSET_REPO_TOKEN || github.token }}
         run: |
           $tag = $env:ASSET_TAG
+          $repo = $env:ASSET_REPO
           $assetDir = Join-Path $PWD ".benchmarks/windows-transcription-assets/$tag"
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --title "Windows transcription assets $tag" `
-              --notes "Versioned faster-whisper runtime and model assets for Windows onboarding." `
-              --target $env:GITHUB_SHA
+            $createArgs = @(
+              'release',
+              'create',
+              $tag,
+              '--repo',
+              $repo,
+              '--title',
+              "Windows transcription assets $tag",
+              '--notes',
+              'Versioned faster-whisper runtime and model assets for Windows onboarding.'
+            )
+
+            if ($repo -eq $env:GITHUB_REPOSITORY) {
+              $createArgs += @('--target', $env:GITHUB_SHA)
+            }
+
+            & gh @createArgs
           }
 
           gh release upload $tag `
@@ -112,6 +132,10 @@ jobs:
             (Join-Path $assetDir 'faster-whisper-runtime-cuda-win-x64.zip') `
             (Join-Path $assetDir 'faster-whisper-small-en-ct2-int8.zip') `
             (Join-Path $assetDir 'faster-whisper-distil-large-v3-ct2.zip') `
+            (Join-Path $assetDir 'parakeet-runtime-win-x64.zip') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part1') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part2') `
+            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-int8.zip') `
             (Join-Path $assetDir 'SHA256SUMS.md') `
-            --repo $env:GITHUB_REPOSITORY `
+            --repo $repo `
             --clobber

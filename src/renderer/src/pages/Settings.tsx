@@ -3,7 +3,8 @@ import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
-import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
+import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount, WhisperSetupStatus } from '../../../shared/types'
+import { supportsWindowsTranscriptionQualityFastMode } from '../../../shared/windows-transcription-settings'
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -62,6 +63,13 @@ export function Settings() {
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
   const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
+  const [transcriptionQualityMode, setTranscriptionQualityModeState] = useState<
+    'balanced' | 'fast'
+  >('balanced')
+  const [transcriptionPerformanceMode, setTranscriptionPerformanceModeState] = useState<
+    'balanced' | 'fast'
+  >('balanced')
+  const [transcriptionBackend, setTranscriptionBackend] = useState<string | undefined>()
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -98,6 +106,31 @@ export function Settings() {
       unsubDiagnosticLogConsent()
     }
   }, [refreshStorageInfo])
+
+  useEffect(() => {
+    if (runtimeInfo?.platform !== 'win32') return
+
+    void window.electronAPI
+      .invoke('prefs:get-transcription-quality-mode')
+      .then(setTranscriptionQualityModeState)
+    void window.electronAPI
+      .invoke('prefs:get-transcription-performance-mode')
+      .then(setTranscriptionPerformanceModeState)
+    void window.electronAPI.invoke('whisper:get-setup-status').then((status: WhisperSetupStatus) => {
+      setTranscriptionBackend(status.backend ?? runtimeInfo?.transcriptionBackend)
+    })
+    const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
+      if (status.backend) {
+        setTranscriptionBackend(status.backend)
+      }
+    })
+
+    return unsubWhisper
+  }, [runtimeInfo?.platform, runtimeInfo?.transcriptionBackend])
+
+  const showTranscriptionQualityControls = supportsWindowsTranscriptionQualityFastMode(
+    transcriptionBackend ?? runtimeInfo?.transcriptionBackend
+  )
 
   useEffect(() => {
     const previousState = previousUpdateState.current
@@ -226,6 +259,49 @@ export function Settings() {
     await window.electronAPI.invoke('prefs:set-diagnostic-log-upload-consent', nextValue)
     setDiagnosticLogUploadConsentState(nextValue)
   }
+
+  const handleSetTranscriptionQualityMode = async (mode: 'balanced' | 'fast') => {
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'transcription_quality_mode_changed',
+      details: { mode }
+    })
+    await window.electronAPI.invoke('prefs:set-transcription-quality-mode', mode)
+    setTranscriptionQualityModeState(mode)
+  }
+
+  const handleSetTranscriptionPerformanceMode = async (mode: 'balanced' | 'fast') => {
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'transcription_performance_mode_changed',
+      details: { mode }
+    })
+    await window.electronAPI.invoke('prefs:set-transcription-performance-mode', mode)
+    setTranscriptionPerformanceModeState(mode)
+  }
+
+  const renderModeChoice = (
+    group: string,
+    label: string,
+    description: string,
+    value: 'balanced' | 'fast',
+    selected: 'balanced' | 'fast',
+    onSelect: (mode: 'balanced' | 'fast') => void
+  ) => (
+    <label className="flex items-start gap-3 rounded-lg border border-border-subtle px-3 py-2.5 cursor-pointer hover:border-ink-muted transition-colors">
+      <input
+        type="radio"
+        name={group}
+        checked={selected === value}
+        onChange={() => void onSelect(value)}
+        className="mt-0.5 h-4 w-4 border-border-subtle text-sage focus:ring-sage"
+      />
+      <span className="text-[12px] text-ink-muted leading-relaxed">
+        <strong className="text-ink font-semibold">{label}</strong>
+        <span className="block mt-0.5">{description}</span>
+      </span>
+    </label>
+  )
 
   const handleRemoveDownloadedComponents = async () => {
     const confirmed = window.confirm(
@@ -416,6 +492,73 @@ export function Settings() {
               </label>
             </div>
           </div>
+          {runtimeInfo?.platform === 'win32' && (
+            <div>
+              <h3 className="text-[13px] font-semibold text-ink mb-2">Transcription</h3>
+              <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4 space-y-4">
+                {showTranscriptionQualityControls && (
+                  <div>
+                    <p className="text-[12px] font-semibold text-ink mb-1">Transcription quality</p>
+                    <p className="text-[12px] text-ink-muted mb-3">
+                      Balanced gives the most accurate transcripts. Fast uses a smaller, more
+                      efficient model that may be slightly less accurate.
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {renderModeChoice(
+                        'transcription-quality',
+                        'Balanced',
+                        'Most accurate. Recommended for most meetings.',
+                        'balanced',
+                        transcriptionQualityMode,
+                        handleSetTranscriptionQualityMode
+                      )}
+                      {renderModeChoice(
+                        'transcription-quality',
+                        'Fast',
+                        'Smaller model, lighter on memory. May be slightly less accurate; speed varies by hardware.',
+                        'fast',
+                        transcriptionQualityMode,
+                        handleSetTranscriptionQualityMode
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div
+                  className={
+                    showTranscriptionQualityControls
+                      ? 'border-t border-border-subtle pt-4'
+                      : undefined
+                  }
+                >
+                  <p className="text-[12px] font-semibold text-ink mb-1">System impact</p>
+                  <p className="text-[12px] text-ink-muted mb-3">
+                    Balanced keeps transcription gentler on CPU and battery. Fast gives
+                    transcription more room to run. Neither affects transcript accuracy — only how
+                    much of your computer transcription can use. On GPU-accelerated transcription
+                    this setting has little effect.
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {renderModeChoice(
+                      'system-impact',
+                      'Balanced',
+                      'Lower priority and efficiency-core scheduling on CPU tiers.',
+                      'balanced',
+                      transcriptionPerformanceMode,
+                      handleSetTranscriptionPerformanceMode
+                    )}
+                    {renderModeChoice(
+                      'system-impact',
+                      'Fast',
+                      'Higher scheduling priority for quicker local processing.',
+                      'fast',
+                      transcriptionPerformanceMode,
+                      handleSetTranscriptionPerformanceMode
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
             <p className="text-[12px] text-ink-muted">Default: off</p>

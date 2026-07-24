@@ -1,5 +1,11 @@
 import { useToastStore } from '../stores/toast'
 import { recordPersistentDiagnosticAction } from './diagnostic-trail'
+import {
+  getMicrophoneCaptureFailureMessage,
+  isWindowsRenderer,
+  type MicrophoneAccessErrorDetails,
+  probeMicrophoneStream
+} from './microphone-access'
 import { captureRecordingRecoveryFailure } from './renderer-sentry'
 
 interface CaptureStreams {
@@ -482,7 +488,10 @@ async function waitForPendingChunkWrites(pendingChunkWrites: Set<Promise<void>>)
   }
 }
 
-async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
+async function createCaptureStreams(
+  sourceId: string,
+  context: 'initial' | 'recovery' = 'initial'
+): Promise<CaptureStreams> {
   const videoStream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -498,16 +507,18 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
   // rather than the thumbnail heuristic which can false-positive
   const videoTrack = videoStream.getVideoTracks()[0]
   if (!videoTrack || videoTrack.readyState !== 'live') {
-    useToastStore.getState().showToast({
-      type: 'screen',
-      message:
-        'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
-      action: {
-        label: 'Enable',
-        type: 'open-settings',
-        target: 'screen'
-      }
-    })
+    if (context === 'initial') {
+      useToastStore.getState().showToast({
+        type: 'screen',
+        message:
+          'Screen recording lets AutoDoc capture meeting visuals. Enable it in System Settings → Privacy → Screen Recording.',
+        action: {
+          label: 'Enable',
+          type: 'open-settings',
+          target: 'screen'
+        }
+      })
+    }
     stopStream(videoStream)
     throw new Error(
       'Screen capture stream is not live. Screen recording permission may be missing.'
@@ -516,26 +527,26 @@ async function createCaptureStreams(sourceId: string): Promise<CaptureStreams> {
 
   const audioStream = await createSystemAudioStream(sourceId)
   if (audioStream.getAudioTracks().length === 0) {
-    useToastStore.getState().showToast({
-      type: 'screen',
-      message:
-        'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
-    })
+    if (context === 'initial') {
+      useToastStore.getState().showToast({
+        type: 'screen',
+        message:
+          'System audio capture failed. AutoDoc can still record, but speaker labeling may be unavailable for this recording.'
+      })
+    }
   }
 
-  const micStream = await createMicStream()
+  const micStream = await createMicStream({
+    notifyOnFailure: context === 'initial',
+    context
+  })
 
-  if (!micStream || micStream.getAudioTracks().length === 0) {
-    useToastStore.getState().showToast({
-      type: 'microphone',
-      message:
-        'Microphone access was revoked. AutoDoc needs it to record meetings. Enable it in System Settings → Privacy → Microphone.',
-      action: {
-        label: 'Enable',
-        type: 'open-settings',
-        target: 'microphone'
-      }
-    })
+  if (micStream && micStream.getAudioTracks().length === 0) {
+    const error = { name: 'NoAudioTrackError', message: 'Microphone stream has no audio tracks.' }
+    recordMicrophoneCaptureFailure(error, context)
+    if (context === 'initial') {
+      showMicrophoneCaptureFailureToast(error)
+    }
   }
 
   return {
@@ -570,14 +581,50 @@ async function createSystemAudioStream(sourceId: string): Promise<MediaStream> {
   }
 }
 
-async function createMicStream(): Promise<MediaStream | null> {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true }
-    })
-  } catch {
-    return null
+function recordMicrophoneCaptureFailure(
+  error: MicrophoneAccessErrorDetails,
+  context: 'initial' | 'recovery'
+): void {
+  console.warn('Microphone capture failed:', error)
+  recordPersistentDiagnosticAction({
+    category: 'recording',
+    action: 'microphone_capture_failed',
+    details: {
+      context,
+      error
+    }
+  })
+}
+
+function showMicrophoneCaptureFailureToast(error: MicrophoneAccessErrorDetails): void {
+  useToastStore.getState().showToast({
+    type: 'microphone',
+    message: getMicrophoneCaptureFailureMessage(error, isWindowsRenderer()),
+    action: {
+      label: 'Enable',
+      type: 'open-settings',
+      target: 'microphone'
+    }
+  })
+}
+
+async function createMicStream({
+  notifyOnFailure,
+  context
+}: {
+  notifyOnFailure: boolean
+  context: 'initial' | 'recovery'
+}): Promise<MediaStream | null> {
+  const result = await probeMicrophoneStream()
+  if (result.ok) {
+    return result.stream
   }
+
+  recordMicrophoneCaptureFailure(result.error, context)
+  if (notifyOnFailure) {
+    showMicrophoneCaptureFailureToast(result.error)
+  }
+  return null
 }
 
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
@@ -902,7 +949,8 @@ async function createCaptureSegment(
   recoverySequence = 0,
   expectedAudio: { hasMic: boolean; hasSystemAudio: boolean } | null = null
 ): Promise<CaptureHandles> {
-  const streams = await createCaptureStreams(sourceId)
+  const captureContext = recoverySequence > 0 ? 'recovery' : 'initial'
+  const streams = await createCaptureStreams(sourceId, captureContext)
 
   try {
     const deviceSnapshot = await getDefaultDeviceSnapshot()
@@ -1072,7 +1120,7 @@ async function recoverAudioCapture(
       let systemStream: MediaStream | null = null
       try {
         if (plan.recoverMic) {
-          micStream = await createMicStream()
+          micStream = await createMicStream({ notifyOnFailure: false, context: 'recovery' })
         }
         if (plan.recoverSystem) {
           systemStream = await createSystemAudioStream(capture.sourceId)
@@ -1088,8 +1136,7 @@ async function recoverAudioCapture(
         }
         const missingSources = getMissingRecoverySources(expectedAudio, actualAudio).filter(
           (source) =>
-            (source === 'mic' && plan.recoverMic) ||
-            (source === 'system' && plan.recoverSystem)
+            (source === 'mic' && plan.recoverMic) || (source === 'system' && plan.recoverSystem)
         )
 
         if (missingSources.length > 0) {
@@ -1218,8 +1265,7 @@ async function recoverAudioCapture(
           capture
         ).filter(
           (source) =>
-            (source === 'mic' && plan.recoverMic) ||
-            (source === 'system' && plan.recoverSystem)
+            (source === 'mic' && plan.recoverMic) || (source === 'system' && plan.recoverSystem)
         )
 
         if (pendingValidationSources.length > 0) {

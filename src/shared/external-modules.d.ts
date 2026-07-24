@@ -73,6 +73,8 @@ declare module 'electron-updater' {
     autoDownload: boolean
     autoInstallOnAppQuit: boolean
     disableDifferentialDownload: boolean
+    allowPrerelease: boolean
+    channel: string | null
     on(event: string, listener: (...args: unknown[]) => void): void
     setFeedURL(options: { provider: string; url: string }): void
     checkForUpdates(): void

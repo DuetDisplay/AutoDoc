@@ -130,8 +130,12 @@ export async function launchIsolatedE2EAppWithEnv(
   }
 }
 
-export async function relaunchIsolatedE2EApp(userDataDir: string, scenario?: E2EScenario) {
-  const electronApp = await launchApp({ scenario, userDataDir })
+export async function relaunchIsolatedE2EApp(
+  userDataDir: string,
+  scenario?: E2EScenario,
+  extraEnv?: Record<string, string>
+) {
+  const electronApp = await launchApp({ scenario, userDataDir, extraEnv })
 
   return {
     electronApp,
@@ -276,8 +280,11 @@ export async function pollDetection(page: Page, advanceMs = 0): Promise<void> {
   }, advanceMs)
 }
 
-export async function installFakeCaptureDevices(page: Page): Promise<void> {
-  await page.evaluate(() => {
+export async function installFakeCaptureDevices(
+  page: Page,
+  options: { useRealMediaRecorder?: boolean } = {}
+): Promise<void> {
+  await page.evaluate(({ useRealMediaRecorder }) => {
     const qaWindow = window as typeof window & {
       __qaCaptureRequests: unknown[]
       __qaSwitchDefaultMic: () => void
@@ -369,37 +376,39 @@ export async function installFakeCaptureDevices(page: Page): Promise<void> {
       }
     }
 
-    class FakeMediaRecorder extends EventTarget {
-      static isTypeSupported() {
-        return true
+    if (!useRealMediaRecorder) {
+      class FakeMediaRecorder extends EventTarget {
+        static isTypeSupported() {
+          return true
+        }
+
+        state: RecordingState = 'inactive'
+        ondataavailable: ((event: { data: Blob }) => void) | null = null
+
+        constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {
+          super()
+        }
+
+        start() {
+          this.state = 'recording'
+        }
+
+        requestData() {
+          this.ondataavailable?.({ data: new Blob(['qa'], { type: 'video/webm' }) })
+        }
+
+        stop() {
+          this.state = 'inactive'
+          this.dispatchEvent(new Event('stop'))
+        }
       }
 
-      state: RecordingState = 'inactive'
-      ondataavailable: ((event: { data: Blob }) => void) | null = null
-
-      constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {
-        super()
-      }
-
-      start() {
-        this.state = 'recording'
-      }
-
-      requestData() {
-        this.ondataavailable?.({ data: new Blob(['qa'], { type: 'video/webm' }) })
-      }
-
-      stop() {
-        this.state = 'inactive'
-        this.dispatchEvent(new Event('stop'))
-      }
+      Object.defineProperty(window, 'MediaRecorder', {
+        configurable: true,
+        value: FakeMediaRecorder
+      })
     }
-
-    Object.defineProperty(window, 'MediaRecorder', {
-      configurable: true,
-      value: FakeMediaRecorder
-    })
-  })
+  }, options)
 }
 
 export async function jumpToOnboardingStep(page: Page, step: number): Promise<void> {
@@ -414,4 +423,10 @@ export async function completeOnboarding(page: Page): Promise<void> {
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
   })
   await page.reload()
+}
+
+export async function installStableScreenshotBackground(page: Page): Promise<void> {
+  await page.addStyleTag({
+    content: 'html, body, #root { background: #f8f7f2 !important; }'
+  })
 }

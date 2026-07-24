@@ -1,5 +1,23 @@
 import type { OllamaSetupStatus, WhisperSetupStatus } from '../../../shared/types'
-import { OLLAMA_NOTES_MODEL_LABEL, OLLAMA_RUNTIME_LABEL } from '../../../shared/constants'
+import {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  OLLAMA_ASK_AI_EMBEDDING_MODEL_LABEL,
+  OLLAMA_NOTES_MODEL_LABEL,
+  OLLAMA_RUNTIME_LABEL
+} from '../../../shared/constants'
+
+function getOllamaPullModelLabel(pullModel?: string): string {
+  if (
+    pullModel &&
+    (pullModel === DEFAULT_OLLAMA_EMBEDDING_MODEL ||
+      pullModel.startsWith(`${DEFAULT_OLLAMA_EMBEDDING_MODEL}:`) ||
+      pullModel.toLowerCase().includes('embedding'))
+  ) {
+    return OLLAMA_ASK_AI_EMBEDDING_MODEL_LABEL
+  }
+
+  return OLLAMA_NOTES_MODEL_LABEL
+}
 
 export function getWhisperSetupLabel(status: WhisperSetupStatus | null | undefined): string | null {
   if (!status) {
@@ -44,8 +62,13 @@ export function getOllamaSetupLabel(status: OllamaSetupStatus | null | undefined
       return `Starting ${OLLAMA_RUNTIME_LABEL}...`
     case 'downloading':
       return `Downloading ${OLLAMA_RUNTIME_LABEL}... ${status.percent}%`
-    case 'pulling':
-      return `Downloading ${OLLAMA_NOTES_MODEL_LABEL}... ${status.percent}%`
+    case 'pulling': {
+      const modelLabel = getOllamaPullModelLabel(status.pullModel)
+      if (status.percent === 0) {
+        return `Preparing ${modelLabel}...`
+      }
+      return `Downloading ${modelLabel}... ${status.percent}%`
+    }
     case 'error':
       return status.error ?? 'AI setup failed.'
     default:

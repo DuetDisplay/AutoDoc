@@ -28,7 +28,8 @@ import type {
   DetectionAutoStopCancelledPayload,
   TranscriptionStatusPayload,
   SegmentationStatusPayload,
-  SegmentationDiagnosticPayload
+  SegmentationDiagnosticPayload,
+  VideoStatus
 } from '../shared/types'
 import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
@@ -123,6 +124,7 @@ export interface IpcInvokeEvents {
   ]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
+  'recording:retry-video': [meetingId: string]
   'transcription:get-status': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
@@ -171,6 +173,10 @@ export interface IpcInvokeEvents {
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
   'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
+  'prefs:get-transcription-performance-mode': []
+  'prefs:set-transcription-performance-mode': [mode: 'balanced' | 'fast']
+  'prefs:get-transcription-quality-mode': []
+  'prefs:set-transcription-quality-mode': [mode: 'balanced' | 'fast' | 'accurate']
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -229,6 +235,7 @@ export interface IpcInvokeReturns {
   'recording:save-segment-timing': void
   'recording:update-title': void
   'recording:delete': void
+  'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
   'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
@@ -245,6 +252,7 @@ export interface IpcInvokeReturns {
     hasVideo: boolean
     hasAudio: boolean
     audioFile?: string
+    videoStatus?: VideoStatus
     mediaBaseUrl?: string
   }
   'recording:report-media-player-error': void
@@ -254,6 +262,8 @@ export interface IpcInvokeReturns {
     date: number
     durationSeconds: number | null
     isFinalizing?: boolean
+    videoProcessingFailed?: boolean
+    videoStatus?: VideoStatus
   }
   'search:query': SearchResult[]
   'chat:send': string
@@ -280,6 +290,10 @@ export interface IpcInvokeReturns {
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
   'prefs:set-low-spec-mac-processing-banner-dismissed': void
+  'prefs:get-transcription-performance-mode': 'balanced' | 'fast'
+  'prefs:set-transcription-performance-mode': void
+  'prefs:get-transcription-quality-mode': 'balanced' | 'fast'
+  'prefs:set-transcription-quality-mode': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus

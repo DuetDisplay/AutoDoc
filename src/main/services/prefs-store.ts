@@ -14,6 +14,8 @@ interface PrefsSchema {
   diagnosticLogUploadConsent: boolean
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
+  transcriptionPerformanceMode: 'balanced' | 'fast'
+  transcriptionQualityMode: 'fast' | 'balanced'
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
@@ -28,10 +30,14 @@ function createPrefsStore(): Store<PrefsSchema> {
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
       experimentalSpeakerDiarization: false,
-      lowSpecMacProcessingBannerDismissed: false
+      lowSpecMacProcessingBannerDismissed: false,
+      transcriptionPerformanceMode: 'balanced',
+      transcriptionQualityMode: 'balanced'
     }
   })
 }
+
+let rejectedAccurateQualityModeLogged = false
 
 export function readInitialAnalyticsConsent(): boolean | null {
   return createPrefsStore().get('analyticsConsent')
@@ -128,6 +134,35 @@ export class PrefsStore {
 
   setLowSpecMacProcessingBannerDismissed(dismissed: boolean): void {
     this.store.set('lowSpecMacProcessingBannerDismissed', dismissed)
+  }
+
+  getTranscriptionPerformanceMode(): 'balanced' | 'fast' {
+    const mode = this.store.get('transcriptionPerformanceMode')
+    return mode === 'fast' ? 'fast' : 'balanced'
+  }
+
+  setTranscriptionPerformanceMode(mode: 'balanced' | 'fast'): void {
+    this.store.set('transcriptionPerformanceMode', mode === 'fast' ? 'fast' : 'balanced')
+  }
+
+  getTranscriptionQualityMode(): 'balanced' | 'fast' {
+    const mode = this.store.get('transcriptionQualityMode')
+    return mode === 'fast' ? 'fast' : 'balanced'
+  }
+
+  setTranscriptionQualityMode(mode: 'balanced' | 'fast' | 'accurate'): void {
+    if (mode === 'accurate') {
+      if (!rejectedAccurateQualityModeLogged) {
+        rejectedAccurateQualityModeLogged = true
+        console.warn(
+          '[prefs] transcriptionQualityMode "accurate" is not available yet; using balanced'
+        )
+      }
+      this.store.set('transcriptionQualityMode', 'balanced')
+      return
+    }
+
+    this.store.set('transcriptionQualityMode', mode === 'fast' ? 'fast' : 'balanced')
   }
 
   private applyLaunchAtLogin(): void {

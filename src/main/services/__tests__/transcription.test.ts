@@ -3,6 +3,7 @@ import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
 import type { CalendarManager } from '../calendar-manager'
+import { TranscriptionWorkerClient } from '../transcription-worker-client'
 import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
@@ -19,9 +20,15 @@ vi.mock('os', () => ({
   setPriority: vi.fn(),
   constants: {
     priority: {
-      PRIORITY_BELOW_NORMAL: 10
+      PRIORITY_BELOW_NORMAL: 10,
+      PRIORITY_LOW: 19
     }
   }
+}))
+
+vi.mock('../autodoc-log', () => ({
+  logAutodocEvent: vi.fn(),
+  logAutodocFailure: vi.fn()
 }))
 
 vi.mock('fs/promises', () => ({
@@ -38,6 +45,23 @@ vi.mock('child_process', () => ({
   execFile: vi.fn()
 }))
 
+const workerClientMock = vi.hoisted(() => ({
+  isLoaded: false,
+  load: vi.fn(),
+  transcribe: vi.fn(),
+  unload: vi.fn(),
+  ping: vi.fn(),
+  dispose: vi.fn(),
+  lastOptions: null as Record<string, unknown> | null
+}))
+
+vi.mock('../transcription-worker-client', () => ({
+  TranscriptionWorkerClient: vi.fn((options: Record<string, unknown>) => {
+    workerClientMock.lastOptions = options
+    return workerClientMock
+  })
+}))
+
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
   decryptJSON: vi.fn(),
@@ -50,6 +74,7 @@ const fsMock = vi.mocked(await import('fs/promises'))
 const childProcessMock = vi.mocked(await import('child_process'))
 const osMock = vi.mocked(await import('os'))
 const cryptoMock = vi.mocked(await import('../crypto'))
+const autodocLogMock = vi.mocked(await import('../autodoc-log'))
 
 class MockChildProcess extends EventEmitter {
   pid = 1234
@@ -68,9 +93,18 @@ function createMockWhisperManager(ready = true): WhisperManager {
     getModelsDir: vi.fn().mockReturnValue('/mock/home/AutoDoc/models'),
     getTranscriptionBackend: vi.fn().mockReturnValue('whisper-cpp'),
     getTranscriptionBackendLabel: vi.fn().mockReturnValue('compatible transcription'),
+    getDowngradesTaken: vi.fn().mockReturnValue([]),
     getMacProcessingProfile: vi.fn().mockReturnValue(null),
     isMlxWhisperSelected: vi.fn().mockReturnValue(false),
     isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+    isWorkerEngineSelected: vi.fn().mockReturnValue(false),
+    getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+    getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+    getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+    getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+    getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+    getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+    getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
     emit: vi.fn(),
     on: vi.fn()
   } as unknown as WhisperManager
@@ -115,8 +149,20 @@ describe('TranscriptionService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    workerClientMock.isLoaded = false
+    workerClientMock.lastOptions = null
+    workerClientMock.load.mockImplementation(async () => {
+      workerClientMock.isLoaded = true
+    })
+    workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+    workerClientMock.unload.mockResolvedValue(undefined)
+    workerClientMock.ping.mockResolvedValue(undefined)
+    workerClientMock.dispose.mockImplementation(() => {
+      workerClientMock.isLoaded = false
+    })
     setPlatform(originalPlatform)
     fsMock.unlink.mockResolvedValue(undefined as any)
+    fsMock.writeFile.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
@@ -510,6 +556,61 @@ describe('TranscriptionService', () => {
     })
   })
 
+  it('encrypts mic and system audio but not screen.webm after transcription', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (
+        String(path).endsWith('mic.webm') ||
+        String(path).endsWith('system.webm') ||
+        String(path).endsWith('screen.webm')
+      ) {
+        return undefined
+      }
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 3 }])
+    ;(service as any).transcribeWithFallback = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 0, to: 900 }, text: 'My microphone words' }]
+      })
+      .mockResolvedValueOnce({
+        transcription: [{ offsets: { from: 500, to: 1200 }, text: 'Remote speaker words' }]
+      })
+    ;(service as any).mapToTranscripts = vi
+      .fn()
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-encrypt-0',
+          meetingId: 'meeting-encrypt',
+          speaker: 'Speaker',
+          text: 'My microphone words',
+          startMs: 0,
+          endMs: 900,
+          confidence: -1
+        }
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'meeting-encrypt-1',
+          meetingId: 'meeting-encrypt',
+          speaker: 'Speaker',
+          text: 'Remote speaker words',
+          startMs: 500,
+          endMs: 1200,
+          confidence: -1
+        }
+      ])
+
+    await expect((service as any).processJob('meeting-encrypt')).resolves.toBeUndefined()
+
+    const encryptedPaths = cryptoMock.encryptFileInPlace.mock.calls.map(([filePath]) =>
+      String(filePath)
+    )
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('mic.webm'))).toBe(true)
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('system.webm'))).toBe(true)
+    expect(encryptedPaths.some((filePath) => filePath.endsWith('screen.webm'))).toBe(false)
+  })
+
   it('compacts diarization audio to transcript windows and remaps speaker timings back to the original meeting', async () => {
     const mockDiarization = createMockDiarizationService()
     mockDiarization.diarize.mockResolvedValue({
@@ -843,6 +944,20 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount()).toBe(10)
   })
 
+  it('chooses 2 whisper threads on a 4-core machine', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(4)
+
+    expect((service as any).getWhisperThreadCount()).toBe(2)
+  })
+
+  it('chooses 2 whisper threads on an 8-core machine', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(8)
+
+    expect((service as any).getWhisperThreadCount()).toBe(2)
+  })
+
   it('splits whisper threads across concurrent Windows sources', () => {
     setPlatform('win32')
     osMock.availableParallelism.mockReturnValue(20)
@@ -850,8 +965,484 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount(2)).toBe(7)
   })
 
+  it('uses 5 whisper threads per source on a 16-core machine with 2 sources', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(16)
+
+    expect((service as any).getWhisperThreadCount(2)).toBe(5)
+  })
+
+  it('uses 4 whisper threads on a 4-core machine in fast mode', () => {
+    setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(4)
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast'
+    )
+
+    expect((service as any).getWhisperThreadCount()).toBe(4)
+  })
+
+  it('passes --no-eco to the transcription worker in fast mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast',
+      () => 'balanced',
+      async () => null,
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
+
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    expect(workerClientMock.load).toHaveBeenCalled()
+    expect(workerClientMock.transcribe).toHaveBeenCalled()
+    expect(fsMock.writeFile).toHaveBeenCalledWith(
+      '/mock/tmp/audio.wav.json',
+      JSON.stringify({ transcription: [] }),
+      'utf-8'
+    )
+  })
+
+  it('does not pass --no-eco to the transcription worker in balanced mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
+
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual([])
+  })
+
+  it('disables EcoQoS and uses below-normal priority for the DML worker even in balanced mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('dml'),
+      getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(4)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).resolves.toBeUndefined()
+
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    ;(service as any).lowerWhisperPriority(1234, 'meeting-123')
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it('uses idle priority in balanced mode and below-normal in fast mode', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(null)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const balancedPromise = (service as any).runWhisperPass(
+      '/mock/tmp/audio.wav',
+      'meeting-balanced',
+      60
+    )
+    child.emit('close', 0)
+    await balancedPromise
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 19)
+
+    osMock.setPriority.mockClear()
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'fast'
+    )
+    childProcessMock.spawn.mockReturnValue(child as any)
+
+    const fastPromise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-fast', 60)
+    child.emit('close', 0)
+    await fastPromise
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it('waits for free memory before whisper pass then proceeds when memory frees', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    let freeGiB = 2
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async (ms) => {
+        freeGiB = 16
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-memory',
+      60,
+      []
+    )
+    await vi.runAllTimersAsync()
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Waiting for free memory before starting transcription pass',
+        meetingId: 'meeting-memory'
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('proceeds after memory wait timeout when memory never frees', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async (ms) => {
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB: 2, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-timeout',
+      60,
+      []
+    )
+    for (let i = 0; i < 13; i += 1) {
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Proceeding with transcription pass after memory wait timeout',
+        meetingId: 'meeting-timeout'
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('extends the memory wait on low-spec when free memory stays below 1 GiB, then eventually proceeds', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    try {
+      mockWhisper = {
+        ...mockWhisper,
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => ({
+          id: 'win-low-spec',
+          label: 'Low-spec Windows processing',
+          reason: 'test',
+          hardware: { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 0.94 },
+          dualSourceMode: 'sequential',
+          serializeLocalProcessing: true,
+          notesAfterTranscriptionOnly: true,
+          threadPolicy: 'min'
+        }),
+        async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms)
+        },
+        () => ({ freeGiB: 0.94, totalGiB: 8 })
+      )
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValue(child as any)
+      fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+      const promise = (service as any).runWhisperPassAndRead(
+        '/mock/tmp/audio.wav',
+        'meeting-low-mem',
+        60,
+        []
+      )
+
+      for (let i = 0; i < 13; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: 'Proceeding with transcription pass after memory wait timeout',
+          meetingId: 'meeting-low-mem'
+        })
+      )
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: expect.stringMatching(/extended memory wait/i),
+          meetingId: 'meeting-low-mem'
+        })
+      )
+      expect(childProcessMock.spawn).not.toHaveBeenCalled()
+
+      for (let i = 0; i < 50; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      child.emit('close', 0)
+      await promise
+      expect(childProcessMock.spawn).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not extend the memory wait when free memory is at least 1 GiB after the normal timeout', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => ({
+        id: 'win-low-spec',
+        label: 'Low-spec Windows processing',
+        reason: 'test',
+        hardware: { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 1.2 },
+        dualSourceMode: 'sequential',
+        serializeLocalProcessing: true,
+        notesAfterTranscriptionOnly: true,
+        threadPolicy: 'min'
+      }),
+      async (ms) => {
+        await vi.advanceTimersByTimeAsync(ms)
+      },
+      () => ({ freeGiB: 1.2, totalGiB: 8 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-1gib',
+      60,
+      []
+    )
+    for (let i = 0; i < 13; i += 1) {
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    child.emit('close', 0)
+    await promise
+
+    expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'transcription',
+        message: 'Proceeding with transcription pass after memory wait timeout',
+        meetingId: 'meeting-1gib'
+      })
+    )
+    expect(autodocLogMock.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringMatching(/extended memory wait/i)
+      })
+    )
+    expect(childProcessMock.spawn).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('skips the Windows memory gate on macOS', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async () => {
+        throw new Error('memory gate delay should not run on macOS')
+      },
+      () => ({ freeGiB: 2, totalGiB: 32 })
+    )
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValue(child as any)
+    fsMock.readFile.mockResolvedValue(JSON.stringify({ transcription: [] }) as any)
+
+    const promise = (service as any).runWhisperPassAndRead(
+      '/mock/tmp/audio.wav',
+      'meeting-macos',
+      60,
+      []
+    )
+    child.emit('close', 0)
+    await expect(promise).resolves.toEqual({ transcription: [] })
+  })
+
   it('passes the computed thread count to whisper-cli', async () => {
     setPlatform('win32')
+    osMock.availableParallelism.mockReturnValue(20)
     const child = new MockChildProcess()
     childProcessMock.spawn.mockReturnValue(child as any)
 
@@ -863,7 +1454,7 @@ describe('TranscriptionService', () => {
       '/mock/whisper',
       expect.arrayContaining(['-t', '10'])
     )
-    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 19)
   })
 
   it('passes short-segmentation flags when requested', async () => {
@@ -886,6 +1477,166 @@ describe('TranscriptionService', () => {
     )
   })
 
+  it('maps transcription worker failures to engine-specific worker errors', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn().mockReturnValue('cuda'),
+      getWorkerComputeType: vi.fn().mockReturnValue('int8_float32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cuda')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    workerClientMock.transcribe.mockRejectedValueOnce(
+      new Error('Transcription worker crashed repeatedly: native crash')
+    )
+
+    await expect(
+      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
+    ).rejects.toThrow(/faster-whisper worker failed/)
+  })
+
+  it.each(['887A0005', '887A0006'] as const)(
+    'disposes the transcription worker client after DML device-loss %s so the next pass gets a fresh client',
+    async (deviceLossCode) => {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+        isParakeetSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('dml'),
+        getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5),
+        downgradeParakeetGpuToCpuForSession: vi.fn()
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => null,
+        async () => undefined,
+        () => ({ freeGiB: 16, totalGiB: 32 })
+      )
+
+      workerClientMock.transcribe.mockRejectedValueOnce(
+        new Error(
+          `[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider ... ${deviceLossCode} The GPU device instance has been suspended.`
+        )
+      )
+
+      await expect(
+        (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-loss', 60)
+      ).rejects.toThrow(/parakeet worker failed/)
+
+      expect(workerClientMock.dispose).toHaveBeenCalled()
+      expect((service as any).transcriptionWorkerClient).toBeNull()
+      expect((service as any).transcriptionWorkerClientFingerprint).toBeNull()
+
+      const clientCallsAfterFailure = vi.mocked(TranscriptionWorkerClient).mock.calls.length
+      workerClientMock.transcribe.mockResolvedValueOnce({ transcription: [] })
+      await (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-loss', 60)
+
+      expect(vi.mocked(TranscriptionWorkerClient).mock.calls.length).toBeGreaterThan(
+        clientCallsAfterFailure
+      )
+    }
+  )
+
+  it('falls back to the CPU backend after 2 consecutive DML device-loss failures', async () => {
+    setPlatform('win32')
+    let device: 'dml' | 'cpu' = 'dml'
+    let backend: 'parakeet-gpu' | 'parakeet-cpu' = 'parakeet-gpu'
+    const downgradeParakeetGpuToCpuForSession = vi.fn(() => {
+      device = 'cpu'
+      backend = 'parakeet-cpu'
+    })
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      isParakeetSelected: vi.fn().mockReturnValue(true),
+      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+      getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+      getWorkerDevice: vi.fn(() => device),
+      getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getTranscriptionBackend: vi.fn(() => backend),
+      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5),
+      downgradeParakeetGpuToCpuForSession
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false,
+      null,
+      () => false,
+      null,
+      () => 'balanced',
+      () => 'balanced',
+      async () => null,
+      async () => undefined,
+      () => ({ freeGiB: 16, totalGiB: 32 })
+    )
+
+    const deviceLoss = new Error(
+      '[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider ... 887A0005 The GPU device instance has been suspended.'
+    )
+    workerClientMock.transcribe
+      .mockRejectedValueOnce(deviceLoss)
+      .mockRejectedValueOnce(deviceLoss)
+      .mockResolvedValueOnce({ transcription: [] })
+
+    await expect(
+      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-1', 60)
+    ).rejects.toThrow(/parakeet worker failed/)
+    expect(downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+
+    await expect(
+      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-2', 60)
+    ).rejects.toThrow(/parakeet worker failed/)
+    expect(downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+
+    workerClientMock.load.mockClear()
+    await (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-3', 60)
+    expect(workerClientMock.load).toHaveBeenCalledWith(
+      expect.objectContaining({
+        device: 'cpu',
+        engine: 'parakeet'
+      })
+    )
+    expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
+  })
+
   it('classifies Metal aborts as whisper-metal-crash', () => {
     expect(
       classifyError('whisper.cpp exited with code null (signal SIGABRT): ggml_metal_rsets_free')
@@ -904,9 +1655,7 @@ describe('TranscriptionService', () => {
     setPlatform('darwin')
     const first = new MockChildProcess()
     const second = new MockChildProcess()
-    childProcessMock.spawn
-      .mockReturnValueOnce(first as any)
-      .mockReturnValueOnce(second as any)
+    childProcessMock.spawn.mockReturnValueOnce(first as any).mockReturnValueOnce(second as any)
 
     const promise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
 
@@ -982,6 +1731,81 @@ describe('TranscriptionService', () => {
     expect(singlePassSpy).not.toHaveBeenCalled()
   })
 
+  it('tries a single CUDA faster-whisper pass before chunking long Windows recordings', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+      getWorkerDevice: vi.fn().mockReturnValue('cuda')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+
+    const singlePassOutput = {
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'single pass' }]
+    }
+    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked')
+    const singlePassSpy = vi
+      .spyOn(service as any, 'runWhisperPassAndRead')
+      .mockResolvedValue(singlePassOutput)
+
+    const result = await (service as any).transcribeWithFallback(
+      '/mock/tmp/audio.wav',
+      'meeting-cuda',
+      30 * 60,
+      '/mock/tmp/audio',
+      []
+    )
+
+    expect(result).toEqual(singlePassOutput)
+    expect(singlePassSpy).toHaveBeenCalled()
+    expect(chunkedSpy).not.toHaveBeenCalled()
+  })
+
+  it('uses a single whole-file pass for long recordings on parakeet (any device)', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+      getWorkerDevice: vi.fn().mockReturnValue('cpu')
+    } as unknown as WhisperManager
+    service = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+
+    const singlePassOutput = {
+      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'parakeet single pass' }]
+    }
+    const chunkedSpy = vi.spyOn(service as any, 'runWhisperChunked')
+    const singlePassSpy = vi
+      .spyOn(service as any, 'runWhisperPassAndRead')
+      .mockResolvedValue(singlePassOutput)
+
+    const result = await (service as any).transcribeWithFallback(
+      '/mock/tmp/audio.wav',
+      'meeting-parakeet',
+      60 * 60,
+      '/mock/tmp/audio',
+      []
+    )
+
+    expect(result).toEqual(singlePassOutput)
+    expect(singlePassSpy).toHaveBeenCalled()
+    expect(chunkedSpy).not.toHaveBeenCalled()
+  })
+
   it('keeps transcription progress monotonic when concurrent sources report out of order', () => {
     ;(service as any).activeJobId = 'meeting-123'
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 50)
@@ -989,6 +1813,70 @@ describe('TranscriptionService', () => {
     ;(service as any).broadcastStatus('meeting-123', 'transcribing', 57)
 
     expect(service.getProgress('meeting-123')).toBe(57)
+  })
+
+  it('advances worker transcription progress using elapsed time when segment timestamps lag', async () => {
+    vi.useFakeTimers()
+    try {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('cpu'),
+        getWorkerComputeType: vi.fn().mockReturnValue('int8'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced'
+      )
+
+      const broadcastSpy = vi.spyOn(service as any, 'broadcastStatus')
+
+      workerClientMock.transcribe.mockImplementation(
+        async (_req, onSegment?: (segment: { endMs: number }) => void) => {
+          onSegment?.({ endMs: 42_000 })
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 60_000)
+          })
+          return { transcription: [] }
+        }
+      )
+
+      const passPromise = (service as any).runWorkerEnginePass(
+        '/mock/tmp/audio.wav',
+        'meeting-elapsed',
+        300,
+        { start: 0, end: 50 }
+      )
+
+      await vi.advanceTimersByTimeAsync(45_000)
+
+      const scaledProgress = broadcastSpy.mock.calls
+        .filter((call) => call[1] === 'transcribing')
+        .map((call) => call[2] as number)
+
+      expect(Math.max(...scaledProgress)).toBeGreaterThan(7)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await passPromise
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('runs acoustic echo suppression before merging dual-channel transcripts', async () => {
