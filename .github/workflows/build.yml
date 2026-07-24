@@ -163,10 +163,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Windows QA builds run on manual dispatch only; the signed release path stays
-  # tag-gated and dormant until Windows ships publicly.
+  # Manual dispatches produce unsigned QA installers. Version tags use the
+  # signed release path and feed the shared release publisher below.
   build-win:
-    if: github.event_name == 'workflow_dispatch' && (inputs.release_platform == 'windows' || inputs.release_platform == 'all')
+    if: >-
+      ${{
+        (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
+        (github.event_name == 'workflow_dispatch' && (inputs.release_platform == 'windows' || inputs.release_platform == 'all'))
+      }}
     runs-on: windows-2022
     permissions:
       contents: read
@@ -455,12 +459,13 @@ jobs:
         github.event_name == 'push' &&
         github.ref_type == 'tag' &&
         startsWith(github.ref_name, 'v') &&
-        needs.build-mac-release.result == 'success'
+        needs.build-mac-release.result == 'success' &&
+        needs.build-win.result == 'success'
       }}
     runs-on: ubuntu-latest
     needs:
       - build-mac-release
-      # - build-win  # Windows builds disabled — macOS-only for now
+      - build-win
     permissions:
       contents: write
       actions: read
@@ -485,12 +490,12 @@ jobs:
           name: release-macos-${{ steps.release_meta.outputs.release_tag }}
           path: release-assets/mac
 
-      # - name: Download Windows release assets
-      #   if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.build-win.result == 'success'
-      #   uses: actions/download-artifact@v8.0.1
-      #   with:
-      #     name: release-windows-${{ steps.release_meta.outputs.release_tag }}
-      #     path: release-assets/win
+      - name: Download Windows release assets
+        if: needs.build-win.result == 'success'
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-windows-${{ steps.release_meta.outputs.release_tag }}
+          path: release-assets/win
 
       - name: Publish curated GitHub release assets
         env:
@@ -498,10 +503,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
         run: |
-          assets=(release-assets/mac/*)
-          # if [ -d release-assets/win ]; then
-          #   assets+=(release-assets/win/*)
-          # fi
+          assets=(release-assets/mac/* release-assets/win/*)
 
           if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber -R "$GH_REPO"
@@ -525,3 +527,19 @@ jobs:
           while IFS= read -r asset_id; do
             gh api --method DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
           done <<<"$blockmap_ids"
+
+  update-readme-release-links:
+    if: >-
+      ${{
+        github.event_name == 'push' &&
+        github.ref_type == 'tag' &&
+        startsWith(github.ref_name, 'v') &&
+        needs.publish-release.result == 'success'
+      }}
+    needs:
+      - publish-release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-readme-release-links.yml
+    with:
+      release_tag: ${{ github.ref_name }}
