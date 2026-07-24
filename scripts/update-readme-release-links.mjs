@@ -43,9 +43,21 @@ export function updateReadmeReleaseLinks(readme, { releaseTag, dmgAsset, windows
   )
 
   replaceRequired(
-    /^1\. \*\*Download\*\* .*$/m,
-    `1. **Download** \`${dmgAsset}\`, or browse the [Releases](${releasePageUrl}) page for a specific version.`,
-    'download install step'
+    /^1\. \*\*Download(?: for macOS)?\*\* .*$/m,
+    `1. **Download for macOS** \`${dmgAsset}\`, or browse the [Releases](${releasePageUrl}) page for a specific version.`,
+    'macOS download install step'
+  )
+
+  replaceRequired(
+    /^## \[.*Download AutoDoc for Windows\]\([^)]+\)$/m,
+    `## [⬇️ Download AutoDoc for Windows](${windowsUrl})`,
+    'Windows download section heading link'
+  )
+
+  replaceRequired(
+    /^1\. \*\*Download for Windows\*\* .*$/m,
+    `1. **Download for Windows** \`${windowsAsset}\`, or browse the [Releases](${releasePageUrl}) page for a specific version.`,
+    'Windows download install step'
   )
 
   return { readme, version }

@@ -21,7 +21,8 @@ The PR suite is the deterministic regression layer we expect to run on every pul
 
 - Run the scoped command for the area you are actively changing while you iterate.
 - Run `npm run test:pr` before opening or updating a pull request that changes product behavior.
-- GitHub Actions runs the same buckets on every `pull_request` via [pr-regression.yml](/Volumes/DuetDrive/Repos/AutoDocLocal/.github/workflows/pr-regression.yml:1).
+- GitHub Actions runs the same buckets on every `pull_request` via
+  [`.github/workflows/pr-regression.yml`](../../.github/workflows/pr-regression.yml).
 
 ## Notes
 

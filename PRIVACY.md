@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: 2026-06-10**
+**Last updated: 2026-07-24**
 
 AutoDoc is built so your meetings stay yours. This document explains exactly
 what happens to your data — and, just as importantly, what does *not* happen.
@@ -23,7 +23,7 @@ Everything that touches your meeting content happens locally:
 | Stage | Where it runs |
 |-------|---------------|
 | Screen / microphone / system-audio capture | Your computer |
-| Transcription (whisper.cpp / MLX) | Your computer |
+| Transcription (Parakeet on Windows / MLX Whisper on macOS) | Your computer |
 | Speaker diarization | Your computer |
 | AI note generation (Ollama / llama3.1) | Your computer |
 | Search | Your computer |
@@ -33,13 +33,20 @@ Duet or any third party.
 
 ## Data storage and encryption
 
-All recordings and derived data are stored locally under
-`~/Library/Application Support/AutoDoc/` and **encrypted at rest** using
-AES-256-GCM. The encryption key is held in the macOS Keychain via Electron's
-`safeStorage`. Media files use chunked, per-block authenticated encryption; JSON
-files (transcripts, notes, speakers, metadata) are individually encrypted with
-per-file authentication. See [`PRODUCT.md`](PRODUCT.md#encryption) for the
-technical detail.
+All recordings and derived data are stored in AutoDoc's local application-data
+directory:
+
+- macOS: `~/Library/Application Support/AutoDoc/`
+- Windows: `%APPDATA%\AutoDoc\`
+
+Meeting data is **encrypted at rest** using AES-256-GCM. When Electron
+`safeStorage` is available, it protects the encryption key with macOS Keychain
+on macOS and DPAPI on Windows. If `safeStorage` is unavailable, AutoDoc stores
+the key locally without operating-system protection; the meeting data itself
+remains AES-256-GCM encrypted. Media files use chunked, per-block authenticated
+encryption; JSON files (transcripts, notes, speakers, metadata) are individually
+encrypted with per-file authentication. See [`PRODUCT.md`](PRODUCT.md#encryption)
+for the technical detail.
 
 ## Calendar integration (optional)
 
@@ -49,7 +56,10 @@ If you connect Google or Microsoft Calendar:
   authorization code for access/refresh tokens**. The worker performs the token
   exchange and returns the tokens to the app — **it does not store your tokens,
   calendar data, or any personal information.**
-- Your OAuth tokens are encrypted with the macOS Keychain and stored locally.
+- Your OAuth tokens are stored locally and, when Electron `safeStorage` is
+  available, protected by the operating system. If `safeStorage` is
+  unavailable, AutoDoc stores the tokens locally without operating-system
+  protection.
 - AutoDoc reads upcoming events (title, times, attendees, meeting links) to
   match recordings and offer speaker suggestions. This calendar data stays on
   your computer.
@@ -93,9 +103,10 @@ fully disabled.
 
 ## Third-party components
 
-AutoDoc downloads and runs open-source components locally (the Ollama binary and
-AI model, Whisper models from Hugging Face). These downloads are standard asset
-fetches and do not transmit your meeting data.
+AutoDoc downloads and runs open-source components locally, including Ollama and
+its AI model plus the platform-specific transcription runtime and model
+(Parakeet on Windows or MLX Whisper on macOS). These downloads are standard
+asset fetches and do not transmit your meeting data.
 
 ## Contact
 

@@ -27,8 +27,9 @@ What actually happened.
 ## Environment
 
 - **AutoDoc version:**
-- **macOS version:**
-- **Hardware:** Apple Silicon (e.g. M1, M2 Pro, M3)
+- **Operating system and version:** (for example, macOS 15.5 or Windows 11 24H2)
+- **Processor / architecture:** (for example, Apple M3 Pro or AMD Ryzen 7 x64)
+- **GPU:** (Windows only, if applicable)
 
 ## Logs / screenshots
 

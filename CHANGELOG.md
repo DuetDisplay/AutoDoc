@@ -7,12 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — TBD
+
 ### Added
 
+- Windows 10+ support for x64 Intel and AMD PCs, including meeting detection,
+  screen/microphone/system-audio capture, system-tray integration, and a signed
+  installer.
+- On-device Windows transcription with NVIDIA NeMo Parakeet TDT 0.6B v3.
+  Compatible DirectML GPUs use hardware acceleration; CPU transcription remains
+  available when acceleration is unavailable.
 - Public repository documentation: README, privacy policy, security policy,
   contributing guide, self-hosting guide, and community templates.
 
-## [1.0.0] — TBD
+### Changed
+
+- Windows processing now adapts concurrency and model execution to available
+  processors, memory, and GPU capabilities.
+- Release automation now requires and publishes both the macOS DMG and Windows
+  installer, including their updater metadata.
+- Product, privacy, installation, self-hosting, and support documentation now
+  cover both macOS and Windows.
+
+### Security
+
+- Windows encryption keys are protected by DPAPI through Electron `safeStorage`
+  when available. If `safeStorage` is unavailable, the key is stored locally
+  without operating-system protection; meeting data remains encrypted at rest
+  with AES-256-GCM.
+
+## [1.0.0] — 2026-06-29
 
 First public release of AutoDoc.
 
@@ -31,5 +55,6 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.0.0

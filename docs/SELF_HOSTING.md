@@ -125,7 +125,12 @@ With your `.env` populated, build as normal:
 
 ```bash
 npm ci
+
+# macOS (run on an Apple Silicon Mac)
 npm run build:mac
+
+# Windows (run on an x64 Windows machine)
+npm run build:win
 ```
 
 See the root [README](../README.md#build-from-source) for full build

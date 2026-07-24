@@ -1,8 +1,8 @@
 # Contributing to AutoDoc
 
 Thanks for your interest in improving AutoDoc! This project is local-first,
-privacy-focused, and macOS-first (Windows coming soon). Contributions of
-all kinds are welcome — bug reports, features, docs, and fixes.
+privacy-focused, and built for macOS and Windows. Contributions of all kinds
+are welcome — bug reports, features, docs, and fixes.
 
 ## Code of Conduct
 
@@ -20,7 +20,7 @@ participating, you agree to uphold it.
 
 **Prerequisites**
 
-- macOS 14+ (primary development target)
+- macOS 14+ on Apple Silicon or Windows 10+ on x64
 - Node.js 20+
 - [Ollama](https://ollama.com) and `ffmpeg` are managed by the app at runtime;
   no manual setup needed for normal development.
