@@ -1,6 +1,6 @@
 # AutoDoc — Product Documentation
 
-AutoDoc is a local-first desktop application that records meetings, transcribes them with whisper.cpp, identifies speakers, and generates structured AI-powered notes using Ollama. Everything runs on-device — no cloud processing, no data leaving your machine.
+AutoDoc is a local-first desktop application for macOS and Windows that records meetings, transcribes them on-device, identifies speakers, and generates structured AI-powered notes with Ollama. Windows uses NVIDIA NeMo Parakeet as its primary transcription engine; Apple Silicon Macs use MLX Whisper. Meeting content is not sent to a cloud AI service.
 
 ---
 
@@ -60,23 +60,32 @@ Recordings are served to the UI via a custom `autodoc-media://` protocol. This p
 
 ### Pipeline Overview
 
-The transcription pipeline converts recorded audio into timestamped, speaker-labeled text using whisper.cpp (the C++ port of OpenAI's Whisper model).
+The transcription pipeline converts each recorded audio source into timestamped text, then merges the source results into a speaker-labeled transcript. AutoDoc selects an engine and processing profile for the current platform and hardware.
 
 ### Audio Preparation
 
-Before transcription, audio files are converted and merged:
+Before transcription, audio files are prepared independently:
 
-1. **Format conversion**: WebM files are converted to 16kHz mono WAV using ffmpeg (required by whisper.cpp).
-2. **Track merging**: If both `mic.webm` and `system.webm` exist, they are merged using ffmpeg's `amix` filter with `duration=longest` to preserve the full meeting length.
-3. **Legacy support**: Older recordings that have a single `audio.webm` file are handled transparently.
+1. **Format conversion**: WebM sources are converted to 16kHz mono WAV with ffmpeg.
+2. **Source transcription**: Microphone and system-audio WAVs are transcribed separately so their source identity can contribute to speaker labels.
+3. **Result merge**: Timestamped segments are normalized, deduplicated, and merged chronologically.
+4. **Legacy support**: Older recordings that contain a single `audio.webm` file are handled transparently.
 
-### Whisper Execution
+### Platform engines
 
-- **Binary**: Uses the system-installed `whisper-cli` from Homebrew (symlinked into the app's models directory). This avoids bundling a large binary in the app.
-- **Model**: `ggml-large-v3.bin` (~3GB), downloaded from Hugging Face on first use with progress tracking.
-- **Output**: JSON format with segments containing millisecond-precision timestamps and transcribed text.
-- **Timeout**: 30-minute hard timeout per transcription job.
-- **Concurrency**: One transcription job at a time; additional recordings are queued.
+| Platform/profile | Primary engine | Model/device behavior |
+|------------------|----------------|-----------------------|
+| **Windows GPU** | Parakeet | TDT 0.6B v3, FP32 through ONNX Runtime and DirectML |
+| **Windows CPU** | Parakeet | TDT 0.6B v3, INT8 CPU execution |
+| **Apple Silicon** | MLX Whisper | `distil-large-v3` through the bundled Python worker |
+
+On Windows, AutoDoc chooses DirectML acceleration for compatible GPUs with at least 4 GB VRAM. When the GPU is unavailable or setup fails, it switches to the CPU profile. Existing faster-whisper assets and whisper.cpp provide additional compatibility fallbacks; they are not the normal Windows path.
+
+The Windows processing profile also considers logical processor count, installed memory, and available memory. Lower-spec systems transcribe the two sources sequentially and defer notes generation to reduce peak memory use.
+
+On macOS, the MLX worker exchanges newline-delimited JSON messages with the Electron main process. whisper.cpp remains a compatibility fallback.
+
+Transcription output contains timestamped segments for each source. One recording is processed at a time; additional recordings remain queued.
 
 ### Status Tracking
 
@@ -86,7 +95,7 @@ Transcription status is broadcast to the renderer in real-time:
 |--------|-------------|
 | `pending` | No audio available or not yet started |
 | `queued` | Waiting behind another transcription |
-| `downloading` | Downloading the Whisper model |
+| `downloading` | Downloading the selected transcription model/runtime |
 | `transcribing` | Active transcription (progress percentage shown) |
 | `diarizing` | Speaker identification in progress |
 | `complete` | Transcript saved and encrypted |
@@ -191,7 +200,7 @@ Same retry logic as transcription — up to 3 automatic retries on startup, trac
 2. App opens Google OAuth consent screen in the default browser.
 3. Auth is handled by a Cloudflare Worker (`autodoc-auth.duetdisplay.workers.dev`) that exchanges the authorization code for tokens.
 4. Tokens are returned to a localhost callback on port 42813.
-5. Tokens are encrypted using Electron's safeStorage (macOS Keychain) and stored locally.
+5. Tokens are encrypted using Electron's `safeStorage` (macOS Keychain or Windows DPAPI) and stored locally.
 
 ### Event Sync
 
@@ -230,8 +239,8 @@ Each calendar event has an auto-record toggle with three modes:
 
 A background service polls every 3 seconds to detect active meetings:
 
-1. **Microphone activity check**: Queries macOS `pmset -g assertions` to detect microphone usage by other apps.
-2. **Meeting app detection**: Scans running processes for known meeting apps (Zoom, Google Meet, Teams, Webex, Slack).
+1. **Microphone activity check**: Uses the platform-specific microphone activity detector.
+2. **Meeting app detection**: Scans running processes and visible windows for known meeting apps (Zoom, Google Meet, Teams, Webex, Slack, and Discord).
 3. **Transition detection**: Triggers when microphone transitions from inactive to active.
 
 ### Detection Notification
@@ -244,7 +253,7 @@ When a meeting is detected, a floating overlay notification appears at the top-c
 - A "Start AI Notes" button to begin recording
 - Auto-dismisses after 30 seconds
 
-The notification is positioned using `screen.getPrimaryDisplay().workArea` to avoid being hidden behind the macOS menu bar.
+The notification is positioned within Electron's display work area so it avoids the macOS menu bar and Windows taskbar.
 
 ### Auto-Stop
 
@@ -287,7 +296,7 @@ Search state (query text, results, and whether a search has been performed) is s
 
 ### At-Rest Encryption
 
-All recording data is encrypted at rest using AES-256-GCM. The encryption key is stored in the macOS Keychain via Electron's safeStorage API.
+All recording data is encrypted at rest using AES-256-GCM. Electron's `safeStorage` protects the encryption key with macOS Keychain on macOS and DPAPI on Windows.
 
 ### JSON Files (transcripts, segments, speakers, metadata)
 
@@ -369,36 +378,38 @@ AutoDoc uses `electron-updater` with GitHub Releases as the update source.
 ### Release Process
 
 1. Developer pushes a git tag matching `v*` (e.g., `v0.1.0`)
-2. GitHub Actions builds, code-signs, and notarizes the macOS app
-3. The build is published as a **draft** GitHub Release
-4. Developer tests the draft manually
-5. When ready for early adopters → mark as **pre-release** (new installs see it, existing users don't auto-update)
-6. When confident → mark as **full release** (auto-updater picks it up for all users)
+2. GitHub Actions builds the macOS and Windows packages in platform-native jobs
+3. The macOS app is code-signed and notarized; the Windows installer is signed
+4. Both packages are assembled into a **draft** GitHub Release
+5. Developer tests the draft manually
+6. When ready for early adopters → mark as **pre-release** (new installs see it, existing users don't auto-update)
+7. When confident → mark as **full release** (auto-updater picks it up for all users)
 
 ---
 
 ## Permissions
 
-### macOS Requirements
+### Platform requirements
 
-AutoDoc requires two system permissions on macOS:
+AutoDoc requests the operating-system permissions needed for the selected capture sources:
 
-| Permission | Required For | Detection Method |
-|------------|-------------|-----------------|
-| **Screen Recording** | Capturing window/screen video | `desktopCapturer.getSources()` — if thumbnails are empty, permission is denied |
-| **Microphone** | Capturing local audio | `systemPreferences.getMediaAccessStatus('microphone')` |
+| Permission | Required for |
+|------------|--------------|
+| **Screen capture** | Capturing a selected window or display |
+| **Microphone** | Capturing the local participant |
+| **System audio** | Capturing remote participants from device output |
 
 ### Permission Prompting
 
 - Permissions are checked before recording starts.
-- If missing, the app can open the relevant System Preferences pane directly.
+- If a permission is missing, the app provides platform-appropriate guidance or opens the relevant settings surface.
 - During onboarding, permissions are presented with clear explanations of why each is needed.
 
 ---
 
 ## System Tray
 
-AutoDoc lives in the macOS menu bar with a template icon. The tray menu shows:
+AutoDoc lives in the macOS menu bar or Windows system tray. The tray menu shows:
 
 - **Upcoming meetings**: The next 5 calendar events for today, with times (e.g., "2:30 PM") or "Now" for in-progress events. Clicking an event with a meeting URL opens it in the browser.
 - **Open AutoDoc**: Shows and focuses the main window.
@@ -408,7 +419,7 @@ The menu refreshes on every click to show current data. Calendar events are pass
 
 ### Window Behavior
 
-Closing the main window hides it to the tray rather than quitting the app. This keeps meeting detection running in the background. The app only fully quits when "Quit" is selected from the tray menu or via Cmd+Q.
+Closing the main window hides it to the tray rather than quitting the app. This keeps meeting detection running in the background. The app fully quits when "Quit" is selected from the tray menu or the platform quit command is used.
 
 ---
 
@@ -446,7 +457,10 @@ The meeting detail page has three tabs:
 
 ### Storage Location
 
-All data lives under `~/Library/Application Support/AutoDoc/`:
+All data lives in Electron's platform `userData` directory:
+
+- **macOS:** `~/Library/Application Support/AutoDoc/`
+- **Windows:** `%APPDATA%\AutoDoc\`
 
 ```
 AutoDoc/
@@ -462,17 +476,16 @@ AutoDoc/
 │       ├── transcript.error  (plaintext, retry tracking)
 │       └── segments.error    (plaintext, retry tracking)
 ├── models/
-│   ├── whisper-cli           (symlink)
-│   ├── ffmpeg                (symlink)
-│   ├── ggml-large-v3.bin     (Whisper model, ~3GB)
-│   └── ollama                (Ollama binary)
+│   ├── {transcription runtime and model assets}
+│   ├── ffmpeg
+│   └── ollama
 └── ollama-data/
     └── {model cache}/
 ```
 
 ### Legacy Migration
 
-Earlier versions stored data in `~/AutoDoc/`. On startup, AutoDoc checks for this legacy directory and migrates `recordings/`, `models/`, and `ollama-data/` subdirectories to the proper `Application Support` location. Individual entries are moved without overwriting existing files. Empty legacy directories are cleaned up.
+Earlier macOS versions stored data in `~/AutoDoc/`. On startup, AutoDoc checks for this legacy directory and migrates `recordings/`, `models/`, and `ollama-data/` subdirectories to the proper Application Support location. Individual entries are moved without overwriting existing files. Empty legacy directories are cleaned up.
 
 ---
 
@@ -512,19 +525,18 @@ All PostHog autocapture, pageview, pageleave, and session recording features rem
 
 - **Framework**: Electron + electron-vite
 - **Builder**: electron-builder
-- **Targets**: macOS DMG (code-signed and notarized)
-- **Publish**: GitHub Releases (`DuetDisplay/AutoDoc-Local`)
+- **Targets**: macOS DMG and Windows NSIS installer
+- **Publish**: GitHub Releases (`DuetDisplay/AutoDoc`)
 
 ### CI/CD Pipeline
 
 A GitHub Actions workflow (`.github/workflows/build.yml`) triggers on `v*` tag pushes:
 
-1. Checks out code on `macos-latest`
-2. Installs Node.js 20 and npm dependencies
-3. Runs typecheck and electron-vite build
-4. Signs with Apple Developer certificate (org secret: `DD_BUILD_CERTIFICATE_BASE64`)
-5. Notarizes with Apple (org secrets: `DD_APPLE_ID`, `DD_APPLE_PASSWORD`, `DD_APPLE_TEAM`)
-6. Publishes DMG to GitHub Releases via `--publish always`
+1. Validates and prepares the tagged source
+2. Builds macOS on `macos-latest`, including signing and notarization
+3. Builds Windows on a Windows runner, including installer signing
+4. Requires both platform packages before assembling the draft release
+5. Publishes the DMG, Windows installer, and updater metadata to GitHub Releases
 
 ### Release Flow
 
@@ -547,3 +559,4 @@ git tag v0.2.0 → push → CI builds → Draft Release
 | `DD_APPLE_ID` | Apple ID for notarization |
 | `DD_APPLE_PASSWORD` | App-specific password for notarization |
 | `DD_APPLE_TEAM` | Apple Developer Team ID |
+| Windows signing secrets | Windows code-signing credentials used by the release workflow |

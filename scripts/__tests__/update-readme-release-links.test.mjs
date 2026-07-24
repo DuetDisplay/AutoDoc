@@ -17,7 +17,11 @@ const originalReadme = `
 
 ## [⬇️ Download AutoDoc for macOS](https://example.com/old.dmg)
 
-1. **Download** \`autodoc-1.0.0.dmg\`.
+1. **Download for macOS** \`autodoc-1.0.0.dmg\`.
+
+## [⬇️ Download AutoDoc for Windows](https://example.com/old.exe)
+
+1. **Download for Windows** \`autodoc-1.0.0-setup.exe\`.
 `
 
 test('updates both platform assets and the release badge', () => {
@@ -26,6 +30,8 @@ test('updates both platform assets and the release badge', () => {
   assert.equal(version, '1.1.0')
   assert.match(readme, /releases\/download\/v1\.1\.0\/autodoc-1\.1\.0\.dmg/)
   assert.match(readme, /releases\/download\/v1\.1\.0\/autodoc-1\.1\.0-setup\.exe/)
+  assert.match(readme, /\*\*Download for macOS\*\* `autodoc-1\.1\.0\.dmg`/)
+  assert.match(readme, /\*\*Download for Windows\*\* `autodoc-1\.1\.0-setup\.exe`/)
   assert.match(readme, /release-v1\.1\.0-/)
   assert.doesNotMatch(readme, /Windows Coming Soon/)
 })
