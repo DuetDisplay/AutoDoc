@@ -1,11 +1,12 @@
 name: Update README Release Links
 
 on:
-  workflow_run:
-    workflows:
-      - Build & Release
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to publish in README.
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       release_tag:
@@ -19,7 +20,6 @@ permissions:
 
 jobs:
   update-readme:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -27,12 +27,12 @@ jobs:
         with:
           ref: main
 
-      - name: Resolve release DMG
+      - name: Resolve release assets
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          REQUESTED_TAG: ${{ github.event.inputs.release_tag || '' }}
+          REQUESTED_TAG: ${{ inputs.release_tag || '' }}
         run: |
           if [ -n "$REQUESTED_TAG" ]; then
             release_json="$(gh api "repos/${GH_REPO}/releases/tags/${REQUESTED_TAG}")"
@@ -61,13 +61,34 @@ jobs:
             exit 1
           fi
 
+          windows_asset="$(jq -r --arg version "$version" '
+            .assets
+            | map(select(.name == ("autodoc-" + $version + "-setup.exe")))
+            | .[0].name // empty
+          ' <<<"$release_json")"
+
+          if [ -z "$windows_asset" ]; then
+            windows_asset="$(jq -r '
+              .assets
+              | map(select(.name | test("^autodoc-[0-9].*-setup\\.exe$")))
+              | .[0].name // empty
+            ' <<<"$release_json")"
+          fi
+
+          if [ -z "$windows_asset" ]; then
+            echo "::error::No versioned AutoDoc Windows setup asset found for ${tag}"
+            exit 1
+          fi
+
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "dmg_asset=$dmg_asset" >> "$GITHUB_OUTPUT"
+          echo "windows_asset=$windows_asset" >> "$GITHUB_OUTPUT"
 
       - name: Update README
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           DMG_ASSET: ${{ steps.release.outputs.dmg_asset }}
+          WINDOWS_ASSET: ${{ steps.release.outputs.windows_asset }}
         run: node scripts/update-readme-release-links.mjs
 
       - name: Commit README update
