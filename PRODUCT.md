@@ -200,7 +200,9 @@ Same retry logic as transcription — up to 3 automatic retries on startup, trac
 2. App opens Google OAuth consent screen in the default browser.
 3. Auth is handled by a Cloudflare Worker (`autodoc-auth.duetdisplay.workers.dev`) that exchanges the authorization code for tokens.
 4. Tokens are returned to a localhost callback on port 42813.
-5. Tokens are encrypted using Electron's `safeStorage` (macOS Keychain or Windows DPAPI) and stored locally.
+5. Tokens are stored locally and encrypted using Electron's `safeStorage`
+   (macOS Keychain or Windows DPAPI) when available. If `safeStorage` is
+   unavailable, they are stored locally without operating-system protection.
 
 ### Event Sync
 
@@ -296,7 +298,11 @@ Search state (query text, results, and whether a search has been performed) is s
 
 ### At-Rest Encryption
 
-All recording data is encrypted at rest using AES-256-GCM. Electron's `safeStorage` protects the encryption key with macOS Keychain on macOS and DPAPI on Windows.
+All recording data is encrypted at rest using AES-256-GCM. When Electron's
+`safeStorage` is available, it protects the encryption key with macOS Keychain
+on macOS and DPAPI on Windows. If `safeStorage` is unavailable, AutoDoc stores
+the key locally without operating-system protection; the recording data itself
+remains AES-256-GCM encrypted.
 
 ### JSON Files (transcripts, segments, speakers, metadata)
 
@@ -475,12 +481,16 @@ AutoDoc/
 │       ├── speakers.json     (encrypted)
 │       ├── transcript.error  (plaintext, retry tracking)
 │       └── segments.error    (plaintext, retry tracking)
+├── logs/
+│   └── {application logs}
 ├── models/
 │   ├── {transcription runtime and model assets}
 │   ├── ffmpeg
 │   └── ollama
-└── ollama-data/
-    └── {model cache}/
+├── ollama-data/
+│   └── {model cache}/
+└── python-env/
+    └── {local diarization environment}
 ```
 
 ### Legacy Migration
@@ -559,4 +569,4 @@ git tag v0.2.0 → push → CI builds → Draft Release
 | `DD_APPLE_ID` | Apple ID for notarization |
 | `DD_APPLE_PASSWORD` | App-specific password for notarization |
 | `DD_APPLE_TEAM` | Apple Developer Team ID |
-| Windows signing secrets | Windows code-signing credentials used by the release workflow |
+| `DD_SM_CLIENT_CERT_FILE_B64`, `DD_SM_API_KEY`, `DD_SM_CLIENT_CERT_PASSWORD`, `DD_SM_KEYPAIR_ALIAS` | DigiCert KeyLocker credentials used to sign Windows releases |

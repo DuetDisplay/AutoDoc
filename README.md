@@ -47,7 +47,7 @@ Meeting AI tools are everywhere — but most of them ship your conversations to 
 
 - **Truly local.** Transcription runs on-device with [NVIDIA NeMo Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) on Windows and Apple [MLX](https://github.com/ml-explore/mlx) Whisper on Apple Silicon. Summaries run through a local [Ollama](https://ollama.com) instance AutoDoc manages on both platforms. No API keys, inference bills, or network round-trips for your audio.
 - **Everything included.** Speaker diarization, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
-- **Encrypted at rest.** Recordings and transcripts use AES-256-GCM. The encryption key is protected by macOS Keychain or Windows DPAPI through Electron `safeStorage`.
+- **Encrypted at rest.** Recordings and transcripts use AES-256-GCM. When Electron `safeStorage` is available, the encryption key is protected by macOS Keychain or Windows DPAPI; otherwise, it is stored locally without operating-system protection.
 - **Desktop-native.** Lives in your macOS menu bar or Windows system tray, detects meetings as they start, and gets out of your way.
 
 ## How AutoDoc compares
@@ -76,7 +76,7 @@ AutoDoc is built around a simple idea: the privacy-protecting choice shouldn't a
 - **📅 Calendar integration** — Google and Microsoft calendars, with Off / Once / Series auto-record per event.
 - **🔔 Automatic meeting detection** — notices when a meeting starts (Zoom, Meet, Teams, Webex, Slack) and offers to record.
 - **🔎 Full-text search** — search every transcript and note, with deep links straight to the moment.
-- **🔒 Encryption at rest** — AES-256-GCM for recordings, transcripts, notes, and metadata, with the key protected by the operating system.
+- **🔒 Encryption at rest** — AES-256-GCM for recordings, transcripts, notes, and metadata. Electron `safeStorage` protects the key through the operating system when available; otherwise, the key is stored locally without operating-system protection.
 
 See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem.
 
@@ -139,7 +139,7 @@ Then:
 
 1. **Download for macOS** `autodoc-1.1.0.dmg`, or browse the [Releases](https://github.com/DuetDisplay/AutoDoc/releases/latest) page for a specific version.
 2. **Open** the `.dmg` and drag **AutoDoc** into your **Applications** folder.
-3. **Launch** AutoDoc from Applications. On first run it walks you through granting **Screen Recording** and **Microphone** permissions, then downloads its local transcription and AI models (~10 GB, one time).
+3. **Launch** AutoDoc from Applications. On first run it walks you through granting **Screen Recording** and **Microphone** permissions; macOS verifies **System Audio Capture** separately when recording starts. AutoDoc then downloads its local transcription and AI models (~10 GB, one time).
 
 That's it — no account, no API keys, nothing to configure. Everything runs locally from here on.
 
@@ -201,6 +201,7 @@ flowchart TB
     subgraph pipeline["Local processing pipeline"]
       direction LR
       Rec["Recording<br/>screen · mic · system"]
+      Platform{"Current platform"}
       MacTrans["macOS transcription<br/>MLX Whisper"]
       WinTrans["Windows transcription<br/>Parakeet · GPU or CPU"]
       Diar["Diarization<br/>two-stream"]
@@ -208,8 +209,9 @@ flowchart TB
     end
 
     Main --> Rec
-    Rec --> MacTrans
-    Rec --> WinTrans
+    Rec --> Platform
+    Platform -->|macOS| MacTrans
+    Platform -->|Windows| WinTrans
     MacTrans --> Diar
     WinTrans --> Diar
     Diar --> Notes

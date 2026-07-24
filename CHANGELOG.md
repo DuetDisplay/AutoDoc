@@ -31,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Windows encryption keys are protected by DPAPI through Electron
-  `safeStorage`; meeting data remains encrypted at rest with AES-256-GCM.
+- Windows encryption keys are protected by DPAPI through Electron `safeStorage`
+  when available. If `safeStorage` is unavailable, the key is stored locally
+  without operating-system protection; meeting data remains encrypted at rest
+  with AES-256-GCM.
 
 ## [1.0.0] — 2026-06-29
 
