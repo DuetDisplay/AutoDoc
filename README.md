@@ -8,7 +8,11 @@
 
 AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meeting starts, and hands you a clean transcript and structured notes when it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No AutoDoc account. No AI API keys necessary.
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/badge/release-v1.1.0-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+[**⬇️ Jump to downloads**](#download)
+
+[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest) [![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#download) [![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 </div>
 
@@ -28,7 +32,7 @@ AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meet
 - [How AutoDoc compares](#how-autodoc-compares)
 - [Features](#features)
 - [Features in action](#features-in-action)
-- [Install](#install)
+- [Download](#download)
   - [System requirements (macOS)](#system-requirements-macos)
   - [System requirements (Windows)](#system-requirements-windows)
 - [Build from source](#build-from-source)
@@ -88,7 +92,15 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 |---|---|
 | ![Notes](docs/assets/screenshots/notes.png) | ![Ask AI](docs/assets/screenshots/ask-ai.png) |
 
-## Install
+## Download
+
+Official macOS and Windows installers are published on GitHub Releases. Open the latest release and choose the asset for your platform:
+
+<div align="center">
+
+## [⬇️ View the latest AutoDoc release](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+
+</div>
 
 > **Platform support:** AutoDoc supports **macOS 14+ on Apple Silicon** and **Windows 10+ on x64 PCs**. Intel Macs and Windows on ARM are not currently supported.
 
@@ -127,7 +139,7 @@ On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and proce
 
 <div align="center">
 
-## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0.dmg)
+## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 **Apple Silicon · macOS 14+**
 
@@ -135,7 +147,7 @@ On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and proce
 
 Then:
 
-1. **Download for macOS** `autodoc-1.1.0.dmg`, or browse the [Releases](https://github.com/DuetDisplay/AutoDoc/releases/latest) page for a specific version.
+1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the macOS `.dmg` asset.
 2. **Open** the `.dmg` and drag **AutoDoc** into your **Applications** folder.
 3. **Launch** AutoDoc from Applications. On first run it walks you through granting **Screen Recording** and **Microphone** permissions; macOS verifies **System Audio Capture** separately when recording starts. AutoDoc then downloads its local transcription and AI models (~10 GB, one time).
 
@@ -145,7 +157,7 @@ That's it — no account, no API keys, nothing to configure. Everything runs loc
 
 <div align="center">
 
-## [⬇️ Download AutoDoc for Windows](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0-setup.exe)
+## [⬇️ Download AutoDoc for Windows](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 **64-bit · Windows 10+**
 
@@ -153,7 +165,7 @@ That's it — no account, no API keys, nothing to configure. Everything runs loc
 
 Then:
 
-1. **Download for Windows** `autodoc-1.1.0-setup.exe`, or browse the [Releases](https://github.com/DuetDisplay/AutoDoc/releases/latest) page for a specific version.
+1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the Windows `.exe` installer asset.
 2. **Open** the installer and follow the setup prompts.
 3. **Launch** AutoDoc. On first run it walks you through capture permissions and downloads the local Parakeet and Ollama models.
 
