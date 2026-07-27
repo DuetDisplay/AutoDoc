@@ -1,0 +1,19 @@
+// INTERNAL-ONLY: upload endpoint for the AutoDoc Internal update feed.
+// Never merge this directory to the public AutoDoc repo.
+//
+// Reads are served directly by the R2 custom domain
+// (updates-internal.getautodoc.com); this worker only accepts authenticated
+// uploads from CI (see .github/workflows/internal-release.yml).
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "autodoc-internal-updates-uploader",
+  "main": "index.ts",
+  "compatibility_date": "2026-07-01",
+  "account_id": "845df9423020aef6c50697467a04e353",
+  "r2_buckets": [
+    {
+      "binding": "FEED_BUCKET",
+      "bucket_name": "autodoc-internal-updates"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# INTERNAL-ONLY electron-builder config for the AutoDoc Internal flavor.
+# This file must never be merged to the public AutoDoc repo.
+# Internal builds must always pass: --config electron-builder.internal.yml
+extends: ./electron-builder.yml
+appId: com.kairos.autodoc.internal
+productName: AutoDoc Internal
+extraMetadata:
+  name: autodoc-internal
+nsis:
+  # ${name} resolves to autodoc-internal here, so this yields
+  # autodoc-internal-<version>-setup.exe
+  artifactName: ${name}-${version}-setup.${ext}
+# Top-level publish override so no code path ever falls back to the base
+# config's github publish block (which would bake the public GitHub feed
+# into app-update.yml inside the installed app). Declared as a list so it
+# REPLACES the base's publish object instead of deep-merging with it
+# (deepAssign would otherwise leave owner/repo/releaseType leaking in).
+publish:
+  - provider: generic
+    url: 'https://updates-internal.getautodoc.com/windows/'
+win:
+  publish:
+    - provider: generic
+      url: 'https://updates-internal.getautodoc.com/windows/'
+mac:
+  # Default mac artifact names derive from productName ("AutoDoc Internal"),
+  # which puts spaces in update-feed URLs. Use the package name instead.
+  artifactName: ${name}-${version}-${arch}-mac.${ext}
+  publish:
+    - provider: generic
+      url: 'https://updates-internal.getautodoc.com/mac/'
