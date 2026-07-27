@@ -159,13 +159,22 @@ jobs:
   build-mac-release:
     needs:
       - validate-release-request
+    # A manual recovery run starts from main so GitHub can expose
+    # workflow_dispatch, but it signs the exact validated release tag. Limit
+    # that signing path to the designated release accounts; tag-triggered
+    # releases remain available to the protected-tag path.
     if: >-
       ${{
         always() &&
         needs.validate-release-request.result == 'success' &&
         (
           (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-          (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_platform == 'all')
+          (
+            github.event_name == 'workflow_dispatch' &&
+            inputs.release_tag != '' &&
+            inputs.release_platform == 'all' &&
+            (github.triggering_actor == 'blackjack130' || github.triggering_actor == 'duetCJackson')
+          )
         )
       }}
     runs-on: macos-latest
@@ -258,7 +267,12 @@ jobs:
             needs.validate-release-request.result == 'success' &&
             (
               (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-              (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.release_platform == 'all')
+              (
+                github.event_name == 'workflow_dispatch' &&
+                inputs.release_tag != '' &&
+                inputs.release_platform == 'all' &&
+                (github.triggering_actor == 'blackjack130' || github.triggering_actor == 'duetCJackson')
+              )
             )
           ) ||
           (
