@@ -632,8 +632,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate-release-request.outputs.release_tag }}
         run: |
-          release_json="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}")"
-          blockmap_ids="$(jq -r '.assets[] | select(.name | endswith(".blockmap")) | .id' <<<"$release_json")"
+          blockmap_ids="$(
+            gh release view "$RELEASE_TAG" -R "$GH_REPO" --json assets \
+              --jq '.assets[] | select(.name | endswith(".blockmap")) | .apiUrl | split("/")[-1]'
+          )"
 
           if [ -z "$blockmap_ids" ]; then
             exit 0
