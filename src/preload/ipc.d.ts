@@ -216,6 +216,8 @@ export interface IpcInvokeEvents {
   'prefs:set-analytics-consent': [enabled: boolean]
   'prefs:get-diagnostic-log-upload-consent': []
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
+  'prefs:get-video-watermark-visible': []
+  'prefs:set-video-watermark-visible': [visible: boolean]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
@@ -358,6 +360,8 @@ export interface IpcInvokeReturns {
   'prefs:set-analytics-consent': void
   'prefs:get-diagnostic-log-upload-consent': boolean
   'prefs:set-diagnostic-log-upload-consent': void
+  'prefs:get-video-watermark-visible': boolean
+  'prefs:set-video-watermark-visible': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
@@ -419,6 +423,7 @@ export interface IpcOnEvents {
   'updater:open-settings': []
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
+  'prefs:video-watermark-visible-changed': [visible: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
   'feedback:contact-initiated': [surface: SupportEmailSurface]
   'feedback:critical-ui-changed': [suppressed: boolean]

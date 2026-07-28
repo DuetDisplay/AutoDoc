@@ -271,6 +271,30 @@ describe('MeetingDetail', () => {
 
     await user.click(screen.getByText('Transcript'))
     expect(document.querySelector('video')).toBeInTheDocument()
+    const watermark = screen.getByText(/Meeting notes by/)
+    expect(watermark).toHaveTextContent('Meeting notes by AutoDoc')
+    expect(watermark).toHaveClass('pointer-events-none')
+
+    const api = window.electronAPI as unknown as MockElectronAPI
+    act(() => {
+      api.emit('prefs:video-watermark-visible-changed', false)
+    })
+
+    expect(screen.queryByText(/Meeting notes by/)).not.toBeInTheDocument()
+  })
+
+  it('keeps video playback available if the watermark preference cannot be read', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('prefs:get-video-watermark-visible', () =>
+      Promise.reject(new Error('preference unavailable'))
+    )
+
+    await renderMeetingDetail()
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Transcript'))
+
+    expect(document.querySelector('video')).toBeInTheDocument()
+    expect(screen.getByText(/Meeting notes by/)).toBeInTheDocument()
   })
 
   it('keeps notes actions disabled while generation runs and when no notes were produced', async () => {
@@ -1157,6 +1181,7 @@ describe('MeetingDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Transcript' }))
 
     await waitFor(() => {
+      expect(screen.queryByText(/Meeting notes by/)).not.toBeInTheDocument()
       expect(screen.getAllByText('Me').length).toBeGreaterThan(0)
       expect(screen.getAllByText('Speaker 1').length).toBeGreaterThan(0)
       expect(screen.queryByText('Speaker 2')).not.toBeInTheDocument()

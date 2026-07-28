@@ -132,6 +132,49 @@ describe('Settings', () => {
     ).toBeChecked()
   })
 
+  it('shows the video watermark by default and persists the playback preference', async () => {
+    const state = {
+      videoWatermarkVisible: true
+    }
+
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-video-watermark-visible': () => state.videoWatermarkVisible,
+      'prefs:set-video-watermark-visible': (visible: boolean) => {
+        state.videoWatermarkVisible = visible
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    const view = render(<Settings />)
+    const toggle = await screen.findByRole('button', {
+      name: /show autodoc watermark on recorded video/i
+    })
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await user.click(toggle)
+
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    view.unmount()
+    render(<Settings />)
+
+    expect(
+      await screen.findByRole('button', {
+        name: /show autodoc watermark on recorded video/i
+      })
+    ).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('keeps connecting while in the browser, clears it on return, and still surfaces a late success', async () => {
     const existing = createCalendarAccount({
       id: 'acct-existing',

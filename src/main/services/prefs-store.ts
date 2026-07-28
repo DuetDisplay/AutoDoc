@@ -12,6 +12,7 @@ interface PrefsSchema {
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
   diagnosticLogUploadConsent: boolean
+  videoWatermarkVisible: boolean
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -31,6 +32,7 @@ function createPrefsStore(): Store<PrefsSchema> {
       launchAtLogin: true,
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
+      videoWatermarkVisible: true,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
@@ -122,6 +124,14 @@ export class PrefsStore {
 
   setDiagnosticLogUploadConsent(enabled: boolean): void {
     this.store.set('diagnosticLogUploadConsent', enabled)
+  }
+
+  getVideoWatermarkVisible(): boolean {
+    return this.store.get('videoWatermarkVisible')
+  }
+
+  setVideoWatermarkVisible(visible: boolean): void {
+    this.store.set('videoWatermarkVisible', visible)
   }
 
   getExperimentalSpeakerDiarization(): boolean {

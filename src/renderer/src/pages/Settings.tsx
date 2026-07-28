@@ -76,6 +76,7 @@ export function Settings() {
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
   const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
+  const [videoWatermarkVisible, setVideoWatermarkVisibleState] = useState(true)
   const [transcriptionQualityMode, setTranscriptionQualityModeState] = useState<
     'balanced' | 'fast'
   >('balanced')
@@ -104,6 +105,14 @@ export function Settings() {
     window.electronAPI
       .invoke('prefs:get-diagnostic-log-upload-consent')
       .then(setDiagnosticLogUploadConsentState)
+    void window.electronAPI.invoke('prefs:get-video-watermark-visible').then(
+      (visible) => {
+        if (typeof visible === 'boolean') {
+          setVideoWatermarkVisibleState(visible)
+        }
+      },
+      () => undefined
+    )
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on(
       'prefs:analytics-consent-changed',
@@ -113,10 +122,15 @@ export function Settings() {
       'prefs:diagnostic-log-upload-consent-changed',
       setDiagnosticLogUploadConsentState
     )
+    const unsubVideoWatermarkVisible = window.electronAPI.on(
+      'prefs:video-watermark-visible-changed',
+      setVideoWatermarkVisibleState
+    )
     return () => {
       unsub()
       unsubConsent()
       unsubDiagnosticLogConsent()
+      unsubVideoWatermarkVisible()
     }
   }, [refreshStorageInfo])
 
@@ -273,6 +287,17 @@ export function Settings() {
     })
     await window.electronAPI.invoke('prefs:set-diagnostic-log-upload-consent', nextValue)
     setDiagnosticLogUploadConsentState(nextValue)
+  }
+
+  const handleToggleVideoWatermark = async (): Promise<void> => {
+    const nextValue = !videoWatermarkVisible
+    recordDiagnosticAction({
+      category: 'settings',
+      action: 'video_watermark_visibility_toggled',
+      details: { visible: nextValue }
+    })
+    await window.electronAPI.invoke('prefs:set-video-watermark-visible', nextValue)
+    setVideoWatermarkVisibleState(nextValue)
   }
 
   const handleSetTranscriptionQualityMode = async (mode: 'balanced' | 'fast') => {
@@ -463,6 +488,29 @@ export function Settings() {
                   <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
                 </svg>
                 {connectingProvider === 'microsoft' ? 'Connecting...' : 'Add Microsoft Outlook'}
+              </button>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Video playback</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] font-semibold text-ink">AutoDoc watermark</p>
+                <p className="mt-0.5 text-[12px] text-ink-muted">
+                  Show “Meeting notes by AutoDoc” while watching recorded video. Original recordings
+                  stay unchanged.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleToggleVideoWatermark()}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                aria-pressed={videoWatermarkVisible}
+                aria-label="Show AutoDoc watermark on recorded video"
+              >
+                <span
+                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${videoWatermarkVisible ? 'translate-x-5' : 'translate-x-0'}`}
+                />
               </button>
             </div>
           </div>

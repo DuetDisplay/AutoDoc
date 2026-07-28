@@ -25,6 +25,7 @@ import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
 import { MeetingExportMenu } from '../components/MeetingExportMenu'
+import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
 
@@ -326,6 +327,7 @@ export function MeetingDetail() {
   const lastTimeUpdateLogAtRef = useRef(0)
   const segmentationEventRevisionRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
+  const [videoWatermarkVisible, setVideoWatermarkVisible] = useState(true)
 
   useEffect(() => {
     activeTabRef.current = activeTab
@@ -334,6 +336,27 @@ export function MeetingDetail() {
   useEffect(() => {
     mediaPlayerErrorLastAtRef.current.clear()
   }, [id])
+
+  useEffect(() => {
+    let active = true
+    void window.electronAPI.invoke('prefs:get-video-watermark-visible').then(
+      (visible) => {
+        if (active && typeof visible === 'boolean') {
+          setVideoWatermarkVisible(visible)
+        }
+      },
+      () => undefined
+    )
+    const unsubscribe = window.electronAPI.on(
+      'prefs:video-watermark-visible-changed',
+      setVideoWatermarkVisible
+    )
+
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
 
   const reportRendererMediaError = useCallback(
     (kind: 'video' | 'audio') => (e: SyntheticEvent<HTMLVideoElement | HTMLAudioElement>) => {
@@ -1599,13 +1622,16 @@ export function MeetingDetail() {
             )}
             {media?.hasVideo && media.mediaBaseUrl && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
-                <video
-                  ref={mediaRef as React.RefObject<HTMLVideoElement>}
-                  controls
-                  className="w-full"
-                  src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
-                  onError={reportRendererMediaError('video')}
-                />
+                <div className="relative">
+                  <video
+                    ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                    controls
+                    className="block w-full"
+                    src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
+                    onError={reportRendererMediaError('video')}
+                  />
+                  {videoWatermarkVisible && <VideoWatermarkOverlay />}
+                </div>
                 <div className="flex justify-end px-3 py-1.5 border-t border-border">
                   <button
                     onClick={cyclePlaybackRate}

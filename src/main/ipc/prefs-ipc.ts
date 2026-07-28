@@ -16,6 +16,13 @@ function broadcastDiagnosticLogUploadConsent(enabled: boolean): void {
   }
 }
 
+function broadcastVideoWatermarkVisible(visible: boolean): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('prefs:video-watermark-visible-changed', visible)
+  }
+}
+
 function broadcastExperimentalSpeakerDiarization(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
@@ -85,6 +92,15 @@ export function registerPrefsIpc(
     prefsStore.setDiagnosticLogUploadConsent(enabled)
     onDiagnosticLogUploadConsentChanged?.(enabled)
     broadcastDiagnosticLogUploadConsent(enabled)
+  })
+
+  ipcMain.handle('prefs:get-video-watermark-visible', (): boolean => {
+    return prefsStore.getVideoWatermarkVisible()
+  })
+
+  ipcMain.handle('prefs:set-video-watermark-visible', (_event, visible: boolean): void => {
+    prefsStore.setVideoWatermarkVisible(visible)
+    broadcastVideoWatermarkVisible(visible)
   })
 
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {
