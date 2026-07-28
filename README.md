@@ -8,8 +8,6 @@
 
 AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meeting starts, and hands you a clean transcript and structured notes when it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No AutoDoc account. No AI API keys necessary.
 
-[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0.dmg) [![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0-setup.exe)
-
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#install) [![Latest release](https://img.shields.io/badge/release-v1.1.0-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 </div>
@@ -129,8 +127,6 @@ On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and proce
 
 <div align="center">
 
-## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0.dmg)
-
 **Apple Silicon · macOS 14+**
 
 </div>
@@ -146,8 +142,6 @@ That's it — no account, no API keys, nothing to configure. Everything runs loc
 ### Download & install on Windows
 
 <div align="center">
-
-## [⬇️ Download AutoDoc for Windows](https://github.com/DuetDisplay/AutoDoc/releases/download/v1.1.0/autodoc-1.1.0-setup.exe)
 
 **64-bit · Windows 10+**
 
