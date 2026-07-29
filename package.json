@@ -66,13 +66,13 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource/instrument-serif": "^5.2.8",
-    "@sentry/electron": "^7.10.0",
+    "@sentry/electron": "^7.16.0",
     "electron-store": "^11.0.2",
-    "electron-updater": "^6.8.3",
+    "electron-updater": "^6.8.9",
     "ffmpeg-static": "^5.3.0",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
-    "posthog-js": "^1.369.3"
+    "posthog-js": "^1.408.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260610.1",
@@ -91,8 +91,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/coverage-v8": "^3.2.6",
-    "electron": "^39.2.6",
-    "electron-builder": "^26.0.12",
+    "electron": "^41.10.3",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react": "^7.37.5",
@@ -102,7 +102,7 @@
     "prettier": "^3.7.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "react-router-dom": "^7.1.1",
+    "react-router-dom": "^7.18.2",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.3",
@@ -111,7 +111,10 @@
     "zustand": "^5.0.2"
   },
   "overrides": {
-    "fast-uri": "3.1.2",
-    "protobufjs": "7.5.9"
+    "dompurify": "3.4.12",
+    "fast-uri": "3.1.4",
+    "js-yaml": "4.3.0",
+    "protobufjs": "7.6.5",
+    "qs": "6.15.3"
   }
 }
