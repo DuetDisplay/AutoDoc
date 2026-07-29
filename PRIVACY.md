@@ -8,7 +8,7 @@ what happens to your data — and, just as importantly, what does *not* happen.
 ## The short version
 
 - **Your audio, video, transcripts, and notes never leave your computer.** All
-  recording, transcription, speaker identification, and AI note generation run
+  recording, transcription, speaker labeling, and AI note generation run
   entirely on-device.
 - **No AutoDoc account.** There is nothing to sign up for.
 - **No paid AI keys.** AI features run on a local [Ollama](https://ollama.com)
@@ -24,7 +24,7 @@ Everything that touches your meeting content happens locally:
 |-------|---------------|
 | Screen / microphone / system-audio capture | Your computer |
 | Transcription (Parakeet on Windows / MLX Whisper on macOS) | Your computer |
-| Speaker diarization | Your computer |
+| Speaker labeling (mic vs system audio) | Your computer |
 | AI note generation (Ollama / llama3.1) | Your computer |
 | Search | Your computer |
 
