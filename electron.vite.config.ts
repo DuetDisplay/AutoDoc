@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
         'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(env.AUTODOC_SENTRY_DSN ?? ''),
         'process.env.AUTODOC_SENTRY_DEV': JSON.stringify(env.AUTODOC_SENTRY_DEV ?? ''),
         'process.env.AUTODOC_AUTH_WORKER_URL': JSON.stringify(env.AUTODOC_AUTH_WORKER_URL ?? ''),
+        'process.env.AUTODOC_SUPPORT_EMAIL': JSON.stringify(env.AUTODOC_SUPPORT_EMAIL ?? ''),
         'process.env.AUTODOC_OFFICIAL_BUILD': JSON.stringify(officialBuild),
         'process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL': JSON.stringify(
           env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL ?? ''

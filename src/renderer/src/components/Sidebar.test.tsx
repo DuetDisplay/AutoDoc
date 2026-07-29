@@ -1,4 +1,4 @@
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Sidebar } from './Sidebar'
@@ -13,6 +13,8 @@ beforeEach(() => {
       if (channel === 'ollama:check-status') return Promise.resolve(true)
       if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
       if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+      if (channel === 'support:get-availability') return Promise.resolve(true)
+      if (channel === 'support:open-email') return Promise.resolve({ status: 'opened' })
       return Promise.resolve(undefined)
     }),
     on: vi.fn(() => () => {}),
@@ -48,6 +50,116 @@ describe('Sidebar', () => {
   it('renders settings link', async () => {
     await renderSidebar()
     expect(screen.getByText('Settings')).toBeInTheDocument()
+  })
+
+  it('renders an accessible Email Us action in the sidebar footer', async () => {
+    await renderSidebar()
+
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeEnabled()
+  })
+
+  it('opens a main-owned email draft without renderer content', async () => {
+    await renderSidebar()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:open-email')
+      expect(screen.getByText('Draft opened in your email app.')).toBeInTheDocument()
+    })
+  })
+
+  it('prevents repeated activation while the mail client request is pending', async () => {
+    let resolveOpenEmail: ((value: { status: 'opened' }) => void) | undefined
+    const openEmailPromise = new Promise<{ status: 'opened' }>((resolve) => {
+      resolveOpenEmail = resolve
+    })
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') return openEmailPromise
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    const button = screen.getByRole('button', { name: 'Email Us' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    expect(screen.getByRole('button', { name: 'Opening email…' })).toBeDisabled()
+    expect(
+      vi
+        .mocked(window.electronAPI.invoke)
+        .mock.calls.filter(([channel]) => channel === 'support:open-email')
+    ).toHaveLength(1)
+
+    await act(async () => {
+      resolveOpenEmail?.({ status: 'opened' })
+      await openEmailPromise
+    })
+  })
+
+  it('offers a copy fallback when no mail client opens', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') {
+          return Promise.resolve({
+            status: 'copy-required',
+            address: 'team@getautodoc.com'
+          })
+        }
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+
+    const copyButton = await screen.findByRole('button', { name: 'Copy email address' })
+    expect(screen.getByText('team@getautodoc.com')).toBeInTheDocument()
+    fireEvent.click(copyButton)
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('team@getautodoc.com')
+      expect(screen.getByText('Email address copied.')).toBeInTheDocument()
+    })
+  })
+
+  it('disables Email Us with an explanation when this build has no support address', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(false)
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeDisabled()
+    expect(screen.getByText('Email isn’t configured in this build.')).toBeInTheDocument()
+    expect(window.electronAPI.invoke).not.toHaveBeenCalledWith('support:open-email')
   })
 
   it('shows Ollama connected status', async () => {
