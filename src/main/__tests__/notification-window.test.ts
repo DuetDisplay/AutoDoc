@@ -7,12 +7,15 @@ const mocks = vi.hoisted(() => {
   class FakeNotificationWindow {
     private listeners = new Map<string, () => void>()
     destroyed = false
+    deferClosedEvent = false
     isDestroyed = vi.fn(() => this.destroyed)
     showInactive = vi.fn()
     loadURL = vi.fn()
     close = vi.fn(() => {
       this.destroyed = true
-      this.listeners.get('closed')?.()
+      if (!this.deferClosedEvent) {
+        this.emitClosed()
+      }
     })
     webContents = {
       executeJavaScript: vi.fn(() => Promise.resolve())
@@ -30,6 +33,10 @@ const mocks = vi.hoisted(() => {
     once(event: string, handler: () => void): this {
       this.listeners.set(event, handler)
       return this
+    }
+
+    emitClosed(): void {
+      this.listeners.get('closed')?.()
     }
   }
 
@@ -62,6 +69,7 @@ vi.mock('electron', () => ({
 }))
 
 const {
+  hideNotificationWindow,
   resetNotificationActivationSuppressionForTests,
   shouldSuppressNotificationActivation,
   showNotificationWindow
@@ -104,6 +112,15 @@ describe('notification window activation suppression', () => {
     expect(shouldSuppressNotificationActivation()).toBe(false)
   })
 
+  it('suppresses app activation before dismiss IPC for an opted-in notification', () => {
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+
+    expect(shouldSuppressNotificationActivation()).toBe(true)
+  })
+
   it('briefly suppresses app activation after notification dismiss', () => {
     showTestNotification()
 
@@ -113,6 +130,73 @@ describe('notification window activation suppression', () => {
 
     vi.advanceTimersByTime(1_001)
 
+    expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('clears visible suppression when the active notification closes', () => {
+    showTestNotification({ suppressAppActivationWhileVisible: true })
+
+    mocks.windows[0].close()
+
+    expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('does not let a replaced window clear the newer notification policy', () => {
+    showTestNotification({ suppressAppActivationWhileVisible: true })
+    const replacedWindow = mocks.windows[0]
+    replacedWindow.deferClosedEvent = true
+
+    showTestNotification({ suppressAppActivationWhileVisible: true })
+    replacedWindow.emitClosed()
+
+    expect(shouldSuppressNotificationActivation()).toBe(true)
+
+    mocks.windows[1].close()
+    expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('preserves trailing suppression after an opted-in notification closes', async () => {
+    showTestNotification({ suppressAppActivationWhileVisible: true })
+
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mocks.windows[0].destroyed).toBe(true)
+    expect(shouldSuppressNotificationActivation()).toBe(true)
+
+    vi.advanceTimersByTime(1_001)
+    expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('clears visible suppression after a programmatic hide without adding a trailing delay', async () => {
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+
+    hideNotificationWindow('meeting-detection')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mocks.windows[0].destroyed).toBe(true)
+    expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('keeps trailing suppression after auto-dismiss closes the notification', async () => {
+    showTestNotification({
+      suppressAppActivationWhileVisible: true,
+      autoDismissMs: 100
+    })
+
+    vi.advanceTimersByTime(100)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mocks.windows[0].destroyed).toBe(true)
+    expect(shouldSuppressNotificationActivation()).toBe(true)
+
+    vi.advanceTimersByTime(1_001)
     expect(shouldSuppressNotificationActivation()).toBe(false)
   })
 
