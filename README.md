@@ -105,7 +105,7 @@ Local-first meeting apps need real hardware headroom for on-device transcription
 | **Chip** | **Apple Silicon required** (M1, M2, M3, M4, or later). Intel Macs are not supported. |
 | **Memory** | **8 GB minimum** · **16 GB recommended** for the default concurrent processing profile |
 | **Storage** | **~10 GB free** for first-run downloads (Whisper + local Ollama model + MLX runtime cache), plus additional space for your encrypted recordings |
-| **Network** | Required for first-run model downloads and updates. Optional afterward for calendar sync and opt-in diagnostics. Not required for recording, transcription, or notes. |
+| **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen Recording**, **Microphone**, and **System Audio Capture** (for remote participant audio) |
 
 **What to expect on an 8 GB Mac:** AutoDoc detects limited memory and switches to a lower-impact profile automatically — smaller notes model (`llama3.2:3b`), serialized audio processing, and longer transcription/notes times. Everything still runs locally; a 16 GB machine is simply more comfortable for hour-long meetings with concurrent processing.
@@ -121,7 +121,7 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 | **Memory** | **8 GB minimum** · **16 GB recommended** |
 | **GPU** | Optional. A compatible DirectML GPU with **4 GB+ VRAM** enables accelerated Parakeet transcription; AutoDoc falls back to CPU automatically. |
 | **Storage** | **~10 GB free recommended** for first-run downloads and encrypted recordings |
-| **Network** | Required for first-run model downloads and updates. Optional afterward for calendar sync and opt-in diagnostics. Not required for recording, transcription, or notes. |
+| **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen capture**, **Microphone**, and **System Audio** |
 
 On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. This reduces memory pressure but can take longer after a meeting ends.
@@ -241,10 +241,12 @@ AutoDoc processes meeting content on-device. Audio, transcripts, and notes are n
 Your recordings, transcripts, notes, and Ask AI answers are processed on-device. They are not uploaded to AutoDoc or a cloud AI API.
 
 **When does AutoDoc use the network?**
-- First-run (and later) downloads of local transcription and Ollama models
-- App updates
+- Required once for the first-run download of local transcription and Ollama models
+- Optional later: app updates and additional model downloads
 - Optional Google/Microsoft calendar sync — the app talks to Google or Microsoft APIs for events; Duet's OAuth worker only exchanges tokens and never receives meeting recordings, transcripts, or notes
 - Optional analytics / crash reporting, only if you opt in
+
+After setup, recording, transcription, and notes work offline.
 
 **Do I need an OpenAI or Anthropic API key?**
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
@@ -259,7 +261,7 @@ An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum 
 Yes. AutoDoc supports 64-bit Windows 10 and later. It requires 8 GB RAM; 16 GB is recommended. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
 
 **How do I know AutoDoc is recording?**
-While recording, AutoDoc shows a Recording banner in the app (with a timer and stop control) and switches the menu bar / tray icon to a recording state. Meeting detection only offers to start; it does not silently record without you starting it. If you previously enabled calendar auto-record for an event (Once or Series), recording can begin for that event without another prompt.
+While recording, AutoDoc shows a Recording banner in the app (with a timer and stop control) and switches the menu bar / tray icon to a recording state. Meeting detection only offers to start recording; it will not start silently unless you previously enabled calendar auto-record for that event (Once or Series). In that case, recording can begin without another prompt.
 
 **What about other participants?**
 AutoDoc records on your computer. It does not join the call as a bot or announce itself to others. You are responsible for following the recording laws and norms that apply to your meeting.
