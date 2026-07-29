@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   isAutoRecordEnabled: vi.fn(() => false),
   getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
+  focusMainWindow: vi.fn(() => true),
   execFile: vi.fn()
 }))
 
@@ -40,6 +41,10 @@ vi.mock('../mac-meeting-detector', () => ({
 
 vi.mock('../windows-meeting-detector', () => ({
   getActiveCaptureProcessIdsWindows: mocks.getActiveCaptureProcessIdsWindows
+}))
+
+vi.mock('../main-window', () => ({
+  focusMainWindow: mocks.focusMainWindow
 }))
 
 vi.mock('child_process', () => ({
@@ -92,6 +97,8 @@ describe('DetectionService', () => {
     mocks.getActiveCaptureProcessIdsMac.mockResolvedValue([])
     mocks.getActiveCaptureProcessIdsWindows.mockReset()
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    mocks.focusMainWindow.mockReset()
+    mocks.focusMainWindow.mockReturnValue(true)
     mocks.execFile.mockReset()
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, '', '')
@@ -217,6 +224,35 @@ describe('DetectionService', () => {
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+  })
+
+  it('suppresses activation while a meeting prompt is visible and focuses only on its primary action', async () => {
+    setPlatform('darwin')
+
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.getActiveCaptureProcessIdsMac.mockResolvedValue(['us.zoom.xos'])
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => []
+    )
+
+    await (service as any).poll()
+
+    const promptConfig = mocks.showNotificationWindow.mock.calls[0][0]
+    expect(promptConfig).toMatchObject({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+    expect(mocks.focusMainWindow).not.toHaveBeenCalled()
+
+    promptConfig.onPrimaryAction()
+
+    expect(mocks.focusMainWindow).toHaveBeenCalledOnce()
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
+      providerId: 'zoom',
+      hasCalendarEvent: false
+    })
   })
 
   it('waits for the event to start before prompting for a matched scheduled event', async () => {

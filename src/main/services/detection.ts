@@ -930,6 +930,7 @@ export class DetectionService {
       body,
       primaryActionLabel: 'Start AI Notes',
       kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true,
       onPrimaryAction: () => {
         this.markAutoRecordPending()
         focusMainWindow()
