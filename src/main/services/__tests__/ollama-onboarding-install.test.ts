@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { access, chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
+import { access, chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { Writable } from 'stream'
 import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const originalPlatform = process.platform
@@ -17,6 +18,7 @@ interface LoadedOllamaManager {
 
 interface OllamaManagerPrivateAccess {
   getOllamaDataDir(): string
+  downloadToFile(url: string, destPath: string, signal: AbortSignal): Promise<void>
 }
 
 function setPlatform(platform: NodeJS.Platform): void {
@@ -29,7 +31,8 @@ function setPlatform(platform: NodeJS.Platform): void {
 async function loadOllamaManager(
   platform: 'darwin' | 'win32',
   rootDir: string,
-  isPackaged = false
+  isPackaged = false,
+  createWriteStreamMock?: Mock
 ): Promise<LoadedOllamaManager> {
   setPlatform(platform)
   vi.resetModules()
@@ -50,6 +53,17 @@ async function loadOllamaManager(
     execFile: execFileMock,
     execSync: execSyncMock
   }))
+  if (createWriteStreamMock) {
+    vi.doMock('fs', async () => {
+      const actual = await vi.importActual<typeof import('fs')>('fs')
+      return {
+        ...actual,
+        createWriteStream: createWriteStreamMock
+      }
+    })
+  } else {
+    vi.doUnmock('fs')
+  }
 
   const mod = await import('../ollama-manager')
   const storageMod = await import('../storage-manager')
@@ -67,6 +81,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
+  vi.doUnmock('fs')
   vi.resetModules()
   if (originalTestUserDataDir == null) {
     delete process.env.AUTODOC_TEST_USER_DATA_DIR
@@ -77,6 +92,285 @@ afterEach(() => {
 })
 
 describe('Ollama onboarding dependency installation', () => {
+  it('owns an immediate destination stream error and removes the partial archive', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-stream-error-'))
+    const createWriteStreamMock = vi.fn(() => {
+      const sink = new Writable({
+        write(_chunk, _encoding, callback) {
+          callback()
+        }
+      })
+      process.nextTick(() => {
+        const error = Object.assign(new Error('destination disappeared'), { code: 'ENOENT' })
+        sink.destroy(error)
+      })
+      return sink
+    })
+
+    try {
+      const { OllamaManager } = await loadOllamaManager(
+        'darwin',
+        rootDir,
+        true,
+        createWriteStreamMock
+      )
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }))
+      )
+      const manager = new OllamaManager()
+
+      const setupError = await manager.ensureReady().then(
+        () => null,
+        (error: Error) => error
+      )
+
+      expect(setupError?.message).toBe('Failed to install managed Ollama runtime (ENOENT)')
+      expect(setupError?.message).not.toContain(rootDir)
+      expect(createWriteStreamMock).toHaveBeenCalledTimes(1)
+      expect(await readdir(join(rootDir, 'models'))).toEqual(['ollama-runtime'])
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('waits for download backpressure before resolving', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-backpressure-'))
+    const chunksWritten: Buffer[] = []
+    let activeWrites = 0
+    let maxActiveWrites = 0
+    const createWriteStreamMock = vi.fn(
+      () =>
+        new Writable({
+          highWaterMark: 1,
+          write(chunk: Buffer, _encoding, callback) {
+            activeWrites += 1
+            maxActiveWrites = Math.max(maxActiveWrites, activeWrites)
+            setTimeout(() => {
+              chunksWritten.push(Buffer.from(chunk))
+              activeWrites -= 1
+              callback()
+            }, 5)
+          }
+        })
+    )
+
+    try {
+      const { OllamaManager } = await loadOllamaManager(
+        'darwin',
+        rootDir,
+        true,
+        createWriteStreamMock
+      )
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new Uint8Array([1, 2]))
+                  controller.enqueue(new Uint8Array([3, 4]))
+                  controller.enqueue(new Uint8Array([5, 6]))
+                  controller.close()
+                }
+              }),
+              { status: 200 }
+            )
+        )
+      )
+      const manager = new OllamaManager()
+
+      await (manager as unknown as OllamaManagerPrivateAccess).downloadToFile(
+        'https://example.invalid/ollama.tgz',
+        join(rootDir, 'runtime', 'ollama-darwin.tgz'),
+        new AbortController().signal
+      )
+
+      expect(maxActiveWrites).toBe(1)
+      expect(Buffer.concat(chunksWritten)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]))
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not create an archive when the download response has no body', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-no-body-'))
+    const archivePath = join(rootDir, 'runtime', 'ollama-darwin.tgz')
+
+    try {
+      const { OllamaManager } = await loadOllamaManager('darwin', rootDir, true)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status: 200 }))
+      )
+      const manager = new OllamaManager()
+
+      await expect(
+        (manager as unknown as OllamaManagerPrivateAccess).downloadToFile(
+          'https://example.invalid/ollama.tgz',
+          archivePath,
+          new AbortController().signal
+        )
+      ).rejects.toThrow('No response body')
+      await expect(access(archivePath)).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not create an archive when the download request fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-http-error-'))
+    const archivePath = join(rootDir, 'runtime', 'ollama-darwin.tgz')
+
+    try {
+      const { OllamaManager } = await loadOllamaManager('darwin', rootDir, true)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status: 503, statusText: 'Unavailable' }))
+      )
+      const manager = new OllamaManager()
+
+      await expect(
+        (manager as unknown as OllamaManagerPrivateAccess).downloadToFile(
+          'https://example.invalid/ollama.tgz',
+          archivePath,
+          new AbortController().signal
+        )
+      ).rejects.toThrow('503')
+      await expect(access(archivePath)).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes a partial archive after a mid-stream download failure', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-midstream-'))
+    const archivePath = join(rootDir, 'runtime', 'ollama-darwin.tgz')
+
+    try {
+      const { OllamaManager } = await loadOllamaManager('darwin', rootDir, true)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3]))
+                  controller.error(new Error('connection interrupted'))
+                }
+              }),
+              { status: 200 }
+            )
+        )
+      )
+      const manager = new OllamaManager()
+
+      await expect(
+        (manager as unknown as OllamaManagerPrivateAccess).downloadToFile(
+          'https://example.invalid/ollama.tgz',
+          archivePath,
+          new AbortController().signal
+        )
+      ).rejects.toThrow('connection interrupted')
+      await expect(access(archivePath)).rejects.toThrow()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps one setup owner and blocks restart until cancellation has joined', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-cancel-'))
+
+    try {
+      const { OllamaManager } = await loadOllamaManager('darwin', rootDir, true)
+      const manager = new OllamaManager()
+      let releaseStart!: () => void
+      const startGate = new Promise<void>((resolve) => {
+        releaseStart = resolve
+      })
+      const startSpy = vi
+        .spyOn(manager, 'start')
+        .mockImplementationOnce(() => startGate)
+        .mockResolvedValueOnce(undefined)
+      vi.spyOn(manager, 'pullModel').mockResolvedValue(undefined)
+
+      const firstAttempt = manager.startAndPull()
+      await Promise.resolve()
+      expect(startSpy).toHaveBeenCalledTimes(1)
+      manager.resetReady()
+      expect(manager.startAndPull()).toBe(firstAttempt)
+
+      const cancellation = manager.cancelSetup()
+      await expect(manager.startAndPull()).rejects.toHaveProperty(
+        'name',
+        'OllamaSetupCancelledError'
+      )
+
+      releaseStart()
+      await expect(firstAttempt).rejects.toHaveProperty('name', 'OllamaSetupCancelledError')
+      await cancellation
+
+      manager.resumeSetup()
+      await expect(manager.startAndPull()).resolves.toBeUndefined()
+      expect(startSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels an active download and leaves no staging work before managed files are cleared', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-clear-race-'))
+    let downloadAborted = false
+    let markDownloadStarted!: () => void
+    const downloadStarted = new Promise<void>((resolve) => {
+      markDownloadStarted = resolve
+    })
+
+    try {
+      const { OllamaManager, clearDownloadedComponents, execSyncMock } = await loadOllamaManager(
+        'darwin',
+        rootDir,
+        true
+      )
+      execSyncMock.mockImplementation(() => {
+        throw new Error('system lookup should not be used in packaged mode')
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async (_url: string | URL | Request, init?: RequestInit) =>
+            await new Promise<Response>((_resolve, reject) => {
+              markDownloadStarted()
+              init?.signal?.addEventListener(
+                'abort',
+                () => {
+                  downloadAborted = true
+                  reject(new DOMException('aborted', 'AbortError'))
+                },
+                { once: true }
+              )
+            })
+        )
+      )
+
+      const manager = new OllamaManager()
+      const setupAttempt = manager.startAndPull()
+      await downloadStarted
+
+      await manager.cancelSetup()
+      await expect(setupAttempt).rejects.toHaveProperty('name', 'OllamaSetupCancelledError')
+      await clearDownloadedComponents()
+
+      expect(downloadAborted).toBe(true)
+      await expect(access(join(rootDir, 'models'))).rejects.toThrow()
+      manager.resumeSetup()
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('installs a packaged macOS runtime binary and waits for startup plus model pull before resolving', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-'))
 
@@ -161,17 +455,33 @@ describe('Ollama onboarding dependency installation', () => {
       )
 
       execFileMock.mockImplementation(
-        async (command: string, args: string[], callback: (err: Error | null) => void) => {
+        (
+          command: string,
+          args: string[],
+          _options: unknown,
+          callback: (err: Error | null) => void
+        ) => {
           expect(command).toBe('tar')
-          expect(args).toEqual([
-            'xzf',
-            join(rootDir, 'models', 'ollama-runtime', 'ollama-darwin.tgz'),
-            '-C',
-            join(rootDir, 'models', 'ollama-runtime')
-          ])
-          await writeFile(join(rootDir, 'models', 'ollama-runtime', 'ollama'), 'binary')
-          await writeFile(join(rootDir, 'models', 'ollama-runtime', 'llama-server'), 'binary')
-          callback(null)
+          expect(args[0]).toBe('xzf')
+          expect(args[1]).toMatch(
+            new RegExp(
+              `^${join(rootDir, 'models', '.ollama-runtime-staging-').replace(
+                /[.*+?^${}()|[\]\\]/g,
+                '\\$&'
+              )}`
+            )
+          )
+          expect(args[2]).toBe('-C')
+          expect(args[3]).toBe(join(args[1], '..'))
+          const extractionProcess = { kill: vi.fn() }
+          void Promise.all([
+            writeFile(join(args[3], 'ollama'), 'binary'),
+            writeFile(join(args[3], 'llama-server'), 'binary')
+          ]).then(
+            () => callback(null),
+            (error: Error) => callback(error)
+          )
+          return extractionProcess
         }
       )
 
@@ -232,36 +542,39 @@ describe('Ollama onboarding dependency installation', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')('marks copied macOS installed runtime sidecars executable', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
-    const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
-    const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+  it.skipIf(process.platform === 'win32')(
+    'marks copied macOS installed runtime sidecars executable',
+    async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
+      const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
+      const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
 
-    try {
-      delete process.env.AUTODOC_TEST_USER_DATA_DIR
-      await mkdir(installedRuntimeDir, { recursive: true })
-      await writeFile(join(installedRuntimeDir, 'ollama'), 'binary')
-      await writeFile(join(installedRuntimeDir, 'llama-server'), 'binary')
-      await chmod(join(installedRuntimeDir, 'ollama'), 0o644)
-      await chmod(join(installedRuntimeDir, 'llama-server'), 0o644)
+      try {
+        delete process.env.AUTODOC_TEST_USER_DATA_DIR
+        await mkdir(installedRuntimeDir, { recursive: true })
+        await writeFile(join(installedRuntimeDir, 'ollama'), 'binary')
+        await writeFile(join(installedRuntimeDir, 'llama-server'), 'binary')
+        await chmod(join(installedRuntimeDir, 'ollama'), 0o644)
+        await chmod(join(installedRuntimeDir, 'llama-server'), 0o644)
 
-      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
-      execSyncMock.mockImplementation(() => {
-        throw new Error('system lookup should not be needed when installed assets exist')
-      })
+        const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
+        execSyncMock.mockImplementation(() => {
+          throw new Error('system lookup should not be needed when installed assets exist')
+        })
 
-      const manager = new OllamaManager()
-      await manager.ensureReady()
+        const manager = new OllamaManager()
+        await manager.ensureReady()
 
-      const ollamaMode = (await stat(join(runtimeDir, 'ollama'))).mode
-      const llamaServerMode = (await stat(join(runtimeDir, 'llama-server'))).mode
-      expect(ollamaMode & 0o111).not.toBe(0)
-      expect(llamaServerMode & 0o111).not.toBe(0)
-      await expect(manager.isReady()).resolves.toBe(true)
-    } finally {
-      await rm(rootDir, { recursive: true, force: true })
+        const ollamaMode = (await stat(join(runtimeDir, 'ollama'))).mode
+        const llamaServerMode = (await stat(join(runtimeDir, 'llama-server'))).mode
+        expect(ollamaMode & 0o111).not.toBe(0)
+        expect(llamaServerMode & 0o111).not.toBe(0)
+        await expect(manager.isReady()).resolves.toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('selects the low-spec Mac notes model before onboarding pulls the model', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-low-spec-mac-'))
