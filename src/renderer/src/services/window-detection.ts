@@ -42,6 +42,15 @@ const BROWSER_NAME_PATTERNS = [
   /\bvivaldi\b/i
 ]
 
+const GENERIC_PROVIDER_WINDOW_NAMES = new Set([
+  'slack',
+  'teams',
+  'microsoft teams',
+  'zoom',
+  'zoom workplace',
+  'zoom meetings'
+])
+
 export function detectMeetingWindow(
   sources: RecordingSource[],
   context?: RecordingSelectionContext,
@@ -79,9 +88,15 @@ export function chooseAutoRecordSource(
       let score = 0
       let method: AutoRecordSourceSelection['method'] = 'none'
 
-      if (preference && matchesPreferredSource(source, preference)) {
-        score += 120
+      const preferenceMatch = preference ? getPreferredSourceMatch(source, preference) : null
+      if (preferenceMatch) {
+        score += preferenceMatch === 'id' ? 150 : 120
         method = 'remembered_source'
+      }
+
+      if (isSlackHuddleWindowName(source.name)) {
+        score += 110
+        if (method === 'none') method = 'meeting_pattern'
       }
 
       if (providerHint && matchesProviderHint(source.name, providerHint)) {
@@ -108,6 +123,18 @@ export function chooseAutoRecordSource(
   const scoreGap = secondBest ? best.score - secondBest.score : best.score
 
   if (!best || best.score <= 0) {
+    return {
+      source: null,
+      confidence: 'none',
+      method: 'none',
+      providerHint,
+      windowCount: windows.length,
+      browserWindowCount,
+      meetingWindowCount
+    }
+  }
+
+  if (secondBest && best.score === secondBest.score) {
     return {
       source: null,
       confidence: 'none',
@@ -189,12 +216,19 @@ export function inferProviderHint(meetingUrl: string | null | undefined): string
   return null
 }
 
-function matchesPreferredSource(
+function getPreferredSourceMatch(
   source: RecordingSource,
   preference: SavedSourcePreference
-): boolean {
-  if (source.id === preference.sourceId) return true
-  return normalizeWindowName(source.name) === normalizeWindowName(preference.sourceName)
+): 'id' | 'name' | null {
+  if (source.id === preference.sourceId) return 'id'
+  const normalizedSourceName = normalizeWindowName(source.name)
+  if (GENERIC_PROVIDER_WINDOW_NAMES.has(normalizedSourceName)) return null
+  return normalizedSourceName === normalizeWindowName(preference.sourceName) ? 'name' : null
+}
+
+function isSlackHuddleWindowName(name: string): boolean {
+  const normalizedName = normalizeWindowName(name)
+  return normalizedName.includes('slack') && /\bhuddle\b/.test(normalizedName)
 }
 
 function isMeetingPatternMatch(name: string): boolean {

@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CalendarEvent } from '../../../shared/types'
 import { DetectionService } from '../detection'
 
+interface DetectionServicePrivateAccess {
+  getWindowSourcesForDetection(): Promise<Array<{ id: string; name: string }>>
+}
+
 const mocks = vi.hoisted(() => ({
   showNotificationWindow: vi.fn(),
   hideNotificationWindow: vi.fn(),
@@ -72,7 +76,7 @@ function makeEvent(id: string, startOffsetMs: number): CalendarEvent {
 describe('DetectionService', () => {
   const originalPlatform = process.platform
 
-  const setPlatform = (platform: NodeJS.Platform) => {
+  const setPlatform = (platform: NodeJS.Platform): void => {
     Object.defineProperty(process, 'platform', {
       value: platform,
       configurable: true
@@ -102,6 +106,23 @@ describe('DetectionService', () => {
     mocks.execFile.mockReset()
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, '', '')
+    })
+  })
+
+  it('enumerates detection windows without capturing thumbnails', async () => {
+    const sources = [{ id: 'window:1', name: 'Slack' }]
+    mocks.getSources.mockResolvedValue(sources as never)
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => []
+    )
+
+    await expect(
+      (service as unknown as DetectionServicePrivateAccess).getWindowSourcesForDetection()
+    ).resolves.toEqual(sources)
+    expect(mocks.getSources).toHaveBeenCalledWith({
+      types: ['window'],
+      thumbnailSize: { width: 0, height: 0 }
     })
   })
 

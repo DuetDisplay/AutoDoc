@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RecordingControls } from '../RecordingControls'
 import { useRecordingPickerStore } from '../../stores/recording-picker'
@@ -66,9 +66,81 @@ describe('RecordingControls', () => {
     expect(await screen.findByText('Suggested window')).toBeInTheDocument()
   })
 
+  it('prefers a window app icon and keeps the complete source name accessible', async () => {
+    const sourceName = 'Huddle: #product - AutoDoc - Slack'
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [
+          {
+            id: 'window:slack-huddle',
+            name: sourceName,
+            thumbnailDataUrl: 'data:image/png;base64,thumbnail',
+            iconDataUrl: 'data:image/png;base64,icon'
+          }
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByText('Record'))
+
+    const sourceButton = await screen.findByRole('button', { name: new RegExp(sourceName) })
+    const preview = screen.getByTestId('recording-source-preview')
+    expect(sourceButton).toBeInTheDocument()
+    expect(preview).toHaveAttribute('src', 'data:image/png;base64,icon')
+    expect(preview).toHaveAttribute('alt', '')
+  })
+
+  it('shows deliberate window and screen placeholders when images are unavailable', async () => {
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [
+          { id: 'window:1', name: 'Notes', thumbnailDataUrl: '' },
+          { id: 'screen:0:0', name: 'Entire screen', thumbnailDataUrl: '' }
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByText('Record'))
+
+    expect(await screen.findByTestId('window-source-placeholder')).toBeInTheDocument()
+    expect(screen.getByTestId('screen-source-placeholder')).toBeInTheDocument()
+  })
+
+  it('replaces an image that fails to load with the matching source placeholder', async () => {
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [
+          {
+            id: 'window:1',
+            name: 'Slack',
+            thumbnailDataUrl: '',
+            iconDataUrl: 'data:image/png;base64,broken'
+          }
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByText('Record'))
+    fireEvent.error(await screen.findByTestId('recording-source-preview'))
+
+    expect(await screen.findByTestId('window-source-placeholder')).toBeInTheDocument()
+    expect(screen.queryByTestId('recording-source-preview')).not.toBeInTheDocument()
+  })
+
   it('shows a screen permission toast when capture sources cannot be listed', async () => {
     const fetchSources = vi.fn(async () => {
-      throw new Error('AutoDoc could not list capture sources. Screen recording permission may be missing.')
+      throw new Error(
+        'AutoDoc could not list capture sources. Screen recording permission may be missing.'
+      )
     })
 
     render(
