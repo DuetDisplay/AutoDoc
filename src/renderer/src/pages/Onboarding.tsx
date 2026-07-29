@@ -121,7 +121,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     if (consented) {
       await identifyConsentedInstall()
     }
-    setAnalyticsConsent(consented)
+    await setAnalyticsConsent(consented)
     if (consented) {
       await trackConsentSnapshot()
       await startAnalyticsSession()

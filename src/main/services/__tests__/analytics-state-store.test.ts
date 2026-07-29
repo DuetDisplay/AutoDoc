@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const electronStoreState = vi.hoisted(() => ({
+  data: null as Record<string, unknown> | null
+}))
+
 vi.mock('electron-store', () => {
   return {
     default: vi.fn().mockImplementation((opts?: { defaults?: Record<string, unknown> }) => {
-      const data: Record<string, unknown> = { ...(opts?.defaults ?? {}) }
+      const data = electronStoreState.data ?? { ...(opts?.defaults ?? {}) }
+      electronStoreState.data = data
       return {
         get: vi.fn((key: string, defaultValue?: unknown) => {
           return key in data ? data[key] : defaultValue
         }),
-        set: vi.fn((key: string, value: unknown) => {
-          data[key] = value
+        set: vi.fn((key: string | Record<string, unknown>, value?: unknown) => {
+          if (typeof key === 'string') {
+            data[key] = value
+          } else {
+            Object.assign(data, key)
+          }
         }),
         clear: vi.fn(() => {
           for (const key of Object.keys(data)) {
@@ -28,6 +37,7 @@ import { AnalyticsStateStore } from '../analytics-state-store'
 
 describe('AnalyticsStateStore', () => {
   beforeEach(() => {
+    electronStoreState.data = null
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-17T10:00:00Z'))
   })
@@ -47,6 +57,116 @@ describe('AnalyticsStateStore', () => {
     )
     expect(secondState.installId).toBe(firstState.installId)
     expect(secondState.firstLaunchDate).toBe(firstState.firstLaunchDate)
+  })
+
+  it('records the first bounded app version without fabricating an upgrade', () => {
+    const store = new AnalyticsStateStore()
+
+    expect(store.observeAppVersion('1.1.1')).toBeNull()
+    expect(store.getState()).toMatchObject({
+      firstSeenAppVersion: '1.1.1',
+      lastSeenAppVersion: '1.1.1',
+      pendingUpgradeFromVersion: null,
+      pendingUpgradeToVersion: null
+    })
+    expect(store.getPendingUpgrade()).toBeNull()
+  })
+
+  it('preserves and acknowledges an immediate version transition', () => {
+    const store = new AnalyticsStateStore()
+    store.observeAppVersion('1.1.0')
+
+    expect(store.observeAppVersion('1.1.1')).toEqual({
+      previousVersion: '1.1.0',
+      currentVersion: '1.1.1'
+    })
+    expect(store.observeAppVersion('1.1.1')).toEqual({
+      previousVersion: '1.1.0',
+      currentVersion: '1.1.1'
+    })
+    expect(
+      store.acknowledgePendingUpgrade({
+        previousVersion: '1.1.0',
+        currentVersion: '1.1.1'
+      })
+    ).toBe(true)
+    expect(store.getPendingUpgrade()).toBeNull()
+    expect(
+      store.acknowledgePendingUpgrade({
+        previousVersion: '1.1.0',
+        currentVersion: '1.1.1'
+      })
+    ).toBe(false)
+  })
+
+  it('keeps only the latest immediate transition across multiple upgrades', () => {
+    const store = new AnalyticsStateStore()
+    store.observeAppVersion('1.0.0')
+    store.observeAppVersion('1.1.0')
+    store.observeAppVersion('1.1.1')
+
+    expect(store.getState().firstSeenAppVersion).toBe('1.0.0')
+    expect(store.getPendingUpgrade()).toEqual({
+      previousVersion: '1.1.0',
+      currentVersion: '1.1.1'
+    })
+    expect(
+      store.acknowledgePendingUpgrade({
+        previousVersion: '1.0.0',
+        currentVersion: '1.1.0'
+      })
+    ).toBe(false)
+  })
+
+  it('rejects invalid and unbounded version values without storing them', () => {
+    const store = new AnalyticsStateStore()
+
+    expect(store.observeAppVersion('not-a-version')).toBeNull()
+    expect(store.observeAppVersion(`1.0.0-${'a'.repeat(65)}`)).toBeNull()
+    expect(store.getState()).toMatchObject({
+      firstSeenAppVersion: null,
+      lastSeenAppVersion: null,
+      pendingUpgradeFromVersion: null,
+      pendingUpgradeToVersion: null
+    })
+  })
+
+  it('adds migration-safe version defaults while retaining legacy identifiers', () => {
+    electronStoreState.data = {
+      installId: 'legacy-install',
+      firstLaunchDate: '2026-06-01T10:00:00.000Z'
+    }
+
+    const store = new AnalyticsStateStore()
+
+    expect(store.getState()).toMatchObject({
+      installId: 'legacy-install',
+      firstLaunchDate: '2026-06-01T10:00:00.000Z',
+      firstSeenAppVersion: null,
+      lastSeenAppVersion: null,
+      pendingUpgradeFromVersion: null,
+      pendingUpgradeToVersion: null
+    })
+  })
+
+  it('removes corrupt persisted transition values during migration', () => {
+    electronStoreState.data = {
+      installId: 'legacy-install',
+      firstLaunchDate: '2026-06-01T10:00:00.000Z',
+      firstSeenAppVersion: '1.0.0',
+      lastSeenAppVersion: '1.1.1',
+      pendingUpgradeFromVersion: 'private-version-value',
+      pendingUpgradeToVersion: '1.1.1'
+    }
+
+    const store = new AnalyticsStateStore()
+
+    expect(store.getState()).toMatchObject({
+      firstSeenAppVersion: '1.0.0',
+      lastSeenAppVersion: '1.1.1',
+      pendingUpgradeFromVersion: null,
+      pendingUpgradeToVersion: null
+    })
   })
 
   it('records local funnel flags and count buckets without network analytics', () => {

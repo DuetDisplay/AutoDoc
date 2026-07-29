@@ -5,6 +5,7 @@ import type {
   AnalyticsSessionEndResult,
   AnalyticsSessionStartResult,
   AnalyticsState,
+  AnalyticsUpgradeTransition,
   AutoRecordMode,
   CalendarAccount,
   CalendarEvent,
@@ -85,6 +86,8 @@ export interface IpcInvokeEvents {
   'analytics:start-session': []
   'analytics:end-session': []
   'analytics:get-consent-snapshot': []
+  'analytics:get-pending-upgrade': []
+  'analytics:acknowledge-upgrade': [transition: AnalyticsUpgradeTransition]
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'support:get-availability': []
@@ -217,6 +220,8 @@ export interface IpcInvokeReturns {
   'analytics:start-session': AnalyticsSessionStartResult
   'analytics:end-session': AnalyticsSessionEndResult | null
   'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
+  'analytics:get-pending-upgrade': AnalyticsUpgradeTransition | null
+  'analytics:acknowledge-upgrade': boolean
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
   'support:get-availability': boolean

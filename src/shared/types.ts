@@ -331,6 +331,15 @@ export interface AnalyticsState {
   userActivated: boolean
   recordingsCompletedCount: number
   notesGeneratedCount: number
+  firstSeenAppVersion: string | null
+  lastSeenAppVersion: string | null
+  pendingUpgradeFromVersion: string | null
+  pendingUpgradeToVersion: string | null
+}
+
+export interface AnalyticsUpgradeTransition {
+  previousVersion: string
+  currentVersion: string
 }
 
 export interface AnalyticsConsentSnapshot {

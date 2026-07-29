@@ -546,6 +546,7 @@ app.whenReady().then(async () => {
 
   const prefsStore = new PrefsStore()
   const analyticsStateStore = new AnalyticsStateStore()
+  analyticsStateStore.observeAppVersion(app.getVersion())
   registerAnalyticsIpc(analyticsStateStore)
   registerSupportIpc()
   const runtimeContext = {
