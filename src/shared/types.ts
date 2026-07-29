@@ -146,6 +146,11 @@ export interface RecordingPaths {
   audio: string
 }
 
+export type OpenSupportEmailResult =
+  | { status: 'opened' }
+  | { status: 'copy-required'; address: string }
+  | { status: 'unavailable' }
+
 /** Renderer reports `<video>` / `<audio>` `error` for main-process logging and Sentry. */
 export interface RecordingMediaPlayerErrorReport {
   meetingId: string

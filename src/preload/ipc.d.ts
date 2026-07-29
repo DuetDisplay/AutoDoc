@@ -14,6 +14,7 @@ import type {
   RecordingTrackingContext,
   RecordingPaths,
   RecordingMediaPlayerErrorReport,
+  OpenSupportEmailResult,
   Transcript,
   TranscriptionStatus,
   MeetingSegments,
@@ -86,6 +87,8 @@ export interface IpcInvokeEvents {
   'analytics:get-consent-snapshot': []
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
+  'support:get-availability': []
+  'support:open-email': []
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:cancel-connect': []
   'calendar:disconnect': [accountId: string]
@@ -216,6 +219,8 @@ export interface IpcInvokeReturns {
   'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
+  'support:get-availability': boolean
+  'support:open-email': OpenSupportEmailResult
   'calendar:connect': CalendarAccount
   'calendar:cancel-connect': void
   'calendar:disconnect': void

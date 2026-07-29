@@ -52,6 +52,7 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
+import { registerSupportIpc } from './ipc/support-ipc'
 import { createTray, updateTrayMenu } from './services/tray'
 import {
   logAutodocEvent,
@@ -546,6 +547,7 @@ app.whenReady().then(async () => {
   const prefsStore = new PrefsStore()
   const analyticsStateStore = new AnalyticsStateStore()
   registerAnalyticsIpc(analyticsStateStore)
+  registerSupportIpc()
   const runtimeContext = {
     platform: process.platform,
     arch: process.arch,
