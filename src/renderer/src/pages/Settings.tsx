@@ -240,7 +240,7 @@ export function Settings() {
       await identifyConsentedInstall()
     }
     await window.electronAPI.invoke('prefs:set-analytics-consent', nextValue)
-    setAnalyticsConsent(nextValue)
+    await setAnalyticsConsent(nextValue)
     if (nextValue) {
       await trackConsentSnapshot()
       await startAnalyticsSession()

@@ -6,10 +6,28 @@ import type {
   AnalyticsLocalSignal,
   AnalyticsSessionEndResult,
   AnalyticsSessionStartResult,
-  AnalyticsState
+  AnalyticsState,
+  AnalyticsUpgradeTransition
 } from '../../shared/types'
 
 interface AnalyticsStateSchema extends AnalyticsState {}
+
+const MAX_APP_VERSION_LENGTH = 64
+const SEMVER_LIKE_PATTERN =
+  /^\d{1,5}\.\d{1,5}\.\d{1,5}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+
+export function normalizeAnalyticsAppVersion(version: unknown): string | null {
+  if (typeof version !== 'string') return null
+  const normalized = version.trim()
+  if (
+    normalized.length === 0 ||
+    normalized.length > MAX_APP_VERSION_LENGTH ||
+    !SEMVER_LIKE_PATTERN.test(normalized)
+  ) {
+    return null
+  }
+  return normalized
+}
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10)
@@ -57,7 +75,11 @@ function createDefaultState(): AnalyticsStateSchema {
     firstNotesGenerated: false,
     userActivated: false,
     recordingsCompletedCount: 0,
-    notesGeneratedCount: 0
+    notesGeneratedCount: 0,
+    firstSeenAppVersion: null,
+    lastSeenAppVersion: null,
+    pendingUpgradeFromVersion: null,
+    pendingUpgradeToVersion: null
   }
 }
 
@@ -72,13 +94,15 @@ export class AnalyticsStateStore {
     })
 
     // Older partial stores should be completed without rotating install IDs.
+    const storedState = this.store.store as Partial<AnalyticsStateSchema>
     for (const [key, value] of Object.entries(defaults) as Array<
       [keyof AnalyticsStateSchema, AnalyticsStateSchema[keyof AnalyticsStateSchema]]
     >) {
-      if (this.store.get(key) === undefined) {
+      if (storedState[key] === undefined) {
         this.store.set(key, value as never)
       }
     }
+    this.normalizeVersionState()
   }
 
   getState(): AnalyticsState {
@@ -186,6 +210,77 @@ export class AnalyticsStateStore {
     }
   }
 
+  observeAppVersion(version: unknown): AnalyticsUpgradeTransition | null {
+    const currentVersion = normalizeAnalyticsAppVersion(version)
+    if (!currentVersion) return null
+
+    const state = this.getState()
+    if (!state.lastSeenAppVersion) {
+      this.store.set({
+        ...state,
+        firstSeenAppVersion: state.firstSeenAppVersion ?? currentVersion,
+        lastSeenAppVersion: currentVersion,
+        pendingUpgradeFromVersion: null,
+        pendingUpgradeToVersion: null
+      })
+      return null
+    }
+
+    if (state.lastSeenAppVersion === currentVersion) {
+      return this.getPendingUpgrade()
+    }
+
+    const transition = {
+      previousVersion: state.lastSeenAppVersion,
+      currentVersion
+    }
+    this.store.set({
+      ...state,
+      firstSeenAppVersion: state.firstSeenAppVersion ?? state.lastSeenAppVersion,
+      lastSeenAppVersion: currentVersion,
+      pendingUpgradeFromVersion: transition.previousVersion,
+      pendingUpgradeToVersion: transition.currentVersion
+    })
+    return transition
+  }
+
+  getPendingUpgrade(): AnalyticsUpgradeTransition | null {
+    const state = this.getState()
+    const previousVersion = normalizeAnalyticsAppVersion(state.pendingUpgradeFromVersion)
+    const currentVersion = normalizeAnalyticsAppVersion(state.pendingUpgradeToVersion)
+    if (
+      !previousVersion ||
+      !currentVersion ||
+      previousVersion === currentVersion ||
+      currentVersion !== state.lastSeenAppVersion
+    ) {
+      return null
+    }
+    return { previousVersion, currentVersion }
+  }
+
+  acknowledgePendingUpgrade(transition: AnalyticsUpgradeTransition): boolean {
+    const pending = this.getPendingUpgrade()
+    const previousVersion = normalizeAnalyticsAppVersion(transition.previousVersion)
+    const currentVersion = normalizeAnalyticsAppVersion(transition.currentVersion)
+    if (
+      !pending ||
+      !previousVersion ||
+      !currentVersion ||
+      pending.previousVersion !== previousVersion ||
+      pending.currentVersion !== currentVersion
+    ) {
+      return false
+    }
+
+    this.store.set({
+      ...this.getState(),
+      pendingUpgradeFromVersion: null,
+      pendingUpgradeToVersion: null
+    })
+    return true
+  }
+
   clear(): void {
     this.store.clear()
     const defaults = createDefaultState()
@@ -199,6 +294,28 @@ export class AnalyticsStateStore {
   private syncSetupCompleted(): void {
     const state = this.getState()
     this.store.set('setupCompleted', state.whisperSetupCompleted && state.ollamaSetupCompleted)
+  }
+
+  private normalizeVersionState(): void {
+    const state = this.store.store as AnalyticsStateSchema
+    const firstSeenAppVersion = normalizeAnalyticsAppVersion(state.firstSeenAppVersion)
+    const lastSeenAppVersion = normalizeAnalyticsAppVersion(state.lastSeenAppVersion)
+    const pendingUpgradeFromVersion = normalizeAnalyticsAppVersion(state.pendingUpgradeFromVersion)
+    const pendingUpgradeToVersion = normalizeAnalyticsAppVersion(state.pendingUpgradeToVersion)
+    const hasValidPendingTransition =
+      Boolean(lastSeenAppVersion) &&
+      Boolean(pendingUpgradeFromVersion) &&
+      Boolean(pendingUpgradeToVersion) &&
+      pendingUpgradeFromVersion !== pendingUpgradeToVersion &&
+      pendingUpgradeToVersion === lastSeenAppVersion
+
+    this.store.set({
+      ...state,
+      firstSeenAppVersion,
+      lastSeenAppVersion,
+      pendingUpgradeFromVersion: hasValidPendingTransition ? pendingUpgradeFromVersion : null,
+      pendingUpgradeToVersion: hasValidPendingTransition ? pendingUpgradeToVersion : null
+    })
   }
 }
 

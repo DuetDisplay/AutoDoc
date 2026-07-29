@@ -32,7 +32,8 @@ import {
   toDurationBucket,
   trackDailyActiveIfNeeded,
   trackEvent,
-  trackFirstEventOnce
+  trackFirstEventOnce,
+  trackPendingAppUpdate
 } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
@@ -282,6 +283,7 @@ export default function App() {
       updateRendererSentryConsent(consent === true)
       if (consent === true) {
         await identifyConsentedInstall()
+        await trackPendingAppUpdate('observed-after-consent')
         recordDiagnosticAction({
           category: 'app',
           action: 'app_opened'
