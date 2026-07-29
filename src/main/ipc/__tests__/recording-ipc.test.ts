@@ -4,7 +4,12 @@ import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { spawn } from 'child_process'
-import { registerRecordingIpc, spawnFfmpegWithStallDetection } from '../recording-ipc'
+import {
+  getRecordingSourceCaptureOptions,
+  registerRecordingIpc,
+  serializeRecordingSource,
+  spawnFfmpegWithStallDetection
+} from '../recording-ipc'
 import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
 import { decryptFileToTemp, encryptJSON, isEncrypted } from '../../services/crypto'
 import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
@@ -101,6 +106,87 @@ describe('recording IPC source handling', () => {
       if (name === 'userData') return '/mock/user-data'
       throw new Error(`unexpected app.getPath(${name})`)
     })
+  })
+
+  it('disables Windows picker thumbnails while requesting app icons', () => {
+    expect(getRecordingSourceCaptureOptions('win32')).toEqual({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: true
+    })
+    expect(getRecordingSourceCaptureOptions('darwin')).toEqual({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 320, height: 180 }
+    })
+  })
+
+  it('serializes a usable Windows app icon without reading the disabled thumbnail', () => {
+    const thumbnail = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => 'data:image/png;base64,thumbnail')
+    }
+    const appIcon = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => 'data:image/png;base64,icon')
+    }
+
+    expect(
+      serializeRecordingSource(
+        {
+          id: 'window:1',
+          name: 'Slack',
+          thumbnail: thumbnail as never,
+          appIcon: appIcon as never
+        },
+        'win32'
+      )
+    ).toEqual({
+      id: 'window:1',
+      name: 'Slack',
+      thumbnailDataUrl: '',
+      iconDataUrl: 'data:image/png;base64,icon'
+    })
+    expect(thumbnail.toDataURL).not.toHaveBeenCalled()
+  })
+
+  it('omits null, empty, and malformed Windows app icons safely', () => {
+    const source = {
+      id: 'screen:0:0',
+      name: 'Entire screen',
+      thumbnail: null
+    }
+
+    expect(serializeRecordingSource({ ...source, appIcon: null }, 'win32')).toEqual({
+      id: 'screen:0:0',
+      name: 'Entire screen',
+      thumbnailDataUrl: ''
+    })
+    expect(
+      serializeRecordingSource(
+        {
+          ...source,
+          appIcon: {
+            isEmpty: () => true,
+            toDataURL: () => {
+              throw new Error('empty image should not be serialized')
+            }
+          } as never
+        },
+        'win32'
+      )
+    ).not.toHaveProperty('iconDataUrl')
+    expect(
+      serializeRecordingSource(
+        {
+          ...source,
+          appIcon: {
+            isEmpty: () => false,
+            toDataURL: () => 'data:image/png;base64,'
+          } as never
+        },
+        'win32'
+      )
+    ).not.toHaveProperty('iconDataUrl')
   })
 
   it('maps capture-source permission failures to a user-facing permission message', async () => {

@@ -116,6 +116,7 @@ export interface RecordingSource {
   id: string
   name: string
   thumbnailDataUrl: string
+  iconDataUrl?: string
 }
 
 export type RecordingIntent = 'meeting' | 'general'

@@ -746,7 +746,7 @@ export class DetectionService {
 
     return await desktopCapturer.getSources({
       types: ['window'],
-      thumbnailSize: { width: 1, height: 1 }
+      thumbnailSize: { width: 0, height: 0 }
     })
   }
 

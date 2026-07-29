@@ -44,6 +44,58 @@ const windowsVideoJobQueue: string[] = []
 const windowsVideoJobInFlight = new Set<string>()
 let windowsVideoJobProcessing = false
 
+interface CapturerSourceForSerialization {
+  id: string
+  name: string
+  thumbnail: Electron.NativeImage | null | undefined
+  appIcon: Electron.NativeImage | null | undefined
+}
+
+export function getRecordingSourceCaptureOptions(
+  platform: NodeJS.Platform = process.platform
+): Electron.SourcesOptions {
+  if (platform === 'win32') {
+    return {
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: true
+    }
+  }
+
+  return {
+    types: ['window', 'screen'],
+    thumbnailSize: { width: 320, height: 180 }
+  }
+}
+
+function getUsableNativeImageDataUrl(image: Electron.NativeImage | null | undefined): string {
+  if (!image) return ''
+  try {
+    if (image.isEmpty()) return ''
+    const dataUrl = image.toDataURL()
+    const payloadStart = dataUrl.indexOf(',')
+    if (!dataUrl.startsWith('data:image/') || payloadStart < 0) return ''
+    return dataUrl.slice(payloadStart + 1).trim() ? dataUrl : ''
+  } catch {
+    return ''
+  }
+}
+
+export function serializeRecordingSource(
+  source: CapturerSourceForSerialization,
+  platform: NodeJS.Platform = process.platform
+): RecordingSource {
+  const thumbnailDataUrl = platform === 'win32' ? '' : getUsableNativeImageDataUrl(source.thumbnail)
+  const iconDataUrl = platform === 'win32' ? getUsableNativeImageDataUrl(source.appIcon) : ''
+
+  return {
+    id: source.id,
+    name: source.name,
+    thumbnailDataUrl,
+    ...(iconDataUrl ? { iconDataUrl } : {})
+  }
+}
+
 interface SegmentTimingEntry {
   type: 'video' | 'mic' | 'system'
   segmentIndex: number
@@ -1412,19 +1464,12 @@ export function registerRecordingIpc(
 
     let sources
     try {
-      sources = await desktopCapturer.getSources({
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 320, height: 180 }
-      })
+      sources = await desktopCapturer.getSources(getRecordingSourceCaptureOptions())
     } catch (err) {
       throw normalizeCaptureSourceError(err)
     }
 
-    return sources.map((source) => ({
-      id: source.id,
-      name: source.name,
-      thumbnailDataUrl: source.thumbnail.toDataURL()
-    }))
+    return sources.map((source) => serializeRecordingSource(source))
   })
 
   function stopActiveRecording(): ReturnType<RecordingService['stopRecording']> {
