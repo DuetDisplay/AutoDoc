@@ -35,7 +35,7 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
   const recording = getIsRecordingRef()
   if (isDarwin) {
     const iconPath = recording ? getRecordingTrayIconPath() : getIdleTrayIconPath()
-    let icon = nativeImage.createFromPath(iconPath)
+    const icon = nativeImage.createFromPath(iconPath)
     if (icon.isEmpty()) {
       console.warn(`Tray icon failed to load from ${iconPath}`)
     }
@@ -48,7 +48,7 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
   }
 
   const iconPath = recording ? getRecordingTrayIconPath() : getIdleTrayIconPath()
-  let icon = nativeImage.createFromPath(iconPath)
+  const icon = nativeImage.createFromPath(iconPath)
   if (icon.isEmpty()) {
     console.warn(`Tray icon failed to load from ${iconPath}`)
   }
@@ -80,7 +80,7 @@ function buildMenu(): Menu {
       label: 'Stop recording notes',
       click: () => {
         stopRecordingFn()
-      },
+      }
     })
     template.push({ type: 'separator' })
   }
@@ -101,7 +101,7 @@ function buildMenu(): Menu {
           if (event.meetingUrl) {
             shell.openExternal(event.meetingUrl)
           }
-        },
+        }
       })
     }
   } else {
@@ -111,14 +111,14 @@ function buildMenu(): Menu {
   template.push({ type: 'separator' })
   template.push({
     label: 'Open AutoDoc',
-    click: showWindowFn,
+    click: showWindowFn
   })
   template.push({ type: 'separator' })
   template.push({
     label: 'Quit AutoDoc',
     click: () => {
       app.quit()
-    },
+    }
   })
 
   return Menu.buildFromTemplate(template)
@@ -137,7 +137,7 @@ export interface TrayRecordingOptions {
 export function createTray(
   getEvents: () => CalendarEvent[],
   showWindow: () => void,
-  recording: TrayRecordingOptions,
+  recording: TrayRecordingOptions
 ): Tray {
   cachedEventsRef = getEvents
   showWindowFn = showWindow

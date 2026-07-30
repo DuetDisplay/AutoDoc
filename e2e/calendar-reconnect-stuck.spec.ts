@@ -64,7 +64,8 @@ async function stubOpenExternal(electronApp: ElectronApplication): Promise<void>
 async function getOpenExternalState(electronApp: ElectronApplication): Promise<OpenExternalState> {
   return await electronApp.evaluate(
     () =>
-      (globalThis as unknown as { __openExternalCalls?: OpenExternalState }).__openExternalCalls ?? {
+      (globalThis as unknown as { __openExternalCalls?: OpenExternalState })
+        .__openExternalCalls ?? {
         count: 0,
         urls: []
       }
@@ -106,7 +107,9 @@ test.describe('Calendar reconnect recovers after the OAuth tab is closed', () =>
       await expect
         .poll(async () => (await getOpenExternalState(electronApp)).count, { timeout: 10_000 })
         .toBe(1)
-      evidence.push('First calendar:connect launched the OAuth redirect and is awaiting a callback.')
+      evidence.push(
+        'First calendar:connect launched the OAuth redirect and is awaiting a callback.'
+      )
 
       // Second attempt from a different surface/provider. With the fix this is NOT
       // rejected with "already in progress" — it supersedes the abandoned attempt

@@ -184,7 +184,8 @@ export function Recordings() {
   }, [])
 
   useEffect(() => {
-    refreshRecordings()
+    Promise.resolve()
+      .then(refreshRecordings)
       .catch((err) => {
         console.error('Failed to list recordings:', err)
       })

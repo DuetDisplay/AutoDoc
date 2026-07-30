@@ -13,5 +13,5 @@ export const useAppStore = create<AppState>((set) => ({
   activePage: '/',
 
   setOllamaConnected: (connected) => set({ ollamaConnected: connected }),
-  setActivePage: (page) => set({ activePage: page }),
+  setActivePage: (page) => set({ activePage: page })
 }))

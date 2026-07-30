@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['src/main/**/*.{test,spec}.{ts,tsx}'],
-    passWithNoTests: true,
-  },
+    passWithNoTests: true
+  }
 })

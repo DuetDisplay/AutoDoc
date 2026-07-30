@@ -17,7 +17,7 @@ function overlap(aStartMs: number, aEndMs: number, bStartSec: number, bEndSec: n
 export function alignSpeakers(
   transcripts: Transcript[],
   diarization: DiarizationResult | null,
-  systemSegments: TimeSegment[] | null,
+  systemSegments: TimeSegment[] | null
 ): Transcript[] {
   // Two-stream only (no ML diarization): label by system audio activity
   // System active = remote speaker, system silent = "me"

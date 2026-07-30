@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
 import type { OllamaSetupStatus } from '../../../../shared/types'
 import { OLLAMA_NOTES_MODEL_LABEL, OLLAMA_RUNTIME_LABEL } from '../../../../shared/constants'
 import { getOllamaSetupLabel } from '../../services/setup-status-labels'
@@ -9,40 +9,45 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showSkip, setShowSkip] = useState(false)
-  const setupStartedAt = useRef(performance.now())
+  const setupStartedAt = useRef<number | null>(null)
   const lastFailureKey = useRef<string | null>(null)
 
-  const markReady = () => {
+  const markReady = useCallback(() => {
     setPhase('ready')
     setPercent(100)
     lastFailureKey.current = null
+    const startedAt = setupStartedAt.current ?? performance.now()
     void trackFirstEventOnce('ollama_setup_completed', 'setup_component_completed', {
       component: 'ollama',
-      duration_bucket: toDurationBucket((performance.now() - setupStartedAt.current) / 1000)
+      duration_bucket: toDurationBucket((performance.now() - startedAt) / 1000)
     })
-  }
+  }, [])
 
-  const recordStatus = (status: OllamaSetupStatus) => {
-    setPhase(status.phase)
-    setPercent(status.percent)
-    if (status.phase === 'ready') markReady()
-    if (status.phase === 'error') {
-      setError(status.error ?? 'Unknown error')
-      const failedStep = status.failedStep ?? 'unknown'
-      const failureKey = `${failedStep}:${status.error ?? ''}`
-      if (lastFailureKey.current !== failureKey) {
-        lastFailureKey.current = failureKey
-        trackEvent('setup_component_failed', {
-          component: 'ollama',
-          phase: failedStep,
-          failure_code: failedStep,
-          attempt_number: 1
-        })
+  const recordStatus = useCallback(
+    (status: OllamaSetupStatus) => {
+      setPhase(status.phase)
+      setPercent(status.percent)
+      if (status.phase === 'ready') markReady()
+      if (status.phase === 'error') {
+        setError(status.error ?? 'Unknown error')
+        const failedStep = status.failedStep ?? 'unknown'
+        const failureKey = `${failedStep}:${status.error ?? ''}`
+        if (lastFailureKey.current !== failureKey) {
+          lastFailureKey.current = failureKey
+          trackEvent('setup_component_failed', {
+            component: 'ollama',
+            phase: failedStep,
+            failure_code: failedStep,
+            attempt_number: 1
+          })
+        }
       }
-    }
-  }
+    },
+    [markReady]
+  )
 
   useEffect(() => {
+    setupStartedAt.current ??= performance.now()
     trackEvent('setup_component_started', { component: 'ollama', phase: 'starting' })
     window.electronAPI.invoke('ollama:get-setup-status').then(async (status) => {
       recordStatus(status)
@@ -58,7 +63,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
     return () => {
       unsub()
     }
-  }, [onNext])
+  }, [recordStatus])
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSkip(true), 1500)

@@ -3,11 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Search } from './Search'
-import {
-  createSearchResult,
-  installMockElectronApi,
-  resetRendererStores,
-} from '../test/fixtures'
+import { createSearchResult, installMockElectronApi, resetRendererStores } from '../test/fixtures'
 
 function MeetingRouteStub() {
   const { id } = useParams()
@@ -22,7 +18,7 @@ describe('Search', () => {
 
   it('shows transcript and note matches, then navigates into meeting detail', async () => {
     installMockElectronApi({
-      'search:query': () => [createSearchResult()],
+      'search:query': () => [createSearchResult()]
     })
 
     render(
@@ -38,12 +34,12 @@ describe('Search', () => {
           />
           <Route path="/recordings/:id" element={<MeetingRouteStub />} />
         </Routes>
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     const user = userEvent.setup()
     fireEvent.change(screen.getByPlaceholderText(/search across all meetings/i), {
-      target: { value: 'transcript highlights' },
+      target: { value: 'transcript highlights' }
     })
 
     await act(async () => {
@@ -53,13 +49,15 @@ describe('Search', () => {
     expect(await screen.findByText('Roadmap Sync')).toBeInTheDocument()
     expect(screen.getByText(/2 matches across 1 meeting/i)).toBeInTheDocument()
     expect(
-      screen.getByText((_, element) =>
-        element?.textContent === 'We should ship the transcript highlights this week.',
-      ),
+      screen.getByText(
+        (_, element) =>
+          element?.textContent === 'We should ship the transcript highlights this week.'
+      )
     ).toBeInTheDocument()
-    const noteMatch = screen.getByText((_, element) =>
-      element?.textContent ===
-      'Ship transcript highlights: Launch transcript highlights to the beta cohort on Friday.',
+    const noteMatch = screen.getByText(
+      (_, element) =>
+        element?.textContent ===
+        'Ship transcript highlights: Launch transcript highlights to the beta cohort on Friday.'
     )
     expect(noteMatch).toBeInTheDocument()
 
@@ -72,17 +70,17 @@ describe('Search', () => {
 
   it('shows an empty-state result message when no processed content matches', async () => {
     installMockElectronApi({
-      'search:query': () => [],
+      'search:query': () => []
     })
 
     render(
       <MemoryRouter initialEntries={['/search']}>
         <Search />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     fireEvent.change(screen.getByPlaceholderText(/search across all meetings/i), {
-      target: { value: 'nonexistent topic' },
+      target: { value: 'nonexistent topic' }
     })
 
     await act(async () => {

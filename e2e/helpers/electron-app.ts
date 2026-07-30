@@ -88,7 +88,9 @@ function killProcessesForUserDataDir(userDataDir: string): void {
       .filter(Boolean)) {
       terminatePid(pid)
     }
-  } catch {}
+  } catch {
+    // Best-effort cleanup for already-terminated test processes.
+  }
 }
 
 export async function launchIsolatedE2EApp(scenario?: E2EScenario) {

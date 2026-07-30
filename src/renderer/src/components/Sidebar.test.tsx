@@ -17,7 +17,7 @@ beforeEach(() => {
       if (channel === 'support:open-email') return Promise.resolve({ status: 'opened' })
       return Promise.resolve(undefined)
     }),
-    on: vi.fn(() => () => {}),
+    on: vi.fn(() => () => {})
   } as any
 })
 
@@ -27,7 +27,7 @@ async function renderSidebar() {
     result = render(
       <MemoryRouter>
         <Sidebar />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
   })
   return result!
@@ -176,7 +176,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -194,7 +194,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -212,7 +212,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -233,7 +233,7 @@ describe('Sidebar', () => {
         }
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -244,7 +244,7 @@ describe('Sidebar', () => {
     const api = createElectronApiMock({
       'ollama:check-status': true,
       'ollama:get-setup-status': defaultSetupStatus,
-      'whisper:get-setup-status': { phase: 'downloading-speaker-model', percent: 75 },
+      'whisper:get-setup-status': { phase: 'downloading-speaker-model', percent: 75 }
     })
     window.electronAPI = api as any
 
@@ -267,7 +267,7 @@ describe('Sidebar', () => {
     try {
       const whisperStatuses = [
         { phase: 'checking', percent: 0 },
-        { phase: 'ready', percent: 100 },
+        { phase: 'ready', percent: 100 }
       ]
 
       window.electronAPI = {
@@ -280,7 +280,7 @@ describe('Sidebar', () => {
           }
           return Promise.resolve(undefined)
         }),
-        on: vi.fn(() => () => {}),
+        on: vi.fn(() => () => {})
       } as any
 
       await renderSidebar()

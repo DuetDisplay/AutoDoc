@@ -16,7 +16,7 @@ const mockEvent: CalendarEvent = {
   attendees: ['alice@example.com', 'bob@example.com'],
   meetingUrl: 'https://meet.google.com/abc-defg-hij',
   autoRecord: 'off',
-  syncedAt: Date.now(),
+  syncedAt: Date.now()
 }
 
 describe('EventCard', () => {

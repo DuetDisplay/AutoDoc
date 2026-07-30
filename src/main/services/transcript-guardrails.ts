@@ -20,7 +20,7 @@ const LOW_SIGNAL_PATTERNS = [
   /^\s*thank you\.?\s*$/i,
   /^\s*thanks\.?\s*$/i,
   /^\s*thanks everyone\.?\s*$/i,
-  /^\s*thanks everybody\.?\s*$/i,
+  /^\s*thanks everybody\.?\s*$/i
 ]
 
 const MIN_MEANINGFUL_SPEECH_MS = 400
@@ -43,16 +43,19 @@ export function getTranscriptContentStats(transcripts: Transcript[]): Transcript
     nonEmptySegments: nonEmpty.length,
     meaningfulSegments: meaningful.length,
     totalAlphaWords: meaningful.reduce((sum, text) => sum + countAlphaWords(text), 0),
-    meaningfulCharCount: meaningful.reduce((sum, text) => sum + text.length, 0),
+    meaningfulCharCount: meaningful.reduce((sum, text) => sum + text.length, 0)
   }
 }
 
 export function summarizeSpeechSignal(
   activeSegments: Array<{ start: number; end: number }>,
-  audioDurationSec?: number,
+  audioDurationSec?: number
 ): SpeechSignalSummary {
   const totalSpeechMs = Math.round(
-    activeSegments.reduce((sum, segment) => sum + Math.max(0, segment.end - segment.start) * 1000, 0),
+    activeSegments.reduce(
+      (sum, segment) => sum + Math.max(0, segment.end - segment.start) * 1000,
+      0
+    )
   )
   const durationMs = audioDurationSec ? Math.max(1, Math.round(audioDurationSec * 1000)) : 0
   const speechRatio = durationMs > 0 ? totalSpeechMs / durationMs : 0
@@ -60,8 +63,11 @@ export function summarizeSpeechSignal(
   return {
     totalSpeechMs,
     speechRatio,
-    likelySilent: totalSpeechMs < MIN_MEANINGFUL_SPEECH_MS && (durationMs === 0 || speechRatio < LOW_SIGNAL_RATIO),
-    lowSignal: totalSpeechMs < LOW_SIGNAL_SPEECH_MS && (durationMs === 0 || speechRatio < LOW_SIGNAL_RATIO),
+    likelySilent:
+      totalSpeechMs < MIN_MEANINGFUL_SPEECH_MS &&
+      (durationMs === 0 || speechRatio < LOW_SIGNAL_RATIO),
+    lowSignal:
+      totalSpeechMs < LOW_SIGNAL_SPEECH_MS && (durationMs === 0 || speechRatio < LOW_SIGNAL_RATIO)
   }
 }
 
@@ -73,7 +79,7 @@ export function isKnownLowSignalPhrase(text: string): boolean {
 
 export function filterLowSignalHallucinations(
   transcripts: Transcript[],
-  signal: SpeechSignalSummary,
+  signal: SpeechSignalSummary
 ): Transcript[] {
   if (transcripts.length === 0) return transcripts
 
@@ -97,7 +103,7 @@ export function hasUsableTranscriptContent(transcripts: Transcript[]): boolean {
 export function shouldTreatEmptySegmentationAsFailure(
   transcripts: Transcript[],
   durationMinutes?: number,
-  renderedTranscriptLength = 0,
+  renderedTranscriptLength = 0
 ): boolean {
   const stats = getTranscriptContentStats(transcripts)
   const duration = durationMinutes ?? 0

@@ -404,9 +404,7 @@ describe('Settings', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/Noticeably faster/i)).not.toBeInTheDocument()
     expect(
-      screen.getByText(
-        /On GPU-accelerated transcription this setting has little effect\./
-      )
+      screen.getByText(/On GPU-accelerated transcription this setting has little effect\./)
     ).toBeInTheDocument()
   })
 

@@ -3,21 +3,34 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock electron modules before importing
 vi.mock('electron', () => ({
   safeStorage: {
-    isEncryptionAvailable: () => false,
-  },
+    isEncryptionAvailable: () => false
+  }
 }))
 
 const mockStore = new Map<string, unknown>()
 vi.mock('electron-store', () => ({
   default: class {
-    get(key: string, fallback?: unknown) { return mockStore.get(key) ?? fallback }
-    set(key: string, value: unknown) { mockStore.set(key, value) }
-    delete(key: string) { mockStore.delete(key) }
-    has(key: string) { return mockStore.has(key) }
-  },
+    get(key: string, fallback?: unknown) {
+      return mockStore.get(key) ?? fallback
+    }
+    set(key: string, value: unknown) {
+      mockStore.set(key, value)
+    }
+    delete(key: string) {
+      mockStore.delete(key)
+    }
+    has(key: string) {
+      return mockStore.has(key)
+    }
+  }
 }))
 
-import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, migrateLegacyTokens } from '../token-store'
+import {
+  saveTokensForAccount,
+  loadTokensForAccount,
+  clearTokensForAccount,
+  migrateLegacyTokens
+} from '../token-store'
 
 beforeEach(() => {
   mockStore.clear()

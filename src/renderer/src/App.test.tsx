@@ -231,7 +231,9 @@ describe('App', () => {
     const bannerTitle = await screen.findByText("You're up to date")
     expect(screen.getByText('AutoDoc is running the latest available version.')).toBeInTheDocument()
     expect(
-      Boolean(bannerTitle.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
+      Boolean(
+        bannerTitle.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+      )
     ).toBe(true)
 
     await userEvent.click(screen.getByRole('button', { name: /dismiss up to date message/i }))

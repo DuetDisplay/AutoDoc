@@ -10,7 +10,7 @@ const MARKERS = {
   ollamaBlob: ['ollama-data', 'blobs', 'sha256-test-model'],
   python: ['python-env', 'bin', 'python3'],
   recording: ['recordings', 'meeting-1', 'audio.webm'],
-  log: ['logs', 'autodoc.log'],
+  log: ['logs', 'autodoc.log']
 } as const
 
 const RESET_CLEANUP_TIMEOUT_MS = process.platform === 'win32' ? 15000 : 5000
@@ -22,7 +22,7 @@ async function seedManagedStorage(userDataDir: string): Promise<void> {
     path.join(userDataDir, ...MARKERS.ollamaBlob),
     path.join(userDataDir, ...MARKERS.python),
     path.join(userDataDir, ...MARKERS.recording),
-    path.join(userDataDir, ...MARKERS.log),
+    path.join(userDataDir, ...MARKERS.log)
   ]
 
   for (const filePath of files) {
@@ -54,23 +54,31 @@ async function confirmResetAndWaitForClose(page: Page): Promise<void> {
 }
 
 async function expectResetCleanup(userDataDir: string): Promise<void> {
-  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.whisperModel)), {
-    timeout: RESET_CLEANUP_TIMEOUT_MS,
-  }).toBe(false)
-  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.ollamaBlob)), {
-    timeout: RESET_CLEANUP_TIMEOUT_MS,
-  }).toBe(false)
-  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.recording)), {
-    timeout: RESET_CLEANUP_TIMEOUT_MS,
-  }).toBe(false)
-  await expect.poll(() => existsSync(path.join(userDataDir, ...MARKERS.log)), {
-    timeout: RESET_CLEANUP_TIMEOUT_MS,
-  }).toBe(false)
+  await expect
+    .poll(() => existsSync(path.join(userDataDir, ...MARKERS.whisperModel)), {
+      timeout: RESET_CLEANUP_TIMEOUT_MS
+    })
+    .toBe(false)
+  await expect
+    .poll(() => existsSync(path.join(userDataDir, ...MARKERS.ollamaBlob)), {
+      timeout: RESET_CLEANUP_TIMEOUT_MS
+    })
+    .toBe(false)
+  await expect
+    .poll(() => existsSync(path.join(userDataDir, ...MARKERS.recording)), {
+      timeout: RESET_CLEANUP_TIMEOUT_MS
+    })
+    .toBe(false)
+  await expect
+    .poll(() => existsSync(path.join(userDataDir, ...MARKERS.log)), {
+      timeout: RESET_CLEANUP_TIMEOUT_MS
+    })
+    .toBe(false)
 }
 
 test('macOS settings cleanup removes managed downloads and keeps recordings', async () => {
   const app = await launchIsolatedE2EApp({
-    platform: 'darwin',
+    platform: 'darwin'
   })
 
   try {
@@ -78,7 +86,9 @@ test('macOS settings cleanup removes managed downloads and keeps recordings', as
     const page = await app.electronApp.firstWindow()
 
     await openSettings(page)
-    await expect(page.getByText(/deleting autodoc from applications does not remove local data on macos/i)).toBeVisible()
+    await expect(
+      page.getByText(/deleting autodoc from applications does not remove local data on macos/i)
+    ).toBeVisible()
     await expect(page.getByText('Downloaded AI components', { exact: true })).toBeVisible()
 
     const acceptDialogPromise = acceptNextDialog(page)
@@ -99,7 +109,7 @@ test('macOS settings cleanup removes managed downloads and keeps recordings', as
 
 test('Windows settings cleanup shows Windows guidance and removes managed downloads', async () => {
   const app = await launchIsolatedE2EApp({
-    platform: 'win32',
+    platform: 'win32'
   })
 
   try {
@@ -107,7 +117,9 @@ test('Windows settings cleanup shows Windows guidance and removes managed downlo
     const page = await app.electronApp.firstWindow()
 
     await openSettings(page)
-    await expect(page.getByText(/windows uninstall can optionally remove autodoc local data/i)).toBeVisible()
+    await expect(
+      page.getByText(/windows uninstall can optionally remove autodoc local data/i)
+    ).toBeVisible()
 
     const acceptDialogPromise = acceptNextDialog(page)
     await page.getByRole('button', { name: /remove downloaded ai components/i }).click()
@@ -125,7 +137,7 @@ test('Windows settings cleanup shows Windows guidance and removes managed downlo
 
 test('macOS settings reset deletes all local AutoDoc data from the temp smoke directory', async () => {
   const app = await launchIsolatedE2EApp({
-    platform: 'darwin',
+    platform: 'darwin'
   })
 
   try {
@@ -142,7 +154,7 @@ test('macOS settings reset deletes all local AutoDoc data from the temp smoke di
 
 test('Windows settings reset deletes all local AutoDoc data from the temp smoke directory', async () => {
   const app = await launchIsolatedE2EApp({
-    platform: 'win32',
+    platform: 'win32'
   })
 
   try {

@@ -183,7 +183,9 @@ describe('DiarizationService bootstrap resolution', () => {
       .mockResolvedValue('/mock/model/community-1')
 
     vi.spyOn(service, 'isReady').mockResolvedValue(false)
-    vi.spyOn(service as any, 'resolveExistingModelPath').mockResolvedValue('/mock/model/community-1')
+    vi.spyOn(service as any, 'resolveExistingModelPath').mockResolvedValue(
+      '/mock/model/community-1'
+    )
     vi.spyOn(service as any, 'isPythonEnvUsable').mockResolvedValue(true)
 
     await expect(service.ensureReady()).resolves.toBeUndefined()

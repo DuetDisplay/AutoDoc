@@ -35,12 +35,13 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
   const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(false)
-  const startedAt = useRef(performance.now())
+  const startedAt = useRef<number | null>(null)
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
 
   useEffect(() => {
+    startedAt.current = performance.now()
     void recordAnalyticsLocalSignal('onboarding_started')
     trackEvent('onboarding_started')
 
@@ -137,8 +138,9 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleFinish = async () => {
+    const onboardingStartedAt = startedAt.current ?? performance.now()
     await trackFirstEventOnce('onboarding_completed', 'onboarding_completed', {
-      duration_bucket: toDurationBucket((performance.now() - startedAt.current) / 1000)
+      duration_bucket: toDurationBucket((performance.now() - onboardingStartedAt) / 1000)
     })
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
     onComplete()

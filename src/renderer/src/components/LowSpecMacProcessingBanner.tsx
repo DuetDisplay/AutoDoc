@@ -23,7 +23,7 @@ export function LowSpecMacProcessingBanner(): ReactElement | null {
   }, [])
 
   useEffect(() => {
-    void refreshVisibility()
+    void Promise.resolve().then(refreshVisibility)
 
     const unsubSetup = window.electronAPI.on('whisper:setup-progress', () => {
       void refreshVisibility()

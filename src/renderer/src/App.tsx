@@ -152,7 +152,9 @@ function UpdateReadyPrompt() {
           </svg>
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-semibold leading-5 text-sage-dark">You're up to date</p>
+          <p className="text-[12px] font-semibold leading-5 text-sage-dark">
+            You&apos;re up to date
+          </p>
           <p className="text-[11px] leading-5 text-ink-muted">
             AutoDoc is running the latest available version.
           </p>

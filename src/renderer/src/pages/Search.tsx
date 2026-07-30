@@ -11,30 +11,33 @@ export function Search() {
   const navigate = useNavigate()
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults([], false)
-      return
-    }
-    setSearching(true)
-    try {
-      const res = await window.electronAPI.invoke('search:query', q)
-      setResults(res, true)
-      recordDiagnosticAction({
-        category: 'search',
-        action: 'search_performed',
-        details: {
-          queryLength: q.trim().length,
-          resultCount: res.length,
-        },
-      })
-      trackEvent('search_performed', { result_count_bucket: toCountBucket(res.length) })
-    } catch (err) {
-      console.error('Search failed:', err)
-    } finally {
-      setSearching(false)
-    }
-  }, [setResults])
+  const doSearch = useCallback(
+    async (q: string) => {
+      if (!q.trim()) {
+        setResults([], false)
+        return
+      }
+      setSearching(true)
+      try {
+        const res = await window.electronAPI.invoke('search:query', q)
+        setResults(res, true)
+        recordDiagnosticAction({
+          category: 'search',
+          action: 'search_performed',
+          details: {
+            queryLength: q.trim().length,
+            resultCount: res.length
+          }
+        })
+        trackEvent('search_performed', { result_count_bucket: toCountBucket(res.length) })
+      } catch (err) {
+        console.error('Search failed:', err)
+      } finally {
+        setSearching(false)
+      }
+    },
+    [setResults]
+  )
 
   useEffect(() => {
     clearTimeout(debounceRef.current)
@@ -59,7 +62,7 @@ export function Search() {
         </mark>
       ) : (
         part
-      ),
+      )
     )
   }
 
@@ -94,8 +97,8 @@ export function Search() {
         </div>
         {searched && (
           <p className="text-[11px] text-ink-faint mt-2">
-            {totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across{' '}
-            {results.length} {results.length === 1 ? 'meeting' : 'meetings'}
+            {totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {results.length}{' '}
+            {results.length === 1 ? 'meeting' : 'meetings'}
           </p>
         )}
       </div>
@@ -109,9 +112,7 @@ export function Search() {
 
         {!searching && searched && results.length === 0 && (
           <div className="flex items-center justify-center py-12">
-            <p className="text-ink-muted text-[13px]">
-              No results found for &ldquo;{query}&rdquo;
-            </p>
+            <p className="text-ink-muted text-[13px]">No results found for &ldquo;{query}&rdquo;</p>
           </div>
         )}
 
@@ -130,9 +131,7 @@ export function Search() {
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
               />
             </svg>
-            <p className="text-ink-faint text-[13px]">
-              Search transcripts and meeting notes
-            </p>
+            <p className="text-ink-faint text-[13px]">Search transcripts and meeting notes</p>
           </div>
         )}
 
@@ -147,18 +146,15 @@ export function Search() {
                   className="px-4 py-3 border-b border-border/50 cursor-pointer hover:bg-bg-accent/40 transition-colors"
                   onClick={() => navigate(`/recordings/${result.meetingId}`)}
                 >
-                  <div className="text-[13px] font-semibold text-ink">
-                    {result.title}
-                  </div>
+                  <div className="text-[13px] font-semibold text-ink">{result.title}</div>
                   <div className="text-[11px] text-ink-faint mt-0.5">
                     {new Date(result.date).toLocaleDateString('en-US', {
                       weekday: 'short',
                       month: 'short',
-                      day: 'numeric',
+                      day: 'numeric'
                     })}
                     {' · '}
-                    {result.matches.length}{' '}
-                    {result.matches.length === 1 ? 'match' : 'matches'}
+                    {result.matches.length} {result.matches.length === 1 ? 'match' : 'matches'}
                   </div>
                 </div>
                 <div className="px-4 py-2 flex flex-col">
@@ -169,7 +165,11 @@ export function Search() {
                       <div
                         key={i}
                         className="flex items-start gap-2 py-1.5 px-1 -mx-1 rounded-md cursor-pointer hover:bg-bg-accent/60 transition-colors"
-                        onClick={() => navigate(`/recordings/${result.meetingId}?tab=${tab}&highlight=${highlight}`)}
+                        onClick={() =>
+                          navigate(
+                            `/recordings/${result.meetingId}?tab=${tab}&highlight=${highlight}`
+                          )
+                        }
                       >
                         <span
                           className={`shrink-0 mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${
@@ -179,7 +179,7 @@ export function Search() {
                           }`}
                         >
                           {match.type === 'segment'
-                            ? match.category?.replace(/_/g, ' ') ?? 'note'
+                            ? (match.category?.replace(/_/g, ' ') ?? 'note')
                             : 'transcript'}
                         </span>
                         <span className="text-[12px] text-ink-muted leading-relaxed">

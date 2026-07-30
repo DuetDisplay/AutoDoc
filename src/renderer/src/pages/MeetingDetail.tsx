@@ -58,6 +58,8 @@ const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
   status_update: 'statusUpdates'
 }
 
+const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
+
 function EditableText({
   value,
   onSave,
@@ -183,8 +185,6 @@ export function MeetingDetail() {
   const lastProgressLogAtRef = useRef(0)
   const lastTimeUpdateLogAtRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
-
-  const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
   useEffect(() => {
     activeTabRef.current = activeTab

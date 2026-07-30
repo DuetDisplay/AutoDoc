@@ -4,7 +4,12 @@ import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import crypto from 'crypto'
 import { URL } from 'url'
-import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasTokensForAccount } from './token-store'
+import {
+  saveTokensForAccount,
+  loadTokensForAccount,
+  clearTokensForAccount,
+  hasTokensForAccount
+} from './token-store'
 import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
@@ -24,7 +29,9 @@ function extractEmailFromIdToken(idToken: string | undefined): string | null {
 
     const normalizedPayload = payload.replace(/-/g, '+').replace(/_/g, '/')
     const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=')
-    const parsed = JSON.parse(Buffer.from(paddedPayload, 'base64').toString('utf-8')) as { email?: string }
+    const parsed = JSON.parse(Buffer.from(paddedPayload, 'base64').toString('utf-8')) as {
+      email?: string
+    }
     return parsed.email?.trim() || null
   } catch {
     return null
@@ -82,13 +89,14 @@ export class GoogleCalendarProvider implements CalendarProvider {
     // userinfo) when the token doesn't include it, so a successful sign-in surfaces
     // to the UI without waiting on an extra round-trip.
     const idToken = (result.tokens as { id_token?: string }).id_token
-    const email = extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
+    const email =
+      extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
 
     return {
       id: accountId,
       provider: 'google',
       email,
-      connectedAt: Date.now(),
+      connectedAt: Date.now()
     }
   }
 
@@ -150,7 +158,9 @@ export class GoogleCalendarProvider implements CalendarProvider {
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>')
+        res.end(
+          '<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>'
+        )
         resolveAndClose({ tokens })
       })
 
@@ -217,14 +227,21 @@ export class GoogleCalendarProvider implements CalendarProvider {
   async fetchRecentEvents(accountId: string, daysBack = 7): Promise<CalendarEvent[]> {
     const since = new Date()
     since.setDate(since.getDate() - daysBack)
-    return this.fetchEvents(accountId, { timeMin: since.toISOString(), timeMax: new Date().toISOString(), maxResults: 50 })
+    return this.fetchEvents(accountId, {
+      timeMin: since.toISOString(),
+      timeMax: new Date().toISOString(),
+      maxResults: 50
+    })
   }
 
   async refreshTokens(accountId: string): Promise<void> {
     await this.refreshIfNeeded(accountId)
   }
 
-  private async fetchEvents(accountId: string, opts: { timeMin: string; timeMax?: string; maxResults: number }): Promise<CalendarEvent[]> {
+  private async fetchEvents(
+    accountId: string,
+    opts: { timeMin: string; timeMax?: string; maxResults: number }
+  ): Promise<CalendarEvent[]> {
     await this.refreshIfNeeded(accountId)
 
     const client = this.getClient(accountId)
@@ -236,7 +253,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       ...(opts.timeMax ? { timeMax: opts.timeMax } : {}),
       maxResults: opts.maxResults,
       singleEvents: true,
-      orderBy: 'startTime',
+      orderBy: 'startTime'
     })
 
     const items = response.data.items ?? []
@@ -254,7 +271,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       attendees: (event.attendees ?? []).map((a) => a.email ?? '').filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
       autoRecord: 'off' as const,
-      syncedAt: Date.now(),
+      syncedAt: Date.now()
     }))
   }
 
@@ -276,10 +293,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
     const tokens = client.credentials as typeof client.credentials & { id_token?: string }
     try {
       const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
+        headers: { Authorization: `Bearer ${tokens.access_token}` }
       })
       if (res.ok) {
-        const data = await res.json() as { email?: string }
+        const data = (await res.json()) as { email?: string }
         if (data.email) return data.email
       }
     } catch {
@@ -300,16 +317,19 @@ export class GoogleCalendarProvider implements CalendarProvider {
       const response = await fetch(`${authWorkerUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: creds.refresh_token }),
+        body: JSON.stringify({ refresh_token: creds.refresh_token })
       })
 
       if (!response.ok) {
         const responseText = await response.text()
         const error = new Error(`Google token refresh failed: ${response.status} ${responseText}`)
         if (isTransientCalendarError(error)) {
-          throw new CalendarTransientError('Google token refresh failed due to transient network conditions', {
-            cause: error
-          })
+          throw new CalendarTransientError(
+            'Google token refresh failed due to transient network conditions',
+            {
+              cause: error
+            }
+          )
         }
         console.error('Google token refresh failed:', responseText)
         logAutodocFailure({
@@ -318,26 +338,29 @@ export class GoogleCalendarProvider implements CalendarProvider {
           error,
           context: {
             provider: 'google',
-            status: response.status,
-          },
+            status: response.status
+          }
         })
         return
       }
 
-      const newTokens = await response.json() as { access_token: string; expires_in: number }
+      const newTokens = (await response.json()) as { access_token: string; expires_in: number }
       const updated = {
         ...creds,
         access_token: newTokens.access_token,
-        expiry_date: Date.now() + newTokens.expires_in * 1000,
+        expiry_date: Date.now() + newTokens.expires_in * 1000
       }
 
       client.setCredentials(updated)
       saveTokensForAccount(accountId, updated)
     } catch (err) {
       if (isTransientCalendarError(err)) {
-        throw new CalendarTransientError('Google token refresh failed due to transient network conditions', {
-          cause: err
-        })
+        throw new CalendarTransientError(
+          'Google token refresh failed due to transient network conditions',
+          {
+            cause: err
+          }
+        )
       }
       console.error('Google token refresh error:', err)
       logAutodocFailure({
@@ -345,13 +368,20 @@ export class GoogleCalendarProvider implements CalendarProvider {
         message: 'Google token refresh errored',
         error: err,
         context: {
-          provider: 'google',
-        },
+          provider: 'google'
+        }
       })
     }
   }
 
-  private extractMeetingUrl(event: { hangoutLink?: string | null; conferenceData?: { entryPoints?: { entryPointType?: string | null; uri?: string | null }[] } | null; location?: string | null; description?: string | null }): string | null {
+  private extractMeetingUrl(event: {
+    hangoutLink?: string | null
+    conferenceData?: {
+      entryPoints?: { entryPointType?: string | null; uri?: string | null }[]
+    } | null
+    location?: string | null
+    description?: string | null
+  }): string | null {
     if (event.hangoutLink) return event.hangoutLink
 
     const entryPoints = event.conferenceData?.entryPoints ?? []

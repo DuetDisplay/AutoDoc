@@ -27,13 +27,8 @@ export function SpeakerLegend({ speakers, speakerIds, onRename }: SpeakerLegendP
         const color = getSpeakerColor(id, speakerIds)
         return (
           <div key={id} className="relative flex items-center gap-1.5">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: color }}
-            />
-            <span className="text-[12px] text-ink font-medium">
-              {info?.label ?? id}
-            </span>
+            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+            <span className="text-[12px] text-ink font-medium">{info?.label ?? id}</span>
             {id !== 'me' && (
               <button
                 onClick={() => setRenamingId(renamingId === id ? null : id)}

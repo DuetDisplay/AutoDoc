@@ -15,9 +15,9 @@ describe('getMicrophoneCaptureFailureMessage', () => {
     expect(
       getMicrophoneCaptureFailureMessage({ name: 'NotAllowedError', message: '' }, true)
     ).toMatch(/blocked/i)
-    expect(getMicrophoneCaptureFailureMessage({ name: 'NotFoundError', message: '' }, true)).toMatch(
-      /no microphone was detected/i
-    )
+    expect(
+      getMicrophoneCaptureFailureMessage({ name: 'NotFoundError', message: '' }, true)
+    ).toMatch(/no microphone was detected/i)
     expect(
       getMicrophoneCaptureFailureMessage({ name: 'NotReadableError', message: '' }, true)
     ).toMatch(/unavailable or in use/i)

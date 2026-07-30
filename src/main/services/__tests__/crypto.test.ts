@@ -8,7 +8,7 @@ import * as electron from 'electron'
 
 let mockPaths = {
   appData: '',
-  userData: '',
+  userData: ''
 }
 let mockIsPackaged = true
 
@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
       if (name === 'appData') return mockPaths.appData
       if (name === 'userData') return mockPaths.userData
       throw new Error(`unexpected app.getPath(${name})`)
-    }),
+    })
   },
   safeStorage: {
     isEncryptionAvailable: vi.fn(() => true),
@@ -30,8 +30,8 @@ vi.mock('electron', () => ({
       const raw = b.toString()
       if (!raw.startsWith('enc:')) throw new Error('decrypt failed')
       return raw.replace('enc:', '')
-    }),
-  },
+    })
+  }
 }))
 
 async function freshImport() {
@@ -53,7 +53,9 @@ describe('crypto module', () => {
     await fsp.mkdir(appDataDir, { recursive: true })
     await fsp.mkdir(userDataDir, { recursive: true })
     vi.mocked(electron.safeStorage.isEncryptionAvailable).mockReturnValue(true)
-    vi.mocked(electron.safeStorage.encryptString).mockImplementation((s: string) => Buffer.from(`enc:${s}`))
+    vi.mocked(electron.safeStorage.encryptString).mockImplementation((s: string) =>
+      Buffer.from(`enc:${s}`)
+    )
     vi.mocked(electron.safeStorage.decryptString).mockImplementation((b: Buffer) => {
       const raw = b.toString()
       if (!raw.startsWith('enc:')) throw new Error('decrypt failed')
@@ -99,16 +101,22 @@ describe('crypto module', () => {
     it('recovers a key from the legacy userData store and re-persists it to the stable store', async () => {
       const legacyStorePath = path.join(userDataDir, 'autodoc-encryption.json')
       const expectedKey = crypto.randomBytes(32)
-      await fsp.writeFile(legacyStorePath, JSON.stringify({
-        encryption_key: `enc:${expectedKey.toString('base64')}`,
-        encryption_key_version: 1,
-      }))
+      await fsp.writeFile(
+        legacyStorePath,
+        JSON.stringify({
+          encryption_key: `enc:${expectedKey.toString('base64')}`,
+          encryption_key_version: 1
+        })
+      )
 
       const { getKey } = await freshImport()
       const recovered = getKey()
 
       expect(recovered.equals(expectedKey)).toBe(true)
-      const stableStoreRaw = await fsp.readFile(path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'), 'utf-8')
+      const stableStoreRaw = await fsp.readFile(
+        path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'),
+        'utf-8'
+      )
       expect(stableStoreRaw).toContain('enc:')
     })
 
@@ -141,19 +149,29 @@ describe('crypto module', () => {
         path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'),
         JSON.stringify({
           encryption_key: 'enc:not-the-dev-key',
-          encryption_key_version: 1,
-        }),
+          encryption_key_version: 1
+        })
       )
 
       const { getKey } = await freshImport()
       const devKey = getKey()
 
-      const devStoreRaw = await fsp.readFile(path.join(userDataDir, 'autodoc-encryption.json'), 'utf-8')
-      const prodStoreRaw = await fsp.readFile(path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'), 'utf-8')
+      const devStoreRaw = await fsp.readFile(
+        path.join(userDataDir, 'autodoc-encryption.json'),
+        'utf-8'
+      )
+      const prodStoreRaw = await fsp.readFile(
+        path.join(appDataDir, 'AutoDoc', 'autodoc-encryption.json'),
+        'utf-8'
+      )
 
       expect(devStoreRaw).toContain('enc:')
       expect(prodStoreRaw).toContain('not-the-dev-key')
-      expect(Buffer.from(JSON.parse(devStoreRaw).encryption_key.replace('enc:', ''), 'base64').equals(devKey)).toBe(true)
+      expect(
+        Buffer.from(JSON.parse(devStoreRaw).encryption_key.replace('enc:', ''), 'base64').equals(
+          devKey
+        )
+      ).toBe(true)
     })
   })
 
@@ -172,7 +190,9 @@ describe('crypto module', () => {
 
       await fsp.rm(path.join(appDataDir, 'AutoDoc'), { recursive: true, force: true })
       const { initializeEncryption, EncryptionKeyUnavailableError } = await freshImport()
-      await expect(initializeEncryption(recordingsDir)).rejects.toBeInstanceOf(EncryptionKeyUnavailableError)
+      await expect(initializeEncryption(recordingsDir)).rejects.toBeInstanceOf(
+        EncryptionKeyUnavailableError
+      )
     })
   })
 
@@ -229,7 +249,6 @@ describe('crypto module', () => {
 
       await expect(decryptFileToTemp(filePath)).rejects.toThrow()
     })
-
   })
 
   describe('migrateRecordings', () => {
@@ -241,8 +260,14 @@ describe('crypto module', () => {
 
       await fsp.writeFile(path.join(meetingDir, 'mic.webm'), crypto.randomBytes(500))
       await fsp.writeFile(path.join(meetingDir, 'system.webm'), crypto.randomBytes(500))
-      await fsp.writeFile(path.join(meetingDir, 'metadata.json'), JSON.stringify({ sourceName: 'test', startedAt: 1, stoppedAt: 2, durationSeconds: 1 }))
-      await fsp.writeFile(path.join(meetingDir, 'speakers.json'), JSON.stringify({ Speaker: { label: 'Speaker' } }))
+      await fsp.writeFile(
+        path.join(meetingDir, 'metadata.json'),
+        JSON.stringify({ sourceName: 'test', startedAt: 1, stoppedAt: 2, durationSeconds: 1 })
+      )
+      await fsp.writeFile(
+        path.join(meetingDir, 'speakers.json'),
+        JSON.stringify({ Speaker: { label: 'Speaker' } })
+      )
 
       await migrateRecordings(tmpDir)
 
@@ -253,7 +278,8 @@ describe('crypto module', () => {
     })
 
     it('skips files that are already encrypted', async () => {
-      const { encryptJSON, encryptFileInPlace, migrateRecordings, isEncrypted } = await freshImport()
+      const { encryptJSON, encryptFileInPlace, migrateRecordings, isEncrypted } =
+        await freshImport()
 
       const meetingDir = path.join(tmpDir, 'meeting-def')
       await fsp.mkdir(meetingDir, { recursive: true })

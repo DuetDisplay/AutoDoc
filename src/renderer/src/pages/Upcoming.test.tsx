@@ -7,7 +7,7 @@ import {
   createCalendarAccount,
   createCalendarEvent,
   installMockElectronApi,
-  resetRendererStores,
+  resetRendererStores
 } from '../test/fixtures'
 
 describe('Upcoming', () => {
@@ -19,8 +19,8 @@ describe('Upcoming', () => {
     const account = createCalendarAccount()
     const event = createCalendarEvent()
     const state = {
-      accounts: [] as typeof account[],
-      events: [event],
+      accounts: [] as (typeof account)[],
+      events: [event]
     }
 
     installMockElectronApi({
@@ -30,13 +30,13 @@ describe('Upcoming', () => {
         state.accounts = [account]
         return account
       },
-      'calendar:sync': () => state.events,
+      'calendar:sync': () => state.events
     })
 
     render(
       <MemoryRouter>
         <Upcoming />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     const user = userEvent.setup()
@@ -53,13 +53,13 @@ describe('Upcoming', () => {
       'calendar:get-events': () => [],
       'calendar:connect': () => {
         throw new Error('OAuth denied')
-      },
+      }
     })
 
     render(
       <MemoryRouter>
         <Upcoming />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     const user = userEvent.setup()
@@ -75,7 +75,7 @@ describe('Upcoming', () => {
     const account = createCalendarAccount()
     const state = {
       accounts: [account],
-      events: [] as ReturnType<typeof createCalendarEvent>[],
+      events: [] as ReturnType<typeof createCalendarEvent>[]
     }
 
     installMockElectronApi({
@@ -84,13 +84,13 @@ describe('Upcoming', () => {
       'calendar:sync': () => {
         state.events = [createCalendarEvent({ title: 'Quarterly Review' })]
         return state.events
-      },
+      }
     })
 
     render(
       <MemoryRouter>
         <Upcoming />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     expect(await screen.findByText(/no upcoming meetings/i)).toBeInTheDocument()

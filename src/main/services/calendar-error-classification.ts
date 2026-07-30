@@ -43,21 +43,23 @@ function getErrorMessage(error: unknown): string {
 export function isTransientCalendarError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase()
 
-  return [
-    'enotfound',
-    'err_name_not_resolved',
-    'err_network_io_suspended',
-    'eai_again',
-    'econnreset',
-    'etimedout',
-    'fetch failed',
-    'network error',
-    'networkerror',
-    'timeout',
-    'temporarily unavailable',
-    'service unavailable'
-  ].some((pattern) => message.includes(pattern))
-  || /\b(408|425|429|500|502|503|504)\b/.test(message)
+  return (
+    [
+      'enotfound',
+      'err_name_not_resolved',
+      'err_network_io_suspended',
+      'eai_again',
+      'econnreset',
+      'etimedout',
+      'fetch failed',
+      'network error',
+      'networkerror',
+      'timeout',
+      'temporarily unavailable',
+      'service unavailable'
+    ].some((pattern) => message.includes(pattern)) ||
+    /\b(408|425|429|500|502|503|504)\b/.test(message)
+  )
 }
 
 export function isUnsupportedMicrosoftMailboxError(error: unknown): boolean {

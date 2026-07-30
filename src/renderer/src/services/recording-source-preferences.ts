@@ -12,7 +12,7 @@ type PreferenceMap = Record<string, SavedSourcePreference>
 const STORAGE_KEY = 'autodoc:recording-source-preferences'
 
 export function getSavedSourcePreference(
-  context: RecordingSelectionContext | null | undefined,
+  context: RecordingSelectionContext | null | undefined
 ): SavedSourcePreference | null {
   if (!context) return null
 
@@ -27,7 +27,7 @@ export function getSavedSourcePreference(
 
 export function saveSourcePreference(
   context: RecordingSelectionContext | null | undefined,
-  source: RecordingSource,
+  source: RecordingSource
 ): void {
   if (!context) return
 
@@ -38,7 +38,7 @@ export function saveSourcePreference(
   const nextPreference: SavedSourcePreference = {
     sourceId: source.id,
     sourceName: source.name,
-    updatedAt: Date.now(),
+    updatedAt: Date.now()
   }
 
   for (const key of keys) {

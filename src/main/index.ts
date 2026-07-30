@@ -391,7 +391,8 @@ if (!gotSingleInstanceLock) {
   logAutodocEvent({
     area: 'app',
     level: 'warn',
-    message: 'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
+    message:
+      'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
     context: { pid: process.pid, execPath: process.execPath }
   })
   void flushAutodocLogWrites()
@@ -1558,13 +1559,10 @@ app.whenReady().then(async () => {
     })
   }
 
-  const { stopActiveRecording, recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl } =
-    registerRecordingIpc(
-      recordingService,
-      transcriptionService,
-      whisperManager,
-      calendarManager
-    )
+  const {
+    stopActiveRecording,
+    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl
+  } = registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
   registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(

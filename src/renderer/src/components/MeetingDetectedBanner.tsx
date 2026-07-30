@@ -41,12 +41,8 @@ export function MeetingDetectedBanner() {
       <div className="flex items-center gap-3 min-w-0">
         <div className="w-2.5 h-2.5 rounded-full bg-sage animate-pulse shrink-0" />
         <div className="min-w-0">
-          <p className="text-[12.5px] font-semibold text-sage-dark truncate">
-            {detection.title}
-          </p>
-          <p className="text-[11px] text-sage-dark/70">
-            {detection.body}
-          </p>
+          <p className="text-[12.5px] font-semibold text-sage-dark truncate">{detection.title}</p>
+          <p className="text-[11px] text-sage-dark/70">{detection.body}</p>
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">

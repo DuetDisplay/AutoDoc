@@ -51,7 +51,7 @@ export function logAutodocFailure(entry: LogEntryInput): void {
     message: entry.message,
     meetingId: entry.meetingId,
     error: serializedError,
-    context: entry.context,
+    context: entry.context
   })
 
   writeQueue = writeQueue
@@ -67,7 +67,7 @@ export function logAutodocFailure(entry: LogEntryInput): void {
         extra: {
           message: entry.message,
           error: serializedError,
-          context: entry.context ?? null,
+          context: entry.context ?? null
         },
         diagnosticLogAttachment
       })
@@ -79,25 +79,25 @@ export function logAutodocFailure(entry: LogEntryInput): void {
         extra: {
           message: entry.message,
           error: serializedError,
-          context: entry.context ?? null,
+          context: entry.context ?? null
         }
       })
     })
 }
 
-export function logAutodocEvent(entry: Omit<LogEntryInput, 'error'> & { level?: 'info' | 'warn' }): void {
+export function logAutodocEvent(
+  entry: Omit<LogEntryInput, 'error'> & { level?: 'info' | 'warn' }
+): void {
   const line = buildLogLine({
     level: entry.level ?? 'info',
     area: entry.area,
     message: entry.message,
     meetingId: entry.meetingId,
     error: null,
-    context: entry.context,
+    context: entry.context
   })
 
-  writeQueue = writeQueue
-    .then(() => appendLogLine(line))
-    .catch(() => {})
+  writeQueue = writeQueue.then(() => appendLogLine(line)).catch(() => {})
 }
 
 export async function flushAutodocLogWrites(): Promise<void> {
@@ -114,7 +114,9 @@ async function appendLogLine(line: string): Promise<void> {
 
   await mkdir(logDir, { recursive: true })
 
-  const size = await stat(logPath).then((result) => result.size).catch(() => 0)
+  const size = await stat(logPath)
+    .then((result) => result.size)
+    .catch(() => 0)
   if (size + Buffer.byteLength(line, 'utf-8') > MAX_LOG_BYTES) {
     await rotateLogs(logPath)
   }
@@ -137,7 +139,7 @@ function buildLogLine(entry: {
     message: entry.message,
     meetingId: entry.meetingId ?? null,
     error: entry.error,
-    context: entry.context ?? null,
+    context: entry.context ?? null
   })}\n`
 }
 
@@ -147,13 +149,17 @@ async function rotateLogs(logPath: string): Promise<void> {
   for (let index = MAX_ROTATED_FILES - 1; index >= 1; index -= 1) {
     const source = rotatedLogPath(index)
     const destination = rotatedLogPath(index + 1)
-    const exists = await stat(source).then(() => true).catch(() => false)
+    const exists = await stat(source)
+      .then(() => true)
+      .catch(() => false)
     if (exists) {
       await rename(source, destination)
     }
   }
 
-  const currentExists = await stat(logPath).then(() => true).catch(() => false)
+  const currentExists = await stat(logPath)
+    .then(() => true)
+    .catch(() => false)
   if (currentExists) {
     await rename(logPath, rotatedLogPath(1))
   }
@@ -183,11 +189,11 @@ function serializeError(error: unknown): SerializedError | null {
     return {
       name: error.name,
       message: error.message,
-      stack: error.stack?.slice(0, 4000),
+      stack: error.stack?.slice(0, 4000)
     }
   }
 
   return {
-    message: String(error),
+    message: String(error)
   }
 }

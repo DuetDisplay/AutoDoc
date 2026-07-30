@@ -552,9 +552,7 @@ export class TranscriptionService {
       const stopToTranscriptWallSec =
         metadata?.stoppedAt != null ? (Date.now() - metadata.stoppedAt) / 1000 : null
       const postProcessingWallSec =
-        metadata?.stoppedAt != null
-          ? (transcriptionStartedAt - metadata.stoppedAt) / 1000
-          : null
+        metadata?.stoppedAt != null ? (transcriptionStartedAt - metadata.stoppedAt) / 1000 : null
       const realtimeFactor = computeRealtimeFactor(this.jobAudioDurationSec, transcriptionWallSec)
       const completedProcessingProfile = await this.getProcessingProfileLogContext()
       const processingProfileId =
@@ -586,7 +584,11 @@ export class TranscriptionService {
         }
       })
 
-      if (process.platform === 'win32' && metadata?.stoppedAt != null && stopToTranscriptWallSec != null) {
+      if (
+        process.platform === 'win32' &&
+        metadata?.stoppedAt != null &&
+        stopToTranscriptWallSec != null
+      ) {
         logQaGateStopToTranscript(meetingId, {
           tier: classifyWindowsTranscriptionTier({
             backendId: backend,
@@ -1363,7 +1365,7 @@ export class TranscriptionService {
     const right = nextText.trim()
     if (!left) return right
     if (!right) return left
-    if (/[-/(\[]$/.test(left)) {
+    if (/[-/([]$/.test(left)) {
       return `${left}${right}`
     }
     return `${left} ${right}`.replace(/\s+/g, ' ').trim()
@@ -2086,11 +2088,7 @@ export class TranscriptionService {
         lastTimestampProgress = Math.max(lastTimestampProgress, timestampProgress)
       }
       const progress = Math.max(lastTimestampProgress, getElapsedProgress())
-      this.broadcastStatus(
-        meetingId,
-        'transcribing',
-        this.scaleProgress(progress, progressRange)
-      )
+      this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(progress, progressRange))
     }
 
     if (audioDurationSec && audioDurationSec > 0) {
@@ -2371,8 +2369,7 @@ export class TranscriptionService {
     })
 
     const profile = await this.getEffectiveWindowsProcessingProfileForJob()
-    const isCpuTierProfile =
-      profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
+    const isCpuTierProfile = profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
     if (
       !isCpuTierProfile ||
       freeAfterTimeoutGiB == null ||
@@ -2383,7 +2380,8 @@ export class TranscriptionService {
 
     logAutodocEvent({
       area: 'transcription',
-      message: 'Starting extended memory wait on low-spec/CPU profile after timeout with low free memory',
+      message:
+        'Starting extended memory wait on low-spec/CPU profile after timeout with low free memory',
       meetingId,
       context: {
         freeGiB: freeAfterTimeoutGiB,

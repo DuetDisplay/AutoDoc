@@ -3,7 +3,8 @@ import { launchIsolatedE2EApp, relaunchIsolatedE2EApp } from './helpers/electron
 
 test('shows a Notes Ready notification, opens the meeting, and does not re-notify after relaunch', async () => {
   const session = await launchIsolatedE2EApp()
-  let { electronApp, userDataDir } = session
+  let { electronApp } = session
+  const { userDataDir } = session
   let page = await electronApp.firstWindow()
 
   try {
@@ -266,7 +267,10 @@ test('Notes Ready hides an unfocused visible main window before it can be raised
 })
 
 test('Notes Ready keeps an unfocused visible main window visible on Windows', async () => {
-  test.skip(process.platform === 'darwin', 'macOS hides the main window before showing the notification')
+  test.skip(
+    process.platform === 'darwin',
+    'macOS hides the main window before showing the notification'
+  )
 
   const session = await launchIsolatedE2EApp()
   const { electronApp } = session

@@ -23,5 +23,5 @@ export const useToastStore = create<ToastStore>((set) => ({
 
   showToast: (toast) => set({ activeToast: toast }),
 
-  dismissToast: () => set({ activeToast: null }),
+  dismissToast: () => set({ activeToast: null })
 }))

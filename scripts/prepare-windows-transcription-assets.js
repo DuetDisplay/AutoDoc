@@ -483,7 +483,9 @@ async function describeArtifact(filePath, zipName = path.basename(filePath)) {
         const buffer = Buffer.allocUnsafe(chunkSize)
         const { bytesRead } = await handle.read(buffer, 0, chunkSize, offset + written)
         if (bytesRead <= 0) {
-          throw new Error(`Unexpected EOF while splitting ${zipName} at offset ${offset + written}.`)
+          throw new Error(
+            `Unexpected EOF while splitting ${zipName} at offset ${offset + written}.`
+          )
         }
         if (!writeStream.write(buffer.subarray(0, bytesRead))) {
           await new Promise((resolve, reject) => {
