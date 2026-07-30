@@ -24,21 +24,21 @@ export function Upcoming() {
     setConnecting,
     setEvents,
     setSyncing,
-    setAutoRecord,
+    setAutoRecord
   } = useCalendarStore()
   const isConnected = useCalendarStore(selectIsConnected)
 
   const {
     connectingProvider,
     error: calendarConnectError,
-    connect,
+    connect
   } = useCalendarConnect({
     onConnected: async (account, provider) => {
       addAccount(account)
       trackEvent('calendar_connected', { provider })
       const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
       setEvents(fetchedEvents)
-    },
+    }
   })
   const isConnecting = connectingProvider !== null
 
@@ -78,8 +78,8 @@ export function Upcoming() {
         action: {
           label: 'Open Settings',
           type: 'navigate',
-          target: ROUTES.settings,
-        },
+          target: ROUTES.settings
+        }
       })
     }
   }, [isConnected, calendarChecked])
@@ -88,7 +88,7 @@ export function Upcoming() {
     recordDiagnosticAction({
       category: 'calendar',
       action: 'calendar_connect_requested',
-      details: { provider },
+      details: { provider }
     })
     void connect(provider)
   }
@@ -97,7 +97,7 @@ export function Upcoming() {
     setSyncing(true)
     recordDiagnosticAction({
       category: 'calendar',
-      action: 'calendar_sync_requested',
+      action: 'calendar_sync_requested'
     })
     try {
       const syncedEvents = await window.electronAPI.invoke('calendar:sync')
@@ -106,7 +106,7 @@ export function Upcoming() {
       console.error('Calendar sync failed:', err)
       trackEvent('calendar_sync_failed', {
         provider: 'unknown',
-        failure_code: 'sync_failed',
+        failure_code: 'sync_failed'
       })
       // Auth failure auto-disconnects via the connection-changed listener
     } finally {
@@ -114,14 +114,18 @@ export function Upcoming() {
     }
   }
 
-  const handleSetAutoRecord = (eventId: string, recurringEventId: string | null, mode: import('../../../shared/types').AutoRecordMode) => {
+  const handleSetAutoRecord = (
+    eventId: string,
+    recurringEventId: string | null,
+    mode: import('../../../shared/types').AutoRecordMode
+  ) => {
     recordDiagnosticAction({
       category: 'calendar',
       action: 'auto_record_mode_changed',
       details: {
         mode,
-        hasRecurringEventId: recurringEventId !== null,
-      },
+        hasRecurringEventId: recurringEventId !== null
+      }
     })
     setAutoRecord(eventId, mode)
     window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
@@ -132,7 +136,7 @@ export function Upcoming() {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
-    day: 'numeric',
+    day: 'numeric'
   })
 
   const groupedEvents = useMemo(() => {
@@ -209,9 +213,11 @@ export function Upcoming() {
             {groupedEvents.map((group) => (
               <div key={group.label}>
                 <div className="flex items-center gap-2 mb-2">
-                  <h2 className={`text-[12px] font-bold tracking-[0.03em] uppercase ${
-                    group.label === 'Today' ? 'text-ink' : 'text-ink-faint'
-                  }`}>
+                  <h2
+                    className={`text-[12px] font-bold tracking-[0.03em] uppercase ${
+                      group.label === 'Today' ? 'text-ink' : 'text-ink-faint'
+                    }`}
+                  >
                     {group.label}
                   </h2>
                   <span className="text-[11px] text-ink-faint">
@@ -220,11 +226,7 @@ export function Upcoming() {
                 </div>
                 <div className="flex flex-col gap-2">
                   {group.events.map((event) => (
-                    <EventCard
-                      key={event.id}
-                      event={event}
-                      onSetAutoRecord={handleSetAutoRecord}
-                    />
+                    <EventCard key={event.id} event={event} onSetAutoRecord={handleSetAutoRecord} />
                   ))}
                 </div>
               </div>

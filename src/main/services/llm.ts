@@ -517,9 +517,7 @@ export class OllamaProvider implements LLMProvider {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const knownTopics = this.extractKnownTopics(merged)
       const knownItemTitles =
-        process.platform === 'win32' && i > 0
-          ? this.extractKnownItemTitles(capturedItemTitles)
-          : []
+        process.platform === 'win32' && i > 0 ? this.extractKnownItemTitles(capturedItemTitles) : []
       const chunkLabel = this.buildChunkLabel(
         i,
         chunks.length,
@@ -1314,7 +1312,8 @@ export class OllamaProvider implements LLMProvider {
     for (let i = 0; i < items.length; i++) {
       for (let j = i + 1; j < items.length; j++) {
         if (
-          this.getItemTitleSimilarity(items[i].title, items[j].title) >= WINDOWS_ITEM_DEDUP_THRESHOLD
+          this.getItemTitleSimilarity(items[i].title, items[j].title) >=
+          WINDOWS_ITEM_DEDUP_THRESHOLD
         ) {
           union(i, j)
         }

@@ -4,7 +4,10 @@ import { readFile } from 'fs/promises'
 import { isEncrypted, decryptJSON } from './crypto'
 
 /** Find calendar event that overlaps with the recording start time (±10min buffer) */
-export function matchCalendarEvent(events: CalendarEvent[], recordingStartMs: number): CalendarEvent | null {
+export function matchCalendarEvent(
+  events: CalendarEvent[],
+  recordingStartMs: number
+): CalendarEvent | null {
   const buffer = 10 * 60 * 1000
   let best: CalendarEvent | null = null
   let bestOverlap = 0

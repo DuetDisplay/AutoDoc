@@ -3,7 +3,7 @@ import type {
   CalendarEvent,
   OllamaSetupStatus,
   RecordingSource,
-  WhisperSetupStatus,
+  WhisperSetupStatus
 } from './types'
 
 export interface E2EDetectionWindowSource {

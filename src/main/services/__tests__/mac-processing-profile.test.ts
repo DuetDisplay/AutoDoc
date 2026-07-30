@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  DEFAULT_OLLAMA_MODEL,
-  LOW_SPEC_MAC_OLLAMA_MODEL
-} from '../../../shared/constants'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 import {
   isMemoryHealthyForConcurrentProcessing,
   parseMacAvailableMemoryGiBFromVmStat,

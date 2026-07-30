@@ -20,9 +20,7 @@ const {
 
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn((name: string) =>
-      name === 'appData' ? '/mock/appData' : '/mock/userData'
-    ),
+    getPath: vi.fn((name: string) => (name === 'appData' ? '/mock/appData' : '/mock/userData')),
     isPackaged: true
   },
   safeStorage: {

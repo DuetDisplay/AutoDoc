@@ -3,11 +3,9 @@ export function classifyError(rawError: string): string {
 
   if (
     error.includes('whisper') &&
-    (
-      error.includes('ggml_metal') ||
+    (error.includes('ggml_metal') ||
       error.includes('signal sigabrt') ||
-      error.includes('abort trap: 6')
-    )
+      error.includes('abort trap: 6'))
   ) {
     return 'whisper-metal-crash'
   }
@@ -17,7 +15,10 @@ export function classifyError(rawError: string): string {
   if (error.includes('unable to authenticate') || error.includes('unsupported state')) {
     return 'key-mismatch'
   }
-  if (error.includes('whisper') && (error.includes('not found') || error.includes('spawn failed'))) {
+  if (
+    error.includes('whisper') &&
+    (error.includes('not found') || error.includes('spawn failed'))
+  ) {
     return 'whisper-not-found'
   }
   if (error.includes('whisper') && error.includes('exited with code')) {

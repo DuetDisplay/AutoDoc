@@ -2,7 +2,12 @@ import { shell } from 'electron'
 import http from 'http'
 import crypto from 'crypto'
 import { URL } from 'url'
-import { saveTokensForAccount, loadTokensForAccount, clearTokensForAccount, hasTokensForAccount } from './token-store'
+import {
+  saveTokensForAccount,
+  loadTokensForAccount,
+  clearTokensForAccount,
+  hasTokensForAccount
+} from './token-store'
 import type { CalendarEvent, CalendarAccount, OAuthTokens } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
 import { logAutodocFailure } from './autodoc-log'
@@ -67,7 +72,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   private getTokens(accountId: string): OAuthTokens | null {
     let tokens = this.tokenCache.get(accountId)
     if (!tokens) {
-      tokens = loadTokensForAccount(accountId) as OAuthTokens | null ?? undefined
+      tokens = (loadTokensForAccount(accountId) as OAuthTokens | null) ?? undefined
       if (tokens) this.tokenCache.set(accountId, tokens)
     }
     return tokens ?? null
@@ -99,13 +104,14 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     // The OAuth id_token already carries the account email, so read it locally to
     // return immediately and only fall back to the network lookup when missing.
     const idToken = (tokens as { id_token?: string }).id_token
-    const email = extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
+    const email =
+      extractEmailFromIdToken(idToken) ?? (await this.fetchAccountEmail(accountId)) ?? ''
 
     return {
       id: accountId,
       provider: 'microsoft',
       email,
-      connectedAt: Date.now(),
+      connectedAt: Date.now()
     }
   }
 
@@ -118,7 +124,9 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     await pending.closed
   }
 
-  private waitForCallback(expectedState: string): Promise<{ tokens: OAuthTokens & { expires_in?: number } }> {
+  private waitForCallback(
+    expectedState: string
+  ): Promise<{ tokens: OAuthTokens & { expires_in?: number } }> {
     return new Promise((resolve, reject) => {
       let settled = false
       let markClosed: () => void = () => {}
@@ -162,7 +170,9 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><p>Connected to Microsoft Outlook! You may close this tab.</p></body></html>')
+        res.end(
+          '<html><body><p>Connected to Microsoft Outlook! You may close this tab.</p></body></html>'
+        )
         resolveAndClose({ tokens })
       })
 
@@ -239,7 +249,12 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
     await this.refreshIfNeeded(accountId)
   }
 
-  private async fetchEvents(accountId: string, startDateTime: string, endDateTime: string, maxResults?: number): Promise<CalendarEvent[]> {
+  private async fetchEvents(
+    accountId: string,
+    startDateTime: string,
+    endDateTime: string,
+    maxResults?: number
+  ): Promise<CalendarEvent[]> {
     await this.refreshIfNeeded(accountId)
 
     const tokens = this.getTokens(accountId)
@@ -247,15 +262,16 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
 
     const allEvents: GraphEvent[] = []
     const top = maxResults ?? 100
-    let url: string | null = `${GRAPH_BASE}/me/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=${top}&$orderby=start/dateTime`
+    let url: string | null =
+      `${GRAPH_BASE}/me/calendarView?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&$top=${top}&$orderby=start/dateTime`
     const MAX_PAGES = 20
 
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
-          Prefer: 'outlook.timezone="UTC"',
-        },
+          Prefer: 'outlook.timezone="UTC"'
+        }
       })
 
       if (!res.ok) {
@@ -274,7 +290,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         throw error
       }
 
-      const data = await res.json() as GraphEventsResponse
+      const data = (await res.json()) as GraphEventsResponse
       if (data.value) allEvents.push(...data.value)
       url = data['@odata.nextLink'] ?? null
     }
@@ -293,19 +309,18 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       startTime: event.start?.dateTime ? new Date(event.start.dateTime + 'Z').getTime() : 0,
       endTime: event.end?.dateTime ? new Date(event.end.dateTime + 'Z').getTime() : 0,
       isAllDay: event.isAllDay === true,
-      attendees: (event.attendees ?? [])
-        .map((a) => a.emailAddress?.address ?? '')
-        .filter(Boolean),
+      attendees: (event.attendees ?? []).map((a) => a.emailAddress?.address ?? '').filter(Boolean),
       meetingUrl: this.extractMeetingUrl(event),
       autoRecord: 'off' as const,
-      syncedAt: Date.now(),
+      syncedAt: Date.now()
     }
   }
 
   private extractMeetingUrl(event: GraphEvent): string | null {
     if (event.onlineMeeting?.joinUrl) return event.onlineMeeting.joinUrl
 
-    const urlPattern = /https?:\/\/[^\s<"']*(zoom\.us\/j|teams\.microsoft\.com\/l\/meetup-join|meet\.google\.com|webex\.com\/meet)[^\s<"']*/i
+    const urlPattern =
+      /https?:\/\/[^\s<"']*(zoom\.us\/j|teams\.microsoft\.com\/l\/meetup-join|meet\.google\.com|webex\.com\/meet)[^\s<"']*/i
 
     const location = event.location?.displayName ?? ''
     const locationMatch = location.match(urlPattern)
@@ -321,15 +336,17 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
   async fetchAccountEmail(accountId: string): Promise<string | null> {
     const tokens = this.getTokens(accountId)
     if (!tokens?.access_token) {
-      return extractEmailFromIdToken((tokens as (OAuthTokens & { id_token?: string }) | null)?.id_token)
+      return extractEmailFromIdToken(
+        (tokens as (OAuthTokens & { id_token?: string }) | null)?.id_token
+      )
     }
 
     try {
       const res = await fetch(`${GRAPH_BASE}/me`, {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
+        headers: { Authorization: `Bearer ${tokens.access_token}` }
       })
       if (res.ok) {
-        const data = await res.json() as { mail?: string; userPrincipalName?: string }
+        const data = (await res.json()) as { mail?: string; userPrincipalName?: string }
         return (
           data.mail ||
           data.userPrincipalName ||
@@ -352,7 +369,7 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
       const response = await fetch(`${authWorkerUrl}/microsoft/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+        body: JSON.stringify({ refresh_token: tokens.refresh_token })
       })
 
       if (!response.ok) {
@@ -378,17 +395,17 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
           error,
           context: {
             provider: 'microsoft',
-            status: response.status,
-          },
+            status: response.status
+          }
         })
         return
       }
 
-      const newTokens = await response.json() as { access_token: string; expires_in: number }
+      const newTokens = (await response.json()) as { access_token: string; expires_in: number }
       const updated: OAuthTokens = {
         ...tokens,
         access_token: newTokens.access_token,
-        expiry_date: Date.now() + newTokens.expires_in * 1000,
+        expiry_date: Date.now() + newTokens.expires_in * 1000
       }
 
       saveTokensForAccount(accountId, updated)
@@ -409,8 +426,8 @@ export class MicrosoftCalendarProvider implements CalendarProvider {
         message: 'Microsoft token refresh errored',
         error: err,
         context: {
-          provider: 'microsoft',
-        },
+          provider: 'microsoft'
+        }
       })
     }
   }

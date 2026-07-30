@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
@@ -27,18 +27,18 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoRetryAttempts = useRef(0)
   const hasSeenMeaningfulSetupProgress = useRef(false)
-  const setupStartedAt = useRef(performance.now())
+  const setupStartedAt = useRef<number | null>(null)
   const lastFailureKey = useRef<string | null>(null)
   const isLowSpecMac = setupStatus.macProcessingProfileId === 'mac-low-spec'
 
-  const clearRetryTimer = () => {
+  const clearRetryTimer = useCallback(() => {
     if (retryTimer.current) {
       clearTimeout(retryTimer.current)
       retryTimer.current = null
     }
-  }
+  }, [])
 
-  const markReady = () => {
+  const markReady = useCallback(() => {
     setPhase('ready')
     setPercent(100)
     setSetupStatus({ phase: 'ready', percent: 100 })
@@ -48,13 +48,14 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     hasSeenMeaningfulSetupProgress.current = false
     lastFailureKey.current = null
     clearRetryTimer()
+    const startedAt = setupStartedAt.current ?? performance.now()
     void trackFirstEventOnce('whisper_setup_completed', 'setup_component_completed', {
       component: 'whisper',
-      duration_bucket: toDurationBucket((performance.now() - setupStartedAt.current) / 1000)
+      duration_bucket: toDurationBucket((performance.now() - startedAt) / 1000)
     })
-  }
+  }, [clearRetryTimer])
 
-  const scheduleAutoRetry = () => {
+  const scheduleAutoRetry = useCallback(() => {
     if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS || retryTimer.current) {
       return
     }
@@ -70,56 +71,60 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       autoRetryAttempts.current += 1
       await window.electronAPI.invoke('whisper:retry-setup')
     }, AUTO_RETRY_DELAY_MS)
-  }
+  }, [])
 
-  const applyStatus = async (status: WhisperSetupStatus, allowKickoff = false) => {
-    setSetupStatus(status)
-    setPhase(status.phase)
-    setPercent(status.percent)
+  const applyStatus = useCallback(
+    async (status: WhisperSetupStatus, allowKickoff = false) => {
+      setSetupStatus(status)
+      setPhase(status.phase)
+      setPercent(status.percent)
 
-    if (status.phase === 'ready') {
-      markReady()
-      return
-    }
-
-    if (status.phase === 'error') {
-      const failedStep = status.failedStep ?? 'unknown'
-      const failureKey = `${failedStep}:${status.error ?? ''}:${autoRetryAttempts.current}`
-      if (lastFailureKey.current !== failureKey) {
-        lastFailureKey.current = failureKey
-        trackEvent('setup_component_failed', {
-          component: 'whisper',
-          phase: failedStep,
-          failure_code: failedStep,
-          attempt_number: autoRetryAttempts.current + 1
-        })
+      if (status.phase === 'ready') {
+        markReady()
+        return
       }
-      scheduleAutoRetry()
-      if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
-        setIsAutoRetrying(false)
-        setError(status.error ?? 'Unknown error')
+
+      if (status.phase === 'error') {
+        const failedStep = status.failedStep ?? 'unknown'
+        const failureKey = `${failedStep}:${status.error ?? ''}:${autoRetryAttempts.current}`
+        if (lastFailureKey.current !== failureKey) {
+          lastFailureKey.current = failureKey
+          trackEvent('setup_component_failed', {
+            component: 'whisper',
+            phase: failedStep,
+            failure_code: failedStep,
+            attempt_number: autoRetryAttempts.current + 1
+          })
+        }
+        scheduleAutoRetry()
+        if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
+          setIsAutoRetrying(false)
+          setError(status.error ?? 'Unknown error')
+        }
+        return
       }
-      return
-    }
 
-    if (status.phase !== 'checking' && status.percent > 0) {
-      hasSeenMeaningfulSetupProgress.current = true
-    }
+      if (status.phase !== 'checking' && status.percent > 0) {
+        hasSeenMeaningfulSetupProgress.current = true
+      }
 
-    setError(null)
-    setIsAutoRetrying(false)
-    if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
-      autoRetryAttempts.current = 0
-      hasSeenMeaningfulSetupProgress.current = false
-    }
-    clearRetryTimer()
+      setError(null)
+      setIsAutoRetrying(false)
+      if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
+        autoRetryAttempts.current = 0
+        hasSeenMeaningfulSetupProgress.current = false
+      }
+      clearRetryTimer()
 
-    if (allowKickoff && status.phase === 'checking') {
-      await window.electronAPI.invoke('whisper:retry-setup')
-    }
-  }
+      if (allowKickoff && status.phase === 'checking') {
+        await window.electronAPI.invoke('whisper:retry-setup')
+      }
+    },
+    [clearRetryTimer, markReady, scheduleAutoRetry]
+  )
 
   useEffect(() => {
+    setupStartedAt.current ??= performance.now()
     trackEvent('setup_component_started', { component: 'whisper', phase: 'checking' })
     window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
       await applyStatus(status, true)
@@ -133,7 +138,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       unsub()
       clearRetryTimer()
     }
-  }, [onNext])
+  }, [applyStatus, clearRetryTimer])
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSkip(true), SHOW_SKIP_DELAY_MS)

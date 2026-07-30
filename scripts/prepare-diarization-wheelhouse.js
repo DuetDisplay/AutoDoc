@@ -13,20 +13,20 @@ const BUNDLE_FORMAT = 'preinstalled-runtime-v3-validated'
 const TARGETS = {
   'darwin-arm64': {
     executable: ['python', 'bin', 'python3'],
-    triplet: 'aarch64-apple-darwin',
+    triplet: 'aarch64-apple-darwin'
   },
   'darwin-x64': {
     executable: ['python', 'bin', 'python3'],
-    triplet: 'x86_64-apple-darwin',
+    triplet: 'x86_64-apple-darwin'
   },
   'win32-arm64': {
     executable: ['python', 'python.exe'],
-    triplet: 'aarch64-pc-windows-msvc',
+    triplet: 'aarch64-pc-windows-msvc'
   },
   'win32-x64': {
     executable: ['python', 'python.exe'],
-    triplet: 'x86_64-pc-windows-msvc',
-  },
+    triplet: 'x86_64-pc-windows-msvc'
+  }
 }
 
 function getCurrentTargetKey() {
@@ -68,7 +68,9 @@ function run(command, args, env = process.env) {
 async function ensureManagedPythonExtracted(targetKey, target) {
   const pythonPath = join(OUTPUT_DIR, targetKey, ...target.executable)
   if (!(await fileExists(pythonPath))) {
-    throw new Error(`Managed Python runtime not found at ${pythonPath}. Run prepare-python-runtime first.`)
+    throw new Error(
+      `Managed Python runtime not found at ${pythonPath}. Run prepare-python-runtime first.`
+    )
   }
   return pythonPath
 }
@@ -77,7 +79,9 @@ async function reseedManagedPythonRuntime(targetKey, target) {
   const runtimeDir = join(OUTPUT_DIR, targetKey)
   const archivePath = getArchivePath(target)
   if (!(await fileExists(archivePath))) {
-    throw new Error(`Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`)
+    throw new Error(
+      `Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`
+    )
   }
 
   await rm(runtimeDir, { recursive: true, force: true })
@@ -133,7 +137,7 @@ async function pruneBundledRuntime(targetKey) {
 
   const removePaths = [
     join(sitePackagesDir, 'torch', 'include'),
-    join(sitePackagesDir, 'torch', 'share'),
+    join(sitePackagesDir, 'torch', 'share')
   ]
 
   if (targetKey.startsWith('win32-')) {
@@ -159,7 +163,7 @@ async function pruneBundledRuntime(targetKey) {
       join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 'w64.exe'),
       join(windowsSitePackagesDir, 'pip', '_vendor', 'distlib', 'w64-arm.exe'),
       // protobuf tooling is not needed at runtime.
-      join(windowsSitePackagesDir, 'torch', 'bin', 'protoc.exe'),
+      join(windowsSitePackagesDir, 'torch', 'bin', 'protoc.exe')
     )
   }
 
@@ -208,7 +212,7 @@ async function ensureBundledRuntime(targetKey) {
 
   if (targetKey !== getCurrentTargetKey()) {
     console.warn(
-      `[diarization-runtime] Skipping ${targetKey}: dependency bundling currently runs on the matching host platform/arch only.`,
+      `[diarization-runtime] Skipping ${targetKey}: dependency bundling currently runs on the matching host platform/arch only.`
     )
     return
   }
@@ -223,21 +227,18 @@ async function ensureBundledRuntime(targetKey) {
   const runtimeDir = join(OUTPUT_DIR, targetKey)
   await mkdir(runtimeDir, { recursive: true })
 
-  console.log(`[diarization-runtime] Installing diarization dependencies into bundled runtime for ${targetKey}`)
+  console.log(
+    `[diarization-runtime] Installing diarization dependencies into bundled runtime for ${targetKey}`
+  )
   await run(pythonPath, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'])
-  await run(pythonPath, [
-    '-m',
-    'pip',
-    'install',
-    '--requirement',
-    REQUIREMENTS_PATH,
-  ])
+  await run(pythonPath, ['-m', 'pip', 'install', '--requirement', REQUIREMENTS_PATH])
 
   await pruneBundledRuntime(targetKey)
-  await run(pythonPath, [
-    '-c',
-    'import torch.testing; from pyannote.audio import Pipeline; print("ok")',
-  ], { ...process.env, PYTHONDONTWRITEBYTECODE: '1' })
+  await run(
+    pythonPath,
+    ['-c', 'import torch.testing; from pyannote.audio import Pipeline; print("ok")'],
+    { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }
+  )
   await pruneBundledRuntime(targetKey)
 
   await writeFile(
@@ -246,13 +247,14 @@ async function ensureBundledRuntime(targetKey) {
       `target=${targetKey}`,
       `python=${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}`,
       'requirements=resources/diarization-requirements.txt',
-      `mode=${BUNDLE_FORMAT}`,
-    ].join('\n'),
+      `mode=${BUNDLE_FORMAT}`
+    ].join('\n')
   )
 }
 
 async function main() {
-  const targetKey = process.env.AUTODOC_DIARIZATION_WHEELHOUSE_TARGET?.trim() || getCurrentTargetKey()
+  const targetKey =
+    process.env.AUTODOC_DIARIZATION_WHEELHOUSE_TARGET?.trim() || getCurrentTargetKey()
   await ensureBundledRuntime(targetKey)
 }
 

@@ -192,14 +192,17 @@ export function buildRecordingTrackingContext(
   const recordingIntent = inferRecordingIntent(selectedSource, detectedMeetingSource, trigger)
   const trackedSource =
     recordingIntent === 'meeting'
-      ? (selectedSource.id.startsWith('screen:') ? detectedMeetingSource : selectedSource)
+      ? selectedSource.id.startsWith('screen:')
+        ? detectedMeetingSource
+        : selectedSource
       : null
 
   return {
     meetingSourceId: trackedSource?.id ?? null,
     meetingSourceName: trackedSource?.name ?? null,
-    providerId:
-      trackedSource ? selectionContext?.providerHint ?? inferProviderHintFromSourceName(trackedSource.name) : null,
+    providerId: trackedSource
+      ? (selectionContext?.providerHint ?? inferProviderHintFromSourceName(trackedSource.name))
+      : null,
     recordingIntent
   }
 }
@@ -260,7 +263,9 @@ function inferRecordingIntent(
     return 'meeting'
   }
 
-  if (normalizeWindowName(selectedSource.name) === normalizeWindowName(detectedMeetingSource.name)) {
+  if (
+    normalizeWindowName(selectedSource.name) === normalizeWindowName(detectedMeetingSource.name)
+  ) {
     return 'meeting'
   }
 

@@ -126,7 +126,9 @@ function getMeetingProviderById(providerId: string | null | undefined): MeetingP
 }
 
 function tokenizeTitle(value: string): string[] {
-  return normalize(value).split(/[^a-z0-9]+/).filter(Boolean)
+  return normalize(value)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
 }
 
 function isGenericProviderWindowTitle(
@@ -502,7 +504,10 @@ export class DetectionService {
       return
     }
 
-    if (this.getNow() - this.pendingAutoStop.startedAt < this.getAutoStopConfirmMs(reason, snapshot)) {
+    if (
+      this.getNow() - this.pendingAutoStop.startedAt <
+      this.getAutoStopConfirmMs(reason, snapshot)
+    ) {
       return
     }
 
@@ -657,7 +662,9 @@ export class DetectionService {
 
       if (trackedSourceName) {
         const normalizedTrackedName = normalize(trackedSourceName)
-        const trackedSource = sources.find((source) => normalize(source.name) === normalizedTrackedName)
+        const trackedSource = sources.find(
+          (source) => normalize(source.name) === normalizedTrackedName
+        )
         return {
           visible: Boolean(trackedSource),
           strongVisible: Boolean(trackedSource),
@@ -699,7 +706,9 @@ export class DetectionService {
     try {
       const sources = await this.getWindowSourcesForDetection()
       return {
-        visible: sources.some((s) => MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))),
+        visible: sources.some((s) =>
+          MEETING_APP_PATTERNS.some(({ pattern }) => pattern.test(s.name))
+        ),
         strongVisible: false,
         diagnostics: {
           trackedSourceId: null,

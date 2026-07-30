@@ -1,4 +1,11 @@
-import { useState, useRef, useEffect, type KeyboardEvent, type ReactElement } from 'react'
+import {
+  useCallback,
+  useState,
+  useRef,
+  useEffect,
+  type KeyboardEvent,
+  type ReactElement
+} from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
@@ -40,6 +47,17 @@ export function AskAI(): ReactElement {
   const completionTimeoutRef = useRef<number | null>(null)
   const isSendingRef = useRef(false)
 
+  const clearRequestTimeouts = useCallback((): void => {
+    if (firstTokenTimeoutRef.current) {
+      window.clearTimeout(firstTokenTimeoutRef.current)
+      firstTokenTimeoutRef.current = null
+    }
+    if (completionTimeoutRef.current) {
+      window.clearTimeout(completionTimeoutRef.current)
+      completionTimeoutRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     window.electronAPI.invoke('ollama:check-status').then(setOllamaReady)
   }, [])
@@ -61,22 +79,11 @@ export function AskAI(): ReactElement {
       activeAssistantMessageIdRef.current = null
       isSendingRef.current = false
     }
-  }, [removeEmptyInFlightAssistantMessages, setMessageStatus])
+  }, [clearRequestTimeouts, removeEmptyInFlightAssistantMessages, setMessageStatus])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, loading])
-
-  const clearRequestTimeouts = (): void => {
-    if (firstTokenTimeoutRef.current) {
-      window.clearTimeout(firstTokenTimeoutRef.current)
-      firstTokenTimeoutRef.current = null
-    }
-    if (completionTimeoutRef.current) {
-      window.clearTimeout(completionTimeoutRef.current)
-      completionTimeoutRef.current = null
-    }
-  }
 
   const finishActiveRequest = (): void => {
     clearRequestTimeouts()

@@ -6,11 +6,7 @@ export function StepDots({ total, current }: { total: number; current: number })
           key={i}
           data-testid="step-dot"
           className={`h-1.5 rounded-full transition-all duration-300 ${
-            i < current
-              ? 'w-1.5 bg-sage'
-              : i === current
-                ? 'w-4 bg-ink'
-                : 'w-1.5 bg-border'
+            i < current ? 'w-1.5 bg-sage' : i === current ? 'w-4 bg-ink' : 'w-1.5 bg-border'
           }`}
         />
       ))}

@@ -2006,8 +2006,7 @@ export function registerRecordingIpc(
         offsetMs: Math.max(0, Math.round(offsetMs))
       }
       const previousWrite = segmentTimingWriteQueues.get(timingPath) ?? Promise.resolve()
-      let nextWrite: Promise<void>
-      nextWrite = previousWrite
+      const nextWrite = previousWrite
         .catch(() => {})
         .then(async () => {
           const existing = await readFile(timingPath, 'utf-8')

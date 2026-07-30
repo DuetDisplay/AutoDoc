@@ -5,14 +5,18 @@ const env = {
   GOOGLE_CLIENT_ID: 'google-client-id',
   GOOGLE_CLIENT_SECRET: 'google-client-secret',
   MICROSOFT_CLIENT_ID: 'microsoft-client-id',
-  MICROSOFT_CLIENT_SECRET: 'microsoft-client-secret',
+  MICROSOFT_CLIENT_SECRET: 'microsoft-client-secret'
 }
 
 function request(path: string, init?: RequestInit): Request {
   return new Request(`https://auth.example.com${path}`, init)
 }
 
-async function fetchWorker(path: string, init?: RequestInit, overrides?: Record<string, unknown>): Promise<Response> {
+async function fetchWorker(
+  path: string,
+  init?: RequestInit,
+  overrides?: Record<string, unknown>
+): Promise<Response> {
   return worker.fetch(request(path, init), { ...env, ...overrides })
 }
 
@@ -44,12 +48,17 @@ describe('AutoDoc auth worker', () => {
     expect(response.status).toBe(302)
     expect(location.origin).toBe('https://login.microsoftonline.com')
     expect(location.searchParams.get('client_id')).toBe(env.MICROSOFT_CLIENT_ID)
-    expect(location.searchParams.get('redirect_uri')).toBe('https://auth.example.com/auth/microsoft/callback')
+    expect(location.searchParams.get('redirect_uri')).toBe(
+      'https://auth.example.com/auth/microsoft/callback'
+    )
     expect(location.searchParams.get('state')).toBe('state-456')
   })
 
   it('exchanges Google callback codes and redirects tokens to localhost', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ access_token: 'access-token' })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ access_token: 'access-token' }))
+    )
 
     const response = await fetchWorker('/auth/callback?code=code-123&state=abc')
     const location = new URL(response.headers.get('Location') ?? '')
@@ -79,7 +88,7 @@ describe('AutoDoc auth worker', () => {
     const response = await fetchWorker('/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{',
+      body: '{'
     })
 
     expect(response.status).toBe(400)
@@ -95,9 +104,9 @@ describe('AutoDoc auth worker', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': '32769',
+        'Content-Length': '32769'
       },
-      body: JSON.stringify({ refresh_token: 'token' }),
+      body: JSON.stringify({ refresh_token: 'token' })
     })
 
     expect(response.status).toBe(413)
@@ -111,9 +120,9 @@ describe('AutoDoc auth worker', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Origin: 'https://getautodoc.com',
+        Origin: 'https://getautodoc.com'
       },
-      body: JSON.stringify({ refresh_token: 'refresh-token' }),
+      body: JSON.stringify({ refresh_token: 'refresh-token' })
     })
 
     expect(response.status).toBe(200)
@@ -124,7 +133,7 @@ describe('AutoDoc auth worker', () => {
   it('rejects disallowed CORS preflights', async () => {
     const response = await fetchWorker('/auth/refresh', {
       method: 'OPTIONS',
-      headers: { Origin: 'https://evil.example.com' },
+      headers: { Origin: 'https://evil.example.com' }
     })
 
     expect(response.status).toBe(403)
@@ -140,8 +149,8 @@ describe('AutoDoc auth worker', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'code-123',
-        redirect_uri: 'https://attacker.example.com/callback',
-      }),
+        redirect_uri: 'https://attacker.example.com/callback'
+      })
     })
 
     expect(response.status).toBe(400)
@@ -158,8 +167,8 @@ describe('AutoDoc auth worker', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'code-123',
-        redirect_uri: 'http://127.0.0.1:42813/callback',
-      }),
+        redirect_uri: 'http://127.0.0.1:42813/callback'
+      })
     })
 
     expect(response.status).toBe(200)
@@ -171,32 +180,39 @@ describe('AutoDoc auth worker', () => {
     const limiter = { limit: vi.fn().mockResolvedValue({ success: false }) }
     vi.stubGlobal('fetch', upstreamFetch)
 
-    const response = await fetchWorker('/auth/refresh', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'CF-Connecting-IP': '203.0.113.10',
+    const response = await fetchWorker(
+      '/auth/refresh',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'CF-Connecting-IP': '203.0.113.10'
+        },
+        body: JSON.stringify({ refresh_token: 'refresh-token' })
       },
-      body: JSON.stringify({ refresh_token: 'refresh-token' }),
-    }, {
-      TOKEN_EXCHANGE_RATE_LIMITER: limiter,
-    })
+      {
+        TOKEN_EXCHANGE_RATE_LIMITER: limiter
+      }
+    )
 
     expect(response.status).toBe(429)
     expect(limiter.limit).toHaveBeenCalledWith({
-      key: 'token-exchange:/auth/refresh:203.0.113.10',
+      key: 'token-exchange:/auth/refresh:203.0.113.10'
     })
     expect(upstreamFetch).not.toHaveBeenCalled()
   })
 
   it('does not log token values', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ access_token: 'access-token' })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ access_token: 'access-token' }))
+    )
 
     await fetchWorker('/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: 'refresh-secret' }),
+      body: JSON.stringify({ refresh_token: 'refresh-secret' })
     })
 
     const logged = logSpy.mock.calls.map((call) => call.join(' ')).join('\n')

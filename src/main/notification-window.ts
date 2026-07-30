@@ -94,8 +94,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   })
   notificationWindow = win
   notificationKind = options.kind ?? null
-  suppressAppActivationWhileNotificationVisible =
-    options.suppressAppActivationWhileVisible === true
+  suppressAppActivationWhileNotificationVisible = options.suppressAppActivationWhileVisible === true
 
   const handlePrimaryAction = (): void => {
     try {

@@ -49,11 +49,7 @@ export function captureError(error: unknown, context: ErrorContext): void {
 
   currentSentry.withScope((scope) => {
     const attachmentAwareScope = scope as typeof scope & {
-      addAttachment?: (attachment: {
-        filename: string
-        contentType?: string
-        data: string
-      }) => void
+      addAttachment?: (attachment: { filename: string; contentType?: string; data: string }) => void
     }
     scope.setTag('area', context.area)
     if (context.meetingId) scope.setTag('meetingId', context.meetingId)
@@ -65,7 +61,7 @@ export function captureError(error: unknown, context: ErrorContext): void {
     if (context.extra) {
       scope.setExtras({
         ...context.extra,
-        diagnosticTrail,
+        diagnosticTrail
       })
     } else {
       scope.setExtras({ diagnosticTrail })
@@ -97,7 +93,7 @@ export function captureMessage(message: string, context: MessageContext): void {
     if (context.extra) {
       scope.setExtras({
         ...context.extra,
-        diagnosticTrail,
+        diagnosticTrail
       })
     } else {
       scope.setExtras({ diagnosticTrail })

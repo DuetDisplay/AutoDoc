@@ -53,7 +53,7 @@ function isNoisyElectronLifecycle(message: string): boolean {
     'window.focus',
     'window.blur',
     'window.close',
-    'window.closed',
+    'window.closed'
   ].includes(message)
 }
 
@@ -61,7 +61,7 @@ export function normalizeSentryBreadcrumb<T extends BreadcrumbLike>(breadcrumb: 
   const category = breadcrumb.category ?? ''
   const message = breadcrumb.message ?? ''
   const level = breadcrumb.level ?? ''
-  const data = (sanitizeValue(breadcrumb.data ?? {}) as Record<string, unknown>)
+  const data = sanitizeValue(breadcrumb.data ?? {}) as Record<string, unknown>
 
   if (category === 'console' && !['warning', 'error', 'fatal'].includes(level)) {
     return null
@@ -82,6 +82,6 @@ export function normalizeSentryBreadcrumb<T extends BreadcrumbLike>(breadcrumb: 
   return {
     ...breadcrumb,
     message: sanitizeString(message),
-    data,
+    data
   }
 }

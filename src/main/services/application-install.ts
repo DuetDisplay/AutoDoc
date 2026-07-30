@@ -12,11 +12,12 @@ const APPLICATIONS_DIR = '/Applications'
 export const MINIMUM_SUPPORTED_MACOS_VERSION = '14.0.0'
 export const MINIMUM_SUPPORTED_MACOS_NAME = 'macOS Sonoma'
 const INSTALL_POLICY_TRACE_ENABLED = process.env.AUTODOC_INSTALL_POLICY_TRACE === '1'
-const INSTALL_POLICY_TRACE_FILE = process.env.AUTODOC_INSTALL_POLICY_TRACE_FILE || '/tmp/autodoc-install-policy.log'
+const INSTALL_POLICY_TRACE_FILE =
+  process.env.AUTODOC_INSTALL_POLICY_TRACE_FILE || '/tmp/autodoc-install-policy.log'
 const WINDOWS_UNINSTALL_PATHS = [
   'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
   'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
 ]
 
 interface ResolvedApplication {
@@ -57,7 +58,11 @@ export const INSTALL_REDIRECT_CHILD_ENV = 'AUTODOC_INSTALL_REDIRECT_CHILD'
  * `traceInstallPolicy` (below) stays opt-in via env var; this one must always record why the
  * app did or did not continue launching, so silent-exit bugs are visible in QA logs.
  */
-function logInstallPolicy(message: string, context?: Record<string, unknown>, level: 'info' | 'warn' = 'info'): void {
+function logInstallPolicy(
+  message: string,
+  context?: Record<string, unknown>,
+  level: 'info' | 'warn' = 'info'
+): void {
   try {
     logAutodocEvent({ area: 'app', level, message: `install-policy: ${message}`, context })
   } catch {
@@ -89,7 +94,9 @@ export function traceInstallPolicy(message: string, data?: Record<string, unknow
   }
 }
 
-export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = process.platform): Record<string, string | boolean | null> {
+export function buildSingleInstanceLaunchData(
+  platform: NodeJS.Platform = process.platform
+): Record<string, string | boolean | null> {
   const currentApplication = getCurrentApplication(platform)
 
   return {
@@ -97,28 +104,36 @@ export function buildSingleInstanceLaunchData(platform: NodeJS.Platform = proces
     executablePath: currentApplication.executablePath,
     packaged: app.isPackaged,
     platform,
-    version: currentApplication.version,
+    version: currentApplication.version
   }
 }
 
-export async function enforceInstalledApplicationPolicy(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+export async function enforceInstalledApplicationPolicy(
+  platform: NodeJS.Platform = process.platform
+): Promise<boolean> {
   try {
     return await enforceInstalledApplicationPolicyUnsafe(platform)
   } catch (error) {
     // Fail open: an unexpected policy error must never prevent the app from launching.
-    logInstallPolicy('enforcement failed unexpectedly; continuing launch of current copy', {
-      platform,
-      error: error instanceof Error ? error.message : String(error),
-    }, 'warn')
+    logInstallPolicy(
+      'enforcement failed unexpectedly; continuing launch of current copy',
+      {
+        platform,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      'warn'
+    )
     traceInstallPolicy('enforce: unexpected error, failing open', {
       platform,
-      error: error instanceof Error ? error.message : String(error),
+      error: error instanceof Error ? error.message : String(error)
     })
     return true
   }
 }
 
-async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform): Promise<boolean> {
+async function enforceInstalledApplicationPolicyUnsafe(
+  platform: NodeJS.Platform
+): Promise<boolean> {
   if (!shouldEnforceInstalledCopyPolicy(platform)) {
     traceInstallPolicy('enforce: skipped policy', { platform, packaged: app.isPackaged })
     logInstallPolicy('policy skipped', { platform, packaged: app.isPackaged })
@@ -132,7 +147,7 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
     currentContainer: currentApplication.containerPath,
     currentVersion: currentApplication.version,
     installedContainer: installedApplication?.containerPath ?? null,
-    installedVersion: installedApplication?.version ?? null,
+    installedVersion: installedApplication?.version ?? null
   })
   logInstallPolicy('resolved current vs installed copies', {
     platform,
@@ -141,47 +156,73 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
     currentVersion: currentApplication.version,
     installedContainer: installedApplication?.containerPath ?? null,
     installedExecutable: installedApplication?.executablePath ?? null,
-    installedVersion: installedApplication?.version ?? null,
+    installedVersion: installedApplication?.version ?? null
   })
-  if (!installedApplication || sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform)) {
+  if (
+    !installedApplication ||
+    sameApplicationCopy(
+      currentApplication.containerPath,
+      installedApplication.containerPath,
+      platform
+    )
+  ) {
     traceInstallPolicy('enforce: no installed conflict', {
       hasInstalled: Boolean(installedApplication),
-      sameCopy: installedApplication ? sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, platform) : null,
+      sameCopy: installedApplication
+        ? sameApplicationCopy(
+            currentApplication.containerPath,
+            installedApplication.containerPath,
+            platform
+          )
+        : null
     })
     logInstallPolicy('no installed conflict; continuing launch', {
-      hasInstalled: Boolean(installedApplication),
+      hasInstalled: Boolean(installedApplication)
     })
     return true
   }
 
-  if (compareVersionStrings(currentApplication.version ?? app.getVersion(), installedApplication.version) === 0) {
+  if (
+    compareVersionStrings(
+      currentApplication.version ?? app.getVersion(),
+      installedApplication.version
+    ) === 0
+  ) {
     if (process.env[INSTALL_REDIRECT_CHILD_ENV] === '1') {
       // This process was itself spawned by a same-version redirect. Redirecting again would
       // ping-pong forever with nothing ever reaching a window; launch this copy instead.
-      logInstallPolicy('redirect child detected; skipping same-version redirect and continuing launch', {
-        current: currentApplication.containerPath,
-        installed: installedApplication.containerPath,
-      }, 'warn')
+      logInstallPolicy(
+        'redirect child detected; skipping same-version redirect and continuing launch',
+        {
+          current: currentApplication.containerPath,
+          installed: installedApplication.containerPath
+        },
+        'warn'
+      )
       return true
     }
     traceInstallPolicy('enforce: same-version redirect', {
       source: currentApplication.containerPath,
       target: installedApplication.containerPath,
-      version: currentApplication.version ?? app.getVersion(),
+      version: currentApplication.version ?? app.getVersion()
     })
     logInstallPolicy('same-version redirect attempt', {
       source: currentApplication.containerPath,
       target: installedApplication.containerPath,
       targetLaunchPath: installedApplication.launchPath,
-      version: currentApplication.version ?? app.getVersion(),
+      version: currentApplication.version ?? app.getVersion()
     })
     const redirected = await launchInstalledCopyAndQuit(installedApplication, platform)
     if (!redirected) {
       // Fail open: the registry/install-dir pointer is stale or the target copy is broken.
       // Launching the current copy is strictly better than exiting with nothing on screen.
-      logInstallPolicy('same-version redirect failed; continuing launch of current copy', {
-        target: installedApplication.launchPath,
-      }, 'warn')
+      logInstallPolicy(
+        'same-version redirect failed; continuing launch of current copy',
+        {
+          target: installedApplication.launchPath
+        },
+        'warn'
+      )
       return true
     }
     return false
@@ -191,19 +232,19 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
     platform,
     sourceVersion: currentApplication.version ?? app.getVersion(),
     installedVersion: installedApplication.version,
-    locationLabel: installedApplication.locationLabel,
+    locationLabel: installedApplication.locationLabel
   })
   traceInstallPolicy('enforce: replacement prompt result', {
     accepted: userAcceptedReplacement,
     sourceVersion: currentApplication.version ?? app.getVersion(),
     installedVersion: installedApplication.version,
-    platform,
+    platform
   })
   logInstallPolicy('replacement prompt shown', {
     accepted: userAcceptedReplacement,
     sourceVersion: currentApplication.version ?? app.getVersion(),
     installedVersion: installedApplication.version,
-    platform,
+    platform
   })
   if (!userAcceptedReplacement) {
     logInstallPolicy('user declined replacement; quitting', { platform })
@@ -215,7 +256,7 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
   logInstallPolicy('replacement started; installed copy will relaunch', {
     source: currentApplication.containerPath,
     target: installedApplication.containerPath,
-    platform,
+    platform
   })
   replaceInstalledCopyAndRelaunch(currentApplication, installedApplication, platform)
   return false
@@ -223,7 +264,7 @@ async function enforceInstalledApplicationPolicyUnsafe(platform: NodeJS.Platform
 
 export async function warnIfUnsupportedMacOS(
   platform: NodeJS.Platform = process.platform,
-  systemVersion: string | null = getSystemVersion(),
+  systemVersion: string | null = getSystemVersion()
 ): Promise<boolean> {
   if (platform !== 'darwin' || isSupportedMacOSVersion(systemVersion)) {
     return true
@@ -239,7 +280,7 @@ export async function warnIfUnsupportedMacOS(
     detail: systemVersion
       ? `This Mac is running macOS ${systemVersion}. Please update macOS to continue using AutoDoc.`
       : 'Please update macOS to continue using AutoDoc.',
-    noLink: true,
+    noLink: true
   })
 
   await flushInstallPolicyLogs()
@@ -252,7 +293,10 @@ export function isSupportedMacOSVersion(systemVersion: string | null | undefined
   return compareVersionStrings(systemVersion, MINIMUM_SUPPORTED_MACOS_VERSION) >= 0
 }
 
-export function compareVersionStrings(currentVersion: string, installedVersion: string | null): number {
+export function compareVersionStrings(
+  currentVersion: string,
+  installedVersion: string | null
+): number {
   if (!installedVersion) return 1
 
   const currentParts = normalizeVersion(currentVersion)
@@ -289,7 +333,7 @@ function normalizeVersion(version: string): number[] {
 export async function handleSecondInstanceLaunch(
   additionalData: unknown,
   argvOrPlatform: string[] | NodeJS.Platform = [],
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = process.platform
 ): Promise<boolean> {
   const argv = Array.isArray(argvOrPlatform) ? argvOrPlatform : []
   const resolvedPlatform = Array.isArray(argvOrPlatform) ? platform : argvOrPlatform
@@ -298,7 +342,7 @@ export async function handleSecondInstanceLaunch(
     traceInstallPolicy('second-instance: ignored pre-check', {
       platform: resolvedPlatform,
       shouldEnforce: shouldEnforceInstalledCopyPolicy(resolvedPlatform),
-      promptOpen: secondInstancePromptOpen,
+      promptOpen: secondInstancePromptOpen
     })
     return false
   }
@@ -307,54 +351,76 @@ export async function handleSecondInstanceLaunch(
   // or both can reach `promptForInstalledCopyReplacement` and the user sees duplicate dialogs.
   secondInstancePromptOpen = true
   try {
-    const secondInstance = await resolveSecondInstanceLaunchData(additionalData, argv, resolvedPlatform)
+    const secondInstance = await resolveSecondInstanceLaunchData(
+      additionalData,
+      argv,
+      resolvedPlatform
+    )
     traceInstallPolicy('second-instance: resolved launch data', {
       platform: resolvedPlatform,
       argvCount: argv.length,
       secondContainer: secondInstance?.containerPath ?? null,
       secondExecutable: secondInstance?.executablePath ?? null,
       secondVersion: secondInstance?.version ?? null,
-      secondPackaged: secondInstance?.packaged ?? null,
+      secondPackaged: secondInstance?.packaged ?? null
     })
-    if (!secondInstance || secondInstance.packaged !== true || secondInstance.platform !== resolvedPlatform) {
+    if (
+      !secondInstance ||
+      secondInstance.packaged !== true ||
+      secondInstance.platform !== resolvedPlatform
+    ) {
       return false
     }
 
     const currentApplication = getCurrentApplication(resolvedPlatform)
     const installedApplication = await readInstalledApplication(resolvedPlatform)
-    if (!installedApplication || !sameApplicationCopy(currentApplication.containerPath, installedApplication.containerPath, resolvedPlatform)) {
+    if (
+      !installedApplication ||
+      !sameApplicationCopy(
+        currentApplication.containerPath,
+        installedApplication.containerPath,
+        resolvedPlatform
+      )
+    ) {
       traceInstallPolicy('second-instance: current copy is not installed target', {
         currentContainer: currentApplication.containerPath,
-        installedContainer: installedApplication?.containerPath ?? null,
+        installedContainer: installedApplication?.containerPath ?? null
       })
       return false
     }
 
-    if (sameApplicationCopy(secondInstance.containerPath, currentApplication.containerPath, resolvedPlatform)) {
-      return false
-    }
-
     if (
-      secondInstance.version !== null
-      && compareVersionStrings(secondInstance.version, installedApplication.version) === 0
+      sameApplicationCopy(
+        secondInstance.containerPath,
+        currentApplication.containerPath,
+        resolvedPlatform
+      )
     ) {
       return false
     }
 
-    const sourceVersion = secondInstance.version
-      ?? (await readPackagedApplicationVersion(secondInstance.containerPath, resolvedPlatform))
-      ?? 'Unknown version'
+    if (
+      secondInstance.version !== null &&
+      compareVersionStrings(secondInstance.version, installedApplication.version) === 0
+    ) {
+      return false
+    }
+
+    const sourceVersion =
+      secondInstance.version ??
+      (await readPackagedApplicationVersion(secondInstance.containerPath, resolvedPlatform)) ??
+      'Unknown version'
     const userAcceptedReplacement = await promptForInstalledCopyReplacement({
       platform: resolvedPlatform,
       sourceVersion,
       installedVersion: installedApplication.version,
-      locationLabel: installedApplication.locationLabel,
+      locationLabel: installedApplication.locationLabel
     })
     traceInstallPolicy('second-instance: replacement prompt result', {
       accepted: userAcceptedReplacement,
       sourceVersion,
       installedVersion: installedApplication.version,
-      platform: resolvedPlatform,
+      platform: resolvedPlatform
     })
     if (!userAcceptedReplacement) {
       return false
@@ -362,7 +428,10 @@ export async function handleSecondInstanceLaunch(
 
     const sourceApplication = await resolveSecondInstanceSource(secondInstance)
     if (!sourceApplication) {
-      await showReplacementError(resolvedPlatform, new Error('Could not locate the launched AutoDoc copy to replace the installed version.'))
+      await showReplacementError(
+        resolvedPlatform,
+        new Error('Could not locate the launched AutoDoc copy to replace the installed version.')
+      )
       return true
     }
 
@@ -373,13 +442,15 @@ export async function handleSecondInstanceLaunch(
   }
 }
 
-export async function handleSingleInstanceLockFailure(_platform: NodeJS.Platform = process.platform): Promise<boolean> {
+export async function handleSingleInstanceLockFailure(
+  _platform: NodeJS.Platform = process.platform
+): Promise<boolean> {
   // When a second process loses `requestSingleInstanceLock`, the first process receives
   // `second-instance` and must be the only one that shows install-policy UI. If we also
   // prompt from this process, Electron can show two identical dialogs (especially during
   // rapid re-launches or automated tests).
   traceInstallPolicy('single-instance lock failure: secondary instance exits without prompt', {
-    platform: _platform,
+    platform: _platform
   })
   return false
 }
@@ -393,20 +464,23 @@ function getCurrentApplication(platform: NodeJS.Platform): ResolvedApplication {
 
   if (platform === 'darwin') {
     return {
-      containerPath: getMacBundlePath(executablePath) ?? dirname(dirname(dirname(dirname(executablePath)))),
+      containerPath:
+        getMacBundlePath(executablePath) ?? dirname(dirname(dirname(dirname(executablePath)))),
       executablePath,
-      version: app.getVersion(),
+      version: app.getVersion()
     }
   }
 
   return {
     containerPath: platformDirname(executablePath, platform),
     executablePath,
-    version: app.getVersion(),
+    version: app.getVersion()
   }
 }
 
-async function readInstalledApplication(platform: NodeJS.Platform): Promise<InstalledApplication | null> {
+async function readInstalledApplication(
+  platform: NodeJS.Platform
+): Promise<InstalledApplication | null> {
   if (platform === 'darwin') {
     return readInstalledMacApplication()
   }
@@ -418,10 +492,13 @@ async function readInstalledApplication(platform: NodeJS.Platform): Promise<Inst
 
 async function readInstalledMacApplication(): Promise<InstalledApplication | null> {
   const exeFromPath = basename(app.getPath('exe'))
-  const bundleNames = Array.from(new Set([
-    app.getName(),
-    'AutoDoc',
-  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)))
+  const bundleNames = Array.from(
+    new Set(
+      [app.getName(), 'AutoDoc'].filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0
+      )
+    )
+  )
 
   const executableNames = Array.from(new Set([exeFromPath, 'AutoDoc']))
 
@@ -442,7 +519,7 @@ async function readInstalledMacApplication(): Promise<InstalledApplication | nul
         executablePath,
         launchPath: bundlePath,
         locationLabel: '/Applications',
-        version: await readBundleVersion(bundlePath),
+        version: await readBundleVersion(bundlePath)
       }
     }
   }
@@ -457,7 +534,7 @@ async function readBundleVersion(bundlePath: string): Promise<string | null> {
   for (const key of ['CFBundleShortVersionString', 'CFBundleVersion']) {
     try {
       const { stdout } = await execFile('/usr/bin/defaults', ['read', infoPlistPath, key], {
-        encoding: 'utf8',
+        encoding: 'utf8'
       })
       const version = stdout.trim()
       if (version) return version
@@ -472,14 +549,16 @@ async function readBundleVersion(bundlePath: string): Promise<string | null> {
 async function readInstalledWindowsApplication(): Promise<InstalledApplication | null> {
   const executableName = platformBasename(app.getPath('exe'), 'win32')
   const registryInstall = await readWindowsInstallFromRegistry(executableName)
-  const candidates = [
-    registryInstall,
-    ...getWindowsInstallPathCandidates(executableName),
-  ].filter((candidate): candidate is InstalledApplication => candidate !== null)
+  const candidates = [registryInstall, ...getWindowsInstallPathCandidates(executableName)].filter(
+    (candidate): candidate is InstalledApplication => candidate !== null
+  )
 
-  const dedupedCandidates = candidates.filter((candidate, index) => (
-    candidates.findIndex((existing) => sameApplicationCopy(existing.executablePath, candidate.executablePath, 'win32')) === index
-  ))
+  const dedupedCandidates = candidates.filter(
+    (candidate, index) =>
+      candidates.findIndex((existing) =>
+        sameApplicationCopy(existing.executablePath, candidate.executablePath, 'win32')
+      ) === index
+  )
 
   for (const candidate of dedupedCandidates) {
     try {
@@ -498,29 +577,29 @@ async function readFallbackWindowsSecondInstanceExecutablePath(): Promise<string
   const executableName = platformBasename(currentExecutablePath, 'win32')
   const script = [
     `$processes = Get-CimInstance Win32_Process -Filter "Name = '${escapePowerShellSingleQuotedString(executableName)}'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath`,
-    'if ($processes) { $processes | ConvertTo-Json -Compress }',
+    'if ($processes) { $processes | ConvertTo-Json -Compress }'
   ].join('; ')
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
-      const { stdout } = await execFile('powershell.exe', [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        script,
-      ], {
-        encoding: 'utf8',
-      })
+      const { stdout } = await execFile(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        {
+          encoding: 'utf8'
+        }
+      )
 
       const trimmed = stdout.trim()
       if (trimmed) {
         const parsed = JSON.parse(trimmed) as string | string[]
         const executablePaths = Array.isArray(parsed) ? parsed : [parsed]
-        const candidate = executablePaths.find((value) => (
-          typeof value === 'string'
-          && normalizeWindowsPath(value) !== normalizeWindowsPath(currentExecutablePath)
-        )) ?? null
+        const candidate =
+          executablePaths.find(
+            (value) =>
+              typeof value === 'string' &&
+              normalizeWindowsPath(value) !== normalizeWindowsPath(currentExecutablePath)
+          ) ?? null
         if (candidate) {
           return candidate
         }
@@ -547,14 +626,14 @@ async function readFallbackMacSecondInstanceExecutablePath(): Promise<string | n
   const executableName = basename(currentExe)
   const tokenPattern = new RegExp(
     String.raw`(\/[^\s]+\/AutoDoc\.app\/Contents\/MacOS\/${escapeRegExp(executableName)})(?:\s|$)`,
-    'g',
+    'g'
   )
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
       const { stdout } = await execFile('/bin/ps', ['-ax', '-o', 'args='], {
         encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
+        maxBuffer: 10 * 1024 * 1024
       })
 
       const seen = new Set<string>()
@@ -594,23 +673,23 @@ function escapeRegExp(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
 }
 
-async function readWindowsInstallFromRegistry(executableName: string): Promise<InstalledApplication | null> {
+async function readWindowsInstallFromRegistry(
+  executableName: string
+): Promise<InstalledApplication | null> {
   try {
     const script = [
       `$paths = @(${WINDOWS_UNINSTALL_PATHS.map((path) => `'${path}'`).join(', ')})`,
       `$entry = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '${escapePowerShellSingleQuotedString(app.getName())}*' } | Select-Object -First 1 DisplayVersion, InstallLocation, DisplayIcon`,
-      'if ($entry) { $entry | ConvertTo-Json -Compress }',
+      'if ($entry) { $entry | ConvertTo-Json -Compress }'
     ].join('; ')
 
-    const { stdout } = await execFile('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      script,
-    ], {
-      encoding: 'utf8',
-    })
+    const { stdout } = await execFile(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      {
+        encoding: 'utf8'
+      }
+    )
 
     const trimmed = stdout.trim()
     if (!trimmed) return null
@@ -622,8 +701,9 @@ async function readWindowsInstallFromRegistry(executableName: string): Promise<I
     }
 
     const displayIconPath = parseWindowsDisplayIconPath(parsed.DisplayIcon)
-    const installRoot = parsed.InstallLocation?.trim()
-      || (displayIconPath ? platformDirname(displayIconPath, 'win32') : null)
+    const installRoot =
+      parsed.InstallLocation?.trim() ||
+      (displayIconPath ? platformDirname(displayIconPath, 'win32') : null)
     if (!installRoot) return null
 
     const executablePath = displayIconPath ?? pathWin32.join(installRoot, executableName)
@@ -632,7 +712,7 @@ async function readWindowsInstallFromRegistry(executableName: string): Promise<I
       executablePath,
       launchPath: executablePath,
       locationLabel: 'the installed copy',
-      version: parsed.DisplayVersion?.trim() || null,
+      version: parsed.DisplayVersion?.trim() || null
     }
   } catch {
     return null
@@ -643,7 +723,7 @@ function getWindowsInstallPathCandidates(executableName: string): InstalledAppli
   const installRoots = [
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', app.getName()) : null,
     process.env.ProgramFiles ? join(process.env.ProgramFiles, app.getName()) : null,
-    process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)'], app.getName()) : null,
+    process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)'], app.getName()) : null
   ].filter((candidate): candidate is string => Boolean(candidate))
 
   return installRoots.map((containerPath) => ({
@@ -651,7 +731,7 @@ function getWindowsInstallPathCandidates(executableName: string): InstalledAppli
     executablePath: pathWin32.join(containerPath, executableName),
     launchPath: pathWin32.join(containerPath, executableName),
     locationLabel: 'the installed copy',
-    version: null,
+    version: null
   }))
 }
 
@@ -669,9 +749,15 @@ async function promptForInstalledCopyReplacement(options: {
 
   const title = hasInstalledVersion
     ? versionComparison > 0
-      ? isMac ? 'Upgrade Applications Copy' : 'Upgrade Installed Copy'
-      : isMac ? 'Downgrade Applications Copy' : 'Downgrade Installed Copy'
-    : isMac ? 'Replace Applications Copy' : 'Replace Installed Copy'
+      ? isMac
+        ? 'Upgrade Applications Copy'
+        : 'Upgrade Installed Copy'
+      : isMac
+        ? 'Downgrade Applications Copy'
+        : 'Downgrade Installed Copy'
+    : isMac
+      ? 'Replace Applications Copy'
+      : 'Replace Installed Copy'
 
   const message = hasInstalledVersion
     ? versionComparison > 0
@@ -687,9 +773,15 @@ async function promptForInstalledCopyReplacement(options: {
 
   const confirmLabel = hasInstalledVersion
     ? versionComparison > 0
-      ? isMac ? 'Upgrade in Applications' : 'Upgrade Installed Copy'
-      : isMac ? 'Downgrade in Applications' : 'Downgrade Installed Copy'
-    : isMac ? 'Replace in Applications' : 'Replace Installed Copy'
+      ? isMac
+        ? 'Upgrade in Applications'
+        : 'Upgrade Installed Copy'
+      : isMac
+        ? 'Downgrade in Applications'
+        : 'Downgrade Installed Copy'
+    : isMac
+      ? 'Replace in Applications'
+      : 'Replace Installed Copy'
 
   const { response } = await dialog.showMessageBox({
     type: 'question',
@@ -699,19 +791,21 @@ async function promptForInstalledCopyReplacement(options: {
     title,
     message,
     detail,
-    noLink: true,
+    noLink: true
   })
 
   return response === 0
 }
 
-async function resolveSecondInstanceSource(secondInstance: SecondInstanceLaunchData): Promise<ResolvedApplication | null> {
+async function resolveSecondInstanceSource(
+  secondInstance: SecondInstanceLaunchData
+): Promise<ResolvedApplication | null> {
   try {
     await access(secondInstance.executablePath)
     return {
       containerPath: secondInstance.containerPath,
       executablePath: secondInstance.executablePath,
-      version: secondInstance.version,
+      version: secondInstance.version
     }
   } catch {
     return null
@@ -733,19 +827,22 @@ function parseSecondInstanceLaunchData(additionalData: unknown): SecondInstanceL
     executablePath: data.executablePath,
     packaged: data.packaged === true,
     platform: typeof data.platform === 'string' ? data.platform : '',
-    version: typeof data.version === 'string' ? data.version : null,
+    version: typeof data.version === 'string' ? data.version : null
   }
 }
 
 async function resolveSecondInstanceLaunchData(
   additionalData: unknown,
   argv: string[],
-  platform: NodeJS.Platform,
+  platform: NodeJS.Platform
 ): Promise<SecondInstanceLaunchData | null> {
   const structuredData = parseSecondInstanceLaunchData(additionalData)
   if (structuredData) {
     if (structuredData.version === null && structuredData.packaged === true) {
-      const inferredVersion = await readPackagedApplicationVersion(structuredData.containerPath, platform)
+      const inferredVersion = await readPackagedApplicationVersion(
+        structuredData.containerPath,
+        platform
+      )
       if (inferredVersion) {
         return { ...structuredData, version: inferredVersion }
       }
@@ -757,12 +854,12 @@ async function resolveSecondInstanceLaunchData(
     let macExecutablePath = parseMacSecondInstanceExecutablePath(argv)
     traceInstallPolicy('second-instance: mac argv parse', {
       argvPreview: argv.slice(0, 4),
-      parsedPath: macExecutablePath,
+      parsedPath: macExecutablePath
     })
     if (!macExecutablePath) {
       macExecutablePath = await readFallbackMacSecondInstanceExecutablePath()
       traceInstallPolicy('second-instance: mac ps fallback', {
-        parsedPath: macExecutablePath,
+        parsedPath: macExecutablePath
       })
     }
     if (!macExecutablePath) {
@@ -785,7 +882,7 @@ async function resolveSecondInstanceLaunchData(
       executablePath: macExecutablePath,
       packaged: true,
       platform,
-      version: await readPackagedApplicationVersion(containerPath, platform),
+      version: await readPackagedApplicationVersion(containerPath, platform)
     }
   }
 
@@ -793,8 +890,9 @@ async function resolveSecondInstanceLaunchData(
     return null
   }
 
-  const fallbackExecutablePath = parseWindowsSecondInstanceExecutablePath(argv)
-    ?? await readFallbackWindowsSecondInstanceExecutablePath()
+  const fallbackExecutablePath =
+    parseWindowsSecondInstanceExecutablePath(argv) ??
+    (await readFallbackWindowsSecondInstanceExecutablePath())
   if (!fallbackExecutablePath) {
     return null
   }
@@ -810,11 +908,18 @@ async function resolveSecondInstanceLaunchData(
     executablePath: fallbackExecutablePath,
     packaged: true,
     platform,
-    version: await readPackagedApplicationVersion(platformDirname(fallbackExecutablePath, 'win32'), platform),
+    version: await readPackagedApplicationVersion(
+      platformDirname(fallbackExecutablePath, 'win32'),
+      platform
+    )
   }
 }
 
-function sameApplicationCopy(leftPath: string, rightPath: string, platform: NodeJS.Platform): boolean {
+function sameApplicationCopy(
+  leftPath: string,
+  rightPath: string,
+  platform: NodeJS.Platform
+): boolean {
   if (platform === 'win32') {
     return normalizeWindowsPath(leftPath) === normalizeWindowsPath(rightPath)
   }
@@ -855,7 +960,7 @@ async function replaceInstalledCopyAndRelaunch(
   sourceApplication: ResolvedApplication,
   installedApplication: InstalledApplication,
   platform: NodeJS.Platform,
-  windowsOptions?: WindowsReplacementOptions,
+  windowsOptions?: WindowsReplacementOptions
 ): Promise<void> {
   try {
     if (platform === 'darwin') {
@@ -865,7 +970,7 @@ async function replaceInstalledCopyAndRelaunch(
         sourceApplication.containerPath,
         installedApplication.containerPath,
         installedApplication.launchPath,
-        windowsOptions,
+        windowsOptions
       )
     } else {
       return
@@ -878,10 +983,14 @@ async function replaceInstalledCopyAndRelaunch(
   quitForInstalledCopyPolicy(platform)
 }
 
-async function readPackagedApplicationVersion(containerPath: string, platform: NodeJS.Platform): Promise<string | null> {
-  const packageJsonPath = platform === 'darwin'
-    ? join(containerPath, 'Contents', 'Resources', 'app.asar', 'package.json')
-    : pathWin32.join(containerPath, 'resources', 'app.asar', 'package.json')
+async function readPackagedApplicationVersion(
+  containerPath: string,
+  platform: NodeJS.Platform
+): Promise<string | null> {
+  const packageJsonPath =
+    platform === 'darwin'
+      ? join(containerPath, 'Contents', 'Resources', 'app.asar', 'package.json')
+      : pathWin32.join(containerPath, 'resources', 'app.asar', 'package.json')
 
   try {
     const packageJson = await readFile(packageJsonPath, 'utf8')
@@ -949,7 +1058,7 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
     'fi',
     '/bin/mv "$AUTODOC_TARGET_TMP" "$AUTODOC_TARGET"',
     'rm -rf "$AUTODOC_TARGET_BACKUP"',
-    '/usr/bin/open "$AUTODOC_TARGET"',
+    '/usr/bin/open "$AUTODOC_TARGET"'
   ].join('\n')
 
   const child = spawn('/bin/sh', ['-c', script], {
@@ -961,9 +1070,9 @@ function relaunchInstalledMacBundle(sourceBundlePath: string, installedBundlePat
       AUTODOC_SOURCE: sourceBundlePath,
       AUTODOC_TARGET: installedBundlePath,
       AUTODOC_TARGET_BACKUP: backupBundlePath,
-      AUTODOC_TARGET_TMP: stagedBundlePath,
+      AUTODOC_TARGET_TMP: stagedBundlePath
     },
-    stdio: 'ignore',
+    stdio: 'ignore'
   })
 
   child.unref()
@@ -973,14 +1082,21 @@ async function relaunchInstalledWindowsCopy(
   sourceRoot: string,
   installedRoot: string,
   installedExecutablePath: string,
-  options?: WindowsReplacementOptions,
+  options?: WindowsReplacementOptions
 ): Promise<void> {
-  const terminateProcessIds = Array.from(new Set(options?.terminateProcessIds?.filter((processId) => processId > 0) ?? []))
-  const waitForProcessIds = Array.from(new Set(options?.waitForProcessIds?.filter((processId) => processId > 0) ?? [process.pid]))
+  const terminateProcessIds = Array.from(
+    new Set(options?.terminateProcessIds?.filter((processId) => processId > 0) ?? [])
+  )
+  const waitForProcessIds = Array.from(
+    new Set(options?.waitForProcessIds?.filter((processId) => processId > 0) ?? [process.pid])
+  )
   const relaunchTestUserDataDir = process.env.AUTODOC_TEST_USER_DATA_DIR ?? ''
   const relaunchE2E = process.env.AUTODOC_E2E ?? ''
   const relaunchRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP ?? ''
-  const helperBasePath = join(app.getPath('temp'), `autodoc-installed-copy-${process.pid}-${Date.now()}`)
+  const helperBasePath = join(
+    app.getPath('temp'),
+    `autodoc-installed-copy-${process.pid}-${Date.now()}`
+  )
   const scriptPath = `${helperBasePath}.ps1`
   const launcherPath = `${helperBasePath}.cmd`
   const logPath = `${helperBasePath}.log`
@@ -1124,38 +1240,38 @@ try {
       '-RelaunchRealSetupTest',
       quoteWindowsCommandArgument(relaunchRealSetupTest),
       '-LogPath',
-      quoteWindowsCommandArgument(logPath),
+      quoteWindowsCommandArgument(logPath)
     ].join(' '),
-    `schtasks /Delete /TN ${quoteWindowsCommandArgument(scheduledTaskName)} /F >nul 2>&1`,
+    `schtasks /Delete /TN ${quoteWindowsCommandArgument(scheduledTaskName)} /F >nul 2>&1`
   ].join('\r\n')
 
   writeFileSync(scriptPath, script, 'utf8')
   writeFileSync(launcherPath, launcherScript, 'utf8')
 
-  execFileSync('schtasks.exe', [
-    '/Create',
-    '/TN',
-    scheduledTaskName,
-    '/SC',
-    'ONCE',
-    '/ST',
-    formatScheduledTaskTime(),
-    '/TR',
-    `cmd.exe /d /c ${quoteWindowsCommandArgument(launcherPath)}`,
-    '/F',
-  ], {
+  execFileSync(
+    'schtasks.exe',
+    [
+      '/Create',
+      '/TN',
+      scheduledTaskName,
+      '/SC',
+      'ONCE',
+      '/ST',
+      formatScheduledTaskTime(),
+      '/TR',
+      `cmd.exe /d /c ${quoteWindowsCommandArgument(launcherPath)}`,
+      '/F'
+    ],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: 'ignore'
+    }
+  )
+  execFileSync('schtasks.exe', ['/Run', '/TN', scheduledTaskName], {
     encoding: 'utf8',
     windowsHide: true,
-    stdio: 'ignore',
-  })
-  execFileSync('schtasks.exe', [
-    '/Run',
-    '/TN',
-    scheduledTaskName,
-  ], {
-    encoding: 'utf8',
-    windowsHide: true,
-    stdio: 'ignore',
+    stdio: 'ignore'
   })
 }
 
@@ -1165,16 +1281,23 @@ try {
  * than assumed. Returns true when the installed copy was launched and this process should quit;
  * false means the redirect failed and the caller should fail open (keep launching this copy).
  */
-async function launchInstalledCopyAndQuit(installedApplication: InstalledApplication, platform: NodeJS.Platform): Promise<boolean> {
+async function launchInstalledCopyAndQuit(
+  installedApplication: InstalledApplication,
+  platform: NodeJS.Platform
+): Promise<boolean> {
   try {
     await access(installedApplication.executablePath)
   } catch (error) {
-    logInstallPolicy('same-version redirect target executable is missing; not quitting', {
-      target: installedApplication.executablePath,
-      error: error instanceof Error ? error.message : String(error),
-    }, 'warn')
+    logInstallPolicy(
+      'same-version redirect target executable is missing; not quitting',
+      {
+        target: installedApplication.executablePath,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      'warn'
+    )
     traceInstallPolicy('launchInstalledCopyAndQuit: target executable missing', {
-      target: installedApplication.executablePath,
+      target: installedApplication.executablePath
     })
     return false
   }
@@ -1191,37 +1314,51 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
   let child: ChildProcess
   try {
     if (platform === 'darwin') {
-      child = spawn('/usr/bin/open', [installedApplication.launchPath], { detached: true, stdio: 'ignore' })
+      child = spawn('/usr/bin/open', [installedApplication.launchPath], {
+        detached: true,
+        stdio: 'ignore'
+      })
     } else if (platform === 'win32') {
       child = spawn(installedApplication.launchPath, [], {
         detached: true,
         stdio: 'ignore',
         cwd: platformDirname(installedApplication.launchPath, platform),
-        env: { ...process.env, [INSTALL_REDIRECT_CHILD_ENV]: '1' },
+        env: { ...process.env, [INSTALL_REDIRECT_CHILD_ENV]: '1' }
       })
     } else {
       return false
     }
   } catch (error) {
-    logInstallPolicy('same-version redirect spawn threw synchronously; not quitting', {
-      target: installedApplication.launchPath,
-      error: error instanceof Error ? error.message : String(error),
-    }, 'warn')
+    logInstallPolicy(
+      'same-version redirect spawn threw synchronously; not quitting',
+      {
+        target: installedApplication.launchPath,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      'warn'
+    )
     traceInstallPolicy('launchInstalledCopyAndQuit: spawn threw', {
-      target: installedApplication.launchPath,
+      target: installedApplication.launchPath
     })
     return false
   }
 
-  const spawnConfirmed = await waitForSpawnConfirmation(child, REDIRECT_SPAWN_CONFIRMATION_TIMEOUT_MS)
+  const spawnConfirmed = await waitForSpawnConfirmation(
+    child,
+    REDIRECT_SPAWN_CONFIRMATION_TIMEOUT_MS
+  )
   if (!spawnConfirmed.ok) {
-    logInstallPolicy('same-version redirect spawn failed; not quitting', {
-      target: installedApplication.launchPath,
-      reason: spawnConfirmed.reason,
-    }, 'warn')
+    logInstallPolicy(
+      'same-version redirect spawn failed; not quitting',
+      {
+        target: installedApplication.launchPath,
+        reason: spawnConfirmed.reason
+      },
+      'warn'
+    )
     traceInstallPolicy('launchInstalledCopyAndQuit: spawn not confirmed', {
       target: installedApplication.launchPath,
-      reason: spawnConfirmed.reason,
+      reason: spawnConfirmed.reason
     })
     return false
   }
@@ -1229,7 +1366,7 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
   child.unref()
   logInstallPolicy('same-version redirect succeeded; quitting so installed copy takes over', {
     target: installedApplication.launchPath,
-    childPid: child.pid ?? null,
+    childPid: child.pid ?? null
   })
   await flushInstallPolicyLogs()
   quitForInstalledCopyPolicy(platform)
@@ -1241,7 +1378,10 @@ async function launchInstalledCopyAndQuit(installedApplication: InstalledApplica
  * successful spawn emits `spawn` and assigns `pid`. Wait for whichever comes first, with a
  * timeout fallback: if `pid` is already set treat the spawn as successful, otherwise fail.
  */
-function waitForSpawnConfirmation(child: ChildProcess, timeoutMs: number): Promise<{ ok: boolean; reason?: string }> {
+function waitForSpawnConfirmation(
+  child: ChildProcess,
+  timeoutMs: number
+): Promise<{ ok: boolean; reason?: string }> {
   return new Promise((resolveConfirmation) => {
     let settled = false
     const settle = (result: { ok: boolean; reason?: string }): void => {
@@ -1256,7 +1396,11 @@ function waitForSpawnConfirmation(child: ChildProcess, timeoutMs: number): Promi
     const onSpawn = (): void => settle({ ok: true })
     const onError = (error: Error): void => settle({ ok: false, reason: error.message })
     const timeout = setTimeout(() => {
-      settle(child.pid ? { ok: true } : { ok: false, reason: `spawn not confirmed within ${timeoutMs}ms` })
+      settle(
+        child.pid
+          ? { ok: true }
+          : { ok: false, reason: `spawn not confirmed within ${timeoutMs}ms` }
+      )
     }, timeoutMs)
     timeout.unref?.()
 
@@ -1271,7 +1415,9 @@ function quitForInstalledCopyPolicy(_platform: NodeJS.Platform): void {
   // app.exit(0) calls C exit() which should be immediate, but on macOS with
   // GPU/utility helper processes it can stall. Belt-and-suspenders:
   setTimeout(() => {
-    traceInstallPolicy('quitForInstalledCopyPolicy: app.exit(0) did not terminate, forcing process.exit(0)')
+    traceInstallPolicy(
+      'quitForInstalledCopyPolicy: app.exit(0) did not terminate, forcing process.exit(0)'
+    )
     process.exit(0)
   }, 2000).unref()
 }
@@ -1293,10 +1439,14 @@ async function showReplacementError(platform: NodeJS.Platform, error: unknown): 
     buttons: ['Quit'],
     defaultId: 0,
     cancelId: 0,
-    title: platform === 'darwin' ? 'Could not replace Applications copy' : 'Could not replace installed copy',
-    message: platform === 'darwin'
-      ? 'AutoDoc could not replace the copy in /Applications.'
-      : 'AutoDoc could not replace the installed copy.',
-    detail: error instanceof Error ? error.message : 'Unknown installation error.',
+    title:
+      platform === 'darwin'
+        ? 'Could not replace Applications copy'
+        : 'Could not replace installed copy',
+    message:
+      platform === 'darwin'
+        ? 'AutoDoc could not replace the copy in /Applications.'
+        : 'AutoDoc could not replace the installed copy.',
+    detail: error instanceof Error ? error.message : 'Unknown installation error.'
   })
 }

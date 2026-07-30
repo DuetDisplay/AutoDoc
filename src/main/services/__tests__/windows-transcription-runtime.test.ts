@@ -480,9 +480,7 @@ describe('Windows transcription runtime selection', () => {
 
       const profiles = await loadWindowsTranscriptionProfiles(manifestPath)
       const modelAsset = profiles['parakeet-gpu'].assets.find((asset) => asset.id === 'model')
-      expect(modelAsset?.url).toBe(
-        'http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip'
-      )
+      expect(modelAsset?.url).toBe('http://127.0.0.1:8765/assets/parakeet-tdt-0.6b-v3-fp32.zip')
       expect(modelAsset?.parts).toEqual([
         {
           filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',

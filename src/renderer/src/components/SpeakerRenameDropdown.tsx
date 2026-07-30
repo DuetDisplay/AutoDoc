@@ -6,7 +6,11 @@ interface SpeakerRenameDropdownProps {
   onClose: () => void
 }
 
-export function SpeakerRenameDropdown({ suggestions, onRename, onClose }: SpeakerRenameDropdownProps) {
+export function SpeakerRenameDropdown({
+  suggestions,
+  onRename,
+  onClose
+}: SpeakerRenameDropdownProps) {
   const [customName, setCustomName] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -46,7 +50,10 @@ export function SpeakerRenameDropdown({ suggestions, onRename, onClose }: Speake
           {suggestions.map((email) => (
             <button
               key={email}
-              onClick={() => { onRename(email); onClose() }}
+              onClick={() => {
+                onRename(email)
+                onClose()
+              }}
               className="block w-full text-left px-3 py-2 text-[12px] text-ink hover:bg-bg-accent/60 transition-colors"
             >
               {email}
@@ -61,7 +68,10 @@ export function SpeakerRenameDropdown({ suggestions, onRename, onClose }: Speake
           type="text"
           value={customName}
           onChange={(e) => setCustomName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') onClose() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSubmit()
+            if (e.key === 'Escape') onClose()
+          }}
           placeholder="Type a custom name..."
           className="w-full border border-border rounded px-2 py-1.5 text-[12px] outline-none focus:border-ink-muted bg-transparent"
         />

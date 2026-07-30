@@ -26,9 +26,8 @@ function isWithinTempDir(targetPath: string): boolean {
 }
 
 function joinAppDataPath(appDataPath: string, folderName: string): string {
-  const joinPath = /^[A-Za-z]:/.test(appDataPath) || appDataPath.includes('\\')
-    ? win32.join
-    : posix.join
+  const joinPath =
+    /^[A-Za-z]:/.test(appDataPath) || appDataPath.includes('\\') ? win32.join : posix.join
   return joinPath(appDataPath, folderName)
 }
 
@@ -39,10 +38,10 @@ export function isSafeTestResetPath(targetPath: string): boolean {
 
   const folderName = basename(normalizePath(targetPath))
   return (
-    folderName.startsWith('autodoc-e2e-')
-    || folderName.startsWith('autodoc-e2e-isolated-')
-    || folderName.startsWith('autodoc-real-setup-')
-    || folderName.startsWith('autodoc-smoke-user-data-')
+    folderName.startsWith('autodoc-e2e-') ||
+    folderName.startsWith('autodoc-e2e-isolated-') ||
+    folderName.startsWith('autodoc-real-setup-') ||
+    folderName.startsWith('autodoc-smoke-user-data-')
   )
 }
 
@@ -52,17 +51,17 @@ export function getResetLocalDataTargets(options: ResetLocalDataOptions): string
 
   if (isTestReset) {
     if (!isSafeTestResetPath(userDataPath)) {
-      throw new Error(
-        `Refusing to reset local data for a non-temporary test path: ${userDataPath}`,
-      )
+      throw new Error(`Refusing to reset local data for a non-temporary test path: ${userDataPath}`)
     }
     return [userDataPath]
   }
 
-  return [...new Set([
-    userDataPath,
-    joinAppDataPath(appDataPath, 'AutoDoc'),
-    joinAppDataPath(appDataPath, 'autodoc'),
-    joinAppDataPath(appDataPath, 'Autodoc'),
-  ])]
+  return [
+    ...new Set([
+      userDataPath,
+      joinAppDataPath(appDataPath, 'AutoDoc'),
+      joinAppDataPath(appDataPath, 'autodoc'),
+      joinAppDataPath(appDataPath, 'Autodoc')
+    ])
+  ]
 }

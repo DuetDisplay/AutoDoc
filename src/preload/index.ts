@@ -2,10 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcSendEvents, IpcInvokeEvents, IpcInvokeReturns, IpcOnEvents } from './ipc'
 
 const api = {
-  send<K extends keyof IpcSendEvents>(
-    channel: K,
-    ...args: IpcSendEvents[K]
-  ): void {
+  send<K extends keyof IpcSendEvents>(channel: K, ...args: IpcSendEvents[K]): void {
     ipcRenderer.send(channel, ...args)
   },
 

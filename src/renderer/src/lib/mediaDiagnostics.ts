@@ -24,6 +24,6 @@ export function snapshotMediaElement(el: HTMLMediaElement) {
     playbackRate: el.playbackRate,
     seekable: timeRangesSnapshot(el.seekable),
     buffered: timeRangesSnapshot(el.buffered),
-    played: timeRangesSnapshot(el.played),
+    played: timeRangesSnapshot(el.played)
   }
 }

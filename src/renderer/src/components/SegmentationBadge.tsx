@@ -40,13 +40,17 @@ interface SegmentationBadgeProps {
   onRetry?: () => void
 }
 
-export function SegmentationBadge({ status, progress, errorCode, onRetry }: SegmentationBadgeProps) {
+export function SegmentationBadge({
+  status,
+  progress,
+  errorCode,
+  onRetry
+}: SegmentationBadgeProps) {
   const config = STATUS_CONFIG[status]
   const [ollamaProgress, setOllamaProgress] = useState<OllamaSetupStatus | null>(null)
 
   useEffect(() => {
     if (status !== 'downloading-model') {
-      setOllamaProgress(null)
       return
     }
     window.electronAPI.invoke('ollama:get-setup-status').then(setOllamaProgress)
@@ -54,6 +58,7 @@ export function SegmentationBadge({ status, progress, errorCode, onRetry }: Segm
     return unsub
   }, [status])
 
+  const activeOllamaProgress = status === 'downloading-model' ? ollamaProgress : null
   const isInsufficientMemory = status === 'failed' && errorCode === 'ollama-insufficient-memory'
   let label = isInsufficientMemory ? 'Not enough memory' : config.label
   if (status === 'segmenting' && progress == null) {
@@ -61,8 +66,8 @@ export function SegmentationBadge({ status, progress, errorCode, onRetry }: Segm
   } else if (status === 'segmenting' && progress != null) {
     label = `Generating notes... ${progress}%`
   }
-  if (status === 'downloading-model' && ollamaProgress) {
-    label = getOllamaSetupLabel(ollamaProgress) ?? label
+  if (activeOllamaProgress) {
+    label = getOllamaSetupLabel(activeOllamaProgress) ?? label
   }
 
   const showProgress = status === 'segmenting' && progress != null

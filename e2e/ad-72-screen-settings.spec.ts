@@ -24,8 +24,8 @@ test('AD-72 primary screen CTA attempts to open System Settings when permission 
     platform: 'darwin',
     permissions: {
       microphone: false,
-      screen: false,
-    },
+      screen: false
+    }
   })
 
   try {
@@ -53,7 +53,7 @@ test('AD-72 primary screen CTA attempts to open System Settings when permission 
 
     await testInfo.attach('ad-72-open-settings-calls', {
       body: JSON.stringify({ expected: true, attemptedToOpenSettings, panels }, null, 2),
-      contentType: 'application/json',
+      contentType: 'application/json'
     })
 
     expect(attemptedToOpenSettings).toBe(true)

@@ -48,7 +48,6 @@ export function TranscriptView({
 
   useEffect(() => {
     if (status !== 'downloading') {
-      setSetupStatus(null)
       return
     }
 
@@ -56,6 +55,8 @@ export function TranscriptView({
     const unsub = window.electronAPI.on('whisper:setup-progress', setSetupStatus)
     return unsub
   }, [status])
+
+  const activeSetupStatus = status === 'downloading' ? setupStatus : null
 
   if (status === 'pending' || status === 'queued') {
     return (
@@ -70,7 +71,7 @@ export function TranscriptView({
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
         <p className="text-[12px] text-ink-muted">
-          {getWhisperSetupLabel(setupStatus) ?? 'Preparing transcription engine...'}
+          {getWhisperSetupLabel(activeSetupStatus) ?? 'Preparing transcription engine...'}
         </p>
       </div>
     )

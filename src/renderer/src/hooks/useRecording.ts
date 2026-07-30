@@ -17,7 +17,11 @@ import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { saveSourcePreference } from '../services/recording-source-preferences'
 import { captureRecordingStartFailure } from '../services/renderer-sentry'
 import type { RecordingSelectionContext } from '../services/window-detection'
-import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
+import type {
+  RecordingPaths,
+  RecordingSource,
+  RecordingTrackingContext
+} from '../../../shared/types'
 
 function isWindowsRenderer(): boolean {
   return (
@@ -65,7 +69,7 @@ export function useRecording() {
   } = useRecordingStore()
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const startPromiseRef = useRef<Promise<any> | null>(null)
+  const startPromiseRef = useRef<Promise<RecordingPaths> | null>(null)
 
   // Subscribe to recording state changes from main process
   useEffect(() => {
@@ -280,7 +284,7 @@ export function useRecordingActions() {
   const reset = useRecordingStore((s) => s.reset)
   const setSources = useRecordingStore((s) => s.setSources)
   const setLoadingSources = useRecordingStore((s) => s.setLoadingSources)
-  const startPromiseRef = useRef<Promise<any> | null>(null)
+  const startPromiseRef = useRef<Promise<RecordingPaths> | null>(null)
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true)

@@ -23,11 +23,7 @@ export function classifyWindowsTranscriptionTier(input: {
   if (backend === 'parakeet-gpu' || backend === 'faster-whisper-cuda') {
     return 'gpu'
   }
-  if (
-    backend === 'parakeet-cpu' ||
-    backend === 'faster-whisper-cpu' ||
-    backend === 'whisper-cpp'
-  ) {
+  if (backend === 'parakeet-cpu' || backend === 'faster-whisper-cpu' || backend === 'whisper-cpp') {
     return 'cpu'
   }
 

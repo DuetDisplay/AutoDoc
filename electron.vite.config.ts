@@ -25,20 +25,17 @@ export default defineConfig(({ mode }) => {
         ),
         'process.env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG': JSON.stringify(
           env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG ?? ''
-        ),
+        )
       },
       build: {
         externalizeDeps: {
-          exclude: ['electron-store'],
-        },
-      },
+          exclude: ['electron-store']
+        }
+      }
     },
     preload: {},
     renderer: {
-      plugins: [
-        tailwindcss(),
-        react(),
-      ],
-    },
+      plugins: [tailwindcss(), react()]
+    }
   }
 })

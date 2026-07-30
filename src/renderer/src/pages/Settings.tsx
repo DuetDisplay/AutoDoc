@@ -3,7 +3,12 @@ import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
-import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount, WhisperSetupStatus } from '../../../shared/types'
+import type {
+  AppRuntimeInfo,
+  AppStorageInfo,
+  CalendarAccount,
+  WhisperSetupStatus
+} from '../../../shared/types'
 import { supportsWindowsTranscriptionQualityFastMode } from '../../../shared/windows-transcription-settings'
 import {
   identifyConsentedInstall,
@@ -116,9 +121,11 @@ export function Settings() {
     void window.electronAPI
       .invoke('prefs:get-transcription-performance-mode')
       .then(setTranscriptionPerformanceModeState)
-    void window.electronAPI.invoke('whisper:get-setup-status').then((status: WhisperSetupStatus) => {
-      setTranscriptionBackend(status.backend ?? runtimeInfo?.transcriptionBackend)
-    })
+    void window.electronAPI
+      .invoke('whisper:get-setup-status')
+      .then((status: WhisperSetupStatus) => {
+        setTranscriptionBackend(status.backend ?? runtimeInfo?.transcriptionBackend)
+      })
     const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
       if (status.backend) {
         setTranscriptionBackend(status.backend)
