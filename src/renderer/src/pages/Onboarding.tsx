@@ -9,6 +9,7 @@ import { TranscriptionStep } from '../components/onboarding/TranscriptionStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
+import { OnboardingSupportLink } from '../components/onboarding/OnboardingSupportLink'
 import {
   identifyConsentedInstall,
   recordAnalyticsLocalSignal,
@@ -276,10 +277,16 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         </button>
       )}
 
-      {/* Content */}
-      <div className="min-h-full flex flex-col items-center justify-start [@media(min-height:520px)]:justify-center pt-20 pb-8">
-        <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
-          {renderStep()}
+      <div className="min-h-full flex flex-col">
+        {/* Content */}
+        <div className="flex flex-1 flex-col items-center justify-start pt-20 pb-4 [@media(min-height:520px)]:justify-center">
+          <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
+            {renderStep()}
+          </div>
+        </div>
+
+        <div className="shrink-0 px-6 pb-4">
+          <OnboardingSupportLink />
         </div>
       </div>
     </div>

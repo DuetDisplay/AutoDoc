@@ -5,8 +5,14 @@ import { Sidebar } from './Sidebar'
 import { createElectronApiMock } from '../test/fixtures'
 
 const defaultSetupStatus = { phase: 'ready', percent: 100 }
+const trackEventMock = vi.hoisted(() => vi.fn())
+
+vi.mock('../services/analytics', () => ({
+  trackEvent: trackEventMock
+}))
 
 beforeEach(() => {
+  trackEventMock.mockReset()
   window.electronAPI = {
     send: vi.fn(),
     invoke: vi.fn((channel: string) => {
@@ -64,8 +70,15 @@ describe('Sidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
 
     await waitFor(() => {
-      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:open-email')
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:open-email', 'sidebar')
       expect(screen.getByText('Draft opened in your email app.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_requested', {
+      surface: 'sidebar'
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'draft_opened'
     })
   })
 
@@ -106,11 +119,6 @@ describe('Sidebar', () => {
   })
 
   it('offers a copy fallback when no mail client opens', async () => {
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText }
-    })
     window.electronAPI = {
       send: vi.fn(),
       invoke: vi.fn((channel: string) => {
@@ -124,6 +132,7 @@ describe('Sidebar', () => {
             address: 'team@getautodoc.com'
           })
         }
+        if (channel === 'support:copy-email') return Promise.resolve({ status: 'copied' })
         return Promise.resolve(undefined)
       }),
       on: vi.fn(() => () => {})
@@ -137,8 +146,51 @@ describe('Sidebar', () => {
     fireEvent.click(copyButton)
 
     await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('team@getautodoc.com')
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:copy-email', 'sidebar')
       expect(screen.getByText('Email address copied.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'copy_required'
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'address_copied'
+    })
+  })
+
+  it('reports a main-process copy failure without claiming success', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') {
+          return Promise.resolve({
+            status: 'copy-required',
+            address: 'team@getautodoc.com'
+          })
+        }
+        if (channel === 'support:copy-email') {
+          return Promise.resolve({ status: 'copy-failed' })
+        }
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy email address' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Couldn’t copy. Select the address above.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'copy_failed'
     })
   })
 

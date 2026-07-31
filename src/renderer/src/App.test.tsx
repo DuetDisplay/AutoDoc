@@ -101,7 +101,9 @@ describe('App', () => {
 
     state.accounts = []
     state.events = []
-    api.emit('calendar:connection-changed', false)
+    act(() => {
+      api.emit('calendar:connection-changed', false)
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /connect google calendar/i })).toBeInTheDocument()

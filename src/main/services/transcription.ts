@@ -173,6 +173,10 @@ export class TranscriptionService {
     this.onCompleteCallback = callback
   }
 
+  hasActiveOrQueuedWork(): boolean {
+    return this.processing || this.activeJobId !== null || this.queue.length > 0
+  }
+
   shutdown(): void {
     this.transcriptionWorkerClient?.dispose()
     this.transcriptionWorkerClient = null

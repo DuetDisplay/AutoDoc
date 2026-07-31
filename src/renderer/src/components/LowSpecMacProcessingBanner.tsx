@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 
-export function LowSpecMacProcessingBanner(): ReactElement | null {
+export function LowSpecMacProcessingBanner({
+  onVisibilityChange
+}: {
+  onVisibilityChange?: (visible: boolean) => void
+}): ReactElement | null {
   const [visible, setVisible] = useState(false)
 
   const refreshVisibility = useCallback(async () => {
@@ -41,6 +45,12 @@ export function LowSpecMacProcessingBanner(): ReactElement | null {
       unsubEntry()
     }
   }, [refreshVisibility])
+
+  useEffect(() => {
+    onVisibilityChange?.(visible)
+  }, [onVisibilityChange, visible])
+
+  useEffect(() => () => onVisibilityChange?.(false), [onVisibilityChange])
 
   const dismiss = async (): Promise<void> => {
     setVisible(false)

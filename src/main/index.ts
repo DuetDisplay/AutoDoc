@@ -5,7 +5,8 @@ import {
   shell,
   systemPreferences,
   powerMonitor,
-  Notification
+  Notification,
+  type WebContents
 } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -53,6 +54,18 @@ import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
+import { registerFeedbackPromptIpc } from './ipc/feedback-prompt-ipc'
+import {
+  FEEDBACK_REMINDER_DELAY_MS,
+  FeedbackPromptService,
+  toLocalDateKey
+} from './services/feedback-prompt-service'
+import { FeedbackForegroundSessionTracker } from './services/feedback-foreground-session'
+import {
+  createDefaultFeedbackPromptState,
+  FeedbackPromptStore
+} from './services/feedback-prompt-store'
+import { getSupportEmail } from './services/distribution-config'
 import { createTray, updateTrayMenu } from './services/tray'
 import {
   logAutodocEvent,
@@ -69,7 +82,7 @@ import type {
   RecordingMediaPlayerErrorReport,
   SegmentationDiagnosticPayload
 } from '../shared/types'
-import type { E2EDetectionState } from '../shared/e2e'
+import type { E2EDetectionState, E2EFeedbackPromptFixture } from '../shared/e2e'
 import {
   initAutoUpdater,
   getUpdateStatus,
@@ -117,7 +130,10 @@ import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
-import { shouldSuppressNotificationActivation } from './notification-window'
+import {
+  onNotificationActivationSuppressionChange,
+  shouldSuppressNotificationActivation
+} from './notification-window'
 import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
 
@@ -250,6 +266,8 @@ let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
 let diagnosticLogUploadConsentEnabled = false
+let onFeedbackWindowActive: (() => void) | null = null
+let onFeedbackWindowInactive: (() => void) | null = null
 
 function syncDiagnosticLogUploadForErrors(): void {
   setDiagnosticLogUploadForErrorsEnabled(
@@ -458,6 +476,13 @@ function createWindow(): void {
 
   registerMainWindow(mainWindow)
 
+  mainWindow.on('focus', () => onFeedbackWindowActive?.())
+  mainWindow.on('show', () => onFeedbackWindowActive?.())
+  mainWindow.on('restore', () => onFeedbackWindowActive?.())
+  mainWindow.on('blur', () => onFeedbackWindowInactive?.())
+  mainWindow.on('hide', () => onFeedbackWindowInactive?.())
+  mainWindow.on('minimize', () => onFeedbackWindowInactive?.())
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
@@ -549,7 +574,6 @@ app.whenReady().then(async () => {
   const analyticsStateStore = new AnalyticsStateStore()
   analyticsStateStore.observeAppVersion(app.getVersion())
   registerAnalyticsIpc(analyticsStateStore)
-  registerSupportIpc()
   const runtimeContext = {
     platform: process.platform,
     arch: process.arch,
@@ -1548,9 +1572,141 @@ app.whenReady().then(async () => {
 
   const {
     stopActiveRecording,
-    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl
+    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
+    hasPostProcessingWork
   } = registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
+
+  const feedbackPromptStore = new FeedbackPromptStore()
+  const feedbackPromptService = new FeedbackPromptService({
+    store: feedbackPromptStore,
+    getEligibilityBaselineAt: () => {
+      const baseline = new Date(analyticsStateStore.getState().firstLaunchDate).getTime()
+      return Number.isFinite(baseline) ? baseline : null
+    },
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    isBusy: () => {
+      const mainWindow = getMainWindow()
+      const updateState = getUpdateStatus().state
+      const updateBusy =
+        updateState === 'checking' ||
+        updateState === 'available' ||
+        updateState === 'downloading' ||
+        updateState === 'downloaded' ||
+        updateState === 'installing'
+
+      return (
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        !mainWindow.isVisible() ||
+        mainWindow.isMinimized() ||
+        !mainWindow.isFocused() ||
+        recordingService.getState().isRecording ||
+        hasPostProcessingWork() ||
+        transcriptionService.hasActiveOrQueuedWork() ||
+        segmentationService.hasActiveOrQueuedWork() ||
+        shouldSuppressNotificationActivation() ||
+        updateBusy
+      )
+    },
+    isSupportAvailable: () => getSupportEmail() !== null
+  })
+
+  const qualifyingFocusMs =
+    isE2E && process.env.AUTODOC_E2E_FEEDBACK_FOCUS_MS
+      ? Math.max(0, Number(process.env.AUTODOC_E2E_FEEDBACK_FOCUS_MS) || 0)
+      : 60_000
+
+  const isMainWindowForegrounded = (): boolean => {
+    const mainWindow = getMainWindow()
+    return Boolean(
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isVisible() &&
+      !mainWindow.isMinimized() &&
+      mainWindow.isFocused()
+    )
+  }
+
+  const feedbackSessionTracker = new FeedbackForegroundSessionTracker({
+    recorder: feedbackPromptService,
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    isForegrounded: isMainWindowForegrounded,
+    qualifyingFocusMs
+  })
+
+  onFeedbackWindowActive = () => feedbackSessionTracker.observeActive()
+  onFeedbackWindowInactive = () => feedbackSessionTracker.observeInactive()
+
+  const isTrustedMainWindowSender = (sender: WebContents): boolean =>
+    getMainWindow()?.webContents === sender
+
+  registerFeedbackPromptIpc(feedbackPromptService, {
+    isTrustedSender: isTrustedMainWindowSender,
+    observeForeground: () => feedbackSessionTracker.observeActive()
+  })
+  registerSupportIpc({
+    isTrustedSender: isTrustedMainWindowSender,
+    onContactInitiated: async (surface) => {
+      await feedbackPromptService.recordContactInitiated()
+      const mainWindow = getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('feedback:contact-initiated', surface)
+      }
+    }
+  })
+  onNotificationActivationSuppressionChange((suppressed) => {
+    const mainWindow = getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('feedback:critical-ui-changed', suppressed)
+    }
+  })
+
+  if (isE2E) {
+    ipcMain.handle(
+      'e2e:set-feedback-prompt-fixture',
+      async (_event, fixture: E2EFeedbackPromptFixture): Promise<boolean> => {
+        const allowedFixtures: E2EFeedbackPromptFixture[] = [
+          'ineligible',
+          'initial-eligible',
+          'reminder-eligible',
+          'never-ask-again',
+          'contact-initiated'
+        ]
+        if (!allowedFixtures.includes(fixture)) return false
+
+        const now = Date.now()
+        const previousDay = new Date(now)
+        previousDay.setDate(previousDay.getDate() - 1)
+        const initialShownAt = now - FEEDBACK_REMINDER_DELAY_MS - 1_000
+        const state = await feedbackPromptStore.updateState(() => ({
+          ...createDefaultFeedbackPromptState(),
+          qualifyingSessionCount: fixture === 'ineligible' || fixture === 'never-ask-again' ? 0 : 3,
+          qualifyingSessionDates:
+            fixture === 'ineligible' || fixture === 'never-ask-again'
+              ? []
+              : [toLocalDateKey(now), toLocalDateKey(previousDay.getTime())],
+          lastQualifiedSessionAt:
+            fixture === 'ineligible' || fixture === 'never-ask-again' ? null : now,
+          initialPromptShownAt: fixture === 'reminder-eligible' ? initialShownAt : null,
+          contactInitiatedAt: fixture === 'contact-initiated' ? now : null,
+          neverAskAgain: fixture === 'never-ask-again'
+        }))
+        return state !== null
+      }
+    )
+    ipcMain.handle('e2e:get-feedback-prompt-debug', async () => {
+      const eligibility = await feedbackPromptService.getEligibility()
+      return {
+        eligible: eligibility.eligible,
+        kind: eligibility.kind,
+        reason: eligibility.reason,
+        windowForegrounded: isMainWindowForegrounded(),
+        supportAvailable: getSupportEmail() !== null
+      }
+    })
+  }
+
   registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Upcoming } from './Upcoming'
+import { hasCurrentOrImminentMeeting } from '../services/feedback-prompt-safety'
 import {
   createCalendarAccount,
   createCalendarEvent,
@@ -101,5 +102,35 @@ describe('Upcoming', () => {
     await waitFor(() => {
       expect(screen.getByText('Quarterly Review')).toBeInTheDocument()
     })
+  })
+
+  it('suppresses feedback only for current or next-ten-minute meetings', () => {
+    const now = new Date('2026-07-31T14:00:00Z').getTime()
+
+    expect(
+      hasCurrentOrImminentMeeting(
+        [createCalendarEvent({ startTime: now - 5_000, endTime: now + 5_000 })],
+        now
+      )
+    ).toBe(true)
+    expect(
+      hasCurrentOrImminentMeeting(
+        [createCalendarEvent({ startTime: now + 10 * 60_000, endTime: now + 20 * 60_000 })],
+        now
+      )
+    ).toBe(true)
+    expect(
+      hasCurrentOrImminentMeeting(
+        [
+          createCalendarEvent({
+            startTime: now,
+            endTime: now + 24 * 60 * 60_000,
+            isAllDay: true
+          }),
+          createCalendarEvent({ startTime: now + 10 * 60_000 + 1, endTime: now + 20 * 60_000 })
+        ],
+        now
+      )
+    ).toBe(false)
   })
 })

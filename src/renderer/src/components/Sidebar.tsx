@@ -17,6 +17,8 @@ const navItems = [
   { to: ROUTES.askAi, label: 'Ask AI' }
 ]
 
+const SUPPORT_SURFACE = 'sidebar' as const
+
 function WaveformIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 40 40" fill="none" className={className}>
@@ -39,7 +41,9 @@ export function Sidebar() {
   const [supportAvailable, setSupportAvailable] = useState<boolean | null>(null)
   const [supportResult, setSupportResult] = useState<OpenSupportEmailResult | null>(null)
   const [supportRequestPending, setSupportRequestPending] = useState(false)
-  const [supportCopyStatus, setSupportCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [supportCopyStatus, setSupportCopyStatus] = useState<
+    'idle' | 'copying' | 'copied' | 'failed'
+  >('idle')
   const supportRequestPendingRef = useRef(false)
 
   useEffect(() => {
@@ -128,27 +132,61 @@ export function Sidebar() {
     setSupportRequestPending(true)
     setSupportResult(null)
     setSupportCopyStatus('idle')
+    trackEvent('support_email_requested', { surface: SUPPORT_SURFACE })
     try {
-      const result = await window.electronAPI.invoke('support:open-email')
+      const result = await window.electronAPI.invoke('support:open-email', SUPPORT_SURFACE)
       setSupportResult(result)
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome:
+          result.status === 'opened'
+            ? 'draft_opened'
+            : result.status === 'copy-required'
+              ? 'copy_required'
+              : 'unavailable'
+      })
       if (result.status === 'unavailable') {
         setSupportAvailable(false)
       }
     } catch {
       setSupportResult({ status: 'unavailable' })
       setSupportAvailable(false)
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome: 'unavailable'
+      })
     } finally {
       supportRequestPendingRef.current = false
       setSupportRequestPending(false)
     }
   }
 
-  const copySupportEmail = async (address: string): Promise<void> => {
+  const copySupportEmail = async (): Promise<void> => {
+    if (supportCopyStatus === 'copying') return
+
+    setSupportCopyStatus('copying')
     try {
-      await navigator.clipboard.writeText(address)
-      setSupportCopyStatus('copied')
+      const result = await window.electronAPI.invoke('support:copy-email', SUPPORT_SURFACE)
+      if (result.status === 'copied') {
+        setSupportCopyStatus('copied')
+        trackEvent('support_email_outcome', {
+          surface: SUPPORT_SURFACE,
+          outcome: 'address_copied'
+        })
+      } else {
+        setSupportCopyStatus('failed')
+        if (result.status === 'unavailable') setSupportAvailable(false)
+        trackEvent('support_email_outcome', {
+          surface: SUPPORT_SURFACE,
+          outcome: result.status === 'copy-failed' ? 'copy_failed' : 'unavailable'
+        })
+      }
     } catch {
       setSupportCopyStatus('failed')
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome: 'copy_failed'
+      })
     }
   }
 
@@ -258,10 +296,11 @@ export function Sidebar() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => copySupportEmail(supportResult.address)}
-                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 rounded-sm transition-colors"
+                  onClick={copySupportEmail}
+                  disabled={supportCopyStatus === 'copying'}
+                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
                 >
-                  Copy email address
+                  {supportCopyStatus === 'copying' ? 'Copying…' : 'Copy email address'}
                 </button>
                 {supportCopyStatus === 'copied' ? <p>Email address copied.</p> : null}
                 {supportCopyStatus === 'failed' ? (

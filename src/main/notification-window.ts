@@ -6,6 +6,24 @@ let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
 let suppressAppActivationUntil = 0
 let suppressAppActivationWhileNotificationVisible = false
+type NotificationActivationSuppressionListener = (isSuppressed: boolean) => void
+const notificationActivationSuppressionListeners =
+  new Set<NotificationActivationSuppressionListener>()
+
+function setNotificationActivationSuppression(isSuppressed: boolean): void {
+  if (suppressAppActivationWhileNotificationVisible === isSuppressed) {
+    return
+  }
+
+  suppressAppActivationWhileNotificationVisible = isSuppressed
+  for (const listener of [...notificationActivationSuppressionListeners]) {
+    try {
+      listener(isSuppressed)
+    } catch {
+      // A consumer must not prevent the native notification from being shown or closed.
+    }
+  }
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -31,6 +49,15 @@ interface NotificationOptions {
 
 export type NotificationKind = 'meeting-detection' | 'notes-ready'
 
+export function onNotificationActivationSuppressionChange(
+  listener: NotificationActivationSuppressionListener
+): () => void {
+  notificationActivationSuppressionListeners.add(listener)
+  return () => {
+    notificationActivationSuppressionListeners.delete(listener)
+  }
+}
+
 export function shouldSuppressNotificationActivation(): boolean {
   if (suppressAppActivationWhileNotificationVisible) {
     return true
@@ -48,7 +75,7 @@ export function shouldSuppressNotificationActivation(): boolean {
 
 export function resetNotificationActivationSuppressionForTests(): void {
   suppressAppActivationUntil = 0
-  suppressAppActivationWhileNotificationVisible = false
+  setNotificationActivationSuppression(false)
 }
 
 function clearAutoDismissTimer(): void {
@@ -94,7 +121,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   })
   notificationWindow = win
   notificationKind = options.kind ?? null
-  suppressAppActivationWhileNotificationVisible = options.suppressAppActivationWhileVisible === true
+  setNotificationActivationSuppression(options.suppressAppActivationWhileVisible === true)
 
   const handlePrimaryAction = (): void => {
     try {
@@ -130,7 +157,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
       clearAutoDismissTimer()
       notificationWindow = null
       notificationKind = null
-      suppressAppActivationWhileNotificationVisible = false
+      setNotificationActivationSuppression(false)
     }
   })
 

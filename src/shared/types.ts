@@ -152,6 +152,27 @@ export type OpenSupportEmailResult =
   | { status: 'copy-required'; address: string }
   | { status: 'unavailable' }
 
+export type SupportEmailSurface = 'sidebar' | 'onboarding' | 'upcoming' | 'ai_notes'
+
+export type CopySupportEmailResult =
+  | { status: 'copied' }
+  | { status: 'copy-failed' }
+  | { status: 'unavailable' }
+
+export type FeedbackPromptSurface = Extract<SupportEmailSurface, 'upcoming' | 'ai_notes'>
+export type FeedbackPromptAppearance = 'initial' | 'reminder'
+export type FeedbackPromptAction = 'later' | 'dismiss' | 'never'
+
+export type FeedbackPromptReservationResponse =
+  | {
+      status: 'reserved'
+      reservationId: string
+      appearance: FeedbackPromptAppearance
+    }
+  | { status: 'suppressed' }
+
+export type FeedbackPromptConfirmationResponse = { status: 'confirmed' } | { status: 'rejected' }
+
 /** Renderer reports `<video>` / `<audio>` `error` for main-process logging and Sentry. */
 export interface RecordingMediaPlayerErrorReport {
   meetingId: string

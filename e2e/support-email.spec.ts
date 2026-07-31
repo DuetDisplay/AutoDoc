@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   completeOnboarding,
-  launchIsolatedE2EApp,
+  launchIsolatedE2EAppWithEnv,
   launchPackagedRealSetupApp
 } from './helpers/electron-app'
 
@@ -12,7 +12,9 @@ test('keeps Email Us accessible in the sidebar footer', async () => {
         AUTODOC_E2E: '1',
         AUTODOC_TEST_REAL_SETUP: '0'
       })
-    : await launchIsolatedE2EApp()
+    : await launchIsolatedE2EAppWithEnv({
+        AUTODOC_SUPPORT_EMAIL: 'team@getautodoc.com'
+      })
 
   try {
     const page = await app.electronApp.firstWindow()

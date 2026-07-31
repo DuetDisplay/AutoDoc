@@ -11,11 +11,18 @@ import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { CalendarEvent } from '../../../shared/types'
 import { ROUTES } from '../../../shared/constants'
+import { FeedbackPromptSlot } from '../components/FeedbackPromptSlot'
 
 let calendarToastShown = false
 
-export function Upcoming() {
+export function Upcoming({
+  feedbackPromptSuppressed = false
+}: {
+  feedbackPromptSuppressed?: boolean
+}) {
   const [calendarChecked, setCalendarChecked] = useState(false)
+  const [calendarEventsChecked, setCalendarEventsChecked] = useState(false)
+  const [feedbackCalendarReady, setFeedbackCalendarReady] = useState(false)
   const {
     events,
     isSyncing,
@@ -47,23 +54,37 @@ export function Upcoming() {
   }, [isConnecting, setConnecting])
 
   useEffect(() => {
-    window.electronAPI.invoke('calendar:get-accounts').then((accts) => {
-      setAccounts(accts)
-      setCalendarChecked(true)
-    })
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const accts = await window.electronAPI.invoke('calendar:get-accounts')
+        if (cancelled) return
+        setAccounts(accts)
+
+        if (accts.length > 0) {
+          const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
+          if (cancelled) return
+          setEvents(fetchedEvents)
+        }
+      } catch (err) {
+        console.error('Failed to load calendar state:', err)
+      } finally {
+        if (!cancelled) {
+          setCalendarChecked(true)
+          setCalendarEventsChecked(true)
+        }
+      }
+    })()
 
     const unsubscribe = window.electronAPI.on('calendar:events-updated', (updatedEvents) => {
       setEvents(updatedEvents)
     })
 
-    window.electronAPI.invoke('calendar:get-accounts').then(async (accts) => {
-      if (accts.length > 0) {
-        const fetchedEvents = await window.electronAPI.invoke('calendar:get-events')
-        setEvents(fetchedEvents)
-      }
-    })
-
-    return unsubscribe
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [setAccounts, setEvents])
 
   useEffect(() => {
@@ -83,6 +104,15 @@ export function Upcoming() {
       })
     }
   }, [isConnected, calendarChecked])
+
+  useEffect(() => {
+    if (!calendarEventsChecked) return
+
+    // Let the calendar-connect toast register with App's critical-UI gate before
+    // the feedback slot is allowed to claim an impression.
+    const timer = window.setTimeout(() => setFeedbackCalendarReady(true), 0)
+    return () => window.clearTimeout(timer)
+  }, [calendarEventsChecked])
 
   const handleConnect = (provider: 'google' | 'microsoft') => {
     recordDiagnosticAction({
@@ -195,6 +225,11 @@ export function Upcoming() {
             )}
           </div>
         }
+      />
+
+      <FeedbackPromptSlot
+        surface="upcoming"
+        suppressed={feedbackPromptSuppressed || !feedbackCalendarReady || isConnecting || isSyncing}
       />
 
       {!isConnected ? (
