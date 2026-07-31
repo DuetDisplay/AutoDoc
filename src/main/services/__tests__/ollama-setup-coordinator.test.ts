@@ -72,27 +72,6 @@ describe('OllamaSetupCoordinator', () => {
     expect(manager.startAndPull).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry or cache an expected setup cancellation as a terminal failure', async () => {
-    const cancellation = Object.assign(new Error('cancelled'), {
-      name: 'OllamaSetupCancelledError'
-    })
-    const manager = {
-      startAndPull: vi.fn().mockRejectedValueOnce(cancellation).mockResolvedValueOnce(undefined)
-    }
-    const onFinalError = vi.fn()
-    const coordinator = new OllamaSetupCoordinator(manager, {
-      retryDelaysMs: [0, 0, 0],
-      onFinalError
-    })
-
-    await expect(coordinator.ensureRunning()).rejects.toBe(cancellation)
-    expect(manager.startAndPull).toHaveBeenCalledTimes(1)
-    expect(onFinalError).not.toHaveBeenCalled()
-
-    await expect(coordinator.ensureRunning()).resolves.toBeUndefined()
-    expect(manager.startAndPull).toHaveBeenCalledTimes(2)
-  })
-
   it('documents cached startAndPull finishing without a fresh pull-complete event', async () => {
     const manager = {
       startAndPull: vi.fn().mockResolvedValue(undefined)

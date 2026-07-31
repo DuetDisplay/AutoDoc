@@ -19,13 +19,6 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
 
-function isSetupCancellation(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === 'OllamaSetupCancelledError' || error.name === 'AbortError')
-  )
-}
-
 function delay(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve()
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -63,9 +56,6 @@ export class OllamaSetupCoordinator {
       })
       .catch((error) => {
         const normalized = toError(error)
-        if (isSetupCancellation(normalized)) {
-          throw normalized
-        }
         this.terminalError = normalized
         this.onFinalError?.(normalized)
         throw normalized
@@ -92,7 +82,6 @@ export class OllamaSetupCoordinator {
         await this.runner.startAndPull()
         return
       } catch (error) {
-        if (isSetupCancellation(error)) throw error
         lastError = toError(error)
       }
     }
