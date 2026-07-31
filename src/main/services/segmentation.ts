@@ -80,6 +80,10 @@ export class SegmentationService {
       | null = null
   ) {}
 
+  hasActiveOrQueuedWork(): boolean {
+    return this.processing || this.activeJobId !== null || this.queue.length > 0
+  }
+
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
     if (this.queue.includes(meetingId)) return

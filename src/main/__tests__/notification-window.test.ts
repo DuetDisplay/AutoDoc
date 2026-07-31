@@ -70,10 +70,18 @@ vi.mock('electron', () => ({
 
 const {
   hideNotificationWindow,
+  onNotificationActivationSuppressionChange,
   resetNotificationActivationSuppressionForTests,
   shouldSuppressNotificationActivation,
   showNotificationWindow
 } = await import('../notification-window')
+const suppressionUnsubscribers: Array<() => void> = []
+
+function subscribeToSuppressionChanges(listener: (isSuppressed: boolean) => void): () => void {
+  const unsubscribe = onNotificationActivationSuppressionChange(listener)
+  suppressionUnsubscribers.push(unsubscribe)
+  return unsubscribe
+}
 
 function showTestNotification(
   options: Partial<Parameters<typeof showNotificationWindow>[0]> = {}
@@ -102,6 +110,9 @@ describe('notification window activation suppression', () => {
     for (const window of mocks.windows) {
       if (!window.destroyed) window.close()
     }
+    for (const unsubscribe of suppressionUnsubscribers.splice(0)) {
+      unsubscribe()
+    }
     vi.clearAllTimers()
     vi.useRealTimers()
   })
@@ -119,6 +130,70 @@ describe('notification window activation suppression', () => {
     })
 
     expect(shouldSuppressNotificationActivation()).toBe(true)
+  })
+
+  it('notifies subscribers when visible suppression starts and ends', () => {
+    const listener = vi.fn()
+    subscribeToSuppressionChanges(listener)
+
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenLastCalledWith(true)
+
+    mocks.windows[0].close()
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenLastCalledWith(false)
+  })
+
+  it('isolates subscriber failures from notification lifecycle updates', () => {
+    const healthyListener = vi.fn()
+    subscribeToSuppressionChanges(() => {
+      throw new Error('listener failed')
+    })
+    subscribeToSuppressionChanges(healthyListener)
+
+    expect(() =>
+      showTestNotification({
+        kind: 'meeting-detection',
+        suppressAppActivationWhileVisible: true
+      })
+    ).not.toThrow()
+    expect(healthyListener).toHaveBeenLastCalledWith(true)
+
+    expect(() => mocks.windows[0].close()).not.toThrow()
+    expect(healthyListener).toHaveBeenLastCalledWith(false)
+  })
+
+  it('stops notifying a subscriber after it unsubscribes', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeToSuppressionChanges(listener)
+
+    unsubscribe()
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+    mocks.windows[0].close()
+
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('notifies subscribers when visible suppression is reset', () => {
+    const listener = vi.fn()
+    subscribeToSuppressionChanges(listener)
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+
+    resetNotificationActivationSuppressionForTests()
+
+    expect(listener).toHaveBeenLastCalledWith(false)
   })
 
   it('briefly suppresses app activation after notification dismiss', () => {
@@ -153,6 +228,50 @@ describe('notification window activation suppression', () => {
 
     mocks.windows[1].close()
     expect(shouldSuppressNotificationActivation()).toBe(false)
+  })
+
+  it('does not emit false when a replaced window closes after its opted-in replacement', () => {
+    const listener = vi.fn()
+    subscribeToSuppressionChanges(listener)
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+    const replacedWindow = mocks.windows[0]
+    replacedWindow.deferClosedEvent = true
+
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+    replacedWindow.emitClosed()
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenLastCalledWith(true)
+
+    mocks.windows[1].close()
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenLastCalledWith(false)
+  })
+
+  it('emits false when an opted-in notification is replaced by a non-suppressing one', () => {
+    const listener = vi.fn()
+    subscribeToSuppressionChanges(listener)
+    showTestNotification({
+      kind: 'meeting-detection',
+      suppressAppActivationWhileVisible: true
+    })
+    const replacedWindow = mocks.windows[0]
+    replacedWindow.deferClosedEvent = true
+
+    showTestNotification({ kind: 'notes-ready' })
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenNthCalledWith(1, true)
+    expect(listener).toHaveBeenNthCalledWith(2, false)
+
+    replacedWindow.emitClosed()
+    expect(listener).toHaveBeenCalledTimes(2)
   })
 
   it('preserves trailing suppression after an opted-in notification closes', async () => {

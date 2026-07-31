@@ -110,6 +110,19 @@ describe('analytics consent', () => {
     expect(posthogMock.capture).not.toHaveBeenCalled()
   })
 
+  it('does not emit support analytics before consent', async () => {
+    const { initAnalytics, trackEvent } = await loadAnalytics()
+
+    initAnalytics()
+    trackEvent('support_email_requested', { surface: 'sidebar' })
+    trackEvent('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'draft_opened'
+    })
+
+    expect(posthogMock.capture).not.toHaveBeenCalled()
+  })
+
   it('sends only coarse consent snapshot properties after opt-in', async () => {
     const { initAnalytics, restoreAnalyticsConsent, trackConsentSnapshot } = await loadAnalytics()
 
@@ -310,6 +323,71 @@ describe('analytics consent', () => {
       transition_source: 'observed-after-consent',
       failure_code: 'permission_denied',
       result_count_bucket: '4-10'
+    })
+  })
+
+  it('keeps only bounded feedback and support property values', async () => {
+    const { sanitizeAnalyticsProperties } = await loadAnalytics()
+
+    for (const surface of ['sidebar', 'onboarding', 'upcoming', 'ai_notes']) {
+      expect(sanitizeAnalyticsProperties({ surface })).toEqual({ surface })
+    }
+    for (const appearance of ['initial', 'reminder']) {
+      expect(sanitizeAnalyticsProperties({ appearance })).toEqual({ appearance })
+    }
+    for (const action of ['share_feedback', 'later', 'dont_ask_again', 'dismiss']) {
+      expect(sanitizeAnalyticsProperties({ action })).toEqual({ action })
+    }
+    for (const outcome of [
+      'draft_opened',
+      'copy_required',
+      'address_copied',
+      'copy_failed',
+      'unavailable'
+    ]) {
+      expect(sanitizeAnalyticsProperties({ outcome })).toEqual({ outcome })
+    }
+
+    expect(
+      sanitizeAnalyticsProperties({
+        surface: 'ai_notes',
+        appearance: 'reminder',
+        action: 'dont_ask_again',
+        outcome: 'address_copied'
+      })
+    ).toEqual({
+      surface: 'ai_notes',
+      appearance: 'reminder',
+      action: 'dont_ask_again',
+      outcome: 'address_copied'
+    })
+
+    expect(
+      sanitizeAnalyticsProperties({
+        surface: 'settings',
+        appearance: 'third',
+        action: 'send_transcript',
+        outcome: 'sent'
+      })
+    ).toEqual({})
+  })
+
+  it('emits consented support analytics with their bounded context', async () => {
+    const { initAnalytics, restoreAnalyticsConsent, trackEvent } = await loadAnalytics()
+
+    initAnalytics()
+    restoreAnalyticsConsent(true)
+    trackEvent('support_email_outcome', {
+      surface: 'upcoming',
+      outcome: 'copy_required'
+    })
+
+    expect(posthogMock.capture).toHaveBeenCalledWith('support_email_outcome', {
+      platform: 'desktop',
+      build_mode: 'test',
+      build_channel: 'development',
+      surface: 'upcoming',
+      outcome: 'copy_required'
     })
   })
 

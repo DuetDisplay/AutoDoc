@@ -15,7 +15,13 @@ import type {
   RecordingTrackingContext,
   RecordingPaths,
   RecordingMediaPlayerErrorReport,
+  CopySupportEmailResult,
+  FeedbackPromptAction,
+  FeedbackPromptConfirmationResponse,
+  FeedbackPromptReservationResponse,
+  FeedbackPromptSurface,
   OpenSupportEmailResult,
+  SupportEmailSurface,
   Transcript,
   TranscriptionStatus,
   MeetingSegments,
@@ -33,7 +39,12 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
-import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
+import type {
+  E2EDetectionState,
+  E2EFeedbackPromptDebugState,
+  E2EFeedbackPromptFixture,
+  E2EPermissionRequestState
+} from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -91,7 +102,13 @@ export interface IpcInvokeEvents {
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
   'support:get-availability': []
-  'support:open-email': []
+  'support:open-email': [surface: SupportEmailSurface]
+  'support:copy-email': [surface: SupportEmailSurface]
+  'feedback:observe-foreground': []
+  'feedback:reserve-prompt': [surface: FeedbackPromptSurface]
+  'feedback:confirm-prompt': [reservationId: string, surface: FeedbackPromptSurface]
+  'feedback:cancel-prompt': [reservationId: string, surface: FeedbackPromptSurface]
+  'feedback:record-action': [impressionId: string, action: FeedbackPromptAction]
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:cancel-connect': []
   'calendar:disconnect': [accountId: string]
@@ -193,6 +210,8 @@ export interface IpcInvokeEvents {
   'e2e:get-detection-state': []
   'e2e:get-permission-request-state': []
   'e2e:set-detection-state': [state: Partial<E2EDetectionState>]
+  'e2e:set-feedback-prompt-fixture': [fixture: E2EFeedbackPromptFixture]
+  'e2e:get-feedback-prompt-debug': []
   'e2e:detection-poll': [advanceMs?: number]
   'e2e:trigger-main-error': []
   'e2e:trigger-notes-ready-notification': [
@@ -226,6 +245,12 @@ export interface IpcInvokeReturns {
   'diagnostics:clear-trail': void
   'support:get-availability': boolean
   'support:open-email': OpenSupportEmailResult
+  'support:copy-email': CopySupportEmailResult
+  'feedback:observe-foreground': void
+  'feedback:reserve-prompt': FeedbackPromptReservationResponse
+  'feedback:confirm-prompt': FeedbackPromptConfirmationResponse
+  'feedback:cancel-prompt': boolean
+  'feedback:record-action': boolean
   'calendar:connect': CalendarAccount
   'calendar:cancel-connect': void
   'calendar:disconnect': void
@@ -316,6 +341,8 @@ export interface IpcInvokeReturns {
   'e2e:get-detection-state': E2EDetectionState
   'e2e:get-permission-request-state': E2EPermissionRequestState
   'e2e:set-detection-state': E2EDetectionState
+  'e2e:set-feedback-prompt-fixture': boolean
+  'e2e:get-feedback-prompt-debug': E2EFeedbackPromptDebugState
   'e2e:detection-poll': void
   'e2e:trigger-main-error': void
   'e2e:trigger-notes-ready-notification': string
@@ -355,5 +382,7 @@ export interface IpcOnEvents {
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
+  'feedback:contact-initiated': [surface: SupportEmailSurface]
+  'feedback:critical-ui-changed': [suppressed: boolean]
   'e2e:track-analytics-event': [payload: { event: string; properties?: Record<string, unknown> }]
 }

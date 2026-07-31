@@ -21,6 +21,21 @@ export interface E2EPermissionRequestState {
   microphoneRequests: number
 }
 
+export type E2EFeedbackPromptFixture =
+  | 'ineligible'
+  | 'initial-eligible'
+  | 'reminder-eligible'
+  | 'never-ask-again'
+  | 'contact-initiated'
+
+export interface E2EFeedbackPromptDebugState {
+  eligible: boolean
+  kind: 'initial' | 'reminder' | null
+  reason: string
+  windowForegrounded: boolean
+  supportAvailable: boolean
+}
+
 export interface E2EScenario {
   platform?: 'darwin' | 'win32'
   permissions?: {

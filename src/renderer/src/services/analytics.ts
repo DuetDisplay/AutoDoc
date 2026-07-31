@@ -53,6 +53,8 @@ const ALLOWED_PROPERTIES = new Set([
   'app_arch',
   'app_platform',
   'app_version',
+  'appearance',
+  'action',
   'attempt_number',
   'available_version',
   'backend',
@@ -102,11 +104,13 @@ const ALLOWED_PROPERTIES = new Set([
   'setup_completed',
   'source_selection_mode',
   'source_type',
+  'surface',
   'step',
   'transcription_backend',
   'transition_source',
   'trigger',
   'user_activated',
+  'outcome',
   'whisper_model',
   'window_count'
 ])
@@ -169,6 +173,34 @@ function normalizePropertyValue(key: string, value: unknown): unknown {
   }
   if (key === 'transition_source') {
     return value === 'observed-after-consent' || value === 'disclosed-at-consent'
+      ? value
+      : undefined
+  }
+  if (key === 'surface') {
+    return value === 'sidebar' ||
+      value === 'onboarding' ||
+      value === 'upcoming' ||
+      value === 'ai_notes'
+      ? value
+      : undefined
+  }
+  if (key === 'appearance') {
+    return value === 'initial' || value === 'reminder' ? value : undefined
+  }
+  if (key === 'action') {
+    return value === 'share_feedback' ||
+      value === 'later' ||
+      value === 'dont_ask_again' ||
+      value === 'dismiss'
+      ? value
+      : undefined
+  }
+  if (key === 'outcome') {
+    return value === 'draft_opened' ||
+      value === 'copy_required' ||
+      value === 'address_copied' ||
+      value === 'copy_failed' ||
+      value === 'unavailable'
       ? value
       : undefined
   }

@@ -829,6 +829,7 @@ export function registerRecordingIpc(
 ): {
   stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
   recoverWindowsFinalizingMeetings: () => Promise<void>
+  hasPostProcessingWork: () => boolean
 } {
   let cachedRecentEvents: {
     fetchedAt: number
@@ -838,6 +839,7 @@ export function registerRecordingIpc(
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
   const windowsCalendarRefreshInFlight = new Set<string>()
   const windowsPostProcessingInFlight = new Set<string>()
+  const macPostProcessingInFlight = new Set<string>()
   const videoCaptureEndedEarlyMeetings = new Set<string>()
 
   async function persistRecordingMetadata(
@@ -1554,6 +1556,7 @@ export function registerRecordingIpc(
     }
 
     // Fire-and-forget: mux audio into video, save metadata, then enqueue transcription
+    macPostProcessingInFlight.add(result.meetingId)
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
@@ -1735,15 +1738,19 @@ export function registerRecordingIpc(
           })
         }
       }
-    })().catch((err) => {
-      logAutodocFailure({
-        area: 'recording',
-        message: 'Recording post-processing failed',
-        error: err,
-        meetingId: result.meetingId
+    })()
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Recording post-processing failed',
+          error: err,
+          meetingId: result.meetingId
+        })
+        console.error('Recording post-processing failed:', err)
       })
-      console.error('Recording post-processing failed:', err)
-    })
+      .finally(() => {
+        macPostProcessingInFlight.delete(result.meetingId)
+      })
 
     return result
   }
@@ -2145,7 +2152,14 @@ export function registerRecordingIpc(
     }
   }
 
-  return { stopActiveRecording, recoverWindowsFinalizingMeetings }
+  const hasPostProcessingWork = (): boolean =>
+    macPostProcessingInFlight.size > 0 ||
+    windowsPendingFinalization.size > 0 ||
+    windowsPostProcessingInFlight.size > 0 ||
+    windowsVideoJobInFlight.size > 0 ||
+    windowsVideoJobQueue.length > 0
+
+  return { stopActiveRecording, recoverWindowsFinalizingMeetings, hasPostProcessingWork }
 }
 
 function broadcastState(state: RecordingState): void {
