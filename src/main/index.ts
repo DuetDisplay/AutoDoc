@@ -34,7 +34,7 @@ import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
-import { isOllamaSetupCancellation, OllamaManager } from './services/ollama-manager'
+import { OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
@@ -1017,11 +1017,7 @@ app.whenReady().then(async () => {
       ? new OllamaSetupCoordinator(managedOllamaManager, {
           retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
           onAttemptStart: markOllamaSetupStarting,
-          onFinalError: (error) => {
-            if (!isOllamaSetupCancellation(error)) {
-              markOllamaSetupFailed(error)
-            }
-          }
+          onFinalError: markOllamaSetupFailed
         })
       : null
 
@@ -1051,9 +1047,7 @@ app.whenReady().then(async () => {
         markOllamaSetupReady()
       })
       .catch((err) => {
-        if (!isOllamaSetupCancellation(err)) {
-          markOllamaSetupFailed(err)
-        }
+        markOllamaSetupFailed(err)
       })
       .finally(() => {
         ollamaRecoveryPromise = null
@@ -1129,12 +1123,9 @@ app.whenReady().then(async () => {
         })
       }
     })
-    try {
-      await managedOllamaManager.cancelSetup()
-      await clearDownloadedComponents()
-    } finally {
-      managedOllamaManager.resumeSetup()
-    }
+    managedOllamaManager.stop()
+    managedOllamaManager.resetReady()
+    await clearDownloadedComponents()
     logAutodocEvent({
       area: 'app',
       message: 'app:clear-downloaded-components completed',
@@ -1148,17 +1139,13 @@ app.whenReady().then(async () => {
     })
     return await getAppStorageInfo()
   })
-  ipcMain.handle('app:reset-local-data', async (): Promise<void> => {
+  ipcMain.handle('app:reset-local-data', (): void => {
     if (recordingService.getState().isRecording) {
       throw new Error('Stop the current recording before deleting local AutoDoc data.')
     }
 
-    try {
-      await managedOllamaManager.cancelSetup()
-    } catch (error) {
-      managedOllamaManager.resumeSetup()
-      throw error
-    }
+    managedOllamaManager.stop()
+    managedOllamaManager.resetReady()
 
     void getStorageDiagnostics({
       whisperBinaryPath: whisperManager.getWhisperPath(),
