@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
 export default defineConfig({
+  define: {
+    __AUTODOC_QA_BUILD__: false
+  },
   plugins: [react()],
   test: {
     environment: 'jsdom',

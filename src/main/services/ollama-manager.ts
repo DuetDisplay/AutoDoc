@@ -16,8 +16,9 @@ import { canUseSystemRuntimeFallback } from './runtime-policy'
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
 
-const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
-const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
+// QA must never adopt or terminate the production app's managed Ollama process.
+const OLLAMA_PORT = __AUTODOC_QA_BUILD__ ? 11436 : 11435
+const OLLAMA_HOST = __AUTODOC_QA_BUILD__ ? '127.0.0.1:11436' : '127.0.0.1:11435'
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const SHOULD_PULL_ASK_AI_EMBEDDING_MODEL =
@@ -204,6 +205,10 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getInstalledFallbackOllamaDataDir(): string | null {
+    // A source-run QA build may reuse the installed runtime binary, but it must
+    // keep models and process ownership inside the isolated AutoDoc QA profile.
+    if (__AUTODOC_QA_BUILD__) return null
+
     const installedOllamaDataDir = getInstalledOllamaDataDir()
     if (
       !installedOllamaDataDir ||

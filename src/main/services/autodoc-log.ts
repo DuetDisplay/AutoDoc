@@ -170,7 +170,7 @@ function rotatedLogPath(index: number): string {
 }
 
 function getLogsDir(): string {
-  if (app.isReady()) {
+  if (__AUTODOC_QA_BUILD__ || app.isReady()) {
     return join(app.getPath('userData'), LOG_DIR_NAME)
   }
 

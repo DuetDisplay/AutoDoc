@@ -163,6 +163,26 @@ export type FeedbackPromptSurface = Extract<SupportEmailSurface, 'upcoming' | 'a
 export type FeedbackPromptAppearance = 'initial' | 'reminder'
 export type FeedbackPromptAction = 'later' | 'dismiss' | 'never'
 
+export type FeedbackPromptQAScenario = 'reset' | 'initial' | 'reminder' | 'contacted' | 'never'
+
+export interface FeedbackPromptQASnapshot {
+  stateAvailable: boolean
+  eligible: boolean
+  kind: FeedbackPromptAppearance | null
+  reason: string
+  windowForegrounded: boolean
+  supportAvailable: boolean
+  state: {
+    qualifyingSessionCount: number
+    qualifyingSessionDates: string[]
+    lastQualifiedSessionAt: number | null
+    initialPromptShownAt: number | null
+    reminderPromptShownAt: number | null
+    contactInitiatedAt: number | null
+    neverAskAgain: boolean
+  } | null
+}
+
 export type FeedbackPromptReservationResponse =
   | {
       status: 'reserved'
@@ -320,7 +340,8 @@ export interface AppRuntimeInfo {
   platform: NodeJS.Platform
   arch: string
   officialBuild: boolean
-  buildChannel: 'development' | 'official' | 'custom'
+  qaBuild: boolean
+  buildChannel: 'development' | 'official' | 'custom' | 'qa'
   storagePath: string
   whisperModel: string
   transcriptionBackend?: string

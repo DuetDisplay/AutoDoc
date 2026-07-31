@@ -405,6 +405,21 @@ export class FeedbackPromptService {
     }, undefined)
   }
 
+  /**
+   * Replaces durable state for a bounded main-process test fixture and clears any
+   * reservation or impression from the previous renderer route. This is used by
+   * the compile-time QA simulator and the existing isolated E2E harness only.
+   */
+  async replaceStateForFixture(
+    nextState: FeedbackPromptState
+  ): Promise<FeedbackPromptState | null> {
+    return await this.enqueueOperation(async () => {
+      this.activeReservation = null
+      this.activeImpression = null
+      return await this.store.updateState(() => nextState)
+    }, null)
+  }
+
   private async enqueueOperation<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
     const result = this.operationQueue.then(operation)
     this.operationQueue = result.then(

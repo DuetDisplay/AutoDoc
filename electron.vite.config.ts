@@ -4,15 +4,22 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const officialBuild = env.AUTODOC_OFFICIAL_BUILD ?? ''
+  const qaBuild = mode === 'qa'
+  const officialBuild = qaBuild ? '' : (env.AUTODOC_OFFICIAL_BUILD ?? '')
+  const buildFlags = {
+    __AUTODOC_QA_BUILD__: JSON.stringify(qaBuild)
+  }
 
   return {
     main: {
       define: {
+        ...buildFlags,
         'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(env.AUTODOC_SENTRY_DSN ?? ''),
         'process.env.AUTODOC_SENTRY_DEV': JSON.stringify(env.AUTODOC_SENTRY_DEV ?? ''),
         'process.env.AUTODOC_AUTH_WORKER_URL': JSON.stringify(env.AUTODOC_AUTH_WORKER_URL ?? ''),
-        'process.env.AUTODOC_SUPPORT_EMAIL': JSON.stringify(env.AUTODOC_SUPPORT_EMAIL ?? ''),
+        'process.env.AUTODOC_SUPPORT_EMAIL': JSON.stringify(
+          env.AUTODOC_SUPPORT_EMAIL ?? (qaBuild ? 'team@getautodoc.com' : '')
+        ),
         'process.env.AUTODOC_OFFICIAL_BUILD': JSON.stringify(officialBuild),
         'process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL': JSON.stringify(
           env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL ?? ''
@@ -35,6 +42,7 @@ export default defineConfig(({ mode }) => {
     },
     preload: {},
     renderer: {
+      define: buildFlags,
       plugins: [tailwindcss(), react()]
     }
   }

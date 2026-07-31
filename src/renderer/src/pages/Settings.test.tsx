@@ -221,6 +221,28 @@ describe('Settings', () => {
     expect(screen.queryByText('Speaker diarization')).not.toBeInTheDocument()
   })
 
+  it('does not render QA simulator controls in the production renderer build', async () => {
+    installMockElectronApi({
+      'app:get-version': '1.1.1',
+      'updater:get-status': createUpdateStatus(),
+      // Even a forged runtime response cannot opt a production renderer into the
+      // compile-time-only simulator module.
+      'app:get-runtime-info': createRuntimeInfo({ qaBuild: true, buildChannel: 'qa' }),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    await screen.findByText('Analytics & Crash Reports')
+    expect(
+      screen.queryByRole('region', { name: 'Feedback prompt simulator' })
+    ).not.toBeInTheDocument()
+  })
+
   it('shows an inline message for unsupported Microsoft mailboxes', async () => {
     installMockElectronApi({
       'app:get-version': '0.1.11',

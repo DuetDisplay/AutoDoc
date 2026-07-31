@@ -3,7 +3,12 @@ import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { basename, join, resolve, sep } from 'path'
 import { tmpdir } from 'os'
-import { isEncrypted, getDecryptedTempPathForMedia, clearMediaDecryptCache } from './crypto'
+import {
+  isEncrypted,
+  getDecryptedTempPathForMedia,
+  clearMediaDecryptCache,
+  isCurrentBuildDecryptedTempFileName
+} from './crypto'
 import { logAutodocFailure } from './autodoc-log'
 
 const ALLOWED_FILENAMES = new Set(['screen.webm', 'system.webm', 'audio.webm', 'mic.webm'])
@@ -27,7 +32,7 @@ function isTrustedServePath(absPath: string, recordingsBaseDir: string): boolean
   const tmpRoot = resolve(tmpdir())
   const tmpWithSep = tmpRoot.endsWith(sep) ? tmpRoot : tmpRoot + sep
   if (!abs.startsWith(tmpWithSep)) return false
-  return /^autodoc-[0-9a-f]{16}\./.test(basename(abs))
+  return isCurrentBuildDecryptedTempFileName(basename(abs))
 }
 
 function parseByteRange(

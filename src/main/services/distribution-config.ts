@@ -31,6 +31,7 @@ function readConfiguredEnv(name: string, buildTimeValue: string | undefined): st
 }
 
 export function isOfficialAutoDocBuild(): boolean {
+  if (__AUTODOC_QA_BUILD__) return false
   return readConfiguredEnv('AUTODOC_OFFICIAL_BUILD', BUILD_TIME_AUTODOC_OFFICIAL_BUILD) === '1'
 }
 

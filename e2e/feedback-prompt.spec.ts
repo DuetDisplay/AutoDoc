@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import {
   completeOnboarding,
@@ -24,12 +25,26 @@ async function installFeedbackFixture(
   }, fixture)
   expect(installed).toBe(true)
   await page.reload()
-  await electronApp.evaluate(({ BrowserWindow }) => {
+  await electronApp.evaluate(async ({ app, BrowserWindow }) => {
+    if (process.platform === 'darwin') {
+      await app.dock?.show()
+      app.focus({ steal: true })
+    }
     const window = BrowserWindow.getAllWindows()[0]
     window?.show()
     window?.focus()
   })
   await page.bringToFront()
+  if (process.platform === 'darwin') {
+    const pid = electronApp.process().pid
+    if (pid) {
+      execFileSync('/usr/bin/osascript', [
+        '-e',
+        `tell application "System Events" to set frontmost of first application process whose unix id is ${pid} to true`
+      ])
+      await page.waitForTimeout(100)
+    }
+  }
 
   // The standard calendar-connect toast is intentionally a critical-UI suppression
   // gate. Close it so these cases can exercise the feedback surface itself.
