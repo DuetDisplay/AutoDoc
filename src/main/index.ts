@@ -137,16 +137,19 @@ import {
 import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
 
-// Ensure consistent app name for safeStorage keychain service across dev and production
-app.setName('AutoDoc')
+const APP_NAME = __AUTODOC_QA_BUILD__ ? 'AutoDoc QA' : 'AutoDoc'
+const EXPECTED_APP_ID = __AUTODOC_QA_BUILD__ ? 'com.kairos.autodoc.qa' : 'com.kairos.autodoc'
+
+// Keep the safeStorage keychain service and profile identity stable within each build flavor.
+app.setName(APP_NAME)
 const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = getScopedTestUserDataDir()
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const skipInstalledApplicationPolicy =
-  process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest)
+  __AUTODOC_QA_BUILD__ ||
+  (process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest))
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
-const EXPECTED_APP_ID = 'com.kairos.autodoc'
 
 interface MacBundleMetadata {
   bundlePath: string | null
@@ -200,6 +203,8 @@ if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
 } else if (isE2E) {
   app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
+} else if (__AUTODOC_QA_BUILD__) {
+  app.setPath('userData', join(app.getPath('appData'), 'AutoDoc QA'))
 } else if (is.dev) {
   // Keep local dev/testing isolated from the installed app's recordings, models, and key store.
   app.setPath('userData', join(app.getPath('appData'), 'AutoDoc Dev'))
@@ -213,14 +218,15 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
     appDataPath,
     testUserDataDir: testUserDataDir ?? undefined,
     isE2E,
-    isRealSetupTest
+    isRealSetupTest,
+    isQABuild: __AUTODOC_QA_BUILD__
   })) {
     rmSync(targetPath, { recursive: true, force: true })
   }
   process.argv = process.argv.filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
 }
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.autodoc.app')
+  app.setAppUserModelId(__AUTODOC_QA_BUILD__ ? 'com.kairos.autodoc.qa' : 'com.autodoc.app')
 }
 if (process.platform === 'darwin' && is.dev) {
   // Electron 39+ uses macOS CoreAudio Tap for desktop audio on 14.2+.
@@ -233,7 +239,8 @@ if (process.platform === 'darwin' && is.dev) {
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
 const SENTRY_STUB_PATH = process.env.AUTODOC_SENTRY_STUB_PATH
 const shouldAllowSentryInEnv =
-  !!SENTRY_STUB_PATH || (!isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
+  !!SENTRY_STUB_PATH ||
+  (!__AUTODOC_QA_BUILD__ && !isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
 const homeDir = homedir()
 
 function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
@@ -464,7 +471,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'AutoDoc',
+    title: APP_NAME,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
     icon: windowIcon,
@@ -672,7 +679,7 @@ app.whenReady().then(async () => {
   }
 
   // Auto-updater
-  if (!isE2E) {
+  if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
       prepareForInstall: () => {
         isQuitting = true
@@ -682,12 +689,12 @@ app.whenReady().then(async () => {
   }
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
-    if (!isE2E) {
+    if (!isE2E && !__AUTODOC_QA_BUILD__) {
       checkForUpdates()
     }
   })
   ipcMain.handle('updater:install', () => {
-    if (!isE2E) {
+    if (!isE2E && !__AUTODOC_QA_BUILD__) {
       installUpdate()
     }
   })
@@ -1125,7 +1132,14 @@ app.whenReady().then(async () => {
       platform: isE2E ? getE2EPlatform() : process.platform,
       arch: process.arch,
       officialBuild: isOfficialAutoDocBuild(),
-      buildChannel: is.dev ? 'development' : isOfficialAutoDocBuild() ? 'official' : 'custom',
+      qaBuild: __AUTODOC_QA_BUILD__,
+      buildChannel: __AUTODOC_QA_BUILD__
+        ? 'qa'
+        : is.dev
+          ? 'development'
+          : isOfficialAutoDocBuild()
+            ? 'official'
+            : 'custom',
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),
@@ -1197,7 +1211,8 @@ app.whenReady().then(async () => {
         appDataPath: app.getPath('appData'),
         testUserDataDir,
         isE2E,
-        isRealSetupTest
+        isRealSetupTest,
+        isQABuild: __AUTODOC_QA_BUILD__
       })
       // In Windows-hosted E2E runs, deleting the temp profile after process exit
       // avoids relaunching an unmanaged second app instance that Playwright can't own.
@@ -1645,6 +1660,14 @@ app.whenReady().then(async () => {
     isTrustedSender: isTrustedMainWindowSender,
     observeForeground: () => feedbackSessionTracker.observeActive()
   })
+  if (__AUTODOC_QA_BUILD__) {
+    const { registerFeedbackPromptQAIpc } = await import('./ipc/feedback-prompt-qa-ipc')
+    registerFeedbackPromptQAIpc(feedbackPromptService, feedbackPromptStore, {
+      isTrustedSender: isTrustedMainWindowSender,
+      isWindowForegrounded: isMainWindowForegrounded,
+      isSupportAvailable: () => getSupportEmail() !== null
+    })
+  }
   registerSupportIpc({
     isTrustedSender: isTrustedMainWindowSender,
     onContactInitiated: async (surface) => {
@@ -1679,7 +1702,7 @@ app.whenReady().then(async () => {
         const previousDay = new Date(now)
         previousDay.setDate(previousDay.getDate() - 1)
         const initialShownAt = now - FEEDBACK_REMINDER_DELAY_MS - 1_000
-        const state = await feedbackPromptStore.updateState(() => ({
+        const state = await feedbackPromptService.replaceStateForFixture({
           ...createDefaultFeedbackPromptState(),
           qualifyingSessionCount: fixture === 'ineligible' || fixture === 'never-ask-again' ? 0 : 3,
           qualifyingSessionDates:
@@ -1691,7 +1714,7 @@ app.whenReady().then(async () => {
           initialPromptShownAt: fixture === 'reminder-eligible' ? initialShownAt : null,
           contactInitiatedAt: fixture === 'contact-initiated' ? now : null,
           neverAskAgain: fixture === 'never-ask-again'
-        }))
+        })
         return state !== null
       }
     )
@@ -1751,15 +1774,17 @@ app.whenReady().then(async () => {
   }
 
   cleanupTempFiles().catch(() => {})
-  try {
-    await migrateDataDir()
-  } catch (err) {
-    logAutodocFailure({
-      area: 'app',
-      message: 'Data dir migration failed',
-      error: err
-    })
-    console.error('Data dir migration failed:', err)
+  if (!__AUTODOC_QA_BUILD__) {
+    try {
+      await migrateDataDir()
+    } catch (err) {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Data dir migration failed',
+        error: err
+      })
+      console.error('Data dir migration failed:', err)
+    }
   }
 
   try {

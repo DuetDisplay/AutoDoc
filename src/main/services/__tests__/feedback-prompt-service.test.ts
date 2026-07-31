@@ -540,6 +540,32 @@ describe('FeedbackPromptService reservations, impressions, and actions', () => {
     })
   })
 
+  it('atomically replaces fixture state and clears transient prompt ownership', async () => {
+    const store = createStore()
+    await seedQualified(store)
+    const now = Date.UTC(2026, 6, 31)
+    const ids = ['reserved-before-replacement', 'confirmed-before-replacement']
+    const service = createService(store, {
+      now: () => now,
+      createReservationId: () => ids.shift() ?? 'unexpected'
+    })
+
+    await service.reservePrompt('upcoming')
+    const contacted = qualifiedState({ contactInitiatedAt: now })
+    await expect(service.replaceStateForFixture(contacted)).resolves.toEqual(contacted)
+    await expect(
+      service.confirmPrompt('reserved-before-replacement', 'upcoming')
+    ).resolves.toMatchObject({ confirmed: false, reason: 'reservation-unavailable' })
+
+    await service.replaceStateForFixture(qualifiedState())
+    await service.reservePrompt('ai_notes')
+    await service.confirmPrompt('confirmed-before-replacement', 'ai_notes')
+    const never = qualifiedState({ neverAskAgain: true })
+    await expect(service.replaceStateForFixture(never)).resolves.toEqual(never)
+    await expect(service.recordAction('confirmed-before-replacement', 'never')).resolves.toBe(false)
+    await expect(store.readState()).resolves.toEqual(never)
+  })
+
   it('fails quiet when state or an injected dependency is unavailable', async () => {
     const unavailableStore: FeedbackPromptStateStore = {
       readState: async () => null,

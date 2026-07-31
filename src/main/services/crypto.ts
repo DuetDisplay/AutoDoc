@@ -42,8 +42,18 @@ export class EncryptionKeyUnavailableError extends Error {
 let cachedKey: Buffer | null = null
 let cachedKeyError: Error | null = null
 
+const DECRYPTED_TEMP_PREFIX = __AUTODOC_QA_BUILD__ ? 'autodoc-qa-' : 'autodoc-'
+const DECRYPTED_TEMP_FILE_PATTERN = __AUTODOC_QA_BUILD__
+  ? /^autodoc-qa-[0-9a-f]{16}\./
+  : /^autodoc-[0-9a-f]{16}\./
+
+export function isCurrentBuildDecryptedTempFileName(filename: string): boolean {
+  return DECRYPTED_TEMP_FILE_PATTERN.test(filename)
+}
+
 function usesIsolatedStore(): boolean {
   return (
+    __AUTODOC_QA_BUILD__ ||
     !app.isPackaged ||
     Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR) ||
     process.env.AUTODOC_E2E === '1' ||
@@ -365,7 +375,7 @@ export async function decryptFileToTemp(encPath: string): Promise<string> {
   const ext = path.extname(encPath) || '.tmp'
   const tmpFilePath = path.join(
     os.tmpdir(),
-    `autodoc-${crypto.randomBytes(8).toString('hex')}${ext}`
+    `${DECRYPTED_TEMP_PREFIX}${crypto.randomBytes(8).toString('hex')}${ext}`
   )
 
   const srcFd = await fsp.open(encPath, 'r')
@@ -647,7 +657,7 @@ export async function cleanupTempFiles(): Promise<void> {
   const entries = await fsp.readdir(tmpdir)
 
   for (const entry of entries) {
-    if (/^autodoc-[0-9a-f]{16}\./.test(entry)) {
+    if (isCurrentBuildDecryptedTempFileName(entry)) {
       await fsp.unlink(path.join(tmpdir, entry)).catch(() => {})
     }
   }

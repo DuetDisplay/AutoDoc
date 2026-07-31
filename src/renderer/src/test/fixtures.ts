@@ -217,6 +217,7 @@ export function createRuntimeInfo(overrides: Partial<AppRuntimeInfo> = {}): AppR
     platform: 'darwin',
     arch: 'arm64',
     officialBuild: true,
+    qaBuild: false,
     buildChannel: 'official',
     storagePath: '/tmp/autodoc-tests',
     whisperModel: 'ggml-base.en.bin',

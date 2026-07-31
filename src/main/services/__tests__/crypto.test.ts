@@ -314,5 +314,37 @@ describe('crypto module', () => {
 
       await expect(fsp.access(tmpFile)).rejects.toThrow()
     })
+
+    it('recognizes only production-flavor decrypted temp filenames', async () => {
+      const { isCurrentBuildDecryptedTempFileName } = await freshImport()
+
+      expect(isCurrentBuildDecryptedTempFileName('autodoc-0123456789abcdef.webm')).toBe(true)
+      expect(isCurrentBuildDecryptedTempFileName('autodoc-qa-0123456789abcdef.webm')).toBe(false)
+      expect(isCurrentBuildDecryptedTempFileName('autodoc-../../recording.webm')).toBe(false)
+    })
+
+    it('does not remove QA temp files from a production build cleanup', async () => {
+      const { cleanupTempFiles } = await freshImport()
+
+      const productionFile = path.join(
+        os.tmpdir(),
+        `autodoc-${crypto.randomBytes(8).toString('hex')}.tmp`
+      )
+      const qaFile = path.join(
+        os.tmpdir(),
+        `autodoc-qa-${crypto.randomBytes(8).toString('hex')}.tmp`
+      )
+      await Promise.all([fsp.writeFile(productionFile, 'prod'), fsp.writeFile(qaFile, 'qa')])
+
+      try {
+        await cleanupTempFiles()
+
+        await expect(fsp.access(productionFile)).rejects.toThrow()
+        await expect(fsp.access(qaFile)).resolves.toBeUndefined()
+      } finally {
+        await fsp.unlink(productionFile).catch(() => {})
+        await fsp.unlink(qaFile).catch(() => {})
+      }
+    })
   })
 })

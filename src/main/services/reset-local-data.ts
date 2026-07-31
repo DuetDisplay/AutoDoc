@@ -7,6 +7,7 @@ export interface ResetLocalDataOptions {
   testUserDataDir?: string
   isE2E?: boolean
   isRealSetupTest?: boolean
+  isQABuild?: boolean
 }
 
 function normalizePath(targetPath: string): string {
@@ -46,12 +47,20 @@ export function isSafeTestResetPath(targetPath: string): boolean {
 }
 
 export function getResetLocalDataTargets(options: ResetLocalDataOptions): string[] {
-  const { userDataPath, appDataPath, testUserDataDir, isE2E, isRealSetupTest } = options
+  const { userDataPath, appDataPath, testUserDataDir, isE2E, isRealSetupTest, isQABuild } = options
   const isTestReset = Boolean(testUserDataDir || isE2E || isRealSetupTest)
 
   if (isTestReset) {
     if (!isSafeTestResetPath(userDataPath)) {
       throw new Error(`Refusing to reset local data for a non-temporary test path: ${userDataPath}`)
+    }
+    return [userDataPath]
+  }
+
+  if (isQABuild) {
+    const expectedQAPath = joinAppDataPath(appDataPath, 'AutoDoc QA')
+    if (normalizePathForComparison(userDataPath) !== normalizePathForComparison(expectedQAPath)) {
+      throw new Error(`Refusing to reset QA data outside its isolated profile: ${userDataPath}`)
     }
     return [userDataPath]
   }

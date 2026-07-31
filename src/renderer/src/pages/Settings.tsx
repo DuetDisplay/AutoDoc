@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
@@ -21,6 +21,14 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
+
+const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
+  ? lazy(() =>
+      import('../components/FeedbackPromptQASimulator').then((module) => ({
+        default: module.FeedbackPromptQASimulator
+      }))
+    )
+  : null
 
 function getCalendarAccountLabel(account: CalendarAccount): string {
   const email = account.email.trim()
@@ -649,17 +657,27 @@ export function Settings() {
               {storageError && <p className="text-[12px] text-clay mt-3">{storageError}</p>}
             </div>
           </div>
+          {FeedbackPromptQASimulator && runtimeInfo?.qaBuild && (
+            <Suspense
+              fallback={<p className="text-[12px] text-ink-muted">Loading QA simulator...</p>}
+            >
+              <FeedbackPromptQASimulator />
+            </Suspense>
+          )}
           <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
             <div className="flex items-center gap-3">
               <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
-              {updateStatus.state === 'idle' && (
+              {updateStatus.state === 'idle' && !__AUTODOC_QA_BUILD__ && (
                 <button
                   onClick={handleCheckForUpdates}
-                  className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors"
+                  className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
                 >
                   Check for updates
                 </button>
+              )}
+              {updateStatus.state === 'idle' && __AUTODOC_QA_BUILD__ && (
+                <span className="text-[11px] text-ink-faint">Updates disabled in QA builds</span>
               )}
               {updateStatus.state === 'checking' && (
                 <span className="text-[11px] text-ink-faint animate-pulse">Checking...</span>

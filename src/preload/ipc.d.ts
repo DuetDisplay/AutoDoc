@@ -18,6 +18,8 @@ import type {
   CopySupportEmailResult,
   FeedbackPromptAction,
   FeedbackPromptConfirmationResponse,
+  FeedbackPromptQAScenario,
+  FeedbackPromptQASnapshot,
   FeedbackPromptReservationResponse,
   FeedbackPromptSurface,
   OpenSupportEmailResult,
@@ -109,6 +111,8 @@ export interface IpcInvokeEvents {
   'feedback:confirm-prompt': [reservationId: string, surface: FeedbackPromptSurface]
   'feedback:cancel-prompt': [reservationId: string, surface: FeedbackPromptSurface]
   'feedback:record-action': [impressionId: string, action: FeedbackPromptAction]
+  'qa:feedback-prompt:get-state': []
+  'qa:feedback-prompt:set-scenario': [scenario: FeedbackPromptQAScenario]
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:cancel-connect': []
   'calendar:disconnect': [accountId: string]
@@ -251,6 +255,8 @@ export interface IpcInvokeReturns {
   'feedback:confirm-prompt': FeedbackPromptConfirmationResponse
   'feedback:cancel-prompt': boolean
   'feedback:record-action': boolean
+  'qa:feedback-prompt:get-state': FeedbackPromptQASnapshot | null
+  'qa:feedback-prompt:set-scenario': FeedbackPromptQASnapshot | null
   'calendar:connect': CalendarAccount
   'calendar:cancel-connect': void
   'calendar:disconnect': void

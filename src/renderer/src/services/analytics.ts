@@ -9,6 +9,10 @@ import type {
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined
 const POSTHOG_HOST = (import.meta.env.VITE_POSTHOG_HOST as string) || 'https://us.i.posthog.com'
 
+export function isAnalyticsConfigured(): boolean {
+  return Boolean(POSTHOG_KEY)
+}
+
 let initialized = false
 let consentGiven = false
 let identifiedInstallId: string | null = null

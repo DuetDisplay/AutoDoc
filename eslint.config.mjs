@@ -6,7 +6,7 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out', 'vendor/**'] },
+  { ignores: ['**/node_modules', '**/dist', '**/dist-qa', '**/out', 'vendor/**'] },
   tseslint.configs.recommended,
   {
     rules: {

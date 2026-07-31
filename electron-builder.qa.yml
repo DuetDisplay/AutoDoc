@@ -1,0 +1,22 @@
+extends: ./electron-builder.yml
+appId: com.kairos.autodoc.qa
+productName: AutoDoc QA
+extraMetadata:
+  name: autodoc-qa
+directories:
+  output: dist-qa
+publish: []
+win:
+  executableName: autodoc-qa
+  forceCodeSigning: false
+  publish: []
+nsis:
+  artifactName: autodoc-qa-${version}-setup.${ext}
+  shortcutName: AutoDoc QA
+  uninstallDisplayName: AutoDoc QA
+  include: build/installer-qa.nsh
+mac:
+  artifactName: autodoc-qa-${version}-${arch}-mac.${ext}
+  identity: null
+  notarize: false
+  publish: []

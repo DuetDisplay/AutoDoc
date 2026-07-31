@@ -58,4 +58,24 @@ describe('reset-local-data safety rails', () => {
       '/Users/chris/Library/Application Support/Autodoc'
     ])
   })
+
+  it('limits QA resets to the isolated AutoDoc QA profile', () => {
+    expect(
+      getResetLocalDataTargets({
+        userDataPath: '/Users/chris/Library/Application Support/AutoDoc QA',
+        appDataPath: '/Users/chris/Library/Application Support',
+        isQABuild: true
+      })
+    ).toEqual(['/Users/chris/Library/Application Support/AutoDoc QA'])
+  })
+
+  it('refuses to let a QA reset target production data', () => {
+    expect(() =>
+      getResetLocalDataTargets({
+        userDataPath: '/Users/chris/Library/Application Support/AutoDoc',
+        appDataPath: '/Users/chris/Library/Application Support',
+        isQABuild: true
+      })
+    ).toThrow(/Refusing to reset QA data outside its isolated profile/)
+  })
 })
