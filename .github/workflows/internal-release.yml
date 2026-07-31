@@ -114,6 +114,7 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
+      AUTODOC_SUPPORT_EMAIL: team@getautodoc.com
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
@@ -195,6 +196,7 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
+      AUTODOC_SUPPORT_EMAIL: team@getautodoc.com
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}

@@ -14,8 +14,8 @@ AutoDoc yourself, you should stand up your own equivalents. This guide shows how
 > Only the official AutoDoc release pipeline sets `AUTODOC_OFFICIAL_BUILD=1`.
 > Local and fork builds leave it unset, which makes the app default to
 > self-hosted services. If you don't configure the variables below, the related
-> features (calendar OAuth, downloadable runtimes) are simply disabled rather
-> than silently using Duet's services.
+> features (calendar OAuth, downloadable runtimes, and in-app support/feedback)
+> are simply disabled rather than silently using Duet's services.
 
 ---
 
@@ -25,16 +25,23 @@ All configuration is via environment variables, documented in
 [`.env.example`](../.env.example). The distribution logic lives in
 [`src/main/services/distribution-config.ts`](../src/main/services/distribution-config.ts).
 
-| Variable | Purpose | Required for |
-|----------|---------|--------------|
-| `AUTODOC_AUTH_WORKER_URL` | URL of your calendar OAuth worker | Google/Microsoft calendar |
-| `AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL` | Base URL hosting the macOS Whisper runtime bundle | macOS transcription runtime download |
-| `AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL` | Base URL hosting the Windows transcription bundle | Windows transcription runtime download |
-| `AUTODOC_OFFICIAL_BUILD` | Internal flag for the official pipeline only — leave unset | — |
+| Variable                                       | Purpose                                                             | Required for                           |
+| ---------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------- |
+| `AUTODOC_AUTH_WORKER_URL`                      | URL of your calendar OAuth worker                                   | Google/Microsoft calendar              |
+| `AUTODOC_SUPPORT_EMAIL`                        | Single support address used by **Email Us** and the feedback prompt | User support and feedback              |
+| `AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL` | Base URL hosting the macOS Whisper runtime bundle                   | macOS transcription runtime download   |
+| `AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL` | Base URL hosting the Windows transcription bundle                   | Windows transcription runtime download |
+| `AUTODOC_OFFICIAL_BUILD`                       | Internal flag for the official pipeline only — leave unset          | —                                      |
 
 Core features that need none of the above: recording, transcription (once the
 runtime is present), diarization, AI notes (local Ollama), search, and
 encryption.
+
+Unofficial and self-hosted builds must set `AUTODOC_SUPPORT_EMAIL` to one valid
+address to enable **Email Us** and the proactive feedback prompt. Leaving it
+unset disables those contact surfaces rather than directing users to Duet.
+The address is public build metadata, not a secret, and forks should use their
+own inbox. Official AutoDoc builds use the AutoDoc team support address.
 
 ---
 
@@ -65,13 +72,15 @@ Create OAuth apps with these settings. End to end, a sign-in flows like this:
 5. The worker redirects the browser to the app's localhost callback
    (`http://127.0.0.1:42813`) with the tokens, and the app takes over.
 
-This is why the redirect URIs below point at *your worker*, not at the app.
+This is why the redirect URIs below point at _your worker_, not at the app.
 
 **Google** ([Google Cloud Console](https://console.cloud.google.com/apis/credentials)):
+
 - Scopes: `https://www.googleapis.com/auth/calendar.events.readonly`, `email`
 - Authorized redirect URI: `https://<your-worker-domain>/auth/callback`
 
 **Microsoft** ([Entra app registrations](https://entra.microsoft.com/)):
+
 - Scopes: `Calendars.Read`, `User.Read`, `offline_access`
 - Redirect URI: `https://<your-worker-domain>/auth/microsoft/callback`
 
