@@ -1,19 +1,19 @@
 # Internal Release — INTERNAL-ONLY workflow. Do NOT merge this file to the public
 # AutoDoc repo; it exists only in the private AutoDoc-Internal fork.
 #
-# Produces unsigned internal QA prereleases and stable internal releases via the
-# internal update-feed overlay. Stable macOS artifacts are signed and notarized;
+# Produces internal QA prereleases and stable internal releases via the internal
+# update-feed overlay. All macOS artifacts are Developer ID signed and notarized;
 # Windows internal artifacts remain unsigned to avoid consuming DigiCert quota.
 #
 # Required secrets:
 #   INTERNAL_FEED_UPLOAD_TOKEN — bearer token for the feed uploader worker
 #     (scripts/internal-update-feed-worker; rotate with `wrangler secret put
 #     UPLOAD_TOKEN` there and update this GitHub secret to match)
-#   (plus the Apple signing secrets shared with build.yml for stable macOS only)
+#   (plus the Apple signing secrets shared with build.yml for every macOS build)
 #
 # Tag formats:
-#   internal-vX.Y.Z.N → unsigned QA app version X.Y.Z-internal.N
-#   internal-vX.Y.Z   → signed stable app version X.Y.Z
+#   internal-vX.Y.Z.N → QA app version X.Y.Z-internal.N
+#   internal-vX.Y.Z   → stable app version X.Y.Z
 #   e.g. internal-v1.1.0.7 → 1.1.0-internal.7
 
 name: Internal Release
@@ -40,11 +40,6 @@ on:
         required: false
         default: true
         type: boolean
-      signed:
-        description: Sign and notarize macOS (required for a stable internal release; Windows stays unsigned)
-        required: false
-        default: false
-        type: boolean
       version:
         description: Version to stamp (e.g. 1.1.1-internal.1 or 1.1.1)
         required: true
@@ -59,7 +54,6 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       publish: ${{ steps.meta.outputs.publish }}
-      signed: ${{ steps.meta.outputs.signed }}
       build_mac: ${{ steps.meta.outputs.build_mac }}
       build_win: ${{ steps.meta.outputs.build_win }}
     steps:
@@ -71,7 +65,6 @@ jobs:
           RAW_TAG: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PUBLISH: ${{ inputs.publish }}
-          INPUT_SIGNED: ${{ inputs.signed }}
           INPUT_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
@@ -81,13 +74,11 @@ jobs:
             stripped="${tag#internal-v}"
             if [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               version="$stripped"
-              signed='true'
             elif [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               # internal-v1.1.0.7 → 1.1.0-internal.7
               version="${stripped%.*}-internal.${stripped##*.}"
-              signed='false'
             else
-              echo "::error::Tag '$tag' must match internal-vX.Y.Z (stable) or internal-vX.Y.Z.N (unsigned QA)." >&2
+              echo "::error::Tag '$tag' must match internal-vX.Y.Z (stable) or internal-vX.Y.Z.N (QA)." >&2
               exit 1
             fi
             publish='true'
@@ -95,19 +86,12 @@ jobs:
             build_win='true'
           else
             version="$INPUT_VERSION"
-            signed="$INPUT_SIGNED"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
-              if [ "$signed" = "true" ]; then
-                echo "::error::Internal QA prereleases must be unsigned; use a stable X.Y.Z version for signed builds." >&2
-                exit 1
-              fi
+              :
             elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              if [ "$signed" != "true" ]; then
-                echo "::error::Stable internal releases must set signed=true." >&2
-                exit 1
-              fi
+              :
             else
-              echo "::error::Version '$version' must match X.Y.Z (stable) or X.Y.Z-internal.N (unsigned QA)." >&2
+              echo "::error::Version '$version' must match X.Y.Z (stable) or X.Y.Z-internal.N (QA)." >&2
               exit 1
             fi
             publish="$INPUT_PUBLISH"
@@ -123,10 +107,9 @@ jobs:
             fi
           fi
 
-          echo "Resolved version: $version (signed_mac=$signed publish=$publish mac=$build_mac win=$build_win)"
+          echo "Resolved version: $version (publish=$publish mac=$build_mac win=$build_win)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "signed=$signed" >> "$GITHUB_OUTPUT"
           echo "build_mac=$build_mac" >> "$GITHUB_OUTPUT"
           echo "build_win=$build_win" >> "$GITHUB_OUTPUT"
 
@@ -134,7 +117,7 @@ jobs:
     needs: resolve-meta
     if: needs.resolve-meta.outputs.build_mac == 'true'
     runs-on: macos-latest
-    environment: ${{ needs.resolve-meta.outputs.signed == 'true' && 'release-signing' || 'internal-qa' }}
+    environment: release-signing
     permissions:
       contents: read
     env:
@@ -165,7 +148,6 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Install Apple certificate
-        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
@@ -185,7 +167,6 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build macOS internal release (signed + notarized)
-        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
@@ -195,17 +176,7 @@ jobs:
           npm run build
           npx electron-builder --mac --publish never --config electron-builder.internal.yml "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
 
-      - name: Build macOS internal QA release (unsigned)
-        if: needs.resolve-meta.outputs.signed != 'true'
-        env:
-          AUTODOC_SKIP_MAC_SIGNING: '1'
-        run: |
-          npm run prepare:macos-mlx-runtime
-          npm run build
-          npx electron-builder --mac --publish never --config electron-builder.internal.yml --config.mac.notarize=false -c.mac.identity=null "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
-
       - name: Verify macOS release artifacts (signature, entitlements, runtime)
-        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           AUTODOC_MAC_APP_NAME: AutoDoc.app
         run: bash scripts/verify-macos-update-artifact.sh dist
