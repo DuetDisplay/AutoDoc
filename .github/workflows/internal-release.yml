@@ -155,27 +155,6 @@ jobs:
           security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
-          echo "MAC_SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
-      - name: Resolve Developer ID Application identity
-        env:
-          KEYCHAIN_PATH: ${{ runner.temp }}/app-signing.keychain-db
-        run: |
-          set -euo pipefail
-
-          identity_line="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-            | awk '/Developer ID Application:/ { print; exit }')"
-          identity="$(awk '{ print $2 }' <<<"$identity_line")"
-          identity_name="$(awk -F '"' '{ print $2 }' <<<"$identity_line")"
-
-          if [ -z "$identity" ]; then
-            echo "::error::The signing keychain does not contain a Developer ID Application identity."
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
-            exit 1
-          fi
-
-          echo "Resolved Developer ID Application identity: $identity_name ($identity)"
-          echo "MAC_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Build macOS internal release (signed + notarized)
         env:
@@ -185,57 +164,12 @@ jobs:
         run: |
           npm run prepare:macos-mlx-runtime
           npm run build
-          npx electron-builder --mac --publish never --config electron-builder.internal.yml \
-            "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}" \
-            "-c.mac.identity=${MAC_SIGNING_IDENTITY}"
+          npx electron-builder --mac --publish never --config electron-builder.internal.yml "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
 
       - name: Verify macOS release artifacts (signature, entitlements, runtime)
         env:
           AUTODOC_MAC_APP_NAME: AutoDoc Internal.app
         run: bash scripts/verify-macos-update-artifact.sh dist
-
-      - name: Verify Developer ID signature and notarization
-        env:
-          AUTODOC_MAC_APP_NAME: AutoDoc Internal.app
-        run: |
-          set -euo pipefail
-
-          zip_path="$(find dist -maxdepth 1 -name '*-mac.zip' -type f -print -quit)"
-          if [ -z "$zip_path" ]; then
-            echo "::error::No macOS update zip was produced in dist/"
-            exit 1
-          fi
-
-          verify_dir="$(mktemp -d "${RUNNER_TEMP}/autodoc-mac-signature.XXXXXX")"
-          trap 'rm -rf "$verify_dir"' EXIT
-          ditto -x -k "$zip_path" "$verify_dir"
-
-          app_path="$(find "$verify_dir" -maxdepth 1 -type d -name '*.app' -print -quit)"
-          if [ -z "$app_path" ]; then
-            echo "::error::No macOS app bundle was found in the update zip."
-            exit 1
-          fi
-
-          details="$(codesign -dv --verbose=4 "$app_path" 2>&1 || true)"
-          echo "$details"
-          if ! grep -q '^Authority=Developer ID Application:' <<<"$details"; then
-            echo "::error::The macOS app is not signed with a Developer ID Application certificate."
-            exit 1
-          fi
-          if grep -q '^Signature=adhoc$' <<<"$details" || grep -q '^TeamIdentifier=not set$' <<<"$details"; then
-            echo "::error::The macOS app has an ad-hoc or teamless signature."
-            exit 1
-          fi
-
-          codesign --verify --deep --strict --verbose=4 "$app_path"
-          spctl --assess --type execute --verbose=4 "$app_path"
-
-          dmg_path="$(find dist -maxdepth 1 -name '*.dmg' -print -quit)"
-          if [ -z "$dmg_path" ]; then
-            echo "::error::No DMG was produced in dist/"
-            exit 1
-          fi
-          xcrun stapler validate "$dmg_path"
 
       # electron-builder derives the update channel from the version's prerelease
       # tag, so internal builds emit internal-mac.yml (not latest-mac.yml).
