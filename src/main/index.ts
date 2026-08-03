@@ -1107,13 +1107,19 @@ app.whenReady().then(async () => {
     })
   })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
+  const waitUntilOllamaReady = async (): Promise<void> => {
+    await ollamaReadiness.waitUntilReady()
+    if (windowsOllamaSetupCoordinator) {
+      markOllamaSetupReady()
+    }
+  }
   const segmentationOllamaReadiness = {
-    waitUntilReady: () => ollamaReadiness.waitUntilReady(),
+    waitUntilReady: waitUntilOllamaReady,
     isReadyForGeneration: async () =>
       ollamaSetupState.phase === 'ready' && (await managedOllamaManager.isServerRunning())
   }
   const ollamaRuntime = {
-    waitUntilReady: () => ollamaReadiness.waitUntilReady(),
+    waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl()
   }
