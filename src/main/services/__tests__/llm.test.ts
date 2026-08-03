@@ -104,7 +104,7 @@ describe('OllamaProvider grounding', () => {
     vi.clearAllMocks()
   })
 
-  it('AUTODOC-8 cancels a timed-out Windows stream before starting its retry', async () => {
+  it('cancels a timed-out Windows stream before starting its retry', async () => {
     setPlatform('win32')
     vi.useFakeTimers()
     const cancelFirstStream = vi.fn()
@@ -128,7 +128,7 @@ describe('OllamaProvider grounding', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
-      'meeting-autodoc-8-windows',
+      'meeting-stream-timeout-windows',
       '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
       undefined,
       5
@@ -143,7 +143,7 @@ describe('OllamaProvider grounding', () => {
     expect(cancelFirstStream).toHaveBeenCalledOnce()
   })
 
-  it('keeps the existing macOS stream-timeout retry behavior for AUTODOC-8', async () => {
+  it('keeps the existing macOS stream-timeout retry behavior', async () => {
     setPlatform('darwin')
     vi.useFakeTimers()
     const cancelFirstStream = vi.fn()
@@ -173,7 +173,7 @@ describe('OllamaProvider grounding', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
-      'meeting-autodoc-8-macos',
+      'meeting-stream-timeout-macos',
       '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
       undefined,
       5
