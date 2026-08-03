@@ -48,6 +48,7 @@ export class OllamaManager extends EventEmitter {
   private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
   private adoptedSystemRuntime = false
+  private testServerRunning = false
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -80,6 +81,7 @@ export class OllamaManager extends EventEmitter {
 
   private async runTestSetupStep(step: string): Promise<void> {
     if (step === 'download-fail') {
+      this.testServerRunning = false
       this.emit('download-start', 'ollama')
       await Promise.resolve()
       throw new TypeError('terminated')
@@ -91,6 +93,7 @@ export class OllamaManager extends EventEmitter {
       this.emit('download-complete', 'ollama')
       this.emit('pull-start', this.model)
       this.emit('pull-progress', { model: this.model, percent: 100, status: 'success' })
+      this.testServerRunning = true
       this.emit('pull-complete', this.model)
       return
     }
@@ -160,6 +163,15 @@ export class OllamaManager extends EventEmitter {
   }
 
   async isServerRunning(): Promise<boolean> {
+    if (
+      IS_WIN &&
+      IS_TEST_RUNTIME &&
+      process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+      this.testServerRunning
+    ) {
+      return true
+    }
+
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         signal: AbortSignal.timeout(2000)
@@ -316,11 +328,13 @@ export class OllamaManager extends EventEmitter {
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
     this.killProcessOnPort()
     this.readyPromise = null
+    this.testServerRunning = false
   }
 
   /** Clear cached ready state so the next startAndPull() actually restarts. */
   resetReady(): void {
     this.readyPromise = null
+    this.testServerRunning = false
   }
 
   /**

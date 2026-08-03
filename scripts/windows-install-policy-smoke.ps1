@@ -83,6 +83,9 @@ $InstalledDir = Join-Path $env:LOCALAPPDATA 'Programs\autodoc'
 $InstalledExe = Join-Path $InstalledDir 'autodoc.exe'
 $UserDataDir = Join-Path $env:TEMP "autodoc-smoke-user-data-$Stamp"
 $UserDataMarker = Join-Path $UserDataDir 'models\uninstall-smoke-marker.bin'
+# The profile override is intentionally gated behind a scoped test runtime. Use the
+# relaunch-safe real-setup marker so replacement installs keep the same temp profile.
+$env:AUTODOC_TEST_REAL_SETUP = '1'
 $env:AUTODOC_TEST_USER_DATA_DIR = $UserDataDir
 
 # ─── Win32 dialog detection ───────────────────────────────────────────────
@@ -578,6 +581,7 @@ finally {
   Stop-AllAutoDocUninstall
   Clear-SmokeLocalData
   Remove-Item Env:AUTODOC_TEST_USER_DATA_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:AUTODOC_TEST_REAL_SETUP -ErrorAction SilentlyContinue
   if (-not [string]::IsNullOrWhiteSpace($Stamp)) {
     foreach ($rel in @("build-older-$Stamp", "build-newer-$Stamp")) {
       $buildDir = Join-Path $RepoRoot $rel
