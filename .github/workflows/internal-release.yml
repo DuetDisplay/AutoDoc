@@ -41,7 +41,7 @@ on:
         default: true
         type: boolean
       signed:
-        description: Sign the build (use only for a stable internal release)
+        description: Sign and notarize macOS (required for a stable internal release; Windows stays unsigned)
         required: false
         default: false
         type: boolean
@@ -207,7 +207,7 @@ jobs:
       - name: Verify macOS release artifacts (signature, entitlements, runtime)
         if: needs.resolve-meta.outputs.signed == 'true'
         env:
-          AUTODOC_MAC_APP_NAME: AutoDoc Internal.app
+          AUTODOC_MAC_APP_NAME: AutoDoc.app
         run: bash scripts/verify-macos-update-artifact.sh dist
 
       # electron-builder emits internal-mac.yml for QA prereleases and
