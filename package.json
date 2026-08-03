@@ -51,6 +51,7 @@
     "test:confirm:mac": "npm run test:main:run -- src/main/services/__tests__/calendar-validity.test.ts src/main/services/__tests__/auto-updater.test.ts src/main/services/__tests__/transcription-validity.test.ts",
     "test:confirm:win": "npm run test:main:run -- src/main/services/__tests__/calendar-validity.test.ts src/main/services/__tests__/auto-updater.test.ts src/main/ipc/__tests__/recording-ipc.test.ts src/main/services/__tests__/transcription-validity.test.ts src/main/services/__tests__/crypto-validity.test.ts && npm run test:run -- src/renderer/src/services/__tests__/recording-capture.test.ts",
     "test:e2e": "playwright test",
+    "test:e2e:production": "playwright test --grep-invert \"(QA simulator|packaged QA app)\"",
     "test:e2e:qa-feedback:source": "npm run test:qa:run && npm run build:qa && playwright test e2e/feedback-prompt-qa-simulator.spec.ts",
     "test:e2e:qa-feedback": "node scripts/test-qa-feedback-e2e.cjs",
     "test:worker": "vitest run --config worker/vitest.config.mts",

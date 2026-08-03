@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'events'
+import { existsSync, writeFileSync } from 'fs'
 import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
@@ -41,14 +42,32 @@ class MockFfmpegProcess extends EventEmitter {
   })
 }
 
+function completeSuccessfulFfmpegProcess(proc: MockFfmpegProcess, args: readonly unknown[]): void {
+  setTimeout(() => {
+    const outputPath = args.at(-1)
+    if (
+      typeof outputPath === 'string' &&
+      path.isAbsolute(outputPath) &&
+      existsSync(path.dirname(outputPath))
+    ) {
+      try {
+        writeFileSync(outputPath, Buffer.from('mock-ffmpeg-output'))
+      } catch (error) {
+        proc.emit('error', error)
+        return
+      }
+    }
+
+    proc.stdout.emit('data', Buffer.from('progress=continue\n'))
+    proc.emit('close', 0)
+  }, 0)
+}
+
 vi.mock('child_process', () => ({
-  spawn: vi.fn(() => {
+  spawn: vi.fn((_command: unknown, args: readonly unknown[] = []) => {
     const proc = new MockFfmpegProcess()
     if (spawnBehavior.current === 'success') {
-      setTimeout(() => {
-        proc.stdout.emit('data', Buffer.from('progress=continue\n'))
-        proc.emit('close', 0)
-      }, 0)
+      completeSuccessfulFfmpegProcess(proc, args)
     } else if (spawnBehavior.current === 'fail') {
       setTimeout(() => {
         proc.stderr.emit('data', Buffer.from('encode error'))
@@ -1244,10 +1263,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
         const args = (spawnArgs[1] as string[] | undefined) ?? []
         spawnCalls.push(args)
         const proc = new MockFfmpegProcess()
-        setTimeout(() => {
-          proc.stdout.emit('data', Buffer.from('progress=continue\n'))
-          proc.emit('close', 0)
-        }, 0)
+        completeSuccessfulFfmpegProcess(proc, args)
         return proc as never
       }) as typeof spawn)
 
