@@ -18,6 +18,7 @@ const BLOCK_SIZE = 65536 // 64KB plaintext per block
 const CHUNKED_VERSION = 0x01
 const MEDIA_DECRYPT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
 const MEDIA_DECRYPT_CACHE_MAX_ENTRIES = 6
+const WINDOWS_MEDIA_RENAME_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const
 const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
   'AutoDoc Safe Storage',
   'autodoc Safe Storage',
@@ -366,8 +367,15 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
     throw err
   }
 
-  // Atomic rename over original
-  await renameWithRetry(encPath, plainPath)
+  // AUTODOC-3E: Windows readers and scanners can briefly deny destination replacement.
+  // Keep this as a direct rename so plaintext remains intact until replacement succeeds;
+  // never unlink plainPath first. If macOS reports the same signature, extend both the
+  // platform guard below and retry classification in file-operation-retry.ts with a test.
+  await renameWithRetry(
+    encPath,
+    plainPath,
+    process.platform === 'win32' ? WINDOWS_MEDIA_RENAME_RETRY_DELAYS_MS : undefined
+  )
 }
 
 export async function decryptFileToTemp(encPath: string): Promise<string> {

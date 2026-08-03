@@ -37,6 +37,8 @@ import type {
   DetectionAutoStopPayload,
   DetectionAutoStopCancelledPayload,
   TranscriptionStatusPayload,
+  SegmentationActivity,
+  SegmentationActivityPayload,
   SegmentationStatusPayload,
   SegmentationDiagnosticPayload,
   VideoStatus
@@ -162,6 +164,7 @@ export interface IpcInvokeEvents {
   'segmentation:get-status': [meetingId: string]
   'segmentation:get-error-code': [meetingId: string]
   'segmentation:get-progress': [meetingId: string]
+  'segmentation:get-activity': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
@@ -288,6 +291,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-status': SegmentationStatus
   'segmentation:get-error-code': string | undefined
   'segmentation:get-progress': number | undefined
+  'segmentation:get-activity': SegmentationActivity | null
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
@@ -364,6 +368,7 @@ export interface IpcOnEvents {
   'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: TranscriptionStatusPayload]
   'segmentation:status-changed': [payload: SegmentationStatusPayload]
+  'segmentation:activity-changed': [payload: SegmentationActivityPayload]
   'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]

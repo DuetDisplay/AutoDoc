@@ -4,6 +4,8 @@ import { join } from 'path'
 import type {
   MeetingSegments,
   Transcript,
+  SegmentationActivity,
+  SegmentationActivityPayload,
   SegmentationStatus,
   SegmentationStatusPayload
 } from '../../shared/types'
@@ -62,6 +64,7 @@ export class SegmentationService {
   private activeJobSource: EnqueueSource | null = null
   private activeStatus: SegmentationStatus | null = null
   private activeProgress: number | undefined = undefined
+  private activeActivity: SegmentationActivity | null = null
   private processing = false
   private enqueueSource = new Map<string, EnqueueSource>()
   private onCompleteCallback: ((meetingId: string) => void) | null = null
@@ -115,6 +118,13 @@ export class SegmentationService {
   getProgress(meetingId: string): number | undefined {
     if (this.activeJobId === meetingId) return this.activeProgress
     return undefined
+  }
+
+  getActivity(meetingId: string): SegmentationActivity | null {
+    if (this.activeJobId !== meetingId || this.activeStatus !== 'segmenting') {
+      return null
+    }
+    return this.activeActivity
   }
 
   async getStatus(meetingId: string): Promise<SegmentationStatus> {
@@ -226,6 +236,7 @@ export class SegmentationService {
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
     this.activeJobSource = this.enqueueSource.get(meetingId) ?? 'direct'
+    this.activeActivity = null
     const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
@@ -236,10 +247,12 @@ export class SegmentationService {
         await this.markFailed(meetingId, error, dirSnapshot)
       }
     } finally {
+      this.updateActivity(meetingId, null)
       this.activeJobId = null
       this.activeJobSource = null
       this.activeStatus = null
       this.activeProgress = undefined
+      this.activeActivity = null
       this.processing = false
       this.enqueueSource.delete(meetingId)
       this.processNext()
@@ -381,7 +394,10 @@ export class SegmentationService {
             this.broadcastStatus(meetingId, 'segmenting', percent)
           }
         },
-        durationMinutes
+        durationMinutes,
+        (activity) => {
+          this.updateActivity(meetingId, activity)
+        }
       )
     } finally {
       if (process.platform === 'darwin') {
@@ -652,6 +668,9 @@ export class SegmentationService {
     progress?: number,
     errorCode?: string
   ): void {
+    if (status !== 'segmenting' && this.activeJobId === meetingId) {
+      this.updateActivity(meetingId, null)
+    }
     if (
       status === 'segmenting' &&
       typeof progress === 'number' &&
@@ -664,6 +683,27 @@ export class SegmentationService {
     const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
     for (const win of windows) {
       win.webContents.send('segmentation:status-changed', payload)
+    }
+  }
+
+  private updateActivity(meetingId: string, activity: SegmentationActivity | null): void {
+    if (this.activeJobId !== meetingId) return
+    if (activity !== null && this.activeStatus !== 'segmenting') return
+    if (this.activeActivity === activity) return
+
+    this.activeActivity = activity
+    const payload: SegmentationActivityPayload = { meetingId, activity }
+
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send('segmentation:activity-changed', payload)
+        } catch (error) {
+          console.warn('Failed to send segmentation activity update:', error)
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to enumerate windows for segmentation activity update:', error)
     }
   }
 

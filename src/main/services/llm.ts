@@ -1,4 +1,9 @@
-import type { MeetingSegments, Segment, SegmentCategory } from '../../shared/types'
+import type {
+  MeetingSegments,
+  Segment,
+  SegmentCategory,
+  SegmentationActivity
+} from '../../shared/types'
 import { logAutodocEvent } from './autodoc-log'
 import { captureMessage } from './sentry-reporter'
 
@@ -7,7 +12,8 @@ export interface LLMProvider {
     meetingId: string,
     transcript: string,
     onProgress?: (percent: number) => void,
-    durationMinutes?: number
+    durationMinutes?: number,
+    onActivity?: (activity: SegmentationActivity | null) => void
   ): Promise<MeetingSegments>
   checkConnection(): Promise<boolean>
   abortActiveRequests?(reason?: string): void
@@ -24,7 +30,8 @@ export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
 export const WINDOWS_CHUNK_CHARS = 8000
-const STREAM_TIMEOUT_MS = 120_000 // Abort if no token received for 2 minutes
+const STREAM_TIMEOUT_MS = 120_000 // Abort if no token is received for 2 minutes
+const SLOW_STREAM_ACTIVITY_DELAY_MS = 60_000
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
 const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
 // Healthy chunks produce well under 1K tokens; runaway generations otherwise ramble
@@ -475,7 +482,42 @@ export class OllamaProvider implements LLMProvider {
     meetingId: string,
     transcript: string,
     onProgress?: (percent: number) => void,
-    durationMinutes?: number
+    durationMinutes?: number,
+    onActivity?: (activity: SegmentationActivity | null) => void
+  ): Promise<MeetingSegments> {
+    let currentActivity: SegmentationActivity | null = null
+    const reportActivity =
+      process.platform === 'win32' && onActivity
+        ? (activity: SegmentationActivity | null): void => {
+            if (activity === currentActivity) return
+            currentActivity = activity
+            try {
+              onActivity(activity)
+            } catch {
+              // UI activity reporting must never affect notes generation.
+            }
+          }
+        : undefined
+
+    try {
+      return await this.summarizeInternal(
+        meetingId,
+        transcript,
+        onProgress,
+        durationMinutes,
+        reportActivity
+      )
+    } finally {
+      reportActivity?.(null)
+    }
+  }
+
+  private async summarizeInternal(
+    meetingId: string,
+    transcript: string,
+    onProgress?: (percent: number) => void,
+    durationMinutes?: number,
+    reportActivity?: (activity: SegmentationActivity | null) => void
   ): Promise<MeetingSegments> {
     const chunks = this.chunkTranscript(transcript)
     const estMinutes = durationMinutes ?? Math.max(5, Math.round(transcript.length / 750))
@@ -544,15 +586,21 @@ export class OllamaProvider implements LLMProvider {
               `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`
             )
           }
-          const raw = await this.callOllama(chunks[i] + chunkLabel, this.contextTokens, () => {
-            chunkTokens++
-            // Asymptotic progress: approaches 0.99 but never reaches it, so it never appears stuck
-            const ratio = chunkTokens / avgTokensPerChunk
-            const chunkFraction =
-              ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
-            const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
-            onProgress?.(percent)
-          })
+          const raw = await this.callOllama(
+            chunks[i] + chunkLabel,
+            this.contextTokens,
+            () => {
+              reportActivity?.(null)
+              chunkTokens++
+              // Asymptotic progress: approaches 0.99 but never reaches it, so it never appears stuck
+              const ratio = chunkTokens / avgTokensPerChunk
+              const chunkFraction =
+                ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
+              const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
+              onProgress?.(percent)
+            },
+            reportActivity ? () => reportActivity('waiting-for-local-ai') : undefined
+          )
           console.log(`Chunk ${i + 1}/${chunks.length} complete (${chunkTokens} tokens)`)
           chunkResult = this.parseResponse(
             meetingId,
@@ -780,7 +828,8 @@ export class OllamaProvider implements LLMProvider {
   private async callOllama(
     transcript: string,
     contextTokens: number,
-    onToken?: () => void
+    onToken?: () => void,
+    onWaiting?: () => void
   ): Promise<string> {
     if (
       process.platform === 'win32' &&
@@ -867,20 +916,37 @@ export class OllamaProvider implements LLMProvider {
     try {
       while (true) {
         let streamTimer: ReturnType<typeof setTimeout> | undefined
+        let slowActivityTimer: ReturnType<typeof setTimeout> | undefined
+        const streamTimeoutError = new Error(
+          `Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`
+        )
         const streamTimeout = new Promise<never>((_, reject) => {
-          streamTimer = setTimeout(
-            () =>
-              reject(
-                new Error(`Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`)
-              ),
-            STREAM_TIMEOUT_MS
-          )
+          streamTimer = setTimeout(() => reject(streamTimeoutError), STREAM_TIMEOUT_MS)
         })
+        if (process.platform === 'win32' && onWaiting) {
+          slowActivityTimer = setTimeout(() => {
+            try {
+              onWaiting()
+            } catch {
+              // UI activity reporting must never affect the stream request.
+            }
+          }, SLOW_STREAM_ACTIVITY_DELAY_MS)
+        }
         let readResult: ReadableStreamReadResult<Uint8Array>
         try {
           readResult = await Promise.race([reader.read(), streamTimeout])
+        } catch (error) {
+          // AUTODOC-8: On Windows, a timed-out Ollama generation can keep running and
+          // block the immediate retry behind orphaned work. Abort and cancel only on
+          // Windows for v1.1.1; revisit this guard if the same signature is confirmed on macOS.
+          if (process.platform === 'win32' && error === streamTimeoutError) {
+            controller.abort(streamTimeoutError)
+            await reader.cancel(streamTimeoutError).catch(() => {})
+          }
+          throw error
         } finally {
           clearTimeout(streamTimer)
+          clearTimeout(slowActivityTimer)
         }
         const { done, value } = readResult
         if (done) break
@@ -938,6 +1004,7 @@ export class OllamaProvider implements LLMProvider {
           if (data.error) throw new Error(`Ollama error: ${data.error}`)
           if (data.message?.content) {
             content += data.message.content
+            onToken?.()
           }
           if (data.done) {
             this.lastOllamaCallMetrics = this.normalizeOllamaMetrics(data, requestStartedAt)

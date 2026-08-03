@@ -237,6 +237,13 @@ export interface SegmentationStatusPayload {
   errorCode?: string
 }
 
+export type SegmentationActivity = 'waiting-for-local-ai'
+
+export interface SegmentationActivityPayload {
+  meetingId: string
+  activity: SegmentationActivity | null
+}
+
 export interface SegmentationDiagnosticPayload {
   meetingId: string
   event:

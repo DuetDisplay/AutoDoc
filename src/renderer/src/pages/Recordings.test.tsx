@@ -132,7 +132,7 @@ describe('Recordings', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByText('Transcript only')).toBeInTheDocument()
+    expect(screen.getByText('No notes generated')).toBeInTheDocument()
     expect(screen.queryByText(/Notes failed/)).not.toBeInTheDocument()
   })
 
