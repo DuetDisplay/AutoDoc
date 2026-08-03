@@ -163,8 +163,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          identity="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-            | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
+          identity_line="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | awk '/Developer ID Application:/ { print; exit }')"
+          identity="$(awk '{ print $2 }' <<<"$identity_line")"
+          identity_name="$(awk -F '"' '{ print $2 }' <<<"$identity_line")"
 
           if [ -z "$identity" ]; then
             echo "::error::The signing keychain does not contain a Developer ID Application identity."
@@ -172,7 +174,7 @@ jobs:
             exit 1
           fi
 
-          echo "Resolved Developer ID Application identity: $identity"
+          echo "Resolved Developer ID Application identity: $identity_name ($identity)"
           echo "MAC_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Build macOS internal release (signed + notarized)
