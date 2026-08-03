@@ -1,6 +1,6 @@
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MeetingDetail } from './MeetingDetail'
 import {
@@ -37,6 +37,7 @@ beforeEach(() => {
     ],
     'segmentation:get-status': 'complete',
     'segmentation:get-progress': undefined,
+    'segmentation:get-activity': null,
     'segmentation:get-segments': {
       decisions: [],
       actionItems: [],
@@ -80,6 +81,39 @@ async function renderMeetingDetail() {
     )
   })
   return result!
+}
+
+function installNoNotesElectronApi() {
+  let segmentationStatus: 'no-notes' | 'queued' = 'no-notes'
+  return installMockElectronApi({
+    'transcription:get-status': 'complete',
+    'transcription:get-progress': undefined,
+    'transcription:get-transcript': [
+      createTranscript({
+        meetingId: 'test-123',
+        speaker: 'Speaker 1',
+        text: 'This transcript is still available even though structured notes were not generated.'
+      })
+    ],
+    'segmentation:get-status': () => segmentationStatus,
+    'segmentation:get-progress': undefined,
+    'segmentation:get-segments': null,
+    'segmentation:retry': () => {
+      segmentationStatus = 'queued'
+    },
+    'recording:get-detail': {
+      title: 'Test Meeting',
+      sourceName: 'Zoom',
+      date: Date.now(),
+      durationSeconds: 300
+    },
+    'recording:get-media': {
+      hasVideo: false,
+      hasAudio: true,
+      mediaBaseUrl: 'http://127.0.0.1:9'
+    },
+    'speakers:get': {}
+  })
 }
 
 describe('MeetingDetail', () => {
@@ -215,19 +249,15 @@ describe('MeetingDetail', () => {
     expect(screen.getByText('Launch the PR regression suite.')).toBeInTheDocument()
   })
 
-  it('shows transcript-only messaging when notes could not be generated', async () => {
-    installMockElectronApi({
+  it('shows slow notes activity only for the open recording and yields immediately to failure', async () => {
+    const api = installMockElectronApi({
       'transcription:get-status': 'complete',
       'transcription:get-progress': undefined,
-      'transcription:get-transcript': [
-        createTranscript({
-          meetingId: 'test-123',
-          speaker: 'Speaker 1',
-          text: 'This transcript is still available even though structured notes were not generated.'
-        })
-      ],
-      'segmentation:get-status': 'no-notes',
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'segmenting',
       'segmentation:get-progress': undefined,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': null,
       'segmentation:get-segments': null,
       'recording:get-detail': {
         title: 'Test Meeting',
@@ -235,20 +265,195 @@ describe('MeetingDetail', () => {
         date: Date.now(),
         durationSeconds: 300
       },
-      'recording:get-media': {
-        hasVideo: false,
-        hasAudio: true,
-        mediaBaseUrl: 'http://127.0.0.1:9'
-      },
+      'recording:get-media': { hasVideo: false, hasAudio: true },
       'speakers:get': {}
     })
 
     await renderMeetingDetail()
 
-    expect(screen.getByText('Transcript only')).toBeInTheDocument()
+    await act(async () => {
+      api.emit('segmentation:activity-changed', {
+        meetingId: 'different-recording',
+        activity: 'waiting-for-local-ai'
+      })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Notes are taking longer than usual.')).not.toBeInTheDocument()
+
+    await act(async () => {
+      api.emit('segmentation:activity-changed', {
+        meetingId: 'test-123',
+        activity: 'waiting-for-local-ai'
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Notes are taking longer than usual.')).toBeInTheDocument()
     expect(
-      screen.getAllByText(/AutoDoc could not turn this transcript into structured notes/i).length
-    ).toBeGreaterThan(0)
+      screen.getByText(/AutoDoc is still waiting for the local AI model to respond/i)
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      api.emit('segmentation:status-changed', {
+        meetingId: 'test-123',
+        status: 'failed',
+        errorCode: 'ollama-unavailable'
+      })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Notes are taking longer than usual.')).not.toBeInTheDocument()
+    expect(screen.getByText('Notes failed — Retry')).toBeInTheDocument()
+  })
+
+  it('restores slow notes activity when this recording is opened mid-wait', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'segmenting',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': 'waiting-for-local-ai',
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Notes are taking longer than usual.')).toBeInTheDocument()
+  })
+
+  it('does not let an older status snapshot restore the warning after failure', async () => {
+    let resolveInitialStatus: (status: 'segmenting') => void = () => {}
+    const initialStatus = new Promise<'segmenting'>((resolve) => {
+      resolveInitialStatus = resolve
+    })
+    const api = installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': initialStatus,
+      'segmentation:get-progress': undefined,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': 'waiting-for-local-ai',
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': { hasVideo: false, hasAudio: true },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+    await act(async () => {
+      api.emit('segmentation:status-changed', {
+        meetingId: 'test-123',
+        status: 'failed',
+        errorCode: 'ollama-unavailable'
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Notes failed — Retry')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveInitialStatus('segmenting')
+      await initialStatus
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Notes failed — Retry')).toBeInTheDocument()
+    expect(screen.queryByText('Notes are taking longer than usual.')).not.toBeInTheDocument()
+  })
+
+  it('does not carry slow notes activity into the next recording route', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'segmenting',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': (meetingId: string) =>
+        meetingId === 'test-123' ? 'waiting-for-local-ai' : null,
+      'segmentation:get-segments': null,
+      'recording:get-detail': (meetingId: string) => ({
+        title: meetingId === 'test-123' ? 'First Meeting' : 'Next Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      }),
+      'recording:get-media': { hasVideo: false, hasAudio: true },
+      'speakers:get': {}
+    })
+
+    await act(async () => {
+      render(
+        <MemoryRouter initialEntries={['/recordings/test-123']}>
+          <Link to="/recordings/test-456">Open next recording</Link>
+          <Routes>
+            <Route path="/recordings/:id" element={<MeetingDetail />} />
+          </Routes>
+        </MemoryRouter>
+      )
+    })
+
+    expect(screen.getByText('Notes are taking longer than usual.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('link', { name: 'Open next recording' }))
+    expect(screen.queryByText('Notes are taking longer than usual.')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Next Meeting')).toBeInTheDocument())
+    expect(screen.queryByText('Notes are taking longer than usual.')).not.toBeInTheDocument()
+  })
+
+  it('shows one recoverable no-notes callout instead of repeated note cards', async () => {
+    installNoNotesElectronApi()
+    await renderMeetingDetail()
+
+    expect(screen.getByText('No notes were generated')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /This transcript appears to contain enough meeting content, but AutoDoc couldn’t produce structured notes this time/i
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Your transcript is still available/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View transcript' })).toBeInTheDocument()
+    expect(screen.queryByText('Decisions')).not.toBeInTheDocument()
+    expect(screen.queryByText('Action Items')).not.toBeInTheDocument()
+    expect(screen.queryByText('Information Shared')).not.toBeInTheDocument()
+    expect(screen.queryByText('Discussion')).not.toBeInTheDocument()
+    expect(screen.queryByText('Status Updates')).not.toBeInTheDocument()
+  })
+
+  it('retries no-notes generation through the existing manual reprocess path', async () => {
+    const api = installNoNotesElectronApi()
+    await renderMeetingDetail()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(api.invoke).toHaveBeenCalledWith('segmentation:retry', 'test-123')
+    expect(screen.getByText('Queued for notes')).toBeInTheDocument()
+  })
+
+  it('opens the transcript from the no-notes callout', async () => {
+    installNoNotesElectronApi()
+    await renderMeetingDetail()
+
+    await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
+
+    expect(
+      screen.getByText(
+        'This transcript is still available even though structured notes were not generated.'
+      )
+    ).toBeInTheDocument()
   })
 
   it('renames a speaker and keeps the new label visible in transcript view', async () => {

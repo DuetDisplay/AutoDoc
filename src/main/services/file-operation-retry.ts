@@ -20,10 +20,14 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export async function renameWithRetry(from: string, to: string): Promise<void> {
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  windowsRetryDelaysMs: readonly number[] = WINDOWS_RETRY_DELAYS_MS
+): Promise<void> {
   let lastError: unknown = null
 
-  for (const delay of [0, ...WINDOWS_RETRY_DELAYS_MS]) {
+  for (const delay of [0, ...windowsRetryDelaysMs]) {
     if (delay > 0) {
       await sleep(delay)
     }

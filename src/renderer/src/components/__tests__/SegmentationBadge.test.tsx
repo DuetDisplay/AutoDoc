@@ -29,4 +29,9 @@ describe('SegmentationBadge', () => {
     render(<SegmentationBadge status="complete" />)
     expect(screen.getByText('Notes ready')).toBeInTheDocument()
   })
+
+  it('shows "No notes generated" for no-notes status', () => {
+    render(<SegmentationBadge status="no-notes" />)
+    expect(screen.getByText('No notes generated')).toBeInTheDocument()
+  })
 })
