@@ -1,8 +1,9 @@
 # Internal Release — INTERNAL-ONLY workflow. Do NOT merge this file to the public
 # AutoDoc repo; it exists only in the private AutoDoc-Internal fork.
 #
-# Produces SIGNED internal builds (via electron-builder.internal.yml overlay) and
-# publishes them to a generic HTTPS update feed hosted on Cloudflare R2.
+# Produces unsigned internal QA prereleases and signed stable internal releases
+# (via electron-builder.internal.yml overlay), publishing both to a generic
+# HTTPS update feed hosted on Cloudflare R2.
 #
 # Required secrets:
 #   INTERNAL_FEED_UPLOAD_TOKEN — bearer token for the feed uploader worker
@@ -10,7 +11,9 @@
 #     UPLOAD_TOKEN` there and update this GitHub secret to match)
 #   (plus the signing secrets shared with build.yml)
 #
-# Tag format: internal-vX.Y.Z.N maps to app version X.Y.Z-internal.N
+# Tag formats:
+#   internal-vX.Y.Z.N → unsigned QA app version X.Y.Z-internal.N
+#   internal-vX.Y.Z   → signed stable app version X.Y.Z
 #   e.g. internal-v1.1.0.7 → 1.1.0-internal.7
 
 name: Internal Release
@@ -33,12 +36,17 @@ on:
           - windows
           - all
       publish:
-        description: Publish artifacts to the internal update feed (uncheck for a signed one-off build)
+        description: Publish artifacts to the internal update feed
         required: false
         default: true
         type: boolean
+      signed:
+        description: Sign the build (use only for a stable internal release)
+        required: false
+        default: false
+        type: boolean
       version:
-        description: Internal version to stamp (e.g. 1.1.0-internal.8)
+        description: Version to stamp (e.g. 1.1.1-internal.1 or 1.1.1)
         required: true
         type: string
 
@@ -51,6 +59,7 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       publish: ${{ steps.meta.outputs.publish }}
+      signed: ${{ steps.meta.outputs.signed }}
       build_mac: ${{ steps.meta.outputs.build_mac }}
       build_win: ${{ steps.meta.outputs.build_win }}
     steps:
@@ -62,6 +71,7 @@ jobs:
           RAW_TAG: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_SIGNED: ${{ inputs.signed }}
           INPUT_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
@@ -69,19 +79,35 @@ jobs:
           if [ "$EVENT_NAME" = "push" ]; then
             tag="${RAW_TAG#refs/tags/}"
             stripped="${tag#internal-v}"
-            if [[ ! "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Tag '$tag' does not match internal-vX.Y.Z.N (e.g. internal-v1.1.0.7)." >&2
+            if [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              version="$stripped"
+              signed='true'
+            elif [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              # internal-v1.1.0.7 → 1.1.0-internal.7
+              version="${stripped%.*}-internal.${stripped##*.}"
+              signed='false'
+            else
+              echo "::error::Tag '$tag' must match internal-vX.Y.Z (stable) or internal-vX.Y.Z.N (unsigned QA)." >&2
               exit 1
             fi
-            # internal-v1.1.0.7 → 1.1.0-internal.7: last dot-segment becomes -internal.N
-            version="${stripped%.*}-internal.${stripped##*.}"
             publish='true'
             build_mac='true'
             build_win='true'
           else
             version="$INPUT_VERSION"
-            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
-              echo "::error::Version '$version' does not match X.Y.Z-internal.N (e.g. 1.1.0-internal.8)." >&2
+            signed="$INPUT_SIGNED"
+            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
+              if [ "$signed" = "true" ]; then
+                echo "::error::Internal QA prereleases must be unsigned; use a stable X.Y.Z version for signed builds." >&2
+                exit 1
+              fi
+            elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              if [ "$signed" != "true" ]; then
+                echo "::error::Stable internal releases must set signed=true." >&2
+                exit 1
+              fi
+            else
+              echo "::error::Version '$version' must match X.Y.Z (stable) or X.Y.Z-internal.N (unsigned QA)." >&2
               exit 1
             fi
             publish="$INPUT_PUBLISH"
@@ -97,9 +123,10 @@ jobs:
             fi
           fi
 
-          echo "Resolved version: $version (publish=$publish mac=$build_mac win=$build_win)"
+          echo "Resolved version: $version (signed=$signed publish=$publish mac=$build_mac win=$build_win)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
           echo "build_mac=$build_mac" >> "$GITHUB_OUTPUT"
           echo "build_win=$build_win" >> "$GITHUB_OUTPUT"
 
@@ -107,7 +134,7 @@ jobs:
     needs: resolve-meta
     if: needs.resolve-meta.outputs.build_mac == 'true'
     runs-on: macos-latest
-    environment: release-signing
+    environment: ${{ needs.resolve-meta.outputs.signed == 'true' && 'release-signing' || 'internal-qa' }}
     permissions:
       contents: read
     env:
@@ -138,6 +165,7 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Install Apple certificate
+        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.DD_BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.DD_P12_PASSWORD }}
@@ -157,6 +185,7 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build macOS internal release (signed + notarized)
+        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           APPLE_ID: ${{ secrets.DD_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.DD_APPLE_PASSWORD }}
@@ -166,13 +195,23 @@ jobs:
           npm run build
           npx electron-builder --mac --publish never --config electron-builder.internal.yml "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
 
+      - name: Build macOS internal QA release (unsigned)
+        if: needs.resolve-meta.outputs.signed != 'true'
+        env:
+          AUTODOC_SKIP_MAC_SIGNING: '1'
+        run: |
+          npm run prepare:macos-mlx-runtime
+          npm run build
+          npx electron-builder --mac --publish never --config electron-builder.internal.yml --config.mac.notarize=false -c.mac.identity=null "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
+
       - name: Verify macOS release artifacts (signature, entitlements, runtime)
+        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           AUTODOC_MAC_APP_NAME: AutoDoc Internal.app
         run: bash scripts/verify-macos-update-artifact.sh dist
 
-      # electron-builder derives the update channel from the version's prerelease
-      # tag, so internal builds emit internal-mac.yml (not latest-mac.yml).
+      # electron-builder emits internal-mac.yml for QA prereleases and
+      # latest-mac.yml for stable versions.
       - name: Upload macOS internal release assets
         if: success()
         uses: actions/upload-artifact@v7.0.1
@@ -181,7 +220,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/internal-mac.yml
+            dist/*-mac.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -189,7 +228,7 @@ jobs:
     needs: resolve-meta
     if: needs.resolve-meta.outputs.build_win == 'true'
     runs-on: windows-2022
-    environment: release-signing
+    environment: ${{ needs.resolve-meta.outputs.signed == 'true' && 'release-signing' || 'internal-qa' }}
     permissions:
       contents: read
     env:
@@ -225,6 +264,7 @@ jobs:
           }
 
       - name: Materialize DigiCert client certificate
+        if: needs.resolve-meta.outputs.signed == 'true'
         shell: pwsh
         env:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
@@ -234,6 +274,7 @@ jobs:
           "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert signing tools
+        if: needs.resolve-meta.outputs.signed == 'true'
         uses: digicert/code-signing-software-trust-action@v1.2.1
         with:
           use-github-caching-service: true
@@ -244,6 +285,7 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
 
       - name: Expose DigiCert tool paths
+        if: needs.resolve-meta.outputs.signed == 'true'
         shell: pwsh
         run: |
           $candidatePaths = @()
@@ -328,6 +370,7 @@ jobs:
           "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check DigiCert signing health
+        if: needs.resolve-meta.outputs.signed == 'true'
         shell: pwsh
         env:
           SM_HOST: https://clientauth.one.digicert.com
@@ -341,6 +384,7 @@ jobs:
           & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
 
       - name: Build Windows internal release
+        if: needs.resolve-meta.outputs.signed == 'true'
         env:
           REQUIRE_WINDOWS_SIGNING: 'true'
           SM_HOST: https://clientauth.one.digicert.com
@@ -353,7 +397,18 @@ jobs:
           npm run build
           npx electron-builder --win --publish never --config electron-builder.internal.yml "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
 
+      - name: Build Windows internal QA release (unsigned)
+        if: needs.resolve-meta.outputs.signed != 'true'
+        shell: pwsh
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          npx electron-builder --win --publish never --config electron-builder.internal.yml --config.win.forceCodeSigning=false "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
+
       - name: Verify Windows signatures
+        if: needs.resolve-meta.outputs.signed == 'true'
         shell: pwsh
         run: |
           # dist\autodoc-*.exe also matches internal installers (autodoc-internal-<version>-setup.exe);
@@ -392,7 +447,7 @@ jobs:
           }
 
       - name: Capture DigiCert signing diagnostics
-        if: failure()
+        if: needs.resolve-meta.outputs.signed == 'true' && failure()
         shell: pwsh
         run: |
           $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
@@ -419,7 +474,7 @@ jobs:
           } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
 
       - name: Upload DigiCert signing diagnostics
-        if: failure()
+        if: needs.resolve-meta.outputs.signed == 'true' && failure()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digicert-signing-diagnostics-${{ github.run_number }}
@@ -434,7 +489,7 @@ jobs:
           name: internal-release-windows-${{ needs.resolve-meta.outputs.version }}
           path: |
             dist/*-setup.exe
-            dist/internal.yml
+            dist/*.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -481,36 +536,39 @@ jobs:
           set -euo pipefail
 
           # Upload ordering matters: binaries (installers/zips/dmgs) go up FIRST and the
-          # feed metadata (internal.yml / internal-mac.yml) goes up LAST, so the feed
-          # never advertises a version whose binary has not been uploaded yet.
-          # (electron-builder derives channel "internal" from the prerelease version
-          # tag, so the feed files are internal*.yml, not latest*.yml.)
+          # Feed metadata (internal.yml / internal-mac.yml for QA, or latest.yml /
+          # latest-mac.yml for stable) goes up LAST, so the feed never advertises
+          # a version whose binary has not been uploaded yet.
 
           if [ -d release-assets/mac ]; then
+            mac_manifest="$(find release-assets/mac -maxdepth 1 -type f -name '*-mac.yml' -print -quit || true)"
             for file in release-assets/mac/*; do
+              [ -f "$file" ] || continue
               name="$(basename "$file")"
-              if [ "$name" = "internal-mac.yml" ]; then
+              if [ "$file" = "$mac_manifest" ]; then
                 continue
               fi
               bash scripts/upload-internal-feed.sh "$file" "mac/$name"
             done
-            if [ -f release-assets/mac/internal-mac.yml ]; then
-              bash scripts/upload-internal-feed.sh release-assets/mac/internal-mac.yml \
-                mac/internal-mac.yml text/yaml
+            if [ -n "$mac_manifest" ]; then
+              bash scripts/upload-internal-feed.sh "$mac_manifest" \
+                "mac/$(basename "$mac_manifest")" text/yaml
             fi
           fi
 
           if [ -d release-assets/win ]; then
+            win_manifest="$(find release-assets/win -maxdepth 1 -type f -name '*.yml' -print -quit || true)"
             for file in release-assets/win/*; do
+              [ -f "$file" ] || continue
               name="$(basename "$file")"
-              if [ "$name" = "internal.yml" ]; then
+              if [ "$file" = "$win_manifest" ]; then
                 continue
               fi
               bash scripts/upload-internal-feed.sh "$file" "windows/$name"
             done
-            if [ -f release-assets/win/internal.yml ]; then
-              bash scripts/upload-internal-feed.sh release-assets/win/internal.yml \
-                windows/internal.yml text/yaml
+            if [ -n "$win_manifest" ]; then
+              bash scripts/upload-internal-feed.sh "$win_manifest" \
+                "windows/$(basename "$win_manifest")" text/yaml
             fi
           fi
 

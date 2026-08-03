@@ -50,6 +50,10 @@ function findSigningIdentity(predicate) {
 }
 
 function tryGetSigningIdentity(context) {
+  if (process.env.AUTODOC_SKIP_MAC_SIGNING === '1') {
+    return null
+  }
+
   if (process.env.CSC_NAME) {
     return process.env.CSC_NAME
   }
