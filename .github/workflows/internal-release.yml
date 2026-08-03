@@ -313,7 +313,8 @@ jobs:
           name: internal-release-windows-${{ needs.resolve-meta.outputs.version }}
           path: |
             dist/*-setup.exe
-            dist/*.yml
+            dist/internal.yml
+            dist/latest.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -381,7 +382,7 @@ jobs:
           fi
 
           if [ -d release-assets/win ]; then
-            win_manifest="$(find release-assets/win -maxdepth 1 -type f -name '*.yml' -print -quit || true)"
+            win_manifest="$(find release-assets/win -maxdepth 1 -type f \( -name 'internal.yml' -o -name 'latest.yml' \) -print -quit || true)"
             for file in release-assets/win/*; do
               [ -f "$file" ] || continue
               name="$(basename "$file")"
