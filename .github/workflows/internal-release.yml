@@ -1,15 +1,15 @@
 # Internal Release — INTERNAL-ONLY workflow. Do NOT merge this file to the public
 # AutoDoc repo; it exists only in the private AutoDoc-Internal fork.
 #
-# Produces unsigned internal QA prereleases and signed stable internal releases
-# (via electron-builder.internal.yml overlay), publishing both to a generic
-# HTTPS update feed hosted on Cloudflare R2.
+# Produces unsigned internal QA prereleases and stable internal releases via the
+# internal update-feed overlay. Stable macOS artifacts are signed and notarized;
+# Windows internal artifacts remain unsigned to avoid consuming DigiCert quota.
 #
 # Required secrets:
 #   INTERNAL_FEED_UPLOAD_TOKEN — bearer token for the feed uploader worker
 #     (scripts/internal-update-feed-worker; rotate with `wrangler secret put
 #     UPLOAD_TOKEN` there and update this GitHub secret to match)
-#   (plus the signing secrets shared with build.yml)
+#   (plus the Apple signing secrets shared with build.yml for stable macOS only)
 #
 # Tag formats:
 #   internal-vX.Y.Z.N → unsigned QA app version X.Y.Z-internal.N
@@ -123,7 +123,7 @@ jobs:
             fi
           fi
 
-          echo "Resolved version: $version (signed=$signed publish=$publish mac=$build_mac win=$build_win)"
+          echo "Resolved version: $version (signed_mac=$signed publish=$publish mac=$build_mac win=$build_win)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "signed=$signed" >> "$GITHUB_OUTPUT"
@@ -228,7 +228,8 @@ jobs:
     needs: resolve-meta
     if: needs.resolve-meta.outputs.build_win == 'true'
     runs-on: windows-2022
-    environment: ${{ needs.resolve-meta.outputs.signed == 'true' && 'release-signing' || 'internal-qa' }}
+    # Intentional: internal Windows builds must not access DigiCert secrets.
+    environment: internal-qa
     permissions:
       contents: read
     env:
@@ -263,142 +264,7 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Materialize DigiCert client certificate
-        if: needs.resolve-meta.outputs.signed == 'true'
-        shell: pwsh
-        env:
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
-        run: |
-          $certPath = Join-Path $env:RUNNER_TEMP 'Certificate_pkcs12.p12'
-          [System.IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
-          "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Setup DigiCert signing tools
-        if: needs.resolve-meta.outputs.signed == 'true'
-        uses: digicert/code-signing-software-trust-action@v1.2.1
-        with:
-          use-github-caching-service: true
-        env:
-          SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
-
-      - name: Expose DigiCert tool paths
-        if: needs.resolve-meta.outputs.signed == 'true'
-        shell: pwsh
-        run: |
-          $candidatePaths = @()
-
-          if ($env:LOCALAPPDATA) {
-            $candidatePaths += Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64\smctl.exe'
-          }
-
-          $smctlCommand = Get-Command smctl.exe -ErrorAction SilentlyContinue
-          if ($smctlCommand) {
-            $candidatePaths += $smctlCommand.Source
-          }
-
-          if ($env:ProgramFiles) {
-            $candidatePaths += Join-Path $env:ProgramFiles 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
-          }
-          if (${env:ProgramFiles(x86)}) {
-            $candidatePaths += Join-Path ${env:ProgramFiles(x86)} 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
-          }
-
-          $smctlPath = $candidatePaths |
-            Where-Object { $_ -and (Test-Path $_) } |
-            Select-Object -Unique -First 1
-
-          if (-not $smctlPath) {
-            throw 'smctl.exe was not found on PATH or in the standard DigiCert install locations.'
-          }
-
-          Write-Host "Resolved smctl.exe to $smctlPath"
-          try {
-            $versionInfo = (Get-Item $smctlPath).VersionInfo
-            if ($versionInfo.FileVersion) {
-              Write-Host "smctl.exe file version: $($versionInfo.FileVersion)"
-            }
-          } catch {
-            Write-Warning "Unable to read smctl.exe file version: $($_.Exception.Message)"
-          }
-
-          $smToolsDir = Split-Path -Parent $smctlPath
-          $smToolsDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          $signToolCandidates = @()
-
-          $signToolCommand = Get-Command signtool.exe -ErrorAction SilentlyContinue
-          if ($signToolCommand) {
-            $signToolCandidates += $signToolCommand.Source
-          }
-
-          if (${env:ProgramFiles(x86)}) {
-            $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
-            $signToolCandidates += Join-Path $windowsKitsRoot 'App Certification Kit\signtool.exe'
-
-            $windowsKitsBin = Join-Path $windowsKitsRoot 'bin'
-            if (Test-Path $windowsKitsBin) {
-              $signToolCandidates += Get-ChildItem -Path $windowsKitsBin -Filter signtool.exe -File -Recurse -ErrorAction SilentlyContinue |
-                Sort-Object FullName -Descending |
-                Select-Object -ExpandProperty FullName
-            }
-          }
-
-          $signToolPath = $signToolCandidates |
-            Where-Object { $_ -and (Test-Path $_) } |
-            Select-Object -Unique -First 1
-
-          if (-not $signToolPath) {
-            throw 'signtool.exe was not found on PATH or in the standard Windows SDK locations.'
-          }
-
-          Write-Host "Resolved signtool.exe to $signToolPath"
-          try {
-            $versionInfo = (Get-Item $signToolPath).VersionInfo
-            if ($versionInfo.FileVersion) {
-              Write-Host "signtool.exe file version: $($versionInfo.FileVersion)"
-            }
-          } catch {
-            Write-Warning "Unable to read signtool.exe file version: $($_.Exception.Message)"
-          }
-
-          $signToolDir = Split-Path -Parent $signToolPath
-          $signToolDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Check DigiCert signing health
-        if: needs.resolve-meta.outputs.signed == 'true'
-        shell: pwsh
-        env:
-          SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
-          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
-          SM_LOG_LEVEL: TRACE
-        run: |
-          & $env:SMCTL_PATH healthcheck
-          & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
-
-      - name: Build Windows internal release
-        if: needs.resolve-meta.outputs.signed == 'true'
-        env:
-          REQUIRE_WINDOWS_SIGNING: 'true'
-          SM_HOST: https://clientauth.one.digicert.com
-          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
-          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
-          SM_LOG_LEVEL: TRACE
-        run: |
-          npm run build
-          npx electron-builder --win --publish never --config electron-builder.internal.yml "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
-
-      - name: Build Windows internal QA release (unsigned)
-        if: needs.resolve-meta.outputs.signed != 'true'
+      - name: Build Windows internal release (unsigned)
         shell: pwsh
         run: |
           npm run build
@@ -406,81 +272,29 @@ jobs:
             exit $LASTEXITCODE
           }
           npx electron-builder --win --publish never --config electron-builder.internal.yml --config.win.forceCodeSigning=false "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-      - name: Verify Windows signatures
-        if: needs.resolve-meta.outputs.signed == 'true'
+      - name: Verify Windows internal installer is unsigned
         shell: pwsh
         run: |
-          # dist\autodoc-*.exe also matches internal installers (autodoc-internal-<version>-setup.exe);
-          # the unpacked executable keeps the public name (executableName is unchanged).
-          $files = @(
-            'dist\win-unpacked\autodoc.exe'
-            'dist\win-unpacked\resources\app.asar.unpacked\native\win-meeting-detector\bin\win-meeting-detector.exe'
-            'dist\autodoc-*.exe'
-          )
-
-          $resolvedFiles = @()
-          foreach ($pattern in $files) {
-            $resolvedFiles += Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
+          $installers = Get-ChildItem -Path 'dist\*-setup.exe' -File -ErrorAction SilentlyContinue
+          if (-not $installers) {
+            throw 'No Windows setup executable was found to verify.'
           }
 
-          if (-not $resolvedFiles) {
-            throw 'No Windows artifacts were found to verify.'
-          }
-
-          $failed = $false
-          foreach ($file in ($resolvedFiles | Sort-Object FullName -Unique)) {
+          foreach ($file in $installers) {
             $signature = Get-AuthenticodeSignature $file.FullName
             [pscustomobject]@{
               Path = $file.FullName
               Status = $signature.Status
-              Signer = $signature.SignerCertificate.Subject
             } | Format-List
 
-            if ($signature.Status -ne 'Valid') {
-              $failed = $true
+            if ($signature.Status -ne 'NotSigned') {
+              throw "Internal Windows installer must remain unsigned, but '$($file.FullName)' has status '$($signature.Status)'."
             }
           }
-
-          if ($failed) {
-            throw 'One or more Windows artifacts are not Authenticode-signed.'
-          }
-
-      - name: Capture DigiCert signing diagnostics
-        if: needs.resolve-meta.outputs.signed == 'true' && failure()
-        shell: pwsh
-        run: |
-          $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
-          New-Item -ItemType Directory -Force -Path $diagnosticDir | Out-Null
-
-          $candidateFiles = @(
-            (Join-Path $env:USERPROFILE '.signingmanager\logs\smctl.log')
-            (Join-Path $env:USERPROFILE '.signingmanager\logs\smksp.log')
-            (Join-Path $env:USERPROFILE '.signingmanager\logs\smcsp.log')
-            (Join-Path $env:USERPROFILE '.signingmanager\logs\smpkcs11.log')
-          ) | Where-Object { $_ }
-
-          foreach ($candidate in $candidateFiles) {
-            if (Test-Path $candidate) {
-              Copy-Item -Path $candidate -Destination $diagnosticDir -Force
-            }
-          }
-
-          [pscustomobject]@{
-            SmctlPath = $env:SMCTL_PATH
-            SmctlExists = [bool]($env:SMCTL_PATH -and (Test-Path $env:SMCTL_PATH))
-            UserProfile = $env:USERPROFILE
-            SigningLogDir = Join-Path $env:USERPROFILE '.signingmanager\logs'
-          } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
-
-      - name: Upload DigiCert signing diagnostics
-        if: needs.resolve-meta.outputs.signed == 'true' && failure()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: digicert-signing-diagnostics-${{ github.run_number }}
-          path: ${{ runner.temp }}/digicert-signing-diagnostics
-          if-no-files-found: warn
-          retention-days: 14
 
       - name: Upload Windows internal release assets
         if: success()
