@@ -22,7 +22,7 @@ import {
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
 
-const FeedbackPromptQASimulator = __AUTODOC_FEEDBACK_PROMPT_QA__
+const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
   ? lazy(() =>
       import('../components/FeedbackPromptQASimulator').then((module) => ({
         default: module.FeedbackPromptQASimulator
@@ -657,7 +657,7 @@ export function Settings() {
               {storageError && <p className="text-[12px] text-clay mt-3">{storageError}</p>}
             </div>
           </div>
-          {FeedbackPromptQASimulator && (
+          {FeedbackPromptQASimulator && runtimeInfo?.qaBuild && (
             <Suspense
               fallback={<p className="text-[12px] text-ink-muted">Loading QA simulator...</p>}
             >

@@ -118,8 +118,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # TEMPORARY (1.1.1 QA): remove after feedback-prompt testing is complete.
-      AUTODOC_FEEDBACK_PROMPT_QA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && '1' || '' }}
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
@@ -288,8 +286,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # TEMPORARY (1.1.1 QA): remove after feedback-prompt testing is complete.
-      AUTODOC_FEEDBACK_PROMPT_QA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' && '1' || '' }}
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}

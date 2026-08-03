@@ -4,8 +4,7 @@ import { resolve } from 'path'
 
 export default defineConfig({
   define: {
-    __AUTODOC_QA_BUILD__: false,
-    __AUTODOC_FEEDBACK_PROMPT_QA__: false
+    __AUTODOC_QA_BUILD__: false
   },
   plugins: [react()],
   test: {
