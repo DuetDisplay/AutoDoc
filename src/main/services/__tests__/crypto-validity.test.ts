@@ -90,7 +90,7 @@ describe('Crypto file replacement retries', () => {
     expect(renameMock).toHaveBeenCalledTimes(3)
   })
 
-  it('AUTODOC-3E waits beyond the short retry window for a Windows media lock', async () => {
+  it('waits beyond the short retry window for a Windows media lock', async () => {
     vi.useFakeTimers()
     const { encryptFileInPlace } = await freshImport()
     const locked = Object.assign(new Error('EPERM: destination is locked'), { code: 'EPERM' })
@@ -116,7 +116,7 @@ describe('Crypto file replacement retries', () => {
     expect(unlinkMock).not.toHaveBeenCalled()
   })
 
-  it('AUTODOC-3E preserves the plaintext and encrypted temp after Windows retries exhaust', async () => {
+  it('preserves the plaintext and encrypted temp after Windows retries exhaust', async () => {
     vi.useFakeTimers()
     const { encryptFileInPlace } = await freshImport()
     const locked = Object.assign(new Error('EPERM: destination is locked'), { code: 'EPERM' })
@@ -133,7 +133,7 @@ describe('Crypto file replacement retries', () => {
     expect(unlinkMock).not.toHaveBeenCalled()
   })
 
-  it('AUTODOC-3E leaves non-Windows media rename behavior unchanged', async () => {
+  it('leaves non-Windows media rename behavior unchanged', async () => {
     Object.defineProperty(process, 'platform', {
       value: 'darwin',
       configurable: true

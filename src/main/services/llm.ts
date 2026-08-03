@@ -936,7 +936,7 @@ export class OllamaProvider implements LLMProvider {
         try {
           readResult = await Promise.race([reader.read(), streamTimeout])
         } catch (error) {
-          // AUTODOC-8: On Windows, a timed-out Ollama generation can keep running and
+          // On Windows, a timed-out Ollama generation can keep running and
           // block the immediate retry behind orphaned work. Abort and cancel only on
           // Windows for v1.1.1; revisit this guard if the same signature is confirmed on macOS.
           if (process.platform === 'win32' && error === streamTimeoutError) {

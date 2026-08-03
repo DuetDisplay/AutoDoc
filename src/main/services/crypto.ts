@@ -367,7 +367,7 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
     throw err
   }
 
-  // AUTODOC-3E: Windows readers and scanners can briefly deny destination replacement.
+  // Windows readers and scanners can briefly deny destination replacement.
   // Keep this as a direct rename so plaintext remains intact until replacement succeeds;
   // never unlink plainPath first. If macOS reports the same signature, extend both the
   // platform guard below and retry classification in file-operation-retry.ts with a test.
