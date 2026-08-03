@@ -60,6 +60,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       publish: ${{ steps.meta.outputs.publish }}
       signed: ${{ steps.meta.outputs.signed }}
+      qa_build: ${{ steps.meta.outputs.qa_build }}
       build_mac: ${{ steps.meta.outputs.build_mac }}
       build_win: ${{ steps.meta.outputs.build_win }}
     steps:
@@ -82,10 +83,12 @@ jobs:
             if [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               version="$stripped"
               signed='true'
+              qa_build='false'
             elif [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               # internal-v1.1.0.7 → 1.1.0-internal.7
               version="${stripped%.*}-internal.${stripped##*.}"
               signed='false'
+              qa_build='true'
             else
               echo "::error::Tag '$tag' must match internal-vX.Y.Z (stable) or internal-vX.Y.Z.N (unsigned QA)." >&2
               exit 1
@@ -97,11 +100,13 @@ jobs:
             version="$INPUT_VERSION"
             signed="$INPUT_SIGNED"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
+              qa_build='true'
               if [ "$signed" = "true" ]; then
                 echo "::error::Internal QA prereleases must be unsigned; use a stable X.Y.Z version for signed builds." >&2
                 exit 1
               fi
             elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              qa_build='false'
               if [ "$signed" != "true" ]; then
                 echo "::error::Stable internal releases must set signed=true." >&2
                 exit 1
@@ -123,10 +128,11 @@ jobs:
             fi
           fi
 
-          echo "Resolved version: $version (signed_mac=$signed publish=$publish mac=$build_mac win=$build_win)"
+          echo "Resolved version: $version (qa=$qa_build signed_mac=$signed publish=$publish mac=$build_mac win=$build_win)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "signed=$signed" >> "$GITHUB_OUTPUT"
+          echo "qa_build=$qa_build" >> "$GITHUB_OUTPUT"
           echo "build_mac=$build_mac" >> "$GITHUB_OUTPUT"
           echo "build_win=$build_win" >> "$GITHUB_OUTPUT"
 
@@ -138,6 +144,8 @@ jobs:
     permissions:
       contents: read
     env:
+      # TEMPORARY (1.1.1 QA): remove after feedback-prompt testing is complete.
+      AUTODOC_FEEDBACK_PROMPT_QA: ${{ needs.resolve-meta.outputs.qa_build == 'true' && '1' || '' }}
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
@@ -233,6 +241,8 @@ jobs:
     permissions:
       contents: read
     env:
+      # TEMPORARY (1.1.1 QA): remove after feedback-prompt testing is complete.
+      AUTODOC_FEEDBACK_PROMPT_QA: ${{ needs.resolve-meta.outputs.qa_build == 'true' && '1' || '' }}
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}

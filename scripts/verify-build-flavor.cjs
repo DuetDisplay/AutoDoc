@@ -5,7 +5,7 @@ const QA_APP_ID = 'com.kairos.autodoc.qa'
 const QA_PRODUCT_NAME = 'AutoDoc QA'
 const QA_PACKAGE_NAME = 'autodoc-qa'
 const QA_NSIS_INCLUDE = 'build/installer-qa.nsh'
-const MARKERS = [
+const FEEDBACK_PROMPT_QA_MARKERS = [
   'AUTODOC_QA_FEEDBACK_SIMULATOR_V1',
   'qa:feedback-prompt:get-state',
   'qa:feedback-prompt:set-scenario'
@@ -36,11 +36,11 @@ function readCompiledBuild(outPath) {
 
 function detectCompiledFlavor(outPath) {
   const output = readCompiledBuild(outPath)
-  const presentMarkers = MARKERS.filter((marker) => output.includes(marker))
+  const presentMarkers = QA_ISOLATION_MARKERS.filter((marker) => output.includes(marker))
   if (presentMarkers.length === 0) return 'production'
-  if (presentMarkers.length === MARKERS.length) return 'qa'
+  if (presentMarkers.length === QA_ISOLATION_MARKERS.length) return 'qa'
   throw new Error(
-    `Compiled output has an incomplete QA boundary. Found: ${presentMarkers.join(', ')}`
+    `Compiled output has an incomplete QA isolation boundary. Found: ${presentMarkers.join(', ')}`
   )
 }
 
@@ -51,6 +51,17 @@ function verifyCompiledFlavor(outPath, expectedFlavor) {
   }
 
   const output = readCompiledBuild(outPath)
+  const presentFeedbackPromptMarkers = FEEDBACK_PROMPT_QA_MARKERS.filter((marker) =>
+    output.includes(marker)
+  )
+  if (
+    presentFeedbackPromptMarkers.length > 0 &&
+    presentFeedbackPromptMarkers.length !== FEEDBACK_PROMPT_QA_MARKERS.length
+  ) {
+    throw new Error(
+      `Compiled output has an incomplete feedback-prompt QA boundary. Found: ${presentFeedbackPromptMarkers.join(', ')}`
+    )
+  }
   const presentIsolationMarkers = QA_ISOLATION_MARKERS.filter((marker) => output.includes(marker))
   if (expectedFlavor === 'qa' && presentIsolationMarkers.length !== QA_ISOLATION_MARKERS.length) {
     throw new Error(
@@ -61,6 +72,12 @@ function verifyCompiledFlavor(outPath, expectedFlavor) {
     throw new Error(
       `Production output contains QA runtime-isolation markers: ${presentIsolationMarkers.join(', ')}`
     )
+  }
+  if (
+    expectedFlavor === 'qa' &&
+    presentFeedbackPromptMarkers.length !== FEEDBACK_PROMPT_QA_MARKERS.length
+  ) {
+    throw new Error('QA output is missing the feedback-prompt simulator markers.')
   }
   console.log(`[build-flavor] Verified ${expectedFlavor} compiled output`)
 }

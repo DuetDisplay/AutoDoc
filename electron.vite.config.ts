@@ -5,9 +5,11 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const qaBuild = mode === 'qa'
+  const feedbackPromptQA = qaBuild || env.AUTODOC_FEEDBACK_PROMPT_QA === '1'
   const officialBuild = qaBuild ? '' : (env.AUTODOC_OFFICIAL_BUILD ?? '')
   const buildFlags = {
-    __AUTODOC_QA_BUILD__: JSON.stringify(qaBuild)
+    __AUTODOC_QA_BUILD__: JSON.stringify(qaBuild),
+    __AUTODOC_FEEDBACK_PROMPT_QA__: JSON.stringify(feedbackPromptQA)
   }
 
   return {

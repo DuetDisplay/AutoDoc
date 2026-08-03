@@ -1666,7 +1666,7 @@ app.whenReady().then(async () => {
     isTrustedSender: isTrustedMainWindowSender,
     observeForeground: () => feedbackSessionTracker.observeActive()
   })
-  if (__AUTODOC_QA_BUILD__) {
+  if (__AUTODOC_FEEDBACK_PROMPT_QA__) {
     const { registerFeedbackPromptQAIpc } = await import('./ipc/feedback-prompt-qa-ipc')
     registerFeedbackPromptQAIpc(feedbackPromptService, feedbackPromptStore, {
       isTrustedSender: isTrustedMainWindowSender,
