@@ -400,7 +400,7 @@ export class SegmentationService {
         }
       )
     } finally {
-      if (process.platform === 'darwin') {
+      if (process.platform === 'darwin' || process.platform === 'win32') {
         await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
           logAutodocEvent({
             area: 'segmentation',
@@ -413,7 +413,9 @@ export class SegmentationService {
             }
           })
         })
-        await this.logMacResourceSnapshot('notes resources released', meetingId)
+        if (process.platform === 'darwin') {
+          await this.logMacResourceSnapshot('notes resources released', meetingId)
+        }
       }
     }
 

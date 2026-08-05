@@ -898,9 +898,6 @@ app.whenReady().then(async () => {
       if (!profile) {
         return false
       }
-      if (profile.id === 'win-gpu') {
-        return false
-      }
       if (profile.id === 'win-low-spec') {
         return true
       }

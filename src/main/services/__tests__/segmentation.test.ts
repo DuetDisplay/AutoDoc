@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
 import { BrowserWindow } from 'electron'
 import { SegmentationService } from '../segmentation'
@@ -49,7 +49,8 @@ function createMockProvider(): LLMProvider {
     checkConnection: vi.fn().mockResolvedValue(true),
     abortActiveRequests: vi.fn(),
     setModel: vi.fn(),
-    setLowMemoryMode: vi.fn()
+    setLowMemoryMode: vi.fn(),
+    releaseResources: vi.fn().mockResolvedValue(undefined)
   }
 }
 
@@ -768,5 +769,130 @@ describe('SegmentationService', () => {
 
     expect(() => (service as any).updateActivity('meeting-a', 'waiting-for-local-ai')).not.toThrow()
     expect(service.getActivity('meeting-a')).toBe('waiting-for-local-ai')
+  })
+
+  describe('LLM resource release', () => {
+    const originalPlatform = process.platform
+
+    const setPlatform = (platform: NodeJS.Platform) => {
+      Object.defineProperty(process, 'platform', {
+        value: platform,
+        configurable: true
+      })
+    }
+
+    beforeEach(() => {
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+    })
+
+    function setupSummarizeTranscript() {
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('transcript.json')) return undefined
+        throw new Error('ENOENT')
+      })
+      fsMock.readFile.mockResolvedValue(
+        JSON.stringify([
+          {
+            id: 'm1-0',
+            meetingId: 'm1',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ]) as any
+      )
+      vi.mocked(provider.summarize).mockResolvedValue({
+        decisions: [],
+        actionItems: [],
+        information: [
+          {
+            id: 'seg-1',
+            meetingId: 'm1',
+            category: 'information',
+            topic: 'Rollout',
+            title: 'Plan confirmed',
+            content: 'The rollout plan was confirmed.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 65_000
+          }
+        ],
+        discussion: [],
+        statusUpdates: []
+      })
+    }
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', {
+        value: originalPlatform,
+        configurable: true
+      })
+    })
+
+    it('calls releaseResources after successful summarize on win32', async () => {
+      setPlatform('win32')
+      provider = createMockProvider()
+      service = new SegmentationService(
+        provider,
+        createMockOllamaManager(),
+        '/mock/home/AutoDoc/recordings'
+      )
+      setupSummarizeTranscript()
+
+      await (service as any).processJob('m1')
+
+      expect(provider.releaseResources).toHaveBeenCalledWith('m1')
+    })
+
+    it('calls releaseResources on win32 when summarize throws', async () => {
+      setPlatform('win32')
+      provider = createMockProvider()
+      service = new SegmentationService(
+        provider,
+        createMockOllamaManager(),
+        '/mock/home/AutoDoc/recordings'
+      )
+      setupSummarizeTranscript()
+      vi.mocked(provider.summarize).mockRejectedValue(new Error('Ollama unavailable'))
+
+      await expect((service as any).processJob('m1')).rejects.toThrow('Ollama unavailable')
+      expect(provider.releaseResources).toHaveBeenCalledWith('m1')
+    })
+
+    it('does not log mac resource snapshot on win32 after summarize', async () => {
+      setPlatform('win32')
+      provider = createMockProvider()
+      service = new SegmentationService(
+        provider,
+        createMockOllamaManager(),
+        '/mock/home/AutoDoc/recordings'
+      )
+      setupSummarizeTranscript()
+      const logMacResourceSnapshot = vi
+        .spyOn(service as any, 'logMacResourceSnapshot')
+        .mockResolvedValue(undefined)
+
+      await (service as any).processJob('m1')
+
+      expect(logMacResourceSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('calls releaseResources after successful summarize on darwin', async () => {
+      setPlatform('darwin')
+      provider = createMockProvider()
+      service = new SegmentationService(
+        provider,
+        createMockOllamaManager(),
+        '/mock/home/AutoDoc/recordings'
+      )
+      setupSummarizeTranscript()
+
+      await (service as any).processJob('m1')
+
+      expect(provider.releaseResources).toHaveBeenCalledWith('m1')
+    })
   })
 })

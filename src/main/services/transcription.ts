@@ -59,6 +59,7 @@ const WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS = 5000
 const WINDOWS_MEMORY_GATE_MAX_WAIT_MS = 60000
 const WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS = 4 * 60 * 1000
 const WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB = 1
+const WINDOWS_MEMORY_GATE_GPU_MIN_FREE_GIB = 2.5
 const DML_DEVICE_LOSS_FAILURE_THRESHOLD = 2
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
@@ -2374,10 +2375,14 @@ export class TranscriptionService {
 
     const profile = await this.getEffectiveWindowsProcessingProfileForJob()
     const isCpuTierProfile = profile?.id === 'win-low-spec' || profile?.id === 'win-cpu-normal'
+    const isGpuProfile = profile?.id === 'win-gpu'
+    const minFreeGiB = isGpuProfile
+      ? WINDOWS_MEMORY_GATE_GPU_MIN_FREE_GIB
+      : WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB
     if (
-      !isCpuTierProfile ||
+      !(isCpuTierProfile || isGpuProfile) ||
       freeAfterTimeoutGiB == null ||
-      freeAfterTimeoutGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB
+      freeAfterTimeoutGiB >= minFreeGiB
     ) {
       return
     }
@@ -2390,7 +2395,7 @@ export class TranscriptionService {
       context: {
         freeGiB: freeAfterTimeoutGiB,
         requiredGiB,
-        minFreeGiB: WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB,
+        minFreeGiB,
         maxExtraWaitMs: WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
       }
     })
@@ -2399,9 +2404,31 @@ export class TranscriptionService {
     while (Date.now() - extendedStartedAt < WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS) {
       await this.memoryGateDelay(WINDOWS_MEMORY_GATE_POLL_INTERVAL_MS)
       const freeGiB = readFreeGiB()
-      if (freeGiB == null || freeGiB >= WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB) {
+      if (freeGiB == null || freeGiB >= minFreeGiB) {
         return
       }
+    }
+
+    const freeAfterExtendedWaitGiB = readFreeGiB()
+    if (
+      isGpuProfile &&
+      freeAfterExtendedWaitGiB != null &&
+      freeAfterExtendedWaitGiB < minFreeGiB
+    ) {
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'Insufficient free memory for GPU transcription pass after extended wait',
+        meetingId,
+        context: {
+          freeGiB: freeAfterExtendedWaitGiB,
+          requiredGiB,
+          minFreeGiB,
+          waitedMs: WINDOWS_MEMORY_GATE_MAX_WAIT_MS + WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS
+        }
+      })
+      throw new Error(
+        `Insufficient free memory for GPU transcription pass (${freeAfterExtendedWaitGiB} GiB free, floor ${minFreeGiB} GiB) after extended wait`
+      )
     }
   }
 
