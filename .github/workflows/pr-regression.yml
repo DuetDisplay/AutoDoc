@@ -48,6 +48,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run test:readme-release-links
       - run: npm run test:pr:recording
 
   pr-processing:
