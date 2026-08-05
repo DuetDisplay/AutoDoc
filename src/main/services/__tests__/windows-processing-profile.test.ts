@@ -90,15 +90,23 @@ describe('windows processing profile selection', () => {
     expect(recoveredProfile.notesAfterTranscriptionOnly).toBe(false)
   })
 
-  it('keeps GPU mode concurrent even when runtime memory is low', () => {
+  it('serializes GPU mode under runtime memory pressure and recovers when memory is healthy', () => {
     const stableProfile = selectWindowsProcessingProfile(hardware(), 'dml')
-    const effectiveProfile = selectEffectiveWindowsProcessingProfile(stableProfile, {
+    const pressuredProfile = selectEffectiveWindowsProcessingProfile(stableProfile, {
       freeMemoryGiB: 1
     })
+    const recoveredProfile = selectEffectiveWindowsProcessingProfile(stableProfile, {
+      freeMemoryGiB: 4
+    })
 
-    expect(effectiveProfile.id).toBe('win-gpu')
-    expect(effectiveProfile.dualSourceMode).toBe('concurrent')
-    expect(effectiveProfile.serializeLocalProcessing).toBe(false)
+    expect(pressuredProfile.id).toBe('win-gpu')
+    expect(pressuredProfile.serializeLocalProcessing).toBe(true)
+    expect(pressuredProfile.dualSourceMode).toBe('sequential')
+    expect(pressuredProfile.notesAfterTranscriptionOnly).toBe(true)
+    expect(recoveredProfile.id).toBe('win-gpu')
+    expect(recoveredProfile.dualSourceMode).toBe('concurrent')
+    expect(recoveredProfile.serializeLocalProcessing).toBe(false)
+    expect(recoveredProfile.notesAfterTranscriptionOnly).toBe(false)
   })
 
   it('keeps low-spec stable profile at runtime', () => {

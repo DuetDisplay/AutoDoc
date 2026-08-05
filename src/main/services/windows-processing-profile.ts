@@ -66,11 +66,14 @@ export function selectEffectiveWindowsProcessingProfile(
   }
 
   if (stableProfile.id === 'win-gpu') {
+    if (!isMemoryHealthyForConcurrentDualSource(memorySnapshot)) {
+      return createRuntimePressuredProfile(stableProfile)
+    }
     return createGpuProfile(stableProfile.hardware, stableProfile.reason)
   }
 
   if (!isMemoryHealthyForConcurrentDualSource(memorySnapshot)) {
-    return createRuntimePressuredCpuNormalProfile(stableProfile)
+    return createRuntimePressuredProfile(stableProfile)
   }
 
   return createCpuNormalProfile(stableProfile.hardware, stableProfile.reason)
@@ -136,7 +139,7 @@ function createLowSpecProfile(
   }
 }
 
-function createRuntimePressuredCpuNormalProfile(
+function createRuntimePressuredProfile(
   stableProfile: WindowsProcessingProfile
 ): WindowsProcessingProfile {
   return {
