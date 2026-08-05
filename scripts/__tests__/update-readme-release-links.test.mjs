@@ -11,29 +11,28 @@ const release = {
 }
 
 const originalReadme = `
-[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://example.com/old.dmg) <img src="docs/assets/badges/windows-coming-soon.svg" alt="Windows Coming Soon!" />
+[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest) [![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-[![Latest release](https://img.shields.io/badge/release-v1.0.0-7A9E7E?style=flat-square&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-## [⬇️ Download AutoDoc for macOS](https://example.com/old.dmg)
+## [⬇️ Download AutoDoc for macOS](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-1. **Download for macOS** \`autodoc-1.0.0.dmg\`.
+1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the macOS \`.dmg\` asset.
 
-## [⬇️ Download AutoDoc for Windows](https://example.com/old.exe)
+## [⬇️ Download AutoDoc for Windows](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-1. **Download for Windows** \`autodoc-1.0.0-setup.exe\`.
+1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the Windows \`.exe\` installer asset.
 `
 
-test('updates both platform assets and the release badge', () => {
+test('updates both platform assets with the current README layout', () => {
   const { readme, version } = updateReadmeReleaseLinks(originalReadme, release)
 
   assert.equal(version, '1.1.0')
   assert.match(readme, /releases\/download\/v1\.1\.0\/autodoc-1\.1\.0\.dmg/)
   assert.match(readme, /releases\/download\/v1\.1\.0\/autodoc-1\.1\.0-setup\.exe/)
-  assert.match(readme, /\*\*Download for macOS\*\* `autodoc-1\.1\.0\.dmg`/)
-  assert.match(readme, /\*\*Download for Windows\*\* `autodoc-1\.1\.0-setup\.exe`/)
-  assert.match(readme, /release-v1\.1\.0-/)
-  assert.doesNotMatch(readme, /Windows Coming Soon/)
+  assert.match(readme, /download `autodoc-1\.1\.0\.dmg`/)
+  assert.match(readme, /download `autodoc-1\.1\.0-setup\.exe`/)
+  assert.match(readme, /img\.shields\.io\/github\/v\/release\/DuetDisplay\/AutoDoc/)
 })
 
 test('is idempotent once both download badges exist', () => {
@@ -43,10 +42,33 @@ test('is idempotent once both download badges exist', () => {
   assert.equal(second, first)
 })
 
+test('continues to support legacy download markers', () => {
+  const legacyReadme = originalReadme
+    .replace(
+      '[![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest)',
+      '<img src="docs/assets/badges/windows-coming-soon.svg" alt="Windows Coming Soon!" />'
+    )
+    .replace(
+      '1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the macOS `.dmg` asset.',
+      '1. **Download for macOS** `autodoc-1.0.0.dmg`.'
+    )
+    .replace(
+      '1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the Windows `.exe` installer asset.',
+      '1. **Download for Windows** `autodoc-1.0.0-setup.exe`.'
+    )
+
+  const { readme } = updateReadmeReleaseLinks(legacyReadme, release)
+
+  assert.match(readme, /autodoc-1\.1\.0\.dmg/)
+  assert.match(readme, /autodoc-1\.1\.0-setup\.exe/)
+  assert.doesNotMatch(readme, /windows-coming-soon\.svg/)
+})
+
 test('supports the current repository README layout', () => {
   const currentReadme = fs.readFileSync(new URL('../../README.md', import.meta.url), 'utf8')
   const { readme } = updateReadmeReleaseLinks(currentReadme, release)
 
+  assert.match(readme, /releases\/download\/v1\.1\.0\/autodoc-1\.1\.0\.dmg/)
   assert.match(readme, /autodoc-1\.1\.0-setup\.exe/)
-  assert.doesNotMatch(readme, /windows-coming-soon\.svg/)
+  assert.match(readme, /img\.shields\.io\/github\/v\/release\/DuetDisplay\/AutoDoc/)
 })
