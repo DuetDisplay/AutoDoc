@@ -4,6 +4,8 @@ import { join } from 'path'
 import type {
   MeetingSegments,
   Transcript,
+  SegmentationActivity,
+  SegmentationActivityPayload,
   SegmentationStatus,
   SegmentationStatusPayload
 } from '../../shared/types'
@@ -28,10 +30,15 @@ type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
+  isReadyForGeneration?(): Promise<boolean>
 }
 
 const EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
+const OLLAMA_UNAVAILABLE_ERROR =
+  'Ollama unavailable for notes generation — model runtime never became ready'
+const OLLAMA_GENERATION_DEFER_MAX = 5
+const OLLAMA_GENERATION_DEFER_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 
 interface SegmentationDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -57,11 +64,13 @@ export class SegmentationService {
   private activeJobSource: EnqueueSource | null = null
   private activeStatus: SegmentationStatus | null = null
   private activeProgress: number | undefined = undefined
+  private activeActivity: SegmentationActivity | null = null
   private processing = false
   private enqueueSource = new Map<string, EnqueueSource>()
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private baselineLlmModel: string | null = null
   private lastAppliedMacModel: string | null = null
+  private ollamaGenerationDeferCounts = new Map<string, number>()
 
   constructor(
     private llmProvider: LLMProvider,
@@ -73,6 +82,10 @@ export class SegmentationService {
       | (() => Promise<MacProcessingProfile | null>)
       | null = null
   ) {}
+
+  hasActiveOrQueuedWork(): boolean {
+    return this.processing || this.activeJobId !== null || this.queue.length > 0
+  }
 
   enqueue(meetingId: string, source: EnqueueSource = 'direct'): void {
     if (this.activeJobId === meetingId) return
@@ -105,6 +118,13 @@ export class SegmentationService {
   getProgress(meetingId: string): number | undefined {
     if (this.activeJobId === meetingId) return this.activeProgress
     return undefined
+  }
+
+  getActivity(meetingId: string): SegmentationActivity | null {
+    if (this.activeJobId !== meetingId || this.activeStatus !== 'segmenting') {
+      return null
+    }
+    return this.activeActivity
   }
 
   async getStatus(meetingId: string): Promise<SegmentationStatus> {
@@ -216,6 +236,7 @@ export class SegmentationService {
     const meetingId = this.queue.shift()!
     this.activeJobId = meetingId
     this.activeJobSource = this.enqueueSource.get(meetingId) ?? 'direct'
+    this.activeActivity = null
     const dirSnapshot = await this.captureDirSnapshot(meetingId).catch(() => undefined)
 
     try {
@@ -226,10 +247,12 @@ export class SegmentationService {
         await this.markFailed(meetingId, error, dirSnapshot)
       }
     } finally {
+      this.updateActivity(meetingId, null)
       this.activeJobId = null
       this.activeJobSource = null
       this.activeStatus = null
       this.activeProgress = undefined
+      this.activeActivity = null
       this.processing = false
       this.enqueueSource.delete(meetingId)
       this.processNext()
@@ -313,7 +336,10 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
       }
     })
-    await this.ollamaManager.waitUntilReady()
+    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId)
+    if (!readyForGeneration) {
+      return
+    }
 
     this.activeStatus = 'segmenting'
     if (process.platform === 'win32') {
@@ -368,7 +394,10 @@ export class SegmentationService {
             this.broadcastStatus(meetingId, 'segmenting', percent)
           }
         },
-        durationMinutes
+        durationMinutes,
+        (activity) => {
+          this.updateActivity(meetingId, activity)
+        }
       )
     } finally {
       if (process.platform === 'darwin') {
@@ -452,6 +481,46 @@ export class SegmentationService {
         meetingId
       })
     }
+  }
+
+  private async ensureOllamaReadyForGeneration(meetingId: string): Promise<boolean> {
+    await this.ollamaManager.waitUntilReady()
+
+    if (!this.ollamaManager.isReadyForGeneration) {
+      return true
+    }
+
+    const ready = await this.ollamaManager.isReadyForGeneration()
+    if (ready) {
+      this.ollamaGenerationDeferCounts.delete(meetingId)
+      return true
+    }
+
+    const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
+    if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
+      throw new Error(OLLAMA_UNAVAILABLE_ERROR)
+    }
+
+    this.ollamaGenerationDeferCounts.set(meetingId, deferCount + 1)
+    const source = this.enqueueSource.get(meetingId) ?? 'direct'
+    const delayMs = OLLAMA_GENERATION_DEFER_DELAYS_MS[deferCount] ?? 30_000
+
+    logAutodocEvent({
+      area: 'segmentation',
+      message: 'notes generation deferred waiting for Ollama readiness',
+      meetingId,
+      context: {
+        deferCount: deferCount + 1,
+        deferDelayMs: delayMs,
+        source
+      }
+    })
+
+    setTimeout(() => {
+      this.enqueue(meetingId, source)
+    }, delayMs)
+
+    return false
   }
 
   private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {
@@ -599,6 +668,9 @@ export class SegmentationService {
     progress?: number,
     errorCode?: string
   ): void {
+    if (status !== 'segmenting' && this.activeJobId === meetingId) {
+      this.updateActivity(meetingId, null)
+    }
     if (
       status === 'segmenting' &&
       typeof progress === 'number' &&
@@ -611,6 +683,27 @@ export class SegmentationService {
     const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
     for (const win of windows) {
       win.webContents.send('segmentation:status-changed', payload)
+    }
+  }
+
+  private updateActivity(meetingId: string, activity: SegmentationActivity | null): void {
+    if (this.activeJobId !== meetingId) return
+    if (activity !== null && this.activeStatus !== 'segmenting') return
+    if (this.activeActivity === activity) return
+
+    this.activeActivity = activity
+    const payload: SegmentationActivityPayload = { meetingId, activity }
+
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send('segmentation:activity-changed', payload)
+        } catch (error) {
+          console.warn('Failed to send segmentation activity update:', error)
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to enumerate windows for segmentation activity update:', error)
     }
   }
 

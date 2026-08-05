@@ -71,7 +71,9 @@ describe('calendar IPC', () => {
       ([channel]) => channel === 'calendar:connect'
     )?.[1] as ((_event: unknown, provider: 'google' | 'microsoft') => Promise<unknown>) | undefined
 
-    await expect(connectHandler?.({}, 'microsoft')).rejects.toThrow('Provider rejected OAuth request')
+    await expect(connectHandler?.({}, 'microsoft')).rejects.toThrow(
+      'Provider rejected OAuth request'
+    )
 
     expect(logAutodocFailure).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -54,10 +54,7 @@ import {
   type MacProcessingProfile
 } from './mac-processing-profile'
 import { getManagedPythonTarget } from './managed-python'
-import {
-  classifyWindowsTranscriptionTier,
-  logQaGateFirstRunSetup
-} from './qa-gate-log'
+import { classifyWindowsTranscriptionTier, logQaGateFirstRunSetup } from './qa-gate-log'
 
 const IS_WIN = process.platform === 'win32'
 const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'

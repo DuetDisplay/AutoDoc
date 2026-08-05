@@ -1,4 +1,8 @@
-import { buildDiagnosticTrailEntry, type DiagnosticActionPayload, type DiagnosticTrailEntry } from '../../../shared/diagnostics'
+import {
+  buildDiagnosticTrailEntry,
+  type DiagnosticActionPayload,
+  type DiagnosticTrailEntry
+} from '../../../shared/diagnostics'
 
 const MAX_TRAIL_ENTRIES = 40
 
@@ -6,10 +10,9 @@ let analyticsConsentEnabled = false
 let diagnosticTrail: DiagnosticTrailEntry[] = []
 
 function pushLocalEntry(payload: DiagnosticActionPayload): void {
-  diagnosticTrail = [
-    ...diagnosticTrail,
-    buildDiagnosticTrailEntry('renderer', payload),
-  ].slice(-MAX_TRAIL_ENTRIES)
+  diagnosticTrail = [...diagnosticTrail, buildDiagnosticTrailEntry('renderer', payload)].slice(
+    -MAX_TRAIL_ENTRIES
+  )
 }
 
 export function setDiagnosticConsentEnabled(enabled: boolean): void {

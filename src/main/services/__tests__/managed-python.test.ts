@@ -4,7 +4,7 @@ import {
   MANAGED_PYTHON_VERSION,
   getManagedPythonArchiveFilename,
   getManagedPythonDownloadUrl,
-  getManagedPythonTarget,
+  getManagedPythonTarget
 } from '../managed-python'
 
 describe('managed Python runtime manifest', () => {
@@ -14,7 +14,7 @@ describe('managed Python runtime manifest', () => {
     expect(target).toMatchObject({
       key: 'darwin-arm64',
       triplet: 'aarch64-apple-darwin',
-      executableRelativePath: ['python', 'bin', 'python3'],
+      executableRelativePath: ['python', 'bin', 'python3']
     })
   })
 
@@ -24,7 +24,7 @@ describe('managed Python runtime manifest', () => {
     expect(target).toMatchObject({
       key: 'win32-x64',
       triplet: 'x86_64-pc-windows-msvc',
-      executableRelativePath: ['python', 'python.exe'],
+      executableRelativePath: ['python', 'python.exe']
     })
   })
 
@@ -33,10 +33,10 @@ describe('managed Python runtime manifest', () => {
     expect(target).not.toBeNull()
 
     expect(getManagedPythonArchiveFilename(target!)).toBe(
-      `cpython-${MANAGED_PYTHON_VERSION}+${MANAGED_PYTHON_RELEASE_TAG}-x86_64-apple-darwin-install_only.tar.gz`,
+      `cpython-${MANAGED_PYTHON_VERSION}+${MANAGED_PYTHON_RELEASE_TAG}-x86_64-apple-darwin-install_only.tar.gz`
     )
     expect(getManagedPythonDownloadUrl(target!)).toBe(
-      `https://github.com/astral-sh/python-build-standalone/releases/download/${MANAGED_PYTHON_RELEASE_TAG}/cpython-${MANAGED_PYTHON_VERSION}%2B${MANAGED_PYTHON_RELEASE_TAG}-x86_64-apple-darwin-install_only.tar.gz`,
+      `https://github.com/astral-sh/python-build-standalone/releases/download/${MANAGED_PYTHON_RELEASE_TAG}/cpython-${MANAGED_PYTHON_VERSION}%2B${MANAGED_PYTHON_RELEASE_TAG}-x86_64-apple-darwin-install_only.tar.gz`
     )
   })
 

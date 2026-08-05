@@ -23,7 +23,7 @@ describe('Recording flow integration', () => {
       meetingId: 'meeting-1',
       startedAt: now,
       sourceId: 'window:1',
-      sourceName: 'Zoom Meeting',
+      sourceName: 'Zoom Meeting'
     })
 
     expect(store.getState().isRecording).toBe(true)
@@ -47,7 +47,7 @@ describe('Recording flow integration', () => {
     const sources: RecordingSource[] = [
       { id: 'window:1', name: 'Zoom Meeting - Standup', thumbnailDataUrl: '' },
       { id: 'window:2', name: 'Visual Studio Code', thumbnailDataUrl: '' },
-      { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' },
+      { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' }
     ]
 
     const detected = detectMeetingWindow(sources)
@@ -60,7 +60,7 @@ describe('Recording flow integration', () => {
       meetingId: 'meeting-2',
       startedAt: Date.now(),
       sourceId: detected!.id,
-      sourceName: detected!.name,
+      sourceName: detected!.name
     })
 
     expect(useRecordingStore.getState().sourceName).toContain('Zoom')

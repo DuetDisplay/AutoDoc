@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useRecordingStore } from '../stores/recording'
 import { ROUTES } from '../../../shared/constants'
-import type { OllamaSetupStatus, WhisperSetupStatus } from '../../../shared/types'
+import type {
+  OllamaSetupStatus,
+  OpenSupportEmailResult,
+  WhisperSetupStatus
+} from '../../../shared/types'
 import { trackEvent } from '../services/analytics'
 import { getOllamaSetupLabel, getWhisperSetupLabel } from '../services/setup-status-labels'
 
@@ -12,6 +16,8 @@ const navItems = [
   { to: ROUTES.search, label: 'Search' },
   { to: ROUTES.askAi, label: 'Ask AI' }
 ]
+
+const SUPPORT_SURFACE = 'sidebar' as const
 
 function WaveformIcon({ className }: { className?: string }) {
   return (
@@ -32,6 +38,13 @@ export function Sidebar() {
   const [setupPercent, setSetupPercent] = useState(0)
   const [whisperPhase, setWhisperPhase] = useState<string | null>(null)
   const [whisperPercent, setWhisperPercent] = useState(0)
+  const [supportAvailable, setSupportAvailable] = useState<boolean | null>(null)
+  const [supportResult, setSupportResult] = useState<OpenSupportEmailResult | null>(null)
+  const [supportRequestPending, setSupportRequestPending] = useState(false)
+  const [supportCopyStatus, setSupportCopyStatus] = useState<
+    'idle' | 'copying' | 'copied' | 'failed'
+  >('idle')
+  const supportRequestPendingRef = useRef(false)
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
@@ -72,6 +85,13 @@ export function Sidebar() {
   }, [])
 
   useEffect(() => {
+    window.electronAPI
+      .invoke('support:get-availability')
+      .then(setSupportAvailable)
+      .catch(() => setSupportAvailable(false))
+  }, [])
+
+  useEffect(() => {
     const check = () => {
       window.electronAPI.invoke('ollama:check-status').then((connected) => {
         setOllamaConnected(connected)
@@ -104,6 +124,71 @@ export function Sidebar() {
     setupPhase === 'downloading' ||
     setupPhase === 'pulling' ||
     (setupPhase === 'starting' && ollamaConnected !== true)
+
+  const openSupportEmail = async (): Promise<void> => {
+    if (supportRequestPendingRef.current || supportAvailable !== true) return
+
+    supportRequestPendingRef.current = true
+    setSupportRequestPending(true)
+    setSupportResult(null)
+    setSupportCopyStatus('idle')
+    trackEvent('support_email_requested', { surface: SUPPORT_SURFACE })
+    try {
+      const result = await window.electronAPI.invoke('support:open-email', SUPPORT_SURFACE)
+      setSupportResult(result)
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome:
+          result.status === 'opened'
+            ? 'draft_opened'
+            : result.status === 'copy-required'
+              ? 'copy_required'
+              : 'unavailable'
+      })
+      if (result.status === 'unavailable') {
+        setSupportAvailable(false)
+      }
+    } catch {
+      setSupportResult({ status: 'unavailable' })
+      setSupportAvailable(false)
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome: 'unavailable'
+      })
+    } finally {
+      supportRequestPendingRef.current = false
+      setSupportRequestPending(false)
+    }
+  }
+
+  const copySupportEmail = async (): Promise<void> => {
+    if (supportCopyStatus === 'copying') return
+
+    setSupportCopyStatus('copying')
+    try {
+      const result = await window.electronAPI.invoke('support:copy-email', SUPPORT_SURFACE)
+      if (result.status === 'copied') {
+        setSupportCopyStatus('copied')
+        trackEvent('support_email_outcome', {
+          surface: SUPPORT_SURFACE,
+          outcome: 'address_copied'
+        })
+      } else {
+        setSupportCopyStatus('failed')
+        if (result.status === 'unavailable') setSupportAvailable(false)
+        trackEvent('support_email_outcome', {
+          surface: SUPPORT_SURFACE,
+          outcome: result.status === 'copy-failed' ? 'copy_failed' : 'unavailable'
+        })
+      }
+    } catch {
+      setSupportCopyStatus('failed')
+      trackEvent('support_email_outcome', {
+        surface: SUPPORT_SURFACE,
+        outcome: 'copy_failed'
+      })
+    }
+  }
 
   return (
     <aside className="w-[200px] bg-bg-sidebar border-r border-border flex flex-col shrink-0">
@@ -189,6 +274,43 @@ export function Sidebar() {
           >
             Settings
           </NavLink>
+
+          <button
+            type="button"
+            onClick={openSupportEmail}
+            disabled={supportAvailable !== true || supportRequestPending}
+            aria-describedby={supportAvailable === false ? 'support-email-unavailable' : undefined}
+            className="w-full px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium text-ink-muted hover:text-ink hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
+          >
+            {supportRequestPending ? 'Opening email…' : 'Email Us'}
+          </button>
+
+          <div aria-live="polite" className="px-2.5 text-[10.5px] leading-4 text-ink-faint">
+            {supportResult?.status === 'opened' ? (
+              <p>Draft opened in your email app.</p>
+            ) : supportResult?.status === 'copy-required' ? (
+              <div className="flex flex-col items-start gap-1">
+                <p>Mail app didn’t open.</p>
+                <span className="break-all select-text text-ink-muted">
+                  {supportResult.address}
+                </span>
+                <button
+                  type="button"
+                  onClick={copySupportEmail}
+                  disabled={supportCopyStatus === 'copying'}
+                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
+                >
+                  {supportCopyStatus === 'copying' ? 'Copying…' : 'Copy email address'}
+                </button>
+                {supportCopyStatus === 'copied' ? <p>Email address copied.</p> : null}
+                {supportCopyStatus === 'failed' ? (
+                  <p>Couldn’t copy. Select the address above.</p>
+                ) : null}
+              </div>
+            ) : supportResult?.status === 'unavailable' || supportAvailable === false ? (
+              <p id="support-email-unavailable">Email isn’t configured in this build.</p>
+            ) : null}
+          </div>
         </div>
       </div>
     </aside>

@@ -1,16 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'events'
+import { existsSync, writeFileSync } from 'fs'
 import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { spawn } from 'child_process'
-import { registerRecordingIpc, spawnFfmpegWithStallDetection } from '../recording-ipc'
+import {
+  getRecordingSourceCaptureOptions,
+  registerRecordingIpc,
+  serializeRecordingSource,
+  spawnFfmpegWithStallDetection
+} from '../recording-ipc'
 import { matchCalendarEvent, readMetadata } from '../../services/calendar-matcher'
 import { decryptFileToTemp, encryptJSON, isEncrypted } from '../../services/crypto'
 import type { CalendarEvent, MeetingMetadata } from '../../../shared/types'
 
-const { handle, getSources, appGetPath, logAutodocEvent, logAutodocFailure, captureMessage, spawnBehavior } =
-  vi.hoisted(() => ({
+const {
+  handle,
+  getSources,
+  appGetPath,
+  logAutodocEvent,
+  logAutodocFailure,
+  captureMessage,
+  spawnBehavior
+} = vi.hoisted(() => ({
   handle: vi.fn(),
   getSources: vi.fn(),
   appGetPath: vi.fn(),
@@ -29,14 +42,32 @@ class MockFfmpegProcess extends EventEmitter {
   })
 }
 
+function completeSuccessfulFfmpegProcess(proc: MockFfmpegProcess, args: readonly unknown[]): void {
+  setTimeout(() => {
+    const outputPath = args.at(-1)
+    if (
+      typeof outputPath === 'string' &&
+      path.isAbsolute(outputPath) &&
+      existsSync(path.dirname(outputPath))
+    ) {
+      try {
+        writeFileSync(outputPath, Buffer.from('mock-ffmpeg-output'))
+      } catch (error) {
+        proc.emit('error', error)
+        return
+      }
+    }
+
+    proc.stdout.emit('data', Buffer.from('progress=continue\n'))
+    proc.emit('close', 0)
+  }, 0)
+}
+
 vi.mock('child_process', () => ({
-  spawn: vi.fn(() => {
+  spawn: vi.fn((_command: unknown, args: readonly unknown[] = []) => {
     const proc = new MockFfmpegProcess()
     if (spawnBehavior.current === 'success') {
-      setTimeout(() => {
-        proc.stdout.emit('data', Buffer.from('progress=continue\n'))
-        proc.emit('close', 0)
-      }, 0)
+      completeSuccessfulFfmpegProcess(proc, args)
     } else if (spawnBehavior.current === 'fail') {
       setTimeout(() => {
         proc.stderr.emit('data', Buffer.from('encode error'))
@@ -94,6 +125,87 @@ describe('recording IPC source handling', () => {
       if (name === 'userData') return '/mock/user-data'
       throw new Error(`unexpected app.getPath(${name})`)
     })
+  })
+
+  it('disables Windows picker thumbnails while requesting app icons', () => {
+    expect(getRecordingSourceCaptureOptions('win32')).toEqual({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: true
+    })
+    expect(getRecordingSourceCaptureOptions('darwin')).toEqual({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 320, height: 180 }
+    })
+  })
+
+  it('serializes a usable Windows app icon without reading the disabled thumbnail', () => {
+    const thumbnail = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => 'data:image/png;base64,thumbnail')
+    }
+    const appIcon = {
+      isEmpty: vi.fn(() => false),
+      toDataURL: vi.fn(() => 'data:image/png;base64,icon')
+    }
+
+    expect(
+      serializeRecordingSource(
+        {
+          id: 'window:1',
+          name: 'Slack',
+          thumbnail: thumbnail as never,
+          appIcon: appIcon as never
+        },
+        'win32'
+      )
+    ).toEqual({
+      id: 'window:1',
+      name: 'Slack',
+      thumbnailDataUrl: '',
+      iconDataUrl: 'data:image/png;base64,icon'
+    })
+    expect(thumbnail.toDataURL).not.toHaveBeenCalled()
+  })
+
+  it('omits null, empty, and malformed Windows app icons safely', () => {
+    const source = {
+      id: 'screen:0:0',
+      name: 'Entire screen',
+      thumbnail: null
+    }
+
+    expect(serializeRecordingSource({ ...source, appIcon: null }, 'win32')).toEqual({
+      id: 'screen:0:0',
+      name: 'Entire screen',
+      thumbnailDataUrl: ''
+    })
+    expect(
+      serializeRecordingSource(
+        {
+          ...source,
+          appIcon: {
+            isEmpty: () => true,
+            toDataURL: () => {
+              throw new Error('empty image should not be serialized')
+            }
+          } as never
+        },
+        'win32'
+      )
+    ).not.toHaveProperty('iconDataUrl')
+    expect(
+      serializeRecordingSource(
+        {
+          ...source,
+          appIcon: {
+            isEmpty: () => false,
+            toDataURL: () => 'data:image/png;base64,'
+          } as never
+        },
+        'win32'
+      )
+    ).not.toHaveProperty('iconDataUrl')
   })
 
   it('maps capture-source permission failures to a user-facing permission message', async () => {
@@ -166,7 +278,7 @@ describe('recording IPC source handling', () => {
           ensureReady: vi.fn(),
           getFfmpegPath: vi.fn(() => ffmpegPath),
           getWhisperPath: vi.fn(() => whisperBinaryPath),
-          getModelPath: vi.fn(() => modelPath),
+          getModelPath: vi.fn(() => modelPath)
         } as any,
         {
           isConnected: vi.fn(() => false),
@@ -187,15 +299,15 @@ describe('recording IPC source handling', () => {
         expect.objectContaining({
           area: 'recording',
           message: 'recording:delete requested',
-          meetingId: 'meeting-1',
-        }),
+          meetingId: 'meeting-1'
+        })
       )
       expect(logAutodocEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           area: 'recording',
           message: 'recording:delete completed',
-          meetingId: 'meeting-1',
-        }),
+          meetingId: 'meeting-1'
+        })
       )
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
@@ -550,7 +662,6 @@ describe('recording IPC source handling', () => {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }
   })
-
 })
 
 describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings', () => {
@@ -860,11 +971,15 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
     delete process.env.AUTODOC_E2E
   })
 
-  function register(options: { recordingsDir: string; stopResult?: Record<string, unknown> }) {
+  function register(options: {
+    recordingsDir: string
+    stopResult?: Record<string, unknown>
+    state?: Record<string, unknown>
+  }) {
     return registerRecordingIpc(
       {
         stopRecording: vi.fn(() => options.stopResult),
-        getState: vi.fn(() => ({ isRecording: false, meetingId: null })),
+        getState: vi.fn(() => options.state ?? { isRecording: false, meetingId: null }),
         getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
         startRecording: vi.fn()
       } as any,
@@ -884,6 +999,60 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
   }
 
   const enqueueMock = vi.fn()
+
+  it('persists an active recording video fallback and preserves it through a title update', async () => {
+    const meetingId = 'meeting-audio-only'
+    let persistedMetadata: MeetingMetadata | null = null
+
+    vi.mocked(readMetadata).mockImplementation(async () => persistedMetadata)
+    vi.mocked(encryptJSON).mockImplementation(async (metadata) => {
+      persistedMetadata = metadata as MeetingMetadata
+    })
+
+    register({
+      recordingsDir: '/mock/recordings',
+      state: {
+        isRecording: true,
+        meetingId,
+        startedAt: Date.now() - 30_000,
+        sourceName: 'Zoom Meeting'
+      }
+    })
+
+    const videoEndedEarlyHandler = handle.mock.calls.find(
+      ([channel]) => channel === 'recording:video-capture-ended-early'
+    )?.[1] as ((event: unknown, meetingId: string) => Promise<void>) | undefined
+    const updateTitleHandler = handle.mock.calls.find(
+      ([channel]) => channel === 'recording:update-title'
+    )?.[1] as
+      | ((event: unknown, meetingId: string, customTitle: string) => Promise<void>)
+      | undefined
+
+    expect(videoEndedEarlyHandler).toBeTypeOf('function')
+    expect(updateTitleHandler).toBeTypeOf('function')
+
+    await videoEndedEarlyHandler?.(null, 'stale-meeting')
+    expect(encryptJSON).not.toHaveBeenCalled()
+
+    await videoEndedEarlyHandler?.(null, meetingId)
+    expect(persistedMetadata).toEqual(
+      expect.objectContaining({
+        sourceName: 'Zoom Meeting',
+        videoCaptureEndedEarly: true
+      })
+    )
+
+    await updateTitleHandler?.(null, meetingId, 'Audio-only meeting')
+    expect(persistedMetadata).toEqual(
+      expect.objectContaining({
+        customTitle: 'Audio-only meeting',
+        videoCaptureEndedEarly: true
+      })
+    )
+
+    vi.mocked(readMetadata).mockResolvedValue(null)
+    vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+  })
 
   it('runs post-processing even when persisting finalizing metadata fails', async () => {
     const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-finalize-'))
@@ -978,10 +1147,15 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
 
     vi.useFakeTimers()
     try {
-      const promise = spawnFfmpegWithStallDetection('video concat', '/mock/ffmpeg', ['-i', 'input.webm'], {
-        meetingId: 'meeting-stall',
-        stallTimeoutMs: 1_000
-      })
+      const promise = spawnFfmpegWithStallDetection(
+        'video concat',
+        '/mock/ffmpeg',
+        ['-i', 'input.webm'],
+        {
+          meetingId: 'meeting-stall',
+          stallTimeoutMs: 1_000
+        }
+      )
       const assertion = expect(promise).rejects.toThrow('ffmpeg video concat stalled after 1000ms')
       await vi.advanceTimersByTimeAsync(1_001)
       await assertion
@@ -1089,10 +1263,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
         const args = (spawnArgs[1] as string[] | undefined) ?? []
         spawnCalls.push(args)
         const proc = new MockFfmpegProcess()
-        setTimeout(() => {
-          proc.stdout.emit('data', Buffer.from('progress=continue\n'))
-          proc.emit('close', 0)
-        }, 0)
+        completeSuccessfulFfmpegProcess(proc, args)
         return proc as never
       }) as typeof spawn)
 
@@ -1104,9 +1275,9 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
       await finalizeHandler?.(null, meetingId)
 
       await vi.waitFor(() => {
-        expect(
-          spawnCalls.some((args) => args.includes('copy') && args.includes('concat'))
-        ).toBe(true)
+        expect(spawnCalls.some((args) => args.includes('copy') && args.includes('concat'))).toBe(
+          true
+        )
       })
 
       await vi.waitFor(() => {

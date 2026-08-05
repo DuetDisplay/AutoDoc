@@ -1,7 +1,6 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
 import type { E2EScenario } from '../src/shared/e2e'
 import {
-  launchE2EApp,
   launchIsolatedE2EApp,
   relaunchIsolatedE2EApp,
   setOllamaStatus,
@@ -160,7 +159,8 @@ test('preserves the diagnostic log upload draft when navigating back and forward
 
 test('persists analytics opt-in with diagnostic log upload disabled across relaunch', async () => {
   const session = await launchIsolatedE2EApp()
-  let { electronApp, userDataDir } = session
+  let { electronApp } = session
+  const { userDataDir } = session
   let page = await electronApp.firstWindow()
 
   try {

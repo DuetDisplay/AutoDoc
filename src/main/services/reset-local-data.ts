@@ -7,6 +7,7 @@ export interface ResetLocalDataOptions {
   testUserDataDir?: string
   isE2E?: boolean
   isRealSetupTest?: boolean
+  isQABuild?: boolean
 }
 
 function normalizePath(targetPath: string): string {
@@ -26,9 +27,8 @@ function isWithinTempDir(targetPath: string): boolean {
 }
 
 function joinAppDataPath(appDataPath: string, folderName: string): string {
-  const joinPath = /^[A-Za-z]:/.test(appDataPath) || appDataPath.includes('\\')
-    ? win32.join
-    : posix.join
+  const joinPath =
+    /^[A-Za-z]:/.test(appDataPath) || appDataPath.includes('\\') ? win32.join : posix.join
   return joinPath(appDataPath, folderName)
 }
 
@@ -39,30 +39,38 @@ export function isSafeTestResetPath(targetPath: string): boolean {
 
   const folderName = basename(normalizePath(targetPath))
   return (
-    folderName.startsWith('autodoc-e2e-')
-    || folderName.startsWith('autodoc-e2e-isolated-')
-    || folderName.startsWith('autodoc-real-setup-')
-    || folderName.startsWith('autodoc-smoke-user-data-')
+    folderName.startsWith('autodoc-e2e-') ||
+    folderName.startsWith('autodoc-e2e-isolated-') ||
+    folderName.startsWith('autodoc-real-setup-') ||
+    folderName.startsWith('autodoc-smoke-user-data-')
   )
 }
 
 export function getResetLocalDataTargets(options: ResetLocalDataOptions): string[] {
-  const { userDataPath, appDataPath, testUserDataDir, isE2E, isRealSetupTest } = options
+  const { userDataPath, appDataPath, testUserDataDir, isE2E, isRealSetupTest, isQABuild } = options
   const isTestReset = Boolean(testUserDataDir || isE2E || isRealSetupTest)
 
   if (isTestReset) {
     if (!isSafeTestResetPath(userDataPath)) {
-      throw new Error(
-        `Refusing to reset local data for a non-temporary test path: ${userDataPath}`,
-      )
+      throw new Error(`Refusing to reset local data for a non-temporary test path: ${userDataPath}`)
     }
     return [userDataPath]
   }
 
-  return [...new Set([
-    userDataPath,
-    joinAppDataPath(appDataPath, 'AutoDoc'),
-    joinAppDataPath(appDataPath, 'autodoc'),
-    joinAppDataPath(appDataPath, 'Autodoc'),
-  ])]
+  if (isQABuild) {
+    const expectedQAPath = joinAppDataPath(appDataPath, 'AutoDoc QA')
+    if (normalizePathForComparison(userDataPath) !== normalizePathForComparison(expectedQAPath)) {
+      throw new Error(`Refusing to reset QA data outside its isolated profile: ${userDataPath}`)
+    }
+    return [userDataPath]
+  }
+
+  return [
+    ...new Set([
+      userDataPath,
+      joinAppDataPath(appDataPath, 'AutoDoc'),
+      joinAppDataPath(appDataPath, 'autodoc'),
+      joinAppDataPath(appDataPath, 'Autodoc')
+    ])
+  ]
 }

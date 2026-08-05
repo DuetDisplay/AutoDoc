@@ -10,8 +10,8 @@ vi.mock('electron', () => ({
     getPath: vi.fn((name: string) => {
       if (name === 'userData') return userDataPath
       throw new Error(`unexpected app.getPath(${name})`)
-    }),
-  },
+    })
+  }
 }))
 
 async function freshImport() {
@@ -39,7 +39,10 @@ describe('storage-manager', () => {
 
     await fsp.writeFile(path.join(tempDir, 'models', 'ggml-large-v3.bin'), Buffer.alloc(10))
     await fsp.writeFile(path.join(tempDir, 'ollama-data', 'blob.bin'), Buffer.alloc(20))
-    await fsp.writeFile(path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'), Buffer.alloc(30))
+    await fsp.writeFile(
+      path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'),
+      Buffer.alloc(30)
+    )
     await fsp.writeFile(path.join(tempDir, 'logs', 'autodoc.log'), Buffer.alloc(5))
     await fsp.writeFile(path.join(tempDir, 'autodoc-prefs.json'), Buffer.alloc(7))
 
@@ -60,53 +63,61 @@ describe('storage-manager', () => {
 
     await fsp.writeFile(path.join(tempDir, 'models', 'ggml-large-v3.bin'), Buffer.alloc(10))
     await fsp.writeFile(path.join(tempDir, 'ollama-data', 'blob.bin'), Buffer.alloc(20))
-    await fsp.writeFile(path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'), Buffer.alloc(30))
+    await fsp.writeFile(
+      path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'),
+      Buffer.alloc(30)
+    )
 
     const { clearDownloadedComponents } = await freshImport()
     await clearDownloadedComponents()
 
     await expect(fsp.access(path.join(tempDir, 'models'))).rejects.toThrow()
     await expect(fsp.access(path.join(tempDir, 'ollama-data'))).rejects.toThrow()
-    await expect(fsp.access(path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'))).resolves.toBeUndefined()
+    await expect(
+      fsp.access(path.join(tempDir, 'recordings', 'meeting-1', 'audio.webm'))
+    ).resolves.toBeUndefined()
   })
 
   it('captures path diagnostics for recordings, managed downloads, and extra paths', async () => {
     await fsp.mkdir(path.join(tempDir, 'models'), { recursive: true })
     await fsp.mkdir(path.join(tempDir, 'recordings', 'meeting-2'), { recursive: true })
     await fsp.writeFile(path.join(tempDir, 'models', 'ggml-large-v3.bin'), Buffer.alloc(10))
-    await fsp.writeFile(path.join(tempDir, 'recordings', 'meeting-2', 'audio.webm'), Buffer.alloc(30))
+    await fsp.writeFile(
+      path.join(tempDir, 'recordings', 'meeting-2', 'audio.webm'),
+      Buffer.alloc(30)
+    )
 
     const { getStorageDiagnostics } = await freshImport()
     const diagnostics = await getStorageDiagnostics({
       meetingDir: path.join(tempDir, 'recordings', 'meeting-2'),
       whisperModelPath: path.join(tempDir, 'models', 'ggml-large-v3.bin'),
-      missingPath: path.join(tempDir, 'models', 'missing.bin'),
+      missingPath: path.join(tempDir, 'models', 'missing.bin')
     })
 
     expect(diagnostics.recordings).toMatchObject({
       kind: 'directory',
       entryCount: 1,
-      entriesSample: ['meeting-2'],
+      entriesSample: ['meeting-2']
     })
     expect(diagnostics.managedDownloads.models).toMatchObject({
       kind: 'directory',
       entryCount: 1,
-      entriesSample: ['ggml-large-v3.bin'],
+      entriesSample: ['ggml-large-v3.bin']
     })
     expect(diagnostics.managedDownloads.ollamaData).toMatchObject({
-      kind: 'missing',
+      kind: 'missing'
     })
     expect(diagnostics.extraPaths?.meetingDir).toMatchObject({
       kind: 'directory',
       entryCount: 1,
-      entriesSample: ['audio.webm'],
+      entriesSample: ['audio.webm']
     })
     expect(diagnostics.extraPaths?.whisperModelPath).toMatchObject({
       kind: 'file',
-      sizeBytes: 10,
+      sizeBytes: 10
     })
     expect(diagnostics.extraPaths?.missingPath).toMatchObject({
-      kind: 'missing',
+      kind: 'missing'
     })
   })
 })

@@ -1,21 +1,29 @@
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Sidebar } from './Sidebar'
 import { createElectronApiMock } from '../test/fixtures'
 
 const defaultSetupStatus = { phase: 'ready', percent: 100 }
+const trackEventMock = vi.hoisted(() => vi.fn())
+
+vi.mock('../services/analytics', () => ({
+  trackEvent: trackEventMock
+}))
 
 beforeEach(() => {
+  trackEventMock.mockReset()
   window.electronAPI = {
     send: vi.fn(),
     invoke: vi.fn((channel: string) => {
       if (channel === 'ollama:check-status') return Promise.resolve(true)
       if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
       if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+      if (channel === 'support:get-availability') return Promise.resolve(true)
+      if (channel === 'support:open-email') return Promise.resolve({ status: 'opened' })
       return Promise.resolve(undefined)
     }),
-    on: vi.fn(() => () => {}),
+    on: vi.fn(() => () => {})
   } as any
 })
 
@@ -25,7 +33,7 @@ async function renderSidebar() {
     result = render(
       <MemoryRouter>
         <Sidebar />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
   })
   return result!
@@ -50,6 +58,162 @@ describe('Sidebar', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
+  it('renders an accessible Email Us action in the sidebar footer', async () => {
+    await renderSidebar()
+
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeEnabled()
+  })
+
+  it('opens a main-owned email draft without renderer content', async () => {
+    await renderSidebar()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:open-email', 'sidebar')
+      expect(screen.getByText('Draft opened in your email app.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_requested', {
+      surface: 'sidebar'
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'draft_opened'
+    })
+  })
+
+  it('prevents repeated activation while the mail client request is pending', async () => {
+    let resolveOpenEmail: ((value: { status: 'opened' }) => void) | undefined
+    const openEmailPromise = new Promise<{ status: 'opened' }>((resolve) => {
+      resolveOpenEmail = resolve
+    })
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') return openEmailPromise
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    const button = screen.getByRole('button', { name: 'Email Us' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    expect(screen.getByRole('button', { name: 'Opening email…' })).toBeDisabled()
+    expect(
+      vi
+        .mocked(window.electronAPI.invoke)
+        .mock.calls.filter(([channel]) => channel === 'support:open-email')
+    ).toHaveLength(1)
+
+    await act(async () => {
+      resolveOpenEmail?.({ status: 'opened' })
+      await openEmailPromise
+    })
+  })
+
+  it('offers a copy fallback when no mail client opens', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') {
+          return Promise.resolve({
+            status: 'copy-required',
+            address: 'team@getautodoc.com'
+          })
+        }
+        if (channel === 'support:copy-email') return Promise.resolve({ status: 'copied' })
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+
+    const copyButton = await screen.findByRole('button', { name: 'Copy email address' })
+    expect(screen.getByText('team@getautodoc.com')).toBeInTheDocument()
+    fireEvent.click(copyButton)
+
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:copy-email', 'sidebar')
+      expect(screen.getByText('Email address copied.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'copy_required'
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'address_copied'
+    })
+  })
+
+  it('reports a main-process copy failure without claiming success', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(true)
+        if (channel === 'support:open-email') {
+          return Promise.resolve({
+            status: 'copy-required',
+            address: 'team@getautodoc.com'
+          })
+        }
+        if (channel === 'support:copy-email') {
+          return Promise.resolve({ status: 'copy-failed' })
+        }
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+    fireEvent.click(screen.getByRole('button', { name: 'Email Us' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy email address' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Couldn’t copy. Select the address above.')).toBeInTheDocument()
+    })
+    expect(trackEventMock).toHaveBeenCalledWith('support_email_outcome', {
+      surface: 'sidebar',
+      outcome: 'copy_failed'
+    })
+  })
+
+  it('disables Email Us with an explanation when this build has no support address', async () => {
+    window.electronAPI = {
+      send: vi.fn(),
+      invoke: vi.fn((channel: string) => {
+        if (channel === 'ollama:check-status') return Promise.resolve(true)
+        if (channel === 'ollama:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        if (channel === 'support:get-availability') return Promise.resolve(false)
+        return Promise.resolve(undefined)
+      }),
+      on: vi.fn(() => () => {})
+    } as unknown as typeof window.electronAPI
+
+    await renderSidebar()
+
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeDisabled()
+    expect(screen.getByText('Email isn’t configured in this build.')).toBeInTheDocument()
+    expect(window.electronAPI.invoke).not.toHaveBeenCalledWith('support:open-email')
+  })
+
   it('shows Ollama connected status', async () => {
     await renderSidebar()
     expect(screen.getByText('Ollama connected')).toBeInTheDocument()
@@ -64,7 +228,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -82,7 +246,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -100,7 +264,7 @@ describe('Sidebar', () => {
         if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -121,7 +285,7 @@ describe('Sidebar', () => {
         }
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await renderSidebar()
@@ -132,7 +296,7 @@ describe('Sidebar', () => {
     const api = createElectronApiMock({
       'ollama:check-status': true,
       'ollama:get-setup-status': defaultSetupStatus,
-      'whisper:get-setup-status': { phase: 'downloading-speaker-model', percent: 75 },
+      'whisper:get-setup-status': { phase: 'downloading-speaker-model', percent: 75 }
     })
     window.electronAPI = api as any
 
@@ -155,7 +319,7 @@ describe('Sidebar', () => {
     try {
       const whisperStatuses = [
         { phase: 'checking', percent: 0 },
-        { phase: 'ready', percent: 100 },
+        { phase: 'ready', percent: 100 }
       ]
 
       window.electronAPI = {
@@ -168,7 +332,7 @@ describe('Sidebar', () => {
           }
           return Promise.resolve(undefined)
         }),
-        on: vi.fn(() => () => {}),
+        on: vi.fn(() => () => {})
       } as any
 
       await renderSidebar()

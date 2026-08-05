@@ -13,7 +13,11 @@ export function ScreenPermissionStep({
   const [isRestoring, setIsRestoring] = useState(true)
 
   const clearOpenedState = useCallback(async () => {
-    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', false)
+    await window.electronAPI.invoke(
+      'prefs:set-onboarding-permission-settings-opened',
+      'screen',
+      false
+    )
     setOpened(false)
   }, [])
 
@@ -22,19 +26,22 @@ export function ScreenPermissionStep({
     onNext()
   }, [clearOpenedState, onNext])
 
-  const checkPermission = useCallback(async (autoAdvance = false) => {
-    const perms = await window.electronAPI.invoke('permissions:check')
-    if (perms.screen) {
-      if (autoAdvance) {
-        await clearOpenedState()
-        onNext()
-      } else {
-        setGranted(true)
+  const checkPermission = useCallback(
+    async (autoAdvance = false) => {
+      const perms = await window.electronAPI.invoke('permissions:check')
+      if (perms.screen) {
+        if (autoAdvance) {
+          await clearOpenedState()
+          onNext()
+        } else {
+          setGranted(true)
+        }
+        return
       }
-      return
-    }
-    setGranted(false)
-  }, [clearOpenedState, onNext])
+      setGranted(false)
+    },
+    [clearOpenedState, onNext]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -43,7 +50,7 @@ export function ScreenPermissionStep({
       try {
         const wasOpened = await window.electronAPI.invoke(
           'prefs:get-onboarding-permission-settings-opened',
-          'screen',
+          'screen'
         )
         if (!cancelled) {
           setOpened(wasOpened)
@@ -78,9 +85,9 @@ export function ScreenPermissionStep({
             mandatory: {
               chromeMediaSource: 'desktop',
               chromeMediaSourceId: targetSource.id,
-              maxFrameRate: 1,
-            },
-          } as MediaTrackConstraints,
+              maxFrameRate: 1
+            }
+          } as MediaTrackConstraints
         })
         stream.getTracks().forEach((track) => track.stop())
       }
@@ -97,7 +104,11 @@ export function ScreenPermissionStep({
     }
 
     trackEvent('permission_denied', { permission_type: 'screen_recording' })
-    await window.electronAPI.invoke('prefs:set-onboarding-permission-settings-opened', 'screen', true)
+    await window.electronAPI.invoke(
+      'prefs:set-onboarding-permission-settings-opened',
+      'screen',
+      true
+    )
     await window.electronAPI.invoke('permissions:open-settings', 'screen')
     setOpened(true)
   }

@@ -21,7 +21,7 @@ describe('PermissionToast', () => {
 
   it('renders toast message when active', () => {
     useToastStore.setState({
-      activeToast: { type: 'screen', message: 'Enable screen recording' },
+      activeToast: { type: 'screen', message: 'Enable screen recording' }
     })
     render(<PermissionToast />)
     expect(screen.getByText('Enable screen recording')).toBeInTheDocument()
@@ -32,8 +32,8 @@ describe('PermissionToast', () => {
       activeToast: {
         type: 'screen',
         message: 'Enable screen recording',
-        action: { label: 'Enable', type: 'open-settings', target: 'screen' },
-      },
+        action: { label: 'Enable', type: 'open-settings', target: 'screen' }
+      }
     })
     render(<PermissionToast />)
     expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument()
@@ -43,8 +43,8 @@ describe('PermissionToast', () => {
     useToastStore.setState({
       activeToast: {
         type: 'warning',
-        message: 'Audio devices changed and AutoDoc could not reconnect automatically.',
-      },
+        message: 'Audio devices changed and AutoDoc could not reconnect automatically.'
+      }
     })
     render(<PermissionToast />)
     expect(screen.queryByRole('button', { name: 'Enable' })).toBeNull()
@@ -53,7 +53,7 @@ describe('PermissionToast', () => {
   it('dismisses on X click', async () => {
     vi.useRealTimers()
     useToastStore.setState({
-      activeToast: { type: 'screen', message: 'test' },
+      activeToast: { type: 'screen', message: 'test' }
     })
     render(<PermissionToast />)
     await userEvent.click(screen.getByTitle('Dismiss'))
@@ -62,10 +62,12 @@ describe('PermissionToast', () => {
 
   it('auto-dismisses after 8 seconds', () => {
     useToastStore.setState({
-      activeToast: { type: 'microphone', message: 'test' },
+      activeToast: { type: 'microphone', message: 'test' }
     })
     render(<PermissionToast />)
-    act(() => { vi.advanceTimersByTime(8000) })
+    act(() => {
+      vi.advanceTimersByTime(8000)
+    })
     expect(useToastStore.getState().activeToast).toBeNull()
   })
 })

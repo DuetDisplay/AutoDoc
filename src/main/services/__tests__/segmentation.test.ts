@@ -600,6 +600,47 @@ describe('SegmentationService', () => {
     })
   })
 
+  it('defers notes generation when Ollama is not ready without consuming recovery retries', async () => {
+    vi.useFakeTimers()
+    const notReadyOllama = {
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      isReadyForGeneration: vi.fn().mockResolvedValue(false)
+    }
+    provider = createMockProvider()
+    service = new SegmentationService(provider, notReadyOllama, '/mock/home/AutoDoc/recordings')
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-ollama-0',
+          meetingId: 'm-ollama',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+
+    const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+    const processing = (service as any).processJobExclusive('m-ollama')
+    await vi.advanceTimersByTimeAsync(0)
+    await processing
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(notReadyOllama.waitUntilReady).toHaveBeenCalled()
+    expect(notReadyOllama.isReadyForGeneration).toHaveBeenCalled()
+    expect(provider.summarize).not.toHaveBeenCalled()
+    expect(fsMock.writeFile).not.toHaveBeenCalled()
+    expect(enqueueSpy).toHaveBeenCalledWith('m-ollama', 'direct')
+    vi.useRealTimers()
+  })
+
   it('clears activeProgress after a job finishes', () => {
     const send = vi.fn()
     vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
@@ -615,5 +656,117 @@ describe('SegmentationService', () => {
       progress: 10,
       errorCode: undefined
     })
+  })
+
+  it('exposes and broadcasts activity only for the active segmenting meeting', () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    ;(service as any).activeJobId = 'meeting-a'
+    ;(service as any).activeStatus = 'segmenting'
+    ;(service as any).updateActivity('meeting-a', 'waiting-for-local-ai')
+
+    expect(service.getActivity('meeting-a')).toBe('waiting-for-local-ai')
+    expect(service.getActivity('meeting-b')).toBeNull()
+    expect(send).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledWith('segmentation:activity-changed', {
+      meetingId: 'meeting-a',
+      activity: 'waiting-for-local-ai'
+    })
+    ;(service as any).updateActivity('meeting-b', 'waiting-for-local-ai')
+    ;(service as any).updateActivity('meeting-a', 'waiting-for-local-ai')
+
+    expect(send).toHaveBeenCalledOnce()
+    ;(service as any).activeStatus = 'complete'
+    expect(service.getActivity('meeting-a')).toBeNull()
+  })
+
+  it('clears activity at job cleanup and ignores callbacks from that job after the next starts', async () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) {
+        return JSON.stringify([
+          {
+            id: 'meeting-a-0',
+            meetingId: 'meeting-a',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan and assigned the remaining launch tasks.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ]) as any
+      }
+      throw new Error('ENOENT')
+    })
+
+    let reportActivity: ((activity: 'waiting-for-local-ai' | null) => void) | undefined
+    vi.mocked(provider.summarize).mockImplementation(async (...args: any[]) => {
+      reportActivity = args[4]
+      reportActivity?.('waiting-for-local-ai')
+      return {
+        decisions: [],
+        actionItems: [],
+        information: [
+          {
+            id: 'segment-1',
+            meetingId: 'meeting-a',
+            category: 'information',
+            topic: 'Rollout',
+            title: 'Plan confirmed',
+            content: 'The rollout plan was confirmed.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 65_000
+          }
+        ],
+        discussion: [],
+        statusUpdates: []
+      }
+    })
+    ;(service as any).queue = ['meeting-a']
+
+    await (service as any).processNext()
+
+    expect(reportActivity).toBeTypeOf('function')
+    expect(send).toHaveBeenCalledWith('segmentation:activity-changed', {
+      meetingId: 'meeting-a',
+      activity: 'waiting-for-local-ai'
+    })
+    expect(send).toHaveBeenCalledWith('segmentation:activity-changed', {
+      meetingId: 'meeting-a',
+      activity: null
+    })
+    expect(service.getActivity('meeting-a')).toBeNull()
+
+    const activityEventCount = send.mock.calls.filter(
+      ([channel]) => channel === 'segmentation:activity-changed'
+    ).length
+    ;(service as any).activeJobId = 'meeting-b'
+    ;(service as any).activeStatus = 'segmenting'
+    reportActivity?.('waiting-for-local-ai')
+
+    expect(service.getActivity('meeting-a')).toBeNull()
+    expect(service.getActivity('meeting-b')).toBeNull()
+    expect(
+      send.mock.calls.filter(([channel]) => channel === 'segmentation:activity-changed')
+    ).toHaveLength(activityEventCount)
+  })
+
+  it('does not let activity delivery failures interrupt notes processing', () => {
+    const send = vi.fn(() => {
+      throw new Error('window closed')
+    })
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    ;(service as any).activeJobId = 'meeting-a'
+    ;(service as any).activeStatus = 'segmenting'
+
+    expect(() => (service as any).updateActivity('meeting-a', 'waiting-for-local-ai')).not.toThrow()
+    expect(service.getActivity('meeting-a')).toBe('waiting-for-local-ai')
   })
 })

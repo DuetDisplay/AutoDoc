@@ -109,12 +109,14 @@ export interface MeetingMetadata {
   notesReadyNotificationSentAt?: number
   videoProcessingFailed?: boolean
   videoStatus?: VideoStatus
+  videoCaptureEndedEarly?: boolean
 }
 
 export interface RecordingSource {
   id: string
   name: string
   thumbnailDataUrl: string
+  iconDataUrl?: string
 }
 
 export type RecordingIntent = 'meeting' | 'general'
@@ -144,6 +146,52 @@ export interface RecordingPaths {
   video: string
   audio: string
 }
+
+export type OpenSupportEmailResult =
+  | { status: 'opened' }
+  | { status: 'copy-required'; address: string }
+  | { status: 'unavailable' }
+
+export type SupportEmailSurface = 'sidebar' | 'onboarding' | 'upcoming' | 'ai_notes'
+
+export type CopySupportEmailResult =
+  | { status: 'copied' }
+  | { status: 'copy-failed' }
+  | { status: 'unavailable' }
+
+export type FeedbackPromptSurface = Extract<SupportEmailSurface, 'upcoming' | 'ai_notes'>
+export type FeedbackPromptAppearance = 'initial' | 'reminder'
+export type FeedbackPromptAction = 'later' | 'dismiss' | 'never'
+
+export type FeedbackPromptQAScenario = 'reset' | 'initial' | 'reminder' | 'contacted' | 'never'
+
+export interface FeedbackPromptQASnapshot {
+  stateAvailable: boolean
+  eligible: boolean
+  kind: FeedbackPromptAppearance | null
+  reason: string
+  windowForegrounded: boolean
+  supportAvailable: boolean
+  state: {
+    qualifyingSessionCount: number
+    qualifyingSessionDates: string[]
+    lastQualifiedSessionAt: number | null
+    initialPromptShownAt: number | null
+    reminderPromptShownAt: number | null
+    contactInitiatedAt: number | null
+    neverAskAgain: boolean
+  } | null
+}
+
+export type FeedbackPromptReservationResponse =
+  | {
+      status: 'reserved'
+      reservationId: string
+      appearance: FeedbackPromptAppearance
+    }
+  | { status: 'suppressed' }
+
+export type FeedbackPromptConfirmationResponse = { status: 'confirmed' } | { status: 'rejected' }
 
 /** Renderer reports `<video>` / `<audio>` `error` for main-process logging and Sentry. */
 export interface RecordingMediaPlayerErrorReport {
@@ -187,6 +235,13 @@ export interface SegmentationStatusPayload {
   status: SegmentationStatus
   progress?: number
   errorCode?: string
+}
+
+export type SegmentationActivity = 'waiting-for-local-ai'
+
+export interface SegmentationActivityPayload {
+  meetingId: string
+  activity: SegmentationActivity | null
 }
 
 export interface SegmentationDiagnosticPayload {
@@ -292,7 +347,8 @@ export interface AppRuntimeInfo {
   platform: NodeJS.Platform
   arch: string
   officialBuild: boolean
-  buildChannel: 'development' | 'official' | 'custom'
+  qaBuild: boolean
+  buildChannel: 'development' | 'official' | 'custom' | 'qa'
   storagePath: string
   whisperModel: string
   transcriptionBackend?: string
@@ -324,6 +380,15 @@ export interface AnalyticsState {
   userActivated: boolean
   recordingsCompletedCount: number
   notesGeneratedCount: number
+  firstSeenAppVersion: string | null
+  lastSeenAppVersion: string | null
+  pendingUpgradeFromVersion: string | null
+  pendingUpgradeToVersion: string | null
+}
+
+export interface AnalyticsUpgradeTransition {
+  previousVersion: string
+  currentVersion: string
 }
 
 export interface AnalyticsConsentSnapshot {

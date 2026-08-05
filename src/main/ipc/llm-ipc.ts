@@ -2,7 +2,12 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type { SegmentationService } from '../services/segmentation'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
-import type { MeetingSegments, SegmentationStatus, OllamaSetupStatus } from '../../shared/types'
+import type {
+  MeetingSegments,
+  SegmentationActivity,
+  SegmentationStatus,
+  OllamaSetupStatus
+} from '../../shared/types'
 import { getE2EOllamaStatus, retryE2EOllamaSetup } from '../services/e2e-fixtures'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
@@ -47,6 +52,13 @@ export function registerLlmIpc(
   ipcMain.handle('segmentation:get-progress', (_event, meetingId: string): number | undefined => {
     return segmentationService.getProgress(meetingId)
   })
+
+  ipcMain.handle(
+    'segmentation:get-activity',
+    (_event, meetingId: string): SegmentationActivity | null => {
+      return segmentationService.getActivity(meetingId)
+    }
+  )
 
   ipcMain.handle(
     'segmentation:get-segments',

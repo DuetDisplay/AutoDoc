@@ -1,12 +1,22 @@
 import posthog from 'posthog-js'
-import type { AnalyticsLocalSignal, AnalyticsState, AppRuntimeInfo } from '../../../shared/types'
+import type {
+  AnalyticsLocalSignal,
+  AnalyticsState,
+  AnalyticsUpgradeTransition,
+  AppRuntimeInfo
+} from '../../../shared/types'
 
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined
 const POSTHOG_HOST = (import.meta.env.VITE_POSTHOG_HOST as string) || 'https://us.i.posthog.com'
 
+export function isAnalyticsConfigured(): boolean {
+  return Boolean(POSTHOG_KEY)
+}
+
 let initialized = false
 let consentGiven = false
 let identifiedInstallId: string | null = null
+const queuedUpgradePairs = new Set<string>()
 let analyticsContext: Record<string, string | boolean | undefined> = {
   platform: 'desktop',
   build_mode: import.meta.env.MODE,
@@ -47,6 +57,8 @@ const ALLOWED_PROPERTIES = new Set([
   'app_arch',
   'app_platform',
   'app_version',
+  'appearance',
+  'action',
   'attempt_number',
   'available_version',
   'backend',
@@ -96,16 +108,39 @@ const ALLOWED_PROPERTIES = new Set([
   'setup_completed',
   'source_selection_mode',
   'source_type',
+  'surface',
   'step',
   'transcription_backend',
+  'transition_source',
   'trigger',
   'user_activated',
+  'outcome',
   'whisper_model',
   'window_count'
 ])
 
 function hasElectronApi(): boolean {
   return typeof window !== 'undefined' && Boolean(window.electronAPI)
+}
+
+function isBoundedAppVersion(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 64 &&
+    /^\d{1,5}\.\d{1,5}\.\d{1,5}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
+      value
+    )
+  )
+}
+
+function isValidUpgradeTransition(value: unknown): value is AnalyticsUpgradeTransition {
+  if (!value || typeof value !== 'object') return false
+  const transition = value as Partial<AnalyticsUpgradeTransition>
+  return (
+    isBoundedAppVersion(transition.previousVersion) &&
+    isBoundedAppVersion(transition.currentVersion) &&
+    transition.previousVersion !== transition.currentVersion
+  )
 }
 
 function bucketDurationSeconds(seconds: number): string {
@@ -137,6 +172,42 @@ export function toCountBucket(count: number): string {
 
 function normalizePropertyValue(key: string, value: unknown): unknown {
   if (value === undefined || value === null) return undefined
+  if (key === 'app_version' || key === 'current_version' || key === 'previous_version') {
+    return isBoundedAppVersion(value) ? value : undefined
+  }
+  if (key === 'transition_source') {
+    return value === 'observed-after-consent' || value === 'disclosed-at-consent'
+      ? value
+      : undefined
+  }
+  if (key === 'surface') {
+    return value === 'sidebar' ||
+      value === 'onboarding' ||
+      value === 'upcoming' ||
+      value === 'ai_notes'
+      ? value
+      : undefined
+  }
+  if (key === 'appearance') {
+    return value === 'initial' || value === 'reminder' ? value : undefined
+  }
+  if (key === 'action') {
+    return value === 'share_feedback' ||
+      value === 'later' ||
+      value === 'dont_ask_again' ||
+      value === 'dismiss'
+      ? value
+      : undefined
+  }
+  if (key === 'outcome') {
+    return value === 'draft_opened' ||
+      value === 'copy_required' ||
+      value === 'address_copied' ||
+      value === 'copy_failed' ||
+      value === 'unavailable'
+      ? value
+      : undefined
+  }
   if (key === 'duration_bucket' && typeof value === 'number') {
     return bucketDurationSeconds(value)
   }
@@ -246,7 +317,7 @@ export async function identifyConsentedInstall(): Promise<AnalyticsState | null>
  * Call when the user makes their analytics choice.
  * Declines must not emit analytics. Opt-ins record the consent event after enabling capture.
  */
-export function setAnalyticsConsent(enabled: boolean): void {
+export async function setAnalyticsConsent(enabled: boolean): Promise<void> {
   if (!initialized) return
 
   if (enabled) {
@@ -255,6 +326,7 @@ export function setAnalyticsConsent(enabled: boolean): void {
     posthog.capture('analytics_consent', buildEventProperties({ consented: true }), {
       send_instantly: true
     })
+    await trackPendingAppUpdate('disclosed-at-consent')
   } else {
     consentGiven = false
     posthog.opt_out_capturing()
@@ -280,6 +352,38 @@ export function restoreAnalyticsConsent(enabled: boolean): void {
 export function trackEvent(event: string, properties?: Record<string, unknown>): void {
   if (!initialized || !consentGiven) return
   posthog.capture(event, buildEventProperties(properties))
+}
+
+export async function trackPendingAppUpdate(
+  transitionSource: 'observed-after-consent' | 'disclosed-at-consent'
+): Promise<boolean> {
+  if (!initialized || !consentGiven || !hasElectronApi()) return false
+
+  const transition = await window.electronAPI
+    .invoke('analytics:get-pending-upgrade')
+    .catch(() => null)
+  if (!isValidUpgradeTransition(transition)) return false
+
+  const pairKey = `${transition.previousVersion}\u0000${transition.currentVersion}`
+  if (queuedUpgradePairs.has(pairKey)) return false
+  queuedUpgradePairs.add(pairKey)
+
+  try {
+    posthog.capture(
+      'app_updated',
+      buildEventProperties({
+        current_version: transition.currentVersion,
+        previous_version: transition.previousVersion,
+        transition_source: transitionSource
+      })
+    )
+  } catch {
+    queuedUpgradePairs.delete(pairKey)
+    return false
+  }
+
+  await window.electronAPI.invoke('analytics:acknowledge-upgrade', transition).catch(() => false)
+  return true
 }
 
 export async function recordAnalyticsLocalSignal(signal: AnalyticsLocalSignal): Promise<boolean> {
@@ -347,4 +451,5 @@ export function shutdownAnalytics(): void {
   if (!initialized) return
   posthog.reset()
   identifiedInstallId = null
+  queuedUpgradePairs.clear()
 }

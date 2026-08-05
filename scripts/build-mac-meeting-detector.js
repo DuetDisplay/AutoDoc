@@ -38,13 +38,13 @@ const result = spawnSync(
     '-framework',
     'AppKit',
     '-framework',
-    'CoreAudio',
+    'CoreAudio'
   ],
   {
     cwd: repoRoot,
     stdio: 'inherit',
-    env: process.env,
-  },
+    env: process.env
+  }
 )
 
 if (result.status !== 0) {
@@ -54,7 +54,7 @@ if (result.status !== 0) {
 function readXcrunOutput(args) {
   const result = spawnSync('xcrun', args, {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'inherit']
   })
 
   if (result.status !== 0) return null

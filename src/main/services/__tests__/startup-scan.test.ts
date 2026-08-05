@@ -7,8 +7,8 @@ import { TranscriptionService } from '../transcription'
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: () => [],
-  },
+    getAllWindows: () => []
+  }
 }))
 
 describe('startup scan', () => {
@@ -23,12 +23,15 @@ describe('startup scan', () => {
     const meetingDir = join(baseDir, meetingId)
     await mkdir(meetingDir, { recursive: true })
     await writeFile(join(meetingDir, 'transcript.json'), '[]')
-    await writeFile(join(meetingDir, 'segments.error'), JSON.stringify({ error: 'boom', retries: 1 }))
+    await writeFile(
+      join(meetingDir, 'segments.error'),
+      JSON.stringify({ error: 'boom', retries: 1 })
+    )
 
     const service = new SegmentationService(
       { summarize: vi.fn(), checkConnection: vi.fn() } as any,
       { waitUntilReady: vi.fn() } as any,
-      baseDir,
+      baseDir
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -43,12 +46,15 @@ describe('startup scan', () => {
     const meetingDir = join(baseDir, meetingId)
     await mkdir(meetingDir, { recursive: true })
     await writeFile(join(meetingDir, 'transcript.json'), '[]')
-    await writeFile(join(meetingDir, 'segments.error'), JSON.stringify({ error: 'boom', retries: 3 }))
+    await writeFile(
+      join(meetingDir, 'segments.error'),
+      JSON.stringify({ error: 'boom', retries: 3 })
+    )
 
     const service = new SegmentationService(
       { summarize: vi.fn(), checkConnection: vi.fn() } as any,
       { waitUntilReady: vi.fn() } as any,
-      baseDir,
+      baseDir
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -67,16 +73,17 @@ describe('startup scan', () => {
     await writeFile(
       join(meetingDir, 'segments.error'),
       JSON.stringify({
-        error: 'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
+        error:
+          'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
         retries: 0,
-        status: 'no-notes',
-      }),
+        status: 'no-notes'
+      })
     )
 
     const service = new SegmentationService(
       { summarize: vi.fn(), checkConnection: vi.fn() } as any,
       { waitUntilReady: vi.fn() } as any,
-      baseDir,
+      baseDir
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -92,14 +99,22 @@ describe('startup scan', () => {
     const meetingDir = join(baseDir, meetingId)
     await mkdir(meetingDir, { recursive: true })
     await writeFile(join(meetingDir, 'audio.webm'), 'audio')
-    await writeFile(join(meetingDir, 'transcript.error'), JSON.stringify({ error: 'boom', retries: 1 }))
+    await writeFile(
+      join(meetingDir, 'transcript.error'),
+      JSON.stringify({ error: 'boom', retries: 1 })
+    )
 
     const service = new TranscriptionService(
-      { ensureReady: vi.fn(), getWhisperPath: vi.fn(), getFfmpegPath: vi.fn(), getModelPath: vi.fn() } as any,
+      {
+        ensureReady: vi.fn(),
+        getWhisperPath: vi.fn(),
+        getFfmpegPath: vi.fn(),
+        getModelPath: vi.fn()
+      } as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
-      () => false,
+      () => false
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -114,14 +129,22 @@ describe('startup scan', () => {
     const meetingDir = join(baseDir, meetingId)
     await mkdir(meetingDir, { recursive: true })
     await writeFile(join(meetingDir, 'audio.webm'), 'audio')
-    await writeFile(join(meetingDir, 'transcript.error'), JSON.stringify({ error: 'boom', retries: 3 }))
+    await writeFile(
+      join(meetingDir, 'transcript.error'),
+      JSON.stringify({ error: 'boom', retries: 3 })
+    )
 
     const service = new TranscriptionService(
-      { ensureReady: vi.fn(), getWhisperPath: vi.fn(), getFfmpegPath: vi.fn(), getModelPath: vi.fn() } as any,
+      {
+        ensureReady: vi.fn(),
+        getWhisperPath: vi.fn(),
+        getFfmpegPath: vi.fn(),
+        getModelPath: vi.fn()
+      } as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
-      () => false,
+      () => false
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -141,16 +164,21 @@ describe('startup scan', () => {
       join(meetingDir, 'transcript.error'),
       JSON.stringify({
         error: 'whisper.cpp exited with code null (signal SIGABRT): ggml_metal_rsets_free',
-        retries: 0,
+        retries: 0
       })
     )
 
     const service = new TranscriptionService(
-      { ensureReady: vi.fn(), getWhisperPath: vi.fn(), getFfmpegPath: vi.fn(), getModelPath: vi.fn() } as any,
+      {
+        ensureReady: vi.fn(),
+        getWhisperPath: vi.fn(),
+        getFfmpegPath: vi.fn(),
+        getModelPath: vi.fn()
+      } as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
-      () => false,
+      () => false
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')
@@ -168,11 +196,16 @@ describe('startup scan', () => {
     await writeFile(join(meetingDir, 'audio.webm'), 'audio')
 
     const service = new TranscriptionService(
-      { ensureReady: vi.fn(), getWhisperPath: vi.fn(), getFfmpegPath: vi.fn(), getModelPath: vi.fn() } as any,
+      {
+        ensureReady: vi.fn(),
+        getWhisperPath: vi.fn(),
+        getFfmpegPath: vi.fn(),
+        getModelPath: vi.fn()
+      } as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
-      (candidateMeetingId) => candidateMeetingId === meetingId,
+      (candidateMeetingId) => candidateMeetingId === meetingId
     )
 
     const enqueueSpy = vi.spyOn(service, 'enqueue')

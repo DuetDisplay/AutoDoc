@@ -24,7 +24,11 @@ function saveSet(key: string, s: Set<string>): void {
   getStore().set(key, [...s])
 }
 
-export function setAutoRecord(eventId: string, recurringEventId: string | null, mode: AutoRecordMode): void {
+export function setAutoRecord(
+  eventId: string,
+  recurringEventId: string | null,
+  mode: AutoRecordMode
+): void {
   const onceSet = getSet(ONCE_KEY)
   const seriesSet = getSet(SERIES_KEY)
 
@@ -42,7 +46,10 @@ export function setAutoRecord(eventId: string, recurringEventId: string | null, 
   saveSet(SERIES_KEY, seriesSet)
 }
 
-export function getAutoRecordMode(eventId: string, recurringEventId: string | null): AutoRecordMode {
+export function getAutoRecordMode(
+  eventId: string,
+  recurringEventId: string | null
+): AutoRecordMode {
   const onceSet = getSet(ONCE_KEY)
   if (onceSet.has(eventId)) return 'once'
 

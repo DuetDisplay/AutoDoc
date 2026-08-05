@@ -6,7 +6,7 @@ const CLICKABLE_SELECTOR = [
   'a[href]',
   'input[type="button"]',
   'input[type="submit"]',
-  '[role="button"]',
+  '[role="button"]'
 ].join(',')
 
 function collapseWhitespace(value: string): string {
@@ -15,9 +15,10 @@ function collapseWhitespace(value: string): string {
 
 function getElementLabel(element: Element): string | null {
   const labeledElement = element as HTMLElement
-  const explicitLabel = labeledElement.getAttribute('data-sentry-label')
-    ?? labeledElement.getAttribute('aria-label')
-    ?? labeledElement.getAttribute('title')
+  const explicitLabel =
+    labeledElement.getAttribute('data-sentry-label') ??
+    labeledElement.getAttribute('aria-label') ??
+    labeledElement.getAttribute('title')
 
   if (explicitLabel) {
     const collapsed = collapseWhitespace(explicitLabel)
@@ -41,27 +42,31 @@ function getElementLabel(element: Element): string | null {
 }
 
 export function installSemanticClickBreadcrumbs(isEnabled: () => boolean): void {
-  document.addEventListener('click', (event) => {
-    if (!isEnabled()) return
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!isEnabled()) return
 
-    const target = event.target
-    if (!(target instanceof Element)) return
+      const target = event.target
+      if (!(target instanceof Element)) return
 
-    const clickable = target.closest(CLICKABLE_SELECTOR)
-    if (!clickable) return
+      const clickable = target.closest(CLICKABLE_SELECTOR)
+      if (!clickable) return
 
-    const label = getElementLabel(clickable)
-    if (!label) return
+      const label = getElementLabel(clickable)
+      if (!label) return
 
-    Sentry.addBreadcrumb({
-      category: 'ui.action',
-      level: 'info',
-      message: label,
-      data: {
-        action: 'click',
-        tagName: clickable.tagName.toLowerCase(),
-        path: window.location.hash || window.location.pathname,
-      },
-    })
-  }, { capture: true })
+      Sentry.addBreadcrumb({
+        category: 'ui.action',
+        level: 'info',
+        message: label,
+        data: {
+          action: 'click',
+          tagName: clickable.tagName.toLowerCase(),
+          path: window.location.hash || window.location.pathname
+        }
+      })
+    },
+    { capture: true }
+  )
 }

@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { focusMainWindow, getMainWindow, registerMainWindow, resetMainWindowForTests } from '../main-window'
+import {
+  focusMainWindow,
+  getMainWindow,
+  registerMainWindow,
+  resetMainWindowForTests
+} from '../main-window'
 
 const mocks = vi.hoisted(() => ({
-  getAllWindows: vi.fn(() => []),
+  getAllWindows: vi.fn(() => [])
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: mocks.getAllWindows,
-  },
+    getAllWindows: mocks.getAllWindows
+  }
 }))
 
 interface MockWindow {
@@ -33,7 +38,7 @@ function createWindow(options?: {
     restore: vi.fn(),
     show: vi.fn(),
     focus: vi.fn(),
-    on: vi.fn(),
+    on: vi.fn()
   }
 }
 

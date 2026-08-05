@@ -232,36 +232,39 @@ describe('Ollama onboarding dependency installation', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')('marks copied macOS installed runtime sidecars executable', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
-    const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
-    const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
+  it.skipIf(process.platform === 'win32')(
+    'marks copied macOS installed runtime sidecars executable',
+    async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-dev-mac-sidecar-'))
+      const installedRuntimeDir = join(rootDir, 'app-data', 'AutoDoc', 'models', 'ollama-runtime')
+      const runtimeDir = join(rootDir, 'models', 'ollama-runtime')
 
-    try {
-      delete process.env.AUTODOC_TEST_USER_DATA_DIR
-      await mkdir(installedRuntimeDir, { recursive: true })
-      await writeFile(join(installedRuntimeDir, 'ollama'), 'binary')
-      await writeFile(join(installedRuntimeDir, 'llama-server'), 'binary')
-      await chmod(join(installedRuntimeDir, 'ollama'), 0o644)
-      await chmod(join(installedRuntimeDir, 'llama-server'), 0o644)
+      try {
+        delete process.env.AUTODOC_TEST_USER_DATA_DIR
+        await mkdir(installedRuntimeDir, { recursive: true })
+        await writeFile(join(installedRuntimeDir, 'ollama'), 'binary')
+        await writeFile(join(installedRuntimeDir, 'llama-server'), 'binary')
+        await chmod(join(installedRuntimeDir, 'ollama'), 0o644)
+        await chmod(join(installedRuntimeDir, 'llama-server'), 0o644)
 
-      const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
-      execSyncMock.mockImplementation(() => {
-        throw new Error('system lookup should not be needed when installed assets exist')
-      })
+        const { OllamaManager, execSyncMock } = await loadOllamaManager('darwin', rootDir)
+        execSyncMock.mockImplementation(() => {
+          throw new Error('system lookup should not be needed when installed assets exist')
+        })
 
-      const manager = new OllamaManager()
-      await manager.ensureReady()
+        const manager = new OllamaManager()
+        await manager.ensureReady()
 
-      const ollamaMode = (await stat(join(runtimeDir, 'ollama'))).mode
-      const llamaServerMode = (await stat(join(runtimeDir, 'llama-server'))).mode
-      expect(ollamaMode & 0o111).not.toBe(0)
-      expect(llamaServerMode & 0o111).not.toBe(0)
-      await expect(manager.isReady()).resolves.toBe(true)
-    } finally {
-      await rm(rootDir, { recursive: true, force: true })
+        const ollamaMode = (await stat(join(runtimeDir, 'ollama'))).mode
+        const llamaServerMode = (await stat(join(runtimeDir, 'llama-server'))).mode
+        expect(ollamaMode & 0o111).not.toBe(0)
+        expect(llamaServerMode & 0o111).not.toBe(0)
+        await expect(manager.isReady()).resolves.toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('selects the low-spec Mac notes model before onboarding pulls the model', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-low-spec-mac-'))

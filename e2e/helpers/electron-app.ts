@@ -20,9 +20,10 @@ async function launchApp(options: {
   const appRoot = options.appRoot ?? process.cwd()
   const mainEntry = resolveMainEntry(appRoot)
   expect(existsSync(mainEntry)).toBeTruthy()
+  const profileMarker = options.userDataDir ? `--autodoc-e2e-profile=${options.userDataDir}` : null
 
   return electron.launch({
-    args: [mainEntry],
+    args: [mainEntry, ...(profileMarker ? [profileMarker] : [])],
     env: {
       ...process.env,
       NODE_ENV: 'test',
@@ -66,12 +67,18 @@ function killProcessesForUserDataDir(userDataDir: string): void {
         [
           '-NoProfile',
           '-Command',
-          `$path = ${JSON.stringify(userDataDir)}; ` +
-            'Get-CimInstance Win32_Process -Filter "Name = \'autodoc.exe\'" | ' +
-            "Where-Object { $_.CommandLine -like ('*' + $path + '*') } | " +
+          '$marker = $env:AUTODOC_E2E_PROCESS_MARKER; ' +
+            'Get-CimInstance Win32_Process | ' +
+            "Where-Object { $_.CommandLine -like ('*' + $marker + '*') } | " +
             'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
         ],
-        { stdio: 'ignore' }
+        {
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            AUTODOC_E2E_PROCESS_MARKER: `--autodoc-e2e-profile=${userDataDir}`
+          }
+        }
       )
       return
     }
@@ -88,7 +95,20 @@ function killProcessesForUserDataDir(userDataDir: string): void {
       .filter(Boolean)) {
       terminatePid(pid)
     }
-  } catch {}
+  } catch {
+    // Best-effort cleanup for already-terminated test processes.
+  }
+}
+
+export async function closeE2EAppKeepingUserData(
+  electronApp: Awaited<ReturnType<typeof electron.launch>>,
+  userDataDir: string
+): Promise<void> {
+  try {
+    await electronApp.close()
+  } finally {
+    killProcessesForUserDataDir(userDataDir)
+  }
 }
 
 export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
@@ -200,13 +220,14 @@ export async function launchPackagedRealSetupApp(
 ) {
   const executablePath =
     process.platform === 'darwin'
-      ? path.join(appBundlePath, 'Contents', 'MacOS', 'AutoDoc')
+      ? path.join(appBundlePath, 'Contents', 'MacOS', path.basename(appBundlePath, '.app'))
       : appBundlePath
   expect(existsSync(executablePath)).toBeTruthy()
 
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-packaged-real-setup-'))
   const electronApp = await electron.launch({
     executablePath,
+    args: [`--autodoc-e2e-profile=${userDataDir}`],
     env: {
       ...process.env,
       NODE_ENV: 'test',
@@ -228,6 +249,32 @@ export async function launchPackagedRealSetupApp(
         killProcessesForUserDataDir(userDataDir)
         rmSync(userDataDir, { recursive: true, force: true })
       }
+    }
+  }
+}
+
+export async function launchPackagedDefaultProfileApp(appBundlePath: string) {
+  const executablePath =
+    process.platform === 'darwin'
+      ? path.join(appBundlePath, 'Contents', 'MacOS', path.basename(appBundlePath, '.app'))
+      : appBundlePath
+  expect(existsSync(executablePath)).toBeTruthy()
+
+  const electronApp = await electron.launch({
+    executablePath,
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      AUTODOC_E2E: '0',
+      AUTODOC_TEST_REAL_SETUP: '1',
+      AUTODOC_SKIP_INSTALL_POLICY: '1'
+    }
+  })
+
+  return {
+    electronApp,
+    async cleanup(): Promise<void> {
+      await electronApp.close()
     }
   }
 }

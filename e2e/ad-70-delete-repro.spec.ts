@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test'
 import {
   completeOnboarding,
   launchIsolatedE2EApp,
-  launchIsolatedExternalE2EApp,
+  launchIsolatedExternalE2EApp
 } from './helpers/electron-app'
 
 const LEGACY_APP_ROOT = process.env.AUTODOC_E2E_LEGACY_APP_ROOT
@@ -15,7 +15,7 @@ const MARKERS = {
   whisperModel: ['models', 'ggml-large-v3.bin'],
   recording: ['recordings', 'meeting-1', 'audio.webm'],
   transcript: ['recordings', 'meeting-1', 'transcript.json'],
-  metadata: ['recordings', 'meeting-1', 'metadata.json'],
+  metadata: ['recordings', 'meeting-1', 'metadata.json']
 } as const
 
 async function seedReproStorage(userDataDir: string): Promise<void> {
@@ -23,7 +23,7 @@ async function seedReproStorage(userDataDir: string): Promise<void> {
     path.join(userDataDir, ...MARKERS.whisperModel),
     path.join(userDataDir, ...MARKERS.recording),
     path.join(userDataDir, ...MARKERS.transcript),
-    path.join(userDataDir, ...MARKERS.metadata),
+    path.join(userDataDir, ...MARKERS.metadata)
   ]
 
   for (const filePath of files) {
@@ -40,8 +40,8 @@ async function seedReproStorage(userDataDir: string): Promise<void> {
       startedAt: Date.UTC(2026, 3, 27, 14, 13, 0),
       stoppedAt: Date.UTC(2026, 3, 27, 14, 14, 0),
       durationSeconds: 60,
-      customTitle: RECORDING_TITLE,
-    }),
+      customTitle: RECORDING_TITLE
+    })
   )
 }
 
@@ -55,10 +55,7 @@ async function openSeededRecording(page: Page): Promise<void> {
   await expect(page.getByText(RECORDING_TITLE)).toBeVisible()
 }
 
-async function verifyDeletePreservesModel(
-  page: Page,
-  userDataDir: string,
-): Promise<void> {
+async function verifyDeletePreservesModel(page: Page, userDataDir: string): Promise<void> {
   await openSeededRecording(page)
   await page.evaluate(async () => {
     await window.electronAPI.invoke('recording:delete', 'meeting-1')
@@ -72,7 +69,7 @@ async function verifyDeletePreservesModel(
 test.describe('AD-70 delete repro', () => {
   test('current branch delete flow preserves the speech model marker', async () => {
     const app = await launchIsolatedE2EApp({
-      platform: 'darwin',
+      platform: 'darwin'
     })
 
     try {
@@ -85,10 +82,13 @@ test.describe('AD-70 delete repro', () => {
   })
 
   test('legacy external delete flow preserves the speech model marker under the same mocked setup', async () => {
-    test.skip(!LEGACY_APP_ROOT, 'Set AUTODOC_E2E_LEGACY_APP_ROOT to compare against a prepared legacy build.')
+    test.skip(
+      !LEGACY_APP_ROOT,
+      'Set AUTODOC_E2E_LEGACY_APP_ROOT to compare against a prepared legacy build.'
+    )
 
     const app = await launchIsolatedExternalE2EApp(LEGACY_APP_ROOT!, {
-      platform: 'darwin',
+      platform: 'darwin'
     })
 
     try {

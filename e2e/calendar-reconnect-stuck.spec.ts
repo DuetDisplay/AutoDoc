@@ -64,7 +64,8 @@ async function stubOpenExternal(electronApp: ElectronApplication): Promise<void>
 async function getOpenExternalState(electronApp: ElectronApplication): Promise<OpenExternalState> {
   return await electronApp.evaluate(
     () =>
-      (globalThis as unknown as { __openExternalCalls?: OpenExternalState }).__openExternalCalls ?? {
+      (globalThis as unknown as { __openExternalCalls?: OpenExternalState })
+        .__openExternalCalls ?? {
         count: 0,
         urls: []
       }
@@ -75,6 +76,14 @@ const CONNECT_BUTTON = {
   google: /connect google calendar/i,
   microsoft: /connect microsoft outlook/i
 } as const
+
+async function expectCalendarConnectPending(page: Page): Promise<void> {
+  const connectingButtons = page.getByRole('button', { name: /connecting/i })
+  await expect(connectingButtons).toHaveCount(2)
+  await expect(connectingButtons.first()).toBeVisible()
+  await expect(connectingButtons.first()).toBeDisabled()
+  await expect(connectingButtons.nth(1)).toBeDisabled()
+}
 
 test.describe('Calendar reconnect recovers after the OAuth tab is closed', () => {
   test('AD-79 a new connect supersedes an abandoned attempt instead of getting stuck', async ({}, testInfo) => {
@@ -106,7 +115,9 @@ test.describe('Calendar reconnect recovers after the OAuth tab is closed', () =>
       await expect
         .poll(async () => (await getOpenExternalState(electronApp)).count, { timeout: 10_000 })
         .toBe(1)
-      evidence.push('First calendar:connect launched the OAuth redirect and is awaiting a callback.')
+      evidence.push(
+        'First calendar:connect launched the OAuth redirect and is awaiting a callback.'
+      )
 
       // Second attempt from a different surface/provider. With the fix this is NOT
       // rejected with "already in progress" — it supersedes the abandoned attempt
@@ -171,9 +182,7 @@ test.describe('Calendar reconnect recovers after the OAuth tab is closed', () =>
 
       // Step 1 + 2: press connect -> get "redirected" -> abandon the tab.
       await connectButton.click()
-      await expect(page.getByRole('button', { name: /connecting/i })).toBeVisible({
-        timeout: 10_000
-      })
+      await expectCalendarConnectPending(page)
       await expect
         .poll(async () => (await getOpenExternalState(electronApp)).count, { timeout: 10_000 })
         .toBe(1)
@@ -194,9 +203,7 @@ test.describe('Calendar reconnect recovers after the OAuth tab is closed', () =>
       evidence.push('Second click launched a fresh OAuth redirect (no stuck state).')
 
       // The "We couldn't connect ..." error must NOT appear.
-      await expect(page.getByRole('button', { name: /connecting/i })).toBeVisible({
-        timeout: 10_000
-      })
+      await expectCalendarConnectPending(page)
       await expect(page.getByRole('alert')).toBeHidden()
       evidence.push('No "We couldn\'t connect" error banner appeared on the retry.')
 

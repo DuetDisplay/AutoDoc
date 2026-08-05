@@ -4,6 +4,7 @@ import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import type { RecordingEntry, SegmentationStatus, TranscriptionStatus } from '../../../shared/types'
+import { FeedbackPromptSlot } from '../components/FeedbackPromptSlot'
 
 const ACTIVE_TRANSCRIPTION_STATUSES: TranscriptionStatus[] = [
   'queued',
@@ -83,7 +84,11 @@ function areRecordingsEqual(prev: RecordingEntry[], next: RecordingEntry[]): boo
   })
 }
 
-export function Recordings() {
+export function Recordings({
+  feedbackPromptSuppressed = false
+}: {
+  feedbackPromptSuppressed?: boolean
+}) {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [segmentationStatuses, setSegmentationStatuses] = useState<
     Record<string, SegmentationStatus>
@@ -184,7 +189,8 @@ export function Recordings() {
   }, [])
 
   useEffect(() => {
-    refreshRecordings()
+    Promise.resolve()
+      .then(refreshRecordings)
       .catch((err) => {
         console.error('Failed to list recordings:', err)
       })
@@ -391,6 +397,8 @@ export function Recordings() {
   return (
     <div className="flex flex-col h-full">
       <PageHeader title="AI Notes" />
+
+      <FeedbackPromptSlot surface="ai_notes" suppressed={feedbackPromptSuppressed} />
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center p-6">

@@ -136,7 +136,11 @@ function isMachOBinary(filePath) {
 
 async function signBundledResourceMachOBinaries(appBundlePath, context) {
   const resourcesRoot = join(appBundlePath, 'Contents', 'Resources')
-  return await signMachOBinariesUnder(resourcesRoot, 'bundled macOS resource Mach-O binaries', context)
+  return await signMachOBinariesUnder(
+    resourcesRoot,
+    'bundled macOS resource Mach-O binaries',
+    context
+  )
 }
 
 async function signMachOBinariesUnder(runtimeRoot, label, context) {

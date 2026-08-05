@@ -9,6 +9,7 @@ import { TranscriptionStep } from '../components/onboarding/TranscriptionStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
 import { AllSetStep } from '../components/onboarding/AllSetStep'
+import { OnboardingSupportLink } from '../components/onboarding/OnboardingSupportLink'
 import {
   identifyConsentedInstall,
   recordAnalyticsLocalSignal,
@@ -35,12 +36,13 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
   const [diagnosticLogUploadDraft, setDiagnosticLogUploadDraft] = useState(false)
-  const startedAt = useRef(performance.now())
+  const startedAt = useRef<number | null>(null)
   const stepOrder = getVisibleStepOrder(platform)
   const step = stepIndex === null ? null : (stepOrder[stepIndex] ?? stepOrder[0])
   const totalDots = Math.max(0, stepOrder.length - 1)
 
   useEffect(() => {
+    startedAt.current = performance.now()
     void recordAnalyticsLocalSignal('onboarding_started')
     trackEvent('onboarding_started')
 
@@ -121,7 +123,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     if (consented) {
       await identifyConsentedInstall()
     }
-    setAnalyticsConsent(consented)
+    await setAnalyticsConsent(consented)
     if (consented) {
       await trackConsentSnapshot()
       await startAnalyticsSession()
@@ -137,8 +139,9 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleFinish = async () => {
+    const onboardingStartedAt = startedAt.current ?? performance.now()
     await trackFirstEventOnce('onboarding_completed', 'onboarding_completed', {
-      duration_bucket: toDurationBucket((performance.now() - startedAt.current) / 1000)
+      duration_bucket: toDurationBucket((performance.now() - onboardingStartedAt) / 1000)
     })
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
     onComplete()
@@ -274,10 +277,16 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         </button>
       )}
 
-      {/* Content */}
-      <div className="min-h-full flex flex-col items-center justify-start [@media(min-height:520px)]:justify-center pt-20 pb-8">
-        <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
-          {renderStep()}
+      <div className="min-h-full flex flex-col">
+        {/* Content */}
+        <div className="flex flex-1 flex-col items-center justify-start pt-20 pb-4 [@media(min-height:520px)]:justify-center">
+          <div className="max-w-[440px] w-full px-6 animate-[fadeUp_400ms_ease]" key={step}>
+            {renderStep()}
+          </div>
+        </div>
+
+        <div className="shrink-0 px-6 pb-4">
+          <OnboardingSupportLink />
         </div>
       </div>
     </div>

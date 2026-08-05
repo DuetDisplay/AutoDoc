@@ -16,8 +16,9 @@ import { canUseSystemRuntimeFallback } from './runtime-policy'
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
 
-const OLLAMA_PORT = 11435 // Use a non-default port to avoid conflicts with user's own Ollama
-const OLLAMA_HOST = `127.0.0.1:${OLLAMA_PORT}`
+// QA must never adopt or terminate the production app's managed Ollama process.
+const OLLAMA_PORT = __AUTODOC_QA_BUILD__ ? 11436 : 11435
+const OLLAMA_HOST = __AUTODOC_QA_BUILD__ ? '127.0.0.1:11436' : '127.0.0.1:11435'
 const OLLAMA_BASE_URL = `http://${OLLAMA_HOST}`
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const SHOULD_PULL_ASK_AI_EMBEDDING_MODEL =
@@ -47,6 +48,7 @@ export class OllamaManager extends EventEmitter {
   private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
   private adoptedSystemRuntime = false
+  private testServerRunning = false
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -79,6 +81,7 @@ export class OllamaManager extends EventEmitter {
 
   private async runTestSetupStep(step: string): Promise<void> {
     if (step === 'download-fail') {
+      this.testServerRunning = false
       this.emit('download-start', 'ollama')
       await Promise.resolve()
       throw new TypeError('terminated')
@@ -90,6 +93,7 @@ export class OllamaManager extends EventEmitter {
       this.emit('download-complete', 'ollama')
       this.emit('pull-start', this.model)
       this.emit('pull-progress', { model: this.model, percent: 100, status: 'success' })
+      this.testServerRunning = true
       this.emit('pull-complete', this.model)
       return
     }
@@ -159,6 +163,15 @@ export class OllamaManager extends EventEmitter {
   }
 
   async isServerRunning(): Promise<boolean> {
+    if (
+      IS_WIN &&
+      IS_TEST_RUNTIME &&
+      process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+      this.testServerRunning
+    ) {
+      return true
+    }
+
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         signal: AbortSignal.timeout(2000)
@@ -204,6 +217,10 @@ export class OllamaManager extends EventEmitter {
   }
 
   private getInstalledFallbackOllamaDataDir(): string | null {
+    // A source-run QA build may reuse the installed runtime binary, but it must
+    // keep models and process ownership inside the isolated AutoDoc QA profile.
+    if (__AUTODOC_QA_BUILD__) return null
+
     const installedOllamaDataDir = getInstalledOllamaDataDir()
     if (
       !installedOllamaDataDir ||
@@ -311,11 +328,13 @@ export class OllamaManager extends EventEmitter {
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
     this.killProcessOnPort()
     this.readyPromise = null
+    this.testServerRunning = false
   }
 
   /** Clear cached ready state so the next startAndPull() actually restarts. */
   resetReady(): void {
     this.readyPromise = null
+    this.testServerRunning = false
   }
 
   /**

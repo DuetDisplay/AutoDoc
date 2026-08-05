@@ -3,13 +3,24 @@ export function AllSetStep({ onFinish }: { onFinish: () => void }) {
     <div className="text-center">
       {/* Green check circle */}
       <div className="w-16 h-16 rounded-full bg-sage-light flex items-center justify-center mx-auto mb-5">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4A6B4E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#4A6B4E"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <polyline points="20 6 9 17 4 12" />
         </svg>
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">You're All Set</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        You&apos;re All Set
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc is ready to go. Start or join a meeting and we'll take it from here.
+        AutoDoc is ready to go. Start or join a meeting and we&apos;ll take it from here.
       </p>
       <button
         onClick={onFinish}

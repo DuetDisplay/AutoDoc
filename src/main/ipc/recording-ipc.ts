@@ -44,6 +44,58 @@ const windowsVideoJobQueue: string[] = []
 const windowsVideoJobInFlight = new Set<string>()
 let windowsVideoJobProcessing = false
 
+interface CapturerSourceForSerialization {
+  id: string
+  name: string
+  thumbnail: Electron.NativeImage | null | undefined
+  appIcon: Electron.NativeImage | null | undefined
+}
+
+export function getRecordingSourceCaptureOptions(
+  platform: NodeJS.Platform = process.platform
+): Electron.SourcesOptions {
+  if (platform === 'win32') {
+    return {
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: true
+    }
+  }
+
+  return {
+    types: ['window', 'screen'],
+    thumbnailSize: { width: 320, height: 180 }
+  }
+}
+
+function getUsableNativeImageDataUrl(image: Electron.NativeImage | null | undefined): string {
+  if (!image) return ''
+  try {
+    if (image.isEmpty()) return ''
+    const dataUrl = image.toDataURL()
+    const payloadStart = dataUrl.indexOf(',')
+    if (!dataUrl.startsWith('data:image/') || payloadStart < 0) return ''
+    return dataUrl.slice(payloadStart + 1).trim() ? dataUrl : ''
+  } catch {
+    return ''
+  }
+}
+
+export function serializeRecordingSource(
+  source: CapturerSourceForSerialization,
+  platform: NodeJS.Platform = process.platform
+): RecordingSource {
+  const thumbnailDataUrl = platform === 'win32' ? '' : getUsableNativeImageDataUrl(source.thumbnail)
+  const iconDataUrl = platform === 'win32' ? getUsableNativeImageDataUrl(source.appIcon) : ''
+
+  return {
+    id: source.id,
+    name: source.name,
+    thumbnailDataUrl,
+    ...(iconDataUrl ? { iconDataUrl } : {})
+  }
+}
+
 interface SegmentTimingEntry {
   type: 'video' | 'mic' | 'system'
   segmentIndex: number
@@ -777,6 +829,7 @@ export function registerRecordingIpc(
 ): {
   stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
   recoverWindowsFinalizingMeetings: () => Promise<void>
+  hasPostProcessingWork: () => boolean
 } {
   let cachedRecentEvents: {
     fetchedAt: number
@@ -786,6 +839,8 @@ export function registerRecordingIpc(
   const windowsPendingFinalization = new Map<string, MeetingMetadata>()
   const windowsCalendarRefreshInFlight = new Set<string>()
   const windowsPostProcessingInFlight = new Set<string>()
+  const macPostProcessingInFlight = new Set<string>()
+  const videoCaptureEndedEarlyMeetings = new Set<string>()
 
   async function persistRecordingMetadata(
     meetingDir: string,
@@ -1033,7 +1088,10 @@ export function registerRecordingIpc(
 
   function enqueueWindowsVideoJob(meetingId: string): void {
     if (windowsVideoJobInFlight.has(meetingId)) {
-      logRecordingDebug('windows video job already in flight; skipping duplicate enqueue', meetingId)
+      logRecordingDebug(
+        'windows video job already in flight; skipping duplicate enqueue',
+        meetingId
+      )
       return
     }
     if (windowsVideoJobQueue.includes(meetingId)) {
@@ -1122,10 +1180,14 @@ export function registerRecordingIpc(
           windowsPendingFinalization.delete(meetingId)
           try {
             await persistRecordingMetadata(meetingDir, workingMetadata)
-            logRecordingDebug('windows finalizing state cleared for background video job', meetingId, {
-              reason: 'post-processing-finished',
-              pendingAfterCount: windowsPendingFinalization.size
-            })
+            logRecordingDebug(
+              'windows finalizing state cleared for background video job',
+              meetingId,
+              {
+                reason: 'post-processing-finished',
+                pendingAfterCount: windowsPendingFinalization.size
+              }
+            )
           } catch (err) {
             logAutodocFailure({
               area: 'recording',
@@ -1333,8 +1395,7 @@ export function registerRecordingIpc(
         systemStat !== null ||
         legacyAudioStat !== null ||
         segmentedPresence.hasSegmentedAudio
-      const hasVideo =
-        videoStat !== null || segmentedPresence.hasSegmentedVideo
+      const hasVideo = videoStat !== null || segmentedPresence.hasSegmentedVideo
       const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
       const isFinalizing = metadata?.isFinalizing === true
       const videoStatus = metadata?.videoStatus
@@ -1371,8 +1432,7 @@ export function registerRecordingIpc(
         }
       }
 
-      const hasVideoResolved =
-        videoStatus === 'processing' ? false : hasVideo
+      const hasVideoResolved = videoStatus === 'processing' ? false : hasVideo
 
       entries.push({
         meetingId,
@@ -1406,19 +1466,12 @@ export function registerRecordingIpc(
 
     let sources
     try {
-      sources = await desktopCapturer.getSources({
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 320, height: 180 }
-      })
+      sources = await desktopCapturer.getSources(getRecordingSourceCaptureOptions())
     } catch (err) {
       throw normalizeCaptureSourceError(err)
     }
 
-    return sources.map((source) => ({
-      id: source.id,
-      name: source.name,
-      thumbnailDataUrl: source.thumbnail.toDataURL()
-    }))
+    return sources.map((source) => serializeRecordingSource(source))
   })
 
   function stopActiveRecording(): ReturnType<RecordingService['stopRecording']> {
@@ -1443,7 +1496,8 @@ export function registerRecordingIpc(
       startedAt: result.startedAt,
       stoppedAt,
       durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000),
-      isFinalizing: isWindows
+      isFinalizing: isWindows,
+      videoCaptureEndedEarly: videoCaptureEndedEarlyMeetings.delete(result.meetingId) || undefined
     }
     logRecordingDebug('recording:stop completed in main process', result.meetingId, {
       elapsedMs: Date.now() - stopRequestedAt,
@@ -1502,6 +1556,7 @@ export function registerRecordingIpc(
     }
 
     // Fire-and-forget: mux audio into video, save metadata, then enqueue transcription
+    macPostProcessingInFlight.add(result.meetingId)
     ;(async () => {
       const baseDir = recordingService.getRecordingsBaseDir()
       const meetingDir = join(baseDir, result.meetingId)
@@ -1683,15 +1738,19 @@ export function registerRecordingIpc(
           })
         }
       }
-    })().catch((err) => {
-      logAutodocFailure({
-        area: 'recording',
-        message: 'Recording post-processing failed',
-        error: err,
-        meetingId: result.meetingId
+    })()
+      .catch((err) => {
+        logAutodocFailure({
+          area: 'recording',
+          message: 'Recording post-processing failed',
+          error: err,
+          meetingId: result.meetingId
+        })
+        console.error('Recording post-processing failed:', err)
       })
-      console.error('Recording post-processing failed:', err)
-    })
+      .finally(() => {
+        macPostProcessingInFlight.delete(result.meetingId)
+      })
 
     return result
   }
@@ -1783,6 +1842,32 @@ export function registerRecordingIpc(
     return recordingService.getState()
   })
 
+  ipcMain.handle('recording:video-capture-ended-early', async (_event, meetingId: string) => {
+    const currentState = recordingService.getState()
+    if (
+      !currentState.isRecording ||
+      currentState.meetingId !== meetingId ||
+      currentState.startedAt == null
+    ) {
+      return
+    }
+
+    videoCaptureEndedEarlyMeetings.add(meetingId)
+    const meetingDir = join(recordingService.getRecordingsBaseDir(), meetingId)
+    const existingMetadata = await readMetadata(meetingDir)
+    const observedAt = Date.now()
+    const updatedMetadata: MeetingMetadata = {
+      sourceName: currentState.sourceName,
+      startedAt: currentState.startedAt,
+      stoppedAt: observedAt,
+      durationSeconds: Math.max(0, Math.round((observedAt - currentState.startedAt) / 1000)),
+      ...existingMetadata,
+      videoCaptureEndedEarly: true
+    }
+    await persistRecordingMetadata(meetingDir, updatedMetadata)
+    broadcastEntryUpdated(meetingId)
+  })
+
   ipcMain.handle('recording:get-detail', async (_event, meetingId: string) => {
     const baseDir = recordingService.getRecordingsBaseDir()
     const meetingDir = join(baseDir, meetingId)
@@ -1828,7 +1913,8 @@ export function registerRecordingIpc(
       durationSeconds,
       isFinalizing,
       videoProcessingFailed: metadata?.videoProcessingFailed,
-      videoStatus: metadata?.videoStatus
+      videoStatus: metadata?.videoStatus,
+      videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
     }
   })
 
@@ -1927,8 +2013,7 @@ export function registerRecordingIpc(
         offsetMs: Math.max(0, Math.round(offsetMs))
       }
       const previousWrite = segmentTimingWriteQueues.get(timingPath) ?? Promise.resolve()
-      let nextWrite: Promise<void>
-      nextWrite = previousWrite
+      const nextWrite = previousWrite
         .catch(() => {})
         .then(async () => {
           const existing = await readFile(timingPath, 'utf-8')
@@ -1965,7 +2050,8 @@ export function registerRecordingIpc(
         calendarTitle: metadata?.calendarTitle,
         customTitle: customTitle.trim() || undefined,
         videoProcessingFailed: metadata?.videoProcessingFailed,
-        videoStatus: metadata?.videoStatus
+        videoStatus: metadata?.videoStatus,
+        videoCaptureEndedEarly: metadata?.videoCaptureEndedEarly
       }
       await encryptJSON(updated, join(meetingDir, 'metadata.json'))
       if (windowsPendingFinalization.has(meetingId)) {
@@ -2045,10 +2131,14 @@ export function registerRecordingIpc(
         }
 
         if (metadata?.videoStatus === 'processing') {
-          logRecordingDebug('windows video recovery: re-enqueueing interrupted video job', meetingId, {
-            startedAt: metadata.startedAt,
-            stoppedAt: metadata.stoppedAt
-          })
+          logRecordingDebug(
+            'windows video recovery: re-enqueueing interrupted video job',
+            meetingId,
+            {
+              startedAt: metadata.startedAt,
+              stoppedAt: metadata.stoppedAt
+            }
+          )
           enqueueWindowsVideoJob(meetingId)
         }
       } catch (err) {
@@ -2062,7 +2152,14 @@ export function registerRecordingIpc(
     }
   }
 
-  return { stopActiveRecording, recoverWindowsFinalizingMeetings }
+  const hasPostProcessingWork = (): boolean =>
+    macPostProcessingInFlight.size > 0 ||
+    windowsPendingFinalization.size > 0 ||
+    windowsPostProcessingInFlight.size > 0 ||
+    windowsVideoJobInFlight.size > 0 ||
+    windowsVideoJobQueue.length > 0
+
+  return { stopActiveRecording, recoverWindowsFinalizingMeetings, hasPostProcessingWork }
 }
 
 function broadcastState(state: RecordingState): void {

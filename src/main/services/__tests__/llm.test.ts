@@ -49,6 +49,38 @@ function makeSegments(items: {
   }
 }
 
+function makeSuccessfulOllamaChunk(): Uint8Array {
+  const content = JSON.stringify({
+    decisions: [],
+    action_items: [],
+    information: [
+      {
+        topic: 'Recovery',
+        title: 'Windows notes retry completed',
+        content: 'The Windows notes retry completed after the stalled request was cancelled.',
+        sourceStartMs: 0,
+        sourceEndMs: 1_000
+      }
+    ],
+    discussion: [],
+    status_updates: []
+  })
+
+  return new TextEncoder().encode(`${JSON.stringify({ message: { content } })}\n`)
+}
+
+function makeSuccessfulOllamaResponse(): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(makeSuccessfulOllamaChunk())
+        controller.close()
+      }
+    }),
+    { status: 200 }
+  )
+}
+
 const mocks = vi.hoisted(() => ({
   logAutodocEvent: vi.fn(),
   captureMessage: vi.fn()
@@ -67,8 +99,295 @@ describe('OllamaProvider grounding', () => {
 
   afterEach(() => {
     setPlatform(originalPlatform)
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('cancels a timed-out Windows stream before starting its retry', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    const cancelFirstStream = vi.fn()
+    let firstSignal: AbortSignal | null = null
+    let retrySawAbortedSignal = false
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        firstSignal = init?.signal as AbortSignal
+        return new Response(
+          new ReadableStream({
+            cancel: cancelFirstStream
+          }),
+          { status: 200 }
+        )
+      }
+
+      retrySawAbortedSignal = firstSignal?.aborted ?? false
+      return makeSuccessfulOllamaResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-stream-timeout-windows',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    const result = await summarizing
+
+    expect(result.information).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(retrySawAbortedSignal).toBe(true)
+    expect(cancelFirstStream).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the existing macOS stream-timeout retry behavior', async () => {
+    setPlatform('darwin')
+    vi.useFakeTimers()
+    const cancelFirstStream = vi.fn()
+    let firstSignal: AbortSignal | null = null
+    let retrySawAbortedSignal = true
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        firstSignal = init?.signal as AbortSignal
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              setTimeout(() => {
+                controller.enqueue(makeSuccessfulOllamaChunk())
+                controller.close()
+              }, 121_000)
+            },
+            cancel: cancelFirstStream
+          }),
+          { status: 200 }
+        )
+      }
+
+      retrySawAbortedSignal = firstSignal?.aborted ?? false
+      return makeSuccessfulOllamaResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-stream-timeout-macos',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    await vi.advanceTimersByTimeAsync(121_000)
+    await expect(summarizing).resolves.toBeDefined()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(retrySawAbortedSignal).toBe(false)
+    expect(cancelFirstStream).not.toHaveBeenCalled()
+  })
+
+  it('reports a slow Windows stream at 60 seconds and clears it when content arrives', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    const onActivity = vi.fn()
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                setTimeout(() => {
+                  controller.enqueue(makeSuccessfulOllamaChunk())
+                  controller.close()
+                }, 61_000)
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-slow-windows',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5,
+      onActivity
+    )
+
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(onActivity).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(onActivity).toHaveBeenCalledTimes(1)
+    expect(onActivity).toHaveBeenLastCalledWith('waiting-for-local-ai')
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(summarizing).resolves.toBeDefined()
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai'], [null]])
+  })
+
+  it('does not report slow-stream activity on macOS', async () => {
+    setPlatform('darwin')
+    vi.useFakeTimers()
+    const onActivity = vi.fn()
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                setTimeout(() => {
+                  controller.enqueue(makeSuccessfulOllamaChunk())
+                  controller.close()
+                }, 61_000)
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-slow-macos',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5,
+      onActivity
+    )
+
+    await vi.advanceTimersByTimeAsync(61_000)
+    await expect(summarizing).resolves.toBeDefined()
+    expect(onActivity).not.toHaveBeenCalled()
+  })
+
+  it('keeps slow activity through Windows retries and clears it after the final failure', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    const onActivity = vi.fn()
+    // An empty underlying source keeps each read pending until the existing timeout fires.
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({}), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const outcome = new OllamaProvider('http://localhost:11434', 'test-model')
+      .summarize(
+        'meeting-slow-retries',
+        '[00:00] [Chris] Notes generation remains silent.',
+        undefined,
+        5,
+        onActivity
+      )
+      .then(
+        () => null,
+        (error: unknown) => error
+      )
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai']])
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai']])
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai']])
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    const error = await outcome
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('timed out after 120s')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai'], [null]])
+  })
+
+  it('clears slow activity when Windows segmentation is preempted', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    const onActivity = vi.fn()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (_url: string, init?: RequestInit) =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener('abort', () => {
+                  controller.error(init.signal?.reason)
+                })
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const outcome = provider
+      .summarize(
+        'meeting-slow-preempted',
+        '[00:00] [Chris] Notes generation remains silent.',
+        undefined,
+        5,
+        onActivity
+      )
+      .then(
+        () => null,
+        (error: unknown) => error
+      )
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai']])
+
+    provider.abortActiveRequests()
+    const error = await outcome
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('SEGMENTATION_PREEMPTED')
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai'], [null]])
+  })
+
+  it('ignores activity callback errors during Windows notes generation', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    const onActivity = vi.fn(() => {
+      throw new Error('renderer unavailable')
+    })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                setTimeout(() => {
+                  controller.enqueue(makeSuccessfulOllamaChunk())
+                  controller.close()
+                }, 61_000)
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const summarizing = new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-slow-callback-error',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5,
+      onActivity
+    )
+
+    await vi.advanceTimersByTimeAsync(61_000)
+    await expect(summarizing).resolves.toBeDefined()
+    expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai'], [null]])
   })
 
   it('drops hallucinated notes whose numbers are not supported by the cited transcript span', () => {

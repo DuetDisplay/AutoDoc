@@ -19,9 +19,11 @@ function registerWith(
   onManualSegmentationRetry?: (meetingId: string) => void
 ) {
   const retry = vi.fn()
+  const getActivity = vi.fn((): 'waiting-for-local-ai' | null => null)
   registerLlmIpc(
     {
-      retry
+      retry,
+      getActivity
     } as never,
     {
       isServerRunning
@@ -34,7 +36,7 @@ function registerWith(
     startSetupFromStatusCheck,
     onManualSegmentationRetry
   )
-  return { retry }
+  return { retry, getActivity }
 }
 
 describe('registerLlmIpc', () => {
@@ -77,5 +79,15 @@ describe('registerLlmIpc', () => {
       retry.mock.invocationCallOrder[0]
     )
     expect(retry).toHaveBeenCalledWith('meeting-123')
+  })
+
+  it('routes activity queries to the requested recording', async () => {
+    const { getActivity } = registerWith(vi.fn().mockResolvedValue(true), vi.fn())
+    getActivity.mockReturnValue('waiting-for-local-ai')
+
+    expect(handlers.get('segmentation:get-activity')?.({}, 'meeting-123')).toBe(
+      'waiting-for-local-ai'
+    )
+    expect(getActivity).toHaveBeenCalledWith('meeting-123')
   })
 })

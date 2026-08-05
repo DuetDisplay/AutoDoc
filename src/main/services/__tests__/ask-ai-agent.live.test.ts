@@ -71,8 +71,7 @@ describe.skipIf(!LIVE)('Ask AI agent LIVE eval', () => {
       await mkdir(REPORT_DIR, { recursive: true })
       const passed = results.filter((r) => r.pass).length
       const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b)
-      const p = (q: number): number =>
-        latencies[Math.floor(q * (latencies.length - 1))] ?? 0
+      const p = (q: number): number => latencies[Math.floor(q * (latencies.length - 1))] ?? 0
       const scorecard = {
         generatedAt: new Date().toISOString(),
         model: MODEL,

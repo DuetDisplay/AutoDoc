@@ -5,7 +5,8 @@ import {
   shell,
   systemPreferences,
   powerMonitor,
-  Notification
+  Notification,
+  type WebContents
 } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -52,6 +53,19 @@ import { registerPrefsIpc } from './ipc/prefs-ipc'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
+import { registerSupportIpc } from './ipc/support-ipc'
+import { registerFeedbackPromptIpc } from './ipc/feedback-prompt-ipc'
+import {
+  FEEDBACK_REMINDER_DELAY_MS,
+  FeedbackPromptService,
+  toLocalDateKey
+} from './services/feedback-prompt-service'
+import { FeedbackForegroundSessionTracker } from './services/feedback-foreground-session'
+import {
+  createDefaultFeedbackPromptState,
+  FeedbackPromptStore
+} from './services/feedback-prompt-store'
+import { getSupportEmail } from './services/distribution-config'
 import { createTray, updateTrayMenu } from './services/tray'
 import {
   logAutodocEvent,
@@ -68,7 +82,7 @@ import type {
   RecordingMediaPlayerErrorReport,
   SegmentationDiagnosticPayload
 } from '../shared/types'
-import type { E2EDetectionState } from '../shared/e2e'
+import type { E2EDetectionState, E2EFeedbackPromptFixture } from '../shared/e2e'
 import {
   initAutoUpdater,
   getUpdateStatus,
@@ -116,20 +130,26 @@ import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
 import { getScopedTestUserDataDir } from './services/test-runtime'
-import { shouldSuppressNotificationActivation } from './notification-window'
+import {
+  onNotificationActivationSuppressionChange,
+  shouldSuppressNotificationActivation
+} from './notification-window'
 import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
 
-// Ensure consistent app name for safeStorage keychain service across dev and production
-app.setName('AutoDoc')
+const APP_NAME = __AUTODOC_QA_BUILD__ ? 'AutoDoc QA' : 'AutoDoc'
+const EXPECTED_APP_ID = __AUTODOC_QA_BUILD__ ? 'com.kairos.autodoc.qa' : 'com.kairos.autodoc'
+
+// Keep the safeStorage keychain service and profile identity stable within each build flavor.
+app.setName(APP_NAME)
 const isE2E = process.env.AUTODOC_E2E === '1'
 const testUserDataDir = getScopedTestUserDataDir()
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 const skipInstalledApplicationPolicy =
-  process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest)
+  __AUTODOC_QA_BUILD__ ||
+  (process.env.AUTODOC_SKIP_INSTALL_POLICY === '1' && (is.dev || isE2E || isRealSetupTest))
 const RESET_LOCAL_DATA_ARG = '--reset-local-data'
-const EXPECTED_APP_ID = 'com.kairos.autodoc'
 
 interface MacBundleMetadata {
   bundlePath: string | null
@@ -183,6 +203,8 @@ if (testUserDataDir) {
   app.setPath('userData', testUserDataDir)
 } else if (isE2E) {
   app.setPath('userData', join(app.getPath('temp'), `autodoc-e2e-${process.pid}`))
+} else if (__AUTODOC_QA_BUILD__) {
+  app.setPath('userData', join(app.getPath('appData'), 'AutoDoc QA'))
 } else if (is.dev) {
   // Keep local dev/testing isolated from the installed app's recordings, models, and key store.
   app.setPath('userData', join(app.getPath('appData'), 'AutoDoc Dev'))
@@ -196,14 +218,15 @@ if (process.argv.includes(RESET_LOCAL_DATA_ARG)) {
     appDataPath,
     testUserDataDir: testUserDataDir ?? undefined,
     isE2E,
-    isRealSetupTest
+    isRealSetupTest,
+    isQABuild: __AUTODOC_QA_BUILD__
   })) {
     rmSync(targetPath, { recursive: true, force: true })
   }
   process.argv = process.argv.filter((arg) => arg !== RESET_LOCAL_DATA_ARG)
 }
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.autodoc.app')
+  app.setAppUserModelId(__AUTODOC_QA_BUILD__ ? 'com.kairos.autodoc.qa' : 'com.autodoc.app')
 }
 if (process.platform === 'darwin' && is.dev) {
   // Electron 39+ uses macOS CoreAudio Tap for desktop audio on 14.2+.
@@ -216,7 +239,8 @@ if (process.platform === 'darwin' && is.dev) {
 const SENTRY_DSN = process.env.AUTODOC_SENTRY_DSN
 const SENTRY_STUB_PATH = process.env.AUTODOC_SENTRY_STUB_PATH
 const shouldAllowSentryInEnv =
-  !!SENTRY_STUB_PATH || (!isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
+  !!SENTRY_STUB_PATH ||
+  (!__AUTODOC_QA_BUILD__ && !isE2E && (!is.dev || !!process.env.AUTODOC_SENTRY_DEV))
 const homeDir = homedir()
 
 function deepScrub<T>(value: T, scrubString: (input: string) => string): T {
@@ -249,6 +273,8 @@ let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
 let analyticsConsentEnabled = false
 let diagnosticLogUploadConsentEnabled = false
+let onFeedbackWindowActive: (() => void) | null = null
+let onFeedbackWindowInactive: (() => void) | null = null
 
 function syncDiagnosticLogUploadForErrors(): void {
   setDiagnosticLogUploadForErrorsEnabled(
@@ -390,7 +416,8 @@ if (!gotSingleInstanceLock) {
   logAutodocEvent({
     area: 'app',
     level: 'warn',
-    message: 'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
+    message:
+      'single-instance lock unavailable; this launch is exiting (another AutoDoc process is running or still exiting)',
     context: { pid: process.pid, execPath: process.execPath }
   })
   void flushAutodocLogWrites()
@@ -444,7 +471,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'AutoDoc',
+    title: APP_NAME,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#FAFAF7',
     icon: windowIcon,
@@ -455,6 +482,13 @@ function createWindow(): void {
   })
 
   registerMainWindow(mainWindow)
+
+  mainWindow.on('focus', () => onFeedbackWindowActive?.())
+  mainWindow.on('show', () => onFeedbackWindowActive?.())
+  mainWindow.on('restore', () => onFeedbackWindowActive?.())
+  mainWindow.on('blur', () => onFeedbackWindowInactive?.())
+  mainWindow.on('hide', () => onFeedbackWindowInactive?.())
+  mainWindow.on('minimize', () => onFeedbackWindowInactive?.())
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -545,6 +579,7 @@ app.whenReady().then(async () => {
 
   const prefsStore = new PrefsStore()
   const analyticsStateStore = new AnalyticsStateStore()
+  analyticsStateStore.observeAppVersion(app.getVersion())
   registerAnalyticsIpc(analyticsStateStore)
   const runtimeContext = {
     platform: process.platform,
@@ -644,7 +679,7 @@ app.whenReady().then(async () => {
   }
 
   // Auto-updater
-  if (!isE2E) {
+  if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
       prepareForInstall: () => {
         isQuitting = true
@@ -654,12 +689,12 @@ app.whenReady().then(async () => {
   }
   ipcMain.handle('updater:get-status', () => getUpdateStatus())
   ipcMain.handle('updater:check', () => {
-    if (!isE2E) {
+    if (!isE2E && !__AUTODOC_QA_BUILD__) {
       checkForUpdates()
     }
   })
   ipcMain.handle('updater:install', () => {
-    if (!isE2E) {
+    if (!isE2E && !__AUTODOC_QA_BUILD__) {
       installUpdate()
     }
   })
@@ -1072,14 +1107,25 @@ app.whenReady().then(async () => {
     })
   })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
+  const waitUntilOllamaReady = async (): Promise<void> => {
+    await ollamaReadiness.waitUntilReady()
+    if (windowsOllamaSetupCoordinator) {
+      markOllamaSetupReady()
+    }
+  }
+  const segmentationOllamaReadiness = {
+    waitUntilReady: waitUntilOllamaReady,
+    isReadyForGeneration: async () =>
+      ollamaSetupState.phase === 'ready' && (await managedOllamaManager.isServerRunning())
+  }
   const ollamaRuntime = {
-    waitUntilReady: () => ollamaReadiness.waitUntilReady(),
+    waitUntilReady: waitUntilOllamaReady,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
     getBaseUrl: () => managedOllamaManager.getBaseUrl()
   }
   const segmentationService = new SegmentationService(
     ollamaProvider,
-    ollamaReadiness,
+    segmentationOllamaReadiness,
     recordingService.getRecordingsBaseDir(),
     localProcessingCoordinator,
     () => whisperManager.getMacProcessingProfile(),
@@ -1092,7 +1138,14 @@ app.whenReady().then(async () => {
       platform: isE2E ? getE2EPlatform() : process.platform,
       arch: process.arch,
       officialBuild: isOfficialAutoDocBuild(),
-      buildChannel: is.dev ? 'development' : isOfficialAutoDocBuild() ? 'official' : 'custom',
+      qaBuild: __AUTODOC_QA_BUILD__,
+      buildChannel: __AUTODOC_QA_BUILD__
+        ? 'qa'
+        : is.dev
+          ? 'development'
+          : isOfficialAutoDocBuild()
+            ? 'official'
+            : 'custom',
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),
@@ -1164,7 +1217,8 @@ app.whenReady().then(async () => {
         appDataPath: app.getPath('appData'),
         testUserDataDir,
         isE2E,
-        isRealSetupTest
+        isRealSetupTest,
+        isQABuild: __AUTODOC_QA_BUILD__
       })
       // In Windows-hosted E2E runs, deleting the temp profile after process exit
       // avoids relaunching an unmanaged second app instance that Playwright can't own.
@@ -1537,14 +1591,151 @@ app.whenReady().then(async () => {
     })
   }
 
-  const { stopActiveRecording, recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl } =
-    registerRecordingIpc(
-      recordingService,
-      transcriptionService,
-      whisperManager,
-      calendarManager
-    )
+  const {
+    stopActiveRecording,
+    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
+    hasPostProcessingWork
+  } = registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
+
+  const feedbackPromptStore = new FeedbackPromptStore()
+  const feedbackPromptService = new FeedbackPromptService({
+    store: feedbackPromptStore,
+    getEligibilityBaselineAt: () => {
+      const baseline = new Date(analyticsStateStore.getState().firstLaunchDate).getTime()
+      return Number.isFinite(baseline) ? baseline : null
+    },
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    isBusy: () => {
+      const mainWindow = getMainWindow()
+      const updateState = getUpdateStatus().state
+      const updateBusy =
+        updateState === 'checking' ||
+        updateState === 'available' ||
+        updateState === 'downloading' ||
+        updateState === 'downloaded' ||
+        updateState === 'installing'
+
+      return (
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        !mainWindow.isVisible() ||
+        mainWindow.isMinimized() ||
+        !mainWindow.isFocused() ||
+        recordingService.getState().isRecording ||
+        hasPostProcessingWork() ||
+        transcriptionService.hasActiveOrQueuedWork() ||
+        segmentationService.hasActiveOrQueuedWork() ||
+        shouldSuppressNotificationActivation() ||
+        updateBusy
+      )
+    },
+    isSupportAvailable: () => getSupportEmail() !== null
+  })
+
+  const qualifyingFocusMs =
+    isE2E && process.env.AUTODOC_E2E_FEEDBACK_FOCUS_MS
+      ? Math.max(0, Number(process.env.AUTODOC_E2E_FEEDBACK_FOCUS_MS) || 0)
+      : 60_000
+
+  const isMainWindowForegrounded = (): boolean => {
+    const mainWindow = getMainWindow()
+    return Boolean(
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isVisible() &&
+      !mainWindow.isMinimized() &&
+      mainWindow.isFocused()
+    )
+  }
+
+  const feedbackSessionTracker = new FeedbackForegroundSessionTracker({
+    recorder: feedbackPromptService,
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    isForegrounded: isMainWindowForegrounded,
+    qualifyingFocusMs
+  })
+
+  onFeedbackWindowActive = () => feedbackSessionTracker.observeActive()
+  onFeedbackWindowInactive = () => feedbackSessionTracker.observeInactive()
+
+  const isTrustedMainWindowSender = (sender: WebContents): boolean =>
+    getMainWindow()?.webContents === sender
+
+  registerFeedbackPromptIpc(feedbackPromptService, {
+    isTrustedSender: isTrustedMainWindowSender,
+    observeForeground: () => feedbackSessionTracker.observeActive()
+  })
+  if (__AUTODOC_QA_BUILD__) {
+    const { registerFeedbackPromptQAIpc } = await import('./ipc/feedback-prompt-qa-ipc')
+    registerFeedbackPromptQAIpc(feedbackPromptService, feedbackPromptStore, {
+      isTrustedSender: isTrustedMainWindowSender,
+      isWindowForegrounded: isMainWindowForegrounded,
+      isSupportAvailable: () => getSupportEmail() !== null
+    })
+  }
+  registerSupportIpc({
+    isTrustedSender: isTrustedMainWindowSender,
+    onContactInitiated: async (surface) => {
+      await feedbackPromptService.recordContactInitiated()
+      const mainWindow = getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('feedback:contact-initiated', surface)
+      }
+    }
+  })
+  onNotificationActivationSuppressionChange((suppressed) => {
+    const mainWindow = getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('feedback:critical-ui-changed', suppressed)
+    }
+  })
+
+  if (isE2E) {
+    ipcMain.handle(
+      'e2e:set-feedback-prompt-fixture',
+      async (_event, fixture: E2EFeedbackPromptFixture): Promise<boolean> => {
+        const allowedFixtures: E2EFeedbackPromptFixture[] = [
+          'ineligible',
+          'initial-eligible',
+          'reminder-eligible',
+          'never-ask-again',
+          'contact-initiated'
+        ]
+        if (!allowedFixtures.includes(fixture)) return false
+
+        const now = Date.now()
+        const previousDay = new Date(now)
+        previousDay.setDate(previousDay.getDate() - 1)
+        const initialShownAt = now - FEEDBACK_REMINDER_DELAY_MS - 1_000
+        const state = await feedbackPromptService.replaceStateForFixture({
+          ...createDefaultFeedbackPromptState(),
+          qualifyingSessionCount: fixture === 'ineligible' || fixture === 'never-ask-again' ? 0 : 3,
+          qualifyingSessionDates:
+            fixture === 'ineligible' || fixture === 'never-ask-again'
+              ? []
+              : [toLocalDateKey(now), toLocalDateKey(previousDay.getTime())],
+          lastQualifiedSessionAt:
+            fixture === 'ineligible' || fixture === 'never-ask-again' ? null : now,
+          initialPromptShownAt: fixture === 'reminder-eligible' ? initialShownAt : null,
+          contactInitiatedAt: fixture === 'contact-initiated' ? now : null,
+          neverAskAgain: fixture === 'never-ask-again'
+        })
+        return state !== null
+      }
+    )
+    ipcMain.handle('e2e:get-feedback-prompt-debug', async () => {
+      const eligibility = await feedbackPromptService.getEligibility()
+      return {
+        eligible: eligibility.eligible,
+        kind: eligibility.kind,
+        reason: eligibility.reason,
+        windowForegrounded: isMainWindowForegrounded(),
+        supportAvailable: getSupportEmail() !== null
+      }
+    })
+  }
+
   registerTranscriptionIpc(transcriptionService, markReprocessNotificationPending)
   registerLlmIpc(
     segmentationService,
@@ -1589,15 +1780,17 @@ app.whenReady().then(async () => {
   }
 
   cleanupTempFiles().catch(() => {})
-  try {
-    await migrateDataDir()
-  } catch (err) {
-    logAutodocFailure({
-      area: 'app',
-      message: 'Data dir migration failed',
-      error: err
-    })
-    console.error('Data dir migration failed:', err)
+  if (!__AUTODOC_QA_BUILD__) {
+    try {
+      await migrateDataDir()
+    } catch (err) {
+      logAutodocFailure({
+        area: 'app',
+        message: 'Data dir migration failed',
+        error: err
+      })
+      console.error('Data dir migration failed:', err)
+    }
   }
 
   try {

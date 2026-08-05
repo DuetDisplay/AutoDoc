@@ -10,7 +10,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
             style={{
               height: [12, 24, 36, 20, 32, 16, 28][i],
               transformOrigin: 'bottom',
-              animation: `wave 1.2s ease-in-out ${delay}s infinite`,
+              animation: `wave 1.2s ease-in-out ${delay}s infinite`
             }}
           />
         ))}
@@ -20,7 +20,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
       <p className="text-[15px] text-ink-muted leading-relaxed mt-1.5 mb-8">
         Your meetings talk. We listen.
         <br />
-        So you don't have to take notes.
+        So you don&apos;t have to take notes.
       </p>
       <button
         onClick={onNext}
