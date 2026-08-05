@@ -50,6 +50,10 @@ function findSigningIdentity(predicate) {
 }
 
 function tryGetSigningIdentity(context) {
+  if (process.env.AUTODOC_SKIP_MAC_SIGNING === '1') {
+    return null
+  }
+
   if (process.env.CSC_NAME) {
     return process.env.CSC_NAME
   }
@@ -136,7 +140,11 @@ function isMachOBinary(filePath) {
 
 async function signBundledResourceMachOBinaries(appBundlePath, context) {
   const resourcesRoot = join(appBundlePath, 'Contents', 'Resources')
-  return await signMachOBinariesUnder(resourcesRoot, 'bundled macOS resource Mach-O binaries', context)
+  return await signMachOBinariesUnder(
+    resourcesRoot,
+    'bundled macOS resource Mach-O binaries',
+    context
+  )
 }
 
 async function signMachOBinariesUnder(runtimeRoot, label, context) {

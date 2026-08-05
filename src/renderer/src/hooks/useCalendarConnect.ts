@@ -50,7 +50,9 @@ const PROVIDER_LABEL: Record<CalendarProviderType, string> = {
  * token makes a superseded attempt's late resolution/rejection a no-op so it can't
  * surface a stale success or error.
  */
-export function useCalendarConnect(options: UseCalendarConnectOptions = {}): UseCalendarConnectResult {
+export function useCalendarConnect(
+  options: UseCalendarConnectOptions = {}
+): UseCalendarConnectResult {
   const [connectingProvider, setConnectingProvider] = useState<CalendarProviderType | null>(null)
   const [error, setError] = useState<string | null>(null)
   const attemptRef = useRef<symbol | null>(null)

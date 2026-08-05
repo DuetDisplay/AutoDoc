@@ -50,7 +50,6 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
 
   useEffect(() => {
     if (status !== 'downloading') {
-      setSetupStatus(null)
       return
     }
 
@@ -60,7 +59,8 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
   }, [status])
 
   const showProgress = status === 'transcribing' && progress != null
-  const setupLabel = status === 'downloading' ? getWhisperSetupLabel(setupStatus) : null
+  const activeSetupStatus = status === 'downloading' ? setupStatus : null
+  const setupLabel = getWhisperSetupLabel(activeSetupStatus)
   const transcribingLabel =
     status === 'transcribing'
       ? formatTranscriptionStatusText({

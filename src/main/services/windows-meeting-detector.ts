@@ -3,7 +3,12 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { execFile } from 'child_process'
 
-const HELPER_RELATIVE_PATH = join('native', 'win-meeting-detector', 'bin', 'win-meeting-detector.exe')
+const HELPER_RELATIVE_PATH = join(
+  'native',
+  'win-meeting-detector',
+  'bin',
+  'win-meeting-detector.exe'
+)
 
 let missingHelperLogged = false
 
@@ -49,7 +54,7 @@ function resolveHelperPath(): string | null {
     join(process.cwd(), HELPER_RELATIVE_PATH),
     join(appPath, HELPER_RELATIVE_PATH),
     join(process.resourcesPath, 'app.asar.unpacked', HELPER_RELATIVE_PATH),
-    join(process.resourcesPath, HELPER_RELATIVE_PATH),
+    join(process.resourcesPath, HELPER_RELATIVE_PATH)
   ]
 
   for (const candidate of candidates) {

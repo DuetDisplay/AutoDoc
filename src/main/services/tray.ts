@@ -35,7 +35,7 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
   const recording = getIsRecordingRef()
   if (isDarwin) {
     const iconPath = recording ? getRecordingTrayIconPath() : getIdleTrayIconPath()
-    let icon = nativeImage.createFromPath(iconPath)
+    const icon = nativeImage.createFromPath(iconPath)
     if (icon.isEmpty()) {
       console.warn(`Tray icon failed to load from ${iconPath}`)
     }
@@ -48,7 +48,7 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
   }
 
   const iconPath = recording ? getRecordingTrayIconPath() : getIdleTrayIconPath()
-  let icon = nativeImage.createFromPath(iconPath)
+  const icon = nativeImage.createFromPath(iconPath)
   if (icon.isEmpty()) {
     console.warn(`Tray icon failed to load from ${iconPath}`)
   }
@@ -74,13 +74,14 @@ function getUpcomingEvents(): CalendarEvent[] {
 function buildMenu(): Menu {
   const events = getUpcomingEvents()
   const template: Electron.MenuItemConstructorOptions[] = []
+  const appName = app.getName()
 
   if (getIsRecordingRef()) {
     template.push({
       label: 'Stop recording notes',
       click: () => {
         stopRecordingFn()
-      },
+      }
     })
     template.push({ type: 'separator' })
   }
@@ -101,7 +102,7 @@ function buildMenu(): Menu {
           if (event.meetingUrl) {
             shell.openExternal(event.meetingUrl)
           }
-        },
+        }
       })
     }
   } else {
@@ -110,15 +111,15 @@ function buildMenu(): Menu {
 
   template.push({ type: 'separator' })
   template.push({
-    label: 'Open AutoDoc',
-    click: showWindowFn,
+    label: `Open ${appName}`,
+    click: showWindowFn
   })
   template.push({ type: 'separator' })
   template.push({
-    label: 'Quit AutoDoc',
+    label: `Quit ${appName}`,
     click: () => {
       app.quit()
-    },
+    }
   })
 
   return Menu.buildFromTemplate(template)
@@ -137,7 +138,7 @@ export interface TrayRecordingOptions {
 export function createTray(
   getEvents: () => CalendarEvent[],
   showWindow: () => void,
-  recording: TrayRecordingOptions,
+  recording: TrayRecordingOptions
 ): Tray {
   cachedEventsRef = getEvents
   showWindowFn = showWindow
@@ -147,7 +148,7 @@ export function createTray(
   const icon = loadTrayNativeImage()
 
   tray = new Tray(icon)
-  tray.setToolTip('AutoDoc')
+  tray.setToolTip(app.getName())
 
   if (isDarwin) {
     // Avoid a persistent context menu on macOS so a click shows our menu instead of only
@@ -185,7 +186,8 @@ export function refreshTray(): void {
   tray.setImage(loadTrayNativeImage())
   if (isDarwin) {
     const recording = getIsRecordingRef()
-    tray.setToolTip(recording ? 'AutoDoc — recording' : 'AutoDoc')
+    const appName = app.getName()
+    tray.setToolTip(recording ? `${appName} — recording` : appName)
   } else {
     tray.setContextMenu(buildMenu())
   }

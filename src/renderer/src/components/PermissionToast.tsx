@@ -6,7 +6,7 @@ const ICONS: Record<string, string> = {
   screen: '🖥️',
   microphone: '🎤',
   calendar: '📅',
-  warning: '⚠️',
+  warning: '⚠️'
 }
 
 export function PermissionToast() {

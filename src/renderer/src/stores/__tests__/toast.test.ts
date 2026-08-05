@@ -19,12 +19,12 @@ describe('useToastStore', () => {
     useToastStore.getState().showToast({
       type: 'screen',
       message: 'Enable screen recording',
-      action: { label: 'Enable', type: 'open-settings', target: 'screen' },
+      action: { label: 'Enable', type: 'open-settings', target: 'screen' }
     })
     expect(useToastStore.getState().activeToast).toEqual({
       type: 'screen',
       message: 'Enable screen recording',
-      action: { label: 'Enable', type: 'open-settings', target: 'screen' },
+      action: { label: 'Enable', type: 'open-settings', target: 'screen' }
     })
   })
 

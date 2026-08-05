@@ -33,7 +33,7 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       subtitle,
       sources,
       detectedId,
-      suggestionLabel,
+      suggestionLabel
     }),
 
   closePicker: () =>
@@ -42,6 +42,6 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       subtitle: null,
       sources: [],
       detectedId: null,
-      suggestionLabel: null,
-    }),
+      suggestionLabel: null
+    })
 }))

@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.0] — TBD
+## [1.1.1] — TBD
+
+### Added
+
+- A persistent **Email Us** action that safely opens the user's default mail
+  client and offers a copy-address fallback when a draft cannot be opened.
+- A non-blocking feedback prompt on Upcoming and AI Notes after meaningful
+  foreground use, with one optional reminder and permanent dismissal.
+
+### Changed
+
+- Windows capture recovery now preserves available microphone and system audio
+  when screen video cannot be recovered, and saved meetings clearly indicate
+  when video ended early.
+- Opted-in analytics can distinguish confirmed app-version transitions from
+  fresh installs. No version event is sent before consent.
+
+### Fixed
+
+- Dismissing the meeting-detected prompt no longer shows, restores, or brings
+  the main AutoDoc window to the front.
+- Slack Huddles are preferred over Slack overlay windows in the Windows capture
+  picker, preventing the screen-share title-bar/overlay issue.
+
+### Security
+
+- Updated Electron, the automatic updater, PostHog/DOMPurify, React Router,
+  Sentry, and affected transitive runtime packages to supported patched
+  versions.
+
+## [1.1.0] — 2026-07-27
 
 ### Added
 
@@ -55,6 +85,7 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.0.0

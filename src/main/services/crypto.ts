@@ -18,6 +18,7 @@ const BLOCK_SIZE = 65536 // 64KB plaintext per block
 const CHUNKED_VERSION = 0x01
 const MEDIA_DECRYPT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
 const MEDIA_DECRYPT_CACHE_MAX_ENTRIES = 6
+const WINDOWS_MEDIA_RENAME_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const
 const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
   'AutoDoc Safe Storage',
   'autodoc Safe Storage',
@@ -42,8 +43,18 @@ export class EncryptionKeyUnavailableError extends Error {
 let cachedKey: Buffer | null = null
 let cachedKeyError: Error | null = null
 
+const DECRYPTED_TEMP_PREFIX = __AUTODOC_QA_BUILD__ ? 'autodoc-qa-' : 'autodoc-'
+const DECRYPTED_TEMP_FILE_PATTERN = __AUTODOC_QA_BUILD__
+  ? /^autodoc-qa-[0-9a-f]{16}\./
+  : /^autodoc-[0-9a-f]{16}\./
+
+export function isCurrentBuildDecryptedTempFileName(filename: string): boolean {
+  return DECRYPTED_TEMP_FILE_PATTERN.test(filename)
+}
+
 function usesIsolatedStore(): boolean {
   return (
+    __AUTODOC_QA_BUILD__ ||
     !app.isPackaged ||
     Boolean(process.env.AUTODOC_TEST_USER_DATA_DIR) ||
     process.env.AUTODOC_E2E === '1' ||
@@ -356,8 +367,15 @@ export async function encryptFileInPlace(plainPath: string): Promise<void> {
     throw err
   }
 
-  // Atomic rename over original
-  await renameWithRetry(encPath, plainPath)
+  // Windows readers and scanners can briefly deny destination replacement.
+  // Keep this as a direct rename so plaintext remains intact until replacement succeeds;
+  // never unlink plainPath first. If macOS reports the same signature, extend both the
+  // platform guard below and retry classification in file-operation-retry.ts with a test.
+  await renameWithRetry(
+    encPath,
+    plainPath,
+    process.platform === 'win32' ? WINDOWS_MEDIA_RENAME_RETRY_DELAYS_MS : undefined
+  )
 }
 
 export async function decryptFileToTemp(encPath: string): Promise<string> {
@@ -365,7 +383,7 @@ export async function decryptFileToTemp(encPath: string): Promise<string> {
   const ext = path.extname(encPath) || '.tmp'
   const tmpFilePath = path.join(
     os.tmpdir(),
-    `autodoc-${crypto.randomBytes(8).toString('hex')}${ext}`
+    `${DECRYPTED_TEMP_PREFIX}${crypto.randomBytes(8).toString('hex')}${ext}`
   )
 
   const srcFd = await fsp.open(encPath, 'r')
@@ -647,7 +665,7 @@ export async function cleanupTempFiles(): Promise<void> {
   const entries = await fsp.readdir(tmpdir)
 
   for (const entry of entries) {
-    if (/^autodoc-[0-9a-f]{16}\./.test(entry)) {
+    if (isCurrentBuildDecryptedTempFileName(entry)) {
       await fsp.unlink(path.join(tmpdir, entry)).catch(() => {})
     }
   }

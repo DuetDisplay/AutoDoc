@@ -36,7 +36,7 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
       // Search transcripts
       try {
         const tPath = join(meetingDir, 'transcript.json')
-        const transcripts: Transcript[] = await isEncrypted(tPath)
+        const transcripts: Transcript[] = (await isEncrypted(tPath))
           ? await decryptJSON<Transcript[]>(tPath)
           : JSON.parse(await readFile(tPath, 'utf-8'))
         for (const seg of transcripts) {
@@ -45,12 +45,14 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
             matches.push({ type: 'transcript', text: seg.text })
           }
         }
-      } catch { /* no transcript */ }
+      } catch {
+        /* no transcript */
+      }
 
       // Search segments
       try {
         const sPath = join(meetingDir, 'segments.json')
-        const segments: MeetingSegments = await isEncrypted(sPath)
+        const segments: MeetingSegments = (await isEncrypted(sPath))
           ? await decryptJSON<MeetingSegments>(sPath)
           : JSON.parse(await readFile(sPath, 'utf-8'))
         for (const [category, items] of Object.entries(segments)) {
@@ -61,7 +63,9 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
             }
           }
         }
-      } catch { /* no segments */ }
+      } catch {
+        /* no segments */
+      }
 
       if (matches.length > 0) {
         const metadata = await readMetadata(meetingDir)
@@ -70,7 +74,7 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
 
         const createdAt = metadata
           ? new Date(metadata.startedAt)
-          : micStat?.birthtime ?? legacyStat?.birthtime ?? dirStat.birthtime
+          : (micStat?.birthtime ?? legacyStat?.birthtime ?? dirStat.birthtime)
 
         const dateSuffix = `${createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${createdAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
         const title = metadata?.sourceName
@@ -81,7 +85,7 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
           meetingId,
           title,
           date: createdAt.getTime(),
-          matches: matches.slice(0, 5), // Cap at 5 matches per meeting
+          matches: matches.slice(0, 5) // Cap at 5 matches per meeting
         })
       }
     }

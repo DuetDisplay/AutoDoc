@@ -21,9 +21,9 @@ export function getMainWindow(): BrowserWindow | null {
     return mainWindow
   }
 
-  const fallback = BrowserWindow
-    .getAllWindows()
-    .find((window) => !window.isDestroyed() && window.isFocusable())
+  const fallback = BrowserWindow.getAllWindows().find(
+    (window) => !window.isDestroyed() && window.isFocusable()
+  )
 
   if (fallback) {
     mainWindow = fallback

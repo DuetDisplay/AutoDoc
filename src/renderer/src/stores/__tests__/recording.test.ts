@@ -12,7 +12,7 @@ describe('useRecordingStore', () => {
       recordingIntent: null,
       elapsedSeconds: 0,
       sources: [],
-      isLoadingSources: false,
+      isLoadingSources: false
     })
   })
 
@@ -30,7 +30,7 @@ describe('useRecordingStore', () => {
       startedAt: Date.now(),
       sourceId: 'source-1',
       sourceName: 'Zoom',
-      recordingIntent: 'meeting',
+      recordingIntent: 'meeting'
     })
 
     const state = useRecordingStore.getState()
@@ -54,15 +54,15 @@ describe('useRecordingStore', () => {
       startedAt: Date.now(),
       sourceId: 's',
       sourceName: 'n',
-      recordingIntent: 'meeting',
+      recordingIntent: 'meeting'
     })
     expect(useRecordingStore.getState().elapsedSeconds).toBe(0)
   })
 
   it('sets sources', () => {
-    useRecordingStore.getState().setSources([
-      { id: 's1', name: 'Zoom', thumbnailDataUrl: 'data:...' },
-    ])
+    useRecordingStore
+      .getState()
+      .setSources([{ id: 's1', name: 'Zoom', thumbnailDataUrl: 'data:...' }])
     expect(useRecordingStore.getState().sources).toHaveLength(1)
     expect(useRecordingStore.getState().sources[0].name).toBe('Zoom')
   })

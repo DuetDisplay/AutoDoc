@@ -16,6 +16,7 @@ import {
   findActiveCalendarEvent
 } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
+import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
@@ -31,7 +32,8 @@ import {
   toDurationBucket,
   trackDailyActiveIfNeeded,
   trackEvent,
-  trackFirstEventOnce
+  trackFirstEventOnce,
+  trackPendingAppUpdate
 } from './services/analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
@@ -39,7 +41,9 @@ import { onManualUpdateCheckStarted } from './services/update-check-events'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import { useToastStore } from './stores/toast'
 import type { AppRuntimeInfo } from '../../shared/types'
+import { hasCurrentOrImminentMeeting } from './services/feedback-prompt-safety'
 
 function RouteDiagnosticTracker() {
   const location = useLocation()
@@ -57,7 +61,11 @@ function RouteDiagnosticTracker() {
   return null
 }
 
-function UpdateReadyPrompt() {
+function UpdateReadyPrompt({
+  onVisibilityChange
+}: {
+  onVisibilityChange?: (visible: boolean) => void
+}) {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
@@ -130,6 +138,20 @@ function UpdateReadyPrompt() {
     return () => window.clearTimeout(dismissTimer)
   }, [showUpToDateBanner])
 
+  const downloadedPromptVisible = Boolean(
+    updateStatus &&
+    (updateStatus.state === 'installing' ||
+      (updateStatus.state === 'downloaded' &&
+        dismissedVersion !== (updateStatus.version ?? 'unknown')))
+  )
+  const promptVisible = showUpToDateBanner || downloadedPromptVisible
+
+  useEffect(() => {
+    onVisibilityChange?.(promptVisible)
+  }, [onVisibilityChange, promptVisible])
+
+  useEffect(() => () => onVisibilityChange?.(false), [onVisibilityChange])
+
   if (showUpToDateBanner) {
     return (
       <div className="mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 flex items-start gap-3 shadow-sm animate-[slideDown_300ms_ease]">
@@ -150,7 +172,9 @@ function UpdateReadyPrompt() {
           </svg>
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-semibold leading-5 text-sage-dark">You're up to date</p>
+          <p className="text-[12px] font-semibold leading-5 text-sage-dark">
+            You&apos;re up to date
+          </p>
           <p className="text-[11px] leading-5 text-ink-muted">
             AutoDoc is running the latest available version.
           </p>
@@ -235,9 +259,24 @@ function UpdateReadyPrompt() {
 
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
-  const { isRecording, sourceName, elapsedSeconds, handleStop, fetchSources, handleStart } =
-    useRecording()
+  const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
+  const [updatePromptVisible, setUpdatePromptVisible] = useState(false)
+  const [notificationPromptVisible, setNotificationPromptVisible] = useState(false)
+  const [calendarStateReady, setCalendarStateReady] = useState(false)
+  const [feedbackClock, setFeedbackClock] = useState(() => Date.now())
+  const {
+    isRecording,
+    sourceName,
+    videoDisabled,
+    elapsedSeconds,
+    handleStop,
+    fetchSources,
+    handleStart
+  } = useRecording()
+
   const { events, setAccounts, setEvents } = useCalendarStore()
+  const recordingPickerOpen = useRecordingPickerStore((state) => state.isOpen)
+  const permissionToastVisible = useToastStore((state) => state.activeToast !== null)
   const transcriptionFailures = useRef<Record<string, string>>({})
   const transcriptionCompletions = useRef<Set<string>>(new Set())
   const transcriptionStarted = useRef<Record<string, number>>({})
@@ -273,6 +312,7 @@ export default function App() {
       updateRendererSentryConsent(consent === true)
       if (consent === true) {
         await identifyConsentedInstall()
+        await trackPendingAppUpdate('observed-after-consent')
         recordDiagnosticAction({
           category: 'app',
           action: 'app_opened'
@@ -323,21 +363,26 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+    let syncGeneration = 0
 
     const syncCalendarState = async () => {
+      const generation = ++syncGeneration
+      setCalendarStateReady(false)
       try {
         const accounts = await window.electronAPI.invoke('calendar:get-accounts')
-        if (cancelled) return
+        if (cancelled || generation !== syncGeneration) return
         setAccounts(accounts)
 
         if (accounts.length === 0) {
           setEvents([])
+          setCalendarStateReady(true)
           return
         }
 
         const events = await window.electronAPI.invoke('calendar:get-events')
-        if (cancelled) return
+        if (cancelled || generation !== syncGeneration) return
         setEvents(events)
+        setCalendarStateReady(true)
       } catch (err) {
         console.error('Failed to sync calendar state:', err)
       }
@@ -347,6 +392,7 @@ export default function App() {
 
     const unsubscribeEvents = window.electronAPI.on('calendar:events-updated', (events) => {
       setEvents(events)
+      setCalendarStateReady(true)
     })
     const unsubscribeConnection = window.electronAPI.on('calendar:connection-changed', () => {
       void syncCalendarState()
@@ -358,6 +404,18 @@ export default function App() {
       unsubscribeConnection()
     }
   }, [setAccounts, setEvents])
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.on('feedback:critical-ui-changed', (visible) => {
+      setNotificationPromptVisible(visible)
+    })
+    const interval = window.setInterval(() => setFeedbackClock(Date.now()), 30_000)
+
+    return () => {
+      unsubscribe()
+      window.clearInterval(interval)
+    }
+  }, [])
 
   useEffect(() => {
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
@@ -688,6 +746,16 @@ export default function App() {
     return <Onboarding onComplete={() => setOnboardingDone(true)} />
   }
 
+  const feedbackPromptSuppressed =
+    isRecording ||
+    recordingPickerOpen ||
+    permissionToastVisible ||
+    lowSpecBannerVisible ||
+    updatePromptVisible ||
+    notificationPromptVisible ||
+    !calendarStateReady ||
+    hasCurrentOrImminentMeeting(events, feedbackClock)
+
   return (
     <HashRouter>
       <RouteDiagnosticTracker />
@@ -701,18 +769,30 @@ export default function App() {
         <main className="flex-1 overflow-hidden flex flex-col pt-[52px]">
           <RecordingBanner
             isRecording={isRecording}
+            videoDisabled={videoDisabled}
             elapsedSeconds={elapsedSeconds}
             sourceName={sourceName}
             onStop={handleStop}
           />
+          {isRecording && videoDisabled && (
+            <div className="px-5 pt-3">
+              <VideoCaptureWarning variant="live" />
+            </div>
+          )}
           <MeetingDetectedBanner />
           <PermissionToast />
-          <LowSpecMacProcessingBanner />
-          <UpdateReadyPrompt />
+          <LowSpecMacProcessingBanner onVisibilityChange={setLowSpecBannerVisible} />
+          <UpdateReadyPrompt onVisibilityChange={setUpdatePromptVisible} />
           <div className="flex-1 overflow-hidden">
             <Routes>
-              <Route path={ROUTES.upcoming} element={<Upcoming />} />
-              <Route path={ROUTES.recordings} element={<Recordings />} />
+              <Route
+                path={ROUTES.upcoming}
+                element={<Upcoming feedbackPromptSuppressed={feedbackPromptSuppressed} />}
+              />
+              <Route
+                path={ROUTES.recordings}
+                element={<Recordings feedbackPromptSuppressed={feedbackPromptSuppressed} />}
+              />
               <Route path={ROUTES.meetingDetail} element={<MeetingDetail />} />
               <Route path={ROUTES.search} element={<Search />} />
               <Route path={ROUTES.askAi} element={<AskAI />} />

@@ -5,6 +5,7 @@ import type {
   AnalyticsSessionEndResult,
   AnalyticsSessionStartResult,
   AnalyticsState,
+  AnalyticsUpgradeTransition,
   AutoRecordMode,
   CalendarAccount,
   CalendarEvent,
@@ -14,6 +15,15 @@ import type {
   RecordingTrackingContext,
   RecordingPaths,
   RecordingMediaPlayerErrorReport,
+  CopySupportEmailResult,
+  FeedbackPromptAction,
+  FeedbackPromptConfirmationResponse,
+  FeedbackPromptQAScenario,
+  FeedbackPromptQASnapshot,
+  FeedbackPromptReservationResponse,
+  FeedbackPromptSurface,
+  OpenSupportEmailResult,
+  SupportEmailSurface,
   Transcript,
   TranscriptionStatus,
   MeetingSegments,
@@ -27,11 +37,18 @@ import type {
   DetectionAutoStopPayload,
   DetectionAutoStopCancelledPayload,
   TranscriptionStatusPayload,
+  SegmentationActivity,
+  SegmentationActivityPayload,
   SegmentationStatusPayload,
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
-import type { E2EDetectionState, E2EPermissionRequestState } from '../shared/e2e'
+import type {
+  E2EDetectionState,
+  E2EFeedbackPromptDebugState,
+  E2EFeedbackPromptFixture,
+  E2EPermissionRequestState
+} from '../shared/e2e'
 import type { DiagnosticActionPayload } from '../shared/diagnostics'
 
 export interface UpdateStatus {
@@ -84,8 +101,20 @@ export interface IpcInvokeEvents {
   'analytics:start-session': []
   'analytics:end-session': []
   'analytics:get-consent-snapshot': []
+  'analytics:get-pending-upgrade': []
+  'analytics:acknowledge-upgrade': [transition: AnalyticsUpgradeTransition]
   'diagnostics:record-action': [payload: DiagnosticActionPayload]
   'diagnostics:clear-trail': []
+  'support:get-availability': []
+  'support:open-email': [surface: SupportEmailSurface]
+  'support:copy-email': [surface: SupportEmailSurface]
+  'feedback:observe-foreground': []
+  'feedback:reserve-prompt': [surface: FeedbackPromptSurface]
+  'feedback:confirm-prompt': [reservationId: string, surface: FeedbackPromptSurface]
+  'feedback:cancel-prompt': [reservationId: string, surface: FeedbackPromptSurface]
+  'feedback:record-action': [impressionId: string, action: FeedbackPromptAction]
+  'qa:feedback-prompt:get-state': []
+  'qa:feedback-prompt:set-scenario': [scenario: FeedbackPromptQAScenario]
   'calendar:connect': [providerType: 'google' | 'microsoft']
   'calendar:cancel-connect': []
   'calendar:disconnect': [accountId: string]
@@ -122,6 +151,7 @@ export interface IpcInvokeEvents {
     segmentIndex: number,
     offsetMs: number
   ]
+  'recording:video-capture-ended-early': [meetingId: string]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
   'recording:retry-video': [meetingId: string]
@@ -134,6 +164,7 @@ export interface IpcInvokeEvents {
   'segmentation:get-status': [meetingId: string]
   'segmentation:get-error-code': [meetingId: string]
   'segmentation:get-progress': [meetingId: string]
+  'segmentation:get-activity': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
@@ -186,6 +217,8 @@ export interface IpcInvokeEvents {
   'e2e:get-detection-state': []
   'e2e:get-permission-request-state': []
   'e2e:set-detection-state': [state: Partial<E2EDetectionState>]
+  'e2e:set-feedback-prompt-fixture': [fixture: E2EFeedbackPromptFixture]
+  'e2e:get-feedback-prompt-debug': []
   'e2e:detection-poll': [advanceMs?: number]
   'e2e:trigger-main-error': []
   'e2e:trigger-notes-ready-notification': [
@@ -213,8 +246,20 @@ export interface IpcInvokeReturns {
   'analytics:start-session': AnalyticsSessionStartResult
   'analytics:end-session': AnalyticsSessionEndResult | null
   'analytics:get-consent-snapshot': AnalyticsConsentSnapshot
+  'analytics:get-pending-upgrade': AnalyticsUpgradeTransition | null
+  'analytics:acknowledge-upgrade': boolean
   'diagnostics:record-action': void
   'diagnostics:clear-trail': void
+  'support:get-availability': boolean
+  'support:open-email': OpenSupportEmailResult
+  'support:copy-email': CopySupportEmailResult
+  'feedback:observe-foreground': void
+  'feedback:reserve-prompt': FeedbackPromptReservationResponse
+  'feedback:confirm-prompt': FeedbackPromptConfirmationResponse
+  'feedback:cancel-prompt': boolean
+  'feedback:record-action': boolean
+  'qa:feedback-prompt:get-state': FeedbackPromptQASnapshot | null
+  'qa:feedback-prompt:set-scenario': FeedbackPromptQASnapshot | null
   'calendar:connect': CalendarAccount
   'calendar:cancel-connect': void
   'calendar:disconnect': void
@@ -233,6 +278,7 @@ export interface IpcInvokeReturns {
   'recording:get-state': RecordingState
   'recording:save-chunk': void
   'recording:save-segment-timing': void
+  'recording:video-capture-ended-early': void
   'recording:update-title': void
   'recording:delete': void
   'recording:retry-video': void
@@ -245,6 +291,7 @@ export interface IpcInvokeReturns {
   'segmentation:get-status': SegmentationStatus
   'segmentation:get-error-code': string | undefined
   'segmentation:get-progress': number | undefined
+  'segmentation:get-activity': SegmentationActivity | null
   'segmentation:get-segments': MeetingSegments | null
   'segmentation:retry': void
   'segmentation:save-segments': void
@@ -264,6 +311,7 @@ export interface IpcInvokeReturns {
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus
+    videoCaptureEndedEarly?: boolean
   }
   'search:query': SearchResult[]
   'chat:send': string
@@ -303,6 +351,8 @@ export interface IpcInvokeReturns {
   'e2e:get-detection-state': E2EDetectionState
   'e2e:get-permission-request-state': E2EPermissionRequestState
   'e2e:set-detection-state': E2EDetectionState
+  'e2e:set-feedback-prompt-fixture': boolean
+  'e2e:get-feedback-prompt-debug': E2EFeedbackPromptDebugState
   'e2e:detection-poll': void
   'e2e:trigger-main-error': void
   'e2e:trigger-notes-ready-notification': string
@@ -318,6 +368,7 @@ export interface IpcOnEvents {
   'calendar:connection-changed': [connected: boolean]
   'transcription:status-changed': [payload: TranscriptionStatusPayload]
   'segmentation:status-changed': [payload: SegmentationStatusPayload]
+  'segmentation:activity-changed': [payload: SegmentationActivityPayload]
   'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]
@@ -342,5 +393,7 @@ export interface IpcOnEvents {
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
+  'feedback:contact-initiated': [surface: SupportEmailSurface]
+  'feedback:critical-ui-changed': [suppressed: boolean]
   'e2e:track-analytics-event': [payload: { event: string; properties?: Record<string, unknown> }]
 }

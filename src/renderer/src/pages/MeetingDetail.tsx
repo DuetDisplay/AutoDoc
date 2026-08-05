@@ -9,12 +9,14 @@ import type {
   Transcript,
   TranscriptionStatus,
   SegmentationStatus,
+  SegmentationActivity,
   SpeakerMap
 } from '../../../shared/types'
 import { TranscriptView } from '../components/TranscriptView'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
+import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
 
@@ -56,6 +58,8 @@ const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
   discussion: 'discussion',
   status_update: 'statusUpdates'
 }
+
+const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
 function EditableText({
   value,
@@ -153,6 +157,10 @@ export function MeetingDetail() {
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [segmentationErrorCode, setSegmentationErrorCode] = useState<string | undefined>()
+  const [segmentationActivity, setSegmentationActivity] = useState<{
+    meetingId: string
+    activity: SegmentationActivity
+  } | null>(null)
   const [detail, setDetail] = useState<{
     title: string
     sourceName: string | null
@@ -161,6 +169,7 @@ export function MeetingDetail() {
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: 'processing' | 'ready' | 'failed'
+    videoCaptureEndedEarly?: boolean
   } | null>(null)
   const [media, setMedia] = useState<{
     hasVideo: boolean
@@ -180,9 +189,8 @@ export function MeetingDetail() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const lastProgressLogAtRef = useRef(0)
   const lastTimeUpdateLogAtRef = useRef(0)
+  const segmentationEventRevisionRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
-
-  const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
 
   useEffect(() => {
     activeTabRef.current = activeTab
@@ -503,6 +511,10 @@ export function MeetingDetail() {
   useEffect(() => {
     if (!id) return
 
+    let cancelled = false
+    segmentationEventRevisionRef.current += 1
+    const initialSegmentationRevision = segmentationEventRevisionRef.current
+
     const refreshDetail = () =>
       window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
         console.info('[meeting-detail] refreshDetail resolved', {
@@ -525,26 +537,44 @@ export function MeetingDetail() {
       window.electronAPI.invoke('transcription:get-progress', id),
       window.electronAPI.invoke('segmentation:get-status', id),
       window.electronAPI.invoke('segmentation:get-progress', id),
-      window.electronAPI.invoke('segmentation:get-error-code', id)
+      window.electronAPI.invoke('segmentation:get-error-code', id),
+      window.electronAPI.invoke('segmentation:get-activity', id)
     ]).then(
       ([
         status,
         progress,
         nextSegmentationStatus,
         nextSegmentationProgress,
-        nextSegmentationErrorCode
+        nextSegmentationErrorCode,
+        nextSegmentationActivity
       ]) => {
+        if (cancelled) return
+
         setTranscriptionStatus(status)
         setTranscriptionProgress((current) => mergeProgress(status, current, progress))
-        setSegmentationStatus(nextSegmentationStatus)
-        setSegmentationProgress(nextSegmentationProgress)
-        setSegmentationErrorCode(
-          nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined
-        )
-        if (nextSegmentationStatus === 'complete') {
-          window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
-        } else {
-          setSegments(null)
+        if (segmentationEventRevisionRef.current === initialSegmentationRevision) {
+          setSegmentationStatus(nextSegmentationStatus)
+          setSegmentationProgress(nextSegmentationProgress)
+          setSegmentationErrorCode(
+            nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined
+          )
+          setSegmentationActivity(
+            nextSegmentationStatus === 'segmenting' && nextSegmentationActivity
+              ? { meetingId: id, activity: nextSegmentationActivity }
+              : null
+          )
+          if (nextSegmentationStatus === 'complete') {
+            window.electronAPI.invoke('segmentation:get-segments', id).then((nextSegments) => {
+              if (
+                !cancelled &&
+                segmentationEventRevisionRef.current === initialSegmentationRevision
+              ) {
+                setSegments(nextSegments)
+              }
+            })
+          } else {
+            setSegments(null)
+          }
         }
       }
     )
@@ -568,9 +598,13 @@ export function MeetingDetail() {
 
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
       if (payload.meetingId === id) {
+        segmentationEventRevisionRef.current += 1
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
         setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        if (payload.status !== 'segmenting') {
+          setSegmentationActivity(null)
+        }
         if (payload.status === 'complete') {
           window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
         } else {
@@ -578,6 +612,18 @@ export function MeetingDetail() {
         }
       }
     })
+
+    const unsubSegmentationActivity = window.electronAPI.on(
+      'segmentation:activity-changed',
+      (payload) => {
+        if (payload.meetingId === id) {
+          segmentationEventRevisionRef.current += 1
+          setSegmentationActivity(
+            payload.activity ? { meetingId: payload.meetingId, activity: payload.activity } : null
+          )
+        }
+      }
+    )
 
     const unsubRecordingEntryUpdated = window.electronAPI.on(
       'recording:entry-updated',
@@ -590,9 +636,11 @@ export function MeetingDetail() {
     )
 
     return () => {
+      cancelled = true
       unsubRecordingEntryUpdated()
       unsubTranscription()
       unsubSegmentation()
+      unsubSegmentationActivity()
       clearTimeout(saveTimeoutRef.current)
     }
   }, [id])
@@ -648,19 +696,23 @@ export function MeetingDetail() {
 
   const handleReprocessTranscript = () => {
     if (!id) return
+    segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
     setTranscriptionProgress(undefined)
     setTranscript([])
     setSegments(null)
     setSegmentationStatus('pending')
     setSegmentationErrorCode(undefined)
+    setSegmentationActivity(null)
     window.electronAPI.invoke('transcription:retry', id)
   }
 
   const handleReprocessNotes = () => {
     if (!id) return
+    segmentationEventRevisionRef.current += 1
     setSegmentationStatus('queued')
     setSegmentationErrorCode(undefined)
+    setSegmentationActivity(null)
     setSegments(null)
     window.electronAPI.invoke('segmentation:retry', id)
   }
@@ -686,18 +738,21 @@ export function MeetingDetail() {
 
     const refreshProcessingState = async () => {
       try {
+        const segmentationSnapshotRevision = segmentationEventRevisionRef.current
         const [
           latestTranscriptionStatus,
           latestTranscriptionProgress,
           latestSegmentationStatus,
           latestSegmentationProgress,
-          latestSegmentationErrorCode
+          latestSegmentationErrorCode,
+          latestSegmentationActivity
         ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
           window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
-          window.electronAPI.invoke('segmentation:get-error-code', id)
+          window.electronAPI.invoke('segmentation:get-error-code', id),
+          window.electronAPI.invoke('segmentation:get-activity', id)
         ])
 
         if (cancelled) return
@@ -706,11 +761,20 @@ export function MeetingDetail() {
         setTranscriptionProgress((current) =>
           mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
         )
-        setSegmentationStatus(latestSegmentationStatus)
-        setSegmentationProgress(latestSegmentationProgress)
-        setSegmentationErrorCode(
-          latestSegmentationStatus === 'failed' ? latestSegmentationErrorCode : undefined
-        )
+        const segmentationSnapshotIsCurrent =
+          segmentationEventRevisionRef.current === segmentationSnapshotRevision
+        if (segmentationSnapshotIsCurrent) {
+          setSegmentationStatus(latestSegmentationStatus)
+          setSegmentationProgress(latestSegmentationProgress)
+          setSegmentationErrorCode(
+            latestSegmentationStatus === 'failed' ? latestSegmentationErrorCode : undefined
+          )
+          setSegmentationActivity(
+            latestSegmentationStatus === 'segmenting' && latestSegmentationActivity
+              ? { meetingId: id, activity: latestSegmentationActivity }
+              : null
+          )
+        }
 
         if (latestTranscriptionStatus === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then((nextTranscript) => {
@@ -721,11 +785,16 @@ export function MeetingDetail() {
           })
         }
 
-        if (latestSegmentationStatus === 'complete') {
+        if (segmentationSnapshotIsCurrent && latestSegmentationStatus === 'complete') {
           window.electronAPI.invoke('segmentation:get-segments', id).then((nextSegments) => {
-            if (!cancelled) setSegments(nextSegments)
+            if (
+              !cancelled &&
+              segmentationEventRevisionRef.current === segmentationSnapshotRevision
+            ) {
+              setSegments(nextSegments)
+            }
           })
-        } else {
+        } else if (segmentationSnapshotIsCurrent) {
           setSegments(null)
         }
       } catch (err) {
@@ -880,7 +949,72 @@ export function MeetingDetail() {
         )}
         {activeTab === 'notes' ? (
           <div ref={transcriptTopRef} className="flex flex-col gap-4">
-            {CATEGORY_ORDER.map((category) => {
+            {segmentationStatus === 'segmenting' &&
+              segmentationActivity?.meetingId === id &&
+              segmentationActivity?.activity === 'waiting-for-local-ai' && (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-snug text-amber-900"
+                >
+                  <svg
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 shrink-0 text-amber-700"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                  >
+                    <circle cx="10" cy="10" r="6.75" />
+                    <path d="M10 6.5v3.9l2.6 1.5" />
+                  </svg>
+                  <p>
+                    <span className="font-semibold">Notes are taking longer than usual.</span>{' '}
+                    AutoDoc is still waiting for the local AI model to respond.
+                  </p>
+                </div>
+              )}
+            {segmentationStatus === 'no-notes' && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
+                    <svg
+                      aria-hidden="true"
+                      className="h-4 w-4"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <path d="M5.75 2.75h5.5l3 3v9.5a2 2 0 0 1-2 2h-6.5a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2Z" />
+                      <path d="M11.25 2.75v3h3M9 8.5v3.25M9 14h.01" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-[13px] font-semibold text-ink">No notes were generated</h3>
+                    <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
+                      This transcript appears to contain enough meeting content, but AutoDoc
+                      couldn’t produce structured notes this time. Your transcript is still
+                      available.
+                    </p>
+                    <div className="flex items-center gap-2 mt-3">
+                      <button
+                        onClick={handleReprocessNotes}
+                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
+                      >
+                        Try again
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('transcript')}
+                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
+                      >
+                        View transcript
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {(segmentationStatus === 'no-notes' ? [] : CATEGORY_ORDER).map((category) => {
               const items = getSegmentsForCategory(category)
               return (
                 <div key={category} className="bg-bg-card border border-border rounded-xl p-4">
@@ -1002,9 +1136,7 @@ export function MeetingDetail() {
           <div className="flex flex-col gap-4">
             {(detail?.videoStatus === 'processing' || videoRetryPending) && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted animate-pulse">
-                  Finishing up your video…
-                </p>
+                <p className="text-[13px] text-ink-muted animate-pulse">Finishing up your video…</p>
                 <p className="text-[11.5px] text-ink-faint mt-1">
                   Your transcript and notes are ready to use.
                 </p>
@@ -1059,6 +1191,7 @@ export function MeetingDetail() {
                 </div>
               </div>
             )}
+            {detail?.videoCaptureEndedEarly && <VideoCaptureWarning variant="saved" />}
             {Object.keys(speakers).length > 0 && (
               <SpeakerLegend
                 speakers={speakers}

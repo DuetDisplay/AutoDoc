@@ -31,7 +31,7 @@ const command = [
   'cl.exe /nologo /std:c++17 /EHsc /utf-8 /O2 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ' +
     `/Fo"${path.join(outputDir, 'win-meeting-detector.obj')}" ` +
     `/Fe"${outputPath}" ` +
-    `"${sourcePath}" ole32.lib uuid.lib`,
+    `"${sourcePath}" ole32.lib uuid.lib`
 ].join('\r\n')
 
 fs.writeFileSync(scriptPath, command)
@@ -40,7 +40,7 @@ const result = spawnSync(scriptPath, [], {
   cwd: repoRoot,
   stdio: 'inherit',
   env: process.env,
-  shell: true,
+  shell: true
 })
 
 fs.rmSync(scriptPath, { force: true })
@@ -50,16 +50,21 @@ if (result.status !== 0) {
 }
 
 function findVsDevCmd() {
-  const roots = [
-    process.env['ProgramFiles'],
-    process.env['ProgramFiles(x86)'],
-  ].filter(Boolean)
+  const roots = [process.env['ProgramFiles'], process.env['ProgramFiles(x86)']].filter(Boolean)
 
   const editions = ['Enterprise', 'Professional', 'Community', 'BuildTools']
 
   for (const root of roots) {
     for (const edition of editions) {
-      const candidate = path.join(root, 'Microsoft Visual Studio', '2022', edition, 'Common7', 'Tools', 'VsDevCmd.bat')
+      const candidate = path.join(
+        root,
+        'Microsoft Visual Studio',
+        '2022',
+        edition,
+        'Common7',
+        'Tools',
+        'VsDevCmd.bat'
+      )
       if (fs.existsSync(candidate)) {
         return candidate
       }

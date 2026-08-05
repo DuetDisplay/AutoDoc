@@ -937,7 +937,9 @@ describe('Whisper onboarding dependency installation', () => {
   })
 
   it('ready-check requires int8 expected files for fast parakeet-gpu, not bare model directory', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-'))
+    const rootDir = await mkdtemp(
+      join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-')
+    )
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
     await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
@@ -1013,10 +1015,7 @@ describe('Whisper onboarding dependency installation', () => {
         }
       }
 
-      const downloadSpy = vi.spyOn(
-        manager as any,
-        'downloadAndExtractWindowsTranscriptionAsset'
-      )
+      const downloadSpy = vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
       vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
 
       await manager.ensureReady()

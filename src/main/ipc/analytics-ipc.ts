@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import type { AnalyticsLocalSignal } from '../../shared/types'
+import type { AnalyticsLocalSignal, AnalyticsUpgradeTransition } from '../../shared/types'
 import type { AnalyticsStateStore } from '../services/analytics-state-store'
 
 export function registerAnalyticsIpc(analyticsStateStore: AnalyticsStateStore): void {
@@ -16,4 +16,12 @@ export function registerAnalyticsIpc(analyticsStateStore: AnalyticsStateStore): 
   ipcMain.handle('analytics:end-session', () => analyticsStateStore.endSession())
 
   ipcMain.handle('analytics:get-consent-snapshot', () => analyticsStateStore.getConsentSnapshot())
+
+  ipcMain.handle('analytics:get-pending-upgrade', () => analyticsStateStore.getPendingUpgrade())
+
+  ipcMain.handle(
+    'analytics:acknowledge-upgrade',
+    (_event, transition: AnalyticsUpgradeTransition): boolean =>
+      analyticsStateStore.acknowledgePendingUpgrade(transition)
+  )
 }

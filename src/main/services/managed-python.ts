@@ -15,36 +15,39 @@ const MANAGED_PYTHON_TARGETS: ManagedPythonTarget[] = [
     platform: 'darwin',
     arch: 'arm64',
     triplet: 'aarch64-apple-darwin',
-    executableRelativePath: ['python', 'bin', 'python3'],
+    executableRelativePath: ['python', 'bin', 'python3']
   },
   {
     key: 'darwin-x64',
     platform: 'darwin',
     arch: 'x64',
     triplet: 'x86_64-apple-darwin',
-    executableRelativePath: ['python', 'bin', 'python3'],
+    executableRelativePath: ['python', 'bin', 'python3']
   },
   {
     key: 'win32-arm64',
     platform: 'win32',
     arch: 'arm64',
     triplet: 'aarch64-pc-windows-msvc',
-    executableRelativePath: ['python', 'python.exe'],
+    executableRelativePath: ['python', 'python.exe']
   },
   {
     key: 'win32-x64',
     platform: 'win32',
     arch: 'x64',
     triplet: 'x86_64-pc-windows-msvc',
-    executableRelativePath: ['python', 'python.exe'],
-  },
+    executableRelativePath: ['python', 'python.exe']
+  }
 ]
 
 export function getManagedPythonTarget(
   platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
+  arch: NodeJS.Architecture
 ): ManagedPythonTarget | null {
-  return MANAGED_PYTHON_TARGETS.find((target) => target.platform === platform && target.arch === arch) ?? null
+  return (
+    MANAGED_PYTHON_TARGETS.find((target) => target.platform === platform && target.arch === arch) ??
+    null
+  )
 }
 
 export function getManagedPythonArchiveFilename(target: ManagedPythonTarget): string {

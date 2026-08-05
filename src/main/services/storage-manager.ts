@@ -43,8 +43,8 @@ export function getStoragePaths(): StoragePaths {
     managedDownloadPaths: [
       join(userDataPath, MODELS_SUBDIR),
       join(userDataPath, OLLAMA_DATA_SUBDIR),
-      join(userDataPath, PYTHON_ENV_SUBDIR),
-    ],
+      join(userDataPath, PYTHON_ENV_SUBDIR)
+    ]
   }
 }
 
@@ -75,7 +75,7 @@ async function describePath(targetPath: string): Promise<PathDiagnostics> {
   } catch {
     return {
       path: targetPath,
-      kind: 'missing',
+      kind: 'missing'
     }
   }
 
@@ -83,7 +83,7 @@ async function describePath(targetPath: string): Promise<PathDiagnostics> {
     return {
       path: targetPath,
       kind: 'file',
-      sizeBytes: stats.size,
+      sizeBytes: stats.size
     }
   }
 
@@ -92,7 +92,7 @@ async function describePath(targetPath: string): Promise<PathDiagnostics> {
     path: targetPath,
     kind: 'directory',
     entryCount: entries.length,
-    entriesSample: entries.slice(0, 10),
+    entriesSample: entries.slice(0, 10)
   }
 }
 
@@ -102,13 +102,13 @@ export async function getAppStorageInfo(): Promise<AppStorageInfo> {
     getPathSize(paths.recordingsPath),
     getPathSize(paths.logsPath),
     getPathSize(paths.userDataPath),
-    ...paths.managedDownloadPaths.map((targetPath) => getPathSize(targetPath)),
+    ...paths.managedDownloadPaths.map((targetPath) => getPathSize(targetPath))
   ])
 
   const downloadedComponentsBytes = managedSizes.reduce((sum, size) => sum + size, 0)
   const otherLocalDataBytes = Math.max(
     0,
-    totalBytes - downloadedComponentsBytes - recordingsBytes - logsBytes,
+    totalBytes - downloadedComponentsBytes - recordingsBytes - logsBytes
   )
 
   return {
@@ -117,12 +117,12 @@ export async function getAppStorageInfo(): Promise<AppStorageInfo> {
     recordingsBytes,
     logsBytes,
     otherLocalDataBytes,
-    totalBytes,
+    totalBytes
   }
 }
 
 export async function getStorageDiagnostics(
-  extraPaths?: Record<string, string>,
+  extraPaths?: Record<string, string>
 ): Promise<StorageDiagnostics> {
   const paths = getStoragePaths()
   const [recordings, logs, models, ollamaData, pythonEnv] = await Promise.all([
@@ -130,7 +130,7 @@ export async function getStorageDiagnostics(
     describePath(paths.logsPath),
     describePath(join(paths.userDataPath, MODELS_SUBDIR)),
     describePath(join(paths.userDataPath, OLLAMA_DATA_SUBDIR)),
-    describePath(join(paths.userDataPath, PYTHON_ENV_SUBDIR)),
+    describePath(join(paths.userDataPath, PYTHON_ENV_SUBDIR))
   ])
 
   let extraDiagnostics: Record<string, PathDiagnostics> | undefined
@@ -139,9 +139,9 @@ export async function getStorageDiagnostics(
       await Promise.all(
         Object.entries(extraPaths).map(async ([key, targetPath]) => [
           key,
-          await describePath(targetPath),
-        ]),
-      ),
+          await describePath(targetPath)
+        ])
+      )
     )
   }
 
@@ -152,17 +152,15 @@ export async function getStorageDiagnostics(
     managedDownloads: {
       models,
       ollamaData,
-      pythonEnv,
+      pythonEnv
     },
-    extraPaths: extraDiagnostics,
+    extraPaths: extraDiagnostics
   }
 }
 
 export async function clearDownloadedComponents(): Promise<void> {
   const { managedDownloadPaths } = getStoragePaths()
   await Promise.all(
-    managedDownloadPaths.map((targetPath) =>
-      rm(targetPath, { recursive: true, force: true }),
-    ),
+    managedDownloadPaths.map((targetPath) => rm(targetPath, { recursive: true, force: true }))
   )
 }

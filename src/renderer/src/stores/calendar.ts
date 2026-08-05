@@ -24,18 +24,17 @@ export const useCalendarStore = create<CalendarState>((set) => ({
 
   setAccounts: (accounts) => set({ accounts }),
   addAccount: (account) => set((state) => ({ accounts: [...state.accounts, account] })),
-  removeAccount: (accountId) => set((state) => ({
-    accounts: state.accounts.filter((a) => a.id !== accountId),
-  })),
+  removeAccount: (accountId) =>
+    set((state) => ({
+      accounts: state.accounts.filter((a) => a.id !== accountId)
+    })),
   setConnecting: (connecting) => set({ isConnecting: connecting }),
   setEvents: (events) => set({ events }),
   setSyncing: (syncing) => set({ isSyncing: syncing }),
   setAutoRecord: (eventId, mode) =>
     set((state) => ({
-      events: state.events.map((e) =>
-        e.id === eventId ? { ...e, autoRecord: mode } : e
-      ),
-    })),
+      events: state.events.map((e) => (e.id === eventId ? { ...e, autoRecord: mode } : e))
+    }))
 }))
 
 // Derived selector — use in components: const isConnected = useCalendarStore(selectIsConnected)

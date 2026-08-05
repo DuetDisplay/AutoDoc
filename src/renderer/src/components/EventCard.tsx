@@ -10,7 +10,7 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hour12: true
   })
 }
 
@@ -54,9 +54,7 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
           <div className="text-[13.5px] font-semibold text-ink tracking-[-0.01em]">
             {event.title}
           </div>
-          {isRecurring && (
-            <span className="text-[10px] text-ink-faint">Recurring</span>
-          )}
+          {isRecurring && <span className="text-[10px] text-ink-faint">Recurring</span>}
           {isActive && (
             <span className="text-[10px] font-medium text-status-connected">
               {event.autoRecord === 'series' ? 'Auto-recording series' : 'Auto-recording'}
@@ -65,15 +63,24 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
         </div>
         <div className="text-[11.5px] text-ink-faint mt-0.5">
           {formatTime(event.startTime)} - {formatTime(event.endTime)}
-          {platform && <span>  ·  {platform}</span>}
+          {platform && <span> · {platform}</span>}
           {event.attendees.length > 0 && (
-            <span>  ·  {event.attendees.length} attendee{event.attendees.length !== 1 ? 's' : ''}</span>
+            <span>
+              {' '}
+              · {event.attendees.length} attendee{event.attendees.length !== 1 ? 's' : ''}
+            </span>
           )}
         </div>
       </div>
       <div className="relative" ref={menuRef}>
         <button
-          onClick={() => isActive ? handleSelect('off') : (isRecurring ? setShowMenu(!showMenu) : handleSelect('once'))}
+          onClick={() =>
+            isActive
+              ? handleSelect('off')
+              : isRecurring
+                ? setShowMenu(!showMenu)
+                : handleSelect('once')
+          }
           aria-label={isActive ? 'Disable auto-record' : 'Enable auto-record'}
           className={`text-[10px] font-medium px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 ${
             isActive
@@ -81,9 +88,13 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
               : 'bg-bg-accent text-ink-muted border-border-subtle hover:border-ink-muted'
           }`}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-status-connected' : 'bg-ink-faint'}`} />
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-status-connected' : 'bg-ink-faint'}`}
+          />
           {isActive
-            ? event.autoRecord === 'series' ? 'Auto-record: Series' : 'Auto-record: On'
+            ? event.autoRecord === 'series'
+              ? 'Auto-record: Series'
+              : 'Auto-record: On'
             : 'Auto-record: Off'}
         </button>
         {showMenu && (

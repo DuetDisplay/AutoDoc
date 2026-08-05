@@ -31,7 +31,7 @@ const MAX_JSON_BODY_BYTES = 32_768
 const DEFAULT_ALLOWED_CORS_ORIGINS = [
   'http://127.0.0.1:42813',
   'http://localhost:42813',
-  'https://getautodoc.com',
+  'https://getautodoc.com'
 ]
 
 const ROUTES: Record<string, RouteConfig> = {
@@ -42,18 +42,18 @@ const ROUTES: Record<string, RouteConfig> = {
   '/auth/microsoft/callback': {
     methods: ['GET'],
     provider: 'microsoft',
-    rateLimitGroup: 'auth-flow',
+    rateLimitGroup: 'auth-flow'
   },
   '/microsoft/auth': {
     methods: ['POST'],
     provider: 'microsoft',
-    rateLimitGroup: 'token-exchange',
+    rateLimitGroup: 'token-exchange'
   },
   '/microsoft/refresh': {
     methods: ['POST'],
     provider: 'microsoft',
-    rateLimitGroup: 'token-exchange',
-  },
+    rateLimitGroup: 'token-exchange'
+  }
 }
 
 export default {
@@ -72,7 +72,7 @@ export default {
         response = methodNotAllowed(route)
       } else {
         const limited = await enforceRateLimit(request, env, url, route.rateLimitGroup)
-        response = limited ?? await routeRequest(request, env, url)
+        response = limited ?? (await routeRequest(request, env, url))
       }
     } catch (error) {
       logWorkerError(error, url.pathname)
@@ -81,7 +81,7 @@ export default {
 
     logRequest(request, url, response, route?.provider ?? 'unknown', startedAt)
     return response
-  },
+  }
 } satisfies ExportedHandler<Env>
 
 async function routeRequest(request: Request, env: Env, url: URL): Promise<Response> {
@@ -130,7 +130,7 @@ function handleGoogleAuthStart(url: URL, env: Env): Response {
     scope: GOOGLE_SCOPES,
     access_type: 'offline',
     prompt: 'consent',
-    state,
+    state
   })
 
   return Response.redirect(`${GOOGLE_AUTH_URL}?${params.toString()}`, 302)
@@ -185,8 +185,8 @@ async function handleGoogleRefresh(request: Request, env: Env): Promise<Response
       refresh_token: refreshToken,
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
-      grant_type: 'refresh_token',
-    }),
+      grant_type: 'refresh_token'
+    })
   })
 
   const tokens = await readResponseJson(tokenResponse)
@@ -207,7 +207,7 @@ function handleMicrosoftAuthStart(url: URL, env: Env): Response {
     scope: MICROSOFT_SCOPES,
     response_mode: 'query',
     prompt: 'select_account',
-    state,
+    state
   })
 
   return Response.redirect(`${MICROSOFT_AUTH_URL}?${params.toString()}`, 302)
@@ -265,11 +265,7 @@ async function handleMicrosoftAuth(request: Request, env: Env): Promise<Response
   return jsonResponse(tokens, tokenResponse.ok ? 200 : 400, request, env)
 }
 
-async function exchangeGoogleCode(
-  env: Env,
-  code: string,
-  redirectUri: string
-): Promise<Response> {
+async function exchangeGoogleCode(env: Env, code: string, redirectUri: string): Promise<Response> {
   return fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -278,8 +274,8 @@ async function exchangeGoogleCode(
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
       redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
+      grant_type: 'authorization_code'
+    })
   })
 }
 
@@ -296,8 +292,8 @@ async function exchangeMicrosoftCode(
       client_id: env.MICROSOFT_CLIENT_ID,
       client_secret: env.MICROSOFT_CLIENT_SECRET,
       redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
+      grant_type: 'authorization_code'
+    })
   })
 }
 
@@ -319,8 +315,8 @@ async function handleMicrosoftRefresh(request: Request, env: Env): Promise<Respo
       refresh_token: refreshToken,
       client_id: env.MICROSOFT_CLIENT_ID,
       client_secret: env.MICROSOFT_CLIENT_SECRET,
-      grant_type: 'refresh_token',
-    }),
+      grant_type: 'refresh_token'
+    })
   })
 
   const tokens = await readResponseJson(tokenResponse)
@@ -339,7 +335,8 @@ async function enforceRateLimit(
     return null
   }
 
-  const actor = request.headers.get('CF-Connecting-IP') ??
+  const actor =
+    request.headers.get('CF-Connecting-IP') ??
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     'unknown'
   const { success } = await limiter.limit({ key: `${group}:${url.pathname}:${actor}` })
@@ -356,29 +353,41 @@ async function readJsonBody<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; response: Response }> {
   const contentLength = Number(request.headers.get('Content-Length') ?? '0')
   if (Number.isFinite(contentLength) && contentLength > MAX_JSON_BODY_BYTES) {
-    return { ok: false, response: jsonResponse({ error: 'Request body too large' }, 413, request, env) }
+    return {
+      ok: false,
+      response: jsonResponse({ error: 'Request body too large' }, 413, request, env)
+    }
   }
 
   const contentType = request.headers.get('Content-Type') ?? ''
   if (!contentType.toLowerCase().includes('application/json')) {
-    return { ok: false, response: jsonResponse({ error: 'Content-Type must be application/json' }, 415, request, env) }
+    return {
+      ok: false,
+      response: jsonResponse({ error: 'Content-Type must be application/json' }, 415, request, env)
+    }
   }
 
   const text = await request.text()
   if (text.length > MAX_JSON_BODY_BYTES) {
-    return { ok: false, response: jsonResponse({ error: 'Request body too large' }, 413, request, env) }
+    return {
+      ok: false,
+      response: jsonResponse({ error: 'Request body too large' }, 413, request, env)
+    }
   }
 
   try {
     return { ok: true, value: JSON.parse(text) as T }
   } catch {
-    return { ok: false, response: jsonResponse({ error: 'Malformed JSON body' }, 400, request, env) }
+    return {
+      ok: false,
+      response: jsonResponse({ error: 'Malformed JSON body' }, 400, request, env)
+    }
   }
 }
 
 async function readResponseJson(response: Response): Promise<Record<string, unknown>> {
   try {
-    return await response.json() as Record<string, unknown>
+    return (await response.json()) as Record<string, unknown>
   } catch {
     return { error: 'Invalid OAuth provider response' }
   }
@@ -408,10 +417,12 @@ function isAllowedLocalRedirectUri(value: string): boolean {
   try {
     const url = new URL(value)
     const allowedHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost'
-    return url.protocol === 'http:' &&
+    return (
+      url.protocol === 'http:' &&
       allowedHost &&
       url.port === '42813' &&
       url.pathname === '/callback'
+    )
   } catch {
     return false
   }
@@ -429,14 +440,14 @@ function handleOptions(request: Request, env: Env, route: RouteConfig): Response
       ...corsHeaders(request, env),
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Allow-Methods': [...route.methods, 'OPTIONS'].join(', '),
-      'Access-Control-Max-Age': '86400',
-    },
+      'Access-Control-Max-Age': '86400'
+    }
   })
 }
 
 function methodNotAllowed(route: RouteConfig): Response {
   return textResponse('Method not allowed', 405, {
-    Allow: [...route.methods, 'OPTIONS'].join(', '),
+    Allow: [...route.methods, 'OPTIONS'].join(', ')
   })
 }
 
@@ -448,7 +459,7 @@ function jsonResponse(
 ): Response {
   return Response.json(body, {
     status,
-    headers: corsHeaders(request, env),
+    headers: corsHeaders(request, env)
   })
 }
 
@@ -464,14 +475,15 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
 
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Credentials': 'false',
+    'Access-Control-Allow-Credentials': 'false'
   }
 }
 
 function isAllowedCorsOrigin(origin: string, env: Env): boolean {
-  const configured = env.ALLOWED_CORS_ORIGINS?.split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean) ?? []
+  const configured =
+    env.ALLOWED_CORS_ORIGINS?.split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean) ?? []
   return [...DEFAULT_ALLOWED_CORS_ORIGINS, ...configured].includes(origin)
 }
 
@@ -484,32 +496,37 @@ function logRequest(
 ): void {
   const cf = request.cf as { colo?: string; country?: string } | undefined
   const status = response.status
-  const outcome = status === 429
-    ? 'rate_limited'
-    : status >= 500
-      ? 'server_error'
-      : status >= 400
-        ? 'client_error'
-        : 'ok'
+  const outcome =
+    status === 429
+      ? 'rate_limited'
+      : status >= 500
+        ? 'server_error'
+        : status >= 400
+          ? 'client_error'
+          : 'ok'
 
-  console.log(JSON.stringify({
-    event: 'autodoc_auth_request',
-    method: request.method,
-    path: url.pathname,
-    provider,
-    status,
-    outcome,
-    duration_ms: Date.now() - startedAt,
-    colo: cf?.colo,
-    country: cf?.country,
-  }))
+  console.log(
+    JSON.stringify({
+      event: 'autodoc_auth_request',
+      method: request.method,
+      path: url.pathname,
+      provider,
+      status,
+      outcome,
+      duration_ms: Date.now() - startedAt,
+      colo: cf?.colo,
+      country: cf?.country
+    })
+  )
 }
 
 function logWorkerError(error: unknown, path: string): void {
   const message = error instanceof Error ? error.message : String(error)
-  console.error(JSON.stringify({
-    event: 'autodoc_auth_error',
-    path,
-    message,
-  }))
+  console.error(
+    JSON.stringify({
+      event: 'autodoc_auth_error',
+      path,
+      message
+    })
+  )
 }

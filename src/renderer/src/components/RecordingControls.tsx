@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
@@ -13,6 +13,77 @@ import { getSavedSourcePreference } from '../services/recording-source-preferenc
 
 const SCREEN_RECORDING_PERMISSION_MESSAGE =
   'AutoDoc needs Screen Recording access. If you just enabled it, fully quit and reopen AutoDoc, then press Record again.'
+
+function isUsableImageDataUrl(value: string | null | undefined): value is string {
+  if (!value?.startsWith('data:image/')) return false
+  const payloadStart = value.indexOf(',')
+  return payloadStart >= 0 && value.slice(payloadStart + 1).trim().length > 0
+}
+
+function SourcePlaceholder({ isScreen }: { isScreen: boolean }): ReactElement {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={isScreen ? 'screen-source-placeholder' : 'window-source-placeholder'}
+      className="w-20 h-12 shrink-0 rounded border border-border-subtle bg-bg-accent flex items-center justify-center text-ink-faint"
+    >
+      {isScreen ? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          className="w-7 h-7"
+        >
+          <rect x="3.5" y="4.5" width="17" height="12" rx="1.5" />
+          <path d="M9 20h6M12 16.5V20" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          className="w-7 h-7"
+        >
+          <rect x="4" y="4.5" width="16" height="15" rx="2" />
+          <path d="M4 8.5h16M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
+function SourcePreview({ source }: { source: RecordingSource }): ReactElement {
+  const [failedDataUrls, setFailedDataUrls] = useState<string[]>([])
+  const candidates = [
+    ...(isUsableImageDataUrl(source.iconDataUrl)
+      ? [{ dataUrl: source.iconDataUrl, kind: 'icon' as const }]
+      : []),
+    ...(isUsableImageDataUrl(source.thumbnailDataUrl)
+      ? [{ dataUrl: source.thumbnailDataUrl, kind: 'thumbnail' as const }]
+      : [])
+  ]
+  const preview = candidates.find(({ dataUrl }) => !failedDataUrls.includes(dataUrl))
+  const isScreen = source.id.startsWith('screen:')
+
+  if (!preview) {
+    return <SourcePlaceholder isScreen={isScreen} />
+  }
+
+  return (
+    <img
+      src={preview.dataUrl}
+      alt=""
+      aria-hidden="true"
+      data-testid="recording-source-preview"
+      onError={() => setFailedDataUrls((failed) => [...failed, preview.dataUrl])}
+      className={`w-20 h-12 shrink-0 rounded border border-border-subtle ${
+        preview.kind === 'icon' ? 'object-contain p-2 bg-bg-accent' : 'object-cover'
+      }`}
+    />
+  )
+}
 
 interface RecordingControlsProps {
   isRecording: boolean
@@ -31,7 +102,7 @@ export function RecordingControls({
   onStartRecording,
   onStopRecording,
   onFetchSources
-}: RecordingControlsProps) {
+}: RecordingControlsProps): ReactElement {
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
   const {
@@ -57,12 +128,14 @@ export function RecordingControls({
     [events]
   )
 
-  const handleRecordClick = async () => {
+  const handleRecordClick = async (): Promise<void> => {
     setLoading(true)
     try {
       const fetchedSources = await onFetchSources()
       if (fetchedSources.length === 0) {
-        throw new Error('No capture sources were available. Screen recording permission may be missing.')
+        throw new Error(
+          'No capture sources were available. Screen recording permission may be missing.'
+        )
       }
       const selection = chooseAutoRecordSource(
         fetchedSources,
@@ -100,7 +173,7 @@ export function RecordingControls({
     }
   }
 
-  const handleSourceSelect = (source: RecordingSource) => {
+  const handleSourceSelect = (source: RecordingSource): void => {
     closePicker()
     const detectedSource = detectedId
       ? (sources.find((candidate) => candidate.id === detectedId) ?? null)
@@ -145,15 +218,11 @@ export function RecordingControls({
                 <button
                   key={source.id}
                   onClick={() => handleSourceSelect(source)}
-                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent transition-colors text-left ${
+                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors text-left ${
                     source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
                   }`}
                 >
-                  <img
-                    src={source.thumbnailDataUrl}
-                    alt={source.name}
-                    className="w-20 h-12 object-cover rounded border border-border-subtle"
-                  />
+                  <SourcePreview source={source} />
                   <div className="flex flex-col flex-1 min-w-0">
                     <span className="text-[12px] text-ink truncate">{source.name}</span>
                     {source.id === detectedId && suggestionLabel && (

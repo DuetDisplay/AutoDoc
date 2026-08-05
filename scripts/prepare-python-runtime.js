@@ -13,20 +13,20 @@ const BUNDLE_DIR = join(process.cwd(), 'vendor', 'python-runtime-bundle')
 const TARGETS = {
   'darwin-arm64': {
     platform: 'darwin',
-    triplet: 'aarch64-apple-darwin',
+    triplet: 'aarch64-apple-darwin'
   },
   'darwin-x64': {
     platform: 'darwin',
-    triplet: 'x86_64-apple-darwin',
+    triplet: 'x86_64-apple-darwin'
   },
   'win32-arm64': {
     platform: 'win32',
-    triplet: 'aarch64-pc-windows-msvc',
+    triplet: 'aarch64-pc-windows-msvc'
   },
   'win32-x64': {
     platform: 'win32',
-    triplet: 'x86_64-pc-windows-msvc',
-  },
+    triplet: 'x86_64-pc-windows-msvc'
+  }
 }
 
 function getArchiveFilename(target) {
@@ -138,9 +138,8 @@ async function ensureBundledRuntime(targetKey) {
   const archiveFilename = getArchiveFilename(target)
   const archivePath = join(OUTPUT_DIR, archiveFilename)
   const runtimeDir = join(BUNDLE_DIR, targetKey)
-  const pythonRelativePath = target.platform === 'win32'
-    ? ['python', 'python.exe']
-    : ['python', 'bin', 'python3']
+  const pythonRelativePath =
+    target.platform === 'win32' ? ['python', 'python.exe'] : ['python', 'bin', 'python3']
   const pythonPath = join(runtimeDir, ...pythonRelativePath)
 
   if (await fileExists(pythonPath)) {

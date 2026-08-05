@@ -6,7 +6,7 @@ import {
   connectE2ECalendar,
   disconnectE2ECalendar,
   getE2ECalendarAccounts,
-  getE2ECalendarEvents,
+  getE2ECalendarEvents
 } from '../services/e2e-fixtures'
 import { logAutodocFailure } from '../services/autodoc-log'
 import { getConfiguredAuthWorkerUrl, isOfficialAutoDocBuild } from '../services/distribution-config'
@@ -16,7 +16,7 @@ const isE2E = process.env.AUTODOC_E2E === '1'
 export function registerCalendarIpc(
   calendarManager: CalendarManager,
   onEventsUpdated?: (events: CalendarEvent[]) => void,
-  onConnectionChanged?: (connected: boolean) => void,
+  onConnectionChanged?: (connected: boolean) => void
 ): void {
   ipcMain.handle('calendar:connect', async (_event, providerType: 'google' | 'microsoft') => {
     if (isE2E) {
@@ -147,15 +147,18 @@ export function registerCalendarIpc(
     return enriched
   })
 
-  ipcMain.handle('calendar:set-auto-record', (_event, eventId: string, recurringEventId: string | null, mode: AutoRecordMode) => {
-    setAutoRecord(eventId, recurringEventId, mode)
-  })
+  ipcMain.handle(
+    'calendar:set-auto-record',
+    (_event, eventId: string, recurringEventId: string | null, mode: AutoRecordMode) => {
+      setAutoRecord(eventId, recurringEventId, mode)
+    }
+  )
 }
 
 function applyAutoRecordState(events: CalendarEvent[]): CalendarEvent[] {
   return events.map((e) => ({
     ...e,
-    autoRecord: getAutoRecordMode(e.id, e.recurringEventId),
+    autoRecord: getAutoRecordMode(e.id, e.recurringEventId)
   }))
 }
 

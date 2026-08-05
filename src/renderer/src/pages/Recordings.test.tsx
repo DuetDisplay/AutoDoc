@@ -24,17 +24,21 @@ describe('Recordings', () => {
               duration: 60,
               hasVideo: true,
               hasAudio: true,
-              transcriptionStatus: 'complete',
-            },
+              transcriptionStatus: 'complete'
+            }
           ])
         }
         if (channel === 'segmentation:get-status') {
-          const value = segmentationStatuses[Math.min(segmentationStatusCall, segmentationStatuses.length - 1)]
+          const value =
+            segmentationStatuses[Math.min(segmentationStatusCall, segmentationStatuses.length - 1)]
           segmentationStatusCall += 1
           return Promise.resolve(value)
         }
         if (channel === 'segmentation:get-progress') {
-          const value = segmentationProgress[Math.min(segmentationProgressCall, segmentationProgress.length - 1)]
+          const value =
+            segmentationProgress[
+              Math.min(segmentationProgressCall, segmentationProgress.length - 1)
+            ]
           segmentationProgressCall += 1
           return Promise.resolve(value)
         }
@@ -42,7 +46,7 @@ describe('Recordings', () => {
         if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
   })
 
@@ -55,7 +59,7 @@ describe('Recordings', () => {
       render(
         <MemoryRouter>
           <Recordings />
-        </MemoryRouter>,
+        </MemoryRouter>
       )
     })
 
@@ -91,17 +95,21 @@ describe('Recordings', () => {
               duration: 60,
               hasVideo: true,
               hasAudio: true,
-              transcriptionStatus: 'complete',
-            },
+              transcriptionStatus: 'complete'
+            }
           ])
         }
         if (channel === 'segmentation:get-status') {
-          const value = segmentationStatuses[Math.min(segmentationStatusCall, segmentationStatuses.length - 1)]
+          const value =
+            segmentationStatuses[Math.min(segmentationStatusCall, segmentationStatuses.length - 1)]
           segmentationStatusCall += 1
           return Promise.resolve(value)
         }
         if (channel === 'segmentation:get-progress') {
-          const value = segmentationProgress[Math.min(segmentationProgressCall, segmentationProgress.length - 1)]
+          const value =
+            segmentationProgress[
+              Math.min(segmentationProgressCall, segmentationProgress.length - 1)
+            ]
           segmentationProgressCall += 1
           return Promise.resolve(value)
         }
@@ -109,14 +117,14 @@ describe('Recordings', () => {
         if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await act(async () => {
       render(
         <MemoryRouter>
           <Recordings />
-        </MemoryRouter>,
+        </MemoryRouter>
       )
     })
 
@@ -124,7 +132,7 @@ describe('Recordings', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByText('Transcript only')).toBeInTheDocument()
+    expect(screen.getByText('No notes generated')).toBeInTheDocument()
     expect(screen.queryByText(/Notes failed/)).not.toBeInTheDocument()
   })
 
@@ -147,8 +155,8 @@ describe('Recordings', () => {
               duration: 120,
               hasVideo: false,
               hasAudio: true,
-              transcriptionStatus: 'queued',
-            },
+              transcriptionStatus: 'queued'
+            }
           ])
         }
         if (channel === 'segmentation:get-status') return Promise.resolve('pending')
@@ -157,14 +165,14 @@ describe('Recordings', () => {
         if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await act(async () => {
       render(
         <MemoryRouter>
           <Recordings />
-        </MemoryRouter>,
+        </MemoryRouter>
       )
     })
 
@@ -196,8 +204,8 @@ describe('Recordings', () => {
               hasVideo: false,
               hasAudio: false,
               isFinalizing: true,
-              transcriptionStatus: 'pending',
-            },
+              transcriptionStatus: 'pending'
+            }
           ])
         }
         if (channel === 'segmentation:get-status') return Promise.resolve('pending')
@@ -206,14 +214,14 @@ describe('Recordings', () => {
         if (channel === 'transcription:get-progress') return Promise.resolve(undefined)
         return Promise.resolve(undefined)
       }),
-      on: vi.fn(() => () => {}),
+      on: vi.fn(() => () => {})
     } as any
 
     await act(async () => {
       render(
         <MemoryRouter>
           <Recordings />
-        </MemoryRouter>,
+        </MemoryRouter>
       )
     })
 

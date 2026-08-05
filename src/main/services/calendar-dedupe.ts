@@ -1,9 +1,6 @@
 import type { CalendarAccount, CalendarEvent, OAuthTokens } from '../../shared/types'
 
-const UNKNOWN_ACCOUNT_EMAILS = new Set([
-  'unknown@gmail.com',
-  'unknown@outlook.com',
-])
+const UNKNOWN_ACCOUNT_EMAILS = new Set(['unknown@gmail.com', 'unknown@outlook.com'])
 
 export function isPlaceholderCalendarEmail(email: string): boolean {
   const normalized = email.trim().toLowerCase()
@@ -25,7 +22,7 @@ function normalizeTokenValue(token: string | undefined): string | null {
 
 export function getCalendarAccountIdentity(
   account: CalendarAccount,
-  tokens: Partial<OAuthTokens> | null | undefined,
+  tokens: Partial<OAuthTokens> | null | undefined
 ): string | null {
   const email = normalizeAccountEmail(account.email)
   if (email) {
@@ -49,7 +46,7 @@ export function isSameCalendarAccount(
   a: CalendarAccount,
   b: CalendarAccount,
   aTokens?: Partial<OAuthTokens> | null,
-  bTokens?: Partial<OAuthTokens> | null,
+  bTokens?: Partial<OAuthTokens> | null
 ): boolean {
   if (a.id === b.id) return true
   if (a.provider !== b.provider) return false

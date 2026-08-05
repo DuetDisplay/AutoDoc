@@ -101,7 +101,9 @@ describe('App', () => {
 
     state.accounts = []
     state.events = []
-    api.emit('calendar:connection-changed', false)
+    act(() => {
+      api.emit('calendar:connection-changed', false)
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /connect google calendar/i })).toBeInTheDocument()
@@ -231,7 +233,9 @@ describe('App', () => {
     const bannerTitle = await screen.findByText("You're up to date")
     expect(screen.getByText('AutoDoc is running the latest available version.')).toBeInTheDocument()
     expect(
-      Boolean(bannerTitle.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
+      Boolean(
+        bannerTitle.compareDocumentPosition(settingsHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+      )
     ).toBe(true)
 
     await userEvent.click(screen.getByRole('button', { name: /dismiss up to date message/i }))

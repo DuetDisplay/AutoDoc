@@ -3,7 +3,12 @@ import { migrateLegacyTokens, hasTokensForAccount, loadTokensForAccount } from '
 import { GoogleCalendarProvider } from './calendar'
 import { MicrosoftCalendarProvider } from './microsoft-calendar'
 import type { CalendarProvider } from './calendar-types'
-import { dedupeCalendarEvents, getCalendarAccountIdentity, isPlaceholderCalendarEmail, isSameCalendarAccount } from './calendar-dedupe'
+import {
+  dedupeCalendarEvents,
+  getCalendarAccountIdentity,
+  isPlaceholderCalendarEmail,
+  isSameCalendarAccount
+} from './calendar-dedupe'
 import type { CalendarAccount, CalendarEvent, OAuthTokens } from '../../shared/types'
 import { logAutodocFailure } from './autodoc-log'
 import { captureMessage } from './sentry-reporter'
@@ -19,7 +24,10 @@ let _accountStore: Store<{ accounts: CalendarAccount[] }> | null = null
 function getAccountStore(): Store<{ accounts: CalendarAccount[] }> {
   // Lazily construct so the store resolves `userData` on first use, after the
   // main process has had a chance to repath it (dev/e2e/test isolation).
-  if (!_accountStore) _accountStore = new Store<{ accounts: CalendarAccount[] }>({ name: 'autodoc-calendar-accounts' })
+  if (!_accountStore)
+    _accountStore = new Store<{ accounts: CalendarAccount[] }>({
+      name: 'autodoc-calendar-accounts'
+    })
   return _accountStore
 }
 
@@ -34,7 +42,7 @@ export class CalendarManager {
   constructor() {
     this.providers = new Map<string, CalendarProvider>([
       ['google', new GoogleCalendarProvider()],
-      ['microsoft', new MicrosoftCalendarProvider()],
+      ['microsoft', new MicrosoftCalendarProvider()]
     ])
   }
 
@@ -67,7 +75,7 @@ export class CalendarManager {
         id: migratedAccountId,
         provider: 'google',
         email,
-        connectedAt: Date.now(),
+        connectedAt: Date.now()
       }
 
       saved.push(migratedAccount)
@@ -110,8 +118,14 @@ export class CalendarManager {
         await existingProvider?.disconnect(existing.id)
       }
 
-      this.accounts = this.accounts.filter((existing) =>
-        !isSameCalendarAccount(existing, account, this.getAccountTokens(existing.id), accountTokens)
+      this.accounts = this.accounts.filter(
+        (existing) =>
+          !isSameCalendarAccount(
+            existing,
+            account,
+            this.getAccountTokens(existing.id),
+            accountTokens
+          )
       )
       this.accounts.push(account)
       this.saveAccounts()
@@ -124,9 +138,7 @@ export class CalendarManager {
   }
 
   async cancelConnect(): Promise<void> {
-    await Promise.all(
-      Array.from(this.providers.values(), (provider) => provider.cancelConnect?.())
-    )
+    await Promise.all(Array.from(this.providers.values(), (provider) => provider.cancelConnect?.()))
   }
 
   async disconnect(accountId: string): Promise<void> {
@@ -185,15 +197,18 @@ export class CalendarManager {
           )
           continue
         }
-        console.error(`Failed to fetch events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
+        console.error(
+          `Failed to fetch events for account ${account?.email ?? account?.provider ?? 'unknown'}:`,
+          result.reason
+        )
         logAutodocFailure({
           area: 'calendar',
           message: 'Failed to fetch upcoming calendar events for account',
           error: result.reason,
           context: {
             provider: account?.provider ?? 'unknown',
-            accountIndex: i,
-          },
+            accountIndex: i
+          }
         })
       }
     }
@@ -244,15 +259,18 @@ export class CalendarManager {
           )
           continue
         }
-        console.error(`Failed to fetch recent events for account ${account?.email ?? account?.provider ?? 'unknown'}:`, result.reason)
+        console.error(
+          `Failed to fetch recent events for account ${account?.email ?? account?.provider ?? 'unknown'}:`,
+          result.reason
+        )
         logAutodocFailure({
           area: 'calendar',
           message: 'Failed to fetch recent calendar events for account',
           error: result.reason,
           context: {
             provider: account?.provider ?? 'unknown',
-            accountIndex: i,
-          },
+            accountIndex: i
+          }
         })
       }
     }
@@ -270,29 +288,32 @@ export class CalendarManager {
           area: 'calendar',
           message: 'Initial calendar sync failed',
           error: err,
-          context: { accountCount: this.accounts.length },
+          context: { accountCount: this.accounts.length }
         })
       })
 
     // Then every 5 minutes
-    this.syncInterval = setInterval(async () => {
-      if (this.syncing) return
-      this.syncing = true
-      try {
-        const events = await this.fetchAllUpcomingEvents()
-        callback(events)
-      } catch (err) {
-        console.error('Calendar sync failed:', err)
-        logAutodocFailure({
-          area: 'calendar',
-          message: 'Scheduled calendar sync failed',
-          error: err,
-          context: { accountCount: this.accounts.length },
-        })
-      } finally {
-        this.syncing = false
-      }
-    }, 5 * 60 * 1000)
+    this.syncInterval = setInterval(
+      async () => {
+        if (this.syncing) return
+        this.syncing = true
+        try {
+          const events = await this.fetchAllUpcomingEvents()
+          callback(events)
+        } catch (err) {
+          console.error('Calendar sync failed:', err)
+          logAutodocFailure({
+            area: 'calendar',
+            message: 'Scheduled calendar sync failed',
+            error: err,
+            context: { accountCount: this.accounts.length }
+          })
+        } finally {
+          this.syncing = false
+        }
+      },
+      5 * 60 * 1000
+    )
   }
 
   stopSync(): void {
@@ -353,7 +374,9 @@ export class CalendarManager {
     return loadTokensForAccount(accountId) as Partial<OAuthTokens> | null
   }
 
-  private async refreshUnknownAccountEmails(accounts: CalendarAccount[]): Promise<CalendarAccount[]> {
+  private async refreshUnknownAccountEmails(
+    accounts: CalendarAccount[]
+  ): Promise<CalendarAccount[]> {
     return await Promise.all(
       accounts.map(async (account) => {
         if (!isPlaceholderCalendarEmail(account.email)) {
@@ -371,7 +394,7 @@ export class CalendarManager {
         } catch {
           return account.email ? { ...account, email: '' } : account
         }
-      }),
+      })
     )
   }
 

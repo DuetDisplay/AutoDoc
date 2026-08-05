@@ -1,18 +1,19 @@
-# PRIVATE MAIN INVARIANT — keep this workflow on AutoDoc-Internal/main when
-# syncing from the public AutoDoc repository. Never copy or merge this file into
-# DuetDisplay/AutoDoc. macOS internal artifacts are Developer ID signed and
-# notarized; Windows internal artifacts deliberately remain unsigned so internal
-# builds do not consume the finite DigiCert signing allotment.
+# Internal Release — INTERNAL-ONLY workflow. Do NOT merge this file to the public
+# AutoDoc repo; it exists only in the private AutoDoc-Internal fork.
 #
-# Publishes internal builds to a generic HTTPS update feed hosted on Cloudflare R2.
+# Produces internal QA prereleases and stable internal releases via the internal
+# update-feed overlay. All macOS artifacts are Developer ID signed and notarized;
+# Windows internal artifacts remain unsigned to avoid consuming DigiCert quota.
 #
 # Required secrets:
 #   INTERNAL_FEED_UPLOAD_TOKEN — bearer token for the feed uploader worker
 #     (scripts/internal-update-feed-worker; rotate with `wrangler secret put
 #     UPLOAD_TOKEN` there and update this GitHub secret to match)
-#   (plus the Apple signing secrets shared with build.yml for macOS only)
+#   (plus the Apple signing secrets shared with build.yml for every macOS build)
 #
-# Tag format: internal-vX.Y.Z.N maps to app version X.Y.Z-internal.N
+# Tag formats:
+#   internal-vX.Y.Z.N → QA app version X.Y.Z-internal.N
+#   internal-vX.Y.Z   → stable app version X.Y.Z
 #   e.g. internal-v1.1.0.7 → 1.1.0-internal.7
 
 name: Internal Release
@@ -35,12 +36,12 @@ on:
           - windows
           - all
       publish:
-        description: Publish artifacts to the internal update feed (uncheck for a signed one-off build)
+        description: Publish artifacts to the internal update feed
         required: false
         default: true
         type: boolean
       version:
-        description: Internal version to stamp (e.g. 1.1.0-internal.8)
+        description: Version to stamp (e.g. 1.1.1-internal.1 or 1.1.1)
         required: true
         type: string
 
@@ -71,19 +72,26 @@ jobs:
           if [ "$EVENT_NAME" = "push" ]; then
             tag="${RAW_TAG#refs/tags/}"
             stripped="${tag#internal-v}"
-            if [[ ! "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Tag '$tag' does not match internal-vX.Y.Z.N (e.g. internal-v1.1.0.7)." >&2
+            if [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              version="$stripped"
+            elif [[ "$stripped" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              # internal-v1.1.0.7 → 1.1.0-internal.7
+              version="${stripped%.*}-internal.${stripped##*.}"
+            else
+              echo "::error::Tag '$tag' must match internal-vX.Y.Z (stable) or internal-vX.Y.Z.N (QA)." >&2
               exit 1
             fi
-            # internal-v1.1.0.7 → 1.1.0-internal.7: last dot-segment becomes -internal.N
-            version="${stripped%.*}-internal.${stripped##*.}"
             publish='true'
             build_mac='true'
             build_win='true'
           else
             version="$INPUT_VERSION"
-            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
-              echo "::error::Version '$version' does not match X.Y.Z-internal.N (e.g. 1.1.0-internal.8)." >&2
+            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internal\.[0-9]+$ ]]; then
+              :
+            elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              :
+            else
+              echo "::error::Version '$version' must match X.Y.Z (stable) or X.Y.Z-internal.N (QA)." >&2
               exit 1
             fi
             publish="$INPUT_PUBLISH"
@@ -116,6 +124,7 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
+      AUTODOC_SUPPORT_EMAIL: team@getautodoc.com
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
@@ -169,11 +178,11 @@ jobs:
 
       - name: Verify macOS release artifacts (signature, entitlements, runtime)
         env:
-          AUTODOC_MAC_APP_NAME: AutoDoc Internal.app
+          AUTODOC_MAC_APP_NAME: AutoDoc.app
         run: bash scripts/verify-macos-update-artifact.sh dist
 
-      # electron-builder derives the update channel from the version's prerelease
-      # tag, so internal builds emit internal-mac.yml (not latest-mac.yml).
+      # electron-builder emits internal-mac.yml for QA prereleases and
+      # latest-mac.yml for stable versions.
       - name: Upload macOS internal release assets
         if: success()
         uses: actions/upload-artifact@v7.0.1
@@ -182,7 +191,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/internal-mac.yml
+            dist/*-mac.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -198,6 +207,7 @@ jobs:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
       AUTODOC_SENTRY_QA_PROBE: ${{ github.repository == 'DuetDisplay/AutoDoc-Internal' && '1' || '' }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
+      AUTODOC_SUPPORT_EMAIL: team@getautodoc.com
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
@@ -229,6 +239,9 @@ jobs:
         shell: pwsh
         run: |
           npm run build
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           npx electron-builder --win --publish never --config electron-builder.internal.yml --config.win.forceCodeSigning=false "-c.extraMetadata.version=${{ needs.resolve-meta.outputs.version }}"
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -262,6 +275,7 @@ jobs:
           path: |
             dist/*-setup.exe
             dist/internal.yml
+            dist/latest.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -308,36 +322,39 @@ jobs:
           set -euo pipefail
 
           # Upload ordering matters: binaries (installers/zips/dmgs) go up FIRST and the
-          # feed metadata (internal.yml / internal-mac.yml) goes up LAST, so the feed
-          # never advertises a version whose binary has not been uploaded yet.
-          # (electron-builder derives channel "internal" from the prerelease version
-          # tag, so the feed files are internal*.yml, not latest*.yml.)
+          # Feed metadata (internal.yml / internal-mac.yml for QA, or latest.yml /
+          # latest-mac.yml for stable) goes up LAST, so the feed never advertises
+          # a version whose binary has not been uploaded yet.
 
           if [ -d release-assets/mac ]; then
+            mac_manifest="$(find release-assets/mac -maxdepth 1 -type f -name '*-mac.yml' -print -quit || true)"
             for file in release-assets/mac/*; do
+              [ -f "$file" ] || continue
               name="$(basename "$file")"
-              if [ "$name" = "internal-mac.yml" ]; then
+              if [ "$file" = "$mac_manifest" ]; then
                 continue
               fi
               bash scripts/upload-internal-feed.sh "$file" "mac/$name"
             done
-            if [ -f release-assets/mac/internal-mac.yml ]; then
-              bash scripts/upload-internal-feed.sh release-assets/mac/internal-mac.yml \
-                mac/internal-mac.yml text/yaml
+            if [ -n "$mac_manifest" ]; then
+              bash scripts/upload-internal-feed.sh "$mac_manifest" \
+                "mac/$(basename "$mac_manifest")" text/yaml
             fi
           fi
 
           if [ -d release-assets/win ]; then
+            win_manifest="$(find release-assets/win -maxdepth 1 -type f \( -name 'internal.yml' -o -name 'latest.yml' \) -print -quit || true)"
             for file in release-assets/win/*; do
+              [ -f "$file" ] || continue
               name="$(basename "$file")"
-              if [ "$name" = "internal.yml" ]; then
+              if [ "$file" = "$win_manifest" ]; then
                 continue
               fi
               bash scripts/upload-internal-feed.sh "$file" "windows/$name"
             done
-            if [ -f release-assets/win/internal.yml ]; then
-              bash scripts/upload-internal-feed.sh release-assets/win/internal.yml \
-                windows/internal.yml text/yaml
+            if [ -n "$win_manifest" ]; then
+              bash scripts/upload-internal-feed.sh "$win_manifest" \
+                "windows/$(basename "$win_manifest")" text/yaml
             fi
           fi
 
@@ -361,5 +378,9 @@ jobs:
           if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber -R "$GH_REPO"
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
+            release_flags=()
+            if [[ "$RELEASE_TAG" =~ ^internal-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" "${release_flags[@]}" --verify-tag --title "$RELEASE_TAG" -R "$GH_REPO"
           fi

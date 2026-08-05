@@ -14,20 +14,20 @@ const PYTHON_VERSION = '3.11.15'
 const TARGETS = {
   'darwin-arm64': {
     executable: ['python', 'bin', 'python3'],
-    triplet: 'aarch64-apple-darwin',
+    triplet: 'aarch64-apple-darwin'
   },
   'darwin-x64': {
     executable: ['python', 'bin', 'python3'],
-    triplet: 'x86_64-apple-darwin',
+    triplet: 'x86_64-apple-darwin'
   },
   'win32-arm64': {
     executable: ['python', 'python.exe'],
-    triplet: 'aarch64-pc-windows-msvc',
+    triplet: 'aarch64-pc-windows-msvc'
   },
   'win32-x64': {
     executable: ['python', 'python.exe'],
-    triplet: 'x86_64-pc-windows-msvc',
-  },
+    triplet: 'x86_64-pc-windows-msvc'
+  }
 }
 
 function getCurrentTarget() {
@@ -61,7 +61,9 @@ function run(command, args, env = process.env) {
 async function ensureManagedPythonExtracted(target) {
   const archivePath = join(process.cwd(), 'vendor', 'python-runtime', getArchiveFilename(target))
   if (!(await fileExists(archivePath))) {
-    throw new Error(`Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`)
+    throw new Error(
+      `Managed Python archive not found at ${archivePath}. Run prepare-python-runtime first.`
+    )
   }
 
   const pythonPath = join(TMP_DIR, ...target.executable)
@@ -90,7 +92,7 @@ async function ensureModelSnapshot() {
 
   if (!HF_TOKEN) {
     throw new Error(
-      'HF_TOKEN/HUGGINGFACE_TOKEN is required to bundle the speaker diarization model. Add it to your local environment or CI secrets before running the build.',
+      'HF_TOKEN/HUGGINGFACE_TOKEN is required to bundle the speaker diarization model. Add it to your local environment or CI secrets before running the build.'
     )
   }
 
@@ -106,19 +108,15 @@ async function ensureModelSnapshot() {
     `    local_dir=r"${MODEL_DIR}",`,
     '    token=os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN"),',
     '    local_dir_use_symlinks=False,',
-    ')',
+    ')'
   ].join('\n')
 
   console.log('[diarization-model] Downloading bundled community-1 snapshot')
-  await run(
-    pythonPath,
-    ['-c', code],
-    {
-      ...process.env,
-      HF_TOKEN,
-      HUGGINGFACE_TOKEN: HF_TOKEN,
-    },
-  )
+  await run(pythonPath, ['-c', code], {
+    ...process.env,
+    HF_TOKEN,
+    HUGGINGFACE_TOKEN: HF_TOKEN
+  })
 }
 
 ensureModelSnapshot().catch((err) => {

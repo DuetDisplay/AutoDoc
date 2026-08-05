@@ -1,14 +1,10 @@
-import type {
-  E2EDetectionState,
-  E2EPermissionRequestState,
-  E2EScenario,
-} from '../../shared/e2e'
+import type { E2EDetectionState, E2EPermissionRequestState, E2EScenario } from '../../shared/e2e'
 import type {
   CalendarAccount,
   CalendarEvent,
   OllamaSetupStatus,
   RecordingSource,
-  WhisperSetupStatus,
+  WhisperSetupStatus
 } from '../../shared/types'
 
 const DEFAULT_RECORDING_SOURCES: RecordingSource[] = [
@@ -16,18 +12,18 @@ const DEFAULT_RECORDING_SOURCES: RecordingSource[] = [
     id: 'screen:e2e-display',
     name: 'E2E Display',
     thumbnailDataUrl:
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2p8i4AAAAASUVORK5CYII=',
-  },
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2p8i4AAAAASUVORK5CYII='
+  }
 ]
 
 const DEFAULT_WHISPER_STATUS: WhisperSetupStatus = {
   phase: 'ready',
-  percent: 100,
+  percent: 100
 }
 
 const DEFAULT_OLLAMA_STATUS: OllamaSetupStatus = {
   phase: 'ready',
-  percent: 100,
+  percent: 100
 }
 
 function clone<T>(value: T): T {
@@ -51,25 +47,21 @@ function parseScenario(): E2EScenario {
 const scenario = parseScenario()
 const platform = scenario.platform ?? process.platform
 const permissions = {
-  microphone: scenario.permissions?.microphone ?? (platform === 'win32'),
-  screen: scenario.permissions?.screen ?? (platform === 'win32'),
+  microphone: scenario.permissions?.microphone ?? platform === 'win32',
+  screen: scenario.permissions?.screen ?? platform === 'win32'
 }
 const permissionRequestResults = {
-  microphone: scenario.permissionRequests?.microphone,
+  microphone: scenario.permissionRequests?.microphone
 }
 const whisperRetryStatuses = [...(scenario.whisper?.retryStatuses ?? [])]
 const ollamaRetryStatuses = [...(scenario.ollama?.retryStatuses ?? [])]
 
-let whisperStatus: WhisperSetupStatus = clone(
-  scenario.whisper?.status ?? DEFAULT_WHISPER_STATUS,
-)
-let ollamaStatus: OllamaSetupStatus = clone(
-  scenario.ollama?.status ?? DEFAULT_OLLAMA_STATUS,
-)
+let whisperStatus: WhisperSetupStatus = clone(scenario.whisper?.status ?? DEFAULT_WHISPER_STATUS)
+let ollamaStatus: OllamaSetupStatus = clone(scenario.ollama?.status ?? DEFAULT_OLLAMA_STATUS)
 let calendarAccounts: CalendarAccount[] = clone(scenario.calendar?.accounts ?? [])
 const calendarEvents: CalendarEvent[] = clone(scenario.calendar?.events ?? [])
 const recordingSources: RecordingSource[] = clone(
-  scenario.recording?.sources ?? DEFAULT_RECORDING_SOURCES,
+  scenario.recording?.sources ?? DEFAULT_RECORDING_SOURCES
 )
 let detectionState: E2EDetectionState = clone({
   providerActiveIds: scenario.detection?.providerActiveIds ?? [],
@@ -78,10 +70,10 @@ let detectionState: E2EDetectionState = clone({
     scenario.detection?.windowSources ??
     recordingSources
       .filter((source) => !source.id.startsWith('screen:'))
-      .map((source) => ({ id: source.id, name: source.name })),
+      .map((source) => ({ id: source.id, name: source.name }))
 })
 let permissionRequestState: E2EPermissionRequestState = {
-  microphoneRequests: 0,
+  microphoneRequests: 0
 }
 
 export function getE2EPermissions(): { microphone: boolean; screen: boolean } {
@@ -91,7 +83,7 @@ export function getE2EPermissions(): { microphone: boolean; screen: boolean } {
 export function requestE2EMicrophoneAccess(): boolean {
   permissionRequestState = {
     ...permissionRequestState,
-    microphoneRequests: permissionRequestState.microphoneRequests + 1,
+    microphoneRequests: permissionRequestState.microphoneRequests + 1
   }
 
   const granted = permissionRequestResults.microphone ?? permissions.microphone
@@ -158,7 +150,7 @@ export function connectE2ECalendar(provider: 'google' | 'microsoft'): CalendarAc
     id: `e2e-${provider}-${calendarAccounts.length + 1}`,
     provider,
     email: `e2e-${provider}@example.com`,
-    connectedAt: Date.now(),
+    connectedAt: Date.now()
   }
 
   calendarAccounts = [...calendarAccounts, account]
@@ -184,7 +176,7 @@ export function getE2EDetectionState(): E2EDetectionState {
 export function setE2EDetectionState(nextState: Partial<E2EDetectionState>): E2EDetectionState {
   detectionState = clone({
     ...detectionState,
-    ...nextState,
+    ...nextState
   })
   return getE2EDetectionState()
 }

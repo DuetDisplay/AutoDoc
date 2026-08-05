@@ -2,27 +2,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AudioConverter } from '../audio-converter'
 
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn()
 }))
 
 const mockSpawn = vi.mocked(await import('child_process')).spawn
 
 function createMockProcess(exitCode: number, stderr = '') {
   const proc = {
-    on: vi.fn((event: string, cb: Function) => {
+    on: vi.fn((event: string, cb: (exitCode: number) => void) => {
       if (event === 'close') {
         setTimeout(() => cb(exitCode), 0)
       }
       return proc
     }),
     stderr: {
-      on: vi.fn((event: string, cb: Function) => {
+      on: vi.fn((event: string, cb: (data: Buffer) => void) => {
         if (event === 'data' && stderr) {
           setTimeout(() => cb(Buffer.from(stderr)), 0)
         }
         return proc.stderr
-      }),
-    },
+      })
+    }
   }
   return proc
 }
@@ -40,10 +40,18 @@ describe('AudioConverter', () => {
 
     await converter.convert('/input/audio.webm', '/output/audio.wav', '/bin/ffmpeg')
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      '/bin/ffmpeg',
-      ['-i', '/input/audio.webm', '-ar', '16000', '-ac', '1', '-f', 'wav', '-y', '/output/audio.wav'],
-    )
+    expect(mockSpawn).toHaveBeenCalledWith('/bin/ffmpeg', [
+      '-i',
+      '/input/audio.webm',
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-f',
+      'wav',
+      '-y',
+      '/output/audio.wav'
+    ])
   })
 
   it('resolves on exit code 0', async () => {

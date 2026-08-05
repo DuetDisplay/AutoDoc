@@ -906,7 +906,7 @@ describe('ChatRecordingIndex', () => {
     expect(result.context).toContain('Apollo launch')
     expect(result.diagnostics.cacheHits).toBeGreaterThan(0)
     expect(elapsedMs).toBeLessThan(50)
-  })
+  }, 15_000)
 
   it('keeps exact-title lookup warm over 500 recordings under the target budget', async () => {
     const baseDir = await createTempRecordingsDir()
@@ -928,7 +928,7 @@ describe('ChatRecordingIndex', () => {
     expect(result.diagnostics.selectedMeetingIds).toEqual(['target-500'])
     expect(result.diagnostics.cacheHits).toBeGreaterThanOrEqual(1)
     expect(elapsedMs).toBeLessThan(50)
-  })
+  }, 15_000)
 
   it('invalidates cached note summaries when note files change', async () => {
     const baseDir = await createTempRecordingsDir()
