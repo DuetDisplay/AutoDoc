@@ -11,10 +11,18 @@
 #     UPLOAD_TOKEN` there and update this GitHub secret to match)
 #   (plus the Apple signing secrets shared with build.yml for every macOS build)
 #
-# Tag formats:
-#   internal-vX.Y.Z.N → QA app version X.Y.Z-internal.N
-#   internal-vX.Y.Z   → stable app version X.Y.Z
-#   e.g. internal-v1.1.0.7 → 1.1.0-internal.7
+# Tag shape picks the track (leave package.json at the public base version):
+#
+#   QA only (GitHub Pre-release, feed channel "internal"):
+#     git tag internal-v1.1.1.3 && git push origin internal-v1.1.1.3
+#     → app version 1.1.1-internal.3 → internal.yml / internal-mac.yml
+#
+#   Company-wide internal (GitHub Release, feed channel "latest"):
+#     git tag internal-v1.1.1 && git push origin internal-v1.1.1
+#     → app version 1.1.1 → latest.yml / latest-mac.yml
+#
+#   e.g. internal-v1.1.0.7 → 1.1.0-internal.7 (QA)
+#        internal-v1.1.0   → 1.1.0           (everybody internally)
 
 name: Internal Release
 
@@ -41,7 +49,7 @@ on:
         default: true
         type: boolean
       version:
-        description: Version to stamp (e.g. 1.1.1-internal.1 or 1.1.1)
+        description: 'QA: 1.1.1-internal.N — company-wide: 1.1.1'
         required: true
         type: string
 
@@ -378,6 +386,8 @@ jobs:
           if gh release view "$RELEASE_TAG" -R "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber -R "$GH_REPO"
           else
+            # Record-keeping only (feed publish is separate). Four-segment tags
+            # are QA → GitHub Pre-release; three-segment tags are company-wide.
             release_flags=()
             if [[ "$RELEASE_TAG" =~ ^internal-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               release_flags+=(--prerelease)
