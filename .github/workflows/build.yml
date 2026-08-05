@@ -644,19 +644,3 @@ jobs:
           while IFS= read -r asset_id; do
             gh api --method DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
           done <<<"$blockmap_ids"
-
-  update-readme-release-links:
-    if: >-
-      ${{
-        github.event_name == 'push' &&
-        github.ref_type == 'tag' &&
-        startsWith(github.ref_name, 'v') &&
-        needs.publish-release.result == 'success'
-      }}
-    needs:
-      - publish-release
-    permissions:
-      contents: write
-    uses: ./.github/workflows/update-readme-release-links.yml
-    with:
-      release_tag: ${{ github.ref_name }}
