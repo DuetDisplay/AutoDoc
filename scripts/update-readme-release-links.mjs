@@ -4,11 +4,9 @@ import { pathToFileURL } from 'node:url'
 
 export function updateReadmeReleaseLinks(readme, { releaseTag, dmgAsset, windowsAsset }) {
   const version = releaseTag.replace(/^v/, '')
-  const badgeVersion = releaseTag.replace(/-/g, '--')
   const releasePageUrl = 'https://github.com/DuetDisplay/AutoDoc/releases/latest'
   const dmgUrl = `https://github.com/DuetDisplay/AutoDoc/releases/download/${releaseTag}/${dmgAsset}`
   const windowsUrl = `https://github.com/DuetDisplay/AutoDoc/releases/download/${releaseTag}/${windowsAsset}`
-  const releaseBadgeUrl = `https://img.shields.io/badge/release-${badgeVersion}-7A9E7E?style=flat-square&labelColor=555555`
 
   function replaceRequired(pattern, replacement, description) {
     if (!pattern.test(readme)) {
@@ -31,20 +29,14 @@ export function updateReadmeReleaseLinks(readme, { releaseTag, dmgAsset, windows
   )
 
   replaceRequired(
-    /\[!\[Latest release\]\(https:\/\/img\.shields\.io\/badge\/release-[^)]+\)\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)/,
-    `[![Latest release](${releaseBadgeUrl})](${releasePageUrl})`,
-    'latest release badge'
-  )
-
-  replaceRequired(
     /^## \[.*Download AutoDoc for macOS\]\([^)]+\)$/m,
     `## [⬇️ Download AutoDoc for macOS](${dmgUrl})`,
     'download section heading link'
   )
 
   replaceRequired(
-    /^1\. \*\*Download(?: for macOS)?\*\* .*$/m,
-    `1. **Download for macOS** \`${dmgAsset}\`, or browse the [Releases](${releasePageUrl}) page for a specific version.`,
+    /^1\. (?:\*\*Download(?: for macOS)?\*\*|On the \[latest release\]\([^)]+\), download (?:the macOS\b|`[^`]+\.dmg`)).*$/m,
+    `1. On the [latest release](${releasePageUrl}), download \`${dmgAsset}\`.`,
     'macOS download install step'
   )
 
@@ -55,8 +47,8 @@ export function updateReadmeReleaseLinks(readme, { releaseTag, dmgAsset, windows
   )
 
   replaceRequired(
-    /^1\. \*\*Download for Windows\*\* .*$/m,
-    `1. **Download for Windows** \`${windowsAsset}\`, or browse the [Releases](${releasePageUrl}) page for a specific version.`,
+    /^1\. (?:\*\*Download for Windows\*\*|On the \[latest release\]\([^)]+\), download (?:the Windows\b|`[^`]+-setup\.exe`)).*$/m,
+    `1. On the [latest release](${releasePageUrl}), download \`${windowsAsset}\`.`,
     'Windows download install step'
   )
 
