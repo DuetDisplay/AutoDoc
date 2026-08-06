@@ -1338,6 +1338,177 @@ describe('TranscriptionService', () => {
     }
   })
 
+  it('fails win-gpu transcription after extended memory wait when free memory stays below the floor', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    try {
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('dml'),
+        getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => ({
+          id: 'win-gpu',
+          label: 'GPU Windows processing',
+          reason: 'test',
+          hardware: { logicalProcessors: 16, totalMemoryGiB: 16, freeMemoryGiB: 1.7 },
+          dualSourceMode: 'concurrent',
+          serializeLocalProcessing: false,
+          notesAfterTranscriptionOnly: false,
+          threadPolicy: 'default'
+        }),
+        async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms)
+        },
+        () => ({ freeGiB: 1.7, totalGiB: 16 })
+      )
+
+      const promise = (service as any).runWhisperPassAndRead(
+        '/mock/tmp/audio.wav',
+        'meeting-win-gpu-starved',
+        60,
+        []
+      )
+
+      for (let i = 0; i < 13; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: 'Proceeding with transcription pass after memory wait timeout',
+          meetingId: 'meeting-win-gpu-starved'
+        })
+      )
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: expect.stringMatching(/extended memory wait/i),
+          meetingId: 'meeting-win-gpu-starved',
+          context: expect.objectContaining({ minFreeGiB: 2.5, freeGiB: 1.7 })
+        })
+      )
+      expect(workerClientMock.transcribe).not.toHaveBeenCalled()
+
+      const rejection = expect(promise).rejects.toThrow(
+        /Insufficient free memory for GPU transcription pass \(1\.7 GiB free, floor 2\.5 GiB\) after extended wait/
+      )
+      for (let i = 0; i < 50; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      await rejection
+      expect(workerClientMock.transcribe).not.toHaveBeenCalled()
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: expect.stringMatching(/Insufficient free memory for GPU transcription pass/i),
+          meetingId: 'meeting-win-gpu-starved',
+          context: expect.objectContaining({ minFreeGiB: 2.5, freeGiB: 1.7 })
+        })
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('allows win-gpu transcription to proceed when memory recovers during the extended wait', async () => {
+    setPlatform('win32')
+    vi.useFakeTimers()
+    try {
+      let freeGiB = 1.7
+      mockWhisper = {
+        ...mockWhisper,
+        isWorkerEngineSelected: vi.fn().mockReturnValue(true),
+        isFasterWhisperSelected: vi.fn().mockReturnValue(false),
+        getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
+        getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
+        getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
+        getWorkerDevice: vi.fn().mockReturnValue('dml'),
+        getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
+        getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
+        getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
+        getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5)
+      } as unknown as WhisperManager
+      service = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false,
+        null,
+        () => false,
+        null,
+        () => 'balanced',
+        () => 'balanced',
+        async () => ({
+          id: 'win-gpu',
+          label: 'GPU Windows processing',
+          reason: 'test',
+          hardware: { logicalProcessors: 16, totalMemoryGiB: 16, freeMemoryGiB: freeGiB },
+          dualSourceMode: 'concurrent',
+          serializeLocalProcessing: false,
+          notesAfterTranscriptionOnly: false,
+          threadPolicy: 'default'
+        }),
+        async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms)
+        },
+        () => ({ freeGiB, totalGiB: 16 })
+      )
+      workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+
+      const promise = (service as any).runWhisperPassAndRead(
+        '/mock/tmp/audio.wav',
+        'meeting-win-gpu-recover',
+        60,
+        []
+      )
+
+      for (let i = 0; i < 13; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          area: 'transcription',
+          message: expect.stringMatching(/extended memory wait/i),
+          meetingId: 'meeting-win-gpu-recover',
+          context: expect.objectContaining({ minFreeGiB: 2.5, freeGiB: 1.7 })
+        })
+      )
+      expect(workerClientMock.transcribe).not.toHaveBeenCalled()
+
+      freeGiB = 3
+      for (let i = 0; i < 2; i += 1) {
+        await vi.advanceTimersByTimeAsync(5000)
+      }
+      await promise
+      expect(workerClientMock.transcribe).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not extend the memory wait when free memory is at least 1 GiB after the normal timeout', async () => {
     setPlatform('win32')
     vi.useFakeTimers()

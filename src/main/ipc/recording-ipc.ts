@@ -1291,8 +1291,9 @@ export function registerRecordingIpc(
   function scheduleWindowsCalendarTitleRefresh(
     meetingId: string,
     meetingDir: string,
-    metadataHint: MeetingMetadata | null = null
-  ): void {
+    metadataHint: MeetingMetadata | null = null,
+    options?: { logSchedule?: boolean }
+  ): boolean {
     // Windows users were waiting on a live calendar fetch before a freshly stopped
     // recording appeared in AI Notes. We keep macOS behavior as-is and do the
     // calendar match lazily on Windows so the item shows up immediately and stays clickable.
@@ -1301,13 +1302,15 @@ export function registerRecordingIpc(
       !calendarManager.isConnected() ||
       windowsCalendarRefreshInFlight.has(meetingId)
     ) {
-      return
+      return false
     }
 
     windowsCalendarRefreshInFlight.add(meetingId)
-    logRecordingDebug('scheduled background calendar title refresh', meetingId, {
-      hasMetadataHint: metadataHint != null
-    })
+    if (options?.logSchedule !== false) {
+      logRecordingDebug('scheduled background calendar title refresh', meetingId, {
+        hasMetadataHint: metadataHint != null
+      })
+    }
 
     void (async () => {
       const refreshStartedAt = Date.now()
@@ -1352,6 +1355,7 @@ export function registerRecordingIpc(
         windowsCalendarRefreshInFlight.delete(meetingId)
       }
     })()
+    return true
   }
 
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
@@ -1362,6 +1366,9 @@ export function registerRecordingIpc(
     } catch {
       return []
     }
+
+    let scheduledCalendarRefreshes = 0
+    let scheduledWithMetadataHint = 0
 
     // Fetch recent calendar events for matching recordings to event names
     let recentEvents: CalendarEvent[] = []
@@ -1417,7 +1424,12 @@ export function registerRecordingIpc(
       const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
 
       if (!metadata?.customTitle && !calendarTitle) {
-        scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, metadata)
+        if (scheduleWindowsCalendarTitleRefresh(meetingId, meetingDir, metadata, { logSchedule: false })) {
+          scheduledCalendarRefreshes += 1
+          if (metadata != null) {
+            scheduledWithMetadataHint += 1
+          }
+        }
       }
       const transcriptionStatus = await transcriptionService.getStatus(meetingId)
 
@@ -1448,6 +1460,12 @@ export function registerRecordingIpc(
     }
 
     if (isWindows) {
+      if (scheduledCalendarRefreshes > 0) {
+        logRecordingDebug('scheduled background calendar title refreshes', undefined, {
+          meetingCount: scheduledCalendarRefreshes,
+          withMetadataHint: scheduledWithMetadataHint
+        })
+      }
       logRecordingDebug('recording:list resolved', undefined, {
         entryCount: entries.length,
         finalizingMeetingIds: entries

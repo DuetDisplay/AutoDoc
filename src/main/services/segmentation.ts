@@ -191,6 +191,8 @@ export class SegmentationService {
 
     for (const meetingId of dirs) {
       try {
+        if (this.ollamaGenerationDeferCounts.has(meetingId)) continue
+
         const meetingDir = join(this.recordingsBaseDir, meetingId)
         const dirStat = await stat(meetingDir).catch(() => null)
         if (!dirStat?.isDirectory()) continue
@@ -400,7 +402,7 @@ export class SegmentationService {
         }
       )
     } finally {
-      if (process.platform === 'darwin') {
+      if (process.platform === 'darwin' || process.platform === 'win32') {
         await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
           logAutodocEvent({
             area: 'segmentation',
@@ -413,7 +415,9 @@ export class SegmentationService {
             }
           })
         })
-        await this.logMacResourceSnapshot('notes resources released', meetingId)
+        if (process.platform === 'darwin') {
+          await this.logMacResourceSnapshot('notes resources released', meetingId)
+        }
       }
     }
 
@@ -498,6 +502,7 @@ export class SegmentationService {
 
     const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
     if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
+      this.ollamaGenerationDeferCounts.delete(meetingId)
       throw new Error(OLLAMA_UNAVAILABLE_ERROR)
     }
 
