@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
+import { access, lstat, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
 import type {
   MeetingSegments,
@@ -25,6 +25,7 @@ import {
   isMemoryHealthyForConcurrentProcessing,
   type MacProcessingProfile
 } from './mac-processing-profile'
+import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
@@ -39,6 +40,15 @@ const OLLAMA_UNAVAILABLE_ERROR =
   'Ollama unavailable for notes generation — model runtime never became ready'
 const OLLAMA_GENERATION_DEFER_MAX = 5
 const OLLAMA_GENERATION_DEFER_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  )
+}
 
 interface SegmentationDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -176,8 +186,7 @@ export class SegmentationService {
   }
 
   async saveSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
-    const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
-    await encryptJSON(segments, segmentsPath)
+    await this.persistSegments(meetingId, segments)
   }
 
   async scanAndEnqueuePending(): Promise<void> {
@@ -276,7 +285,6 @@ export class SegmentationService {
     const jobStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
-    const segmentsPath = join(meetingDir, 'segments.json')
 
     if (!(await this.fileExists(transcriptPath))) {
       return
@@ -287,16 +295,13 @@ export class SegmentationService {
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     if (!hasUsableTranscriptContent(transcripts)) {
-      await encryptJSON(
-        {
-          decisions: [],
-          actionItems: [],
-          information: [],
-          discussion: [],
-          statusUpdates: []
-        },
-        segmentsPath
-      )
+      await this.persistSegments(meetingId, {
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      })
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -437,7 +442,7 @@ export class SegmentationService {
       return
     }
 
-    await encryptJSON(segments, segmentsPath)
+    await this.persistSegments(meetingId, segments)
     await unlink(join(meetingDir, 'segments.error')).catch(() => {})
 
     console.log(
@@ -485,6 +490,21 @@ export class SegmentationService {
         meetingId
       })
     }
+  }
+
+  private persistSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
+    return enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
+      const meetingDir = join(this.recordingsBaseDir, meetingId)
+      try {
+        await lstat(join(meetingDir, 'notes.json'))
+        return
+      } catch (error) {
+        if (!isNodeErrorWithCode(error, 'ENOENT')) {
+          throw new Error('Could not inspect authoritative meeting notes')
+        }
+      }
+      await encryptJSON(segments, join(meetingDir, 'segments.json'))
+    })
   }
 
   private async ensureOllamaReadyForGeneration(meetingId: string): Promise<boolean> {

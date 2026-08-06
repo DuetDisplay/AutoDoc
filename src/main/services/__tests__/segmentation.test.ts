@@ -21,7 +21,8 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn(),
   unlink: vi.fn(),
   stat: vi.fn(),
-  readdir: vi.fn()
+  readdir: vi.fn(),
+  lstat: vi.fn()
 }))
 
 vi.mock('../crypto', () => ({
@@ -78,6 +79,7 @@ describe('SegmentationService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fsMock.unlink.mockResolvedValue(undefined as any)
+    fsMock.lstat.mockRejectedValue({ code: 'ENOENT' })
     provider = createMockProvider()
     service = new SegmentationService(
       provider,
@@ -91,6 +93,20 @@ describe('SegmentationService', () => {
 
     const status = await service.getStatus('meeting-123')
     expect(status).toBe('pending')
+  })
+
+  it('does not write legacy segments beneath authoritative V2 notes', async () => {
+    fsMock.lstat.mockResolvedValue({ isFile: () => true } as any)
+
+    await service.saveSegments('meeting-v2', {
+      decisions: [],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    })
+
+    expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
   })
 
   it('returns failed status when segments.error is newer than segments.json', async () => {
