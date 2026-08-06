@@ -95,4 +95,16 @@ describe('diagnostic log upload', () => {
     expect(sanitized).not.toContain('qa-user')
     expect(parsed.binaryPath).toBe('[home]\\AppData\\Roaming\\AutoDoc\\ollama.exe')
   })
+
+  it('sanitizes Windows home paths with spaces and non-canonical Users casing', () => {
+    const line = JSON.stringify({
+      binaryPath: 'C:\\users\\QA User\\AppData\\Roaming\\AutoDoc\\ollama.exe'
+    })
+
+    const sanitized = sanitizeDiagnosticLogTail(line)
+    const parsed = JSON.parse(sanitized) as { binaryPath: string }
+
+    expect(sanitized).not.toContain('QA User')
+    expect(parsed.binaryPath).toBe('[home]\\AppData\\Roaming\\AutoDoc\\ollama.exe')
+  })
 })
