@@ -689,11 +689,14 @@ describe('SegmentationService', () => {
       service.retry('m-poison')
       await vi.advanceTimersByTimeAsync(0)
 
+      expect(enqueueSpy).toHaveBeenCalledTimes(1)
+      expect(enqueueSpy).toHaveBeenLastCalledWith('m-poison', 'direct')
       expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
       expect(provider.summarize).not.toHaveBeenCalled()
 
       await vi.advanceTimersByTimeAsync(1_000)
-      expect(enqueueSpy).toHaveBeenCalledWith('m-poison', 'direct')
+      expect(enqueueSpy).toHaveBeenCalledTimes(2)
+      expect(enqueueSpy).toHaveBeenLastCalledWith('m-poison', 'direct')
       expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
     } finally {
       vi.useRealTimers()

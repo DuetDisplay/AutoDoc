@@ -13,6 +13,7 @@ import {
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
@@ -211,8 +212,7 @@ export class OllamaManager extends EventEmitter {
           this.adoptedSystemRuntime = true
           logAutodocEvent({
             area: 'ollama',
-            message: 'adopted system ollama runtime',
-            context: { systemBinaryPath: systemBinary }
+            message: 'adopted system ollama runtime'
           })
           return
         }
@@ -289,7 +289,7 @@ export class OllamaManager extends EventEmitter {
       logAutodocEvent({
         area: 'ollama',
         message: 'ollama server spawn attempt',
-        context: { binaryPath: binary, pid: proc.pid ?? null }
+        context: { pid: proc.pid ?? null }
       })
 
       let stderr = ''
@@ -309,7 +309,7 @@ export class OllamaManager extends EventEmitter {
           area: 'ollama',
           message: 'ollama server failed to start within timeout',
           error: new Error('Ollama server failed to start within 30 seconds'),
-          context: { timeoutMs: 30_000, binaryPath: binary }
+          context: { timeoutMs: 30_000 }
         })
         reject(new Error('Ollama server failed to start within 30 seconds'))
       }, 30_000)
@@ -324,8 +324,7 @@ export class OllamaManager extends EventEmitter {
           message: 'ollama server became ready',
           context: {
             startupMs: Date.now() - spawnStartedAt,
-            pid: proc.pid ?? null,
-            binaryPath: binary
+            pid: proc.pid ?? null
           }
         })
         resolve()
@@ -355,11 +354,18 @@ export class OllamaManager extends EventEmitter {
           signal: signal ?? null,
           pid: proc.pid ?? null
         }
-        if (code !== null && code !== 0) {
+        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
+        const exitError =
+          code !== null && code !== 0
+            ? new Error(
+                `Ollama exited with code ${code}${sanitizedStderrTail ? `: ${sanitizedStderrTail}` : ''}`
+              )
+            : null
+        if (exitError) {
           logAutodocFailure({
             area: 'ollama',
             message: 'ollama server process exited',
-            error: new Error(`Ollama exited with code ${code}: ${stderr.slice(-300)}`),
+            error: exitError,
             context: exitContext
           })
         } else {
@@ -370,11 +376,11 @@ export class OllamaManager extends EventEmitter {
             context: exitContext
           })
         }
-        if (!settled && code !== null && code !== 0) {
+        if (!settled && exitError) {
           settled = true
           clearInterval(pollInterval)
           clearTimeout(timeoutHandle)
-          reject(new Error(`Ollama exited with code ${code}: ${stderr.slice(-300)}`))
+          reject(exitError)
         }
       })
     })

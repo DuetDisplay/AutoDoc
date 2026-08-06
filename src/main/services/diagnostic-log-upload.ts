@@ -13,7 +13,11 @@ const SECRET_REPLACEMENTS: Array<[RegExp, string]> = [
   [/https?:\/\/[^\s"'<>]*autodoc-auth\.duetdisplay\.workers\.dev[^\s"'<>]*/gi, REDACTION]
 ]
 
-const PATH_PATTERNS = [/\/Users\/[^/\s]+/g, /[A-Za-z]:\\Users\\[^\\\s]+/g]
+const PATH_PATTERNS = [
+  /\/Users\/[^/\s"]+/g,
+  // Log entries are sanitized after JSON serialization, where Windows separators are doubled.
+  /[A-Za-z]:\\{1,2}Users\\{1,2}[^\\\s"]+/g
+]
 
 export interface DiagnosticLogAttachment {
   filename: string

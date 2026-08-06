@@ -2389,8 +2389,7 @@ export class TranscriptionService {
 
     logAutodocEvent({
       area: 'transcription',
-      message:
-        'Starting extended memory wait on low-spec/CPU profile after timeout with low free memory',
+      message: 'Starting extended memory wait after timeout with low free memory',
       meetingId,
       context: {
         freeGiB: freeAfterTimeoutGiB,
@@ -2410,11 +2409,7 @@ export class TranscriptionService {
     }
 
     const freeAfterExtendedWaitGiB = readFreeGiB()
-    if (
-      isGpuProfile &&
-      freeAfterExtendedWaitGiB != null &&
-      freeAfterExtendedWaitGiB < minFreeGiB
-    ) {
+    if (isGpuProfile && freeAfterExtendedWaitGiB != null && freeAfterExtendedWaitGiB < minFreeGiB) {
       logAutodocEvent({
         area: 'transcription',
         message: 'Insufficient free memory for GPU transcription pass after extended wait',
