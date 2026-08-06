@@ -12,6 +12,7 @@ import {
 } from '../../shared/constants'
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
@@ -208,6 +209,11 @@ export class OllamaManager extends EventEmitter {
         if (systemBinary) {
           await copyFile(systemBinary, this.getBinaryPath())
           this.adoptedSystemRuntime = true
+          logAutodocEvent({
+            area: 'ollama',
+            message: 'adopted system ollama runtime',
+            context: { systemBinaryPath: systemBinary }
+          })
           return
         }
       }
@@ -266,8 +272,10 @@ export class OllamaManager extends EventEmitter {
     this.killProcessOnPort()
     await new Promise((r) => setTimeout(r, 1000))
 
+    const binary = this.getBinaryPath()
+    const spawnStartedAt = Date.now()
+
     await new Promise<void>((resolve, reject) => {
-      const binary = this.getBinaryPath()
       const proc = spawn(binary, ['serve'], {
         env: {
           ...process.env,
@@ -278,41 +286,97 @@ export class OllamaManager extends EventEmitter {
       })
 
       this.process = proc
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama server spawn attempt',
+        context: { binaryPath: binary, pid: proc.pid ?? null }
+      })
 
       let stderr = ''
+      let settled = false
+
+      const pollInterval = setInterval(async () => {
+        if (await this.isServerRunning()) {
+          markReady()
+        }
+      }, 500)
+
+      const timeoutHandle = setTimeout(() => {
+        if (settled) return
+        settled = true
+        clearInterval(pollInterval)
+        logAutodocFailure({
+          area: 'ollama',
+          message: 'ollama server failed to start within timeout',
+          error: new Error('Ollama server failed to start within 30 seconds'),
+          context: { timeoutMs: 30_000, binaryPath: binary }
+        })
+        reject(new Error('Ollama server failed to start within 30 seconds'))
+      }, 30_000)
+
+      function markReady(): void {
+        if (settled) return
+        settled = true
+        clearInterval(pollInterval)
+        clearTimeout(timeoutHandle)
+        logAutodocEvent({
+          area: 'ollama',
+          message: 'ollama server became ready',
+          context: {
+            startupMs: Date.now() - spawnStartedAt,
+            pid: proc.pid ?? null,
+            binaryPath: binary
+          }
+        })
+        resolve()
+      }
+
       proc.stderr?.on('data', (data: Buffer) => {
         stderr += data.toString()
         // Ollama logs "Listening on ..." to stderr when ready
         if (stderr.includes('Listening on')) {
-          resolve()
+          markReady()
         }
       })
 
       proc.on('error', (err) => {
         this.process = null
+        if (settled) return
+        settled = true
+        clearInterval(pollInterval)
+        clearTimeout(timeoutHandle)
         reject(new Error(`Failed to start Ollama: ${err.message}`))
       })
 
-      proc.on('exit', (code) => {
+      proc.on('exit', (code, signal) => {
         this.process = null
+        const exitContext = {
+          exitCode: code,
+          signal: signal ?? null,
+          pid: proc.pid ?? null
+        }
         if (code !== null && code !== 0) {
+          logAutodocFailure({
+            area: 'ollama',
+            message: 'ollama server process exited',
+            error: new Error(`Ollama exited with code ${code}: ${stderr.slice(-300)}`),
+            context: exitContext
+          })
+        } else {
+          logAutodocEvent({
+            area: 'ollama',
+            message: 'ollama server process exited',
+            level: 'warn',
+            context: exitContext
+          })
+        }
+        if (!settled && code !== null && code !== 0) {
+          settled = true
+          clearInterval(pollInterval)
+          clearTimeout(timeoutHandle)
           reject(new Error(`Ollama exited with code ${code}: ${stderr.slice(-300)}`))
         }
       })
-
-      // Fallback: poll for readiness if we miss the log line
-      const pollInterval = setInterval(async () => {
-        if (await this.isServerRunning()) {
-          clearInterval(pollInterval)
-          resolve()
-        }
-      }, 500)
-
-      // Timeout after 30 seconds
-      setTimeout(() => {
-        clearInterval(pollInterval)
-        reject(new Error('Ollama server failed to start within 30 seconds'))
-      }, 30_000)
     })
   }
 
@@ -343,6 +407,7 @@ export class OllamaManager extends EventEmitter {
    * where start() found an existing server and never tracked its PID.
    */
   private killProcessOnPort(): void {
+    const killedPids: number[] = []
     try {
       if (IS_WIN) {
         const output = execSync(`netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`, {
@@ -357,6 +422,7 @@ export class OllamaManager extends EventEmitter {
         for (const pid of pids) {
           try {
             execSync(`taskkill /pid ${pid} /f /t`, { timeout: 5000 })
+            killedPids.push(Number(pid))
           } catch {
             // already dead
           }
@@ -370,6 +436,7 @@ export class OllamaManager extends EventEmitter {
           if (pid) {
             try {
               process.kill(Number(pid), 'SIGKILL')
+              killedPids.push(Number(pid))
             } catch {
               // already dead
             }
@@ -378,6 +445,14 @@ export class OllamaManager extends EventEmitter {
       }
     } catch {
       // No process found on the port - nothing to clean up
+    }
+
+    if (killedPids.length > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'killed orphaned ollama process on port',
+        context: { port: OLLAMA_PORT, pids: killedPids }
+      })
     }
   }
 

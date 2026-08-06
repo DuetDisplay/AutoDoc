@@ -20,7 +20,8 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   unlink: vi.fn(),
-  stat: vi.fn()
+  stat: vi.fn(),
+  readdir: vi.fn()
 }))
 
 vi.mock('../crypto', () => ({
@@ -640,6 +641,106 @@ describe('SegmentationService', () => {
     expect(fsMock.writeFile).not.toHaveBeenCalled()
     expect(enqueueSpy).toHaveBeenCalledWith('m-ollama', 'direct')
     vi.useRealTimers()
+  })
+
+  it('starts a fresh Ollama defer cycle on retry after defer budget is exhausted', async () => {
+    vi.useFakeTimers()
+    try {
+      const notReadyOllama = {
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        isReadyForGeneration: vi.fn().mockResolvedValue(false)
+      }
+      provider = createMockProvider()
+      service = new SegmentationService(provider, notReadyOllama, '/mock/home/AutoDoc/recordings')
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('transcript.json')) return undefined
+        throw new Error('ENOENT')
+      })
+      fsMock.readFile.mockResolvedValue(
+        JSON.stringify([
+          {
+            id: 'm-poison-0',
+            meetingId: 'm-poison',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ]) as any
+      )
+      fsMock.writeFile.mockResolvedValue(undefined as any)
+
+      for (let i = 0; i < 5; i++) {
+        await (service as any).processJobExclusive('m-poison')
+      }
+      await expect((service as any).processJobExclusive('m-poison')).rejects.toThrow(
+        'Ollama unavailable for notes generation — model runtime never became ready'
+      )
+      await (service as any).markFailed(
+        'm-poison',
+        new Error('Ollama unavailable for notes generation — model runtime never became ready')
+      )
+
+      vi.clearAllTimers()
+      const failureWrites = fsMock.writeFile.mock.calls.length
+      const enqueueSpy = vi.spyOn(service, 'enqueue')
+
+      service.retry('m-poison')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
+      expect(provider.summarize).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(enqueueSpy).toHaveBeenCalledWith('m-poison', 'direct')
+      expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not re-enqueue a meeting that is mid Ollama defer cycle during pending scan', async () => {
+    vi.useFakeTimers()
+    try {
+      const notReadyOllama = {
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        isReadyForGeneration: vi.fn().mockResolvedValue(false)
+      }
+      provider = createMockProvider()
+      service = new SegmentationService(provider, notReadyOllama, '/mock/home/AutoDoc/recordings')
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('transcript.json')) return undefined
+        throw new Error('ENOENT')
+      })
+      fsMock.readFile.mockResolvedValue(
+        JSON.stringify([
+          {
+            id: 'm-scan-0',
+            meetingId: 'm-scan',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ]) as any
+      )
+
+      await (service as any).processJobExclusive('m-scan')
+      expect((service as any).ollamaGenerationDeferCounts.get('m-scan')).toBe(1)
+
+      fsMock.readdir.mockResolvedValue(['m-scan'] as any)
+      fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+
+      const enqueueSpy = vi.spyOn(service, 'enqueue')
+      await service.scanAndEnqueuePending()
+
+      expect(enqueueSpy).not.toHaveBeenCalled()
+      expect((service as any).ollamaGenerationDeferCounts.get('m-scan')).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears activeProgress after a job finishes', () => {

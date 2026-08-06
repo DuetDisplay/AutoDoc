@@ -191,6 +191,8 @@ export class SegmentationService {
 
     for (const meetingId of dirs) {
       try {
+        if (this.ollamaGenerationDeferCounts.has(meetingId)) continue
+
         const meetingDir = join(this.recordingsBaseDir, meetingId)
         const dirStat = await stat(meetingDir).catch(() => null)
         if (!dirStat?.isDirectory()) continue
@@ -500,6 +502,7 @@ export class SegmentationService {
 
     const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
     if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
+      this.ollamaGenerationDeferCounts.delete(meetingId)
       throw new Error(OLLAMA_UNAVAILABLE_ERROR)
     }
 
