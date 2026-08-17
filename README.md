@@ -126,6 +126,8 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 
 On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. This reduces memory pressure but can take longer after a meeting ends.
 
+**What to expect on an 8 GB Windows PC:** AutoDoc still generates notes locally with `llama3.1`. That uses a lot of RAM while notes are running, so transcription and notes take longer and the machine will feel pinned until they finish. A 16 GB machine is the comfortable default.
+
 ### Download & install on macOS
 
 <div align="center">
@@ -258,7 +260,7 @@ On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML
 An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB recommended) and ~10 GB free storage for first-run model downloads. **Intel Macs are not supported.**
 
 **Is Windows supported?**
-Yes. AutoDoc supports 64-bit Windows 10 and later. It requires 8 GB RAM; 16 GB is recommended. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
+Yes. AutoDoc supports 64-bit Windows 10 and later. It requires 8 GB RAM; 16 GB is recommended. On 8 GB machines, notes take longer and use more RAM while they run. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
 
 **How do I know AutoDoc is recording?**
 While recording, AutoDoc shows a Recording banner in the app (with a timer and stop control) and switches the menu bar / tray icon to a recording state. Meeting detection only offers to start recording; it will not start silently unless you previously enabled calendar auto-record for that event (Once or Series). In that case, recording can begin without another prompt.

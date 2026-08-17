@@ -24,8 +24,6 @@ export function OnboardingSupportLink() {
       </div>
 
       <div id={STATUS_ID} aria-live="polite" aria-atomic="true" className="min-h-4 leading-4">
-        {result?.status === 'opened' ? <p>Draft opened in your email app.</p> : null}
-
         {result?.status === 'copy-required' ? (
           <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
             <span>Mail app didn’t open.</span>
