@@ -56,8 +56,13 @@ export function useSupportEmail(surface: SupportEmailSurface): SupportEmailState
 
     try {
       const nextResult = await window.electronAPI.invoke('support:open-email', surface)
-      resultRef.current = nextResult
-      setResult(nextResult)
+      if (nextResult.status === 'opened') {
+        resultRef.current = null
+        setResult(null)
+      } else {
+        resultRef.current = nextResult
+        setResult(nextResult)
+      }
       trackEvent('support_email_outcome', {
         surface,
         outcome:

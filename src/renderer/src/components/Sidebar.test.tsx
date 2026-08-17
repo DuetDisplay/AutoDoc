@@ -71,8 +71,9 @@ describe('Sidebar', () => {
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('support:open-email', 'sidebar')
-      expect(screen.getByText('Draft opened in your email app.')).toBeInTheDocument()
     })
+    expect(screen.queryByText('Draft opened in your email app.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeEnabled()
     expect(trackEventMock).toHaveBeenCalledWith('support_email_requested', {
       surface: 'sidebar'
     })

@@ -135,7 +135,7 @@ export function Sidebar() {
     trackEvent('support_email_requested', { surface: SUPPORT_SURFACE })
     try {
       const result = await window.electronAPI.invoke('support:open-email', SUPPORT_SURFACE)
-      setSupportResult(result)
+      setSupportResult(result.status === 'opened' ? null : result)
       trackEvent('support_email_outcome', {
         surface: SUPPORT_SURFACE,
         outcome:
@@ -286,9 +286,7 @@ export function Sidebar() {
           </button>
 
           <div aria-live="polite" className="px-2.5 text-[10.5px] leading-4 text-ink-faint">
-            {supportResult?.status === 'opened' ? (
-              <p>Draft opened in your email app.</p>
-            ) : supportResult?.status === 'copy-required' ? (
+            {supportResult?.status === 'copy-required' ? (
               <div className="flex flex-col items-start gap-1">
                 <p>Mail app didn’t open.</p>
                 <span className="break-all select-text text-ink-muted">

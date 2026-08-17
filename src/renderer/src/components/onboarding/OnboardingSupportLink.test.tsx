@@ -60,11 +60,14 @@ describe('OnboardingSupportLink', () => {
 
     resolveOpen?.({ status: 'opened' })
 
-    expect(await screen.findByText('Draft opened in your email app.')).toBeInTheDocument()
-    expect(trackEvent).toHaveBeenCalledWith('support_email_outcome', {
-      surface: 'onboarding',
-      outcome: 'draft_opened'
+    await waitFor(() => {
+      expect(trackEvent).toHaveBeenCalledWith('support_email_outcome', {
+        surface: 'onboarding',
+        outcome: 'draft_opened'
+      })
     })
+    expect(screen.queryByText('Draft opened in your email app.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Email Us' })).toBeEnabled()
   })
 
   it('copies through main when an email app cannot be opened', async () => {
