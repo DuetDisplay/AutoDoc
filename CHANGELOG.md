@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-08-17
+
+### Changed
+
+- Documented the 8 GB Windows notes experience: notes still run locally, but
+  they use more RAM, take longer, and the machine will feel pinned until they
+  finish. 8 GB remains the minimum; 16 GB is the comfortable default.
+
+### Fixed
+
+- Clicking **Email Us** opens the default mail client without leaving leftover
+  “Draft opened in your email app.” text in the sidebar or onboarding.
+
 ## [1.1.1] — TBD
 
 ### Added
@@ -85,7 +98,8 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.2...v1.1.3
 [1.1.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.0.0
