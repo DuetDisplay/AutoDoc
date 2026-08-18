@@ -26,6 +26,13 @@ import {
   type MacProcessingProfile
 } from './mac-processing-profile'
 import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
+import { NotesRepository } from './notes-repository'
+import {
+  computeLegacyNotesRevision,
+  computeNotesAttributionRevision,
+  computeTranscriptRevision
+} from './notes-revision'
+import { runNotesScanPipeline } from './notes-scan-pipeline'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
@@ -295,13 +302,17 @@ export class SegmentationService {
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     if (!hasUsableTranscriptContent(transcripts)) {
-      await this.persistSegments(meetingId, {
-        decisions: [],
-        actionItems: [],
-        information: [],
-        discussion: [],
-        statusUpdates: []
-      })
+      await this.persistSegments(
+        meetingId,
+        {
+          decisions: [],
+          actionItems: [],
+          information: [],
+          discussion: [],
+          statusUpdates: []
+        },
+        { overwriteWhenV2Exists: true }
+      )
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
       this.broadcastStatus(meetingId, 'complete')
@@ -442,7 +453,8 @@ export class SegmentationService {
       return
     }
 
-    await this.persistSegments(meetingId, segments)
+    await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
+    await this.persistScanLayerNotes(meetingId, segments, transcripts)
     await unlink(join(meetingDir, 'segments.error')).catch(() => {})
 
     console.log(
@@ -492,15 +504,84 @@ export class SegmentationService {
     }
   }
 
-  private persistSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
+  private async persistScanLayerNotes(
+    meetingId: string,
+    segments: MeetingSegments,
+    transcripts: Transcript[]
+  ): Promise<void> {
+    const completePrompt = this.llmProvider.completePrompt
+    if (!completePrompt) return
+
+    const startedAt = Date.now()
+    try {
+      const meetingDir = join(this.recordingsBaseDir, meetingId)
+      const metadata = await readMetadata(meetingDir)
+      const title = metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
+      const result = await runNotesScanPipeline(segments, {
+        title,
+        spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
+        generate: (request) =>
+          completePrompt(request.prompt, {
+            num_ctx: request.num_ctx,
+            num_predict: request.num_predict,
+            temperature: request.temperature,
+            seed: request.seed,
+            stop: request.stop
+          })
+      })
+      const meetingNotesPath = join(meetingDir, 'notes.json')
+      await enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
+        try {
+          await unlink(meetingNotesPath)
+        } catch (error) {
+          if (!isNodeErrorWithCode(error, 'ENOENT')) throw error
+        }
+      })
+      const repository = new NotesRepository(this.recordingsBaseDir)
+      await repository.promoteLegacyToV2(meetingId, result.content, {
+        expectedLegacyRevision: computeLegacyNotesRevision(meetingId, segments),
+        sourceTranscriptRevision: computeTranscriptRevision(meetingId, transcripts),
+        sourceAttributionRevision: computeNotesAttributionRevision(meetingId, transcripts)
+      })
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes scan layer completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          groupingFallback: result.groupingFallback,
+          restyleFallbacks: result.restyleFallbacks,
+          compressFallbacks: result.compressFallbacks,
+          sectionCount: result.content.sections.length,
+          nextStepCount: result.content.nextSteps.length
+        }
+      })
+    } catch (error) {
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'notes scan layer failed; keeping legacy segments',
+        error,
+        meetingId,
+        context: { elapsedMs: Date.now() - startedAt }
+      })
+    }
+  }
+
+  private persistSegments(
+    meetingId: string,
+    segments: MeetingSegments,
+    options?: { overwriteWhenV2Exists?: boolean }
+  ): Promise<void> {
     return enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
       const meetingDir = join(this.recordingsBaseDir, meetingId)
-      try {
-        await lstat(join(meetingDir, 'notes.json'))
-        return
-      } catch (error) {
-        if (!isNodeErrorWithCode(error, 'ENOENT')) {
-          throw new Error('Could not inspect authoritative meeting notes')
+      if (!options?.overwriteWhenV2Exists) {
+        try {
+          await lstat(join(meetingDir, 'notes.json'))
+          return
+        } catch (error) {
+          if (!isNodeErrorWithCode(error, 'ENOENT')) {
+            throw new Error('Could not inspect authoritative meeting notes')
+          }
         }
       }
       await encryptJSON(segments, join(meetingDir, 'segments.json'))

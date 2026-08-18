@@ -21,6 +21,17 @@ export interface LLMProvider {
   setModel?(model: string): void
   setLowMemoryMode?(enabled: boolean): void
   releaseResources?(meetingId?: string): Promise<void>
+  /** Raw completion for scan-layer restyle/compress. Must not use the notes JSON schema. */
+  completePrompt?(
+    prompt: string,
+    options: {
+      num_ctx: number
+      num_predict: number
+      temperature: number
+      seed: number
+      stop?: readonly string[]
+    }
+  ): Promise<string>
 }
 
 const MAX_RETRIES = 2
@@ -344,6 +355,48 @@ export class OllamaProvider implements LLMProvider {
 
   setModel(model: string): void {
     this.model = model
+  }
+
+  async completePrompt(
+    prompt: string,
+    options: {
+      num_ctx: number
+      num_predict: number
+      temperature: number
+      seed: number
+      stop?: readonly string[]
+    }
+  ): Promise<string> {
+    const controller = new AbortController()
+    const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    this.activeControllers.add(controller)
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          prompt,
+          stream: false,
+          options: {
+            num_ctx: options.num_ctx,
+            num_predict: options.num_predict,
+            temperature: options.temperature,
+            seed: options.seed,
+            stop: options.stop ? [...options.stop] : undefined
+          }
+        }),
+        signal: controller.signal
+      })
+      if (!res.ok) {
+        throw new Error(`Ollama generate failed: ${res.status}`)
+      }
+      const payload = (await res.json()) as { response?: string }
+      return typeof payload.response === 'string' ? payload.response : ''
+    } finally {
+      clearTimeout(requestTimer)
+      this.activeControllers.delete(controller)
+    }
   }
 
   setLowMemoryMode(enabled: boolean): void {
