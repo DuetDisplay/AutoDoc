@@ -6,7 +6,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    include: ['src/main/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/main/**/*.{test,spec}.{ts,tsx}', 'src/shared/**/*.{test,spec}.{ts,tsx}'],
     passWithNoTests: true
   }
 })

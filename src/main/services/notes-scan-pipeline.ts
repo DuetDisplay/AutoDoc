@@ -34,6 +34,7 @@ import type { MeetingNotesContent, MeetingSegments } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
 import { emptyValidationStats, type NotesValidationStats, type TranscriptRow } from './notes-evidence-validate'
 import { generateNotesOverview } from './notes-overview'
+import { fallbackMeetingOverview } from '../../shared/notes-overview-text'
 import { meetingSpanSources, parseScanMarkdown } from './notes-scan-markdown'
 import { NOTES_SCAN_PROGRESS_END, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import { applyNotesBudget, countWords } from './notes-scan-budget'
@@ -334,6 +335,7 @@ export async function runNotesScanPipeline(
         }),
       meetingSpan
     )
+    overviewFailed = !overview.usedModel
     content = dropAssertiveTakeaways({
       ...content,
       overview: overview.overview,
@@ -341,6 +343,23 @@ export async function runNotesScanPipeline(
     })
   } catch {
     overviewFailed = true
+  }
+  if (!content.overview?.text.trim()) {
+    const fallbackText = fallbackMeetingOverview(
+      content.sections.map((section) => section.title),
+      options.title
+    )
+    if (fallbackText) {
+      overviewFailed = true
+      content = {
+        ...content,
+        overview: {
+          text: fallbackText,
+          sources: meetingSpan.map((source) => ({ ...source })),
+          provenance: 'generated'
+        }
+      }
+    }
   }
 
   content = preserveWriterEntities(content, [...topical, ...actions])

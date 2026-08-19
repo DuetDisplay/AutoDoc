@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import type {
   MeetingNotesContent,
   MeetingNotesV2,
@@ -6,6 +14,7 @@ import type {
   NoteSection,
   NoteSourceRange
 } from '../../../shared/types'
+import { fallbackMeetingOverview } from '../../../shared/notes-overview-text'
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
 
 type NotesOption = 'option-1' | 'option-2'
@@ -20,6 +29,52 @@ function formatClock(ms: number): string {
 function earliestStart(sources: readonly NoteSourceRange[]): number | null {
   if (sources.length === 0) return null
   return sources.reduce((min, source) => Math.min(min, source.startMs), sources[0].startMs)
+}
+
+function renderNoteMarkup(text: string): ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, index) => {
+    const bold = /^\*\*([^*]+)\*\*$/.exec(part)
+    if (bold) {
+      return (
+        <strong key={index} className="font-semibold text-ink">
+          {bold[1]}
+        </strong>
+      )
+    }
+    return <span key={index}>{part}</span>
+  })
+}
+
+function meetingSummary(notes: MeetingNotesV2, title?: string): string {
+  const overview = notes.overview?.text.trim()
+  if (overview) return overview
+  return fallbackMeetingOverview(
+    notes.sections.map((section) => section.title),
+    title
+  )
+}
+
+function RemoveButton({
+  label,
+  testId,
+  onClick
+}: {
+  label: string
+  testId?: string
+  onClick: () => void
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      data-testid={testId}
+      onClick={onClick}
+      className="shrink-0 text-[11px] font-semibold text-transparent group-hover:text-clay hover:underline"
+    >
+      Remove
+    </button>
+  )
 }
 
 function stripAgreed(text: string): { agreed: boolean; text: string } {
@@ -116,7 +171,7 @@ function InlineEdit({
   if (!onSave) {
     return (
       <Tag className={className} style={style}>
-        {value}
+        {renderNoteMarkup(value)}
       </Tag>
     )
   }
@@ -152,7 +207,7 @@ function InlineEdit({
 
   return (
     <Tag className={`${className ?? ''} cursor-text`} style={style} onClick={() => setEditing(true)}>
-      {value}
+      {renderNoteMarkup(value)}
     </Tag>
   )
 }
@@ -214,16 +269,7 @@ function NextStepRow({
         {item.owner ? <span className="ml-1.5 text-[11.5px] text-ink-muted">({item.owner})</span> : null}
       </span>
       <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
-      {onDelete ? (
-        <button
-          type="button"
-          aria-label="Delete next step"
-          onClick={() => onDelete(item.id)}
-          className="opacity-0 text-[11px] text-ink-faint hover:text-clay group-hover:opacity-100"
-        >
-          ×
-        </button>
-      ) : null}
+      {onDelete ? <RemoveButton label="Delete next step" onClick={() => onDelete(item.id)} /> : null}
     </div>
   )
 }
@@ -255,23 +301,24 @@ function Bullet({
       <div
         className={`group grid grid-cols-[52px_minmax(0,1fr)_auto] gap-x-3 py-1.5 ${parsed.agreed ? 'border-l-2 border-sage pl-3' : ''}`}
       >
-        <div className="pt-0.5 text-right text-[11px] tabular-nums text-ink-faint">
-          {showTime ? formatClock(start) : ''}
+        <div className="pt-0.5 text-right">
+          {showTime ? (
+            <button
+              type="button"
+              onClick={() => onSeek(start)}
+              className="text-[11px] tabular-nums text-ink-faint hover:text-ink"
+              title={`Jump to ${formatClock(start)}`}
+            >
+              {formatClock(start)}
+            </button>
+          ) : null}
         </div>
         <div className="text-[13.5px] leading-relaxed text-ink">
           {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
           <InlineEdit value={parsed.text} onSave={saveText} className="text-[13.5px] leading-relaxed text-ink" />
         </div>
         {onDelete ? (
-          <button
-            type="button"
-            aria-label="Delete note"
-            data-testid={`delete-${item.id}`}
-            onClick={() => onDelete(item.id)}
-            className="opacity-0 text-[11px] text-ink-faint hover:text-clay group-hover:opacity-100"
-          >
-            ×
-          </button>
+          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
         ) : null}
       </div>
     )
@@ -290,15 +337,7 @@ function Bullet({
       <div className="flex items-center gap-2">
         <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
         {onDelete ? (
-          <button
-            type="button"
-            aria-label="Delete note"
-            data-testid={`delete-${item.id}`}
-            onClick={() => onDelete(item.id)}
-            className="opacity-0 text-[11px] text-ink-faint hover:text-clay group-hover:opacity-100"
-          >
-            ×
-          </button>
+          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
         ) : null}
       </div>
     </div>
@@ -334,10 +373,10 @@ export function NotesV2Document({
     .filter((owner, index, all) => all.indexOf(owner) === index)
     .slice(0, 3)
 
-  const header =
-    notes.overview?.text || notes.keyTakeaways.length > 0
-      ? { overview: notes.overview?.text ?? '', takeaways: notes.keyTakeaways }
-      : null
+  const summary = meetingSummary(notes, title)
+  const header = summary || notes.keyTakeaways.length > 0
+    ? { overview: summary, takeaways: notes.keyTakeaways }
+    : null
 
   const saveItem = (itemId: string, text: string): void => {
     onWrite?.(mapNotesItems(notes, itemId, (item) => markEdited(item, text)))
@@ -430,13 +469,19 @@ export function NotesV2Document({
         ) : null}
       </div>
 
-      {option === 'option-2' && header ? (
-        <div className="rounded-xl border border-border bg-bg-card px-4 py-3">
+      {header ? (
+        <div
+          className={
+            option === 'option-1'
+              ? 'mx-auto w-full max-w-[560px] pb-2'
+              : 'rounded-xl border border-border bg-bg-card px-4 py-3'
+          }
+        >
           {header.overview ? (
             <InlineEdit
               value={header.overview}
-              onSave={onWrite ? saveOverview : undefined}
-              className="text-[13px] leading-relaxed text-ink-secondary"
+              onSave={notes.overview && onWrite ? saveOverview : undefined}
+              className="text-[13.5px] leading-relaxed text-ink-secondary"
               as="p"
             />
           ) : null}
@@ -453,14 +498,7 @@ export function NotesV2Document({
                     className="text-[11.5px] text-ink-secondary"
                   />
                   {onWrite ? (
-                    <button
-                      type="button"
-                      aria-label="Delete note"
-                      onClick={() => deleteItem(item.id)}
-                      className="text-[11px] text-ink-faint hover:text-clay"
-                    >
-                      ×
-                    </button>
+                    <RemoveButton label="Delete note" onClick={() => deleteItem(item.id)} />
                   ) : null}
                 </span>
               ))}
@@ -501,10 +539,7 @@ export function NotesV2Document({
 
       <div className={option === 'option-1' ? 'mx-auto w-full max-w-[560px] py-2' : 'flex flex-col gap-5'}>
         {option === 'option-1' ? (
-          <h2
-            className="mb-4 text-[28px] font-normal tracking-tight text-ink"
-            style={{ fontFamily: 'Instrument Serif, Georgia, serif' }}
-          >
+          <h2 className="mb-4 text-[22px] font-semibold tracking-tight text-ink">
             {title?.trim() || 'Notes'}
           </h2>
         ) : null}
@@ -518,13 +553,8 @@ export function NotesV2Document({
                 onSave={onWrite ? (next) => saveSectionTitle(section.id, next) : undefined}
                 className={
                   option === 'option-1'
-                    ? 'mb-2 text-[18px] font-normal text-ink'
-                    : 'mb-2 text-[15px] font-semibold text-ink'
-                }
-                style={
-                  option === 'option-1'
-                    ? { fontFamily: 'Instrument Serif, Georgia, serif' }
-                    : undefined
+                    ? 'mb-2 text-[17px] font-semibold text-ink'
+                    : 'mb-2 text-[18px] font-semibold tracking-tight text-ink'
                 }
                 as="h3"
               />
@@ -554,10 +584,11 @@ export function NotesV2Document({
                     : (
                       <button
                         type="button"
-                        className="mt-1 text-[11.5px] font-semibold text-ink-muted hover:text-ink"
+                        className="mt-1 inline-flex items-center gap-1 text-[12.5px] font-bold text-sage hover:text-sage-dark"
                         onClick={() => setExpanded((current) => ({ ...current, [section.id]: true }))}
                       >
                         {extra.length} more
+                        <span aria-hidden>▾</span>
                       </button>
                     )}
                 </div>
@@ -587,12 +618,7 @@ export function NotesV2Document({
 
       {option === 'option-1' && (notes.nextSteps.length > 0 || onWrite) ? (
         <div id="notes-next-steps" className="mx-auto w-full max-w-[560px] border-t border-border pt-4">
-          <h3
-            className="mb-2 text-[18px] font-normal text-ink"
-            style={{ fontFamily: 'Instrument Serif, Georgia, serif' }}
-          >
-            Next Steps
-          </h3>
+          <h3 className="mb-2 text-[17px] font-semibold text-ink">Next Steps</h3>
           {notes.nextSteps.map((item) => (
             <NextStepRow
               key={item.id}

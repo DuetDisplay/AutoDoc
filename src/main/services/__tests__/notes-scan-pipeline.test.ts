@@ -69,7 +69,8 @@ describe('runNotesScanPipeline', () => {
     expect(result.groupingFallback).toBe(false)
     expect(result.markdown).toMatch(/## (Analytics|HP opt-in rate)/)
     expect(result.attachFailed).toBe(false)
-    expect(result.content.overview).toBeNull()
+    expect(result.overviewFailed).toBe(true)
+    expect(result.content.overview?.text).toMatch(/This meeting (covered|focused on)/)
     expect(result.content.sections[0]?.keyPoints[0]?.sources[0]?.startMs).toBe(1000)
     expect(result.validation).toEqual(emptyValidationStats(false))
   })
@@ -100,6 +101,8 @@ describe('runNotesScanPipeline', () => {
     })
 
     expect(result.validation).toEqual(emptyValidationStats(false))
+    expect(result.overviewFailed).toBe(false)
+    expect(result.content.overview?.text).toBe('Standup recap.')
     expect(result.content.keyTakeaways.some((row) => /agreed/i.test(row.text))).toBe(false)
     expect(
       result.content.sections.some((section) =>

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeetingNotesV2 } from '../../../../shared/types'
 import { NotesV2Document } from '../NotesV2Document'
 
@@ -74,6 +74,10 @@ function notes(): MeetingNotesV2 {
 }
 
 describe('NotesV2Document', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem('autodoc.notesV2Option')
+  })
+
   it('lets the user switch Option 1 / Option 2 and persist a next-step check', async () => {
     const onToggle = vi.fn()
     render(
@@ -86,6 +90,7 @@ describe('NotesV2Document', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Option 1' })).toBeInTheDocument()
+    expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByText('Review the offline analytics PR')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
@@ -129,5 +134,29 @@ describe('NotesV2Document', () => {
     const afterAdd = onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>
     expect(afterAdd.sections).toHaveLength(2)
     expect(afterAdd.sections[1].keyPoints[0].provenance).toBe('user-created')
+  })
+
+  it('renders bold markdown, a sage more control, and Option 1 timestamp jumps', async () => {
+    const onSeek = vi.fn()
+    const sample = notes()
+    sample.sections[0].keyPoints[0].text =
+      '**Investigate accent keys** — Determine whether KMS is the cause.'
+    render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={onSeek}
+        onToggleNextStep={vi.fn()}
+        onWrite={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Investigate accent keys')).toBeInTheDocument()
+    expect(screen.queryByText(/\*\*Investigate accent keys\*\*/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /1 more/ })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Option 1' }))
+    await userEvent.click(screen.getByRole('button', { name: '0:01' }))
+    expect(onSeek).toHaveBeenCalledWith(1200)
   })
 })

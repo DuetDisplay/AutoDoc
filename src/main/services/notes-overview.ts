@@ -69,24 +69,44 @@ function takeaway(text: string, sources: readonly NoteSourceRange[]): NoteItem {
   }
 }
 
-export async function generateNotesOverview(
+export interface NotesOverviewResult extends Pick<MeetingNotesContent, 'overview' | 'keyTakeaways'> {
+  usedModel: boolean
+}
+
+async function requestOverview(
   markdown: string,
   generate: NotesOverviewGenerateFn,
-  sources: readonly NoteSourceRange[]
-): Promise<Pick<MeetingNotesContent, 'overview' | 'keyTakeaways'>> {
-  const fallbackSources = sources.length > 0 ? sources : [{ startMs: 0, endMs: 0 }]
+  temperature: number
+): Promise<{ overview: string; keyTakeaways: string[] } | null> {
   const raw = await generate({
     prompt: `${OVERVIEW_PROMPT}${markdown.trim()}`,
     num_ctx: 4096,
     num_predict: 400,
-    temperature: 0.2
+    temperature
   })
-  const parsed = parseOverviewPayload(raw)
-  if (!parsed) {
-    return { overview: null, keyTakeaways: [] }
+  return parseOverviewPayload(raw)
+}
+
+export async function generateNotesOverview(
+  markdown: string,
+  generate: NotesOverviewGenerateFn,
+  sources: readonly NoteSourceRange[]
+): Promise<NotesOverviewResult> {
+  const fallbackSources = sources.length > 0 ? sources : [{ startMs: 0, endMs: 0 }]
+  let parsed = await requestOverview(markdown, generate, 0.2)
+  if (!parsed?.overview) {
+    parsed = await requestOverview(markdown, generate, 0.35)
+  }
+  if (!parsed?.overview) {
+    return {
+      overview: null,
+      keyTakeaways: (parsed?.keyTakeaways ?? []).map((text) => takeaway(text, fallbackSources)),
+      usedModel: false
+    }
   }
   return {
-    overview: parsed.overview ? block(parsed.overview, fallbackSources) : null,
-    keyTakeaways: parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources))
+    overview: block(parsed.overview, fallbackSources),
+    keyTakeaways: parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
+    usedModel: true
   }
 }
