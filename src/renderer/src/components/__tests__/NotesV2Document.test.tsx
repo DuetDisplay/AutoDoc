@@ -159,4 +159,51 @@ describe('NotesV2Document', () => {
     await userEvent.click(screen.getByRole('button', { name: '0:01' }))
     expect(onSeek).toHaveBeenCalledWith(1200)
   })
+
+  it('lets the user add, change, and clear a next-step owner', async () => {
+    const onWrite = vi.fn()
+    const sample = notes()
+    sample.nextSteps[0].owner = null
+    const view = render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+        onToggleNextStep={vi.fn()}
+        onWrite={onWrite}
+      />
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add owner' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Owner' }), 'Raul')
+    await userEvent.tab()
+
+    const added = onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>
+    expect(added.nextSteps[0].owner).toBe('Raul')
+    expect(added.nextSteps[0].provenance).toBe('user-edited')
+
+    onWrite.mockClear()
+    view.rerender(
+      <NotesV2Document
+        notes={{ ...sample, nextSteps: [{ ...sample.nextSteps[0], owner: 'Raul' }] }}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+        onToggleNextStep={vi.fn()}
+        onWrite={onWrite}
+      />
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Owner: Raul' }))
+    const editor = screen.getByRole('textbox', { name: 'Owner' })
+    await userEvent.clear(editor)
+    await userEvent.type(editor, 'Chris')
+    await userEvent.tab()
+    expect((onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>).nextSteps[0].owner).toBe(
+      'Chris'
+    )
+
+    onWrite.mockClear()
+    await userEvent.click(screen.getByRole('button', { name: 'Remove owner' }))
+    expect((onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>).nextSteps[0].owner).toBeNull()
+  })
 })

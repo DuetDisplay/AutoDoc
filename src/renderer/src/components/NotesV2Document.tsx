@@ -116,6 +116,14 @@ function markEdited(item: NoteItem, text: string): NoteItem {
   }
 }
 
+function markOwnerEdited(item: NoteItem, owner: string | null): NoteItem {
+  return {
+    ...item,
+    owner,
+    provenance: item.provenance === 'user-created' ? 'user-created' : 'user-edited'
+  }
+}
+
 function mapItems(items: NoteItem[], itemId: string, map: (item: NoteItem) => NoteItem | null): NoteItem[] {
   return items.map((item) => (item.id === itemId ? map(item) : item)).filter((item): item is NoteItem => item != null)
 }
@@ -212,6 +220,95 @@ function InlineEdit({
   )
 }
 
+function OwnerEdit({
+  owner,
+  onSave
+}: {
+  owner: string | null
+  onSave?: (next: string | null) => void
+}): ReactElement | null {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(owner ?? '')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setDraft(owner ?? '')
+  }, [owner])
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  if (!onSave) {
+    return owner ? <span className="ml-1.5 text-[11.5px] text-ink-muted">({owner})</span> : null
+  }
+
+  const commit = (): void => {
+    setEditing(false)
+    const next = draft.trim() || null
+    if (next !== (owner?.trim() || null)) onSave(next)
+    else setDraft(owner ?? '')
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        aria-label="Owner"
+        placeholder="Owner"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            inputRef.current?.blur()
+          }
+          if (event.key === 'Escape') {
+            setDraft(owner ?? '')
+            setEditing(false)
+          }
+        }}
+        className="ml-1.5 w-[8rem] bg-transparent text-[11.5px] text-ink-muted outline-none"
+      />
+    )
+  }
+
+  if (!owner) {
+    return (
+      <button
+        type="button"
+        aria-label="Add owner"
+        onClick={() => setEditing(true)}
+        className="ml-1.5 text-[11px] font-semibold text-ink-faint hover:text-ink hover:underline"
+      >
+        + Owner
+      </button>
+    )
+  }
+
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-1">
+      <button
+        type="button"
+        aria-label={`Owner: ${owner}`}
+        onClick={() => setEditing(true)}
+        className="text-[11.5px] text-ink-muted hover:underline"
+      >
+        ({owner})
+      </button>
+      <button
+        type="button"
+        aria-label="Remove owner"
+        onClick={() => onSave(null)}
+        className="text-[11px] font-semibold text-transparent group-hover:text-clay hover:underline"
+      >
+        Clear
+      </button>
+    </span>
+  )
+}
+
 function JumpButton({
   sources,
   meetingSpan,
@@ -242,6 +339,7 @@ function NextStepRow({
   onSeek,
   onToggle,
   onSave,
+  onSaveOwner,
   onDelete
 }: {
   item: NoteItem
@@ -249,6 +347,7 @@ function NextStepRow({
   onSeek: (startMs: number) => void
   onToggle: (itemId: string, completed: boolean) => void
   onSave?: (itemId: string, text: string) => void
+  onSaveOwner?: (itemId: string, owner: string | null) => void
   onDelete?: (itemId: string) => void
 }): ReactElement {
   const label = item.title?.trim() || item.text
@@ -266,7 +365,10 @@ function NextStepRow({
           onSave={onSave ? (text) => onSave(item.id, text) : undefined}
           className={`text-[13px] leading-relaxed ${item.completed ? 'text-ink-faint line-through' : 'text-ink'}`}
         />
-        {item.owner ? <span className="ml-1.5 text-[11.5px] text-ink-muted">({item.owner})</span> : null}
+        <OwnerEdit
+          owner={item.owner}
+          onSave={onSaveOwner ? (owner) => onSaveOwner(item.id, owner) : undefined}
+        />
       </span>
       <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
       {onDelete ? <RemoveButton label="Delete next step" onClick={() => onDelete(item.id)} /> : null}
@@ -381,6 +483,9 @@ export function NotesV2Document({
   const saveItem = (itemId: string, text: string): void => {
     onWrite?.(mapNotesItems(notes, itemId, (item) => markEdited(item, text)))
   }
+  const saveOwner = (itemId: string, owner: string | null): void => {
+    onWrite?.(mapNotesItems(notes, itemId, (item) => markOwnerEdited(item, owner)))
+  }
   const deleteItem = (itemId: string): void => {
     onWrite?.(mapNotesItems(notes, itemId, () => null))
   }
@@ -434,8 +539,8 @@ export function NotesV2Document({
   }
 
   const itemEdit = onWrite
-    ? { onSave: saveItem, onDelete: deleteItem }
-    : { onSave: undefined, onDelete: undefined }
+    ? { onSave: saveItem, onSaveOwner: saveOwner, onDelete: deleteItem }
+    : { onSave: undefined, onSaveOwner: undefined, onDelete: undefined }
 
   return (
     <div className="flex flex-col gap-3">
