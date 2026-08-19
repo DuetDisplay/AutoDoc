@@ -78,14 +78,41 @@ function bytesToRssMiB(bytes: number): number {
 
 interface WindowsLlamaServerCimRow {
   ProcessId?: number
+  ParentProcessId?: number
   WorkingSetSize?: number
   ExecutablePath?: string | null
   CommandLine?: string | null
 }
 
+/**
+ * Windows Ollama loads the model in a child `ollama.exe runner` (or a
+ * `llama-server.exe` in older layouts), not always a process named llama-server.
+ * Never treat `ollama.exe serve` as a runner — that is the API process we own.
+ */
+export function isWindowsManagedNotesRunner(input: {
+  pid: number
+  command: string
+  parentPid?: number | null
+  runtimeDir: string
+  servePid?: number | null
+}): boolean {
+  if (input.servePid != null && input.pid === input.servePid) return false
+  if (!commandIncludesRuntime(input.command, input.runtimeDir)) return false
+
+  const lower = input.command.toLowerCase()
+  if (lower.includes('llama-server')) return true
+
+  const isOllamaExe = lower.includes('ollama.exe') || /(^|[\\/])ollama(\.exe)?(\s|$)/i.test(input.command)
+  if (!isOllamaExe) return false
+  if (/\bserve\b/.test(lower)) return false
+  if (/\brunner\b/.test(lower)) return true
+  return input.servePid != null && input.parentPid === input.servePid
+}
+
 export function parseWindowsLlamaServerCimJson(
   json: string,
-  runtimeDir: string
+  runtimeDir: string,
+  servePid?: number | null
 ): ManagedLlamaServer[] {
   const trimmed = json.trim()
   if (!trimmed || trimmed === 'null') return []
@@ -105,8 +132,18 @@ export function parseWindowsLlamaServerCimJson(
     const pid = Number(record.ProcessId)
     if (!Number.isFinite(pid)) continue
     const command = String(record.CommandLine || record.ExecutablePath || '')
-    if (!command.toLowerCase().includes('llama-server')) continue
-    if (!commandIncludesRuntime(command, runtimeDir)) continue
+    const parentPid = Number(record.ParentProcessId)
+    if (
+      !isWindowsManagedNotesRunner({
+        pid,
+        command,
+        parentPid: Number.isFinite(parentPid) ? parentPid : null,
+        runtimeDir,
+        servePid
+      })
+    ) {
+      continue
+    }
     const workingSet = Number(record.WorkingSetSize)
     byPid.set(pid, {
       pid,
@@ -785,11 +822,11 @@ export class OllamaManager extends EventEmitter {
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | Select-Object ProcessId,WorkingSetSize,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
+          "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe' OR Name='ollama.exe'\" | Select-Object ProcessId,ParentProcessId,WorkingSetSize,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
         ],
         { encoding: 'utf-8', timeout: 8000, windowsHide: true }
       )
-      return parseWindowsLlamaServerCimJson(json, runtimeDir)
+      return parseWindowsLlamaServerCimJson(json, runtimeDir, this.process?.pid ?? null)
     } catch {
       // Fall through to WMIC on images where CIM is blocked.
     }

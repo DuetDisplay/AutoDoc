@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
 const {
   formatWmicLlamaServerListing,
   getRunnerRecycleRssThresholdMiB,
+  isWindowsManagedNotesRunner,
   parseManagedLlamaServerPids,
   parseManagedLlamaServers,
   parseWindowsLlamaServerCimJson,
@@ -72,6 +73,57 @@ describe('parseManagedLlamaServerPids', () => {
     })
 
     expect(parseWindowsLlamaServerCimJson(json, runtime)).toEqual([])
+  })
+
+  it('treats ollama.exe runner children as the Windows notes runner', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc Dev\\models\\ollama-runtime'
+    const servePid = 30916
+    const json = JSON.stringify([
+      {
+        ProcessId: servePid,
+        ParentProcessId: 1,
+        WorkingSetSize: 104857600,
+        ExecutablePath: `${runtime}\\ollama.exe`,
+        CommandLine: `"${runtime}\\ollama.exe" serve`
+      },
+      {
+        ProcessId: 44120,
+        ParentProcessId: servePid,
+        WorkingSetSize: 3221225472,
+        ExecutablePath: `${runtime}\\ollama.exe`,
+        CommandLine: `"${runtime}\\ollama.exe" runner --ollama-engine --model qwen`
+      }
+    ])
+
+    expect(parseWindowsLlamaServerCimJson(json, runtime, servePid)).toEqual([
+      { pid: 44120, rssMiB: 3072, numCtx: null }
+    ])
+  })
+
+  it('does not recycle ollama.exe serve even when it is the only process', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc Dev\\models\\ollama-runtime'
+    expect(
+      isWindowsManagedNotesRunner({
+        pid: 30916,
+        command: `"${runtime}\\ollama.exe" serve`,
+        parentPid: 1,
+        runtimeDir: runtime,
+        servePid: 30916
+      })
+    ).toBe(false)
+  })
+
+  it('treats a same-runtime ollama.exe child of serve as a runner when args are missing', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc Dev\\models\\ollama-runtime'
+    expect(
+      isWindowsManagedNotesRunner({
+        pid: 44120,
+        command: `${runtime}\\ollama.exe`,
+        parentPid: 30916,
+        runtimeDir: runtime,
+        servePid: 30916
+      })
+    ).toBe(true)
   })
 
   it('formats WMIC working-set rows into a pid rssKb command listing', () => {
