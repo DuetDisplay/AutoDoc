@@ -78,27 +78,26 @@ describe('NotesV2Document', () => {
     window.localStorage.removeItem('autodoc.notesV2Option')
   })
 
-  it('lets the user switch Option 1 / Option 2 and persist a next-step check', async () => {
-    const onToggle = vi.fn()
+  it('lets the user switch Option 1 / Option 2 without next-step checkboxes', async () => {
     render(
       <NotesV2Document
         notes={notes()}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={vi.fn()}
-        onToggleNextStep={onToggle}
       />
     )
 
     expect(screen.getByRole('button', { name: 'Option 1' })).toBeInTheDocument()
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByText('Review the offline analytics PR')).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
-    expect(screen.getByText('Collect login events')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('checkbox'))
-    expect(onToggle).toHaveBeenCalledWith('n1', true)
+    expect(screen.queryByText('Collect login events')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
   })
 
   it('edits, deletes, and adds through writeV2 without regenerating', async () => {
@@ -108,7 +107,6 @@ describe('NotesV2Document', () => {
         notes={notes()}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={vi.fn()}
-        onToggleNextStep={vi.fn()}
         onWrite={onWrite}
       />
     )
@@ -146,7 +144,6 @@ describe('NotesV2Document', () => {
         notes={sample}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={onSeek}
-        onToggleNextStep={vi.fn()}
         onWrite={vi.fn()}
       />
     )
@@ -169,7 +166,6 @@ describe('NotesV2Document', () => {
         notes={sample}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={vi.fn()}
-        onToggleNextStep={vi.fn()}
         onWrite={onWrite}
       />
     )
@@ -188,7 +184,6 @@ describe('NotesV2Document', () => {
         notes={{ ...sample, nextSteps: [{ ...sample.nextSteps[0], owner: 'Raul' }] }}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={vi.fn()}
-        onToggleNextStep={vi.fn()}
         onWrite={onWrite}
       />
     )

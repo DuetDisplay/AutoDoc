@@ -337,7 +337,6 @@ function NextStepRow({
   item,
   meetingSpan,
   onSeek,
-  onToggle,
   onSave,
   onSaveOwner,
   onDelete
@@ -345,7 +344,6 @@ function NextStepRow({
   item: NoteItem
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
-  onToggle: (itemId: string, completed: boolean) => void
   onSave?: (itemId: string, text: string) => void
   onSaveOwner?: (itemId: string, owner: string | null) => void
   onDelete?: (itemId: string) => void
@@ -353,17 +351,12 @@ function NextStepRow({
   const label = item.title?.trim() || item.text
   return (
     <div className="group flex items-start gap-2.5 py-1">
-      <input
-        type="checkbox"
-        checked={item.completed === true}
-        onChange={(event) => onToggle(item.id, event.target.checked)}
-        className="mt-1 accent-[var(--sage,#7A9E7E)]"
-      />
+      <span aria-hidden className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-muted" />
       <span className="min-w-0 flex-1">
         <InlineEdit
           value={label}
           onSave={onSave ? (text) => onSave(item.id, text) : undefined}
-          className={`text-[13px] leading-relaxed ${item.completed ? 'text-ink-faint line-through' : 'text-ink'}`}
+          className="text-[13px] leading-relaxed text-ink"
         />
         <OwnerEdit
           owner={item.owner}
@@ -451,14 +444,12 @@ export function NotesV2Document({
   title,
   meetingSpan,
   onSeek,
-  onToggleNextStep,
   onWrite
 }: {
   notes: MeetingNotesV2
   title?: string
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
-  onToggleNextStep: (itemId: string, completed: boolean) => void
   onWrite?: (content: MeetingNotesContent) => void
 }): ReactElement {
   const [option, setOption] = useState<NotesOption>(() => {
@@ -468,17 +459,7 @@ export function NotesV2Document({
   })
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
-  const openSteps = notes.nextSteps.filter((item) => item.completed !== true)
-  const ownerPreview = openSteps
-    .map((item) => item.owner)
-    .filter((owner): owner is string => Boolean(owner))
-    .filter((owner, index, all) => all.indexOf(owner) === index)
-    .slice(0, 3)
-
   const summary = meetingSummary(notes, title)
-  const header = summary || notes.keyTakeaways.length > 0
-    ? { overview: summary, takeaways: notes.keyTakeaways }
-    : null
 
   const saveItem = (itemId: string, text: string): void => {
     onWrite?.(mapNotesItems(notes, itemId, (item) => markEdited(item, text)))
@@ -544,37 +525,25 @@ export function NotesV2Document({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex rounded-lg border border-border bg-bg-card p-0.5">
-          {(['option-1', 'option-2'] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => {
-                setOption(value)
-                window.localStorage.setItem('autodoc.notesV2Option', value)
-              }}
-              className={`rounded-md px-2.5 py-1 text-[11.5px] font-semibold ${
-                option === value ? 'bg-ink text-white' : 'text-ink-muted hover:text-ink'
-              }`}
-            >
-              {value === 'option-1' ? 'Option 1' : 'Option 2'}
-            </button>
-          ))}
-        </div>
-        {openSteps.length > 0 ? (
+      <div className="flex rounded-lg border border-border bg-bg-card p-0.5 self-start">
+        {(['option-1', 'option-2'] as const).map((value) => (
           <button
+            key={value}
             type="button"
-            className="text-[11.5px] font-semibold text-sage hover:text-sage-dark"
-            onClick={() => document.getElementById('notes-next-steps')?.scrollIntoView({ behavior: 'smooth' })}
+            onClick={() => {
+              setOption(value)
+              window.localStorage.setItem('autodoc.notesV2Option', value)
+            }}
+            className={`rounded-md px-2.5 py-1 text-[11.5px] font-semibold ${
+              option === value ? 'bg-ink text-white' : 'text-ink-muted hover:text-ink'
+            }`}
           >
-            {openSteps.length} open
-            {ownerPreview.length > 0 ? ` · ${ownerPreview.join(' · ')}` : ''}
+            {value === 'option-1' ? 'Option 1' : 'Option 2'}
           </button>
-        ) : null}
+        ))}
       </div>
 
-      {header ? (
+      {summary ? (
         <div
           className={
             option === 'option-1'
@@ -582,33 +551,12 @@ export function NotesV2Document({
               : 'rounded-xl border border-border bg-bg-card px-4 py-3'
           }
         >
-          {header.overview ? (
-            <InlineEdit
-              value={header.overview}
-              onSave={notes.overview && onWrite ? saveOverview : undefined}
-              className="text-[13.5px] leading-relaxed text-ink-secondary"
-              as="p"
-            />
-          ) : null}
-          {header.takeaways.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {header.takeaways.map((item) => (
-                <span
-                  key={item.id}
-                  className="group inline-flex items-center gap-1 rounded-full border border-border bg-bg-accent px-2 py-0.5 text-[11.5px] text-ink-secondary"
-                >
-                  <InlineEdit
-                    value={item.text}
-                    onSave={onWrite ? (text) => saveItem(item.id, text) : undefined}
-                    className="text-[11.5px] text-ink-secondary"
-                  />
-                  {onWrite ? (
-                    <RemoveButton label="Delete note" onClick={() => deleteItem(item.id)} />
-                  ) : null}
-                </span>
-              ))}
-            </div>
-          ) : null}
+          <InlineEdit
+            value={summary}
+            onSave={notes.overview && onWrite ? saveOverview : undefined}
+            className="text-[13.5px] leading-relaxed text-ink-secondary"
+            as="p"
+          />
         </div>
       ) : null}
 
@@ -626,7 +574,6 @@ export function NotesV2Document({
               item={item}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
-              onToggle={onToggleNextStep}
               {...itemEdit}
             />
           ))}
@@ -730,7 +677,6 @@ export function NotesV2Document({
               item={item}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
-              onToggle={onToggleNextStep}
               {...itemEdit}
             />
           ))}

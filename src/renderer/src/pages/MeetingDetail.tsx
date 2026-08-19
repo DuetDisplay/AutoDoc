@@ -754,21 +754,6 @@ export function MeetingDetail() {
     )
   )
 
-  const handleToggleNextStep = (itemId: string, completed: boolean): void => {
-    if (!id) return
-    void window.electronAPI
-      .invoke('notes:set-next-step-completed', id, itemId, completed)
-      .then((next) => {
-        if (next) {
-          notesV2Ref.current = next
-          setNotesV2(next)
-        }
-      })
-      .catch((error) => {
-        console.warn('Failed to persist next-step check:', error)
-      })
-  }
-
   const notesV2Ref = useRef<MeetingNotesV2 | null>(null)
   const pendingNotesWriteRef = useRef<MeetingNotesContent | null>(null)
   const notesWriteInFlightRef = useRef(false)
@@ -1121,7 +1106,6 @@ export function MeetingDetail() {
                 title={detail?.title}
                 meetingSpan={meetingSpan}
                 onSeek={seekToSegment}
-                onToggleNextStep={handleToggleNextStep}
                 onWrite={handleWriteNotesV2}
               />
             ) : null}
