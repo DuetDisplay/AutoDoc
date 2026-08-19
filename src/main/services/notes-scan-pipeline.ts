@@ -30,6 +30,7 @@ import {
   type TopicGroup
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
+import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
 import type { MeetingNotesContent, MeetingSegments } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
 import { emptyValidationStats, type NotesValidationStats, type TranscriptRow } from './notes-evidence-validate'
@@ -369,6 +370,12 @@ export async function runNotesScanPipeline(
   }
   const durationMs = meetingSpan[0] ? meetingSpan[0].endMs - meetingSpan[0].startMs : 0
   content = applyNotesBudget(content, durationMs)
+  if (process.platform === 'win32') {
+    content = {
+      ...content,
+      sections: nestFlatPeerKeyPoints(content.sections)
+    }
+  }
   const validation = emptyValidationStats(false)
   reportProgress('budget', 1)
 

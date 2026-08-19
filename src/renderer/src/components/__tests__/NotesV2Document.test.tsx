@@ -4,6 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeetingNotesV2 } from '../../../../shared/types'
 import { NotesV2Document } from '../NotesV2Document'
 
+const isWindowsRenderer = vi.hoisted(() => vi.fn(() => false))
+
+vi.mock('../../services/microphone-access', () => ({
+  isWindowsRenderer
+}))
+
 function notes(): MeetingNotesV2 {
   return {
     schemaVersion: 2,
@@ -86,6 +92,7 @@ function notes(): MeetingNotesV2 {
 describe('NotesV2Document', () => {
   beforeEach(() => {
     window.localStorage.removeItem('autodoc.notesV2Option')
+    isWindowsRenderer.mockReturnValue(false)
   })
 
   it('lets the user switch Option 1 / Option 2 without next-step checkboxes', async () => {
@@ -183,6 +190,52 @@ describe('NotesV2Document', () => {
 
     expect(screen.getByTestId('sub-d1')).toHaveTextContent('collect login events from all users')
     expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
+  })
+
+  it('nests extra Windows key points when the scan left supporting details empty', () => {
+    isWindowsRenderer.mockReturnValue(true)
+    const sample = notes()
+    sample.sections[0].keyPoints = [
+      sample.sections[0].keyPoints[0],
+      {
+        ...sample.sections[0].keyPoints[0],
+        id: 'p2',
+        text: 'Users have not encountered instability'
+      }
+    ]
+    sample.sections[0].supportingDetails = []
+    render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('sub-p2')).toHaveTextContent('Users have not encountered instability')
+  })
+
+  it('keeps extra Mac key points as peers when supporting details are empty', () => {
+    const sample = notes()
+    sample.sections[0].keyPoints = [
+      sample.sections[0].keyPoints[0],
+      {
+        ...sample.sections[0].keyPoints[0],
+        id: 'p2',
+        text: 'Users have not encountered instability'
+      }
+    ]
+    sample.sections[0].supportingDetails = []
+    render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('sub-p2')).not.toBeInTheDocument()
+    expect(screen.getByText('Users have not encountered instability')).toBeInTheDocument()
   })
 
   it('lets the user add, change, and clear a next-step owner', async () => {

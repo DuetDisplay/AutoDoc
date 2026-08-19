@@ -14,7 +14,9 @@ import type {
   NoteSourceRange
 } from '../../../shared/types'
 import { fallbackMeetingOverview } from '../../../shared/notes-overview-text'
+import { displayNoteSectionHierarchy } from '../../../shared/notes-section-display'
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
+import { isWindowsRenderer } from '../services/microphone-access'
 import { renderNoteMarkup } from './NoteMarkup'
 
 type NotesOption = 'option-1' | 'option-2'
@@ -508,7 +510,7 @@ function BulletGroup({
       {children.length > 0 ? (
         <div
           className={
-            option === 'option-1' ? '' : 'ml-0 border-l border-hairline/80'
+            option === 'option-1' ? '' : 'ml-0 border-l border-border'
           }
         >
           {children.map((child) => (
@@ -683,8 +685,9 @@ export function NotesV2Document({
           </h2>
         ) : null}
         {notes.sections.map((section) => {
-          const extra = section.supportingDetails
-          const lastParentIndex = section.keyPoints.length - 1
+          const hierarchy = displayNoteSectionHierarchy(section, isWindowsRenderer())
+          const extra = hierarchy.supportingDetails
+          const lastParentIndex = hierarchy.keyPoints.length - 1
           return (
             <section key={section.id} className="mb-6">
               <InlineEdit
@@ -697,7 +700,7 @@ export function NotesV2Document({
                 }
                 as="h3"
               />
-              {section.keyPoints.map((item, index) => (
+              {hierarchy.keyPoints.map((item, index) => (
                 <BulletGroup
                   key={item.id}
                   item={item}
@@ -708,7 +711,7 @@ export function NotesV2Document({
                   {...itemEdit}
                 />
               ))}
-              {section.keyPoints.length === 0
+              {hierarchy.keyPoints.length === 0
                 ? extra.map((item) => (
                     <Bullet
                       key={item.id}
