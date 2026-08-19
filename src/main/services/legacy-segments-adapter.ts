@@ -178,6 +178,15 @@ function parseLegacyBucket(value: unknown, expectedMeetingId: string): ParsedLeg
 
 function parseLegacySegments(value: unknown, expectedMeetingId: string): ParsedLegacySegments {
   const record = expectRecord(value)
+  if (Array.isArray(record.items) && Array.isArray(record.nextSteps)) {
+    return {
+      decisions: [],
+      actionItems: parseLegacyBucket(record.nextSteps, expectedMeetingId),
+      information: parseLegacyBucket(record.items, expectedMeetingId),
+      discussion: [],
+      statusUpdates: []
+    }
+  }
   const actualKeys = Object.keys(record).sort()
   const expectedKeys = LEGACY_BUCKETS.map(({ key }) => key).sort()
   if (

@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
-import type { Transcript, MeetingSegments } from '../../shared/types'
+import type { Transcript } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
+import { meetingSegmentsFromDisk } from '../services/writer-catalog'
 import { readMetadata } from '../services/calendar-matcher'
 import { collectNotesV2SearchEntries, matchNotesV2SearchEntries } from '../services/notes-search-text'
 
@@ -69,9 +70,11 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
       if (!usedV2Notes) {
         try {
           const sPath = join(meetingDir, 'segments.json')
-          const segments: MeetingSegments = (await isEncrypted(sPath))
-            ? await decryptJSON<MeetingSegments>(sPath)
-            : JSON.parse(await readFile(sPath, 'utf-8'))
+          const segments = meetingSegmentsFromDisk(
+            (await isEncrypted(sPath))
+              ? await decryptJSON<unknown>(sPath)
+              : JSON.parse(await readFile(sPath, 'utf-8'))
+          )
           for (const [category, items] of Object.entries(segments)) {
             for (const item of items) {
               const combined = `${item.title} ${item.content}`.toLowerCase()

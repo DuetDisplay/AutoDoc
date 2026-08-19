@@ -3,7 +3,7 @@ import { access, mkdir, chmod, rm, copyFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { createWriteStream } from 'fs'
-import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
+import { spawn, execFile, execFileSync, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { totalmem } from 'os'
 import {
@@ -63,12 +63,91 @@ function parseLlamaServerNumCtx(command: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+function normalizeRuntimeDir(runtimeDir: string): string {
+  return runtimeDir.replace(/\\/g, '/').toLowerCase()
+}
+
+function commandIncludesRuntime(command: string, runtimeDir: string): boolean {
+  const runtime = normalizeRuntimeDir(runtimeDir)
+  return runtime.length > 0 && command.replace(/\\/g, '/').toLowerCase().includes(runtime)
+}
+
+function bytesToRssMiB(bytes: number): number {
+  return Math.round(bytes / 1024 / 1024)
+}
+
+interface WindowsLlamaServerCimRow {
+  ProcessId?: number
+  WorkingSetSize?: number
+  ExecutablePath?: string | null
+  CommandLine?: string | null
+}
+
+export function parseWindowsLlamaServerCimJson(
+  json: string,
+  runtimeDir: string
+): ManagedLlamaServer[] {
+  const trimmed = json.trim()
+  if (!trimmed || trimmed === 'null') return []
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return []
+  }
+
+  const rows = Array.isArray(parsed) ? parsed : [parsed]
+  const byPid = new Map<number, ManagedLlamaServer>()
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const record = row as WindowsLlamaServerCimRow
+    const pid = Number(record.ProcessId)
+    if (!Number.isFinite(pid)) continue
+    const command = String(record.CommandLine || record.ExecutablePath || '')
+    if (!command.toLowerCase().includes('llama-server')) continue
+    if (!commandIncludesRuntime(command, runtimeDir)) continue
+    const workingSet = Number(record.WorkingSetSize)
+    byPid.set(pid, {
+      pid,
+      rssMiB: Number.isFinite(workingSet) ? bytesToRssMiB(workingSet) : null,
+      numCtx: parseLlamaServerNumCtx(command)
+    })
+  }
+  return [...byPid.values()]
+}
+
+/**
+ * WMIC column order is alphabetical, so
+ * `ExecutablePath ProcessId WorkingSetSize` is the usual layout. PID is the
+ * smaller trailing integer; WorkingSetSize is bytes.
+ */
+export function formatWmicLlamaServerListing(listing: string): string {
+  const lines: string[] = []
+  for (const raw of listing.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || /executablepath/i.test(line)) continue
+    if (!/llama-server/i.test(line)) continue
+    const match = line.match(/^(.*?)\s+(\d+)\s+(\d+)\s*$/)
+    if (!match) continue
+    const command = match[1].trim()
+    const first = Number(match[2])
+    const second = Number(match[3])
+    if (!Number.isFinite(first) || !Number.isFinite(second)) continue
+    const workingSetLooksLikeBytes = Math.max(first, second) >= 1024 * 1024
+    const pid = workingSetLooksLikeBytes ? Math.min(first, second) : second
+    const workingSetBytes = workingSetLooksLikeBytes ? Math.max(first, second) : first
+    const rssKb = Math.max(1, Math.round(workingSetBytes / 1024))
+    lines.push(`${pid} ${rssKb} ${command}`)
+  }
+  return lines.join('\n')
+}
+
 export function parseManagedLlamaServers(
   listing: string,
   runtimeDir: string
 ): ManagedLlamaServer[] {
-  const runtime = runtimeDir.replace(/\\/g, '/').toLowerCase()
-  if (!runtime) return []
+  if (!normalizeRuntimeDir(runtimeDir)) return []
 
   const byPid = new Map<number, ManagedLlamaServer>()
   for (const raw of listing.split(/\r?\n/)) {
@@ -76,7 +155,7 @@ export function parseManagedLlamaServers(
     if (!line) continue
     const lower = line.replace(/\\/g, '/').toLowerCase()
     if (!lower.includes('llama-server')) continue
-    if (!lower.includes(runtime)) continue
+    if (!commandIncludesRuntime(line, runtimeDir)) continue
 
     const pidFromStart = line.match(/^(\d+)\s+(.*)$/)
     if (pidFromStart) {
@@ -117,9 +196,19 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // itself within the next chunk once decode has degraded.
 const RUNNER_RECYCLE_RSS_MIB_LARGE_HOST = 4864 // ~4.75 GiB on hosts with >= 20 GiB RAM
 const RUNNER_RECYCLE_RSS_MIB_SMALL_HOST = 4352 // ~4.25 GiB — low-RAM hosts hit swap sooner
+const RUNNER_RECYCLE_RSS_MIB_WIN_16G = 3584 // ~3.5 GiB — 16 GB boxes share RAM with GPU drivers
+const RUNNER_RECYCLE_RSS_MIB_WIN_LOW = 2560 // ~2.5 GiB — 8 GB Windows cannot absorb Metal-sized RSS
 
-export function getRunnerRecycleRssThresholdMiB(totalMemBytes: number): number {
+export function getRunnerRecycleRssThresholdMiB(
+  totalMemBytes: number,
+  platform: NodeJS.Platform = process.platform
+): number {
   const totalGiB = totalMemBytes / 1024 ** 3
+  if (platform === 'win32') {
+    if (totalGiB >= 20) return RUNNER_RECYCLE_RSS_MIB_LARGE_HOST
+    if (totalGiB >= 16) return RUNNER_RECYCLE_RSS_MIB_WIN_16G
+    return RUNNER_RECYCLE_RSS_MIB_WIN_LOW
+  }
   return totalGiB >= 20 ? RUNNER_RECYCLE_RSS_MIB_LARGE_HOST : RUNNER_RECYCLE_RSS_MIB_SMALL_HOST
 }
 
@@ -652,7 +741,18 @@ export class OllamaManager extends EventEmitter {
    */
   maybeRecycleBloatedRunners(meetingId?: string): boolean {
     const thresholdMiB = getRunnerRecycleRssThresholdMiB(totalmem())
-    const bloated = selectBloatedLlamaServers(this.listManagedLlamaServers(), thresholdMiB)
+    const servers = this.listManagedLlamaServers()
+    const bloated = selectBloatedLlamaServers(servers, thresholdMiB)
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'llama-server runner rss check',
+      meetingId,
+      context: {
+        thresholdMiB,
+        servers,
+        bloatedCount: bloated.length
+      }
+    })
     if (bloated.length === 0) return false
     this.killManagedLlamaServers(`runner-rss-over-${thresholdMiB}mib`, meetingId)
     return true
@@ -666,18 +766,43 @@ export class OllamaManager extends EventEmitter {
 
   private listManagedLlamaServers(): ManagedLlamaServer[] {
     const runtimeDir = this.getRuntimeDir()
-    let listing = ''
+    if (IS_WIN) {
+      return this.listManagedLlamaServersWindows(runtimeDir)
+    }
     try {
-      listing = IS_WIN
-        ? execSync('wmic process where "name=\'llama-server.exe\'" get ProcessId,ExecutablePath', {
-            encoding: 'utf-8',
-            timeout: 5000
-          })
-        : execSync('ps -axo pid=,rss=,command=', { encoding: 'utf-8', timeout: 5000 })
+      const listing = execSync('ps -axo pid=,rss=,command=', { encoding: 'utf-8', timeout: 5000 })
+      return parseManagedLlamaServers(listing, runtimeDir)
     } catch {
       return []
     }
-    return parseManagedLlamaServers(listing, runtimeDir)
+  }
+
+  private listManagedLlamaServersWindows(runtimeDir: string): ManagedLlamaServer[] {
+    try {
+      const json = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | Select-Object ProcessId,WorkingSetSize,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
+        ],
+        { encoding: 'utf-8', timeout: 8000, windowsHide: true }
+      )
+      return parseWindowsLlamaServerCimJson(json, runtimeDir)
+    } catch {
+      // Fall through to WMIC on images where CIM is blocked.
+    }
+
+    try {
+      const listing = execSync(
+        'wmic process where "name=\'llama-server.exe\'" get ExecutablePath,ProcessId,WorkingSetSize',
+        { encoding: 'utf-8', timeout: 5000, windowsHide: true }
+      )
+      return parseManagedLlamaServers(formatWmicLlamaServerListing(listing), runtimeDir)
+    } catch {
+      return []
+    }
   }
 
   private killManagedLlamaServers(reason = 'stop', meetingId?: string): void {

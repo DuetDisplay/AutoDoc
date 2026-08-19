@@ -6,7 +6,7 @@ import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 import { NotesRepository } from '../notes-repository'
 import * as notesScanPipeline from '../notes-scan-pipeline'
-import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const mocks = vi.hoisted(() => ({
   logAutodocEvent: vi.fn(),
@@ -716,6 +716,50 @@ describe('SegmentationService', () => {
     expect(provider.summarize).toHaveBeenCalledOnce()
   })
 
+  it('enables Qwen notes on capable Windows profiles without low-memory mode', async () => {
+    service = new SegmentationService(
+      provider,
+      createMockOllamaManager(),
+      '/mock/home/AutoDoc/recordings',
+      null,
+      null,
+      null,
+      () => ({
+        id: 'win-gpu',
+        label: 'GPU Windows processing',
+        reason: 'test',
+        hardware: { logicalProcessors: 16, totalMemoryGiB: 32, freeMemoryGiB: 12 },
+        notesModel: DEFAULT_OLLAMA_MODEL,
+        dualSourceMode: 'concurrent',
+        serializeLocalProcessing: false,
+        notesAfterTranscriptionOnly: false,
+        threadPolicy: 'default'
+      })
+    )
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-win-0',
+          meetingId: 'm-win',
+          speaker: 'Chris',
+          text: 'We should follow up next week.',
+          startMs: 0,
+          endMs: 15_000,
+          confidence: 0.8
+        }
+      ]) as any
+    )
+
+    await (service as any).processJob('m-win')
+
+    expect(provider.setModel).toHaveBeenCalledWith(DEFAULT_OLLAMA_MODEL)
+    expect(provider.setLowMemoryMode).toHaveBeenCalledWith(false)
+  })
+
   it('reaps leftover Ollama runners before selecting the notes processing profile', async () => {
     const order: string[] = []
     const reapLeftoverRunners = vi.fn((reason?: string) => {
@@ -1276,7 +1320,7 @@ describe('SegmentationService', () => {
       expect(provider.releaseResources).toHaveBeenCalledWith('m1')
     })
 
-    it('does not log mac resource snapshot on win32 after summarize', async () => {
+    it('logs a windows resource snapshot after summarize', async () => {
       setPlatform('win32')
       provider = createMockProvider()
       service = new SegmentationService(
@@ -1285,13 +1329,13 @@ describe('SegmentationService', () => {
         '/mock/home/AutoDoc/recordings'
       )
       setupSummarizeTranscript()
-      const logMacResourceSnapshot = vi
-        .spyOn(service as any, 'logMacResourceSnapshot')
+      const logNotesResourceSnapshot = vi
+        .spyOn(service as any, 'logNotesResourceSnapshot')
         .mockResolvedValue(undefined)
 
       await (service as any).processJob('m1')
 
-      expect(logMacResourceSnapshot).not.toHaveBeenCalled()
+      expect(logNotesResourceSnapshot).toHaveBeenCalledWith('notes resources released', 'm1')
     })
 
     it('calls releaseResources after successful summarize on darwin', async () => {

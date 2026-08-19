@@ -8,9 +8,11 @@ vi.mock('electron', () => ({
 }))
 
 const {
+  formatWmicLlamaServerListing,
   getRunnerRecycleRssThresholdMiB,
   parseManagedLlamaServerPids,
   parseManagedLlamaServers,
+  parseWindowsLlamaServerCimJson,
   selectBloatedLlamaServers
 } = await import('../ollama-manager')
 
@@ -46,15 +48,41 @@ describe('parseManagedLlamaServerPids', () => {
     ).toEqual([])
   })
 
-  it('reads context size and rss from a darwin process listing', () => {
+  it('reads working set and ctx-size from Windows CIM JSON', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc Dev\\models\\ollama-runtime'
+    const json = JSON.stringify({
+      ProcessId: 4412,
+      WorkingSetSize: 4120903680,
+      ExecutablePath: `${runtime}\\llama-server.exe`,
+      CommandLine: `"${runtime}\\llama-server.exe" --model qwen -c 8192`
+    })
+
+    expect(parseWindowsLlamaServerCimJson(json, runtime)).toEqual([
+      { pid: 4412, rssMiB: 3930, numCtx: 8192 }
+    ])
+  })
+
+  it('ignores CIM rows from a different AutoDoc runtime', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc Dev\\models\\ollama-runtime'
+    const json = JSON.stringify({
+      ProcessId: 9001,
+      WorkingSetSize: 4120903680,
+      ExecutablePath: 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc\\models\\ollama-runtime\\llama-server.exe',
+      CommandLine: 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc\\models\\ollama-runtime\\llama-server.exe -c 4096'
+    })
+
+    expect(parseWindowsLlamaServerCimJson(json, runtime)).toEqual([])
+  })
+
+  it('formats WMIC working-set rows into a pid rssKb command listing', () => {
+    const runtime = 'C:\\Users\\chris\\AppData\\Roaming\\AutoDoc\\models\\ollama-runtime'
     const listing = [
-      `27809  3670016 ${DEV_RUNTIME}/llama-server --model qwen -c 4096`,
-      `84972  4812800 ${DEV_RUNTIME}/llama-server --model qwen --ctx-size 8192`
+      'ExecutablePath                      ProcessId  WorkingSetSize',
+      `${runtime}\\llama-server.exe        4412       4120903680`
     ].join('\n')
 
-    expect(parseManagedLlamaServers(listing, DEV_RUNTIME)).toEqual([
-      { pid: 27809, rssMiB: 3584, numCtx: 4096 },
-      { pid: 84972, rssMiB: 4700, numCtx: 8192 }
+    expect(parseManagedLlamaServers(formatWmicLlamaServerListing(listing), runtime)).toEqual([
+      { pid: 4412, rssMiB: 3930, numCtx: null }
     ])
   })
 })
@@ -62,10 +90,16 @@ describe('parseManagedLlamaServerPids', () => {
 describe('runner RSS recycle threshold', () => {
   const GIB = 1024 ** 3
 
-  it('allows more runner growth on large-RAM hosts than small ones', () => {
-    expect(getRunnerRecycleRssThresholdMiB(24 * GIB)).toBe(4864)
-    expect(getRunnerRecycleRssThresholdMiB(16 * GIB)).toBe(4352)
-    expect(getRunnerRecycleRssThresholdMiB(8 * GIB)).toBe(4352)
+  it('allows more runner growth on large-RAM Macs than small ones', () => {
+    expect(getRunnerRecycleRssThresholdMiB(24 * GIB, 'darwin')).toBe(4864)
+    expect(getRunnerRecycleRssThresholdMiB(16 * GIB, 'darwin')).toBe(4352)
+    expect(getRunnerRecycleRssThresholdMiB(8 * GIB, 'darwin')).toBe(4352)
+  })
+
+  it('recycles earlier on 16 GB and 8 GB Windows hosts than on 24 GB', () => {
+    expect(getRunnerRecycleRssThresholdMiB(32 * GIB, 'win32')).toBe(4864)
+    expect(getRunnerRecycleRssThresholdMiB(16 * GIB, 'win32')).toBe(3584)
+    expect(getRunnerRecycleRssThresholdMiB(8 * GIB, 'win32')).toBe(2560)
   })
 
   it('selects only runners with known rss above the threshold', () => {

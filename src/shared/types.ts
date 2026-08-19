@@ -455,6 +455,7 @@ export interface WhisperSetupStatus {
   macProcessingProfileReason?: string
   windowsProcessingProfileId?: 'win-gpu' | 'win-cpu-normal' | 'win-low-spec'
   windowsProcessingProfileReason?: string
+  notesModel?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'

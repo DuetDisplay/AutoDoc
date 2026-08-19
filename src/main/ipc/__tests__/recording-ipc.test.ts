@@ -662,6 +662,67 @@ describe('recording IPC source handling', () => {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }
   })
+
+  it('lists imported meetings that have a transcript but no audio or video', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const importedId = 'imported-transcript-only'
+    const emptyId = 'empty-aborted'
+    const startedAt = new Date(2026, 7, 17, 15, 29).getTime()
+
+    try {
+      await fsp.mkdir(path.join(recordingsDir, importedId), { recursive: true })
+      await fsp.mkdir(path.join(recordingsDir, emptyId), { recursive: true })
+      await fsp.writeFile(path.join(recordingsDir, importedId, 'transcript.json'), '[]')
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === importedId) {
+          return {
+            customTitle: 'Stand Up',
+            startedAt,
+            durationSeconds: 33 * 60
+          }
+        }
+        return null
+      })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn().mockResolvedValue('complete'),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      const listHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:list'
+      )?.[1] as (() => Promise<Array<{ meetingId: string; title: string }>>) | undefined
+
+      expect(listHandler).toBeTypeOf('function')
+      const entries = await listHandler?.()
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          meetingId: importedId,
+          title: 'Stand Up'
+        })
+      ])
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings', () => {

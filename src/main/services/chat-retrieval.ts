@@ -9,6 +9,7 @@ import type {
   Transcript
 } from '../../shared/types'
 import { decryptJSON, isEncrypted } from './crypto'
+import { meetingSegmentsFromDisk } from './writer-catalog'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import {
   collectNotesV2SearchEntries,
@@ -1828,9 +1829,11 @@ async function loadMeetingSummaryFromDisk(
 
   try {
     const sPath = join(meetingDir, 'segments.json')
-    const segments: MeetingSegments = (await isEncrypted(sPath))
-      ? await decryptJSON<MeetingSegments>(sPath)
-      : JSON.parse(await readFile(sPath, 'utf-8'))
+    const segments = meetingSegmentsFromDisk(
+      (await isEncrypted(sPath))
+        ? await decryptJSON<unknown>(sPath)
+        : JSON.parse(await readFile(sPath, 'utf-8'))
+    )
 
     let body = ''
     let searchText = ''
@@ -1957,8 +1960,8 @@ async function readInventoryNotePreview(meetingDir: string): Promise<string | nu
   }
 
   try {
-    const segments = await readMaybeEncryptedJson<MeetingSegments>(
-      join(meetingDir, 'segments.json')
+    const segments = meetingSegmentsFromDisk(
+      await readMaybeEncryptedJson<unknown>(join(meetingDir, 'segments.json'))
     )
     const preview = Object.values(segments)
       .flat()

@@ -16,11 +16,10 @@ export function LowSpecMacProcessingBanner({
       ])
 
       const hasRecordings = Array.isArray(recordings) && recordings.length > 0
-      setVisible(
-        setupStatus?.macProcessingProfileId === 'mac-low-spec' &&
-          dismissed !== true &&
-          hasRecordings
-      )
+      const isLowSpecHost =
+        setupStatus?.macProcessingProfileId === 'mac-low-spec' ||
+        setupStatus?.windowsProcessingProfileId === 'win-low-spec'
+      setVisible(isLowSpecHost && dismissed !== true && hasRecordings)
     } catch {
       setVisible(false)
     }
@@ -80,8 +79,8 @@ export function LowSpecMacProcessingBanner({
         <div className="min-w-0 flex-1">
           <h2 className="text-[12.5px] font-semibold text-ink">Optimized local processing is on</h2>
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            This Mac has limited memory, so AutoDoc is processing recordings more carefully. Notes
-            may take a little longer, but this helps avoid slowdowns or failed processing.
+            This computer has limited memory, so AutoDoc is processing recordings more carefully.
+            Notes may take a little longer, but this helps avoid slowdowns or failed processing.
           </p>
         </div>
         <button

@@ -57,9 +57,6 @@ const LOW_MEMORY_TOTAL_GIB_THRESHOLD = 14
 const MAX_UNIQUE_TOPICS = 6
 const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
-const WINDOWS_ITEM_DEDUP_THRESHOLD = 0.85
-const MAX_KNOWN_ITEM_TITLES = 20
-const WINDOWS_CHUNK_ITEM_CAP = 8
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 
 export function writerProgressPercent(
@@ -71,9 +68,6 @@ export function writerProgressPercent(
   const fraction = Math.min(1, Math.max(0, (chunkIndex + chunkFraction) / chunkCount))
   return Math.min(NOTES_WRITER_PROGRESS_END, Math.round(fraction * NOTES_WRITER_PROGRESS_END))
 }
-const WINDOWS_CATEGORY_GUIDANCE =
-  'It is okay for action_items or status_updates to be empty. Put factual details, product capabilities, costs, timelines, and explanations under information unless the transcript explicitly assigns work or makes a decision.'
-
 const NOTES_RESPONSE_ITEM_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -232,15 +226,6 @@ MAC QUALITY TUNING OVERRIDE:
 - Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
 - Prefer empty arrays over weak, repeated, speculative, or low-signal notes.`
 
-const WINDOWS_NOTES_PROMPT_SUFFIX = `
-
-WINDOWS QUALITY TUNING OVERRIDE:
-- Avoid near-duplicate titles across all categories. If two items describe the same underlying point, keep only the stronger one.
-- Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
-- If a point is already captured, do not re-create it with a slightly different title.
-- Skip content already captured in earlier chunks when processing later sections.
-- Prefer empty arrays over weak, repeated, or low-signal notes.`
-
 interface RawSegment {
   topic?: string
   title?: string
@@ -275,6 +260,7 @@ interface OllamaCallMetrics {
   promptEvalDurationMs?: number
   evalCount?: number
   evalDurationMs?: number
+  evalTokPerSec?: number
 }
 
 export type OllamaProviderTelemetryEventName =
@@ -505,7 +491,7 @@ export class OllamaProvider implements LLMProvider {
 
   private estimateItemCount(durationMinutes: number): string {
     const estMinutes = Math.max(5, Math.round(durationMinutes))
-    if (process.platform === 'darwin') {
+    if (this.usesSharedNotesWriter()) {
       return `This is roughly a ${estMinutes}-minute meeting. Target a focused final note set around 40-55 total items across all categories. Prefer fewer, higher-signal notes over exhaustive extraction.`
     }
 
@@ -590,20 +576,11 @@ export class OllamaProvider implements LLMProvider {
 
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
-    const capturedItemTitles: string[] = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const knownTopics = this.extractKnownTopics(merged)
-      const knownItemTitles =
-        process.platform === 'win32' && i > 0 ? this.extractKnownItemTitles(capturedItemTitles) : []
-      const chunkLabel = this.buildChunkLabel(
-        i,
-        chunks.length,
-        itemGuidance,
-        knownTopics,
-        knownItemTitles
-      )
+      const chunkLabel = this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics)
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -737,13 +714,6 @@ export class OllamaProvider implements LLMProvider {
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
 
-      if (process.platform === 'win32') {
-        for (const item of this.flattenSegments(chunkResult)) {
-          const title = item.title?.trim()
-          if (title) capturedItemTitles.push(title)
-        }
-      }
-
       onProgress?.(writerProgressPercent(i, 1, chunks.length))
     }
 
@@ -789,10 +759,6 @@ export class OllamaProvider implements LLMProvider {
     return topics.slice(0, MAX_UNIQUE_TOPICS)
   }
 
-  private extractKnownItemTitles(capturedTitles: string[]): string[] {
-    return capturedTitles.slice(-MAX_KNOWN_ITEM_TITLES)
-  }
-
   private chunkTranscript(transcript: string): string[] {
     const chunkChars = this.getChunkChars()
     if (transcript.length <= chunkChars) return [transcript]
@@ -814,16 +780,12 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    return process.platform === 'win32' ? WINDOWS_CHUNK_CHARS : CHUNK_CHARS
+    return CHUNK_CHARS
   }
 
   private getSystemPrompt(): string {
-    if (process.platform === 'darwin') {
+    if (this.usesSharedNotesWriter()) {
       return `${SYSTEM_PROMPT}${MAC_NOTES_PROMPT_SUFFIX}`
-    }
-
-    if (process.platform === 'win32') {
-      return `${SYSTEM_PROMPT}${WINDOWS_NOTES_PROMPT_SUFFIX}`
     }
 
     return SYSTEM_PROMPT
@@ -833,32 +795,22 @@ export class OllamaProvider implements LLMProvider {
     chunkIndex: number,
     chunkCount: number,
     itemGuidance: string,
-    knownTopics: string[],
-    knownItemTitles: string[] = []
+    knownTopics: string[]
   ): string {
-    const windowsCategoryGuidance = this.getWindowsCategoryGuidance()
     const knownTopicGuidance =
       knownTopics.length > 0
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
         : ''
-    const knownItemGuidance =
-      process.platform === 'win32' && knownItemTitles.length > 0
-        ? ` Do not re-create notes already captured: ${knownItemTitles.join('; ')}.`
-        : ''
 
     if (chunkCount <= 1) {
-      return `\n\n${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
+      return `\n\n${itemGuidance}${knownTopicGuidance}`
     }
 
-    if (process.platform === 'darwin') {
+    if (this.usesSharedNotesWriter()) {
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
     }
 
-    if (process.platform === 'win32') {
-      return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy NEW items from THIS section, at most ${WINDOWS_CHUNK_ITEM_CAP} total items across all categories. Be concise. Avoid near-duplicate titles; prefer one strong item over overlapping items about the same point. Skip content already captured.${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}${knownItemGuidance}`
-    }
-
-    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
+    return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${knownTopicGuidance}`
   }
 
   private async readGenerateStream(
@@ -1149,27 +1101,34 @@ export class OllamaProvider implements LLMProvider {
     const nsToMs = (value?: number): number | undefined =>
       typeof value === 'number' ? Math.round(value / 1_000_000) : undefined
 
+    const evalDurationMs = nsToMs(data.eval_duration)
+    const evalCount = data.eval_count
     return {
       totalDurationMs: nsToMs(data.total_duration) ?? Date.now() - requestStartedAt,
       loadDurationMs: nsToMs(data.load_duration),
       promptEvalCount: data.prompt_eval_count,
       promptEvalDurationMs: nsToMs(data.prompt_eval_duration),
-      evalCount: data.eval_count,
-      evalDurationMs: nsToMs(data.eval_duration)
+      evalCount,
+      evalDurationMs,
+      evalTokPerSec:
+        evalCount != null && evalDurationMs != null && evalDurationMs > 0
+          ? Math.round((evalCount / evalDurationMs) * 1000 * 10) / 10
+          : undefined
     }
   }
 
+  private usesSharedNotesWriter(): boolean {
+    return process.platform === 'darwin' || process.platform === 'win32'
+  }
+
   private getNotesResponseFormat(): 'json' | typeof NOTES_RESPONSE_SCHEMA {
-    return process.platform === 'win32' ? NOTES_RESPONSE_SCHEMA : 'json'
+    return 'json'
   }
 
   private getMaxOutputTokens(): number {
-    return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
+    return MAX_OUTPUT_TOKENS
   }
 
-  private getWindowsCategoryGuidance(): string {
-    return process.platform === 'win32' ? ` ${WINDOWS_CATEGORY_GUIDANCE}` : ''
-  }
 
   private enableLowMemoryContext(
     meetingId: string,
@@ -1466,82 +1425,9 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
-  private dedupeNearDuplicateItems(segments: MeetingSegments): void {
-    if (process.platform !== 'win32') return
-
-    const items = this.flattenSegments(segments)
-    if (items.length <= 1) return
-
-    const parent = items.map((_, index) => index)
-    const find = (index: number): number => {
-      while (parent[index] !== index) {
-        parent[index] = parent[parent[index]]
-        index = parent[index]
-      }
-      return index
-    }
-    const union = (left: number, right: number) => {
-      const rootLeft = find(left)
-      const rootRight = find(right)
-      if (rootLeft !== rootRight) parent[rootRight] = rootLeft
-    }
-
-    for (let i = 0; i < items.length; i++) {
-      for (let j = i + 1; j < items.length; j++) {
-        if (
-          this.getItemTitleSimilarity(items[i].title, items[j].title) >=
-          WINDOWS_ITEM_DEDUP_THRESHOLD
-        ) {
-          union(i, j)
-        }
-      }
-    }
-
-    const clusters = new Map<number, Segment[]>()
-    for (let i = 0; i < items.length; i++) {
-      const root = find(i)
-      const cluster = clusters.get(root) ?? []
-      cluster.push(items[i])
-      clusters.set(root, cluster)
-    }
-
-    const keptSegments = new Set<Segment>()
-    for (const cluster of clusters.values()) {
-      keptSegments.add(cluster.length === 1 ? cluster[0] : this.pickRicherSegment(cluster))
-    }
-
-    const categoryKeys: Array<keyof MeetingSegments> = [
-      'decisions',
-      'actionItems',
-      'information',
-      'discussion',
-      'statusUpdates'
-    ]
-    for (const categoryKey of categoryKeys) {
-      segments[categoryKey] = segments[categoryKey].filter((segment) => keptSegments.has(segment))
-    }
-  }
-
-  private getItemTitleSimilarity(left: string, right: string): number {
-    return this.getTopicTextSimilarity(left, right)
-  }
-
-  private pickRicherSegment(segments: Segment[]): Segment {
-    return segments.reduce((best, candidate) => {
-      const bestContentLength = best.content?.length ?? 0
-      const candidateContentLength = candidate.content?.length ?? 0
-      if (candidateContentLength !== bestContentLength) {
-        return candidateContentLength > bestContentLength ? candidate : best
-      }
-
-      const bestRange = Math.abs(best.sourceEndMs - best.sourceStartMs)
-      const candidateRange = Math.abs(candidate.sourceEndMs - candidate.sourceStartMs)
-      if (candidateRange !== bestRange) {
-        return candidateRange > bestRange ? candidate : best
-      }
-
-      return best
-    })
+  private dedupeNearDuplicateItems(_segments: MeetingSegments): void {
+    // Writer-level title collapse was a Windows V1 llama workaround. The shared
+    // V2 writer + scan path matches macOS and leaves near-duplicates for scan.
   }
 
   private flattenSegments(segments: MeetingSegments): Segment[] {
@@ -1794,15 +1680,14 @@ export class OllamaProvider implements LLMProvider {
   ): SourceRange {
     const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps)
     const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps)
-    const fallbackRange =
-      process.platform === 'darwin'
-        ? {
-            startMs: Math.min(sourceStartMs, sourceEndMs),
-            endMs: Math.max(sourceStartMs, sourceEndMs)
-          }
-        : { startMs: sourceStartMs, endMs: sourceEndMs }
+    const fallbackRange = this.usesSharedNotesWriter()
+      ? {
+          startMs: Math.min(sourceStartMs, sourceEndMs),
+          endMs: Math.max(sourceStartMs, sourceEndMs)
+        }
+      : { startMs: sourceStartMs, endMs: sourceEndMs }
 
-    if (process.platform !== 'darwin' || transcriptLines.length === 0) return fallbackRange
+    if (!this.usesSharedNotesWriter() || transcriptLines.length === 0) return fallbackRange
 
     return this.findBestEvidenceRange(item, fallbackRange, transcriptLines) ?? fallbackRange
   }

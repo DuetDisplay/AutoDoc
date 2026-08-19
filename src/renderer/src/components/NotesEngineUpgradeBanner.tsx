@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { DEFAULT_OLLAMA_EMBEDDING_MODEL } from '../../../shared/constants'
+import { DEFAULT_OLLAMA_EMBEDDING_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 import { trackEvent } from '../services/analytics'
 
 type BannerVariant = 'downloading' | 'offline' | 'ready'
@@ -31,7 +31,11 @@ export function NotesEngineUpgradeBanner({
         window.electronAPI.invoke('prefs:get-notes-engine-ready-dismissed')
       ])
 
-      if (whisper?.macProcessingProfileId === 'mac-low-spec') {
+      if (
+        whisper?.macProcessingProfileId === 'mac-low-spec' ||
+        whisper?.windowsProcessingProfileId === 'win-low-spec' ||
+        whisper?.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
+      ) {
         setVariant(null)
         return
       }

@@ -5,8 +5,6 @@ import {
   MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
-  WINDOWS_CHUNK_CHARS,
-  WINDOWS_MAX_OUTPUT_TOKENS,
   WINDOWS_CONTEXT_TOKENS,
   writerProgressPercent
 } from '../llm'
@@ -492,10 +490,10 @@ describe('OllamaProvider grounding', () => {
 
     expect(result.actionItems).toHaveLength(1)
     expect(result.actionItems[0].sourceStartMs).toBe(
-      process.platform === 'darwin' ? 605_000 : 600_000
+      process.platform === 'darwin' || process.platform === 'win32' ? 605_000 : 600_000
     )
     expect(result.actionItems[0].sourceEndMs).toBe(
-      process.platform === 'darwin' ? 605_000 : 600_000
+      process.platform === 'darwin' || process.platform === 'win32' ? 605_000 : 600_000
     )
   })
 
@@ -531,7 +529,7 @@ describe('OllamaProvider grounding', () => {
 
     expect(result.actionItems).toHaveLength(1)
     expect(result.actionItems[0].sourceStartMs).toBe(
-      process.platform === 'darwin' ? 620_000 : 600_000
+      process.platform === 'darwin' || process.platform === 'win32' ? 620_000 : 600_000
     )
   })
 
@@ -661,7 +659,16 @@ describe('OllamaProvider grounding', () => {
       return
     }
 
-    expect(chunks).toHaveLength(process.platform === 'win32' ? 2 : 3)
+    if (process.platform === 'win32') {
+      expect(chunks).toHaveLength(3)
+      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
+
+      tunedProvider.setLowMemoryMode(true)
+      expect((tunedProvider as any).chunkTranscript(longTranscript)).toHaveLength(3)
+      return
+    }
+
+    expect(chunks).toHaveLength(3)
     expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
@@ -787,7 +794,7 @@ describe('OllamaProvider grounding', () => {
       (tunedProvider as any).parseTranscriptLines(transcript)
     )
 
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' || process.platform === 'win32') {
       expect(result.decisions[0].sourceStartMs).toBe(600_000)
       expect(result.decisions[0].sourceEndMs).toBe(605_000)
       return
@@ -1064,41 +1071,13 @@ describe('OllamaProvider grounding', () => {
     expect(result.actionItems[0].deadline).toBe('Friday')
   })
 
-  it('includes optional assignee and deadline in the Windows structured-output schema', () => {
+  it('uses the shared V2 writer schema and budgets on Windows', async () => {
     setPlatform('win32')
     const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
-    const format = (windowsProvider as any).getNotesResponseFormat() as {
-      properties: {
-        action_items: {
-          items: {
-            properties: Record<string, { type: string }>
-            required: string[]
-            additionalProperties: boolean
-          }
-        }
-      }
-    }
+    expect((windowsProvider as any).getNotesResponseFormat()).toBe('json')
+    expect((windowsProvider as any).getMaxOutputTokens()).toBe(8192)
+    expect((windowsProvider as any).getChunkChars()).toBe(4000)
 
-    expect(format).not.toBe('json')
-    const itemSchema = format.properties.action_items.items
-    // Grammar-constrained Ollama format + additionalProperties:false drops any key
-    // not listed here, so assignee/deadline must be present as optional properties.
-    expect(itemSchema.additionalProperties).toBe(false)
-    expect(itemSchema.properties.assignee).toEqual({ type: 'string' })
-    expect(itemSchema.properties.deadline).toEqual({ type: 'string' })
-    expect(itemSchema.required).toEqual(
-      expect.arrayContaining(['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs'])
-    )
-    expect(itemSchema.required).not.toContain('assignee')
-    expect(itemSchema.required).not.toContain('deadline')
-  })
-
-  it('uses constrained shorter notes generation on Windows', async () => {
-    if (process.platform !== 'win32') {
-      return
-    }
-
-    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const requestBodies: Array<{
       format?: unknown
       messages?: Array<{ role: string; content: string }>
@@ -1126,7 +1105,7 @@ describe('OllamaProvider grounding', () => {
                             topic: 'Windows Performance',
                             title: 'CPU notes path was optimized',
                             content:
-                              'The Windows notes generation path now uses a stricter response format.',
+                              'The Windows notes generation path now uses the shared V2 writer.',
                             sourceStartMs: 0,
                             sourceEndMs: 0
                           }
@@ -1148,36 +1127,15 @@ describe('OllamaProvider grounding', () => {
 
     const result = await windowsProvider.summarize(
       'meeting-windows-schema',
-      '[00:00] [Chris] The Windows notes generation path now uses a stricter response format.',
+      '[00:00] [Chris] The Windows notes generation path now uses the shared V2 writer.',
       undefined,
       5
     )
 
     expect(result.information).toHaveLength(1)
-    expect(requestBodies[0].format).toMatchObject({
-      type: 'object',
-      properties: {
-        decisions: expect.objectContaining({ type: 'array' }),
-        action_items: expect.objectContaining({ type: 'array' }),
-        information: expect.objectContaining({ type: 'array' }),
-        discussion: expect.objectContaining({ type: 'array' }),
-        status_updates: expect.objectContaining({ type: 'array' })
-      }
-    })
-    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
-    expect(requestBodies[0].messages?.[1]?.content).toContain(
-      'It is okay for action_items or status_updates to be empty'
-    )
-  })
-
-  it('uses larger transcript chunks on Windows to reduce notes calls', () => {
-    if (process.platform !== 'win32') {
-      return
-    }
-
-    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
-
-    expect((windowsProvider as any).getChunkChars()).toBe(WINDOWS_CHUNK_CHARS)
+    expect(requestBodies[0].format).toBe('json')
+    expect(requestBodies[0].options?.num_predict).toBe(8192)
+    expect(requestBodies[0].messages?.[0]?.content).toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
   it('keeps low-memory context when setLowMemoryMode(false) runs on a low-RAM Windows host', () => {
@@ -1205,7 +1163,7 @@ describe('OllamaProvider grounding', () => {
   describe('Windows near-duplicate item dedup', () => {
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
 
-    it('collapses exact duplicate titles across categories on Windows', () => {
+    it('leaves writer items intact on Windows so scan matches macOS', () => {
       setPlatform('win32')
       const segments = makeSegments({
         information: [
@@ -1228,12 +1186,11 @@ describe('OllamaProvider grounding', () => {
 
       ;(provider as any).dedupeNearDuplicateItems(segments)
 
-      expect(segments.information).toHaveLength(0)
+      expect(segments.information).toHaveLength(1)
       expect(segments.discussion).toHaveLength(1)
-      expect(segments.discussion[0].content).toContain('debated')
     })
 
-    it('collapses substring near-duplicate titles like the Autopilot example on Windows', () => {
+    it('does not collapse near-duplicate titles on Windows', () => {
       setPlatform('win32')
       const segments = makeSegments({
         information: [
@@ -1256,12 +1213,10 @@ describe('OllamaProvider grounding', () => {
 
       ;(provider as any).dedupeNearDuplicateItems(segments)
 
-      expect(segments.information).toHaveLength(1)
-      expect(segments.information[0].title).toContain('Crash Rate')
-      expect(segments.information[0].content.length).toBeGreaterThan(80)
+      expect(segments.information).toHaveLength(2)
     })
 
-    it('collapses cross-category near-duplicates and keeps the richer item in its original category', () => {
+    it('does not collapse cross-category near-duplicates on Windows', () => {
       setPlatform('win32')
       const segments = makeSegments({
         decisions: [
@@ -1289,33 +1244,8 @@ describe('OllamaProvider grounding', () => {
 
       ;(provider as any).dedupeNearDuplicateItems(segments)
 
-      expect(segments.decisions).toHaveLength(0)
+      expect(segments.decisions).toHaveLength(1)
       expect(segments.actionItems).toHaveLength(1)
-      expect(segments.actionItems[0].content).toContain('Chris')
-    })
-
-    it('preserves distinct titles on Windows', () => {
-      setPlatform('win32')
-      const segments = makeSegments({
-        information: [
-          makeSegment({
-            id: 'i1',
-            category: 'information',
-            title: 'Windows rollout split remains 30% and 70%',
-            content: 'Rewrite stays at 30% while legacy Windows remains at 70%.'
-          }),
-          makeSegment({
-            id: 'i2',
-            category: 'information',
-            title: 'Latest Windows desktop installs are 73 for this build',
-            content: 'Install count for the current build is 73.'
-          })
-        ]
-      })
-
-      ;(provider as any).dedupeNearDuplicateItems(segments)
-
-      expect(segments.information).toHaveLength(2)
     })
 
     it('does not dedupe near-duplicate items on macOS', () => {
@@ -1346,31 +1276,28 @@ describe('OllamaProvider grounding', () => {
   })
 
   describe('Windows chunk label guidance', () => {
-    it('includes per-chunk item cap, anti-duplication guidance, and known item titles on later chunks', () => {
+    it('uses the shared V2 writer guidance on later chunks', () => {
       setPlatform('win32')
       const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
       const label = (windowsProvider as any).buildChunkLabel(
         1,
         3,
-        'Aim for 8-12 items total across all categories.',
-        ['Product Planning'],
-        ['Autopilot timeline confirmed', 'Billing API migration plan']
+        'Target a focused final note set around 40-55 total items.',
+        ['Product Planning']
       ) as string
 
-      expect(label).toContain('at most 8 total items across all categories')
-      expect(label).toContain('Avoid near-duplicate titles')
-      expect(label).toContain('Do not re-create notes already captured')
-      expect(label).toContain('Autopilot timeline confirmed')
-      expect(label).toContain('Billing API migration plan')
+      expect(label).toContain('at most 6 total items across all categories')
+      expect(label).toContain('Use broad reusable topic headings')
+      expect(label).toContain('Product Planning')
     })
 
-    it('adds Windows anti-duplication guidance to the system prompt', () => {
+    it('adds the shared V2 quality override to the Windows system prompt', () => {
       setPlatform('win32')
       const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
       const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
 
-      expect(systemPrompt).toContain('WINDOWS QUALITY TUNING OVERRIDE')
-      expect(systemPrompt).toContain('Avoid near-duplicate titles across all categories')
+      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).toContain('Target roughly 40-55 total final items')
     })
   })
 })

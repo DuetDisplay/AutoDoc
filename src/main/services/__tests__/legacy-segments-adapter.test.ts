@@ -312,6 +312,34 @@ describe('legacy segments adapter', () => {
     expect(adaptLegacySegments('meeting-1', whitespaceChanged).revision).not.toBe(revision)
   })
 
+  it('reads Windows catalog files as items and next steps', () => {
+    const notes = adaptLegacySegments('meeting-1', {
+      items: [
+        segment({
+          id: 'item-1',
+          category: 'information',
+          title: 'Rollback needs a flag',
+          content: 'The rollback needs a feature flag.'
+        })
+      ],
+      nextSteps: [
+        segment({
+          id: 'step-1',
+          category: 'action_item',
+          title: 'Write the rollback plan',
+          content: 'Chris will write the rollback plan.',
+          assignee: 'Chris'
+        })
+      ]
+    })
+
+    expect(notes.sections).toHaveLength(1)
+    expect(notes.sections[0].keyPoints[0].title).toBe('Rollback needs a flag')
+    expect(notes.nextSteps).toHaveLength(1)
+    expect(notes.nextSteps[0].title).toBe('Write the rollback plan')
+    expect(notes.decisions).toHaveLength(0)
+  })
+
   it.each([
     {},
     {

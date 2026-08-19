@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron'
 import { access, lstat, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
+import { freemem, totalmem } from 'os'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../shared/constants'
 import type {
   MeetingSegments,
   Transcript,
@@ -35,6 +37,9 @@ import {
   computeTranscriptRevision
 } from './notes-revision'
 import { runNotesScanPipeline, scanLayerProgress } from './notes-scan-pipeline'
+import { getSystemMemorySnapshot } from './windows-transcription-runtime'
+import { meetingSegmentsFromDisk } from './writer-catalog'
+import type { WindowsProcessingProfile } from './windows-processing-profile'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
@@ -103,6 +108,10 @@ export class SegmentationService {
     private getMacProcessingProfile: (() => MacProcessingProfile | null) | null = null,
     private getEffectiveMacProcessingProfile:
       | (() => Promise<MacProcessingProfile | null>)
+      | null = null,
+    private getWindowsProcessingProfile: (() => WindowsProcessingProfile | null) | null = null,
+    private getEffectiveWindowsProcessingProfile:
+      | (() => Promise<WindowsProcessingProfile | null>)
       | null = null
   ) {}
 
@@ -195,10 +204,10 @@ export class SegmentationService {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
     try {
       if (await isEncrypted(segmentsPath)) {
-        return await decryptJSON<MeetingSegments>(segmentsPath)
+        return meetingSegmentsFromDisk(await decryptJSON<unknown>(segmentsPath))
       }
       const data = await readFile(segmentsPath, 'utf-8')
-      return JSON.parse(data)
+      return meetingSegmentsFromDisk(JSON.parse(data))
     } catch {
       return null
     }
@@ -337,6 +346,8 @@ export class SegmentationService {
     this.reapNotesRunners('before-notes-profile', meetingId)
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
+    const windowsProcessingProfile =
+      (await this.getEffectiveWindowsProcessingProfile?.()) ?? this.getWindowsProcessingProfile?.()
     if (macProcessingProfile) {
       const currentModel = this.llmProvider.getModel?.()
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
@@ -351,6 +362,23 @@ export class SegmentationService {
         meetingId,
         context: this.getProcessingProfileLogContext(macProcessingProfile) ?? undefined
       })
+    } else if (windowsProcessingProfile) {
+      const currentModel = this.llmProvider.getModel?.()
+      if (currentModel && currentModel !== this.lastAppliedMacModel) {
+        this.baselineLlmModel = currentModel
+      }
+      this.llmProvider.setModel?.(windowsProcessingProfile.notesModel)
+      this.llmProvider.setLowMemoryMode?.(
+        windowsProcessingProfile.id === 'win-low-spec' ||
+          windowsProcessingProfile.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
+      )
+      this.lastAppliedMacModel = windowsProcessingProfile.notesModel
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes effective processing profile selected',
+        meetingId,
+        context: this.getWindowsProcessingProfileLogContext(windowsProcessingProfile)
+      })
     } else {
       if (this.baselineLlmModel) {
         this.llmProvider.setModel?.(this.baselineLlmModel)
@@ -364,7 +392,11 @@ export class SegmentationService {
       meetingId,
       context: {
         transcriptCount: transcripts.length,
-        processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
+        processingProfile:
+          this.getProcessingProfileLogContext(macProcessingProfile ?? undefined) ??
+          (windowsProcessingProfile
+            ? this.getWindowsProcessingProfileLogContext(windowsProcessingProfile)
+            : null)
       }
     })
     const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId)
@@ -450,9 +482,7 @@ export class SegmentationService {
       await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
       if (this.llmProvider.completePrompt) {
         this.reapNotesRunners('before-scan', meetingId)
-        if (process.platform === 'darwin') {
-          await this.logMacResourceSnapshot('notes runners reaped before scan', meetingId)
-        }
+        await this.logNotesResourceSnapshot('notes runners reaped before scan', meetingId)
       }
       const scanOutcome = await this.persistScanLayerNotes(
         meetingId,
@@ -519,9 +549,7 @@ export class SegmentationService {
           })
         })
         this.reapNotesRunners('after-notes', meetingId)
-        if (process.platform === 'darwin') {
-          await this.logMacResourceSnapshot('notes resources released', meetingId)
-        }
+        await this.logNotesResourceSnapshot('notes resources released', meetingId)
       }
     }
   }
@@ -755,16 +783,34 @@ export class SegmentationService {
     this.ollamaManager.reapLeftoverRunners?.(reason, meetingId)
   }
 
-  private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {
+  private async logNotesResourceSnapshot(message: string, meetingId: string): Promise<void> {
     if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
-    const hardware = await detectMacHardwareSnapshot()
+    if (process.platform === 'darwin') {
+      const hardware = await detectMacHardwareSnapshot()
+      logAutodocEvent({
+        area: 'segmentation',
+        message,
+        meetingId,
+        context: {
+          hardware,
+          memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware),
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
+      return
+    }
+
+    if (process.platform !== 'win32') return
+
+    const memory = getSystemMemorySnapshot()
+    const gib = (bytes: number): number => Math.round((bytes / 1024 ** 3) * 100) / 100
     logAutodocEvent({
       area: 'segmentation',
       message,
       meetingId,
       context: {
-        hardware,
-        memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware),
+        freeMemoryGiB: memory.freeMemoryGiB ?? gib(freemem()),
+        totalMemoryGiB: memory.totalMemoryGiB ?? gib(totalmem()),
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
@@ -918,7 +964,7 @@ export class SegmentationService {
   ): Record<string, unknown> | null {
     const profile = selectedProfile ?? this.getMacProcessingProfile?.()
     if (!profile) {
-      return null
+      return this.getWindowsProcessingProfileLogContext()
     }
 
     return {
@@ -932,6 +978,28 @@ export class SegmentationService {
         dualSourceMode: profile.dualSourceMode,
         notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
         serializeLocalProcessing: profile.serializeLocalProcessing
+      }
+    }
+  }
+
+  private getWindowsProcessingProfileLogContext(
+    selectedProfile?: WindowsProcessingProfile
+  ): Record<string, unknown> | null {
+    const profile = selectedProfile ?? this.getWindowsProcessingProfile?.()
+    if (!profile) {
+      return null
+    }
+
+    return {
+      profileId: profile.id,
+      reason: profile.reason,
+      hardware: profile.hardware,
+      settings: {
+        notesModel: profile.notesModel,
+        dualSourceMode: profile.dualSourceMode,
+        notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
+        serializeLocalProcessing: profile.serializeLocalProcessing,
+        threadPolicy: profile.threadPolicy
       }
     }
   }

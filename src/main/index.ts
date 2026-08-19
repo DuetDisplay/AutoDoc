@@ -927,8 +927,17 @@ app.whenReady().then(async () => {
   )
   shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({
-    resolveModel: async () =>
-      (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+    resolveModel: async () => {
+      if (process.platform === 'win32') {
+        return (
+          (await whisperManager.getEffectiveWindowsProcessingProfile())?.notesModel ??
+          DEFAULT_OLLAMA_MODEL
+        )
+      }
+      return (
+        (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+      )
+    }
   })
   const managedOllamaManager = ollamaManager
 
@@ -1138,7 +1147,9 @@ app.whenReady().then(async () => {
     recordingService.getRecordingsBaseDir(),
     localProcessingCoordinator,
     () => whisperManager.getMacProcessingProfile(),
-    () => whisperManager.getEffectiveMacProcessingProfile()
+    () => whisperManager.getEffectiveMacProcessingProfile(),
+    () => whisperManager.getWindowsProcessingProfile(),
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
   ipcMain.handle(
     'app:get-runtime-info',

@@ -678,7 +678,12 @@ async function assembleRecordingVideoSegment(
 
 async function getSegmentedCapturePresence(
   meetingDir: string
-): Promise<{ hasSegmentedAudio: boolean; hasSegmentedVideo: boolean }> {
+): Promise<{
+  hasSegmentedAudio: boolean
+  hasSegmentedVideo: boolean
+  hasTranscript: boolean
+  hasNotes: boolean
+}> {
   const names = await readdir(meetingDir).catch(() => [])
   return {
     hasSegmentedAudio: names.some(
@@ -686,7 +691,9 @@ async function getSegmentedCapturePresence(
         (name.startsWith('mic-') || name.startsWith('system-') || name.startsWith('audio-')) &&
         name.endsWith('.webm')
     ),
-    hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm'))
+    hasSegmentedVideo: names.some((name) => name.startsWith('screen-') && name.endsWith('.webm')),
+    hasTranscript: names.includes('transcript.json'),
+    hasNotes: names.includes('notes.json')
   }
 }
 
@@ -1409,6 +1416,8 @@ export function registerRecordingIpc(
       if (
         !hasAudio &&
         !hasVideo &&
+        !segmentedPresence.hasTranscript &&
+        !segmentedPresence.hasNotes &&
         !isFinalizing &&
         videoStatus !== 'processing' &&
         videoStatus !== 'failed'

@@ -572,6 +572,7 @@ export class WhisperManager extends EventEmitter {
         reason: this.selectedWindowsProcessingProfile.reason,
         hardware: this.selectedWindowsProcessingProfile.hardware,
         settings: {
+          notesModel: this.selectedWindowsProcessingProfile.notesModel,
           dualSourceMode: this.selectedWindowsProcessingProfile.dualSourceMode,
           notesAfterTranscriptionOnly:
             this.selectedWindowsProcessingProfile.notesAfterTranscriptionOnly,
@@ -657,7 +658,8 @@ export class WhisperManager extends EventEmitter {
         backend: 'mlx-whisper',
         backendLabel: MLX_WHISPER_LABEL,
         macProcessingProfileId: this.selectedMacProfile?.id,
-        macProcessingProfileReason: this.selectedMacProfile?.reason
+        macProcessingProfileReason: this.selectedMacProfile?.reason,
+        notesModel: this.selectedMacProfile?.notesModel
       }
     }
 
@@ -671,7 +673,8 @@ export class WhisperManager extends EventEmitter {
       backend: profile.id,
       backendLabel: profile.label,
       windowsProcessingProfileId: this.selectedWindowsProcessingProfile?.id,
-      windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason
+      windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason,
+      notesModel: this.selectedWindowsProcessingProfile?.notesModel
     }
   }
 
