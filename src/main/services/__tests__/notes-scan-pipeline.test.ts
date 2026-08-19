@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
-import { runNotesScanPipeline } from '../notes-scan-pipeline'
+import { emptyValidationStats } from '../notes-evidence-validate'
+import {
+  runNotesScanPipeline,
+  scanLayerProgress,
+  type ScanGenerateRequest
+} from '../notes-scan-pipeline'
 
 function segment(partial: Partial<Segment> & Pick<Segment, 'id' | 'category' | 'title'>): Segment {
   return {
@@ -61,6 +66,71 @@ describe('runNotesScanPipeline', () => {
     expect(result.content.nextSteps.some((item) => item.title?.includes('offline analytics'))).toBe(
       true
     )
-    expect(result.groupingFallback).toBe(true)
+    expect(result.groupingFallback).toBe(false)
+    expect(result.markdown).toMatch(/## (Analytics|HP opt-in rate)/)
+    expect(result.attachFailed).toBe(false)
+    expect(result.content.overview).toBeNull()
+    expect(result.content.sections[0]?.keyPoints[0]?.sources[0]?.startMs).toBe(1000)
+    expect(result.validation).toEqual(emptyValidationStats(false))
+  })
+
+  it('does not run transcript LLM validation and drops assertive overview takeaways', async () => {
+    const generate = async (request: ScanGenerateRequest): Promise<string> => {
+      if (request.prompt.includes('Summarize the finished meeting notes')) {
+        return JSON.stringify({
+          overview: 'Standup recap.',
+          keyTakeaways: ['Team agreed to adopt the Mirror concept']
+        })
+      }
+      return 'not valid json'
+    }
+
+    const result = await runNotesScanPipeline(segments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      transcript: [
+        {
+          speaker: 'Chris',
+          text: 'The linear for this feature request is DD1450.',
+          startMs: 0,
+          endMs: 4000
+        }
+      ],
+      generate
+    })
+
+    expect(result.validation).toEqual(emptyValidationStats(false))
+    expect(result.content.keyTakeaways.some((row) => /agreed/i.test(row.text))).toBe(false)
+    expect(
+      result.content.sections.some((section) =>
+        section.supportingDetails.some((row) => row.text.includes('DD1450'))
+      )
+    ).toBe(true)
+  })
+
+  it('reports scan progress inside the reserved 70-99 band', async () => {
+    const seen: number[] = []
+    await runNotesScanPipeline(segments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      generate: async () => 'not valid json',
+      onProgress: (update) => {
+        seen.push(scanLayerProgress(update.fraction))
+      }
+    })
+
+    expect(seen[0]).toBe(70)
+    expect(seen.at(-1)).toBe(99)
+    expect(Math.max(...seen)).toBe(99)
+    expect(seen.some((percent) => percent > 70 && percent < 99)).toBe(true)
+  })
+})
+
+describe('scanLayerProgress', () => {
+  it('maps the scan fraction onto 70-99 instead of a frozen 99', () => {
+    expect(scanLayerProgress(0)).toBe(70)
+    expect(scanLayerProgress(1)).toBe(99)
+    expect(scanLayerProgress(0.5)).toBeGreaterThan(70)
+    expect(scanLayerProgress(0.5)).toBeLessThan(99)
   })
 })

@@ -11,6 +11,11 @@ import type {
 import { decryptJSON, isEncrypted } from './crypto'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
 import {
+  collectNotesV2SearchEntries,
+  formatNotesV2SearchBody,
+  type NotesV2SearchEntry
+} from './notes-search-text'
+import {
   buildRecordingTitle,
   buildRecordingTitleAliases,
   getRecordingDisplayCalendarTitle,
@@ -1051,6 +1056,7 @@ export class ChatRecordingIndex {
       (await stat(join(meetingDir, 'system.webm')).catch(() => null)) ??
       (await stat(join(meetingDir, 'audio.webm')).catch(() => null)) ??
       (await stat(join(meetingDir, 'transcript.json')).catch(() => null)) ??
+      (await stat(join(meetingDir, 'notes.json')).catch(() => null)) ??
       (await stat(join(meetingDir, 'segments.json')).catch(() => null))
 
     if (!primaryStat) return null
@@ -1676,10 +1682,12 @@ export class ChatRecordingIndex {
   }
 
   private async getSummarySignature(meetingDir: string, mode: SummaryMode): Promise<string> {
+    const notesStat = await stat(join(meetingDir, 'notes.json')).catch(() => null)
     const segmentsStat = await stat(join(meetingDir, 'segments.json')).catch(() => null)
     const transcriptStat =
       mode === 'full' ? await stat(join(meetingDir, 'transcript.json')).catch(() => null) : null
     return [
+      notesStat ? `${notesStat.mtimeMs}:${notesStat.size}` : 'no-notes',
       segmentsStat ? `${segmentsStat.mtimeMs}:${segmentsStat.size}` : 'no-segments',
       transcriptStat ? `${transcriptStat.mtimeMs}:${transcriptStat.size}` : 'no-transcript'
     ].join('|')
@@ -1736,10 +1744,88 @@ export class ChatRecordingIndex {
   }
 }
 
+function summaryFromV2Entries(
+  entries: NotesV2SearchEntry[],
+  transcriptExcerpt: string | null,
+  transcriptText: string,
+  transcriptEvidence: MeetingEvidenceChunk[]
+): MeetingSummary {
+  const body = formatNotesV2SearchBody(entries)
+  const notes = entries.map((entry) => ({
+    category: entry.category,
+    title: entry.title,
+    content: entry.content,
+    topic: entry.topic,
+    assignee: entry.owner,
+    deadline: entry.deadline,
+    searchText: [entry.topic, entry.title, entry.content, entry.owner, entry.deadline, entry.category]
+      .filter(Boolean)
+      .join(' ')
+  }))
+  const evidence: MeetingEvidenceChunk[] = notes.map((note, index) => ({
+    id: entries[index].id,
+    source: 'note',
+    category: note.category,
+    title: note.title,
+    content: note.content,
+    topic: note.topic,
+    assignee: note.assignee,
+    deadline: note.deadline,
+    searchText: note.searchText
+  }))
+  const searchText = notes.map((note) => note.searchText).join(' ')
+  const snippets = notes.map((note) => `${note.title}: ${note.content}`)
+  const fullBody = transcriptExcerpt ? `${body}\n\n### transcriptExcerpt\n${transcriptExcerpt}` : body
+  const fullSearchText = transcriptExcerpt ? `${searchText} ${transcriptText}` : searchText
+  const fullSnippets = transcriptExcerpt
+    ? [...snippets, `Transcript excerpt: ${transcriptExcerpt}`]
+    : snippets
+  const fullEvidence = transcriptExcerpt ? [...evidence, ...transcriptEvidence] : evidence
+
+  return {
+    body: fullBody,
+    searchText: fullSearchText,
+    snippets: fullSnippets,
+    notes,
+    evidence: fullEvidence,
+    hasNotes: true,
+    source: 'segments'
+  }
+}
+
+async function loadV2MeetingSummaryFromDisk(
+  meetingDir: string,
+  mode: SummaryMode
+): Promise<MeetingSummary | null> {
+  const notes = await readMaybeEncryptedJson<unknown>(join(meetingDir, 'notes.json'))
+  const entries = collectNotesV2SearchEntries(notes)
+  if (entries.length === 0) return null
+
+  const transcriptEvidence =
+    mode === 'full' ? await readTranscriptEvidence(meetingDir).catch(() => []) : []
+  const transcriptText = transcriptEvidence.map((chunk) => chunk.content).join(' ')
+  const searchText = entries
+    .map((entry) =>
+      [entry.topic, entry.title, entry.content, entry.owner, entry.deadline, entry.category]
+        .filter(Boolean)
+        .join(' ')
+    )
+    .join(' ')
+  const transcriptExcerpt = formatTranscriptFallbackExcerpt(transcriptText, searchText)
+  return summaryFromV2Entries(entries, transcriptExcerpt, transcriptText, transcriptEvidence)
+}
+
 async function loadMeetingSummaryFromDisk(
   meetingDir: string,
   mode: SummaryMode
 ): Promise<MeetingSummary> {
+  try {
+    const v2Summary = await loadV2MeetingSummaryFromDisk(meetingDir, mode)
+    if (v2Summary) return v2Summary
+  } catch {
+    // Fall through to the writer extract when notes.json is unreadable.
+  }
+
   try {
     const sPath = join(meetingDir, 'segments.json')
     const segments: MeetingSegments = (await isEncrypted(sPath))
@@ -1858,6 +1944,19 @@ async function readInventorySpeakerLabels(meetingDir: string): Promise<string[]>
 
 async function readInventoryNotePreview(meetingDir: string): Promise<string | null> {
   try {
+    const notes = await readMaybeEncryptedJson<unknown>(join(meetingDir, 'notes.json'))
+    const preview = collectNotesV2SearchEntries(notes)
+      .slice(0, 4)
+      .map((entry) => `${entry.title}: ${entry.content}`)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (preview) return limitText(preview, 360)
+  } catch {
+    /* no V2 notes */
+  }
+
+  try {
     const segments = await readMaybeEncryptedJson<MeetingSegments>(
       join(meetingDir, 'segments.json')
     )
@@ -1891,9 +1990,12 @@ async function readInventoryTranscriptStatus(
   meetingDir: string
 ): Promise<MeetingInventoryEntry['transcriptStatus']> {
   if (
-    await stat(join(meetingDir, 'segments.json'))
+    (await stat(join(meetingDir, 'notes.json'))
       .then(() => true)
-      .catch(() => false)
+      .catch(() => false)) ||
+    (await stat(join(meetingDir, 'segments.json'))
+      .then(() => true)
+      .catch(() => false))
   ) {
     return 'notes'
   }

@@ -254,7 +254,7 @@ After setup, recording, transcription, and notes work offline.
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
 
 **Which models does it use?**
-On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes use `llama3.1` via Ollama on both platforms, with a smaller `llama3.2:3b` model on 8 GB Macs.
+On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes and Ask AI use `qwen3:4b-instruct` via Ollama on both platforms, with a smaller `llama3.2:3b` model on 8 GB Macs. After an app update, leftover `llama3.1` keeps working until the new notes engine is on disk.
 
 **What Mac do I need?**
 An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB recommended) and ~10 GB free storage for first-run model downloads. **Intel Macs are not supported.**

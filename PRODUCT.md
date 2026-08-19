@@ -141,7 +141,7 @@ Each speaker is assigned a distinct color from the palette (sage, amber, slate b
 
 ### How It Works
 
-After transcription completes, the transcript is sent to a locally-running Ollama instance (llama3.1) to extract structured meeting notes. This happens automatically — no user action required.
+After transcription completes, the transcript is sent to a locally-running Ollama instance (`qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB Macs) to extract structured meeting notes. This happens automatically — no user action required.
 
 ### Chunked Processing
 
@@ -165,7 +165,7 @@ To maximize note accuracy:
 
 - **Temperature 0**: Ollama runs with `temperature: 0` for deterministic, consistent output.
 - **Strict prompt instructions**: The system prompt explicitly forbids paraphrasing numbers, dates, or proper nouns. The model is instructed to quote exact words from the transcript.
-- **32K context window**: Ollama is configured with `num_ctx: 32768` tokens. The llama3.1 model supports up to 128K context, ensuring the full chunk plus system prompt fits comfortably.
+- **32K context window**: Ollama is configured with `num_ctx: 32768` tokens so the full chunk plus system prompt fits comfortably.
 
 ### Segment Structure
 
@@ -335,7 +335,7 @@ AutoDoc manages its own isolated Ollama instance — completely separate from an
 
 1. **Binary download**: Downloaded from `github.com/ollama/ollama/releases` to the app's models directory.
 2. **Server launch**: Spawned as a subprocess on port 11435 (not the default 11434) with isolated data directory.
-3. **Model pull**: Automatically pulls `llama3.1` with streaming progress updates.
+3. **Model pull**: Automatically pulls `qwen3:4b-instruct` (or `llama3.2:3b` on 8 GB Macs) with streaming progress updates. After an app update, leftover `llama3.1` stays usable until the new model is on disk.
 
 ### Progress Tracking
 
@@ -344,7 +344,7 @@ The setup process broadcasts progress to the UI:
 | Phase | Description |
 |-------|-------------|
 | `downloading` | Downloading Ollama binary (with %) |
-| `pulling` | Pulling the llama3.1 model (with %) |
+| `pulling` | Pulling the notes model (with %) |
 | `ready` | Server running, model available |
 | `error` | Setup failed (with error message) |
 

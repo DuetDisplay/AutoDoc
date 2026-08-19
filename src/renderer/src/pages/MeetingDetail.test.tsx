@@ -420,7 +420,7 @@ describe('MeetingDetail', () => {
     expect(screen.getByText('No notes were generated')).toBeInTheDocument()
     expect(
       screen.getByText(
-        /This transcript appears to contain enough meeting content, but AutoDoc couldn’t produce structured notes this time/i
+        /There wasn’t enough conversation to turn into notes/i
       )
     ).toBeInTheDocument()
     expect(screen.getByText(/Your transcript is still available/i)).toBeInTheDocument()

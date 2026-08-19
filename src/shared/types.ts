@@ -121,6 +121,8 @@ export interface NoteItem<
   topic: string | null
   owner: string | null
   deadline: string | null
+  /** Next-step checkbox. Optional on older documents; default false. */
+  completed?: boolean
 }
 
 export interface NoteSection<
@@ -389,6 +391,9 @@ export interface SegmentationStatusPayload {
   status: SegmentationStatus
   progress?: number
   errorCode?: string
+  userReason?: string
+  notesLayout?: 'v1' | 'v2'
+  groupingFallback?: boolean
 }
 
 export type SegmentationActivity = 'waiting-for-local-ai'

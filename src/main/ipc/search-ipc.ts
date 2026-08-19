@@ -4,6 +4,7 @@ import { join } from 'path'
 import type { Transcript, MeetingSegments } from '../../shared/types'
 import { decryptJSON, isEncrypted } from '../services/crypto'
 import { readMetadata } from '../services/calendar-matcher'
+import { collectNotesV2SearchEntries, matchNotesV2SearchEntries } from '../services/notes-search-text'
 
 export interface SearchResult {
   meetingId: string
@@ -49,22 +50,39 @@ export function registerSearchIpc(recordingsBaseDir: string): void {
         /* no transcript */
       }
 
-      // Search segments
+      // Prefer V2 notes when present so Search matches the document on the Notes tab.
+      let usedV2Notes = false
       try {
-        const sPath = join(meetingDir, 'segments.json')
-        const segments: MeetingSegments = (await isEncrypted(sPath))
-          ? await decryptJSON<MeetingSegments>(sPath)
-          : JSON.parse(await readFile(sPath, 'utf-8'))
-        for (const [category, items] of Object.entries(segments)) {
-          for (const item of items) {
-            const combined = `${item.title} ${item.content}`.toLowerCase()
-            if (terms.every((t) => combined.includes(t))) {
-              matches.push({ type: 'segment', text: `${item.title}: ${item.content}`, category })
-            }
-          }
+        const nPath = join(meetingDir, 'notes.json')
+        const notes = (await isEncrypted(nPath))
+          ? await decryptJSON<unknown>(nPath)
+          : JSON.parse(await readFile(nPath, 'utf-8'))
+        const entries = collectNotesV2SearchEntries(notes)
+        if (entries.length > 0) {
+          usedV2Notes = true
+          matches.push(...matchNotesV2SearchEntries(entries, terms))
         }
       } catch {
-        /* no segments */
+        /* no V2 notes */
+      }
+
+      if (!usedV2Notes) {
+        try {
+          const sPath = join(meetingDir, 'segments.json')
+          const segments: MeetingSegments = (await isEncrypted(sPath))
+            ? await decryptJSON<MeetingSegments>(sPath)
+            : JSON.parse(await readFile(sPath, 'utf-8'))
+          for (const [category, items] of Object.entries(segments)) {
+            for (const item of items) {
+              const combined = `${item.title} ${item.content}`.toLowerCase()
+              if (terms.every((t) => combined.includes(t))) {
+                matches.push({ type: 'segment', text: `${item.title}: ${item.content}`, category })
+              }
+            }
+          }
+        } catch {
+          /* no segments */
+        }
       }
 
       if (matches.length > 0) {

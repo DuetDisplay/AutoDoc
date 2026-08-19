@@ -1,6 +1,34 @@
 import { describe, expect, it } from 'vitest'
+
+describe('isPlausiblePersonOwner verb stoplist', () => {
+  it('rejects common action verbs seen in generated next steps', () => {
+    for (const junk of [
+      'Assess',
+      'Evaluate',
+      'Investigate',
+      'Implement',
+      'Establish',
+      'Adopt',
+      'Adjusted',
+      'Switch',
+      'Finish'
+    ]) {
+      expect(isPlausiblePersonOwner(junk)).toBe(false)
+    }
+  })
+})
 import { parseMeetingNotesContent } from '../notes-schema'
-import { meetingSpanSources, parseScanMarkdown } from '../notes-scan-markdown'
+import {
+  isPlausiblePersonOwner,
+  meetingSpanSources,
+  parseScanMarkdown
+} from '../notes-scan-markdown'
+
+function parseNextSteps(markdown: string) {
+  return parseScanMarkdown(`## Next Steps\n${markdown}`, {
+    fallbackSources: [{ startMs: 0, endMs: 10 }]
+  }).nextSteps
+}
 
 const FIR_LIKE = `# Entire screen
 
@@ -39,6 +67,89 @@ describe('parseScanMarkdown', () => {
     expect(content.sections).toEqual([])
     expect(content.decisions).toEqual([])
     expect(content.nextSteps[0]?.owner).toBe('Chris')
+  })
+
+  it('drops parenthetical fragments that are not person names', () => {
+    const [step] = parseNextSteps('* **Confirm mirroring approach** (Determine, English)')
+    expect(step?.title).toBe('Confirm mirroring approach')
+    expect(step?.owner).toBeNull()
+  })
+
+  it.each(['Yeah', 'Them', 'We', 'User'])(
+    'treats (%s) as a non-owner',
+    (owner) => {
+      const [step] = parseNextSteps(`* **Ship the notes parser** (${owner})`)
+      expect(step?.title).toBe('Ship the notes parser')
+      expect(step?.owner).toBeNull()
+    }
+  )
+
+  it.each(['English', 'Determine', 'TBD', 'Team', 'Yeah', 'by Friday', '2026-08-20'])(
+    'treats (%s) as a non-owner',
+    (owner) => {
+      const [step] = parseNextSteps(`* **Ship the notes parser** (${owner})`)
+      expect(step?.title).toBe('Ship the notes parser')
+      expect(step?.owner).toBeNull()
+    }
+  )
+
+  it.each(['Chris', 'Norbert', 'Chris Jackson', "O'Brien", 'Anne-Marie'])(
+    'keeps plausible person owner %s',
+    (owner) => {
+      const [step] = parseNextSteps(`* **Ship the notes parser** (${owner})`)
+      expect(step?.title).toBe('Ship the notes parser')
+      expect(step?.owner).toBe(owner)
+    }
+  )
+
+  it('parses a next step with no parenthetical and a null owner', () => {
+    const [step] = parseNextSteps('* **Write the release notes**')
+    expect(step?.title).toBe('Write the release notes')
+    expect(step?.owner).toBeNull()
+  })
+
+  it('still maps topical key points when next-step owners are gated', () => {
+    const content = parseScanMarkdown(
+      `## Analytics and User Consent\n- A fix is needed on the Consent to Analytics event.\n - Agreed: collect login events from all users\n\n## Next Steps\n* **Confirm mirroring approach** (Determine, English)\n`,
+      { fallbackSources: [{ startMs: 0, endMs: 10 }] }
+    )
+    expect(content.sections).toHaveLength(1)
+    expect(content.sections[0]?.title).toBe('Analytics and User Consent')
+    expect(content.sections[0]?.keyPoints[0]?.title).toBe(
+      'A fix is needed on the Consent to Analytics event.'
+    )
+    expect(content.sections[0]?.supportingDetails[0]?.text).toMatch(/^Agreed:/)
+    expect(content.nextSteps[0]?.owner).toBeNull()
+  })
+})
+
+describe('isPlausiblePersonOwner', () => {
+  it('accepts 1–3 capitalized name tokens', () => {
+    expect(isPlausiblePersonOwner('Chris')).toBe(true)
+    expect(isPlausiblePersonOwner('Chris Jackson')).toBe(true)
+    expect(isPlausiblePersonOwner("O'Brien")).toBe(true)
+    expect(isPlausiblePersonOwner('Anne-Marie')).toBe(true)
+    expect(isPlausiblePersonOwner('José')).toBe(true)
+  })
+
+  it('rejects empty, punctuated, numeric, and stoplist values', () => {
+    expect(isPlausiblePersonOwner('')).toBe(false)
+    expect(isPlausiblePersonOwner('   ')).toBe(false)
+    expect(isPlausiblePersonOwner('Determine, English')).toBe(false)
+    expect(isPlausiblePersonOwner('English')).toBe(false)
+    expect(isPlausiblePersonOwner('2026-08-20')).toBe(false)
+    expect(isPlausiblePersonOwner('Chris/Norbert')).toBe(false)
+    expect(isPlausiblePersonOwner('Chris & Matt')).toBe(false)
+    expect(isPlausiblePersonOwner('Team')).toBe(false)
+    expect(isPlausiblePersonOwner('Yeah')).toBe(false)
+    expect(isPlausiblePersonOwner('(Yeah)')).toBe(false)
+    expect(isPlausiblePersonOwner('Them')).toBe(false)
+    expect(isPlausiblePersonOwner('(Them)')).toBe(false)
+    expect(isPlausiblePersonOwner('We')).toBe(false)
+    expect(isPlausiblePersonOwner('(We)')).toBe(false)
+    expect(isPlausiblePersonOwner('User')).toBe(false)
+    expect(isPlausiblePersonOwner('(User)')).toBe(false)
+    expect(isPlausiblePersonOwner('by Friday')).toBe(false)
   })
 })
 

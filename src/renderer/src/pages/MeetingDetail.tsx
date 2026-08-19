@@ -6,13 +6,17 @@ import type {
   SegmentCategory,
   Segment,
   MeetingSegments,
+  MeetingNotesContent,
+  MeetingNotesV2,
   Transcript,
   TranscriptionStatus,
   SegmentationStatus,
   SegmentationActivity,
   SpeakerMap
 } from '../../../shared/types'
+import { notesFailureKindFromCode, notesUserCopy } from '../../../shared/notes-user-copy'
 import { TranscriptView } from '../components/TranscriptView'
+import { NotesV2Document, useMeetingSpan } from '../components/NotesV2Document'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
@@ -154,6 +158,7 @@ export function MeetingDetail() {
     'fast' | 'balanced' | undefined
   >()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
+  const [notesV2, setNotesV2] = useState<MeetingNotesV2 | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [segmentationErrorCode, setSegmentationErrorCode] = useState<string | undefined>()
@@ -556,7 +561,9 @@ export function MeetingDetail() {
           setSegmentationStatus(nextSegmentationStatus)
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
-            nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined
+            nextSegmentationStatus === 'failed' || nextSegmentationStatus === 'complete'
+              ? nextSegmentationErrorCode
+              : undefined
           )
           setSegmentationActivity(
             nextSegmentationStatus === 'segmenting' && nextSegmentationActivity
@@ -572,8 +579,17 @@ export function MeetingDetail() {
                 setSegments(nextSegments)
               }
             })
+            window.electronAPI.invoke('notes:get-v2', id).then((nextNotes) => {
+              if (
+                !cancelled &&
+                segmentationEventRevisionRef.current === initialSegmentationRevision
+              ) {
+                setNotesV2(nextNotes)
+              }
+            })
           } else {
             setSegments(null)
+            setNotesV2(null)
           }
         }
       }
@@ -601,14 +617,20 @@ export function MeetingDetail() {
         segmentationEventRevisionRef.current += 1
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
-        setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        setSegmentationErrorCode(
+          payload.status === 'failed' || payload.status === 'complete'
+            ? payload.errorCode
+            : undefined
+        )
         if (payload.status !== 'segmenting') {
           setSegmentationActivity(null)
         }
         if (payload.status === 'complete') {
           window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+          window.electronAPI.invoke('notes:get-v2', id).then(setNotesV2)
         } else {
           setSegments(null)
+          setNotesV2(null)
         }
       }
     })
@@ -714,7 +736,86 @@ export function MeetingDetail() {
     setSegmentationErrorCode(undefined)
     setSegmentationActivity(null)
     setSegments(null)
+    setNotesV2(null)
+    trackEvent('notes_generation_retried', {
+      failure_code: segmentationErrorCode ?? 'unknown'
+    })
     window.electronAPI.invoke('segmentation:retry', id)
+  }
+
+  const meetingSpan = useMeetingSpan(detail?.durationSeconds)
+  const layoutDegraded =
+    segmentationStatus === 'complete' && segmentationErrorCode === 'scan_or_persist'
+  const showHardFailCallout =
+    segmentationStatus === 'no-notes' || segmentationStatus === 'failed'
+  const failCopy = notesUserCopy(
+    notesFailureKindFromCode(
+      segmentationStatus === 'no-notes' ? 'no_notes_detected' : segmentationErrorCode
+    )
+  )
+
+  const handleToggleNextStep = (itemId: string, completed: boolean): void => {
+    if (!id) return
+    void window.electronAPI
+      .invoke('notes:set-next-step-completed', id, itemId, completed)
+      .then((next) => {
+        if (next) {
+          notesV2Ref.current = next
+          setNotesV2(next)
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to persist next-step check:', error)
+      })
+  }
+
+  const notesV2Ref = useRef<MeetingNotesV2 | null>(null)
+  const pendingNotesWriteRef = useRef<MeetingNotesContent | null>(null)
+  const notesWriteInFlightRef = useRef(false)
+  notesV2Ref.current = notesV2
+
+  const flushNotesWrites = useCallback(async (): Promise<void> => {
+    if (!id || notesWriteInFlightRef.current) return
+    notesWriteInFlightRef.current = true
+    try {
+      while (pendingNotesWriteRef.current) {
+        const draft = pendingNotesWriteRef.current
+        pendingNotesWriteRef.current = null
+        const expected = notesV2Ref.current?.revision
+        if (!expected) break
+        try {
+          const persisted = await window.electronAPI.invoke('notes:write-v2', id, draft, expected)
+          const queued = pendingNotesWriteRef.current
+          const current = notesV2Ref.current
+          const merged =
+            queued && current
+              ? { ...current, revision: persisted.revision }
+              : persisted
+          notesV2Ref.current = merged
+          setNotesV2(merged)
+        } catch (error) {
+          console.warn('Failed to save notes:', error)
+          const fresh = await window.electronAPI.invoke('notes:get-v2', id)
+          notesV2Ref.current = fresh
+          setNotesV2(fresh)
+          pendingNotesWriteRef.current = null
+          break
+        }
+      }
+    } finally {
+      notesWriteInFlightRef.current = false
+      if (pendingNotesWriteRef.current) void flushNotesWrites()
+    }
+  }, [id])
+
+  const handleWriteNotesV2 = (content: MeetingNotesContent): void => {
+    const current = notesV2Ref.current
+    if (!id || !current) return
+    const optimistic = { ...current, ...content }
+    notesV2Ref.current = optimistic
+    setNotesV2(optimistic)
+    pendingNotesWriteRef.current = content
+    void flushNotesWrites()
   }
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -973,7 +1074,7 @@ export function MeetingDetail() {
                   </p>
                 </div>
               )}
-            {segmentationStatus === 'no-notes' && (
+            {(showHardFailCallout || layoutDegraded) && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
@@ -990,11 +1091,11 @@ export function MeetingDetail() {
                     </svg>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-[13px] font-semibold text-ink">No notes were generated</h3>
+                    <h3 className="text-[13px] font-semibold text-ink">
+                      {layoutDegraded ? notesUserCopy('layout').title : failCopy.title}
+                    </h3>
                     <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-                      This transcript appears to contain enough meeting content, but AutoDoc
-                      couldn’t produce structured notes this time. Your transcript is still
-                      available.
+                      {layoutDegraded ? notesUserCopy('layout').body : failCopy.body}
                     </p>
                     <div className="flex items-center gap-2 mt-3">
                       <button
@@ -1014,7 +1115,18 @@ export function MeetingDetail() {
                 </div>
               </div>
             )}
-            {(segmentationStatus === 'no-notes' ? [] : CATEGORY_ORDER).map((category) => {
+            {notesV2 && segmentationStatus === 'complete' && !layoutDegraded ? (
+              <NotesV2Document
+                notes={notesV2}
+                title={detail?.title}
+                meetingSpan={meetingSpan}
+                onSeek={seekToSegment}
+                onToggleNextStep={handleToggleNextStep}
+                onWrite={handleWriteNotesV2}
+              />
+            ) : null}
+            {(!notesV2 || layoutDegraded) &&
+              (segmentationStatus === 'no-notes' ? [] : CATEGORY_ORDER).map((category) => {
               const items = getSegmentsForCategory(category)
               return (
                 <div key={category} className="bg-bg-card border border-border rounded-xl p-4">

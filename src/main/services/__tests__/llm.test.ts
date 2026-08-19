@@ -7,7 +7,8 @@ import {
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CHUNK_CHARS,
   WINDOWS_MAX_OUTPUT_TOKENS,
-  WINDOWS_CONTEXT_TOKENS
+  WINDOWS_CONTEXT_TOKENS,
+  writerProgressPercent
 } from '../llm'
 
 const originalPlatform = process.platform
@@ -687,41 +688,47 @@ describe('OllamaProvider grounding', () => {
     )
   })
 
-  it('does not let unsupported pricing headings win canonical topic selection on macOS', () => {
+  it('keeps the majority organic topic instead of rewriting it onto a canned family', () => {
     const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const canonical = (tunedProvider as any).pickCanonicalTopic({
       segments: [
         {
-          topic: 'Pricing & Costs',
-          title: 'Retina setting default changed',
-          content: 'The team discussed the retina setting and resolution behavior.'
+          topic: 'Nordic Keyboard',
+          title: 'Accent keys fail in KMS',
+          content: 'Circumflex and tilde do not work on the host PC during KMS.'
         },
         {
-          topic: 'Pricing & Costs',
-          title: 'Feature flag issue needs cleanup',
-          content: 'The local discovery feature flag needs refactoring before it ships.'
+          topic: 'Nordic Keyboard',
+          title: 'On-screen keyboard is the fallback',
+          content: 'Sergio will try an emulator if the OSK is not enough.'
         },
         {
-          topic: 'Pricing & Costs',
-          title: 'Stylus hover implementation changed',
-          content: 'The iOS and desktop sides need changes for stylus hover behavior.'
-        },
-        {
-          topic: 'Technical Changes',
-          title: 'Technical changes grouped together',
-          content: 'The notes should use a technical chapter instead of a pricing chapter.'
+          topic: 'Feature Flag Audit',
+          title: 'LaunchDarkly replacement spike',
+          content: 'Several flags reverted after the 10% rollout.'
         }
       ],
       labelCounts: new Map([
-        ['Pricing & Costs', 3],
-        ['Technical Changes', 1]
+        ['Nordic Keyboard', 2],
+        ['Feature Flag Audit', 1]
       ])
     })
 
-    expect(canonical).toBe(process.platform === 'darwin' ? 'Technical Changes' : 'Pricing & Costs')
+    expect(canonical).toBe('Nordic Keyboard')
   })
 
-  it('consolidates macOS local note topics into broad topic families', () => {
+  it('does not teach the writer a canned topic taxonomy', () => {
+    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const systemPrompt = (tunedProvider as any).getSystemPrompt() as string
+
+    const goodExamples = systemPrompt.split('GOOD topics')[1]?.split('BAD topics')[0] ?? ''
+    expect(goodExamples).not.toContain('Pricing & Costs')
+    expect(goodExamples).not.toContain('Technical Architecture')
+    expect(systemPrompt).toContain('Invent the names from the transcript')
+    expect(systemPrompt).toContain('Windows Tickets')
+  })
+
+  it('leaves meeting-specific topics alone after merge', () => {
     const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const segments = {
       decisions: [
@@ -729,9 +736,9 @@ describe('OllamaProvider grounding', () => {
           id: 'd1',
           meetingId: 'm1',
           category: 'decision',
-          topic: 'Pricing & Costs',
-          title: 'Retina setting default changed',
-          content: 'The team agreed to make retina the default resolution setting.',
+          topic: 'Nordic Keyboard',
+          title: 'Try on-screen keyboard first',
+          content: 'Reproduce the missing accent keys without extra hardware.',
           assignee: null,
           deadline: null,
           sourceStartMs: 0,
@@ -744,11 +751,10 @@ describe('OllamaProvider grounding', () => {
       statusUpdates: []
     }
 
-    ;(tunedProvider as any).consolidateMacTopicFamilies(segments)
+    ;(tunedProvider as any).normalizeMergedTopics(segments)
 
-    expect(segments.decisions[0].topic).toBe(
-      process.platform === 'darwin' ? 'Technical Changes' : 'Pricing & Costs'
-    )
+    expect(segments.decisions[0].topic).toBe('Nordic Keyboard')
+    expect(typeof (tunedProvider as any).consolidateMacTopicFamilies).toBe('undefined')
   })
 
   it('stores ordered timestamp ranges for macOS notes', () => {
@@ -1366,5 +1372,13 @@ describe('OllamaProvider grounding', () => {
       expect(systemPrompt).toContain('WINDOWS QUALITY TUNING OVERRIDE')
       expect(systemPrompt).toContain('Avoid near-duplicate titles across all categories')
     })
+  })
+})
+
+describe('writerProgressPercent', () => {
+  it('keeps the last writer chunk at 70 so scan is not shown as 99%', () => {
+    expect(writerProgressPercent(13, 1, 14)).toBe(70)
+    expect(writerProgressPercent(0, 0, 14)).toBe(0)
+    expect(writerProgressPercent(13, 0.99, 14)).toBeLessThanOrEqual(70)
   })
 })

@@ -9,21 +9,150 @@ function itemId(prefix: string, text: string): string {
   return `${prefix}-${createHash('sha256').update(text).digest('hex').slice(0, 16)}`
 }
 
+const PERSON_OWNER_STOPLIST = new Set([
+  'determine',
+  'english',
+  'spanish',
+  'review',
+  'update',
+  'updates',
+  'team',
+  'teams',
+  'all',
+  'everyone',
+  'anyone',
+  'tbd',
+  'todo',
+  'pending',
+  'later',
+  'backlog',
+  'next',
+  'engineering',
+  'design',
+  'ops',
+  'sales',
+  'support',
+  'marketing',
+  'follow',
+  'followup',
+  'assess',
+  'adjusted',
+  'adjust',
+  'switch',
+  'finish',
+  'finished',
+  'evaluate',
+  'investigate',
+  'implement',
+  'improve',
+  'create',
+  'establish',
+  'enable',
+  'adopt',
+  'add',
+  'fix',
+  'research',
+  'consider',
+  'confirm',
+  'schedule',
+  'monitor',
+  'deploy',
+  'ship',
+  'build',
+  'test',
+  'verify',
+  'draft',
+  'define',
+  'decide',
+  'align',
+  'plan',
+  'track',
+  'escalate',
+  'notify',
+  'document',
+  'deadline',
+  'asap',
+  'today',
+  'tomorrow',
+  'week',
+  'month',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'may',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'oct',
+  'nov',
+  'dec',
+  'yeah',
+  'yes',
+  'no',
+  'okay',
+  'ok',
+  'sure',
+  'right',
+  'thanks',
+  'hello',
+  'hey',
+  'cool',
+  'well',
+  'um',
+  'uh',
+  'hmm',
+  'me',
+  'them',
+  'us',
+  'we',
+  'they',
+  'him',
+  'her',
+  'speaker',
+  'user',
+  'others'
+])
+
+const PERSON_OWNER_TOKEN = /^\p{Lu}\p{Ll}*(?:['’-]\p{Lu}\p{Ll}+)*$/u
+
+export function isPlausiblePersonOwner(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || /[,0-9/&]/.test(trimmed)) return false
+  const tokens = trimmed.split(/\s+/)
+  if (tokens.length < 1 || tokens.length > 3) return false
+  return tokens.every((token) => {
+    if (token.length < 2 || token.length > 20) return false
+    if (!PERSON_OWNER_TOKEN.test(token)) return false
+    return !PERSON_OWNER_STOPLIST.has(token.toLowerCase())
+  })
+}
+
 function makeItem(
   prefix: string,
   text: string,
   extras: Partial<Pick<NoteItem, 'title' | 'topic' | 'owner' | 'deadline'>>,
   sources: readonly NoteSourceRange[]
 ): NoteItem {
+  const owner = extras.owner ?? null
   return {
     id: itemId(prefix, `${extras.title ?? ''}\n${text}`),
     title: extras.title ?? null,
     topic: extras.topic ?? null,
-    owner: extras.owner ?? null,
+    owner: owner && isPlausiblePersonOwner(owner) ? owner : null,
     deadline: extras.deadline ?? null,
     text,
     sources: sources.map((source) => ({ ...source })),
-    provenance: 'generated'
+    provenance: 'generated',
+    completed: false
   }
 }
 
@@ -31,7 +160,8 @@ function parseNextStep(line: string): { title: string; owner: string | null } | 
   const match = /^\*\s+\*\*(.+?)\*\*(?:\s+\(([^)]+)\))?/.exec(line.trim())
   if (!match) return null
   const title = match[1].trim()
-  const owner = match[2]?.trim() || null
+  const captured = match[2]?.trim() || null
+  const owner = captured && isPlausiblePersonOwner(captured) ? captured : null
   return { title, owner }
 }
 

@@ -1094,6 +1094,11 @@ app.whenReady().then(async () => {
     managedOllamaManager.getModel(),
     { onTelemetry: broadcastSegmentationDiagnostic }
   )
+  managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
+    if (plan.usingLegacyFallback && prefsStore.isOnboardingComplete()) {
+      prefsStore.setNotesEngineUpgradeEligible(true)
+    }
+  })
   managedOllamaManager.on('model-selected', (model: string) => {
     ollamaProvider.setModel(model)
     updateOllamaSentryContext({
@@ -1113,7 +1118,8 @@ app.whenReady().then(async () => {
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
     isReadyForGeneration: async () =>
-      ollamaSetupState.phase === 'ready' && (await managedOllamaManager.isServerRunning())
+      (await managedOllamaManager.isServerRunning()) &&
+      (await managedOllamaManager.hasUsableNotesModel())
   }
   const ollamaRuntime = {
     waitUntilReady: waitUntilOllamaReady,
@@ -1741,7 +1747,8 @@ app.whenReady().then(async () => {
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
-    markReprocessNotificationPending
+    markReprocessNotificationPending,
+    recordingService.getRecordingsBaseDir()
   )
   registerWhisperIpc(
     whisperManager,

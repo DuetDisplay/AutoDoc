@@ -108,6 +108,18 @@ export function registerPrefsIpc(
     }
   )
 
+  ipcMain.handle('prefs:get-notes-engine-upgrade-eligible', (): boolean => {
+    return prefsStore.getNotesEngineUpgradeEligible()
+  })
+
+  ipcMain.handle('prefs:get-notes-engine-ready-dismissed', (): boolean => {
+    return prefsStore.getNotesEngineReadyDismissed()
+  })
+
+  ipcMain.handle('prefs:set-notes-engine-ready-dismissed', (_event, dismissed: boolean): void => {
+    prefsStore.setNotesEngineReadyDismissed(dismissed)
+  })
+
   ipcMain.handle('prefs:get-transcription-performance-mode', (): 'balanced' | 'fast' => {
     return prefsStore.getTranscriptionPerformanceMode()
   })

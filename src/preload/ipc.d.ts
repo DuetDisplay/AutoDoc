@@ -26,7 +26,10 @@ import type {
   SupportEmailSurface,
   Transcript,
   TranscriptionStatus,
+  MeetingNotesContent,
+  MeetingNotesV2,
   MeetingSegments,
+  NotesRevision,
   SegmentationStatus,
   SpeakerMap,
   OllamaSetupStatus,
@@ -168,6 +171,9 @@ export interface IpcInvokeEvents {
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
+  'notes:get-v2': [meetingId: string]
+  'notes:set-next-step-completed': [meetingId: string, itemId: string, completed: boolean]
+  'notes:write-v2': [meetingId: string, content: MeetingNotesContent, expectedRevision: NotesRevision]
   'recording:get-media': [meetingId: string]
   'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
@@ -204,6 +210,9 @@ export interface IpcInvokeEvents {
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
   'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
+  'prefs:get-notes-engine-upgrade-eligible': []
+  'prefs:get-notes-engine-ready-dismissed': []
+  'prefs:set-notes-engine-ready-dismissed': [dismissed: boolean]
   'prefs:get-transcription-performance-mode': []
   'prefs:set-transcription-performance-mode': [mode: 'balanced' | 'fast']
   'prefs:get-transcription-quality-mode': []
@@ -293,6 +302,9 @@ export interface IpcInvokeReturns {
   'segmentation:get-progress': number | undefined
   'segmentation:get-activity': SegmentationActivity | null
   'segmentation:get-segments': MeetingSegments | null
+  'notes:get-v2': MeetingNotesV2 | null
+  'notes:set-next-step-completed': MeetingNotesV2 | null
+  'notes:write-v2': MeetingNotesV2
   'segmentation:retry': void
   'segmentation:save-segments': void
   'recording:get-media': {
@@ -338,6 +350,9 @@ export interface IpcInvokeReturns {
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
   'prefs:set-low-spec-mac-processing-banner-dismissed': void
+  'prefs:get-notes-engine-upgrade-eligible': boolean
+  'prefs:get-notes-engine-ready-dismissed': boolean
+  'prefs:set-notes-engine-ready-dismissed': void
   'prefs:get-transcription-performance-mode': 'balanced' | 'fast'
   'prefs:set-transcription-performance-mode': void
   'prefs:get-transcription-quality-mode': 'balanced' | 'fast'

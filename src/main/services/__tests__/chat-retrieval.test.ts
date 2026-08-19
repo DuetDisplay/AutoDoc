@@ -450,6 +450,41 @@ describe('ChatRecordingIndex', () => {
     expect(result.context).toContain('Pause iOS rollout')
   })
 
+  it('answers from V2 notes.json when it exists and ignores stale writer extract text', async () => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'billing-sync', {
+      startedAt: new Date(2026, 4, 27, 10, 0).getTime(),
+      sourceName: 'Entire screen',
+      calendarTitle: 'Billing Sync',
+      notes: 'Legacy writer extract about the old CSV importer only.',
+      notesV2: {
+        schemaVersion: 2,
+        overview: { text: 'The team aligned on the billing migration.' },
+        keyTakeaways: [],
+        sections: [
+          {
+            id: 's1',
+            title: 'Billing',
+            keyPoints: [{ id: 'p1', text: 'Move invoices onto the new export pipeline.' }],
+            supportingDetails: []
+          }
+        ],
+        decisions: [],
+        nextSteps: [{ id: 'n1', text: 'Review the billing PR', owner: 'Priya' }]
+      }
+    })
+
+    const result = await new ChatRecordingIndex(baseDir).buildContext(
+      'What did we decide about the billing migration?',
+      []
+    )
+
+    expect(result.context).toContain('Move invoices onto the new export pipeline.')
+    expect(result.context).toContain('Review the billing PR')
+    expect(result.diagnostics.selectedMeetingIds).toEqual(['billing-sync'])
+    expect(result.context).not.toContain('old CSV importer only')
+  })
+
   it('uses structured notes first and transcript excerpts as fallback for matched meetings', async () => {
     const baseDir = await createTempRecordingsDir()
     await createRecording(baseDir, 'planning-sync', {
@@ -1393,6 +1428,7 @@ async function createRecording(
     customTitle?: string
     calendarTitle?: string
     segments?: MeetingSegments
+    notesV2?: unknown
     speakers?: Record<string, { label: string }>
   }
 ): Promise<string> {
@@ -1415,6 +1451,10 @@ async function createRecording(
       join(meetingDir, 'segments.json'),
       JSON.stringify(params.segments ?? createSegments(params.notes ?? ''))
     )
+  }
+
+  if (params.notesV2 != null) {
+    await writeFile(join(meetingDir, 'notes.json'), JSON.stringify(params.notesV2))
   }
 
   if (params.transcript != null) {

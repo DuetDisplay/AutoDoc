@@ -89,6 +89,16 @@ describe('PrefsStore', () => {
     expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(true)
   })
 
+  it('persists the notes engine upgrade ready dismissal and clears eligibility', () => {
+    store.setNotesEngineUpgradeEligible(true)
+    expect(store.getNotesEngineReadyDismissed()).toBe(false)
+
+    store.setNotesEngineReadyDismissed(true)
+
+    expect(store.getNotesEngineReadyDismissed()).toBe(true)
+    expect(store.getNotesEngineUpgradeEligible()).toBe(false)
+  })
+
   it('defaults transcription performance mode to balanced', () => {
     expect(store.getTranscriptionPerformanceMode()).toBe('balanced')
   })

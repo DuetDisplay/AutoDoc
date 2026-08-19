@@ -10,6 +10,11 @@ import {
   DEFAULT_OLLAMA_MODEL,
   MODELS_SUBDIR
 } from '../../shared/constants'
+import {
+  isModelInstalled,
+  resolveNotesModelMigration,
+  type NotesModelMigrationPlan
+} from './notes-model-migration'
 import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-paths'
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
@@ -69,7 +74,7 @@ export class OllamaManager extends EventEmitter {
           return testStep
             ? this.runTestSetupStep(testStep)
             : this.start()
-                .then(() => this.pullModel())
+                .then(() => this.prepareNotesModels())
                 .then(() => this.pullOptionalEmbeddingModel())
         })
         .catch((err) => {
@@ -184,16 +189,102 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async hasModel(model = this.model): Promise<boolean> {
+  async listInstalledModels(): Promise<string[]> {
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000)
       })
-      if (!res.ok) return false
+      if (!res.ok) return []
       const data = (await res.json()) as { models?: { name: string }[] }
-      return data.models?.some((m) => m.name === model || m.name.startsWith(`${model}:`)) ?? false
+      return (data.models ?? []).map((row) => row.name).filter((name) => name.length > 0)
     } catch {
-      return false
+      return []
+    }
+  }
+
+  async hasModel(model = this.model): Promise<boolean> {
+    return isModelInstalled(await this.listInstalledModels(), model)
+  }
+
+  async hasUsableNotesModel(): Promise<boolean> {
+    return this.hasModel(this.model)
+  }
+
+  async deleteModel(model: string): Promise<void> {
+    try {
+      const res = await fetch(`${OLLAMA_BASE_URL}/api/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: model }),
+        signal: AbortSignal.timeout(15_000)
+      })
+      if (!res.ok && res.status !== 404) {
+        throw new Error(`Failed to delete model ${model}: ${res.status}`)
+      }
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'deleted leftover notes model',
+        context: { model }
+      })
+    } catch (error) {
+      logAutodocFailure({
+        area: 'ollama',
+        message: 'failed to delete leftover notes model',
+        error,
+        context: { model }
+      })
+    }
+  }
+
+  private async prepareNotesModels(): Promise<void> {
+    const preferred = this.model
+    const plan = resolveNotesModelMigration({
+      preferredModel: preferred,
+      installedModels: await this.listInstalledModels()
+    })
+    this.setModel(plan.activeModel)
+    this.emit('notes-model-plan', plan)
+
+    if (plan.pullBeforeReady) {
+      await this.pullModel(plan.pullModel)
+      this.setModel(plan.pullModel)
+      await this.deleteLeftoverModels(plan)
+      return
+    }
+
+    const installed = await this.listInstalledModels()
+    if (!isModelInstalled(installed, plan.pullModel)) {
+      void this.pullPreferredInBackground(plan)
+      return
+    }
+
+    await this.deleteLeftoverModels(plan)
+  }
+
+  private async pullPreferredInBackground(plan: NotesModelMigrationPlan): Promise<void> {
+    try {
+      await this.pullModel(plan.pullModel)
+      this.setModel(plan.pullModel)
+      const next = resolveNotesModelMigration({
+        preferredModel: plan.pullModel,
+        installedModels: await this.listInstalledModels()
+      })
+      await this.deleteLeftoverModels(next)
+    } catch (error) {
+      logAutodocFailure({
+        area: 'ollama',
+        message: 'background preferred notes model pull failed',
+        error,
+        context: { pullModel: plan.pullModel, activeModel: this.model }
+      })
+    }
+  }
+
+  private async deleteLeftoverModels(plan: NotesModelMigrationPlan): Promise<void> {
+    for (const model of plan.leftoverModels) {
+      if (isModelInstalled(await this.listInstalledModels(), model)) {
+        await this.deleteModel(model)
+      }
     }
   }
 

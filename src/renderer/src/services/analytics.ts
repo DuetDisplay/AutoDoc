@@ -73,6 +73,8 @@ const ALLOWED_PROPERTIES = new Set([
   'duration_bucket',
   'export_format',
   'failure_code',
+  'grouping_fallback',
+  'notes_layout',
   'feature_name',
   'first_notes_generated',
   'first_recording_completed',

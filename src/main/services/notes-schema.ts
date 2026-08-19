@@ -170,7 +170,7 @@ function parseNullableTextBlock(value: unknown, context: ValidationContext): Not
 
 function parseItem(value: unknown, context: ValidationContext): NoteItem {
   const record = expectRecord(value)
-  expectExactKeys(record, [
+  const itemKeys = [
     'id',
     'title',
     'topic',
@@ -179,11 +179,17 @@ function parseItem(value: unknown, context: ValidationContext): NoteItem {
     'text',
     'sources',
     'provenance'
-  ])
+  ]
+  if ('completed' in record) {
+    if (typeof record.completed !== 'boolean') invalid()
+    expectExactKeys(record, [...itemKeys, 'completed'])
+  } else {
+    expectExactKeys(record, itemKeys)
+  }
   const provenance = parseProvenance(record.provenance)
   const sources = parseSources(record.sources, context)
   if (provenance === 'generated' && sources.length === 0) invalid()
-  return {
+  const item: NoteItem = {
     id: registerId(record.id, context),
     title: expectNullableString(record.title, MAX_METADATA_LENGTH, context),
     topic: expectNullableString(record.topic, MAX_METADATA_LENGTH, context),
@@ -193,6 +199,10 @@ function parseItem(value: unknown, context: ValidationContext): NoteItem {
     sources,
     provenance
   }
+  if ('completed' in record) {
+    item.completed = record.completed === true
+  }
+  return item
 }
 
 function parseItems(value: unknown, context: ValidationContext): NoteItem[] {

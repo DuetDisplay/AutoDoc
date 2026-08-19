@@ -20,6 +20,7 @@ import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
+import { NotesEngineUpgradeBanner } from './components/NotesEngineUpgradeBanner'
 import { Onboarding } from './pages/Onboarding'
 import type { UpdateStatus } from '../../preload/ipc.d'
 import {
@@ -260,6 +261,7 @@ function UpdateReadyPrompt({
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
+  const [notesEngineBannerVisible, setNotesEngineBannerVisible] = useState(false)
   const [updatePromptVisible, setUpdatePromptVisible] = useState(false)
   const [notificationPromptVisible, setNotificationPromptVisible] = useState(false)
   const [calendarStateReady, setCalendarStateReady] = useState(false)
@@ -484,16 +486,33 @@ export default function App() {
           segmentationCompletions.current.add(payload.meetingId)
           const startedAt = notesGenerationStarted.current[payload.meetingId]
           delete notesGenerationStarted.current[payload.meetingId]
-          trackEvent('notes_generated', {
-            processing_time_bucket:
-              startedAt === undefined
-                ? undefined
-                : toDurationBucket((performance.now() - startedAt) / 1000)
-          })
-          void trackFirstEventOnce('notes_generated', 'first_notes_generated')
-          void trackFirstEventOnce('user_activated', 'user_activated', {
-            activation_reason: 'first_notes_generated'
-          })
+          const processing_time_bucket =
+            startedAt === undefined
+              ? undefined
+              : toDurationBucket((performance.now() - startedAt) / 1000)
+          if (payload.errorCode === 'scan_or_persist') {
+            trackEvent('notes_layout_degraded', {
+              failure_code: 'scan_or_persist',
+              notes_layout: 'v1',
+              processing_time_bucket
+            })
+          } else {
+            trackEvent('notes_generated', {
+              processing_time_bucket,
+              notes_layout: payload.notesLayout ?? 'v2',
+              grouping_fallback: payload.groupingFallback === true
+            })
+            void trackFirstEventOnce('notes_generated', 'first_notes_generated')
+            void trackFirstEventOnce('user_activated', 'user_activated', {
+              activation_reason: 'first_notes_generated'
+            })
+          }
+          if (payload.groupingFallback) {
+            trackEvent('notes_step_degraded', {
+              step: 'grouping',
+              grouping_fallback: true
+            })
+          }
         }
         return
       }
@@ -751,6 +770,7 @@ export default function App() {
     recordingPickerOpen ||
     permissionToastVisible ||
     lowSpecBannerVisible ||
+    notesEngineBannerVisible ||
     updatePromptVisible ||
     notificationPromptVisible ||
     !calendarStateReady ||
@@ -782,6 +802,7 @@ export default function App() {
           <MeetingDetectedBanner />
           <PermissionToast />
           <LowSpecMacProcessingBanner onVisibilityChange={setLowSpecBannerVisible} />
+          <NotesEngineUpgradeBanner onVisibilityChange={setNotesEngineBannerVisible} />
           <UpdateReadyPrompt onVisibilityChange={setUpdatePromptVisible} />
           <div className="flex-1 overflow-hidden">
             <Routes>

@@ -3,11 +3,15 @@ import type { SegmentationService } from '../services/segmentation'
 import type { OllamaManager } from '../services/ollama-manager'
 import type { OllamaProvider } from '../services/llm'
 import type {
+  MeetingNotesContent,
+  MeetingNotesV2,
   MeetingSegments,
+  NotesRevision,
   SegmentationActivity,
   SegmentationStatus,
   OllamaSetupStatus
 } from '../../shared/types'
+import { NotesRepository } from '../services/notes-repository'
 import { getE2EOllamaStatus, retryE2EOllamaSetup } from '../services/e2e-fixtures'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
@@ -19,7 +23,8 @@ export function registerLlmIpc(
   getOllamaSetupStatus: () => OllamaSetupStatus,
   ensureOllamaRunning: (options?: { force?: boolean }) => void,
   startSetupFromStatusCheck = true,
-  onManualSegmentationRetry?: (meetingId: string) => void
+  onManualSegmentationRetry?: (meetingId: string) => void,
+  recordingsBaseDir?: string
 ): void {
   ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
     if (isE2E) {
@@ -82,6 +87,68 @@ export function registerLlmIpc(
       await segmentationService.saveSegments(meetingId, segments)
     }
   )
+
+  if (recordingsBaseDir) {
+    const notesRepository = new NotesRepository(recordingsBaseDir)
+
+    ipcMain.handle(
+      'notes:get-v2',
+      async (_event, meetingId: string): Promise<MeetingNotesV2 | null> => {
+        return notesRepository.readV2(meetingId)
+      }
+    )
+
+    ipcMain.handle(
+      'notes:set-next-step-completed',
+      async (
+        _event,
+        meetingId: string,
+        itemId: string,
+        completed: boolean
+      ): Promise<MeetingNotesV2 | null> => {
+        const current = await notesRepository.readV2(meetingId)
+        if (!current) return null
+        const nextSteps = current.nextSteps.map((item) =>
+          item.id === itemId ? { ...item, completed } : item
+        )
+        return notesRepository.writeV2(
+          meetingId,
+          {
+            overview: current.overview,
+            keyTakeaways: current.keyTakeaways,
+            sections: current.sections,
+            decisions: current.decisions,
+            nextSteps
+          },
+          {
+            expectedRevision: current.revision,
+            sourceTranscriptRevision: current.sourceTranscriptRevision,
+            sourceAttributionRevision: current.sourceAttributionRevision
+          }
+        )
+      }
+    )
+
+    ipcMain.handle(
+      'notes:write-v2',
+      async (
+        _event,
+        meetingId: string,
+        content: MeetingNotesContent,
+        expectedRevision: NotesRevision
+      ): Promise<MeetingNotesV2> => {
+        const current = await notesRepository.readV2(meetingId)
+        if (!current) {
+          throw new Error('Notes are not available to edit')
+        }
+        return notesRepository.writeV2(meetingId, content, {
+          expectedRevision,
+          sourceTranscriptRevision: current.sourceTranscriptRevision,
+          sourceAttributionRevision: current.sourceAttributionRevision
+        })
+      }
+    )
+  }
 
   ipcMain.handle('ollama:get-setup-status', (): OllamaSetupStatus => {
     if (isE2E) {

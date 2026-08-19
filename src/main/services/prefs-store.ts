@@ -14,6 +14,8 @@ interface PrefsSchema {
   diagnosticLogUploadConsent: boolean
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
+  notesEngineUpgradeEligible: boolean
+  notesEngineReadyDismissed: boolean
   transcriptionPerformanceMode: 'balanced' | 'fast'
   transcriptionQualityMode: 'fast' | 'balanced'
 }
@@ -31,6 +33,8 @@ function createPrefsStore(): Store<PrefsSchema> {
       diagnosticLogUploadConsent: false,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
+      notesEngineUpgradeEligible: false,
+      notesEngineReadyDismissed: false,
       transcriptionPerformanceMode: 'balanced',
       transcriptionQualityMode: 'balanced'
     }
@@ -134,6 +138,25 @@ export class PrefsStore {
 
   setLowSpecMacProcessingBannerDismissed(dismissed: boolean): void {
     this.store.set('lowSpecMacProcessingBannerDismissed', dismissed)
+  }
+
+  getNotesEngineUpgradeEligible(): boolean {
+    return this.store.get('notesEngineUpgradeEligible')
+  }
+
+  setNotesEngineUpgradeEligible(eligible: boolean): void {
+    this.store.set('notesEngineUpgradeEligible', eligible)
+  }
+
+  getNotesEngineReadyDismissed(): boolean {
+    return this.store.get('notesEngineReadyDismissed')
+  }
+
+  setNotesEngineReadyDismissed(dismissed: boolean): void {
+    this.store.set('notesEngineReadyDismissed', dismissed)
+    if (dismissed) {
+      this.store.set('notesEngineUpgradeEligible', false)
+    }
   }
 
   getTranscriptionPerformanceMode(): 'balanced' | 'fast' {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
 import type { SegmentationStatus, OllamaSetupStatus } from '../../../shared/types'
 import { getOllamaSetupLabel } from '../services/setup-status-labels'
 
@@ -64,7 +65,10 @@ export function SegmentationBadge({
   if (status === 'segmenting' && progress == null) {
     label = 'Preparing notes...'
   } else if (status === 'segmenting' && progress != null) {
-    label = `Generating notes... ${progress}%`
+    label =
+      progress >= NOTES_WRITER_PROGRESS_END
+        ? `Shaping notes... ${progress}%`
+        : `Generating notes... ${progress}%`
   }
   if (activeOllamaProgress) {
     label = getOllamaSetupLabel(activeOllamaProgress) ?? label

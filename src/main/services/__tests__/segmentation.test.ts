@@ -4,6 +4,8 @@ import { BrowserWindow } from 'electron'
 import { SegmentationService } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
+import { NotesRepository } from '../notes-repository'
+import * as notesScanPipeline from '../notes-scan-pipeline'
 import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const mocks = vi.hoisted(() => ({
@@ -278,6 +280,126 @@ describe('SegmentationService', () => {
     expect(onComplete).toHaveBeenCalledWith('m1')
   })
 
+  it('keeps the LLM provider receiver when the scan layer starts', async () => {
+    class ReceiverProvider {
+      readonly activeControllers = new Set<string>()
+      summarize = vi.fn().mockResolvedValue({
+        decisions: [],
+        actionItems: [],
+        information: [
+          {
+            id: 'seg-1',
+            meetingId: 'm1',
+            category: 'information',
+            topic: 'Rollout',
+            title: 'Plan confirmed',
+            content: 'The rollout plan was confirmed.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 65_000
+          }
+        ],
+        discussion: [],
+        statusUpdates: []
+      })
+      checkConnection = vi.fn().mockResolvedValue(true)
+      abortActiveRequests = vi.fn()
+      setModel = vi.fn()
+      setLowMemoryMode = vi.fn()
+      releaseResources = vi.fn().mockResolvedValue(undefined)
+      async completePrompt(this: ReceiverProvider) {
+        this.activeControllers.add('scan')
+        return ''
+      }
+    }
+    const boundProvider = new ReceiverProvider()
+    const pipeline = vi.spyOn(notesScanPipeline, 'runNotesScanPipeline').mockImplementation(
+      async (_segments, options) => {
+        await options.generate({
+          prompt: 'scan',
+          num_ctx: 2048,
+          num_predict: 64,
+          temperature: 0,
+          seed: 1,
+          stop: []
+        })
+        expect(options.transcript?.length).toBeGreaterThan(0)
+        expect(options.transcript?.[0]).toEqual({
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000
+        })
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          attachFailed: false,
+          overviewFailed: false,
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      }
+    )
+    const promote = vi.spyOn(NotesRepository.prototype, 'promoteLegacyToV2').mockResolvedValue({} as never)
+
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      Buffer.from(
+        JSON.stringify([
+          {
+            id: 'm1-0',
+            meetingId: 'm1',
+            speaker: 'Chris',
+            text: 'We confirmed the rollout plan.',
+            startMs: 0,
+            endMs: 65_000,
+            confidence: 0.9
+          }
+        ])
+      )
+    )
+
+    const boundService = new SegmentationService(
+      boundProvider as unknown as LLMProvider,
+      createMockOllamaManager(),
+      '/mock/home/AutoDoc/recordings'
+    )
+    await (boundService as any).processJob('m1')
+
+    expect(boundProvider.activeControllers.has('scan')).toBe(true)
+    expect(pipeline).toHaveBeenCalled()
+    expect(promote).toHaveBeenCalled()
+    expect(boundProvider.releaseResources).toHaveBeenCalled()
+    expect(boundProvider.releaseResources.mock.invocationCallOrder[0]).toBeGreaterThan(
+      pipeline.mock.invocationCallOrder[0]
+    )
+    expect(mocks.logAutodocFailure).not.toHaveBeenCalled()
+
+    pipeline.mockRestore()
+    promote.mockRestore()
+  })
+
   it('logs onComplete callback failures without failing completed segmentation', async () => {
     fsMock.access.mockImplementation(async (path) => {
       if (String(path).endsWith('transcript.json')) return undefined
@@ -416,7 +538,10 @@ describe('SegmentationService', () => {
         error:
           'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
         retries: 0,
-        status: 'no-notes'
+        status: 'no-notes',
+        errorCode: 'no_notes_detected',
+        userReason:
+          'No notes were generated. There wasn’t enough conversation to turn into notes. Your transcript is still available.'
       })
     )
   })

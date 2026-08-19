@@ -14,7 +14,9 @@ import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { readMetadata } from './calendar-matcher'
 import { logQaGateStopToNotes } from './qa-gate-log'
+import { captureMessage } from './sentry-reporter'
 import { classifyError } from './error-classification'
+import { notesFailureKindFromCode, notesUserCopy } from '../../shared/notes-user-copy'
 import {
   hasUsableTranscriptContent,
   shouldTreatEmptySegmentationAsFailure
@@ -32,10 +34,10 @@ import {
   computeNotesAttributionRevision,
   computeTranscriptRevision
 } from './notes-revision'
-import { runNotesScanPipeline } from './notes-scan-pipeline'
+import { runNotesScanPipeline, scanLayerProgress } from './notes-scan-pipeline'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
-type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
+type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
   isReadyForGeneration?(): Promise<boolean>
@@ -73,6 +75,9 @@ interface PersistedSegmentationError {
   retries: number
   status?: PersistedSegmentationStatus
   errorCode?: string
+  userReason?: string
+  notesLayout?: 'v1' | 'v2'
+  groupingFallback?: boolean
 }
 
 export class SegmentationService {
@@ -177,6 +182,12 @@ export class SegmentationService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const errorData = await this.readErrorFile(errorPath)
     return errorData?.errorCode
+  }
+
+  async getUserReason(meetingId: string): Promise<string | undefined> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    const errorData = await this.readErrorFile(errorPath)
+    return errorData?.userReason
   }
 
   async getSegments(meetingId: string): Promise<MeetingSegments | null> {
@@ -401,22 +412,90 @@ export class SegmentationService {
       : undefined
 
     let lastBroadcastedPercent = -1
+    const reportPercent = (percent: number): void => {
+      if (percent === lastBroadcastedPercent) return
+      lastBroadcastedPercent = percent
+      this.broadcastStatus(meetingId, 'segmenting', percent)
+    }
     let segments: MeetingSegments
     try {
       segments = await this.llmProvider.summarize(
         meetingId,
         fullText,
-        (percent) => {
-          if (percent !== lastBroadcastedPercent) {
-            lastBroadcastedPercent = percent
-            this.broadcastStatus(meetingId, 'segmenting', percent)
-          }
-        },
+        reportPercent,
         durationMinutes,
         (activity) => {
           this.updateActivity(meetingId, activity)
         }
       )
+
+      // Verify the LLM actually produced content — empty results mean it failed silently
+      const totalItems =
+        segments.decisions.length +
+        segments.actionItems.length +
+        segments.information.length +
+        segments.discussion.length +
+        segments.statusUpdates.length
+
+      if (
+        totalItems === 0 &&
+        shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
+      ) {
+        await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
+        return
+      }
+
+      await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
+      const scanOutcome = await this.persistScanLayerNotes(
+        meetingId,
+        segments,
+        transcripts,
+        (fraction, stage) => {
+          const percent = scanLayerProgress(fraction)
+          if (percent !== lastBroadcastedPercent) {
+            console.log(`[perf] Notes scan ${stage}: ${percent}% (${meetingId})`)
+          }
+          reportPercent(percent)
+        }
+      )
+      if (scanOutcome.notesLayout === 'v2') {
+        await unlink(join(meetingDir, 'segments.error')).catch(() => {})
+      }
+
+      console.log(
+        `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
+      )
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes generation completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - t0,
+          totalProcessingElapsedMs: Date.now() - jobStartedAt,
+          itemCount: totalItems,
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
+
+      if (process.platform === 'win32') {
+        const metadata = await readMetadata(meetingDir)
+        if (metadata?.stoppedAt != null) {
+          logQaGateStopToNotes(meetingId, {
+            recordingDurationSec: metadata.durationSeconds,
+            stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
+            transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
+            notesItemCount: totalItems
+          })
+        }
+      }
+
+      this.activeStatus = 'complete'
+      this.broadcastStatus(meetingId, 'complete', undefined, scanOutcome.errorCode, {
+        userReason: scanOutcome.userReason,
+        notesLayout: scanOutcome.notesLayout,
+        groupingFallback: scanOutcome.groupingFallback
+      })
+      this.safeInvokeOnComplete(meetingId)
     } finally {
       if (process.platform === 'darwin' || process.platform === 'win32') {
         await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
@@ -436,57 +515,6 @@ export class SegmentationService {
         }
       }
     }
-
-    // Verify the LLM actually produced content — empty results mean it failed silently
-    const totalItems =
-      segments.decisions.length +
-      segments.actionItems.length +
-      segments.information.length +
-      segments.discussion.length +
-      segments.statusUpdates.length
-
-    if (
-      totalItems === 0 &&
-      shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
-    ) {
-      await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
-      return
-    }
-
-    await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
-    await this.persistScanLayerNotes(meetingId, segments, transcripts)
-    await unlink(join(meetingDir, 'segments.error')).catch(() => {})
-
-    console.log(
-      `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
-    )
-    logAutodocEvent({
-      area: 'segmentation',
-      message: 'notes generation completed',
-      meetingId,
-      context: {
-        elapsedMs: Date.now() - t0,
-        totalProcessingElapsedMs: Date.now() - jobStartedAt,
-        itemCount: totalItems,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
-    })
-
-    if (process.platform === 'win32') {
-      const metadata = await readMetadata(meetingDir)
-      if (metadata?.stoppedAt != null) {
-        logQaGateStopToNotes(meetingId, {
-          recordingDurationSec: metadata.durationSeconds,
-          stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
-          transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
-          notesItemCount: totalItems
-        })
-      }
-    }
-
-    this.activeStatus = 'complete'
-    this.broadcastStatus(meetingId, 'complete')
-    this.safeInvokeOnComplete(meetingId)
   }
 
   private safeInvokeOnComplete(meetingId: string): void {
@@ -507,10 +535,17 @@ export class SegmentationService {
   private async persistScanLayerNotes(
     meetingId: string,
     segments: MeetingSegments,
-    transcripts: Transcript[]
-  ): Promise<void> {
-    const completePrompt = this.llmProvider.completePrompt
-    if (!completePrompt) return
+    transcripts: Transcript[],
+    onProgress?: (fraction: number, stage: string) => void
+  ): Promise<{
+    notesLayout: 'v1' | 'v2'
+    errorCode?: string
+    userReason?: string
+    groupingFallback?: boolean
+  }> {
+    if (!this.llmProvider.completePrompt) {
+      return { notesLayout: 'v1' }
+    }
 
     const startedAt = Date.now()
     try {
@@ -520,14 +555,21 @@ export class SegmentationService {
       const result = await runNotesScanPipeline(segments, {
         title,
         spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
+        transcript: transcripts.map((row) => ({
+          speaker: row.speaker,
+          text: row.text,
+          startMs: row.startMs,
+          endMs: row.endMs
+        })),
         generate: (request) =>
-          completePrompt(request.prompt, {
+          this.llmProvider.completePrompt!(request.prompt, {
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,
             seed: request.seed,
             stop: request.stop
-          })
+          }),
+        onProgress: (update) => onProgress?.(update.fraction, update.stage)
       })
       const meetingNotesPath = join(meetingDir, 'notes.json')
       await enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
@@ -552,18 +594,75 @@ export class SegmentationService {
           groupingFallback: result.groupingFallback,
           restyleFallbacks: result.restyleFallbacks,
           compressFallbacks: result.compressFallbacks,
+          attachFailed: result.attachFailed,
+          overviewFailed: result.overviewFailed,
+          validationRan: result.validation.ran,
+          validationError: result.validation.error,
+          ledgerChunksFailed: result.validation.ledgerChunksFailed,
+          claimsChecked: result.validation.claimsChecked,
+          claimsDropped: result.validation.claimsDropped,
+          ownersStripped: result.validation.ownersStripped,
+          ledgerAppends: result.validation.ledgerAppends,
+          unvalidatedClaims: result.validation.unvalidatedClaims,
           sectionCount: result.content.sections.length,
-          nextStepCount: result.content.nextSteps.length
+          nextStepCount: result.content.nextSteps.length,
+          notesLayout: 'v2'
         }
       })
+      if (result.groupingFallback) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes grouping fallback',
+          meetingId
+        })
+      }
+      if (result.attachFailed) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes attach timestamps failed',
+          meetingId
+        })
+      }
+      if (result.overviewFailed) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes overview pass failed',
+          meetingId
+        })
+      }
+      return { notesLayout: 'v2', groupingFallback: result.groupingFallback }
     } catch (error) {
+      const copy = notesUserCopy('layout')
       logAutodocFailure({
         area: 'segmentation',
         message: 'notes scan layer failed; keeping legacy segments',
         error,
         meetingId,
-        context: { elapsedMs: Date.now() - startedAt }
+        context: { elapsedMs: Date.now() - startedAt, notesLayout: 'v1', errorCode: 'scan_or_persist' }
       })
+      captureMessage('notes_layout_degraded', {
+        area: 'segmentation',
+        meetingId,
+        level: 'warning',
+        tags: { errorCode: 'scan_or_persist', notes_layout: 'v1' },
+        extra: { elapsedMs: Date.now() - startedAt }
+      })
+      await this.writeOutcomeFile(meetingId, {
+        error: error instanceof Error ? error.message : String(error),
+        retries: 0,
+        status: 'complete',
+        errorCode: 'scan_or_persist',
+        userReason: `${copy.title}. ${copy.body}`,
+        notesLayout: 'v1'
+      })
+      return {
+        notesLayout: 'v1',
+        errorCode: 'scan_or_persist',
+        userReason: `${copy.title}. ${copy.body}`
+      }
     }
   }
 
@@ -655,9 +754,17 @@ export class SegmentationService {
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
+      const copy = notesUserCopy(notesFailureKindFromCode(errorCode))
       await writeFile(
         errorPath,
-        JSON.stringify({ error: errorMsg, errorCode, retries, status: 'failed' })
+        JSON.stringify({
+          error: errorMsg,
+          errorCode,
+          retries,
+          status: 'failed',
+          userReason: `${copy.title}. ${copy.body}`,
+          notesLayout: 'v1'
+        })
       )
     } catch (err) {
       const code =
@@ -690,7 +797,13 @@ export class SegmentationService {
     try {
       await writeFile(
         errorPath,
-        JSON.stringify({ error: errorMessage, retries: 0, status: 'no-notes' })
+        JSON.stringify({
+          error: errorMessage,
+          retries: 0,
+          status: 'no-notes',
+          errorCode: 'no_notes_detected',
+          userReason: `${notesUserCopy('empty').title}. ${notesUserCopy('empty').body}`
+        })
       )
     } catch (err) {
       const code =
@@ -699,13 +812,16 @@ export class SegmentationService {
           : null
       if (code !== 'ENOENT') throw err
     }
-    logAutodocFailure({
+    const copy = notesUserCopy('empty')
+    logAutodocEvent({
       area: 'segmentation',
+      level: 'warn',
       message: 'Meeting notes generation returned no structured output',
-      error: errorMessage,
       meetingId,
       context: {
         ...context,
+        errorCode: 'no_notes_detected',
+        userReason: `${copy.title}. ${copy.body}`,
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
@@ -725,7 +841,13 @@ export class SegmentationService {
           errorCode:
             typeof parsed.errorCode === 'string'
               ? parsed.errorCode
-              : classifyError(typeof parsed.error === 'string' ? parsed.error : raw)
+              : classifyError(typeof parsed.error === 'string' ? parsed.error : raw),
+          userReason: typeof parsed.userReason === 'string' ? parsed.userReason : undefined,
+          notesLayout: parsed.notesLayout === 'v2' || parsed.notesLayout === 'v1'
+            ? parsed.notesLayout
+            : undefined,
+          groupingFallback:
+            typeof parsed.groupingFallback === 'boolean' ? parsed.groupingFallback : undefined
         }
       } catch {
         return { error: raw, retries: 0, errorCode: classifyError(raw) }
@@ -738,11 +860,30 @@ export class SegmentationService {
   private getPersistedStatus(
     errorData: PersistedSegmentationError | null
   ): PersistedSegmentationStatus {
+    if (errorData?.status === 'complete') {
+      return 'complete'
+    }
     if (errorData?.status === 'no-notes' || errorData?.error === EMPTY_SEGMENTATION_ERROR) {
       return 'no-notes'
     }
 
     return 'failed'
+  }
+
+  private async writeOutcomeFile(
+    meetingId: string,
+    outcome: PersistedSegmentationError
+  ): Promise<void> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    try {
+      await writeFile(errorPath, JSON.stringify(outcome))
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : null
+      if (code !== 'ENOENT') throw err
+    }
   }
 
   private getProcessingProfileLogContext(
@@ -772,7 +913,12 @@ export class SegmentationService {
     meetingId: string,
     status: SegmentationStatus,
     progress?: number,
-    errorCode?: string
+    errorCode?: string,
+    extras?: {
+      userReason?: string
+      notesLayout?: 'v1' | 'v2'
+      groupingFallback?: boolean
+    }
   ): void {
     if (status !== 'segmenting' && this.activeJobId === meetingId) {
       this.updateActivity(meetingId, null)
@@ -786,7 +932,15 @@ export class SegmentationService {
     }
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
-    const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
+    const payload: SegmentationStatusPayload = {
+      meetingId,
+      status,
+      progress,
+      errorCode,
+      userReason: extras?.userReason,
+      notesLayout: extras?.notesLayout,
+      groupingFallback: extras?.groupingFallback
+    }
     for (const win of windows) {
       win.webContents.send('segmentation:status-changed', payload)
     }

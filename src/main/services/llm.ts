@@ -1,3 +1,4 @@
+import { NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import type {
   MeetingSegments,
   Segment,
@@ -59,45 +60,16 @@ const WINDOWS_ITEM_DEDUP_THRESHOLD = 0.85
 const MAX_KNOWN_ITEM_TITLES = 20
 const WINDOWS_CHUNK_ITEM_CAP = 8
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
-const PRICING_TOPIC_SIGNAL =
-  /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$)\b/i
-const MAC_TOPIC_FAMILIES: Array<{ topic: string; pattern: RegExp }> = [
-  {
-    topic: 'Pricing & Costs',
-    pattern:
-      /\b(pric(?:e|es|ing)|costs?|revenue|billing|currency|currencies|moneti[sz]ation|subscription|subscriptions?|paid|paywall|dollars?|usd|\$|ad|ads|campaign|conversion|tracking|attribution|user value|metric|analytics|data|rate|rates|split|baseline|vlp|encoder|cancellations?)\b/i
-  },
-  {
-    topic: 'Release Planning',
-    pattern:
-      /\b(release|qa|test|testing|build|rollout|ship|timing|today|tomorrow|panic|ready|readiness)\b/i
-  },
-  {
-    topic: 'Technical Deployment',
-    pattern:
-      /\b(deploy|deployment|config|periscope|service|services|integration|integrate|channel|editor|intercom)\b/i
-  },
-  {
-    topic: 'Technical Architecture',
-    pattern:
-      /\b(api|virtual display|native|interface|platform|capabilities|architecture|windows|mac|ios|desktop|hover|stylus|mouse|touch|scaling|viewer|device)\b/i
-  },
-  {
-    topic: 'Technical Behavior',
-    pattern:
-      /\b(scroll|scrolling|behavior|behaviour|local computer|remote|mirror|reversed|natural|complaint|complaints|latency|performance|android|apple)\b/i
-  },
-  {
-    topic: 'Technical Changes',
-    pattern:
-      /\b(retina|resolution|setting|settings|feature flag|feature flags|local discovery|feature|bug|bugs|issue|issues|implementation|implement|modify|modification|down.?sampling|pixelation|code|pr)\b/i
-  },
-  {
-    topic: 'Project Planning',
-    pattern:
-      /\b(documentation|docs|prioritize|priority|plan|planning|follow.?up|estimate|ownership|assign|task|refactor|discussion)\b/i
-  }
-]
+
+export function writerProgressPercent(
+  chunkIndex: number,
+  chunkFraction: number,
+  chunkCount: number
+): number {
+  if (chunkCount <= 0) return 0
+  const fraction = Math.min(1, Math.max(0, (chunkIndex + chunkFraction) / chunkCount))
+  return Math.min(NOTES_WRITER_PROGRESS_END, Math.round(fraction * NOTES_WRITER_PROGRESS_END))
+}
 const WINDOWS_CATEGORY_GUIDANCE =
   'It is okay for action_items or status_updates to be empty. Put factual details, product capabilities, costs, timelines, and explanations under information unless the transcript explicitly assigns work or makes a decision.'
 
@@ -218,16 +190,16 @@ STRICT RULES:
 - If a topic only has 1-2 items, it is TOO SPECIFIC — merge it into a broader topic.
 - Items about the same general area MUST share the EXACT same topic string.
 
-HOW TO PICK TOPICS: Before writing items, identify the 3-5 major subjects discussed in this meeting. Use those as your only topic values. Every item must map to one of them.
+HOW TO PICK TOPICS: Before writing items, name the 3-5 subjects this meeting actually covered — the same way someone would title agenda sections. Invent the names from the transcript. Never reuse a canned taxonomy (do not write "Technical Architecture", "Technical Changes", "Pricing & Costs", "Release Planning", or "Project Planning" unless those words are the real subject).
 
-GOOD topics (broad, each grouping many items):
-- "Pricing & Costs" — groups: setup fees, per-device costs, update charges, discount tiers, billing terms
-- "Technical Architecture" — groups: infrastructure, deployment, security, integrations, performance
-- "Project Timeline" — groups: milestones, deadlines, dependencies, launch date, phases
+GOOD topics (named from the conversation):
+- "Windows Tickets" — groups USB/IT exceptions, RDP errors, and keyboard-layout bugs from the same support pass
+- "Feature Flag Audit" — groups a LaunchDarkly replacement, reverted flags, and blast radius
+- "Relay Monitoring" — groups uptime, dashboards, and weekend alerts
 
-BAD topics (too specific, essentially restating the item title):
-- "Image Pricing", "Image Creation", "Image Updates", "Chrome Browser" — these should ALL be under ONE topic like "Device Imaging"
-- "Q1 Revenue", "Q2 Forecast", "Budget Cuts" — these should ALL be under "Financial Planning"
+BAD topics:
+- Fixed department labels that could apply to any meeting: "Technical Architecture", "Pricing & Costs", "Project Planning"
+- One heading per item: "Image Pricing", "Image Creation", "Chrome Browser" — merge those under the real subject, e.g. "Device Imaging"
 
 TIMESTAMPS — The transcript includes timestamps like [00:12] or [01:05:30] at the start of each line. For EVERY item, you MUST set "sourceStartMs" and "sourceEndMs" to the timestamps in milliseconds from the transcript lines the item is based on. Convert: [02:30] = 150000, [01:05:30] = 3930000. Use the timestamp of the first relevant line for sourceStartMs and the last relevant line for sourceEndMs. Every item must have non-zero timestamps.
 
@@ -251,7 +223,7 @@ MAC QUALITY TUNING OVERRIDE:
 - Reuse broad topic labels across chunks and categories whenever they fit.
 - Do not create a new topic for a single feature, status update, person update, bug, customer complaint, or implementation detail unless it is truly a major new subject.
 - Avoid near-duplicate topic labels. For example, do not split release-related notes across both "Release Timing" and "Release Plan".
-- Do not use "Pricing & Costs" unless the underlying item is actually about price, cost, revenue, billing, currency, or monetization.
+- Topic names must come from this meeting's material. Do not map items onto a fixed list of department headings.
 - Decisions require an explicit choice, approval, rejection, or agreed direction. Do not classify general discussion, concern, or preference as a decision.
 - Action items require a clear next step, owner, request, or follow-up. Do not turn vague possibilities into tasks.
 - Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
@@ -377,7 +349,7 @@ export class OllamaProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.model,
           prompt,
-          stream: false,
+          stream: true,
           options: {
             num_ctx: options.num_ctx,
             num_predict: options.num_predict,
@@ -391,8 +363,10 @@ export class OllamaProvider implements LLMProvider {
       if (!res.ok) {
         throw new Error(`Ollama generate failed: ${res.status}`)
       }
-      const payload = (await res.json()) as { response?: string }
-      return typeof payload.response === 'string' ? payload.response : ''
+      if (!res.body) {
+        throw new Error('Ollama generate returned no response body')
+      }
+      return await this.readGenerateStream(res.body, controller)
     } finally {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
@@ -649,8 +623,7 @@ export class OllamaProvider implements LLMProvider {
               const ratio = chunkTokens / avgTokensPerChunk
               const chunkFraction =
                 ratio <= 1 ? ratio * 0.8 : 0.8 + 0.19 * (1 - 1 / (1 + (ratio - 1)))
-              const percent = Math.min(99, Math.round(((i + chunkFraction) / chunks.length) * 100))
-              onProgress?.(percent)
+              onProgress?.(writerProgressPercent(i, chunkFraction, chunks.length))
             },
             reportActivity ? () => reportActivity('waiting-for-local-ai') : undefined
           )
@@ -759,13 +732,11 @@ export class OllamaProvider implements LLMProvider {
         }
       }
 
-      const percent = Math.min(99, Math.round(((i + 1) / chunks.length) * 100))
-      onProgress?.(percent)
+      onProgress?.(writerProgressPercent(i, 1, chunks.length))
     }
 
     this.normalizeMergedTopics(merged)
     this.dedupeNearDuplicateItems(merged)
-    this.consolidateMacTopicFamilies(merged)
     if (lowMemoryFallbackActivated) {
       this.recordLowMemoryFallbackEvent('ollama_low_memory_fallback_succeeded', meetingId, null, {
         chunkCount: chunks.length,
@@ -876,6 +847,74 @@ export class OllamaProvider implements LLMProvider {
     }
 
     return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${windowsCategoryGuidance}${knownTopicGuidance}`
+  }
+
+  private async readGenerateStream(
+    body: ReadableStream<Uint8Array>,
+    controller: AbortController
+  ): Promise<string> {
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let content = ''
+
+    try {
+      while (true) {
+        let streamTimer: ReturnType<typeof setTimeout> | undefined
+        const streamTimeoutError = new Error(
+          `Ollama stream timed out after ${STREAM_TIMEOUT_MS / 1000}s with no data`
+        )
+        const streamTimeout = new Promise<never>((_, reject) => {
+          streamTimer = setTimeout(() => reject(streamTimeoutError), STREAM_TIMEOUT_MS)
+        })
+        let readResult: ReadableStreamReadResult<Uint8Array>
+        try {
+          readResult = await Promise.race([reader.read(), streamTimeout])
+        } catch (error) {
+          if (error === streamTimeoutError) {
+            controller.abort(streamTimeoutError)
+            await reader.cancel(streamTimeoutError).catch(() => {})
+          }
+          throw error
+        } finally {
+          clearTimeout(streamTimer)
+        }
+        const { done, value } = readResult
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const data = JSON.parse(line) as { response?: string; error?: string }
+            if (data.error) throw new Error(`Ollama error: ${data.error}`)
+            if (typeof data.response === 'string') content += data.response
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              console.warn('Ollama: unparseable generate line (skipped):', line.slice(0, 100))
+              continue
+            }
+            throw error
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const data = JSON.parse(buffer) as { response?: string; error?: string }
+          if (data.error) throw new Error(`Ollama error: ${data.error}`)
+          if (typeof data.response === 'string') content += data.response
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+
+    return content
   }
 
   private async callOllama(
@@ -1487,28 +1526,6 @@ export class OllamaProvider implements LLMProvider {
     })
   }
 
-  private consolidateMacTopicFamilies(segments: MeetingSegments): void {
-    if (process.platform !== 'darwin') return
-
-    for (const segment of this.flattenSegments(segments)) {
-      const topic = this.inferMacTopicFamily(segment)
-      if (topic) {
-        segment.topic = topic
-      }
-    }
-  }
-
-  private inferMacTopicFamily(segment: Segment): string | null {
-    const text = `${segment.title} ${segment.content}`
-    for (const family of MAC_TOPIC_FAMILIES) {
-      if (family.pattern.test(text)) {
-        return family.topic
-      }
-    }
-
-    return segment.topic
-  }
-
   private flattenSegments(segments: MeetingSegments): Segment[] {
     return [
       ...segments.decisions,
@@ -1637,12 +1654,6 @@ export class OllamaProvider implements LLMProvider {
   private pickCanonicalTopic(group: TopicGroup): string {
     const candidates = [...group.labelCounts.entries()]
     candidates.sort((a, b) => {
-      if (process.platform === 'darwin') {
-        const aUnsupported = this.isUnsupportedMacTopicCandidate(a[0], group)
-        const bUnsupported = this.isUnsupportedMacTopicCandidate(b[0], group)
-        if (aUnsupported !== bUnsupported) return aUnsupported ? 1 : -1
-      }
-
       if (b[1] !== a[1]) return b[1] - a[1]
 
       const aWords = this.tokenizeTopic(a[0]).length
@@ -1654,18 +1665,6 @@ export class OllamaProvider implements LLMProvider {
     })
 
     return candidates[0]?.[0] ?? 'General'
-  }
-
-  private isUnsupportedMacTopicCandidate(topic: string, group: TopicGroup): boolean {
-    if (this.normalizeTopicText(topic) !== 'pricing costs') {
-      return false
-    }
-
-    const supportedItems = group.segments.filter((segment) =>
-      PRICING_TOPIC_SIGNAL.test(`${segment.title} ${segment.content}`)
-    ).length
-    const supportRatio = supportedItems / Math.max(1, group.segments.length)
-    return supportRatio < 0.35
   }
 
   private getTopicGroupSimilarity(a: TopicGroup, b: TopicGroup): number {
