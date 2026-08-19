@@ -716,6 +716,55 @@ describe('SegmentationService', () => {
     expect(provider.summarize).toHaveBeenCalledOnce()
   })
 
+  it('reaps leftover Ollama runners before selecting the notes processing profile', async () => {
+    const order: string[] = []
+    const reapLeftoverRunners = vi.fn(() => {
+      order.push('reap')
+    })
+    const getEffectiveMacProcessingProfile = vi.fn(async () => {
+      order.push('snapshot')
+      return null
+    })
+    service = new SegmentationService(
+      provider,
+      { waitUntilReady: vi.fn().mockResolvedValue(undefined), reapLeftoverRunners },
+      '/mock/home/AutoDoc/recordings',
+      null,
+      null,
+      getEffectiveMacProcessingProfile
+    )
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-reap-0',
+          meetingId: 'm-reap',
+          speaker: 'Chris',
+          text: 'We should follow up next week.',
+          startMs: 0,
+          endMs: 15_000,
+          confidence: 0.8
+        }
+      ]) as any
+    )
+    vi.mocked(provider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    })
+
+    await (service as any).processJob('m-reap')
+
+    expect(reapLeftoverRunners).toHaveBeenCalledWith('before-notes-profile')
+    expect(getEffectiveMacProcessingProfile).toHaveBeenCalled()
+    expect(order).toEqual(['reap', 'snapshot'])
+  })
+
   it('keeps notes progress monotonic across retries', () => {
     const send = vi.fn()
     vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)

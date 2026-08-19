@@ -41,6 +41,7 @@ type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-no
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
   isReadyForGeneration?(): Promise<boolean>
+  reapLeftoverRunners?(reason?: string): void
 }
 
 const EMPTY_SEGMENTATION_ERROR =
@@ -333,6 +334,7 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
+    this.ollamaManager.reapLeftoverRunners?.('before-notes-profile')
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
     if (macProcessingProfile) {

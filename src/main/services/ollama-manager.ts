@@ -49,6 +49,30 @@ function consumeTestOllamaSetupStep(): string | null {
   return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
 }
 
+export function parseManagedLlamaServerPids(listing: string, runtimeDir: string): number[] {
+  const runtime = runtimeDir.replace(/\\/g, '/').toLowerCase()
+  if (!runtime) return []
+
+  const pids = new Set<number>()
+  for (const raw of listing.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const lower = line.replace(/\\/g, '/').toLowerCase()
+    if (!lower.includes('llama-server')) continue
+    if (!lower.includes(runtime)) continue
+
+    const pidFromStart = line.match(/^(\d+)\s+/)
+    if (pidFromStart) {
+      pids.add(Number(pidFromStart[1]))
+      continue
+    }
+
+    const pidFromEnd = line.match(/(\d+)\s*$/)
+    if (pidFromEnd) pids.add(Number(pidFromEnd[1]))
+  }
+  return [...pids]
+}
+
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   private model: string
@@ -56,6 +80,7 @@ export class OllamaManager extends EventEmitter {
   private readyPromise: Promise<void> | null = null
   private adoptedSystemRuntime = false
   private testServerRunning = false
+  private didReapAdoptedRunners = false
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -357,10 +382,14 @@ export class OllamaManager extends EventEmitter {
   async start(): Promise<void> {
     await this.ensureReady()
 
-    if (await this.isServerRunning()) return
+    if (await this.isServerRunning()) {
+      this.reapManagedLlamaServersOnce('adopt-existing-server')
+      return
+    }
 
     // Kill any orphaned process holding our port from a previous app session
     this.killProcessOnPort()
+    this.reapManagedLlamaServersOnce('replace-orphaned-server')
     await new Promise((r) => setTimeout(r, 1000))
 
     const binary = this.getBinaryPath()
@@ -488,6 +517,8 @@ export class OllamaManager extends EventEmitter {
     }
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
     this.killProcessOnPort()
+    this.killManagedLlamaServers()
+    this.didReapAdoptedRunners = false
     this.readyPromise = null
     this.testServerRunning = false
   }
@@ -549,6 +580,54 @@ export class OllamaManager extends EventEmitter {
         area: 'ollama',
         message: 'killed orphaned ollama process on port',
         context: { port: OLLAMA_PORT, pids: killedPids }
+      })
+    }
+  }
+
+  reapLeftoverRunners(reason = 'before-profile-snapshot'): void {
+    this.killManagedLlamaServers(reason)
+  }
+
+  private reapManagedLlamaServersOnce(reason: string): void {
+    if (this.didReapAdoptedRunners) return
+    this.didReapAdoptedRunners = true
+    this.killManagedLlamaServers(reason)
+  }
+
+  private killManagedLlamaServers(reason = 'stop'): void {
+    const runtimeDir = this.getRuntimeDir()
+    let listing = ''
+    try {
+      listing = IS_WIN
+        ? execSync('wmic process where "name=\'llama-server.exe\'" get ProcessId,ExecutablePath', {
+            encoding: 'utf-8',
+            timeout: 5000
+          })
+        : execSync('ps -axo pid=,command=', { encoding: 'utf-8', timeout: 5000 })
+    } catch {
+      return
+    }
+
+    const pids = parseManagedLlamaServerPids(listing, runtimeDir)
+    const killedPids: number[] = []
+    for (const pid of pids) {
+      try {
+        if (IS_WIN) {
+          execSync(`taskkill /pid ${pid} /f`, { timeout: 5000 })
+        } else {
+          process.kill(pid, 'SIGKILL')
+        }
+        killedPids.push(pid)
+      } catch {
+        // already dead
+      }
+    }
+
+    if (killedPids.length > 0) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'killed leftover llama-server runners',
+        context: { reason, runtimeDir, pids: killedPids }
       })
     }
   }

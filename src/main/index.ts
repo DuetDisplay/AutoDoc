@@ -1119,7 +1119,8 @@ app.whenReady().then(async () => {
     waitUntilReady: waitUntilOllamaReady,
     isReadyForGeneration: async () =>
       (await managedOllamaManager.isServerRunning()) &&
-      (await managedOllamaManager.hasUsableNotesModel())
+      (await managedOllamaManager.hasUsableNotesModel()),
+    reapLeftoverRunners: (reason?: string) => managedOllamaManager.reapLeftoverRunners(reason)
   }
   const ollamaRuntime = {
     waitUntilReady: waitUntilOllamaReady,
