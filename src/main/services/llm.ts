@@ -36,6 +36,7 @@ export interface LLMProvider {
 }
 
 const MAX_RETRIES = 2
+const RETRY_TEMPERATURE = 0.15
 export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
@@ -289,6 +290,12 @@ export interface OllamaProviderTelemetryEvent {
 
 interface OllamaProviderOptions {
   onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
+  /**
+   * Called before each Ollama request so the runner can be recycled when its
+   * memory growth has degraded decode speed (fresh runner respawns on the next
+   * request). Must be cheap and must never throw.
+   */
+  maybeRecycleRunner?: (meetingId?: string) => void
 }
 
 const LOW_SIGNAL_NOTE_PATTERNS = [
@@ -316,12 +323,14 @@ export class OllamaProvider implements LLMProvider {
   private contextProfile: OllamaContextProfile = 'standard'
   private contextTokens = STANDARD_CONTEXT_TOKENS
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
+  private maybeRecycleRunner?: (meetingId?: string) => void
   private lastOllamaCallMetrics: OllamaCallMetrics | null = null
 
   constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
     this.baseUrl = baseUrl
     this.model = model
     this.onTelemetry = options.onTelemetry
+    this.maybeRecycleRunner = options.maybeRecycleRunner
     this.setInitialContextProfile()
   }
 
@@ -339,6 +348,7 @@ export class OllamaProvider implements LLMProvider {
       stop?: readonly string[]
     }
   ): Promise<string> {
+    this.maybeRecycleRunner?.()
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
@@ -613,9 +623,11 @@ export class OllamaProvider implements LLMProvider {
               `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`
             )
           }
+          this.maybeRecycleRunner?.(meetingId)
           const raw = await this.callOllama(
             chunks[i] + chunkLabel,
             this.contextTokens,
+            attempt,
             () => {
               reportActivity?.(null)
               chunkTokens++
@@ -920,6 +932,7 @@ export class OllamaProvider implements LLMProvider {
   private async callOllama(
     transcript: string,
     contextTokens: number,
+    attempt = 0,
     onToken?: () => void,
     onWaiting?: () => void
   ): Promise<string> {
@@ -972,7 +985,12 @@ export class OllamaProvider implements LLMProvider {
           options: {
             num_ctx: contextTokens,
             num_predict: this.getMaxOutputTokens(),
-            temperature: 0,
+            // Retries must not replay the identical request: at temperature 0 a
+            // malformed completion reproduces deterministically, so every retry
+            // fails the same way. A small temperature plus a per-attempt seed
+            // lets retries escape while keeping first attempts untouched.
+            temperature: attempt > 0 ? RETRY_TEMPERATURE : 0,
+            seed: attempt > 0 ? attempt : undefined,
             repeat_penalty: 1.3
           }
         }),

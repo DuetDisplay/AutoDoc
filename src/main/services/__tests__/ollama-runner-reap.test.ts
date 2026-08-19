@@ -7,7 +7,12 @@ vi.mock('electron', () => ({
   }
 }))
 
-const { parseManagedLlamaServerPids } = await import('../ollama-manager')
+const {
+  getRunnerRecycleRssThresholdMiB,
+  parseManagedLlamaServerPids,
+  parseManagedLlamaServers,
+  selectBloatedLlamaServers
+} = await import('../ollama-manager')
 
 const DEV_RUNTIME = '/Users/chris/Library/Application Support/AutoDoc Dev/models/ollama-runtime'
 const PROD_RUNTIME = '/Users/chris/Library/Application Support/AutoDoc/models/ollama-runtime'
@@ -39,5 +44,36 @@ describe('parseManagedLlamaServerPids', () => {
     expect(
       parseManagedLlamaServerPids(`33028 ${PROD_RUNTIME}/llama-server --model qwen`, DEV_RUNTIME)
     ).toEqual([])
+  })
+
+  it('reads context size and rss from a darwin process listing', () => {
+    const listing = [
+      `27809  3670016 ${DEV_RUNTIME}/llama-server --model qwen -c 4096`,
+      `84972  4812800 ${DEV_RUNTIME}/llama-server --model qwen --ctx-size 8192`
+    ].join('\n')
+
+    expect(parseManagedLlamaServers(listing, DEV_RUNTIME)).toEqual([
+      { pid: 27809, rssMiB: 3584, numCtx: 4096 },
+      { pid: 84972, rssMiB: 4700, numCtx: 8192 }
+    ])
+  })
+})
+
+describe('runner RSS recycle threshold', () => {
+  const GIB = 1024 ** 3
+
+  it('allows more runner growth on large-RAM hosts than small ones', () => {
+    expect(getRunnerRecycleRssThresholdMiB(24 * GIB)).toBe(4864)
+    expect(getRunnerRecycleRssThresholdMiB(16 * GIB)).toBe(4352)
+    expect(getRunnerRecycleRssThresholdMiB(8 * GIB)).toBe(4352)
+  })
+
+  it('selects only runners with known rss above the threshold', () => {
+    const fresh = { pid: 1, rssMiB: 3700, numCtx: 4096 }
+    const bloated = { pid: 2, rssMiB: 5200, numCtx: 4096 }
+    const unknownRss = { pid: 3, rssMiB: null, numCtx: 8192 }
+
+    expect(selectBloatedLlamaServers([fresh, bloated, unknownRss], 4864)).toEqual([bloated])
+    expect(selectBloatedLlamaServers([fresh, unknownRss], 4864)).toEqual([])
   })
 })

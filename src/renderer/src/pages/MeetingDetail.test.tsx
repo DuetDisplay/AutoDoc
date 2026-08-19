@@ -127,6 +127,66 @@ describe('MeetingDetail', () => {
     expect(screen.getByText('Status Updates')).toBeInTheDocument()
   })
 
+  it('shows the document skeleton placeholder instead of category cards while notes generate', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'segmenting',
+      'segmentation:get-progress': 40,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': null,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {}
+    })
+    await renderMeetingDetail()
+
+    expect(screen.getByText('Generating notes...')).toBeInTheDocument()
+    expect(screen.getByText('40%')).toBeInTheDocument()
+    expect(screen.queryByText('Decisions')).not.toBeInTheDocument()
+    expect(screen.queryByText('Action Items')).not.toBeInTheDocument()
+  })
+
+  it('shows a quiet empty state instead of category cards when complete without notes', async () => {
+    installMockElectronApi({
+      'transcription:get-status': 'complete',
+      'transcription:get-progress': undefined,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'complete',
+      'segmentation:get-progress': undefined,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': null,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {}
+    })
+    await renderMeetingDetail()
+
+    expect(screen.getByText('No notes for this meeting yet.')).toBeInTheDocument()
+    expect(screen.queryByText('Decisions')).not.toBeInTheDocument()
+  })
+
   it('switches to Transcript tab on click', async () => {
     await renderMeetingDetail()
     const user = userEvent.setup()
@@ -222,7 +282,7 @@ describe('MeetingDetail', () => {
     await renderMeetingDetail()
 
     expect(screen.getByText('Transcribing 55%')).toBeInTheDocument()
-    expect(screen.getAllByText(/analyzing transcript/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/writing structured notes/i)).toBeInTheDocument()
 
     await act(async () => {
       api.emit('transcription:status-changed', {
@@ -419,9 +479,7 @@ describe('MeetingDetail', () => {
 
     expect(screen.getByText('No notes were generated')).toBeInTheDocument()
     expect(
-      screen.getByText(
-        /There wasn’t enough conversation to turn into notes/i
-      )
+      screen.getByText(/There wasn’t enough conversation to turn into notes/i)
     ).toBeInTheDocument()
     expect(screen.getByText(/Your transcript is still available/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()

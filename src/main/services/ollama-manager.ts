@@ -5,6 +5,7 @@ import { join } from 'path'
 import { createWriteStream } from 'fs'
 import { spawn, execFile, execSync, type ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
+import { totalmem } from 'os'
 import {
   DEFAULT_OLLAMA_EMBEDDING_MODEL,
   DEFAULT_OLLAMA_MODEL,
@@ -49,11 +50,27 @@ function consumeTestOllamaSetupStep(): string | null {
   return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
 }
 
-export function parseManagedLlamaServerPids(listing: string, runtimeDir: string): number[] {
+export interface ManagedLlamaServer {
+  pid: number
+  rssMiB: number | null
+  numCtx: number | null
+}
+
+function parseLlamaServerNumCtx(command: string): number | null {
+  const match = command.match(/(?:^|\s)(?:-c|--ctx-size|--ctx_size)\s+(\d+)\b/i)
+  if (!match) return null
+  const value = Number(match[1])
+  return Number.isFinite(value) ? value : null
+}
+
+export function parseManagedLlamaServers(
+  listing: string,
+  runtimeDir: string
+): ManagedLlamaServer[] {
   const runtime = runtimeDir.replace(/\\/g, '/').toLowerCase()
   if (!runtime) return []
 
-  const pids = new Set<number>()
+  const byPid = new Map<number, ManagedLlamaServer>()
   for (const raw of listing.split(/\r?\n/)) {
     const line = raw.trim()
     if (!line) continue
@@ -61,16 +78,56 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
     if (!lower.includes('llama-server')) continue
     if (!lower.includes(runtime)) continue
 
-    const pidFromStart = line.match(/^(\d+)\s+/)
+    const pidFromStart = line.match(/^(\d+)\s+(.*)$/)
     if (pidFromStart) {
-      pids.add(Number(pidFromStart[1]))
+      const pid = Number(pidFromStart[1])
+      const rest = pidFromStart[2].trim()
+      const rssAndCommand = rest.match(/^(\d+)\s+(.*)$/)
+      const command = rssAndCommand ? rssAndCommand[2] : rest
+      const rssKb = rssAndCommand ? Number(rssAndCommand[1]) : null
+      byPid.set(pid, {
+        pid,
+        rssMiB: rssKb != null && Number.isFinite(rssKb) ? Math.round(rssKb / 1024) : null,
+        numCtx: parseLlamaServerNumCtx(command)
+      })
       continue
     }
 
     const pidFromEnd = line.match(/(\d+)\s*$/)
-    if (pidFromEnd) pids.add(Number(pidFromEnd[1]))
+    if (pidFromEnd) {
+      const pid = Number(pidFromEnd[1])
+      byPid.set(pid, {
+        pid,
+        rssMiB: null,
+        numCtx: parseLlamaServerNumCtx(line)
+      })
+    }
   }
-  return [...pids]
+  return [...byPid.values()]
+}
+
+export function parseManagedLlamaServerPids(listing: string, runtimeDir: string): number[] {
+  return parseManagedLlamaServers(listing, runtimeDir).map((row) => row.pid)
+}
+
+// llama.cpp's Metal runner grows RSS by ~350 MiB per uncached prompt and decode
+// throughput decays as it grows (verified against Ollama 0.30.0 directly: 23.4 →
+// 18.5 tok/s over 8 varied prompts while RSS went 3.8 → 5.9 GiB). Recycling the
+// runner costs one model reload (~5-10s) and restores full speed, which pays for
+// itself within the next chunk once decode has degraded.
+const RUNNER_RECYCLE_RSS_MIB_LARGE_HOST = 4864 // ~4.75 GiB on hosts with >= 20 GiB RAM
+const RUNNER_RECYCLE_RSS_MIB_SMALL_HOST = 4352 // ~4.25 GiB — low-RAM hosts hit swap sooner
+
+export function getRunnerRecycleRssThresholdMiB(totalMemBytes: number): number {
+  const totalGiB = totalMemBytes / 1024 ** 3
+  return totalGiB >= 20 ? RUNNER_RECYCLE_RSS_MIB_LARGE_HOST : RUNNER_RECYCLE_RSS_MIB_SMALL_HOST
+}
+
+export function selectBloatedLlamaServers(
+  servers: ManagedLlamaServer[],
+  thresholdMiB: number
+): ManagedLlamaServer[] {
+  return servers.filter((server) => server.rssMiB != null && server.rssMiB > thresholdMiB)
 }
 
 export class OllamaManager extends EventEmitter {
@@ -584,8 +641,21 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  reapLeftoverRunners(reason = 'before-profile-snapshot'): void {
-    this.killManagedLlamaServers(reason)
+  reapLeftoverRunners(reason = 'before-profile-snapshot', meetingId?: string): void {
+    this.killManagedLlamaServers(reason, meetingId)
+  }
+
+  /**
+   * Kill managed llama-server runners whose RSS has grown past the recycle
+   * threshold. Ollama respawns a fresh runner on the next request, restoring
+   * full decode speed. Returns true if any runner was recycled.
+   */
+  maybeRecycleBloatedRunners(meetingId?: string): boolean {
+    const thresholdMiB = getRunnerRecycleRssThresholdMiB(totalmem())
+    const bloated = selectBloatedLlamaServers(this.listManagedLlamaServers(), thresholdMiB)
+    if (bloated.length === 0) return false
+    this.killManagedLlamaServers(`runner-rss-over-${thresholdMiB}mib`, meetingId)
+    return true
   }
 
   private reapManagedLlamaServersOnce(reason: string): void {
@@ -594,7 +664,7 @@ export class OllamaManager extends EventEmitter {
     this.killManagedLlamaServers(reason)
   }
 
-  private killManagedLlamaServers(reason = 'stop'): void {
+  private listManagedLlamaServers(): ManagedLlamaServer[] {
     const runtimeDir = this.getRuntimeDir()
     let listing = ''
     try {
@@ -603,33 +673,44 @@ export class OllamaManager extends EventEmitter {
             encoding: 'utf-8',
             timeout: 5000
           })
-        : execSync('ps -axo pid=,command=', { encoding: 'utf-8', timeout: 5000 })
+        : execSync('ps -axo pid=,rss=,command=', { encoding: 'utf-8', timeout: 5000 })
     } catch {
-      return
+      return []
     }
+    return parseManagedLlamaServers(listing, runtimeDir)
+  }
 
-    const pids = parseManagedLlamaServerPids(listing, runtimeDir)
-    const killedPids: number[] = []
-    for (const pid of pids) {
+  private killManagedLlamaServers(reason = 'stop', meetingId?: string): void {
+    const runtimeDir = this.getRuntimeDir()
+    const found = this.listManagedLlamaServers()
+    const killed: ManagedLlamaServer[] = []
+    for (const runner of found) {
       try {
         if (IS_WIN) {
-          execSync(`taskkill /pid ${pid} /f`, { timeout: 5000 })
+          execSync(`taskkill /pid ${runner.pid} /f`, { timeout: 5000 })
         } else {
-          process.kill(pid, 'SIGKILL')
+          process.kill(runner.pid, 'SIGKILL')
         }
-        killedPids.push(pid)
+        killed.push(runner)
       } catch {
         // already dead
       }
     }
 
-    if (killedPids.length > 0) {
-      logAutodocEvent({
-        area: 'ollama',
-        message: 'killed leftover llama-server runners',
-        context: { reason, runtimeDir, pids: killedPids }
-      })
-    }
+    const remaining = this.listManagedLlamaServers()
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'reaped llama-server runners',
+      meetingId,
+      context: {
+        reason,
+        runtimeDir,
+        killed,
+        remaining,
+        killedCount: killed.length,
+        remainingCount: remaining.length
+      }
+    })
   }
 
   async pullModel(model = this.model): Promise<void> {

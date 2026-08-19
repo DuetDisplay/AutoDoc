@@ -1382,3 +1382,120 @@ describe('writerProgressPercent', () => {
     expect(writerProgressPercent(13, 0.99, 14)).toBeLessThanOrEqual(70)
   })
 })
+
+describe('OllamaProvider retry sampling jitter', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  function makeGarbageOllamaResponse(): Response {
+    // Irreparable content: no "}," / "]" / "[]" for repairTruncatedJSON to cut at.
+    const chunk = new TextEncoder().encode(
+      `${JSON.stringify({ message: { content: 'garbage output' } })}\n`
+    )
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk)
+          controller.close()
+        }
+      }),
+      { status: 200 }
+    )
+  }
+
+  it('keeps the first attempt at temperature 0 and jitters retries so they are not identical', async () => {
+    const requestBodies: string[] = []
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      requestBodies.push(init?.body as string)
+      return requestBodies.length === 1
+        ? makeGarbageOllamaResponse()
+        : makeSuccessfulOllamaResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+      'meeting-retry-jitter',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    const firstBody = JSON.parse(requestBodies[0])
+    const retryBody = JSON.parse(requestBodies[1])
+
+    expect(firstBody.options.temperature).toBe(0)
+    expect('seed' in firstBody.options).toBe(false)
+    expect(retryBody.options.temperature).toBeGreaterThan(0)
+    expect(retryBody.options.seed).toBe(1)
+  })
+})
+
+describe('OllamaProvider runner recycling hook', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it('invokes maybeRecycleRunner with the meeting id before each writer chunk', async () => {
+    const maybeRecycleRunner = vi.fn()
+    const callOrder: string[] = []
+    const fetchMock = vi.fn(async () => {
+      callOrder.push('fetch')
+      return makeSuccessfulOllamaResponse()
+    })
+    maybeRecycleRunner.mockImplementation(() => callOrder.push('recycle'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await new OllamaProvider('http://localhost:11434', 'test-model', {
+      maybeRecycleRunner
+    }).summarize(
+      'meeting-recycle-hook',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    expect(maybeRecycleRunner).toHaveBeenCalledWith('meeting-recycle-hook')
+    expect(callOrder[0]).toBe('recycle')
+  })
+
+  it('invokes maybeRecycleRunner before scan completePrompt requests', async () => {
+    const maybeRecycleRunner = vi.fn()
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `${JSON.stringify({ response: 'restyled text', done: true })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await new OllamaProvider('http://localhost:11434', 'test-model', {
+      maybeRecycleRunner
+    }).completePrompt('Restyle this note.', {
+      num_ctx: 8192,
+      num_predict: 512,
+      temperature: 0,
+      seed: 7
+    })
+
+    expect(output).toBe('restyled text')
+    expect(maybeRecycleRunner).toHaveBeenCalledTimes(1)
+  })
+})

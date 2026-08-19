@@ -1092,7 +1092,11 @@ app.whenReady().then(async () => {
   const ollamaProvider = new OllamaProvider(
     managedOllamaManager.getBaseUrl(),
     managedOllamaManager.getModel(),
-    { onTelemetry: broadcastSegmentationDiagnostic }
+    {
+      onTelemetry: broadcastSegmentationDiagnostic,
+      maybeRecycleRunner: (meetingId?: string) =>
+        managedOllamaManager.maybeRecycleBloatedRunners(meetingId)
+    }
   )
   managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
     if (plan.usingLegacyFallback && prefsStore.isOnboardingComplete()) {
@@ -1120,7 +1124,8 @@ app.whenReady().then(async () => {
     isReadyForGeneration: async () =>
       (await managedOllamaManager.isServerRunning()) &&
       (await managedOllamaManager.hasUsableNotesModel()),
-    reapLeftoverRunners: (reason?: string) => managedOllamaManager.reapLeftoverRunners(reason)
+    reapLeftoverRunners: (reason?: string, meetingId?: string) =>
+      managedOllamaManager.reapLeftoverRunners(reason, meetingId)
   }
   const ollamaRuntime = {
     waitUntilReady: waitUntilOllamaReady,

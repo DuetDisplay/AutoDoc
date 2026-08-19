@@ -41,7 +41,7 @@ type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-no
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
   isReadyForGeneration?(): Promise<boolean>
-  reapLeftoverRunners?(reason?: string): void
+  reapLeftoverRunners?(reason?: string, meetingId?: string): void
 }
 
 const EMPTY_SEGMENTATION_ERROR =
@@ -334,7 +334,7 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
-    this.ollamaManager.reapLeftoverRunners?.('before-notes-profile')
+    this.reapNotesRunners('before-notes-profile', meetingId)
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
     if (macProcessingProfile) {
@@ -448,6 +448,12 @@ export class SegmentationService {
       }
 
       await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
+      if (this.llmProvider.completePrompt) {
+        this.reapNotesRunners('before-scan', meetingId)
+        if (process.platform === 'darwin') {
+          await this.logMacResourceSnapshot('notes runners reaped before scan', meetingId)
+        }
+      }
       const scanOutcome = await this.persistScanLayerNotes(
         meetingId,
         segments,
@@ -512,6 +518,7 @@ export class SegmentationService {
             }
           })
         })
+        this.reapNotesRunners('after-notes', meetingId)
         if (process.platform === 'darwin') {
           await this.logMacResourceSnapshot('notes resources released', meetingId)
         }
@@ -554,6 +561,7 @@ export class SegmentationService {
       const meetingDir = join(this.recordingsBaseDir, meetingId)
       const metadata = await readMetadata(meetingDir)
       const title = metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
+      let loggedScanRequest = false
       const result = await runNotesScanPipeline(segments, {
         title,
         spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
@@ -563,14 +571,27 @@ export class SegmentationService {
           startMs: row.startMs,
           endMs: row.endMs
         })),
-        generate: (request) =>
-          this.llmProvider.completePrompt!(request.prompt, {
+        generate: (request) => {
+          if (!loggedScanRequest) {
+            loggedScanRequest = true
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes scan first ollama request',
+              meetingId,
+              context: {
+                num_ctx: request.num_ctx,
+                num_predict: request.num_predict
+              }
+            })
+          }
+          return this.llmProvider.completePrompt!(request.prompt, {
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,
             seed: request.seed,
             stop: request.stop
-          }),
+          })
+        },
         onProgress: (update) => onProgress?.(update.fraction, update.stage)
       })
       const meetingNotesPath = join(meetingDir, 'notes.json')
@@ -728,6 +749,10 @@ export class SegmentationService {
     }, delayMs)
 
     return false
+  }
+
+  private reapNotesRunners(reason: string, meetingId: string): void {
+    this.ollamaManager.reapLeftoverRunners?.(reason, meetingId)
   }
 
   private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {

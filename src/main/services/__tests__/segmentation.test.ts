@@ -718,8 +718,8 @@ describe('SegmentationService', () => {
 
   it('reaps leftover Ollama runners before selecting the notes processing profile', async () => {
     const order: string[] = []
-    const reapLeftoverRunners = vi.fn(() => {
-      order.push('reap')
+    const reapLeftoverRunners = vi.fn((reason?: string) => {
+      if (reason === 'before-notes-profile') order.push('reap')
     })
     const getEffectiveMacProcessingProfile = vi.fn(async () => {
       order.push('snapshot')
@@ -760,9 +760,129 @@ describe('SegmentationService', () => {
 
     await (service as any).processJob('m-reap')
 
-    expect(reapLeftoverRunners).toHaveBeenCalledWith('before-notes-profile')
+    expect(reapLeftoverRunners).toHaveBeenCalledWith('before-notes-profile', 'm-reap')
+    expect(reapLeftoverRunners).toHaveBeenCalledWith('after-notes', 'm-reap')
+    expect(reapLeftoverRunners).not.toHaveBeenCalledWith('before-scan', 'm-reap')
     expect(getEffectiveMacProcessingProfile).toHaveBeenCalled()
     expect(order).toEqual(['reap', 'snapshot'])
+  })
+
+  it('reaps the writer runner before scan and again after notes finish', async () => {
+    const order: string[] = []
+    const reapLeftoverRunners = vi.fn((reason?: string) => {
+      order.push(`reap:${reason}`)
+    })
+    provider = createMockProvider()
+    provider.completePrompt = vi.fn().mockResolvedValue('')
+    vi.mocked(provider.summarize).mockImplementation(async () => {
+      order.push('writer')
+      return {
+        decisions: [],
+        actionItems: [],
+        information: [
+          {
+            id: 'seg-1',
+            meetingId: 'm-scan-reap',
+            category: 'information',
+            topic: 'Rollout',
+            title: 'Plan confirmed',
+            content: 'The rollout plan was confirmed.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 65_000
+          }
+        ],
+        discussion: [],
+        statusUpdates: []
+      }
+    })
+    vi.mocked(provider.releaseResources!).mockImplementation(async () => {
+      order.push('unload')
+    })
+    const pipeline = vi.spyOn(notesScanPipeline, 'runNotesScanPipeline').mockImplementation(
+      async (_segments, options) => {
+        order.push('scan')
+        await options.generate({
+          prompt: 'scan',
+          num_ctx: 8192,
+          num_predict: 64,
+          temperature: 0,
+          seed: 1,
+          stop: []
+        })
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          attachFailed: false,
+          overviewFailed: false,
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      }
+    )
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    service = new SegmentationService(
+      provider,
+      { waitUntilReady: vi.fn().mockResolvedValue(undefined), reapLeftoverRunners },
+      '/mock/home/AutoDoc/recordings'
+    )
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm-scan-reap-0',
+          meetingId: 'm-scan-reap',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as never
+    )
+
+    await (service as any).processJob('m-scan-reap')
+
+    expect(order).toEqual([
+      'reap:before-notes-profile',
+      'writer',
+      'reap:before-scan',
+      'scan',
+      'unload',
+      'reap:after-notes'
+    ])
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'notes scan first ollama request',
+        meetingId: 'm-scan-reap',
+        context: expect.objectContaining({ num_ctx: 8192 })
+      })
+    )
+    pipeline.mockRestore()
+    promote.mockRestore()
   })
 
   it('keeps notes progress monotonic across retries', () => {
