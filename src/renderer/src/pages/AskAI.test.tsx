@@ -172,6 +172,24 @@ describe('AskAI', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
   })
 
+  it('renders assistant markdown bold instead of raw asterisks', async () => {
+    installMockElectronApi({
+      'ollama:check-status': true
+    })
+    useChatStore.getState().addMessage({
+      id: 'assistant-bold',
+      role: 'assistant',
+      content: 'Chris will **review the PR** after standup.',
+      status: 'complete'
+    })
+
+    render(<AskAI />)
+    await act(async () => {})
+
+    expect(screen.getByText('review the PR')).toBeInTheDocument()
+    expect(screen.queryByText(/\*\*review the PR\*\*/)).not.toBeInTheDocument()
+  })
+
   it('persists the draft when the Ask AI view remounts', async () => {
     installMockElectronApi({
       'ollama:check-status': true

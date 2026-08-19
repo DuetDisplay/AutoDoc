@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
   type ReactElement
 } from 'react'
+import { renderNoteMarkup } from '../components/NoteMarkup'
 import { PageHeader } from '../components/PageHeader'
 import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
@@ -360,7 +361,7 @@ export function AskAI(): ReactElement {
                     </div>
                   ) : msg.role === 'assistant' ? (
                     <div className="space-y-3">
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      <div className="whitespace-pre-wrap">{renderNoteMarkup(msg.content)}</div>
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid gap-2">
                           {msg.clarificationOptions.map((option) => (

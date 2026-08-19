@@ -52,6 +52,16 @@ function notes(): MeetingNotesV2 {
             text: 'Agreed: collect login events from all users',
             sources: [{ startMs: 2000, endMs: 2600 }],
             provenance: 'generated'
+          },
+          {
+            id: 'd2',
+            title: null,
+            topic: 'Analytics',
+            owner: null,
+            deadline: null,
+            text: 'HP opt-in for gaming PCs is 80-95%.',
+            sources: [{ startMs: 2800, endMs: 3200 }],
+            provenance: 'generated'
           }
         ]
       }
@@ -134,7 +144,7 @@ describe('NotesV2Document', () => {
     expect(afterAdd.sections[1].keyPoints[0].provenance).toBe('user-created')
   })
 
-  it('renders bold markdown, a sage more control, and Option 1 timestamp jumps', async () => {
+  it('renders bold markdown, nested supporting lines, and Option 1 timestamp jumps', async () => {
     const onSeek = vi.fn()
     const sample = notes()
     sample.sections[0].keyPoints[0].text =
@@ -150,11 +160,29 @@ describe('NotesV2Document', () => {
 
     expect(screen.getByText('Investigate accent keys')).toBeInTheDocument()
     expect(screen.queryByText(/\*\*Investigate accent keys\*\*/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /1 more/ })).toBeInTheDocument()
+    expect(screen.getByText('collect login events from all users')).toBeInTheDocument()
+    expect(screen.getByText('HP opt-in for gaming PCs is 80-95%.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 1' }))
     await userEvent.click(screen.getByRole('button', { name: '0:01' }))
     expect(onSeek).toHaveBeenCalledWith(1200)
+  })
+
+  it('nests a supporting line under its parent instead of treating it as a peer', () => {
+    const sample = notes()
+    sample.sections[0].supportingDetails = [sample.sections[0].supportingDetails[0]]
+    render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+        onWrite={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('sub-d1')).toHaveTextContent('collect login events from all users')
+    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
   })
 
   it('lets the user add, change, and clear a next-step owner', async () => {

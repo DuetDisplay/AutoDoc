@@ -4,8 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactElement,
-  type ReactNode
+  type ReactElement
 } from 'react'
 import type {
   MeetingNotesContent,
@@ -16,6 +15,7 @@ import type {
 } from '../../../shared/types'
 import { fallbackMeetingOverview } from '../../../shared/notes-overview-text'
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
+import { renderNoteMarkup } from './NoteMarkup'
 
 type NotesOption = 'option-1' | 'option-2'
 
@@ -29,21 +29,6 @@ function formatClock(ms: number): string {
 function earliestStart(sources: readonly NoteSourceRange[]): number | null {
   if (sources.length === 0) return null
   return sources.reduce((min, source) => Math.min(min, source.startMs), sources[0].startMs)
-}
-
-function renderNoteMarkup(text: string): ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, index) => {
-    const bold = /^\*\*([^*]+)\*\*$/.exec(part)
-    if (bold) {
-      return (
-        <strong key={index} className="font-semibold text-ink">
-          {bold[1]}
-        </strong>
-      )
-    }
-    return <span key={index}>{part}</span>
-  })
 }
 
 function meetingSummary(notes: MeetingNotesV2, title?: string): string {
@@ -439,6 +424,110 @@ function Bullet({
   )
 }
 
+function SubBullet({
+  item,
+  option,
+  meetingSpan,
+  onSeek,
+  onSave,
+  onDelete
+}: {
+  item: NoteItem
+  option: NotesOption
+  meetingSpan: readonly NoteSourceRange[]
+  onSeek: (startMs: number) => void
+  onSave?: (itemId: string, text: string) => void
+  onDelete?: (itemId: string) => void
+}): ReactElement {
+  const parsed = stripAgreed(item.text)
+  const saveText = onSave
+    ? (text: string) => onSave(item.id, parsed.agreed ? `Agreed: ${text}` : text)
+    : undefined
+
+  return (
+    <div
+      data-testid={`sub-${item.id}`}
+      className={`group flex items-start gap-2 py-0.5 ${
+        option === 'option-1' ? 'pl-[64px]' : 'pl-5'
+      }`}
+    >
+      <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
+      <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-secondary">
+        {parsed.agreed ? (
+          option === 'option-2' ? (
+            <span className="mr-1.5 inline-flex items-center rounded-full bg-sage-light px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sage-dark">
+              Agreed
+            </span>
+          ) : (
+            <span className="sr-only">Agreed: </span>
+          )
+        ) : null}
+        <InlineEdit
+          value={parsed.text}
+          onSave={saveText}
+          className="text-[12.5px] leading-relaxed text-ink-secondary"
+        />
+      </div>
+      <div className="flex items-center gap-1">
+        <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
+        {onDelete ? (
+          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function BulletGroup({
+  item,
+  children,
+  option,
+  meetingSpan,
+  onSeek,
+  onSave,
+  onDelete
+}: {
+  item: NoteItem
+  children: readonly NoteItem[]
+  option: NotesOption
+  meetingSpan: readonly NoteSourceRange[]
+  onSeek: (startMs: number) => void
+  onSave?: (itemId: string, text: string) => void
+  onDelete?: (itemId: string) => void
+}): ReactElement {
+  return (
+    <div>
+      <Bullet
+        item={item}
+        option={option}
+        meetingSpan={meetingSpan}
+        onSeek={onSeek}
+        onSave={onSave}
+        onDelete={onDelete}
+      />
+      {children.length > 0 ? (
+        <div
+          className={
+            option === 'option-1' ? '' : 'ml-0 border-l border-hairline/80'
+          }
+        >
+          {children.map((child) => (
+            <SubBullet
+              key={child.id}
+              item={child}
+              option={option}
+              meetingSpan={meetingSpan}
+              onSeek={onSeek}
+              onSave={onSave}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function NotesV2Document({
   notes,
   title,
@@ -457,8 +546,6 @@ export function NotesV2Document({
       ? 'option-2'
       : 'option-1'
   })
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-
   const summary = meetingSummary(notes, title)
 
   const saveItem = (itemId: string, text: string): void => {
@@ -597,7 +684,7 @@ export function NotesV2Document({
         ) : null}
         {notes.sections.map((section) => {
           const extra = section.supportingDetails
-          const open = expanded[section.id] === true
+          const lastParentIndex = section.keyPoints.length - 1
           return (
             <section key={section.id} className="mb-6">
               <InlineEdit
@@ -610,41 +697,29 @@ export function NotesV2Document({
                 }
                 as="h3"
               />
-              {section.keyPoints.map((item) => (
-                <Bullet
+              {section.keyPoints.map((item, index) => (
+                <BulletGroup
                   key={item.id}
                   item={item}
+                  children={index === lastParentIndex ? extra : []}
                   option={option}
                   meetingSpan={meetingSpan}
                   onSeek={onSeek}
                   {...itemEdit}
                 />
               ))}
-              {extra.length > 0 ? (
-                <div className={option === 'option-1' ? 'pl-[64px]' : ''}>
-                  {open
-                    ? extra.map((item) => (
-                        <Bullet
-                          key={item.id}
-                          item={item}
-                          option={option}
-                          meetingSpan={meetingSpan}
-                          onSeek={onSeek}
-                          {...itemEdit}
-                        />
-                      ))
-                    : (
-                      <button
-                        type="button"
-                        className="mt-1 inline-flex items-center gap-1 text-[12.5px] font-bold text-sage hover:text-sage-dark"
-                        onClick={() => setExpanded((current) => ({ ...current, [section.id]: true }))}
-                      >
-                        {extra.length} more
-                        <span aria-hidden>▾</span>
-                      </button>
-                    )}
-                </div>
-              ) : null}
+              {section.keyPoints.length === 0
+                ? extra.map((item) => (
+                    <Bullet
+                      key={item.id}
+                      item={item}
+                      option={option}
+                      meetingSpan={meetingSpan}
+                      onSeek={onSeek}
+                      {...itemEdit}
+                    />
+                  ))
+                : null}
               {onWrite ? (
                 <button
                   type="button"
