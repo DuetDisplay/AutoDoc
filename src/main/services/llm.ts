@@ -31,6 +31,7 @@ export interface LLMProvider {
       temperature: number
       seed: number
       stop?: readonly string[]
+      format?: unknown
     }
   ): Promise<string>
 }
@@ -221,6 +222,7 @@ MAC QUALITY TUNING OVERRIDE:
 - Topic names must come from this meeting's material. Do not map items onto a fixed list of department headings.
 - Decisions require an explicit choice, approval, rejection, or agreed direction. Do not classify general discussion, concern, or preference as a decision.
 - Action items require a clear next step, owner, request, or follow-up. Do not turn vague possibilities into tasks.
+- Copy product names, feature names, and domain words exactly as spoken in the transcript; never substitute a similar-sounding word (the transcript word is correct even if unusual).
 - Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
 - If a point is already captured as a decision, only add context as information when it includes a distinct durable fact someone would search for later.
 - Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
@@ -332,6 +334,7 @@ export class OllamaProvider implements LLMProvider {
       temperature: number
       seed: number
       stop?: readonly string[]
+      format?: unknown
     }
   ): Promise<string> {
     this.maybeRecycleRunner?.()
@@ -346,6 +349,7 @@ export class OllamaProvider implements LLMProvider {
           model: this.model,
           prompt,
           stream: true,
+          format: options.format,
           options: {
             num_ctx: options.num_ctx,
             num_predict: options.num_predict,

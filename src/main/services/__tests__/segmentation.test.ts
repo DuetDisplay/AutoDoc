@@ -347,6 +347,7 @@ describe('SegmentationService', () => {
           compressRejectReasons: [],
           attachFailed: false,
           overviewFailed: false,
+          overviewFailureReasons: [],
           validation: {
             ran: false,
             error: null,
@@ -873,6 +874,7 @@ describe('SegmentationService', () => {
           compressRejectReasons: [],
           attachFailed: false,
           overviewFailed: false,
+          overviewFailureReasons: [],
           validation: {
             ran: false,
             error: null,

@@ -86,13 +86,48 @@ describe('generateNotesOverview', () => {
     ).toEqual(['Relay hosting capacity review'])
   })
 
-  it('returns empty when both attempts are unusable', async () => {
+  it('returns empty when both attempts are unusable and names each failure', async () => {
     const result = await generateNotesOverview('## Notes\n- Hello\n', async () => 'not json', [
       { startMs: 0, endMs: 10 }
     ])
     expect(result.usedModel).toBe(false)
     expect(result.overview).toBeNull()
     expect(result.keyTakeaways).toEqual([])
+    expect(result.failureReasons).toHaveLength(2)
+    expect(result.failureReasons[0]).toContain('unparseable response')
+    expect(result.failureReasons[1]).toContain('unparseable response')
+  })
+
+  it('reports thrown generate errors in the failure reasons', async () => {
+    const result = await generateNotesOverview(
+      '## Notes\n- Hello\n',
+      async () => {
+        throw new Error('runner recycled')
+      },
+      [{ startMs: 0, endMs: 10 }]
+    )
+    expect(result.usedModel).toBe(false)
+    expect(result.failureReasons).toEqual([
+      'attempt 1: generate failed: runner recycled',
+      'attempt 2: generate failed: runner recycled'
+    ])
+  })
+
+  it('requests grammar-constrained JSON output from the model', async () => {
+    const formats: unknown[] = []
+    await generateNotesOverview(
+      '## Notes\n- Hello\n',
+      async (request) => {
+        formats.push(request.format)
+        return JSON.stringify({ overview: 'Recap.', keyTakeaways: [] })
+      },
+      [{ startMs: 0, endMs: 10 }]
+    )
+    expect(formats).toHaveLength(1)
+    expect(formats[0]).toMatchObject({
+      type: 'object',
+      required: ['overview', 'keyTakeaways']
+    })
   })
 
   it('retries after a dropped generate call and keeps the scan context window', async () => {

@@ -7,7 +7,8 @@ export const LONG_MEETING_WORD_BUDGET = 1100
 export const MAX_SECTIONS = 6
 export const MAX_KEY_POINTS = 4
 export const MAX_SUPPORTING_DETAILS = 2
-export const MAX_NEXT_STEPS = 7
+export const SHORT_MEETING_NEXT_STEPS = 7
+export const LONG_MEETING_NEXT_STEPS = 10
 export const MAX_TAKEAWAYS = 3
 
 export interface NotesBudget {
@@ -27,7 +28,9 @@ export function notesBudgetForDuration(durationMs: number): NotesBudget {
     maxSections: MAX_SECTIONS,
     maxKeyPoints: MAX_KEY_POINTS,
     maxSupportingDetails: MAX_SUPPORTING_DETAILS,
-    maxNextSteps: MAX_NEXT_STEPS,
+    maxNextSteps: durationMs > 0 && durationMs < SHORT_MEETING_MS
+      ? SHORT_MEETING_NEXT_STEPS
+      : LONG_MEETING_NEXT_STEPS,
     maxTakeaways: MAX_TAKEAWAYS
   }
 }
@@ -59,6 +62,26 @@ function notesText(content: MeetingNotesContent): string {
   }
   for (const item of content.nextSteps) parts.push(itemText(item))
   return parts.join('\n')
+}
+
+function hasNonEmptyField(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+/** Deadline first, then owner, then the rest. Stable within each tier. */
+function rankNextSteps(items: readonly NoteItem[]): NoteItem[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftDeadline = hasNonEmptyField(left.item.deadline) ? 0 : 1
+      const rightDeadline = hasNonEmptyField(right.item.deadline) ? 0 : 1
+      if (leftDeadline !== rightDeadline) return leftDeadline - rightDeadline
+      const leftOwner = hasNonEmptyField(left.item.owner) ? 0 : 1
+      const rightOwner = hasNonEmptyField(right.item.owner) ? 0 : 1
+      if (leftOwner !== rightOwner) return leftOwner - rightOwner
+      return left.index - right.index
+    })
+    .map(({ item }) => item)
 }
 
 function takeProtectedFirst(items: readonly NoteItem[], limit: number): NoteItem[] {
@@ -163,7 +186,7 @@ export function applyNotesBudget(
   durationMs: number
 ): MeetingNotesContent {
   const budget = notesBudgetForDuration(durationMs)
-  const nextSteps = takeProtectedFirst(content.nextSteps, budget.maxNextSteps)
+  const nextSteps = takeProtectedFirst(rankNextSteps(content.nextSteps), budget.maxNextSteps)
   const keyTakeaways = content.keyTakeaways.slice(0, budget.maxTakeaways)
   const trimmed: MeetingNotesContent = {
     ...content,

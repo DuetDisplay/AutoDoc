@@ -54,6 +54,8 @@ export interface ScanGenerateRequest {
   temperature: number
   seed: number
   stop: readonly string[]
+  /** Ollama structured-output schema for JSON responses (overview pass). */
+  format?: unknown
 }
 
 export type ScanGenerateFn = (request: ScanGenerateRequest) => Promise<string>
@@ -96,6 +98,7 @@ export interface NotesScanResult {
   compressRejectReasons: ScanRewriteRejectReason[]
   attachFailed: boolean
   overviewFailed: boolean
+  overviewFailureReasons: string[]
   validation: NotesValidationStats
 }
 
@@ -364,6 +367,7 @@ export async function runNotesScanPipeline(
   }
 
   let overviewFailed = false
+  let overviewFailureReasons: string[] = []
   reportProgress('overview', 0.9)
   try {
     const overview = await generateNotesOverview(
@@ -378,13 +382,17 @@ export async function runNotesScanPipeline(
       { numCtx: groupPlan.request.options.num_ctx }
     )
     overviewFailed = !overview.usedModel
+    overviewFailureReasons = overview.failureReasons
     content = dropAssertiveTakeaways({
       ...content,
       overview: overview.overview,
       keyTakeaways: overview.keyTakeaways
     })
-  } catch {
+  } catch (error) {
     overviewFailed = true
+    overviewFailureReasons = [
+      `overview pass threw: ${error instanceof Error ? error.message : String(error)}`
+    ]
   }
   if (!content.overview?.text.trim()) {
     const fallbackText = fallbackMeetingOverviewFromNotes(content.sections, options.title)
@@ -427,6 +435,7 @@ export async function runNotesScanPipeline(
     compressRejectReasons,
     attachFailed,
     overviewFailed,
+    overviewFailureReasons,
     validation
   }
 }

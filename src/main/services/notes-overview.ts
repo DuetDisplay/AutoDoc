@@ -6,9 +6,21 @@ export interface NotesOverviewGenerateRequest {
   num_ctx: number
   num_predict: number
   temperature: number
+  /** Ollama structured-output schema; grammar-forces valid JSON from small models. */
+  format?: unknown
 }
 
 export type NotesOverviewGenerateFn = (request: NotesOverviewGenerateRequest) => Promise<string>
+
+const OVERVIEW_RESPONSE_FORMAT = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    overview: { type: 'string' },
+    keyTakeaways: { type: 'array', items: { type: 'string' }, maxItems: 4 }
+  },
+  required: ['overview', 'keyTakeaways']
+} as const
 
 const OVERVIEW_PROMPT = `Summarize the finished meeting notes below for a busy reader.
 Return ONLY JSON with this shape:
@@ -94,6 +106,13 @@ function takeaway(text: string, sources: readonly NoteSourceRange[]): NoteItem {
 
 export interface NotesOverviewResult extends Pick<MeetingNotesContent, 'overview' | 'keyTakeaways'> {
   usedModel: boolean
+  /** Why the model output was rejected, one entry per failed attempt. Empty on success. */
+  failureReasons: string[]
+}
+
+interface OverviewAttempt {
+  parsed: { overview: string; keyTakeaways: string[] } | null
+  failure: string | null
 }
 
 async function requestOverview(
@@ -101,18 +120,25 @@ async function requestOverview(
   generate: NotesOverviewGenerateFn,
   temperature: number,
   numCtx: number
-): Promise<{ overview: string; keyTakeaways: string[] } | null> {
+): Promise<OverviewAttempt> {
+  let raw: string
   try {
-    const raw = await generate({
+    raw = await generate({
       prompt: `${OVERVIEW_PROMPT}${markdown.trim()}`,
       num_ctx: numCtx,
       num_predict: 400,
-      temperature
+      temperature,
+      format: OVERVIEW_RESPONSE_FORMAT
     })
-    return parseOverviewPayload(raw)
-  } catch {
-    return null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { parsed: null, failure: `generate failed: ${message}` }
   }
+  const parsed = parseOverviewPayload(raw)
+  if (!parsed) {
+    return { parsed: null, failure: `unparseable response: ${raw.trim().slice(0, 160)}` }
+  }
+  return { parsed, failure: null }
 }
 
 export async function generateNotesOverview(
@@ -131,23 +157,43 @@ export async function generateNotesOverview(
     return Boolean(overview) && !overviewLooksLikeHeadingList(overview, headings)
   }
 
-  let parsed = await requestOverview(markdown, generate, 0.2, numCtx)
+  const failureReasons: string[] = []
+  const noteRejection = (
+    attempt: OverviewAttempt,
+    label: string
+  ): void => {
+    if (attempt.failure) {
+      failureReasons.push(`${label}: ${attempt.failure}`)
+    } else if (!attempt.parsed?.overview) {
+      failureReasons.push(`${label}: response had no overview text`)
+    } else if (!usable(attempt.parsed)) {
+      failureReasons.push(`${label}: overview restated section headings`)
+    }
+  }
+
+  const first = await requestOverview(markdown, generate, 0.2, numCtx)
+  let parsed = first.parsed
   if (!usable(parsed)) {
+    noteRejection(first, 'attempt 1')
     const retry = await requestOverview(markdown, generate, 0.35, numCtx)
-    if (usable(retry) || (!parsed?.overview && retry?.overview)) {
-      parsed = retry
+    if (usable(retry.parsed) || (!parsed?.overview && retry.parsed?.overview)) {
+      parsed = retry.parsed
+    } else {
+      noteRejection(retry, 'attempt 2')
     }
   }
   if (!parsed?.overview) {
     return {
       overview: null,
       keyTakeaways: (parsed?.keyTakeaways ?? []).map((text) => takeaway(text, fallbackSources)),
-      usedModel: false
+      usedModel: false,
+      failureReasons
     }
   }
   return {
     overview: block(parsed.overview, fallbackSources),
     keyTakeaways: parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
-    usedModel: true
+    usedModel: true,
+    failureReasons
   }
 }

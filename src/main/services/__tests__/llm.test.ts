@@ -1298,6 +1298,9 @@ describe('OllamaProvider grounding', () => {
 
       expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
       expect(systemPrompt).toContain('Target roughly 40-55 total final items')
+      expect(systemPrompt).toContain(
+        'Copy product names, feature names, and domain words exactly as spoken in the transcript'
+      )
     })
   })
 })

@@ -617,7 +617,8 @@ export class SegmentationService {
             num_predict: request.num_predict,
             temperature: request.temperature,
             seed: request.seed,
-            stop: request.stop
+            stop: request.stop,
+            format: request.format
           })
         },
         onProgress: (update) => onProgress?.(update.fraction, update.stage)
@@ -683,7 +684,8 @@ export class SegmentationService {
           area: 'segmentation',
           level: 'warn',
           message: 'notes overview pass failed',
-          meetingId
+          meetingId,
+          context: { reasons: result.overviewFailureReasons }
         })
       }
       return { notesLayout: 'v2', groupingFallback: result.groupingFallback }
