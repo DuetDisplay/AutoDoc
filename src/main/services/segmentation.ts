@@ -645,6 +645,8 @@ export class SegmentationService {
           groupingFallback: result.groupingFallback,
           restyleFallbacks: result.restyleFallbacks,
           compressFallbacks: result.compressFallbacks,
+          restyleRejectReasons: result.restyleRejectReasons,
+          compressRejectReasons: result.compressRejectReasons,
           attachFailed: result.attachFailed,
           overviewFailed: result.overviewFailed,
           validationRan: result.validation.ran,

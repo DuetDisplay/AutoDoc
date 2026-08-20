@@ -91,4 +91,23 @@ describe('OllamaSetupCoordinator', () => {
     expect(manager.startAndPull).toHaveBeenCalledTimes(2)
     expect(onAttemptStart).toHaveBeenCalledTimes(2)
   })
+
+  it('clears a cached runner on force so a hung serve can be replaced', async () => {
+    const resetReady = vi.fn()
+    const manager = {
+      startAndPull: vi.fn().mockResolvedValue(undefined),
+      resetReady
+    }
+    const coordinator = new OllamaSetupCoordinator(manager, {
+      retryDelaysMs: [0]
+    })
+
+    await coordinator.ensureRunning()
+    await coordinator.ensureRunning()
+    expect(resetReady).not.toHaveBeenCalled()
+
+    await coordinator.ensureRunning({ force: true })
+    expect(resetReady).toHaveBeenCalledTimes(1)
+    expect(manager.startAndPull).toHaveBeenCalledTimes(3)
+  })
 })

@@ -343,6 +343,8 @@ describe('SegmentationService', () => {
           groupingFallback: false,
           restyleFallbacks: 0,
           compressFallbacks: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
           attachFailed: false,
           overviewFailed: false,
           validation: {
@@ -867,6 +869,8 @@ describe('SegmentationService', () => {
           groupingFallback: false,
           restyleFallbacks: 0,
           compressFallbacks: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
           attachFailed: false,
           overviewFailed: false,
           validation: {

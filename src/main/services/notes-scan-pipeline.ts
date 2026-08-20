@@ -35,7 +35,7 @@ import type { MeetingNotesContent, MeetingSegments } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
 import { emptyValidationStats, type NotesValidationStats, type TranscriptRow } from './notes-evidence-validate'
 import { generateNotesOverview } from './notes-overview'
-import { fallbackMeetingOverview } from '../../shared/notes-overview-text'
+import { fallbackMeetingOverviewFromNotes } from '../../shared/notes-overview-text'
 import { meetingSpanSources, parseScanMarkdown } from './notes-scan-markdown'
 import { NOTES_SCAN_PROGRESS_END, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import { applyNotesBudget, countWords } from './notes-scan-budget'
@@ -77,15 +77,36 @@ export function scanLayerProgress(fraction: number): number {
   )
 }
 
+export type ScanRewriteRejectReason =
+  | 'facts'
+  | 'catalog-id'
+  | 'entities'
+  | 'grew'
+  | 'item-id'
+  | 'ungrounded'
+  | 'coverage'
+
 export interface NotesScanResult {
   markdown: string
   content: MeetingNotesContent
   groupingFallback: boolean
   restyleFallbacks: number
   compressFallbacks: number
+  restyleRejectReasons: ScanRewriteRejectReason[]
+  compressRejectReasons: ScanRewriteRejectReason[]
   attachFailed: boolean
   overviewFailed: boolean
   validation: NotesValidationStats
+}
+
+export function restyleRejectReason(
+  input: string,
+  output: string
+): Extract<ScanRewriteRejectReason, 'facts' | 'catalog-id' | 'entities'> | null {
+  if (containsCatalogItemId(output)) return 'catalog-id'
+  if (!factsPass(input, output)) return 'facts'
+  if (!entitiesPreserved(input, output)) return 'entities'
+  return null
 }
 
 function catalogById(catalog: readonly CatalogItem[]): Map<string, CatalogItem> {
@@ -216,6 +237,7 @@ export async function runNotesScanPipeline(
   const byId = catalogById(topical)
   const sectionBodies: { name: string; markdown: string }[] = []
   let restyleFallbacks = 0
+  const restyleRejectReasons: ScanRewriteRejectReason[] = []
   for (const [groupIndex, group] of groups.entries()) {
     const members = itemsForGroup(group, byId)
     const inputText = members.map((row) => row.fullText).join('\n')
@@ -237,12 +259,10 @@ export async function runNotesScanPipeline(
         )
       )
     }
-    if (
-      !factsPass(inputText, markdown) ||
-      containsCatalogItemId(markdown) ||
-      !entitiesPreserved(inputText, markdown)
-    ) {
+    const restyleRejected = restyleRejectReason(inputText, markdown)
+    if (restyleRejected) {
       restyleFallbacks += 1
+      restyleRejectReasons.push(restyleRejected)
       markdown = renderUnrestyledItems(members.map((row) => row.item))
     }
     sectionBodies.push({ name: group.name, markdown })
@@ -261,6 +281,7 @@ export async function runNotesScanPipeline(
   const chunks = splitNotesDocument(composed)
   let working = chunks.map((chunk) => ({ ...chunk }))
   let compressFallbacks = 0
+  const compressRejectReasons: ScanRewriteRejectReason[] = []
   const topicalChunks = working.filter((chunk) => chunk.kind === 'topical')
   let compressDone = 0
   for (const [index, chunk] of working.entries()) {
@@ -295,6 +316,25 @@ export async function runNotesScanPipeline(
     }
     if (!accept(markdown)) {
       compressFallbacks += 1
+      const judgment = judgeCompression({
+        inputSection: inputText,
+        compressed: markdown,
+        trialDocument: joinNotesDocument(reconstructWith(working, index, markdown)),
+        baselineStrict: scoreCoverage(inputText, coverageItems).strict,
+        coverageItems
+      })
+      compressRejectReasons.push(
+        !entitiesPreserved(inputText, markdown)
+          ? 'entities'
+          : countWords(inputText) >= 80 && countWords(markdown) > countWords(inputText)
+            ? 'grew'
+            : judgment.reason === 'item-id' ||
+                judgment.reason === 'facts' ||
+                judgment.reason === 'ungrounded' ||
+                judgment.reason === 'coverage'
+              ? judgment.reason
+              : 'coverage'
+      )
       markdown = inputText
     }
     working = reconstructWith(working, index, markdown)
@@ -334,7 +374,8 @@ export async function runNotesScanPipeline(
           seed,
           stop: []
         }),
-      meetingSpan
+      meetingSpan,
+      { numCtx: groupPlan.request.options.num_ctx }
     )
     overviewFailed = !overview.usedModel
     content = dropAssertiveTakeaways({
@@ -346,10 +387,7 @@ export async function runNotesScanPipeline(
     overviewFailed = true
   }
   if (!content.overview?.text.trim()) {
-    const fallbackText = fallbackMeetingOverview(
-      content.sections.map((section) => section.title),
-      options.title
-    )
+    const fallbackText = fallbackMeetingOverviewFromNotes(content.sections, options.title)
     if (fallbackText) {
       overviewFailed = true
       content = {
@@ -385,6 +423,8 @@ export async function runNotesScanPipeline(
     groupingFallback,
     restyleFallbacks,
     compressFallbacks,
+    restyleRejectReasons,
+    compressRejectReasons,
     attachFailed,
     overviewFailed,
     validation

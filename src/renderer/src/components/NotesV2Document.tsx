@@ -13,7 +13,7 @@ import type {
   NoteSection,
   NoteSourceRange
 } from '../../../shared/types'
-import { fallbackMeetingOverview } from '../../../shared/notes-overview-text'
+import { fallbackMeetingOverviewFromNotes } from '../../../shared/notes-overview-text'
 import { displayNoteSectionHierarchy } from '../../../shared/notes-section-display'
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
 import { isWindowsRenderer } from '../services/microphone-access'
@@ -36,10 +36,7 @@ function earliestStart(sources: readonly NoteSourceRange[]): number | null {
 function meetingSummary(notes: MeetingNotesV2, title?: string): string {
   const overview = notes.overview?.text.trim()
   if (overview) return overview
-  return fallbackMeetingOverview(
-    notes.sections.map((section) => section.title),
-    title
-  )
+  return fallbackMeetingOverviewFromNotes(notes.sections, title)
 }
 
 function RemoveButton({

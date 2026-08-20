@@ -15,6 +15,8 @@ import { NotesRepository } from '../services/notes-repository'
 import { getE2EOllamaStatus, retryE2EOllamaSetup } from '../services/e2e-fixtures'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
+const UNHEALTHY_OLLAMA_RESTART_AFTER = 2
+let consecutiveOllamaHealthFailures = 0
 
 export function registerLlmIpc(
   segmentationService: SegmentationService,
@@ -26,14 +28,30 @@ export function registerLlmIpc(
   onManualSegmentationRetry?: (meetingId: string) => void,
   recordingsBaseDir?: string
 ): void {
+  consecutiveOllamaHealthFailures = 0
   ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
     if (isE2E) {
       return getE2EOllamaStatus().phase === 'ready'
     }
 
     const running = await ollamaManager.isServerRunning()
-    if (!running && startSetupFromStatusCheck) ensureOllamaRunning()
-    return running
+    if (running) {
+      consecutiveOllamaHealthFailures = 0
+      return true
+    }
+
+    consecutiveOllamaHealthFailures += 1
+    if (startSetupFromStatusCheck) {
+      // Windows caches startAndPull as already done. A hung serve still listens,
+      // so a plain ensureRunning() is a no-op. After two failed polls, force a
+      // replace instead of leaving the sidebar disconnected.
+      ensureOllamaRunning(
+        consecutiveOllamaHealthFailures >= UNHEALTHY_OLLAMA_RESTART_AFTER
+          ? { force: true }
+          : undefined
+      )
+    }
+    return false
   })
 
   ipcMain.handle('ollama:get-model', (): string => {

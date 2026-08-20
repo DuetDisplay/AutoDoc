@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import { emptyValidationStats } from '../notes-evidence-validate'
 import {
+  restyleRejectReason,
   runNotesScanPipeline,
   scanLayerProgress,
   type ScanGenerateRequest
@@ -70,7 +71,8 @@ describe('runNotesScanPipeline', () => {
     expect(result.markdown).toMatch(/## (Analytics|HP opt-in rate)/)
     expect(result.attachFailed).toBe(false)
     expect(result.overviewFailed).toBe(true)
-    expect(result.content.overview?.text).toMatch(/This meeting (covered|focused on)/)
+    expect(result.content.overview?.text).toMatch(/opt-in analytics rate|login events|offline analytics/i)
+    expect(result.content.overview?.text).not.toMatch(/^This meeting (covered|focused on)/)
     expect(result.content.sections[0]?.keyPoints[0]?.sources[0]?.startMs).toBe(1000)
     expect(result.validation).toEqual(emptyValidationStats(false))
   })
@@ -126,6 +128,14 @@ describe('runNotesScanPipeline', () => {
     expect(seen.at(-1)).toBe(99)
     expect(Math.max(...seen)).toBe(99)
     expect(seen.some((percent) => percent > 70 && percent < 99)).toBe(true)
+  })
+})
+
+describe('restyleRejectReason', () => {
+  it('names the shared gate that rejected a rewrite', () => {
+    expect(restyleRejectReason('Talk to Nora', 'Talk to Nora about i03')).toBe('catalog-id')
+    expect(restyleRejectReason('Nora approved 16GB', 'Someone approved more RAM')).toBe('facts')
+    expect(restyleRejectReason('Nora approved 16GB', 'Nora approved 16GB')).toBeNull()
   })
 })
 

@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
 
 function registerWith(
   isServerRunning: () => Promise<boolean>,
-  ensureOllamaRunning: () => void,
+  ensureOllamaRunning: (options?: { force?: boolean }) => void,
   startSetupFromStatusCheck?: boolean,
   onManualSegmentationRetry?: (meetingId: string) => void
 ) {
@@ -61,6 +61,35 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
     expect(ensureOllamaRunning).toHaveBeenCalledTimes(1)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith(undefined)
+  })
+
+  it('force-restarts a hung Ollama serve after two failed health checks', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(vi.fn().mockResolvedValue(false), ensureOllamaRunning)
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+  })
+
+  it('does not force-restart after a later healthy check', async () => {
+    const ensureOllamaRunning = vi.fn()
+    const isServerRunning = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    registerWith(isServerRunning, ensureOllamaRunning)
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(true)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).toHaveBeenCalledTimes(2)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, undefined)
   })
 
   it('marks manual segmentation retries before retrying notes', async () => {
