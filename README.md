@@ -103,12 +103,12 @@ Local-first meeting apps need real hardware headroom for on-device transcription
 |---|---|
 | **macOS** | 14.0 (Sonoma) or later |
 | **Chip** | **Apple Silicon required** (M1, M2, M3, M4, or later). Intel Macs are not supported. |
-| **Memory** | **8 GB minimum** · **16 GB recommended** for the default concurrent processing profile |
+| **Memory** | **8 GB minimum** (supported) · **16 GB+ recommended** for the best experience |
 | **Storage** | **~10 GB free** for first-run downloads (Whisper + local Ollama model + MLX runtime cache), plus additional space for your encrypted recordings |
 | **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen Recording**, **Microphone**, and **System Audio Capture** (for remote participant audio) |
 
-**What to expect on an 8 GB Mac:** AutoDoc detects limited memory and switches to a lower-impact profile automatically — smaller notes model (`llama3.2:3b`), serialized audio processing, and longer transcription/notes times. Everything still runs locally; a 16 GB machine is simply more comfortable for hour-long meetings with concurrent processing.
+**What to expect on 8 GB:** AutoDoc still runs, but it switches to a lower-impact profile — smaller notes model (`llama3.2:3b`), sequential audio processing, and notes after transcription. Expect a longer wait after the meeting. **16 GB+ is recommended for the best experience.**
 
 Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires Apple Silicon — there is no Intel or Rosetta fallback.
 
@@ -117,16 +117,16 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 | | Requirement |
 |---|---|
 | **Windows** | Windows 10 or later, 64-bit |
-| **Processor** | x64 Intel or AMD processor |
-| **Memory** | **8 GB minimum** · **16 GB recommended** |
+| **Processor** | x64 Intel or AMD processor; **8+ logical processors** recommended for CPU-only processing |
+| **Memory** | **8 GB minimum** (supported) · **16 GB+ recommended** for the best experience |
 | **GPU** | Optional. A compatible DirectML GPU with **4 GB+ VRAM** enables accelerated Parakeet transcription; AutoDoc falls back to CPU automatically. |
 | **Storage** | **~10 GB free recommended** for first-run downloads and encrypted recordings |
 | **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen capture**, **Microphone**, and **System Audio** |
 
-On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. This reduces memory pressure but can take longer after a meeting ends.
+**What to expect on 8 GB:** AutoDoc still runs, but it uses the smaller notes model (`llama3.2:3b`) and a lower-impact path. Audio sources may be processed sequentially and notes wait until transcription finishes, so expect a longer post-meeting wait. **16 GB+ is recommended for the best experience.** A compatible DirectML GPU can accelerate transcription, but it does not replace the RAM headroom.
 
-**What to expect on an 8 GB Windows PC:** AutoDoc still generates notes locally with `llama3.1`. That uses a lot of RAM while notes are running, so transcription and notes take longer and the machine will feel pinned until they finish. A 16 GB machine is the comfortable default.
+On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. This reduces memory pressure but can take longer after a meeting ends.
 
 ### Download & install on macOS
 
@@ -254,13 +254,13 @@ After setup, recording, transcription, and notes work offline.
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
 
 **Which models does it use?**
-On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes and Ask AI use `qwen3:4b-instruct` via Ollama on both platforms, with a smaller `llama3.2:3b` model on 8 GB Macs. After an app update, leftover `llama3.1` keeps working until the new notes engine is on disk.
+On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes and Ask AI use `qwen3:4b-instruct` via Ollama on both platforms, with a smaller `llama3.2:3b` model on 8 GB Macs and Windows PCs. After an app update, leftover `llama3.1` keeps working until the new notes engine is on disk.
 
 **What Mac do I need?**
-An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB recommended) and ~10 GB free storage for first-run model downloads. **Intel Macs are not supported.**
+An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB+ recommended for the best experience) and ~10 GB free storage for first-run model downloads. On 8 GB, AutoDoc uses a smaller notes model and slower processing. **Intel Macs are not supported.**
 
 **Is Windows supported?**
-Yes. AutoDoc supports 64-bit Windows 10 and later. It requires 8 GB RAM; 16 GB is recommended. On 8 GB machines, notes take longer and use more RAM while they run. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
+Yes. AutoDoc supports 64-bit Windows 10 and later. 8 GB RAM is supported; **16 GB+ is recommended for the best experience.** On 8 GB systems, AutoDoc uses a smaller notes model and lower-impact processing, so huddles take longer. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
 
 **How do I know AutoDoc is recording?**
 While recording, AutoDoc shows a Recording banner in the app (with a timer and stop control) and switches the menu bar / tray icon to a recording state. Meeting detection only offers to start recording; it will not start silently unless you previously enabled calendar auto-record for that event (Once or Series). In that case, recording can begin without another prompt.

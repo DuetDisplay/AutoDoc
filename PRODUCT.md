@@ -6,22 +6,36 @@ AutoDoc is a local-first desktop application for macOS and Windows that records 
 
 ## Table of Contents
 
-1. [Recording](#recording)
-2. [Transcription](#transcription)
-3. [Speaker Identification](#speaker-identification)
-4. [AI Note-Taking](#ai-note-taking)
-5. [Google Calendar Integration](#google-calendar-integration)
-6. [Meeting Detection & Auto-Record](#meeting-detection--auto-record)
-7. [Search](#search)
-8. [Encryption](#encryption)
-9. [Ollama Management](#ollama-management)
-10. [Auto-Updater](#auto-updater)
-11. [Permissions](#permissions)
-12. [System Tray](#system-tray)
-13. [UI Overview](#ui-overview)
-14. [Data Storage & Migration](#data-storage--migration)
-15. [Analytics & Crash Reporting](#analytics--crash-reporting)
-16. [Build & Distribution](#build--distribution)
+1. [System Requirements](#system-requirements)
+2. [Recording](#recording)
+3. [Transcription](#transcription)
+4. [Speaker Identification](#speaker-identification)
+5. [AI Note-Taking](#ai-note-taking)
+6. [Google Calendar Integration](#google-calendar-integration)
+7. [Meeting Detection & Auto-Record](#meeting-detection--auto-record)
+8. [Search](#search)
+9. [Encryption](#encryption)
+10. [Ollama Management](#ollama-management)
+11. [Auto-Updater](#auto-updater)
+12. [Permissions](#permissions)
+13. [System Tray](#system-tray)
+14. [UI Overview](#ui-overview)
+15. [Data Storage & Migration](#data-storage--migration)
+16. [Analytics & Crash Reporting](#analytics--crash-reporting)
+17. [Build & Distribution](#build--distribution)
+
+---
+
+## System Requirements
+
+The published minimum is the lowest supported configuration, not the target experience. AutoDoc adapts its local processing profile to available memory and hardware.
+
+| Platform | Minimum (supported) | Recommended (best experience) |
+|----------|---------------------|-------------------------------|
+| **macOS** | macOS 14+ on Apple Silicon (M1 or later), 8 GB RAM, and ~10 GB free for first-run models | 16 GB+ RAM on Apple Silicon |
+| **Windows** | Windows 10+ on 64-bit x64 Intel or AMD hardware, 8 GB RAM, and ~10 GB free for first-run models | 16 GB+ RAM; 8+ logical processors for CPU-only processing; a DirectML GPU with 4 GB+ VRAM is optional |
+
+8 GB remains supported on both platforms. On 8 GB machines and other low-spec profiles, AutoDoc uses the smaller `llama3.2:3b` notes model and a lower-impact path: audio sources may be processed sequentially and notes wait until transcription finishes. **16 GB+ is recommended for the best experience.** Windows CPU systems below 8 logical processors or 16 GiB RAM use the low-spec profile; memory pressure can temporarily apply the same safeguards to otherwise capable hardware.
 
 ---
 
@@ -141,7 +155,7 @@ Each speaker is assigned a distinct color from the palette (sage, amber, slate b
 
 ### How It Works
 
-After transcription completes, the transcript is sent to a locally-running Ollama instance (`qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB Macs) to extract structured meeting notes. This happens automatically — no user action required.
+After transcription completes, the transcript is sent to a locally-running Ollama instance (`qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB or low-spec profiles on either platform) to extract structured meeting notes. This happens automatically — no user action required.
 
 ### Chunked Processing
 
@@ -335,7 +349,7 @@ AutoDoc manages its own isolated Ollama instance — completely separate from an
 
 1. **Binary download**: Downloaded from `github.com/ollama/ollama/releases` to the app's models directory.
 2. **Server launch**: Spawned as a subprocess on port 11435 (not the default 11434) with isolated data directory.
-3. **Model pull**: Automatically pulls `qwen3:4b-instruct` (or `llama3.2:3b` on 8 GB Macs) with streaming progress updates. After an app update, leftover `llama3.1` stays usable until the new model is on disk.
+3. **Model pull**: Automatically pulls `qwen3:4b-instruct` (or `llama3.2:3b` on 8 GB or low-spec profiles) with streaming progress updates. After an app update, leftover `llama3.1` stays usable until the new model is on disk.
 
 ### Progress Tracking
 
