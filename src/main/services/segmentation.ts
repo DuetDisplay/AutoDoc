@@ -377,7 +377,8 @@ export class SegmentationService {
         area: 'segmentation',
         message: 'notes effective processing profile selected',
         meetingId,
-        context: this.getWindowsProcessingProfileLogContext(windowsProcessingProfile)
+        context:
+          this.getWindowsProcessingProfileLogContext(windowsProcessingProfile) ?? undefined
       })
     } else {
       if (this.baselineLlmModel) {

@@ -677,8 +677,10 @@ describe('recording IPC source handling', () => {
       vi.mocked(readMetadata).mockImplementation(async (dir) => {
         if (path.basename(dir) === importedId) {
           return {
+            sourceName: 'Imported transcript',
             customTitle: 'Stand Up',
             startedAt,
+            stoppedAt: startedAt + 33 * 60 * 1000,
             durationSeconds: 33 * 60
           }
         }

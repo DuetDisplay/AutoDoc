@@ -684,7 +684,7 @@ async function getSegmentedCapturePresence(
   hasTranscript: boolean
   hasNotes: boolean
 }> {
-  const names = await readdir(meetingDir).catch(() => [])
+  const names = await readdir(meetingDir).catch(() => [] as string[])
   return {
     hasSegmentedAudio: names.some(
       (name) =>

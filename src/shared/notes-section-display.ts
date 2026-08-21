@@ -1,7 +1,7 @@
 import type { NoteItem, NoteSection } from './types'
 
 export function displayNoteSectionHierarchy<TItem extends NoteItem>(
-  section: Pick<NoteSection, 'keyPoints' | 'supportingDetails'> & {
+  section: {
     keyPoints: TItem[]
     supportingDetails: TItem[]
   },

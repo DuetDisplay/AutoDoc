@@ -150,11 +150,13 @@ export async function generateNotesOverview(
   const numCtx = options?.numCtx && options.numCtx > 0 ? options.numCtx : 4096
   const fallbackSources = sources.length > 0 ? sources : [{ startMs: 0, endMs: 0 }]
   const headings = notesHeadingsFromMarkdown(markdown)
-  const usable = (
-    parsed: { overview: string; keyTakeaways: string[] } | null
-  ): parsed is { overview: string; keyTakeaways: string[] } => {
+  const usable = (parsed: { overview: string; keyTakeaways: string[] } | null): boolean => {
     const overview = parsed?.overview
-    return Boolean(overview) && !overviewLooksLikeHeadingList(overview, headings)
+    return (
+      typeof overview === 'string' &&
+      overview.length > 0 &&
+      !overviewLooksLikeHeadingList(overview, headings)
+    )
   }
 
   const failureReasons: string[] = []
