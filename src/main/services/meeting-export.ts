@@ -12,14 +12,7 @@ import {
   Paragraph,
   TextRun
 } from 'docx'
-import type {
-  MeetingExportFormat,
-  MeetingExportVariant,
-  NormalizedNoteItem,
-  NormalizedNotes,
-  SpeakerMap,
-  Transcript
-} from '../../shared/types'
+import type { MeetingExportFormat, NormalizedNoteItem, NormalizedNotes } from '../../shared/types'
 
 export interface MeetingExportSnapshot {
   detail: {
@@ -29,8 +22,30 @@ export interface MeetingExportSnapshot {
     durationSeconds: number | null
   }
   notes: NormalizedNotes | null
-  transcript: Transcript[]
-  speakers: SpeakerMap
+}
+
+function hasReadableText(...values: Array<string | null | undefined>): boolean {
+  return values.some((value) => typeof value === 'string' && value.trim().length > 0)
+}
+
+function hasReadableItem(item: NormalizedNoteItem): boolean {
+  return hasReadableText(item.title, item.text, item.topic, item.owner, item.deadline)
+}
+
+/** Whether a snapshot contains note content worth exporting beyond its meeting masthead. */
+export function hasMeetingExportNotes(snapshot: MeetingExportSnapshot): boolean {
+  const { notes } = snapshot
+  if (!notes) return false
+  if (hasReadableText(notes.overview?.text)) return true
+  if (notes.keyTakeaways.some(hasReadableItem)) return true
+  if (notes.decisions.some(hasReadableItem)) return true
+  if (notes.nextSteps.some(hasReadableItem)) return true
+  return notes.sections.some(
+    (section) =>
+      hasReadableText(section.summary?.text) ||
+      section.keyPoints.some(hasReadableItem) ||
+      section.supportingDetails.some(hasReadableItem)
+  )
 }
 
 const PALETTE = {
@@ -41,9 +56,7 @@ const PALETTE = {
   muted: '6B6A63',
   faint: '9C9B94',
   sage: '7A9E7E',
-  sageDark: '4A6B4E',
-  sageLight: 'E8F0E8',
-  border: 'D9D8D0'
+  sageDark: '4A6B4E'
 } as const
 
 const BULLET_REFERENCE = 'autodoc-export-bullets'
@@ -51,39 +64,6 @@ const PAGE_WIDTH_DXA = 12_240
 const PAGE_HEIGHT_DXA = 15_840
 const PAGE_MARGIN_DXA = 1_440
 const HEADER_FOOTER_DXA = 708
-
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-
-function canonicalize(value: unknown): JsonValue {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
-  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value)
-  if (Array.isArray(value)) return value.map(canonicalize)
-  if (typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonicalize(entry)])
-    )
-  }
-  return String(value)
-}
-
-function fullRecordJson(snapshot: MeetingExportSnapshot): string {
-  return JSON.stringify(canonicalize(snapshot), null, 2)
-}
-
-function markdownSafeJson(snapshot: MeetingExportSnapshot): string {
-  return fullRecordJson(snapshot).replace(/[<>&\u2028\u2029]/g, (character) => {
-    const codePoint = character.charCodeAt(0).toString(16).padStart(4, '0')
-    return `\\u${codePoint}`
-  })
-}
-
-function markdownJsonFence(json: string): string {
-  const longestRun = Math.max(0, ...Array.from(json.matchAll(/`+/g), (match) => match[0].length))
-  return '`'.repeat(Math.max(3, longestRun + 1))
-}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -166,22 +146,6 @@ function formatDuration(durationSeconds: number | null): string {
     .join(' ')
 }
 
-function formatTimestamp(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000))
-  const hours = Math.floor(totalSeconds / 3_600)
-  const minutes = Math.floor((totalSeconds % 3_600) / 60)
-  const seconds = totalSeconds % 60
-  return hours
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-    : `${minutes}:${String(seconds).padStart(2, '0')}`
-}
-
-function speakerLabel(snapshot: MeetingExportSnapshot, transcript: Transcript): string {
-  return (
-    snapshot.speakers[transcript.speaker]?.label?.trim() || transcript.speaker || 'Unknown speaker'
-  )
-}
-
 function itemMetadata(item: NormalizedNoteItem): string[] {
   return [
     item.topic ? `Topic: ${item.topic}` : '',
@@ -244,26 +208,7 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
   return lines
 }
 
-function renderMarkdownTranscript(snapshot: MeetingExportSnapshot): string[] {
-  const lines = ['## Transcript', '']
-  if (!snapshot.transcript.length)
-    return [...lines, '_No transcript is available for this meeting._', '']
-
-  for (const entry of snapshot.transcript) {
-    lines.push(
-      `**${escapeMarkdown(speakerLabel(snapshot, entry))}** _(${formatTimestamp(entry.startMs)}–${formatTimestamp(entry.endMs)})_`,
-      '',
-      escapeMarkdown(entry.text),
-      ''
-    )
-  }
-  return lines
-}
-
-export function renderMeetingExportMarkdown(
-  snapshot: MeetingExportSnapshot,
-  variant: MeetingExportVariant
-): string {
+export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): string {
   const lines = [
     'AUTODOC MEETING MEMO',
     '',
@@ -275,24 +220,8 @@ export function renderMeetingExportMarkdown(
     '',
     '---',
     '',
-    ...renderMarkdownNotes(snapshot),
-    ...renderMarkdownTranscript(snapshot)
+    ...renderMarkdownNotes(snapshot)
   ]
-
-  if (variant === 'full') {
-    const record = markdownSafeJson(snapshot)
-    const fence = markdownJsonFence(record)
-    lines.push(
-      '## Full-fidelity Record',
-      '',
-      'This appendix preserves the normalized notes, revisions, provenance, source ranges, legacy origins, raw transcript fields, and speaker registry.',
-      '',
-      `${fence}json`,
-      record,
-      fence,
-      ''
-    )
-  }
 
   return `${lines
     .join('\n')
@@ -367,29 +296,7 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   return content.join('')
 }
 
-function renderHtmlTranscript(snapshot: MeetingExportSnapshot): string {
-  if (!snapshot.transcript.length) {
-    return '<section aria-labelledby="transcript"><h2 id="transcript">Transcript</h2><p class="empty">No transcript is available for this meeting.</p></section>'
-  }
-
-  const entries = snapshot.transcript
-    .map(
-      (entry, index) =>
-        `<article class="utterance" aria-labelledby="speaker-${index + 1}"><header><strong id="speaker-${index + 1}">${htmlText(speakerLabel(snapshot, entry))}</strong><time>${formatTimestamp(entry.startMs)}–${formatTimestamp(entry.endMs)}</time></header><p>${htmlText(entry.text)}</p></article>`
-    )
-    .join('')
-  return `<section aria-labelledby="transcript"><h2 id="transcript">Transcript</h2>${entries}</section>`
-}
-
-export function renderMeetingExportHtml(
-  snapshot: MeetingExportSnapshot,
-  variant: MeetingExportVariant
-): string {
-  const appendix =
-    variant === 'full'
-      ? `<section class="technical" aria-labelledby="full-record"><h2 id="full-record">Full-fidelity Record</h2><p>This appendix preserves the normalized notes, revisions, provenance, source ranges, legacy origins, raw transcript fields, and speaker registry.</p><pre><code>${escapeHtml(fullRecordJson(snapshot))}</code></pre></section>`
-      : ''
-
+export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -398,7 +305,7 @@ export function renderMeetingExportHtml(
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
   <title>${escapeHtml(snapshot.detail.title || 'Untitled Meeting')} — AutoDoc Meeting Memo</title>
   <style>
-    :root { --paper: #${PALETTE.paper}; --surface: #${PALETTE.surface}; --ink: #${PALETTE.ink}; --secondary: #${PALETTE.secondaryInk}; --muted: #${PALETTE.muted}; --sage: #${PALETTE.sage}; --sage-dark: #${PALETTE.sageDark}; --sage-light: #${PALETTE.sageLight}; --border: #${PALETTE.border}; }
+    :root { --paper: #${PALETTE.paper}; --surface: #${PALETTE.surface}; --ink: #${PALETTE.ink}; --secondary: #${PALETTE.secondaryInk}; --muted: #${PALETTE.muted}; --sage: #${PALETTE.sage}; --sage-dark: #${PALETTE.sageDark}; }
     @page { size: Letter portrait; margin: 1in; }
     * { box-sizing: border-box; }
     html { background: var(--paper); color: var(--ink); font-family: "DM Sans", "Avenir Next", Arial, sans-serif; font-size: 11pt; line-height: 1.5; }
@@ -420,14 +327,7 @@ export function renderMeetingExportHtml(
     .checklist { list-style: none; padding-left: 0; }
     .checklist li { display: flex; gap: 7pt; }
     .check { color: var(--sage-dark); font-weight: 700; }
-    .utterance { border-left: 2px solid var(--sage-light); margin: 0 0 10pt; padding-left: 10pt; break-inside: avoid; }
-    .utterance header { display: flex; align-items: baseline; gap: 8pt; }
-    .utterance strong { color: var(--secondary); }
-    .utterance time { color: var(--muted); font-size: 8.5pt; }
-    .utterance p { margin: 2pt 0 0; }
     .empty { color: var(--muted); font-style: italic; }
-    .technical { margin-top: 18pt; }
-    pre { overflow-wrap: anywhere; white-space: pre-wrap; border: 1px solid var(--border); border-left: 3px solid var(--sage); background: var(--paper); color: var(--secondary); padding: 10pt; font: 8pt/1.22 "JetBrains Mono", Consolas, monospace; }
     @media print { html, body, main { background: white; } main { width: auto; margin: 0; padding: 0; } a { color: inherit; text-decoration: none; } }
   </style>
 </head>
@@ -443,8 +343,6 @@ export function renderMeetingExportHtml(
       </dl>
     </header>
     ${renderHtmlNotes(snapshot)}
-    ${renderHtmlTranscript(snapshot)}
-    ${appendix}
   </main>
 </body>
 </html>`
@@ -540,35 +438,6 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
   return paragraphs
 }
 
-function docxTranscript(snapshot: MeetingExportSnapshot): Paragraph[] {
-  const paragraphs = [
-    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Transcript')] })
-  ]
-  if (!snapshot.transcript.length)
-    return [
-      ...paragraphs,
-      docxParagraph('No transcript is available for this meeting.', 'EmptyState')
-    ]
-
-  for (const entry of snapshot.transcript) {
-    paragraphs.push(
-      new Paragraph({
-        style: 'TranscriptLabel',
-        children: [
-          new TextRun({ text: xmlSafeText(speakerLabel(snapshot, entry)), bold: true }),
-          new TextRun({
-            text: `  ${formatTimestamp(entry.startMs)}–${formatTimestamp(entry.endMs)}`,
-            color: PALETTE.muted,
-            size: 18
-          })
-        ]
-      }),
-      docxParagraph(entry.text)
-    )
-  }
-  return paragraphs
-}
-
 function deterministicCoreProperties(snapshot: MeetingExportSnapshot): string {
   const date = new Date(snapshot.detail.date)
   const timestamp =
@@ -629,10 +498,7 @@ function normalizeZipTimestamps(buffer: Buffer): Buffer {
   return normalized
 }
 
-export async function renderMeetingExportDocx(
-  snapshot: MeetingExportSnapshot,
-  variant: MeetingExportVariant
-): Promise<Buffer> {
+export async function renderMeetingExportDocx(snapshot: MeetingExportSnapshot): Promise<Buffer> {
   const children: Paragraph[] = [
     new Paragraph({ style: 'MastheadKicker', children: [new TextRun('AUTODOC MEETING MEMO')] }),
     new Paragraph({
@@ -661,24 +527,8 @@ export async function renderMeetingExportDocx(
       ]
     }),
     new Paragraph({ style: 'MastheadRule', children: [] }),
-    ...docxNotes(snapshot),
-    ...docxTranscript(snapshot)
+    ...docxNotes(snapshot)
   ]
-
-  if (variant === 'full') {
-    children.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_1,
-        children: [new TextRun('Full-fidelity Record')]
-      }),
-      docxParagraph(
-        'This appendix preserves the normalized notes, revisions, provenance, source ranges, legacy origins, raw transcript fields, and speaker registry.'
-      ),
-      ...fullRecordJson(snapshot)
-        .split('\n')
-        .map((line) => docxParagraph(line, 'TechnicalRecord'))
-    )
-  }
 
   const document = new Document({
     creator: 'AutoDoc',
@@ -752,32 +602,12 @@ export async function renderMeetingExportDocx(
           }
         },
         {
-          id: 'TranscriptLabel',
-          name: 'Transcript Label',
-          basedOn: 'Normal',
-          next: 'Normal',
-          quickFormat: true,
-          run: { font: 'Calibri', size: 20, color: PALETTE.secondaryInk },
-          paragraph: { spacing: { before: 120, after: 20 }, keepNext: true }
-        },
-        {
           id: 'EmptyState',
           name: 'Empty State',
           basedOn: 'Normal',
           next: 'Normal',
           run: { font: 'Calibri', size: 22, color: PALETTE.muted, italics: true },
           paragraph: { spacing: { after: 120, line: 300, lineRule: LineRuleType.AUTO } }
-        },
-        {
-          id: 'TechnicalRecord',
-          name: 'Technical Record',
-          basedOn: 'Normal',
-          next: 'TechnicalRecord',
-          run: { font: 'Consolas', size: 16, color: PALETTE.secondaryInk, noProof: true },
-          paragraph: {
-            spacing: { before: 0, after: 0, line: 180, lineRule: LineRuleType.AUTO },
-            keepLines: true
-          }
         }
       ]
     },
@@ -866,8 +696,7 @@ export function meetingExportExtension(format: MeetingExportFormat): 'md' | 'pdf
 
 export function createMeetingExportSuggestedFilename(
   title: string,
-  format: MeetingExportFormat,
-  variant: MeetingExportVariant
+  format: MeetingExportFormat
 ): string {
   const cleaned = title
     .normalize('NFKC')
@@ -885,14 +714,13 @@ export function createMeetingExportSuggestedFilename(
   const withoutReservedName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(windowsStem)
     ? `Meeting ${cleaned}`
     : cleaned
-  const suffix = variant === 'full' ? ' - Full' : ''
   const extension = `.${meetingExportExtension(format)}`
-  const maxBaseBytes = 120 - Buffer.byteLength(suffix + extension, 'utf8')
+  const maxBaseBytes = 120 - Buffer.byteLength(extension, 'utf8')
   let base = ''
   for (const character of withoutReservedName || 'Untitled Meeting') {
     if (Buffer.byteLength(base + character, 'utf8') > maxBaseBytes) break
     base += character
   }
   base = base.trimEnd() || 'Untitled Meeting'
-  return `${base}${suffix}${extension}`
+  return `${base}${extension}`
 }

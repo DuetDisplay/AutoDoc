@@ -12,10 +12,10 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import type {
+  MeetingCopyNotesResult,
   MeetingExportFormat,
   MeetingExportRequest,
-  MeetingExportResult,
-  MeetingExportVariant
+  MeetingExportResult
 } from '../../../shared/types'
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   fromPartition: vi.fn(),
   fromWebContents: vi.fn(),
   appGetPath: vi.fn(),
+  clipboardWriteText: vi.fn(),
   dialogShowSaveDialog: vi.fn(),
   loadSnapshotFromSource: vi.fn(),
   loadSnapshot: vi.fn(),
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   getDocumentsPath: vi.fn(),
   getParentWindow: vi.fn(),
   createSuggestedFilename: vi.fn(),
+  hasExportNotes: vi.fn(),
   meetingExportExtension: vi.fn(),
   renderMarkdown: vi.fn(),
   renderDocx: vi.fn(),
@@ -51,6 +53,7 @@ vi.mock('electron', () => {
   return {
     app: { getPath: mocks.appGetPath },
     BrowserWindow: BrowserWindowMock,
+    clipboard: { writeText: mocks.clipboardWriteText },
     dialog: { showSaveDialog: mocks.dialogShowSaveDialog },
     protocol: {
       registerSchemesAsPrivileged: vi.fn((schemes: unknown) => {
@@ -74,6 +77,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 vi.mock('../../services/meeting-export', () => ({
   createMeetingExportSuggestedFilename: mocks.createSuggestedFilename,
+  hasMeetingExportNotes: mocks.hasExportNotes,
   meetingExportExtension: mocks.meetingExportExtension,
   renderMeetingExportMarkdown: mocks.renderMarkdown,
   renderMeetingExportDocx: mocks.renderDocx,
@@ -104,16 +108,27 @@ const snapshot = {
     date: Date.UTC(2026, 7, 23, 14, 30),
     durationSeconds: 3_600
   },
-  notes: {} as NonNullable<MeetingExportSnapshot['notes']>,
-  transcript: [],
-  speakers: {}
+  notes: {
+    normalizedSchemaVersion: 1,
+    meetingId: 'meeting-123',
+    source: { format: 'legacy-segments', adapterVersion: 1 },
+    sourceTranscriptRevision: null,
+    sourceAttributionRevision: null,
+    revision: `legacy-sha256:${'a'.repeat(64)}`,
+    overview: {
+      text: 'The team agreed on the export plan.',
+      sources: [],
+      provenance: 'legacy'
+    },
+    keyTakeaways: [],
+    sections: [],
+    decisions: [],
+    nextSteps: []
+  } as NonNullable<MeetingExportSnapshot['notes']>
 } satisfies MeetingExportSnapshot
 
-function request(
-  format: MeetingExportFormat = 'markdown',
-  variant: MeetingExportVariant = 'full'
-): MeetingExportRequest {
-  return { meetingId: 'meeting-123', format, variant }
+function request(format: MeetingExportFormat = 'markdown'): MeetingExportRequest {
+  return { meetingId: 'meeting-123', format }
 }
 
 function getHandler(): (
@@ -123,6 +138,18 @@ function getHandler(): (
   const handler = mocks.handlers.get('meeting:export')
   if (!handler) throw new Error('Missing meeting:export IPC handler')
   return handler as (event: { sender: Sender }, rawRequest: unknown) => Promise<MeetingExportResult>
+}
+
+function getCopyNotesHandler(): (
+  event: { sender: Sender },
+  rawRequest: unknown
+) => Promise<MeetingCopyNotesResult> {
+  const handler = mocks.handlers.get('meeting:copy-notes')
+  if (!handler) throw new Error('Missing meeting:copy-notes IPC handler')
+  return handler as (
+    event: { sender: Sender },
+    rawRequest: unknown
+  ) => Promise<MeetingCopyNotesResult>
 }
 
 function register(overrides: Partial<RegisterMeetingExportIpcOptions> = {}): void {
@@ -146,6 +173,13 @@ async function invoke(
   return getHandler()({ sender }, rawRequest)
 }
 
+async function invokeCopyNotes(
+  rawRequest: unknown,
+  sender: Sender = trustedSender
+): Promise<MeetingCopyNotesResult> {
+  return getCopyNotesHandler()({ sender }, rawRequest)
+}
+
 function nodeError(code: string): Error & { code: string } {
   return Object.assign(new Error(code), { code })
 }
@@ -161,12 +195,14 @@ beforeEach(() => {
   })
   mocks.renderPdf.mockResolvedValue(Buffer.from('pdf output'))
   mocks.writeExportFile.mockResolvedValue(undefined)
+  mocks.clipboardWriteText.mockReturnValue(undefined)
   mocks.getDocumentsPath.mockReturnValue('/documents')
   mocks.getParentWindow.mockReturnValue(parentWindow)
   mocks.createSuggestedFilename.mockImplementation(
-    (title: string, format: MeetingExportFormat, variant: MeetingExportVariant) =>
-      `${title}-${variant}.${format === 'markdown' ? 'md' : format}`
+    (title: string, format: MeetingExportFormat) =>
+      `${title}.${format === 'markdown' ? 'md' : format}`
   )
+  mocks.hasExportNotes.mockReturnValue(true)
   mocks.meetingExportExtension.mockImplementation((format: MeetingExportFormat) =>
     format === 'markdown' ? 'md' : format
   )
@@ -198,9 +234,9 @@ describe('meeting export IPC', () => {
     const malformedRequests: unknown[] = [
       null,
       [],
-      { meetingId: 123, format: 'markdown', variant: 'full' },
-      { meetingId: 'meeting-123', format: 'html', variant: 'full' },
-      { meetingId: 'meeting-123', format: 'pdf', variant: 'verbose' },
+      { meetingId: 123, format: 'markdown' },
+      { meetingId: 'meeting-123', format: 'html' },
+      { meetingId: 'meeting-123', format: 'pdf', variant: 'full' },
       { ...request(), rendererChosenPath: '/private/renderer-controlled' }
     ]
     malformedRequests.push(
@@ -213,8 +249,7 @@ describe('meeting export IPC', () => {
             get: () => {
               throw new Error('malicious accessor')
             }
-          },
-          variant: { enumerable: true, value: 'full' }
+          }
         }
       )
     )
@@ -241,20 +276,16 @@ describe('meeting export IPC', () => {
       mocks.showSaveDialog.mockResolvedValueOnce({ canceled: true })
       register()
 
-      await expect(invoke(request(format, 'concise'))).resolves.toEqual({
+      await expect(invoke(request(format))).resolves.toEqual({
         status: 'cancelled'
       })
 
-      expect(mocks.createSuggestedFilename).toHaveBeenCalledWith(
-        'Weekly product sync',
-        format,
-        'concise'
-      )
+      expect(mocks.createSuggestedFilename).toHaveBeenCalledWith('Weekly product sync', format)
       expect(mocks.showSaveDialog).toHaveBeenCalledWith(parentWindow, {
-        title: 'Export meeting',
+        title: 'Export notes',
         buttonLabel: 'Export',
-        defaultPath: join('/documents', `Weekly product sync-concise.${extension}`),
-        message: 'Choose where to save this meeting export.',
+        defaultPath: join('/documents', `Weekly product sync.${extension}`),
+        message: 'Choose where to save these notes.',
         filters: [{ name: filterName, extensions: [extension] }],
         properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent']
       })
@@ -265,7 +296,7 @@ describe('meeting export IPC', () => {
     mocks.showSaveDialog.mockResolvedValueOnce({ canceled: true })
     register()
 
-    await expect(invoke(request('pdf', 'full'))).resolves.toEqual({ status: 'cancelled' })
+    await expect(invoke(request('pdf'))).resolves.toEqual({ status: 'cancelled' })
 
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
     expect(mocks.renderDocx).not.toHaveBeenCalled()
@@ -279,7 +310,7 @@ describe('meeting export IPC', () => {
     mocks.showSaveDialog.mockRejectedValueOnce(new Error('dialog unavailable'))
     register()
 
-    await expect(invoke(request('pdf', 'full'))).resolves.toEqual({
+    await expect(invoke(request('pdf'))).resolves.toEqual({
       status: 'failed',
       code: 'write-failed'
     })
@@ -289,12 +320,12 @@ describe('meeting export IPC', () => {
     expect(mocks.writeExportFile).not.toHaveBeenCalled()
   })
 
-  it('renders markdown with the requested variant', async () => {
+  it('renders markdown for the meeting snapshot', async () => {
     register()
 
-    await expect(invoke(request('markdown', 'concise'))).resolves.toEqual({ status: 'saved' })
+    await expect(invoke(request('markdown'))).resolves.toEqual({ status: 'saved' })
 
-    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot, 'concise')
+    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderDocx).not.toHaveBeenCalled()
     expect(mocks.renderHtml).not.toHaveBeenCalled()
     expect(mocks.renderPdf).not.toHaveBeenCalled()
@@ -304,28 +335,28 @@ describe('meeting export IPC', () => {
     )
   })
 
-  it('renders DOCX with the requested variant', async () => {
+  it('renders DOCX for the meeting snapshot', async () => {
     const docx = Buffer.from('distinct docx output')
     mocks.renderDocx.mockResolvedValueOnce(docx)
     register()
 
-    await expect(invoke(request('docx', 'full'))).resolves.toEqual({ status: 'saved' })
+    await expect(invoke(request('docx'))).resolves.toEqual({ status: 'saved' })
 
-    expect(mocks.renderDocx).toHaveBeenCalledWith(snapshot, 'full')
+    expect(mocks.renderDocx).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
     expect(mocks.renderHtml).not.toHaveBeenCalled()
     expect(mocks.renderPdf).not.toHaveBeenCalled()
     expect(mocks.writeExportFile).toHaveBeenCalledWith('/exports/meeting', docx)
   })
 
-  it('renders PDF HTML with the requested variant and dispatches it to the PDF renderer', async () => {
+  it('renders PDF HTML and dispatches it to the PDF renderer', async () => {
     const pdf = Buffer.from('distinct pdf output')
     mocks.renderPdf.mockResolvedValueOnce(pdf)
     register()
 
-    await expect(invoke(request('pdf', 'concise'))).resolves.toEqual({ status: 'saved' })
+    await expect(invoke(request('pdf'))).resolves.toEqual({ status: 'saved' })
 
-    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot, 'concise')
+    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderPdf).toHaveBeenCalledWith('<html><body>PDF output</body></html>')
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
     expect(mocks.renderDocx).not.toHaveBeenCalled()
@@ -360,10 +391,10 @@ describe('meeting export IPC', () => {
   )
 
   it('returns nothing-to-export before opening a save dialog', async () => {
+    mocks.hasExportNotes.mockReturnValueOnce(false)
     mocks.loadSnapshot.mockResolvedValueOnce({
       ...snapshot,
-      notes: null,
-      transcript: []
+      notes: null
     })
     register()
 
@@ -378,8 +409,50 @@ describe('meeting export IPC', () => {
     expect(mocks.writeExportFile).not.toHaveBeenCalled()
   })
 
+  it('returns nothing-to-export for a structurally empty notes snapshot', async () => {
+    const emptySnapshot = {
+      ...snapshot,
+      notes: {
+        ...snapshot.notes,
+        overview: null,
+        keyTakeaways: [],
+        sections: [],
+        decisions: [],
+        nextSteps: []
+      }
+    } satisfies MeetingExportSnapshot
+    mocks.hasExportNotes.mockReturnValueOnce(false)
+    mocks.loadSnapshot.mockResolvedValueOnce(emptySnapshot)
+    register()
+
+    await expect(invoke(request())).resolves.toEqual({
+      status: 'failed',
+      code: 'nothing-to-export'
+    })
+
+    expect(mocks.hasExportNotes).toHaveBeenCalledWith(emptySnapshot)
+    expect(mocks.showSaveDialog).not.toHaveBeenCalled()
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+  })
+
   it('bounds snapshot failures as render-failed without opening a save dialog', async () => {
     mocks.loadSnapshot.mockRejectedValueOnce(new Error('snapshot unavailable'))
+    register()
+
+    await expect(invoke(request())).resolves.toEqual({
+      status: 'failed',
+      code: 'render-failed'
+    })
+
+    expect(mocks.showSaveDialog).not.toHaveBeenCalled()
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.writeExportFile).not.toHaveBeenCalled()
+  })
+
+  it('bounds notes inspection failures as render-failed without opening a save dialog', async () => {
+    mocks.hasExportNotes.mockImplementationOnce(() => {
+      throw new Error('invalid notes')
+    })
     register()
 
     await expect(invoke(request())).resolves.toEqual({
@@ -432,6 +505,151 @@ describe('meeting export IPC', () => {
       status: 'failed',
       code: 'write-failed'
     })
+  })
+})
+
+describe('meeting copy notes IPC', () => {
+  it('copies the readable Markdown notes for a valid trusted request', async () => {
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'copied'
+    })
+
+    expect(mocks.loadSnapshot).toHaveBeenCalledWith('/recordings', 'meeting-123')
+    expect(mocks.hasExportNotes).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot)
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('markdown output')
+  })
+
+  it('rejects untrusted and malformed requests before reading meeting data', async () => {
+    register()
+
+    const unreadRequest = Object.defineProperties(
+      {},
+      {
+        meetingId: {
+          enumerable: true,
+          get: () => {
+            throw new Error('request should not be read')
+          }
+        }
+      }
+    )
+    await expect(invokeCopyNotes(unreadRequest, untrustedSender)).resolves.toEqual({
+      status: 'failed',
+      code: 'invalid-request'
+    })
+
+    const malformedRequests: unknown[] = [
+      null,
+      [],
+      {},
+      { meetingId: 123 },
+      { meetingId: 'meeting-123', format: 'markdown' },
+      Object.defineProperty({}, 'meetingId', {
+        enumerable: true,
+        get: () => {
+          throw new Error('malicious accessor')
+        }
+      })
+    ]
+    for (const malformedRequest of malformedRequests) {
+      await expect(invokeCopyNotes(malformedRequest)).resolves.toEqual({
+        status: 'failed',
+        code: 'invalid-request'
+      })
+    }
+
+    expect(mocks.loadSnapshot).not.toHaveBeenCalled()
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing', null],
+    [
+      'structurally empty',
+      {
+        ...snapshot.notes,
+        overview: null,
+        keyTakeaways: [],
+        sections: [],
+        decisions: [],
+        nextSteps: []
+      }
+    ]
+  ])('returns nothing-to-copy for %s notes', async (_label, notes) => {
+    const emptySnapshot = { ...snapshot, notes } as MeetingExportSnapshot
+    mocks.loadSnapshot.mockResolvedValueOnce(emptySnapshot)
+    mocks.hasExportNotes.mockReturnValueOnce(false)
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'nothing-to-copy'
+    })
+
+    expect(mocks.hasExportNotes).toHaveBeenCalledWith(emptySnapshot)
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+  })
+
+  it('bounds snapshot failures as copy-failed', async () => {
+    mocks.loadSnapshot.mockRejectedValueOnce(new Error('snapshot unavailable'))
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'copy-failed'
+    })
+
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+  })
+
+  it('bounds notes inspection failures as copy-failed', async () => {
+    mocks.hasExportNotes.mockImplementationOnce(() => {
+      throw new Error('invalid notes')
+    })
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'copy-failed'
+    })
+
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+  })
+
+  it('bounds Markdown rendering failures as copy-failed', async () => {
+    mocks.renderMarkdown.mockImplementationOnce(() => {
+      throw new Error('render failed')
+    })
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'copy-failed'
+    })
+
+    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+  })
+
+  it('bounds clipboard failures as copy-failed', async () => {
+    mocks.clipboardWriteText.mockImplementationOnce(() => {
+      throw new Error('clipboard unavailable')
+    })
+    register()
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'copy-failed'
+    })
+
+    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot)
+    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('markdown output')
   })
 })
 

@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react'
 import type {
+  MeetingCopyNotesResult,
   MeetingExportFormat,
-  MeetingExportResult,
-  MeetingExportVariant
+  MeetingExportResult
 } from '../../../shared/types'
 
 export interface MeetingExportMenuProps {
   disabled: boolean
   disabledReason?: string
-  onExport: (
-    format: MeetingExportFormat,
-    variant: MeetingExportVariant
-  ) => Promise<MeetingExportResult>
+  onCopyNotes: () => Promise<MeetingCopyNotesResult>
+  onExport: (format: MeetingExportFormat) => Promise<MeetingExportResult>
 }
 
-type ExportFeedback =
-  | { kind: 'saved'; message: 'Exported' }
-  | { kind: 'failed'; message: string }
+type Action = 'copy' | 'export'
+
+type ActionFeedback =
+  | { action: Action; kind: 'success'; message: 'Copied' | 'Exported' }
+  | { action: Action; kind: 'failed'; message: string }
   | null
 
 interface ExportFormatOption {
@@ -34,19 +34,46 @@ const EXPORT_FORMATS: readonly ExportFormatOption[] = [
 
 const SUCCESS_VISIBLE_MS = 2_400
 
-function failureMessage(result: Extract<MeetingExportResult, { status: 'failed' }>): string {
+function exportFailureMessage(result: Extract<MeetingExportResult, { status: 'failed' }>): string {
   switch (result.code) {
     case 'disk-full':
       return 'Not enough disk space to export. Choose another location or free up space.'
     case 'nothing-to-export':
-      return 'There’s nothing ready to export for this meeting.'
+      return 'There aren’t any notes to export yet.'
     case 'permission-denied':
-      return 'AutoDoc couldn’t save to that location. Choose another location and try again.'
+      return 'AutoDoc couldn’t save the notes there. Choose another location and try again.'
     case 'invalid-request':
     case 'render-failed':
     case 'write-failed':
-      return 'AutoDoc couldn’t export this meeting. Try again.'
+      return 'Couldn’t export notes. Try again.'
   }
+}
+
+function copyFailureMessage(result: Extract<MeetingCopyNotesResult, { status: 'failed' }>): string {
+  return result.code === 'nothing-to-copy'
+    ? 'There aren’t any notes to copy yet.'
+    : 'Couldn’t copy notes. Try again.'
+}
+
+function CopyIcon(): ReactElement {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" className="size-3.5">
+      <rect
+        x="5.25"
+        y="4.75"
+        width="7"
+        height="7"
+        rx="1.25"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path
+        d="M10.25 4.75V3.5c0-.7-.55-1.25-1.25-1.25H3.5c-.7 0-1.25.55-1.25 1.25V9c0 .7.55 1.25 1.25 1.25h1.75"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+    </svg>
+  )
 }
 
 function DownloadIcon(): ReactElement {
@@ -80,15 +107,16 @@ function CheckIcon(): ReactElement {
 export function MeetingExportMenu({
   disabled,
   disabledReason,
+  onCopyNotes,
   onExport
 }: MeetingExportMenuProps): ReactElement {
   const [open, setOpen] = useState(false)
-  const [variant, setVariant] = useState<MeetingExportVariant>('full')
-  const [busy, setBusy] = useState(false)
-  const [feedback, setFeedback] = useState<ExportFeedback>(null)
+  const [busyAction, setBusyAction] = useState<Action | null>(null)
+  const [feedback, setFeedback] = useState<ActionFeedback>(null)
   const rootRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const fullVariantRef = useRef<HTMLButtonElement>(null)
+  const copyTriggerRef = useRef<HTMLButtonElement>(null)
+  const exportTriggerRef = useRef<HTMLButtonElement>(null)
+  const firstFormatRef = useRef<HTMLButtonElement>(null)
   const busyRef = useRef(false)
   const successTimerRef = useRef<number | null>(null)
   const dialogId = useId()
@@ -102,18 +130,28 @@ export function MeetingExportMenu({
     successTimerRef.current = null
   }, [])
 
-  const restoreTriggerFocus = useCallback((): void => {
-    window.setTimeout(() => triggerRef.current?.focus(), 0)
+  const showSuccess = useCallback((action: Action, message: 'Copied' | 'Exported'): void => {
+    setFeedback({ action, kind: 'success', message })
+    successTimerRef.current = window.setTimeout(() => {
+      setFeedback(null)
+      successTimerRef.current = null
+    }, SUCCESS_VISIBLE_MS)
   }, [])
 
-  const closeAndRestoreFocus = useCallback((): void => {
+  const restoreFocus = useCallback((action: Action): void => {
+    window.setTimeout(() => {
+      if (action === 'copy') copyTriggerRef.current?.focus()
+      else exportTriggerRef.current?.focus()
+    }, 0)
+  }, [])
+
+  const closeAndRestoreExportFocus = useCallback((): void => {
     setOpen(false)
-    restoreTriggerFocus()
-  }, [restoreTriggerFocus])
+    restoreFocus('export')
+  }, [restoreFocus])
 
   useEffect(() => {
-    if (!open) return
-    fullVariantRef.current?.focus()
+    if (open) firstFormatRef.current?.focus()
   }, [open])
 
   useEffect(() => {
@@ -126,7 +164,7 @@ export function MeetingExportMenu({
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      closeAndRestoreFocus()
+      closeAndRestoreExportFocus()
     }
 
     document.addEventListener('click', handleOutsideClick)
@@ -135,18 +173,65 @@ export function MeetingExportMenu({
       document.removeEventListener('click', handleOutsideClick)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [closeAndRestoreFocus, open])
+  }, [closeAndRestoreExportFocus, open])
 
   useEffect(() => {
-    if (!disabled || !open) return
-    setOpen(false)
+    if (disabled && open) setOpen(false)
   }, [disabled, open])
 
   useEffect(() => {
     return () => clearSuccessTimer()
   }, [clearSuccessTimer])
 
-  const handleTriggerClick = (): void => {
+  const beginAction = (action: Action): boolean => {
+    if (disabled || busyRef.current) return false
+    busyRef.current = true
+    clearSuccessTimer()
+    setFeedback(null)
+    setOpen(false)
+    setBusyAction(action)
+    return true
+  }
+
+  const finishAction = (action: Action): void => {
+    busyRef.current = false
+    setBusyAction(null)
+    restoreFocus(action)
+  }
+
+  const handleCopy = async (): Promise<void> => {
+    if (!beginAction('copy')) return
+    try {
+      const result = await onCopyNotes()
+      if (result.status === 'copied') showSuccess('copy', 'Copied')
+      else setFeedback({ action: 'copy', kind: 'failed', message: copyFailureMessage(result) })
+    } catch {
+      setFeedback({ action: 'copy', kind: 'failed', message: 'Couldn’t copy notes. Try again.' })
+    } finally {
+      finishAction('copy')
+    }
+  }
+
+  const handleExport = async (format: MeetingExportFormat): Promise<void> => {
+    if (!beginAction('export')) return
+    try {
+      const result = await onExport(format)
+      if (result.status === 'saved') showSuccess('export', 'Exported')
+      else if (result.status === 'failed') {
+        setFeedback({ action: 'export', kind: 'failed', message: exportFailureMessage(result) })
+      }
+    } catch {
+      setFeedback({
+        action: 'export',
+        kind: 'failed',
+        message: 'Couldn’t export notes. Try again.'
+      })
+    } finally {
+      finishAction('export')
+    }
+  }
+
+  const handleExportTriggerClick = (): void => {
     if (disabled || busyRef.current) return
     if (open) {
       setOpen(false)
@@ -154,66 +239,53 @@ export function MeetingExportMenu({
     }
     clearSuccessTimer()
     setFeedback(null)
-    setVariant('full')
     setOpen(true)
   }
 
-  const handleExport = async (format: MeetingExportFormat): Promise<void> => {
-    if (busyRef.current) return
-    busyRef.current = true
-    clearSuccessTimer()
-    setFeedback(null)
-    setOpen(false)
-    setBusy(true)
-
-    try {
-      const result = await onExport(format, variant)
-      if (result.status === 'saved') {
-        setFeedback({ kind: 'saved', message: 'Exported' })
-        successTimerRef.current = window.setTimeout(() => {
-          setFeedback(null)
-          successTimerRef.current = null
-        }, SUCCESS_VISIBLE_MS)
-      } else if (result.status === 'failed') {
-        setFeedback({ kind: 'failed', message: failureMessage(result) })
-      }
-    } catch {
-      setFeedback({ kind: 'failed', message: 'AutoDoc couldn’t export this meeting. Try again.' })
-    } finally {
-      busyRef.current = false
-      setBusy(false)
-      restoreTriggerFocus()
-    }
-  }
-
-  const triggerLabel = busy ? 'Exporting…' : feedback?.kind === 'saved' ? 'Exported' : 'Export'
-  const variantDescription =
-    variant === 'full'
-      ? 'Every stored note and transcript detail.'
-      : 'A polished summary for sharing.'
+  const copySucceeded = feedback?.kind === 'success' && feedback.action === 'copy'
+  const exportSucceeded = feedback?.kind === 'success' && feedback.action === 'export'
+  const copyLabel = busyAction === 'copy' ? 'Copying…' : copySucceeded ? 'Copied' : 'Copy notes'
+  const exportLabel =
+    busyAction === 'export' ? 'Exporting…' : exportSucceeded ? 'Exported' : 'Export'
+  const controlsDisabled = disabled || busyAction !== null
+  const baseButtonClass =
+    'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-45'
+  const normalButtonClass =
+    'border-border bg-bg-card text-ink-muted hover:border-border-strong hover:text-ink'
+  const successButtonClass = 'border-sage/25 bg-sage-light text-sage-dark'
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative flex items-center gap-1.5">
       <button
-        ref={triggerRef}
+        ref={copyTriggerRef}
         type="button"
-        disabled={disabled || busy}
+        disabled={controlsDisabled}
         title={disabled ? disabledReason : undefined}
-        aria-busy={busy}
+        aria-busy={busyAction === 'copy'}
+        aria-describedby={disabled && disabledReason ? disabledReasonId : undefined}
+        onClick={() => void handleCopy()}
+        className={`${baseButtonClass} ${copySucceeded ? successButtonClass : normalButtonClass}`}
+      >
+        {copySucceeded ? <CheckIcon /> : <CopyIcon />}
+        <span>{copyLabel}</span>
+      </button>
+
+      <button
+        ref={exportTriggerRef}
+        type="button"
+        disabled={controlsDisabled}
+        title={disabled ? disabledReason : undefined}
+        aria-busy={busyAction === 'export'}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? dialogId : undefined}
         aria-describedby={disabled && disabledReason ? disabledReasonId : undefined}
-        onClick={handleTriggerClick}
-        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-45 ${
-          feedback?.kind === 'saved'
-            ? 'border-sage/25 bg-sage-light text-sage-dark'
-            : 'border-border bg-bg-card text-ink-muted hover:border-border-strong hover:text-ink'
-        }`}
+        onClick={handleExportTriggerClick}
+        className={`${baseButtonClass} ${exportSucceeded ? successButtonClass : normalButtonClass}`}
       >
-        {feedback?.kind === 'saved' && !busy ? <CheckIcon /> : <DownloadIcon />}
-        <span>{triggerLabel}</span>
-        {!busy && feedback?.kind !== 'saved' ? (
+        {exportSucceeded ? <CheckIcon /> : <DownloadIcon />}
+        <span>{exportLabel}</span>
+        {busyAction !== 'export' && !exportSucceeded ? (
           <svg
             aria-hidden="true"
             focusable="false"
@@ -245,49 +317,23 @@ export function MeetingExportMenu({
           aria-modal="false"
           aria-labelledby={headingId}
           aria-describedby={descriptionId}
-          aria-busy={busy}
-          className="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-xl border border-border bg-bg-card p-3 shadow-lg"
+          className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-border bg-bg-card p-3 shadow-lg"
         >
           <h2 id={headingId} className="text-[12px] font-semibold text-ink">
-            Export meeting
+            Export notes
           </h2>
           <p id={descriptionId} className="mt-0.5 text-[10.5px] leading-4 text-ink-faint">
-            Choose how much detail to include, then a file format.
-          </p>
-
-          <div
-            role="group"
-            aria-label="Export detail"
-            className="mt-3 flex rounded-lg border border-border bg-bg-card p-0.5"
-          >
-            {(['full', 'concise'] as const).map((value) => (
-              <button
-                key={value}
-                ref={value === 'full' ? fullVariantRef : undefined}
-                type="button"
-                aria-pressed={variant === value}
-                onClick={() => setVariant(value)}
-                className={`flex-1 rounded-md px-2.5 py-1 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 ${
-                  variant === value
-                    ? 'bg-ink text-white'
-                    : 'text-ink-muted hover:bg-bg-accent hover:text-ink'
-                }`}
-              >
-                {value === 'full' ? 'Full' : 'Concise'}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 min-h-4 text-[10.5px] leading-4 text-ink-faint">
-            {variantDescription}
+            Choose a file format.
           </p>
 
           <div className="mt-2 flex flex-col gap-1 border-t border-border-subtle pt-2">
-            {EXPORT_FORMATS.map((option) => (
+            {EXPORT_FORMATS.map((option, index) => (
               <button
                 key={option.format}
+                ref={index === 0 ? firstFormatRef : undefined}
                 type="button"
                 onClick={() => void handleExport(option.format)}
-                className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-wait disabled:opacity-50"
+                className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12px] font-medium text-ink">{option.label}</span>
@@ -300,7 +346,7 @@ export function MeetingExportMenu({
         </div>
       ) : null}
 
-      {feedback?.kind === 'saved' ? (
+      {feedback?.kind === 'success' ? (
         <div
           role="status"
           aria-live="polite"
@@ -308,7 +354,7 @@ export function MeetingExportMenu({
           className="absolute right-0 top-full z-50 mt-1.5 inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-sage/25 bg-sage-light px-3 py-2 text-[11.5px] font-medium text-sage-dark shadow-sm"
         >
           <CheckIcon />
-          Exported
+          {feedback.message}
         </div>
       ) : null}
 
@@ -320,7 +366,7 @@ export function MeetingExportMenu({
           <span className="min-w-0 flex-1">{feedback.message}</span>
           <button
             type="button"
-            aria-label="Dismiss export error"
+            aria-label={`Dismiss ${feedback.action} error`}
             onClick={() => setFeedback(null)}
             className="flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-clay-dark/70 transition-colors hover:bg-white/50 hover:text-clay-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
           >

@@ -4,6 +4,7 @@ import { basename, dirname, join } from 'path'
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   protocol,
@@ -12,14 +13,17 @@ import {
   type WebContents
 } from 'electron'
 import type {
+  MeetingCopyNotesFailureCode,
+  MeetingCopyNotesRequest,
+  MeetingCopyNotesResult,
   MeetingExportFailureCode,
   MeetingExportFormat,
   MeetingExportRequest,
-  MeetingExportResult,
-  MeetingExportVariant
+  MeetingExportResult
 } from '../../shared/types'
 import {
   createMeetingExportSuggestedFilename,
+  hasMeetingExportNotes,
   meetingExportExtension,
   renderMeetingExportDocx,
   renderMeetingExportHtml,
@@ -29,7 +33,6 @@ import {
 import { loadMeetingExportSnapshot } from '../services/meeting-export-sources'
 
 const EXPORT_FORMATS = ['markdown', 'pdf', 'docx'] as const satisfies readonly MeetingExportFormat[]
-const EXPORT_VARIANTS = ['full', 'concise'] as const satisfies readonly MeetingExportVariant[]
 const EXPORT_RENDER_SCHEME = 'autodoc-export'
 const EXPORT_RENDER_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -54,6 +57,7 @@ export interface RegisterMeetingExportIpcOptions {
   showSaveDialog?: ShowSaveDialog
   renderPdf?: (html: string) => Promise<Buffer>
   writeExportFile?: (filePath: string, data: Buffer) => Promise<void>
+  writeClipboardText?: (text: string) => void
   getDocumentsPath?: () => string
   getParentWindow?: (sender: WebContents) => BrowserWindow | null
 }
@@ -73,20 +77,33 @@ function isMeetingExportRequest(value: unknown): value is MeetingExportRequest {
     const record = value as Record<string, unknown>
     const keys = Object.keys(record).sort()
     return (
-      keys.length === 3 &&
+      keys.length === 2 &&
       keys[0] === 'format' &&
       keys[1] === 'meetingId' &&
-      keys[2] === 'variant' &&
       typeof record.meetingId === 'string' &&
-      EXPORT_FORMATS.some((format) => format === record.format) &&
-      EXPORT_VARIANTS.some((variant) => variant === record.variant)
+      EXPORT_FORMATS.some((format) => format === record.format)
     )
   } catch {
     return false
   }
 }
 
-function failure(code: MeetingExportFailureCode): MeetingExportResult {
+function isMeetingCopyNotesRequest(value: unknown): value is MeetingCopyNotesRequest {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  try {
+    const record = value as Record<string, unknown>
+    const keys = Object.keys(record)
+    return keys.length === 1 && keys[0] === 'meetingId' && typeof record.meetingId === 'string'
+  } catch {
+    return false
+  }
+}
+
+function exportFailure(code: MeetingExportFailureCode): MeetingExportResult {
+  return { status: 'failed', code }
+}
+
+function copyFailure(code: MeetingCopyNotesFailureCode): MeetingCopyNotesResult {
   return { status: 'failed', code }
 }
 
@@ -101,19 +118,18 @@ function mapWriteFailure(error: unknown): MeetingExportFailureCode {
 function saveDialogOptions(
   snapshot: MeetingExportSnapshot,
   format: MeetingExportFormat,
-  variant: MeetingExportVariant,
   documentsPath: string
 ): SaveDialogOptions {
   const extension = meetingExportExtension(format)
   const formatName = format === 'markdown' ? 'Markdown' : format === 'pdf' ? 'PDF' : 'Word Document'
   return {
-    title: 'Export meeting',
+    title: 'Export notes',
     buttonLabel: 'Export',
     defaultPath: join(
       documentsPath,
-      createMeetingExportSuggestedFilename(snapshot.detail.title, format, variant)
+      createMeetingExportSuggestedFilename(snapshot.detail.title, format)
     ),
-    message: 'Choose where to save this meeting export.',
+    message: 'Choose where to save these notes.',
     filters: [{ name: formatName, extensions: [extension] }],
     properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent']
   }
@@ -257,14 +273,13 @@ export async function renderMeetingExportPdf(html: string): Promise<Buffer> {
 async function renderExport(
   snapshot: MeetingExportSnapshot,
   format: MeetingExportFormat,
-  variant: MeetingExportVariant,
   renderPdf: (html: string) => Promise<Buffer>
 ): Promise<Buffer> {
   if (format === 'markdown') {
-    return Buffer.from(renderMeetingExportMarkdown(snapshot, variant), 'utf8')
+    return Buffer.from(renderMeetingExportMarkdown(snapshot), 'utf8')
   }
-  if (format === 'docx') return renderMeetingExportDocx(snapshot, variant)
-  return renderPdf(renderMeetingExportHtml(snapshot, variant))
+  if (format === 'docx') return renderMeetingExportDocx(snapshot)
+  return renderPdf(renderMeetingExportHtml(snapshot))
 }
 
 export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOptions): void {
@@ -274,6 +289,8 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
     ((parent, dialogOptions) => dialog.showSaveDialog(parent, dialogOptions))
   const renderPdf = options.renderPdf ?? renderMeetingExportPdf
   const writeExportFile = options.writeExportFile ?? writeExportFileAtomically
+  const writeClipboardText =
+    options.writeClipboardText ?? ((text: string) => clipboard.writeText(text))
   const getDocumentsPath = options.getDocumentsPath ?? (() => app.getPath('documents'))
   const getParentWindow =
     options.getParentWindow ?? ((sender: WebContents) => BrowserWindow.fromWebContents(sender))
@@ -282,37 +299,37 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
     'meeting:export',
     async (event, rawRequest: unknown): Promise<MeetingExportResult> => {
       if (!options.isTrustedSender(event.sender) || !isMeetingExportRequest(rawRequest)) {
-        return failure('invalid-request')
+        return exportFailure('invalid-request')
       }
 
       let snapshot: MeetingExportSnapshot
       try {
         snapshot = await loadSnapshot(options.recordingsBaseDir, rawRequest.meetingId)
+        if (!hasMeetingExportNotes(snapshot)) {
+          return exportFailure('nothing-to-export')
+        }
       } catch {
-        return failure('render-failed')
-      }
-      if (!snapshot.notes && snapshot.transcript.length === 0) {
-        return failure('nothing-to-export')
+        return exportFailure('render-failed')
       }
 
       let saveResult: Electron.SaveDialogReturnValue
       try {
         const parent = getParentWindow(event.sender)
-        if (!parent || parent.isDestroyed()) return failure('invalid-request')
+        if (!parent || parent.isDestroyed()) return exportFailure('invalid-request')
         saveResult = await showSaveDialog(
           parent,
-          saveDialogOptions(snapshot, rawRequest.format, rawRequest.variant, getDocumentsPath())
+          saveDialogOptions(snapshot, rawRequest.format, getDocumentsPath())
         )
       } catch {
-        return failure('write-failed')
+        return exportFailure('write-failed')
       }
       if (saveResult.canceled || !saveResult.filePath) return { status: 'cancelled' }
 
       let data: Buffer
       try {
-        data = await renderExport(snapshot, rawRequest.format, rawRequest.variant, renderPdf)
+        data = await renderExport(snapshot, rawRequest.format, renderPdf)
       } catch {
-        return failure('render-failed')
+        return exportFailure('render-failed')
       }
 
       try {
@@ -322,7 +339,31 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
         await writeExportFile(saveResult.filePath, data)
         return { status: 'saved' }
       } catch (error) {
-        return failure(mapWriteFailure(error))
+        return exportFailure(mapWriteFailure(error))
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'meeting:copy-notes',
+    async (event, rawRequest: unknown): Promise<MeetingCopyNotesResult> => {
+      if (!options.isTrustedSender(event.sender) || !isMeetingCopyNotesRequest(rawRequest)) {
+        return copyFailure('invalid-request')
+      }
+
+      let snapshot: MeetingExportSnapshot
+      try {
+        snapshot = await loadSnapshot(options.recordingsBaseDir, rawRequest.meetingId)
+        if (!hasMeetingExportNotes(snapshot)) return copyFailure('nothing-to-copy')
+      } catch {
+        return copyFailure('copy-failed')
+      }
+
+      try {
+        writeClipboardText(renderMeetingExportMarkdown(snapshot))
+        return { status: 'copied' }
+      } catch {
+        return copyFailure('copy-failed')
       }
     }
   )

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { NormalizedNoteItem, NormalizedNotes } from '../../../shared/types'
 import {
   createMeetingExportSuggestedFilename,
+  hasMeetingExportNotes,
   meetingExportExtension,
   renderMeetingExportDocx,
   renderMeetingExportHtml,
@@ -30,29 +31,32 @@ const item = (
 
 const notes: NormalizedNotes = {
   normalizedSchemaVersion: 1,
-  meetingId: 'NOTES_MEETING_ID_SENTINEL',
+  meetingId: 'NOTES_MEETING_ID_INTERNAL',
   source: { format: 'notes-v2', schemaVersion: 2 },
-  sourceTranscriptRevision: 'transcript-sha256:TRANSCRIPT_REVISION_SENTINEL',
-  sourceAttributionRevision: 'notes-attribution-sha256:ATTRIBUTION_REVISION_SENTINEL',
-  revision: 'sha256:NOTES_REVISION_SENTINEL',
+  sourceTranscriptRevision: 'transcript-sha256:TRANSCRIPT_REVISION_INTERNAL',
+  sourceAttributionRevision: 'notes-attribution-sha256:ATTRIBUTION_REVISION_INTERNAL',
+  revision: 'sha256:NOTES_REVISION_INTERNAL',
   overview: {
-    text: 'OVERVIEW_TEXT_SENTINEL',
+    text: 'OVERVIEW_TEXT_VISIBLE',
     sources: [{ startMs: 3_003, endMs: 4_004 }],
     provenance: 'user-edited'
   },
   keyTakeaways: [
-    item('TAKEAWAY_ID_SENTINEL', 'TAKEAWAY_TEXT_SENTINEL', {
-      completed: true,
+    item('TAKEAWAY_ID_INTERNAL', 'TAKEAWAY_TEXT_VISIBLE', {
+      title: 'TAKEAWAY_TITLE_VISIBLE',
+      topic: 'TAKEAWAY_TOPIC_VISIBLE',
+      owner: 'TAKEAWAY_OWNER_VISIBLE',
+      deadline: 'TAKEAWAY_DEADLINE_VISIBLE',
       sources: [{ startMs: 5_005, endMs: 6_006 }],
       provenance: 'legacy',
       legacySource: {
         adapterVersion: 1,
         bucket: 'decisions',
         itemIndex: 7,
-        segmentId: 'LEGACY_SEGMENT_ID_SENTINEL',
-        meetingId: 'LEGACY_MEETING_ID_SENTINEL',
+        segmentId: 'LEGACY_SEGMENT_ID_INTERNAL',
+        meetingId: 'LEGACY_MEETING_ID_INTERNAL',
         category: 'decision',
-        topic: 'LEGACY_TOPIC_SENTINEL',
+        topic: 'LEGACY_TOPIC_INTERNAL',
         sourceStartMs: 7_007,
         sourceEndMs: 8_008
       }
@@ -60,25 +64,28 @@ const notes: NormalizedNotes = {
   ],
   sections: [
     {
-      id: 'SECTION_ID_SENTINEL',
-      title: 'SECTION_TITLE_SENTINEL',
+      id: 'SECTION_ID_INTERNAL',
+      title: 'SECTION_TITLE_VISIBLE',
       summary: {
-        text: 'SECTION_SUMMARY_SENTINEL',
+        text: 'SECTION_SUMMARY_VISIBLE',
         sources: [{ startMs: 9_009, endMs: 10_010 }],
         provenance: 'user-created'
       },
       keyPoints: [
-        item('KEY_POINT_ID_SENTINEL', 'KEY_POINT_TEXT_SENTINEL', {
+        item('KEY_POINT_ID_INTERNAL', 'KEY_POINT_TEXT_VISIBLE', {
           title: null,
           topic: null,
           owner: null,
           deadline: null,
-          completed: false,
           sources: [{ startMs: 11_011, endMs: 12_012 }]
         })
       ],
       supportingDetails: [
-        item('SUPPORTING_ID_SENTINEL', 'SUPPORTING_TEXT_SENTINEL', {
+        item('SUPPORTING_ID_INTERNAL', 'SUPPORTING_TEXT_VISIBLE', {
+          title: 'SUPPORTING_TITLE_VISIBLE',
+          topic: 'SUPPORTING_TOPIC_VISIBLE',
+          owner: 'SUPPORTING_OWNER_VISIBLE',
+          deadline: 'SUPPORTING_DEADLINE_VISIBLE',
           provenance: 'user-edited',
           sources: [{ startMs: 13_013, endMs: 14_014 }]
         })
@@ -86,12 +93,14 @@ const notes: NormalizedNotes = {
     }
   ],
   decisions: [
-    item('DECISION_ID_SENTINEL', 'DECISION_TEXT_SENTINEL', {
+    item('DECISION_ID_INTERNAL', 'DECISION_TEXT_VISIBLE', {
+      title: 'DECISION_TITLE_VISIBLE',
       sources: [{ startMs: 15_015, endMs: 16_016 }]
     })
   ],
   nextSteps: [
-    item('NEXT_STEP_ID_SENTINEL', 'NEXT_STEP_TEXT_SENTINEL', {
+    item('NEXT_STEP_ID_INTERNAL', 'NEXT_STEP_TEXT_VISIBLE', {
+      title: 'NEXT_STEP_TITLE_VISIBLE',
       completed: true,
       sources: [{ startMs: 17_017, endMs: 18_018 }]
     })
@@ -100,42 +109,60 @@ const notes: NormalizedNotes = {
 
 const snapshot: MeetingExportSnapshot = {
   detail: {
-    title: 'MEETING_TITLE_SENTINEL',
-    sourceName: 'SOURCE_NAME_SENTINEL',
+    title: 'MEETING_TITLE_VISIBLE',
+    sourceName: 'SOURCE_NAME_VISIBLE',
     date: Date.UTC(2026, 4, 6, 14, 7, 8),
     durationSeconds: 3_661
   },
-  notes,
-  transcript: [
-    {
-      id: 'TRANSCRIPT_ID_SENTINEL',
-      meetingId: 'TRANSCRIPT_MEETING_ID_SENTINEL',
-      speaker: 'speaker-1',
-      text: 'TRANSCRIPT_TEXT_SENTINEL',
-      startMs: 19_019,
-      endMs: 20_020,
-      confidence: 0.87654321
+  notes
+}
+
+const visibleNoteContent = [
+  'OVERVIEW_TEXT_VISIBLE',
+  'TAKEAWAY_TITLE_VISIBLE',
+  'TAKEAWAY_TEXT_VISIBLE',
+  'TAKEAWAY_TOPIC_VISIBLE',
+  'TAKEAWAY_OWNER_VISIBLE',
+  'TAKEAWAY_DEADLINE_VISIBLE',
+  'SECTION_TITLE_VISIBLE',
+  'SECTION_SUMMARY_VISIBLE',
+  'KEY_POINT_TEXT_VISIBLE',
+  'SUPPORTING_TITLE_VISIBLE',
+  'SUPPORTING_TEXT_VISIBLE',
+  'SUPPORTING_TOPIC_VISIBLE',
+  'SUPPORTING_OWNER_VISIBLE',
+  'SUPPORTING_DEADLINE_VISIBLE',
+  'DECISION_TITLE_VISIBLE',
+  'DECISION_TEXT_VISIBLE',
+  'NEXT_STEP_TITLE_VISIBLE',
+  'NEXT_STEP_TEXT_VISIBLE'
+]
+
+const internalContent = [
+  'NOTES_MEETING_ID_INTERNAL',
+  'TRANSCRIPT_REVISION_INTERNAL',
+  'ATTRIBUTION_REVISION_INTERNAL',
+  'NOTES_REVISION_INTERNAL',
+  'TAKEAWAY_ID_INTERNAL',
+  'LEGACY_SEGMENT_ID_INTERNAL',
+  'LEGACY_MEETING_ID_INTERNAL',
+  'LEGACY_TOPIC_INTERNAL',
+  'SECTION_ID_INTERNAL',
+  'TRANSCRIPT_TEXT_PRIVATE',
+  'SPEAKER_LABEL_PRIVATE',
+  'SPEAKER_SUGGESTION_PRIVATE',
+  'RAW_RECORD_PRIVATE'
+]
+
+function withIgnoredPrivateData(value: MeetingExportSnapshot): MeetingExportSnapshot {
+  return {
+    ...value,
+    transcript: [{ text: 'TRANSCRIPT_TEXT_PRIVATE' }],
+    speakers: {
+      'speaker-1': { label: 'SPEAKER_LABEL_PRIVATE', suggestions: ['SPEAKER_SUGGESTION_PRIVATE'] }
     },
-    {
-      id: 'TRANSCRIPT_TWO_ID_SENTINEL',
-      meetingId: 'TRANSCRIPT_MEETING_ID_SENTINEL',
-      speaker: 'unregistered-speaker',
-      text: 'TRANSCRIPT_TWO_TEXT_SENTINEL',
-      startMs: 21_021,
-      endMs: 22_022,
-      confidence: 0.7654321
-    }
-  ],
-  speakers: {
-    'speaker-1': {
-      label: 'SPEAKER_LABEL_SENTINEL',
-      suggestions: ['SPEAKER_SUGGESTION_ONE_SENTINEL', 'SPEAKER_SUGGESTION_TWO_SENTINEL']
-    },
-    'speaker-unused': {
-      label: 'UNUSED_SPEAKER_LABEL_SENTINEL',
-      suggestions: []
-    }
-  }
+    rawRecord: 'RAW_RECORD_PRIVATE'
+  } as MeetingExportSnapshot
 }
 
 function readZipEntries(buffer: Buffer): Map<string, Buffer> {
@@ -162,8 +189,7 @@ function readZipEntries(buffer: Buffer): Map<string, Buffer> {
     const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28)
     const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength
     const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize)
-    const data = compression === 0 ? Buffer.from(compressed) : inflateRawSync(compressed)
-    entries.set(name, data)
+    entries.set(name, compression === 0 ? Buffer.from(compressed) : inflateRawSync(compressed))
 
     offset += 46 + fileNameLength + extraLength + commentLength
   }
@@ -177,65 +203,40 @@ function xml(entries: Map<string, Buffer>, path: string): string {
 }
 
 describe('meeting export renderers', () => {
-  it('preserves the complete normalized record in the full Markdown variant', () => {
-    const markdown = renderMeetingExportMarkdown(snapshot, 'full')
-    const record = markdown.match(/(`{3,})json\n([\s\S]*?)\n\1/)
+  it('renders every human-readable notes field in Markdown without private source records', () => {
+    const markdown = renderMeetingExportMarkdown(withIgnoredPrivateData(snapshot))
+    const readable = markdown.replace(/\\/g, '')
 
-    expect(markdown).toContain('# MEETING\\_TITLE\\_SENTINEL')
-    expect(markdown).toContain('OVERVIEW\\_TEXT\\_SENTINEL')
-    expect(markdown).toContain('SPEAKER\\_LABEL\\_SENTINEL')
-    expect(markdown).toContain('TRANSCRIPT\\_TEXT\\_SENTINEL')
-    expect(record).not.toBeNull()
-    expect(JSON.parse(record![2])).toEqual(snapshot)
+    expect(readable).toContain('# MEETING_TITLE_VISIBLE')
+    expect(readable).toContain('May 6, 2026 at 2:07 PM UTC')
+    expect(readable).toContain('SOURCE_NAME_VISIBLE')
+    expect(readable).toContain('1h 1m 1s')
+    expect(readable).toContain('[x]')
+    for (const visible of visibleNoteContent) expect(readable).toContain(visible)
+    for (const internal of internalContent) expect(markdown).not.toContain(internal)
+    expect(markdown).not.toContain('Transcript')
+    expect(markdown).not.toContain('Full-fidelity Record')
+    expect(markdown).not.toContain('```json')
   })
 
-  it('keeps human notes and a readable transcript while omitting internals in concise Markdown', () => {
-    const markdown = renderMeetingExportMarkdown(snapshot, 'concise')
-
-    for (const visible of [
-      'OVERVIEW\\_TEXT\\_SENTINEL',
-      'TAKEAWAY\\_TEXT\\_SENTINEL',
-      'SECTION\\_SUMMARY\\_SENTINEL',
-      'KEY\\_POINT\\_TEXT\\_SENTINEL',
-      'SUPPORTING\\_TEXT\\_SENTINEL',
-      'DECISION\\_TEXT\\_SENTINEL',
-      'NEXT\\_STEP\\_TEXT\\_SENTINEL',
-      'SPEAKER\\_LABEL\\_SENTINEL',
-      'TRANSCRIPT\\_TEXT\\_SENTINEL'
-    ]) {
-      expect(markdown).toContain(visible)
-    }
-    for (const internal of [
-      'NOTES_REVISION_SENTINEL',
-      'ATTRIBUTION_REVISION_SENTINEL',
-      'LEGACY_SEGMENT_ID_SENTINEL',
-      'TRANSCRIPT_ID_SENTINEL',
-      'SPEAKER_SUGGESTION_ONE_SENTINEL',
-      '0.87654321'
-    ]) {
-      expect(markdown).not.toContain(internal)
-    }
-  })
-
-  it('emits semantic, print-ready HTML with a restrictive CSP and a full record', () => {
-    const html = renderMeetingExportHtml(snapshot, 'full')
+  it('emits semantic print-ready notes HTML with the established memo styling', () => {
+    const html = renderMeetingExportHtml(withIgnoredPrivateData(snapshot))
 
     expect(html.startsWith('<!doctype html>')).toBe(true)
     expect(html).toContain('<main>')
     expect(html).toContain('<header class="masthead">')
     expect(html).toContain('<section aria-labelledby="notes">')
-    expect(html).toContain('<article class="utterance"')
-    expect(html).toContain('Full-fidelity Record')
     expect(html).toContain("default-src 'none'")
     expect(html).toContain('@page { size: Letter portrait; margin: 1in; }')
     expect(html).toContain('--paper: #FAFAF7')
     expect(html).toContain('--sage: #7A9E7E')
-    expect(html).toContain('&quot;revision&quot;: &quot;sha256:NOTES_REVISION_SENTINEL&quot;')
-    expect(html).toContain('&quot;confidence&quot;: 0.87654321')
-    expect(html).toContain('UNUSED_SPEAKER_LABEL_SENTINEL')
+    for (const visible of visibleNoteContent) expect(html).toContain(visible)
+    for (const internal of internalContent) expect(html).not.toContain(internal)
+    expect(html).not.toContain('id="transcript"')
+    expect(html).not.toContain('Full-fidelity Record')
   })
 
-  it('escapes untrusted content in Markdown, HTML, and DOCX XML', async () => {
+  it('escapes untrusted meeting and note content in Markdown, HTML, and DOCX XML', async () => {
     const unsafe: MeetingExportSnapshot = {
       ...snapshot,
       detail: {
@@ -248,33 +249,24 @@ describe('meeting export renderers', () => {
           ...notes.overview!,
           text: 'A & B <tag attr="value"> _note_ [link](javascript:alert(1))'
         }
-      },
-      transcript: [
-        {
-          ...snapshot.transcript[0],
-          text: '</w:t><script>transcript & text</script>\n```\n# still data'
-        }
-      ]
+      }
     }
 
-    const markdown = renderMeetingExportMarkdown(unsafe, 'full')
+    const markdown = renderMeetingExportMarkdown(unsafe)
     expect(markdown).not.toContain('<script>')
     expect(markdown).toContain('&lt;script&gt;')
     expect(markdown).toContain('&amp;')
     expect(markdown).toContain('\\*title\\*')
     expect(markdown).toContain('\\[link\\]\\(javascript:alert\\(1\\)\\)')
-    const record = markdown.match(/(`{4,})json\n([\s\S]*?)\n\1/)
-    expect(record).not.toBeNull()
-    expect(JSON.parse(record![2])).toEqual(unsafe)
 
-    const html = renderMeetingExportHtml(unsafe, 'full')
+    const html = renderMeetingExportHtml(unsafe)
     expect(html).not.toContain('<script>alert')
     expect(html).not.toContain('</w:t>')
     expect(html).toContain('&lt;script&gt;')
     expect(html).toContain('&amp;')
     expect(html).toContain('&quot;value&quot;')
 
-    const entries = readZipEntries(await renderMeetingExportDocx(unsafe, 'full'))
+    const entries = readZipEntries(await renderMeetingExportDocx(unsafe))
     const documentXml = xml(entries, 'word/document.xml')
     expect(documentXml).not.toContain('<script>')
     expect(documentXml).not.toContain('</w:t><script>')
@@ -286,10 +278,11 @@ describe('meeting export renderers', () => {
     expect(xml(entries, 'docProps/core.xml')).toContain('\ufffd')
   })
 
-  it('builds a deterministic, valid DOCX with compact-reference styles and real numbering', async () => {
+  it('builds a deterministic valid DOCX containing notes but no source internals', async () => {
+    const privateSnapshot = withIgnoredPrivateData(snapshot)
     const [first, second] = await Promise.all([
-      renderMeetingExportDocx(snapshot, 'full'),
-      renderMeetingExportDocx(snapshot, 'full')
+      renderMeetingExportDocx(privateSnapshot),
+      renderMeetingExportDocx(privateSnapshot)
     ])
     expect(first.equals(second)).toBe(true)
     expect(first.subarray(0, 4).toString('hex')).toBe('504b0304')
@@ -306,10 +299,10 @@ describe('meeting export renderers', () => {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'
     )
     expect(documentXml).toContain('AUTODOC MEETING MEMO')
-    expect(documentXml).toContain('OVERVIEW_TEXT_SENTINEL')
-    expect(documentXml).toContain('LEGACY_SEGMENT_ID_SENTINEL')
-    expect(documentXml).toContain('TRANSCRIPT_ID_SENTINEL')
-    expect(documentXml).toContain('SPEAKER_SUGGESTION_ONE_SENTINEL')
+    for (const visible of visibleNoteContent) expect(documentXml).toContain(visible)
+    for (const internal of internalContent) expect(documentXml).not.toContain(internal)
+    expect(documentXml).not.toContain('Transcript')
+    expect(documentXml).not.toContain('Full-fidelity Record')
     expect(documentXml).toContain('w:val="Heading1"')
     expect(documentXml).toContain('w:val="MastheadRule"')
     expect(documentXml).toMatch(/<w:pgSz[^>]*w:w="12240"[^>]*w:h="15840"/)
@@ -318,7 +311,8 @@ describe('meeting export renderers', () => {
     )
 
     expect(stylesXml).toContain('w:styleId="MastheadKicker"')
-    expect(stylesXml).toContain('w:styleId="TechnicalRecord"')
+    expect(stylesXml).not.toContain('w:styleId="TechnicalRecord"')
+    expect(stylesXml).not.toContain('w:styleId="TranscriptLabel"')
     expect(stylesXml).toContain('w:color w:val="4A6B4E"')
     expect(stylesXml).toContain('w:spacing w:after="120" w:line="300" w:lineRule="auto"')
     expect(numberingXml).toContain('w:numFmt w:val="bullet"')
@@ -329,34 +323,86 @@ describe('meeting export renderers', () => {
     expect(coreXml).toContain('2026-05-06T14:07:08.000Z')
   })
 
-  it('keeps the full legacy source union and explicit null revisions', () => {
-    const legacyNotes: NormalizedNotes = {
-      ...notes,
-      source: { format: 'legacy-segments', adapterVersion: 1 },
-      sourceTranscriptRevision: null,
-      sourceAttributionRevision: null,
-      revision: 'legacy-sha256:LEGACY_REVISION_SENTINEL'
-    }
-    const markdown = renderMeetingExportMarkdown({ ...snapshot, notes: legacyNotes }, 'full')
-    const record = markdown.match(/(`{3,})json\n([\s\S]*?)\n\1/)
+  it('renders a quiet empty state when no normalized notes are present', async () => {
+    const empty: MeetingExportSnapshot = { ...snapshot, notes: null }
 
-    expect(JSON.parse(record![2]).notes).toMatchObject({
-      source: { format: 'legacy-segments', adapterVersion: 1 },
-      sourceTranscriptRevision: null,
-      sourceAttributionRevision: null,
-      revision: 'legacy-sha256:LEGACY_REVISION_SENTINEL'
-    })
+    expect(renderMeetingExportMarkdown(empty)).toContain('No notes are available')
+    expect(renderMeetingExportHtml(empty)).toContain('No notes are available')
+    expect(
+      xml(readZipEntries(await renderMeetingExportDocx(empty)), 'word/document.xml')
+    ).toContain('No notes are available')
+  })
+})
+
+describe('hasMeetingExportNotes', () => {
+  const emptyNotes: NormalizedNotes = {
+    ...notes,
+    overview: null,
+    keyTakeaways: [],
+    sections: [],
+    decisions: [],
+    nextSteps: []
+  }
+
+  it('rejects null, structurally empty, whitespace-only, and section-title-only notes', () => {
+    expect(hasMeetingExportNotes({ ...snapshot, notes: null })).toBe(false)
+    expect(hasMeetingExportNotes({ ...snapshot, notes: emptyNotes })).toBe(false)
+    expect(
+      hasMeetingExportNotes({
+        ...snapshot,
+        notes: {
+          ...emptyNotes,
+          overview: { text: '   ', sources: [], provenance: 'user-created' }
+        }
+      })
+    ).toBe(false)
+    expect(
+      hasMeetingExportNotes({
+        ...snapshot,
+        notes: {
+          ...emptyNotes,
+          sections: [
+            {
+              id: 'empty-section',
+              title: 'A title without note content',
+              summary: null,
+              keyPoints: [],
+              supportingDetails: []
+            }
+          ]
+        }
+      })
+    ).toBe(false)
   })
 
-  it('handles meetings with no notes or transcript', async () => {
-    const empty: MeetingExportSnapshot = { ...snapshot, notes: null, transcript: [], speakers: {} }
-
-    expect(renderMeetingExportMarkdown(empty, 'concise')).toContain('No notes are available')
-    expect(renderMeetingExportMarkdown(empty, 'concise')).toContain('No transcript is available')
-    expect(renderMeetingExportHtml(empty, 'concise')).toContain('No notes are available')
+  it('accepts human-readable overview, item metadata, and section content', () => {
+    expect(hasMeetingExportNotes(snapshot)).toBe(true)
     expect(
-      xml(readZipEntries(await renderMeetingExportDocx(empty, 'concise')), 'word/document.xml')
-    ).toContain('No transcript is available')
+      hasMeetingExportNotes({
+        ...snapshot,
+        notes: {
+          ...emptyNotes,
+          decisions: [item('metadata-only', '', { title: null, topic: null, owner: 'Chris' })]
+        }
+      })
+    ).toBe(true)
+    expect(
+      hasMeetingExportNotes({
+        ...snapshot,
+        notes: {
+          ...emptyNotes,
+          sections: [
+            {
+              id: 'summary-section',
+              title: 'Section',
+              summary: { text: 'Summary', sources: [], provenance: 'user-created' },
+              keyPoints: [],
+              supportingDetails: []
+            }
+          ]
+        }
+      })
+    ).toBe(true)
   })
 })
 
@@ -367,24 +413,16 @@ describe('meeting export filenames', () => {
     expect(meetingExportExtension('docx')).toBe('docx')
   })
 
-  it('creates short, filesystem-safe suggested names', () => {
+  it('creates short filesystem-safe names without a presentation variant suffix', () => {
+    expect(createMeetingExportSuggestedFilename('  Q3: Roadmap / Review?  ', 'markdown')).toBe(
+      'Q3 Roadmap Review.md'
+    )
+    expect(createMeetingExportSuggestedFilename('CON', 'docx')).toBe('Meeting CON.docx')
+    expect(createMeetingExportSuggestedFilename('con.txt', 'pdf')).toBe('Meeting con.txt.pdf')
+    expect(createMeetingExportSuggestedFilename('... ', 'pdf')).toBe('Untitled Meeting.pdf')
     expect(
-      createMeetingExportSuggestedFilename('  Q3: Roadmap / Review?  ', 'markdown', 'concise')
-    ).toBe('Q3 Roadmap Review.md')
-    expect(createMeetingExportSuggestedFilename('CON', 'docx', 'full')).toBe(
-      'Meeting CON - Full.docx'
-    )
-    expect(createMeetingExportSuggestedFilename('con.txt', 'pdf', 'concise')).toBe(
-      'Meeting con.txt.pdf'
-    )
-    expect(createMeetingExportSuggestedFilename('... ', 'pdf', 'concise')).toBe(
-      'Untitled Meeting.pdf'
-    )
-    expect(
-      Buffer.byteLength(
-        createMeetingExportSuggestedFilename('📝'.repeat(200), 'docx', 'full'),
-        'utf8'
-      )
+      Buffer.byteLength(createMeetingExportSuggestedFilename('📝'.repeat(200), 'docx'), 'utf8')
     ).toBeLessThanOrEqual(120)
+    expect(createMeetingExportSuggestedFilename('Roadmap', 'docx')).not.toContain('Full')
   })
 })

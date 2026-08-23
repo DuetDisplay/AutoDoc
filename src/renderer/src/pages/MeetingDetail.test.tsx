@@ -189,6 +189,7 @@ function installExportReadyElectronApi(
     },
     'speakers:get': {},
     'meeting:export': { status: 'saved' },
+    'meeting:copy-notes': { status: 'copied' },
     ...overrides
   })
 }
@@ -272,7 +273,7 @@ describe('MeetingDetail', () => {
     expect(document.querySelector('video')).toBeInTheDocument()
   })
 
-  it('keeps Export beside the tabs disabled until transcription and notes reach terminal states', async () => {
+  it('keeps notes actions disabled while generation runs and when no notes were produced', async () => {
     const api = installMockElectronApi({
       'transcription:get-status': 'transcribing',
       'transcription:get-progress': 60,
@@ -298,21 +299,20 @@ describe('MeetingDetail', () => {
 
     await renderMeetingDetail()
 
+    const copyButton = screen.getByRole('button', { name: 'Copy notes' })
     const exportButton = screen.getByRole('button', { name: 'Export' })
+    expect(copyButton).toBeDisabled()
     expect(exportButton).toBeDisabled()
-    expect(exportButton).toHaveAccessibleDescription('Export is available when notes are ready.')
+    expect(copyButton).toHaveAccessibleDescription('Notes are available when generation finishes.')
+    expect(exportButton).toHaveAccessibleDescription(
+      'Notes are available when generation finishes.'
+    )
+    expect(screen.getByRole('button', { name: 'Notes' }).parentElement?.parentElement).toContain(
+      copyButton
+    )
     expect(screen.getByRole('button', { name: 'Notes' }).parentElement?.parentElement).toContain(
       exportButton
     )
-
-    act(() => {
-      api.emit('transcription:status-changed', {
-        meetingId: 'test-123',
-        status: 'complete',
-        progress: 100
-      })
-    })
-    expect(exportButton).toBeDisabled()
 
     act(() => {
       api.emit('segmentation:status-changed', {
@@ -321,10 +321,28 @@ describe('MeetingDetail', () => {
       })
     })
 
-    await waitFor(() => expect(exportButton).toBeEnabled())
+    await waitFor(() => {
+      expect(copyButton).toHaveAccessibleDescription('There aren’t any notes to copy or export.')
+      expect(exportButton).toHaveAccessibleDescription('There aren’t any notes to copy or export.')
+    })
+    expect(copyButton).toBeDisabled()
+    expect(exportButton).toBeDisabled()
   })
 
-  it('exports the current meeting as Full by default', async () => {
+  it('enables notes actions when generated notes exist without waiting on transcript status', async () => {
+    installExportReadyElectronApi({
+      'transcription:get-status': 'transcribing',
+      'transcription:get-progress': 60
+    })
+    await renderMeetingDetail()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Copy notes' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
+    })
+  })
+
+  it('exports the selected format without a presentation variant', async () => {
     const api = installExportReadyElectronApi()
     const user = userEvent.setup()
     await renderMeetingDetail()
@@ -333,36 +351,65 @@ describe('MeetingDetail', () => {
     await waitFor(() => expect(exportButton).toBeEnabled())
     await user.click(exportButton)
 
-    expect(screen.getByRole('button', { name: 'Full' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('dialog', { name: 'Export notes' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Full' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Concise' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /^PDF/ }))
 
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
         meetingId: 'test-123',
-        format: 'pdf',
-        variant: 'full'
+        format: 'pdf'
       })
     })
   })
 
-  it('forwards the selected Concise variant and format to meeting export', async () => {
+  it('copies notes for the current meeting in one click', async () => {
     const api = installExportReadyElectronApi()
     const user = userEvent.setup()
     await renderMeetingDetail()
 
-    const exportButton = screen.getByRole('button', { name: 'Export' })
-    await waitFor(() => expect(exportButton).toBeEnabled())
-    await user.click(exportButton)
-    await user.click(screen.getByRole('button', { name: 'Concise' }))
-    await user.click(screen.getByRole('button', { name: /^Markdown/ }))
+    const copyButton = screen.getByRole('button', { name: 'Copy notes' })
+    await waitFor(() => expect(copyButton).toBeEnabled())
+    await user.click(copyButton)
 
     await waitFor(() => {
-      expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
-        meetingId: 'test-123',
-        format: 'markdown',
-        variant: 'concise'
-      })
+      expect(api.invoke).toHaveBeenCalledWith('meeting:copy-notes', { meetingId: 'test-123' })
     })
+  })
+
+  it('does not let an unrelated title-save failure block notes actions', async () => {
+    let rejectTitleWrite!: (error: Error) => void
+    const pendingTitleWrite = new Promise<void>((_resolve, reject) => {
+      rejectTitleWrite = reject
+    })
+    const api = installExportReadyElectronApi({
+      'recording:update-title': () => pendingTitleWrite
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByText('Test Meeting'))
+    const titleEditor = screen.getByRole('textbox')
+    await user.clear(titleEditor)
+    await user.type(titleEditor, 'Updated title{Enter}')
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('recording:update-title', 'test-123', 'Updated title')
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:copy-notes', expect.anything())
+
+    await act(async () => {
+      rejectTitleWrite(new Error('title storage unavailable'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:copy-notes', { meetingId: 'test-123' })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('Copied')
   })
 
   it('waits for an in-flight notes write before invoking meeting export', async () => {
@@ -414,11 +461,60 @@ describe('MeetingDetail', () => {
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
         meetingId: 'test-123',
-        format: 'docx',
-        variant: 'full'
+        format: 'docx'
       })
     })
     expect(order).toEqual(['notes-write-started', 'meeting-exported'])
+  })
+
+  it('waits for an in-flight notes write before copying notes', async () => {
+    const notes = createEditableNotes()
+    const order: string[] = []
+    let resolveWrite!: (persisted: MeetingNotesV2) => void
+    const pendingWrite = new Promise<MeetingNotesV2>((resolve) => {
+      resolveWrite = resolve
+    })
+    const api = installExportReadyElectronApi({
+      'notes:get-v2': notes,
+      'notes:write-v2': () => {
+        order.push('notes-write-started')
+        return pendingWrite
+      },
+      'meeting:copy-notes': () => {
+        order.push('notes-copied')
+        return { status: 'copied' }
+      }
+    })
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByRole('button', { name: '+ Add topic' }))
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith(
+        'notes:write-v2',
+        'test-123',
+        expect.any(Object),
+        notes.revision
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:copy-notes', expect.anything())
+    expect(order).toEqual(['notes-write-started'])
+
+    await act(async () => {
+      resolveWrite({
+        ...notes,
+        revision: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      })
+      await pendingWrite
+    })
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:copy-notes', { meetingId: 'test-123' })
+    })
+    expect(order).toEqual(['notes-write-started', 'notes-copied'])
   })
 
   it('does not export stale notes when an in-flight notes write fails', async () => {
@@ -454,9 +550,7 @@ describe('MeetingDetail', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'AutoDoc couldn’t export this meeting. Try again.'
-      )
+      expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t export notes. Try again.')
     })
     expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
   })
@@ -510,8 +604,7 @@ describe('MeetingDetail', () => {
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
         meetingId: 'test-123',
-        format: 'docx',
-        variant: 'full'
+        format: 'docx'
       })
     })
     expect(order).toEqual(['legacy-notes-write-started', 'meeting-exported'])
@@ -541,9 +634,7 @@ describe('MeetingDetail', () => {
     await user.click(screen.getByRole('button', { name: /^Word/ }))
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'AutoDoc couldn’t export this meeting. Try again.'
-      )
+      expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t export notes. Try again.')
     })
     expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
   })
@@ -1099,6 +1190,12 @@ describe('MeetingDetail', () => {
     expect(
       screen.getByText('Wrapping up this recording. It should finish appearing in a moment.')
     ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy notes' })).toHaveAccessibleDescription(
+      'Notes are available after this recording finishes.'
+    )
+    expect(screen.getByRole('button', { name: 'Export' })).toHaveAccessibleDescription(
+      'Notes are available after this recording finishes.'
+    )
   })
 
   it('shows a video processing placeholder while videoStatus is processing', async () => {

@@ -1,12 +1,17 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MeetingExportFailureCode, MeetingExportResult } from '../../../shared/types'
+import type {
+  MeetingCopyNotesResult,
+  MeetingExportFailureCode,
+  MeetingExportResult
+} from '../../../shared/types'
 import { MeetingExportMenu, type MeetingExportMenuProps } from './MeetingExportMenu'
 
 function createProps(overrides: Partial<MeetingExportMenuProps> = {}): MeetingExportMenuProps {
   return {
     disabled: false,
+    onCopyNotes: vi.fn(async () => ({ status: 'copied' }) as MeetingCopyNotesResult),
     onExport: vi.fn(async () => ({ status: 'cancelled' }) as MeetingExportResult),
     ...overrides
   }
@@ -14,15 +19,12 @@ function createProps(overrides: Partial<MeetingExportMenuProps> = {}): MeetingEx
 
 async function openExportDialog(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   await user.click(screen.getByRole('button', { name: 'Export' }))
-  return screen.getByRole('dialog', { name: 'Export meeting' })
+  return screen.getByRole('dialog', { name: 'Export notes' })
 }
 
-function deferredResult(): {
-  promise: Promise<MeetingExportResult>
-  resolve: (result: MeetingExportResult) => void
-} {
-  let resolve!: (result: MeetingExportResult) => void
-  const promise = new Promise<MeetingExportResult>((next) => {
+function deferred<T>(): { promise: Promise<T>; resolve: (result: T) => void } {
+  let resolve!: (result: T) => void
+  const promise = new Promise<T>((next) => {
     resolve = next
   })
   return { promise, resolve }
@@ -37,115 +39,191 @@ describe('MeetingExportMenu', () => {
     vi.useRealTimers()
   })
 
-  it('renders an explicit, collapsed Export trigger with accessible popover semantics', () => {
+  it('renders quiet Copy notes and collapsed Export controls', () => {
     render(<MeetingExportMenu {...createProps()} />)
 
-    const trigger = screen.getByRole('button', { name: 'Export' })
-    expect(trigger).toBeEnabled()
-    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(trigger).toHaveAttribute('aria-busy', 'false')
-    expect(trigger).not.toHaveAttribute('aria-controls')
-    expect(trigger.querySelector('svg')).toBeInTheDocument()
+    const copy = screen.getByRole('button', { name: 'Copy notes' })
+    const exportTrigger = screen.getByRole('button', { name: 'Export' })
+    expect(copy).toBeEnabled()
+    expect(copy).toHaveAttribute('aria-busy', 'false')
+    expect(exportTrigger).toBeEnabled()
+    expect(exportTrigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(exportTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(exportTrigger).toHaveAttribute('aria-busy', 'false')
+    expect(exportTrigger).not.toHaveAttribute('aria-controls')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('disables the trigger and exposes the supplied reason to assistive technology', async () => {
+  it('disables both controls and exposes the supplied reason', async () => {
     const user = userEvent.setup()
     render(
       <MeetingExportMenu
         {...createProps({
           disabled: true,
-          disabledReason: 'Export is available when notes are ready.'
+          disabledReason: 'Notes are available when generation finishes.'
         })}
       />
     )
 
-    const trigger = screen.getByRole('button', { name: 'Export' })
-    expect(trigger).toBeDisabled()
-    expect(trigger).toHaveAccessibleDescription('Export is available when notes are ready.')
-    expect(trigger).toHaveAttribute('title', 'Export is available when notes are ready.')
-    await user.click(trigger)
+    for (const label of ['Copy notes', 'Export']) {
+      const control = screen.getByRole('button', { name: label })
+      expect(control).toBeDisabled()
+      expect(control).toHaveAccessibleDescription('Notes are available when generation finishes.')
+      expect(control).toHaveAttribute('title', 'Notes are available when generation finishes.')
+      await user.click(control)
+    }
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('opens a labelled, right-aligned dialog with Full selected and all format choices', async () => {
+  it('copies notes in one click without opening the export dialog', async () => {
+    const props = createProps()
+    const user = userEvent.setup()
+    render(<MeetingExportMenu {...props} />)
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+    await waitFor(() => expect(props.onCopyNotes).toHaveBeenCalledOnce())
+    expect(props.onExport).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('locks both controls while copy is pending, then politely reports Copied', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    const pending = deferred<MeetingCopyNotesResult>()
+    const onCopyNotes = vi.fn(() => pending.promise)
+    const user = userEvent.setup()
+    render(<MeetingExportMenu {...createProps({ onCopyNotes })} />)
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+    const busyCopy = screen.getByRole('button', { name: 'Copying…' })
+    expect(busyCopy).toBeDisabled()
+    expect(busyCopy).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled()
+    await user.click(busyCopy)
+    expect(onCopyNotes).toHaveBeenCalledOnce()
+
+    await act(async () => pending.resolve({ status: 'copied' }))
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveAttribute('aria-atomic', 'true')
+    expect(status).toHaveTextContent('Copied')
+    expect(screen.getByRole('button', { name: 'Copied' })).toHaveClass(
+      'bg-sage-light',
+      'text-sage-dark'
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toHaveFocus())
+
+    const successTimerIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 2_400)
+    expect(successTimerIndex).toBeGreaterThanOrEqual(0)
+    const successCallback = timeoutSpy.mock.calls[successTimerIndex][0] as () => void
+    const successTimerId = timeoutSpy.mock.results[successTimerIndex].value as number
+    window.clearTimeout(successTimerId)
+    act(successCallback)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy notes' })).toBeInTheDocument()
+    timeoutSpy.mockRestore()
+  })
+
+  it('keeps the actionable nothing-to-copy error visible until dismissed', async () => {
+    const user = userEvent.setup()
+    render(
+      <MeetingExportMenu
+        {...createProps({
+          onCopyNotes: vi.fn(async () => ({ status: 'failed', code: 'nothing-to-copy' }))
+        })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('There aren’t any notes to copy yet.')
+    expect(screen.getByRole('button', { name: 'Copy notes' })).toBeEnabled()
+    await act(async () => Promise.resolve())
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss copy error' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['invalid-request', 'copy-failed'] as const)(
+    'maps copy failure %s to clear retry copy',
+    async (code) => {
+      const user = userEvent.setup()
+      render(
+        <MeetingExportMenu
+          {...createProps({
+            onCopyNotes: vi.fn(async () => ({ status: 'failed', code }))
+          })}
+        />
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t copy notes. Try again.')
+    }
+  )
+
+  it('recovers from an unexpected rejected copy request', async () => {
+    const user = userEvent.setup()
+    render(
+      <MeetingExportMenu
+        {...createProps({
+          onCopyNotes: vi.fn(async () => {
+            throw new Error('IPC unavailable')
+          })
+        })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Copy notes' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t copy notes. Try again.')
+  })
+
+  it('opens Export notes with only the three file formats', async () => {
     const user = userEvent.setup()
     render(<MeetingExportMenu {...createProps()} />)
 
     const dialog = await openExportDialog(user)
-    const trigger = screen.getByRole('button', { name: 'Export' })
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(trigger).toHaveAttribute('aria-controls', dialog.id)
+    const exportTrigger = screen.getByRole('button', { name: 'Export' })
+    expect(exportTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(exportTrigger).toHaveAttribute('aria-controls', dialog.id)
     expect(dialog).toHaveAttribute('aria-modal', 'false')
-    expect(dialog).toHaveAccessibleDescription(
-      'Choose how much detail to include, then a file format.'
-    )
-    expect(dialog).toHaveClass('right-0', 'w-72', 'border-border', 'bg-bg-card', 'rounded-xl')
+    expect(dialog).toHaveAccessibleDescription('Choose a file format.')
+    expect(dialog).toHaveClass('right-0', 'w-64', 'border-border', 'bg-bg-card', 'rounded-xl')
+    expect(screen.queryByRole('button', { name: 'Full' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Concise' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/stored note|polished summary/i)).not.toBeInTheDocument()
 
-    const full = screen.getByRole('button', { name: 'Full' })
-    const concise = screen.getByRole('button', { name: 'Concise' })
-    expect(full).toHaveAttribute('aria-pressed', 'true')
-    expect(concise).toHaveAttribute('aria-pressed', 'false')
-    expect(full).toHaveFocus()
-    expect(screen.getByText('Every stored note and transcript detail.')).toBeInTheDocument()
-
-    const formatButtons = screen
-      .getAllByRole('button')
-      .filter((button) =>
-        /^(PDF|Word|Markdown)/.test(button.getAttribute('aria-label') ?? button.textContent ?? '')
-      )
-    expect(formatButtons).toHaveLength(3)
-    expect(formatButtons[0]).toHaveAccessibleName('PDF Best for sharing .pdf')
-    expect(formatButtons[1]).toHaveAccessibleName('Word Editable document .docx')
-    expect(formatButtons[2]).toHaveAccessibleName('Markdown Plain text .md')
-  })
-
-  it('switches to Concise and explains the presentation-only variant', async () => {
-    const user = userEvent.setup()
-    render(<MeetingExportMenu {...createProps()} />)
-    await openExportDialog(user)
-
-    await user.click(screen.getByRole('button', { name: 'Concise' }))
-
-    expect(screen.getByRole('button', { name: 'Full' })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByRole('button', { name: 'Concise' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('A polished summary for sharing.')).toBeInTheDocument()
-    expect(screen.queryByText('Every stored note and transcript detail.')).not.toBeInTheDocument()
-  })
-
-  it('dispatches PDF with the Full default', async () => {
-    const user = userEvent.setup()
-    const props = createProps()
-    render(<MeetingExportMenu {...props} />)
-    await openExportDialog(user)
-
-    await user.click(screen.getByRole('button', { name: /^PDF/ }))
-
-    await waitFor(() => expect(props.onExport).toHaveBeenCalledWith('pdf', 'full'))
+    expect(screen.getByRole('button', { name: 'PDF Best for sharing .pdf' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Word Editable document .docx' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Markdown Plain text .md' })).toBeInTheDocument()
   })
 
   it.each([
+    ['PDF', 'pdf'],
     ['Word', 'docx'],
-    ['Markdown', 'markdown'],
-    ['PDF', 'pdf']
-  ] as const)('dispatches %s with the Concise variant', async (label, format) => {
-    const user = userEvent.setup()
+    ['Markdown', 'markdown']
+  ] as const)('dispatches the %s format without a presentation variant', async (label, format) => {
     const props = createProps()
+    const user = userEvent.setup()
     render(<MeetingExportMenu {...props} />)
     await openExportDialog(user)
-    await user.click(screen.getByRole('button', { name: 'Concise' }))
 
     await user.click(screen.getByRole('button', { name: new RegExp(`^${label}`) }))
 
-    await waitFor(() => expect(props.onExport).toHaveBeenCalledWith(format, 'concise'))
+    await waitFor(() => expect(props.onExport).toHaveBeenCalledWith(format))
+    expect(props.onExport).toHaveBeenCalledOnce()
   })
 
-  it('closes on Escape and restores focus to the Export trigger', async () => {
+  it('closes on Escape and restores focus to Export', async () => {
     const user = userEvent.setup()
     render(<MeetingExportMenu {...createProps()} />)
     await openExportDialog(user)
-    expect(screen.getByRole('button', { name: 'Full' })).toHaveFocus()
 
     await user.keyboard('{Escape}')
 
@@ -169,62 +247,42 @@ describe('MeetingExportMenu', () => {
     expect(screen.getByRole('button', { name: 'Outside' })).toHaveFocus()
   })
 
-  it('resets the safer Full variant whenever the popover is reopened', async () => {
+  it('locks both controls while export is pending and treats cancel silently', async () => {
+    const pending = deferred<MeetingExportResult>()
+    const onExport = vi.fn(() => pending.promise)
     const user = userEvent.setup()
-    render(
-      <div>
-        <MeetingExportMenu {...createProps()} />
-        <button type="button">Outside</button>
-      </div>
-    )
-    await openExportDialog(user)
-    await user.click(screen.getByRole('button', { name: 'Concise' }))
-    await user.click(screen.getByRole('button', { name: 'Outside' }))
-
-    await user.click(screen.getByRole('button', { name: 'Export' }))
-
-    expect(screen.getByRole('button', { name: 'Full' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('Every stored note and transcript detail.')).toBeInTheDocument()
-  })
-
-  it('locks the trigger and reports busy while export is pending, then treats cancel silently', async () => {
-    const user = userEvent.setup()
-    const deferred = deferredResult()
-    const onExport = vi.fn(() => deferred.promise)
     render(<MeetingExportMenu {...createProps({ onExport })} />)
     await openExportDialog(user)
 
     await user.click(screen.getByRole('button', { name: /^PDF/ }))
 
-    const busyTrigger = screen.getByRole('button', { name: 'Exporting…' })
-    expect(busyTrigger).toBeDisabled()
-    expect(busyTrigger).toHaveAttribute('aria-busy', 'true')
+    const busyExport = screen.getByRole('button', { name: 'Exporting…' })
+    expect(busyExport).toBeDisabled()
+    expect(busyExport).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: 'Copy notes' })).toBeDisabled()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    await user.click(busyTrigger)
+    await user.click(busyExport)
     expect(onExport).toHaveBeenCalledOnce()
 
-    await act(async () => deferred.resolve({ status: 'cancelled' }))
+    await act(async () => pending.resolve({ status: 'cancelled' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled())
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('shows and politely announces temporary success', async () => {
+  it('briefly turns Export into a politely announced success', async () => {
     const timeoutSpy = vi.spyOn(window, 'setTimeout')
     const user = userEvent.setup()
-    const props = createProps({
-      onExport: vi.fn(async () => ({ status: 'saved' }))
-    })
-    render(<MeetingExportMenu {...props} />)
+    render(
+      <MeetingExportMenu {...createProps({ onExport: vi.fn(async () => ({ status: 'saved' })) })} />
+    )
     await openExportDialog(user)
 
     await user.click(screen.getByRole('button', { name: /^PDF/ }))
-    await act(async () => Promise.resolve())
 
-    const status = screen.getByRole('status')
+    const status = await screen.findByRole('status')
     expect(status).toHaveAttribute('aria-live', 'polite')
-    expect(status).toHaveAttribute('aria-atomic', 'true')
     expect(status).toHaveTextContent('Exported')
     expect(screen.getByRole('button', { name: 'Exported' })).toHaveClass(
       'bg-sage-light',
@@ -243,12 +301,15 @@ describe('MeetingExportMenu', () => {
     timeoutSpy.mockRestore()
   })
 
-  it('shows the exact actionable low-disk error and allows it to be dismissed', async () => {
+  it('shows the exact low-disk error until it is dismissed', async () => {
     const user = userEvent.setup()
-    const props = createProps({
-      onExport: vi.fn(async () => ({ status: 'failed', code: 'disk-full' }))
-    })
-    render(<MeetingExportMenu {...props} />)
+    render(
+      <MeetingExportMenu
+        {...createProps({
+          onExport: vi.fn(async () => ({ status: 'failed', code: 'disk-full' }))
+        })}
+      />
+    )
     await openExportDialog(user)
 
     await user.click(screen.getByRole('button', { name: /^PDF/ }))
@@ -257,30 +318,29 @@ describe('MeetingExportMenu', () => {
     expect(alert).toHaveTextContent(
       'Not enough disk space to export. Choose another location or free up space.'
     )
-    expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
+    await act(async () => Promise.resolve())
+    expect(screen.getByRole('alert')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Dismiss export error' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it.each([
-    ['nothing-to-export', 'There’s nothing ready to export for this meeting.'],
+    ['nothing-to-export', 'There aren’t any notes to export yet.'],
     [
       'permission-denied',
-      'AutoDoc couldn’t save to that location. Choose another location and try again.'
+      'AutoDoc couldn’t save the notes there. Choose another location and try again.'
     ],
-    ['invalid-request', 'AutoDoc couldn’t export this meeting. Try again.'],
-    ['render-failed', 'AutoDoc couldn’t export this meeting. Try again.'],
-    ['write-failed', 'AutoDoc couldn’t export this meeting. Try again.']
+    ['invalid-request', 'Couldn’t export notes. Try again.'],
+    ['render-failed', 'Couldn’t export notes. Try again.'],
+    ['write-failed', 'Couldn’t export notes. Try again.']
   ] as const)(
-    'maps %s to clear failure copy',
+    'maps export failure %s to clear retry copy',
     async (code: MeetingExportFailureCode, expectedMessage: string) => {
       const user = userEvent.setup()
       render(
         <MeetingExportMenu
-          {...createProps({
-            onExport: vi.fn(async () => ({ status: 'failed', code }))
-          })}
+          {...createProps({ onExport: vi.fn(async () => ({ status: 'failed', code })) })}
         />
       )
       await openExportDialog(user)
@@ -306,13 +366,11 @@ describe('MeetingExportMenu', () => {
 
     await user.click(screen.getByRole('button', { name: /^PDF/ }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'AutoDoc couldn’t export this meeting. Try again.'
-    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t export notes. Try again.')
     expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
   })
 
-  it('closes the popover if export becomes unavailable', async () => {
+  it('closes the popover if notes actions become unavailable', async () => {
     const user = userEvent.setup()
     const props = createProps()
     const { rerender } = render(<MeetingExportMenu {...props} />)
@@ -322,11 +380,12 @@ describe('MeetingExportMenu', () => {
       <MeetingExportMenu
         {...props}
         disabled
-        disabledReason="Export is available when notes are ready."
+        disabledReason="There aren’t any notes to copy or export."
       />
     )
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy notes' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled()
   })
 })

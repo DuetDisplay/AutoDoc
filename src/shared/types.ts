@@ -196,12 +196,10 @@ export type NormalizedNotes = NormalizedNotesBase &
   )
 
 export type MeetingExportFormat = 'markdown' | 'pdf' | 'docx'
-export type MeetingExportVariant = 'full' | 'concise'
 
 export interface MeetingExportRequest {
   meetingId: string
   format: MeetingExportFormat
-  variant: MeetingExportVariant
 }
 
 export type MeetingExportFailureCode =
@@ -216,6 +214,16 @@ export type MeetingExportResult =
   | { status: 'saved' }
   | { status: 'cancelled' }
   | { status: 'failed'; code: MeetingExportFailureCode }
+
+export interface MeetingCopyNotesRequest {
+  meetingId: string
+}
+
+export type MeetingCopyNotesFailureCode = 'invalid-request' | 'nothing-to-copy' | 'copy-failed'
+
+export type MeetingCopyNotesResult =
+  | { status: 'copied' }
+  | { status: 'failed'; code: MeetingCopyNotesFailureCode }
 
 /** Stable, serializable address for any semantic block in a normalized note document. */
 export type NoteBlockRef =

@@ -3,12 +3,8 @@ import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  MeetingNotesContent,
-  MeetingNotesV2,
-  MeetingSegments,
-  Transcript
-} from '../../../shared/types'
+import type { MeetingNotesContent, MeetingNotesV2, MeetingSegments } from '../../../shared/types'
+import { encryptJSON } from '../crypto'
 import { loadMeetingExportSnapshot } from '../meeting-export-sources'
 import {
   computeNotesAttributionRevision,
@@ -37,18 +33,6 @@ interface FileFingerprint {
   sha256: string
   size: number
   mtimeMs: number
-}
-
-function transcriptRow(meetingId: string): Transcript {
-  return {
-    id: 'utterance-1',
-    meetingId,
-    speaker: 'speaker-1',
-    text: 'Ship the export flow after visual QA.',
-    startMs: 1_250,
-    endMs: 4_750,
-    confidence: 0.97
-  }
 }
 
 function legacySegments(meetingId: string): MeetingSegments {
@@ -82,12 +66,24 @@ function v2Notes(meetingId: string): MeetingNotesV2 {
       provenance: 'generated'
     },
     keyTakeaways: [],
-    sections: [],
+    sections: [
+      {
+        id: 'section-1',
+        title: 'Export scope',
+        summary: {
+          text: 'Exports contain generated notes only.',
+          sources: [{ startMs: 4_751, endMs: 7_000 }],
+          provenance: 'generated'
+        },
+        keyPoints: [],
+        supportingDetails: []
+      }
+    ],
     decisions: [],
     nextSteps: []
   }
   const sourceTranscriptRevision = computeTranscriptRevision(meetingId, [
-    { startMs: 1_250, text: 'Ship the export flow after visual QA.' }
+    { startMs: 1_250, text: 'Private transcript source not exported.' }
   ])
   const sourceAttributionRevision = computeNotesAttributionRevision(meetingId, [
     { id: 'speaker-1', confirmedSpeakerLabel: 'Chris' }
@@ -150,13 +146,9 @@ describe('loadMeetingExportSnapshot', () => {
     }
   }
 
-  it('loads exact legacy notes, transcript, speakers, and persisted title metadata without touching source files', async () => {
+  it('loads exact legacy notes and title metadata while ignoring transcript and speaker bytes', async () => {
     const meetingId = 'meeting-legacy-export'
     const meetingDir = await createMeeting(meetingId)
-    const transcript = [transcriptRow(meetingId)]
-    const speakers = {
-      'speaker-1': { label: 'Chris', suggestions: ['Chris', 'Christopher'] }
-    }
     const metadata = {
       sourceName: 'Screen 1',
       startedAt: Date.UTC(2026, 7, 23, 14, 30),
@@ -167,78 +159,108 @@ describe('loadMeetingExportSnapshot', () => {
     }
     const sourceFiles = await Promise.all([
       writeJson(meetingDir, 'segments.json', legacySegments(meetingId)),
-      writeJson(meetingDir, 'transcript.json', transcript),
-      writeJson(meetingDir, 'speakers.json', speakers),
-      writeJson(meetingDir, 'metadata.json', metadata)
+      writeJson(meetingDir, 'metadata.json', metadata),
+      writeJson(meetingDir, 'transcript.json', 'TRANSCRIPT_PRIVATE_INVALID_SHAPE'),
+      writeJson(meetingDir, 'speakers.json', 'SPEAKERS_PRIVATE_INVALID_SHAPE')
     ])
     const before = await Promise.all(sourceFiles.map(fingerprint))
     const entriesBefore = await fsp.readdir(meetingDir)
 
     const snapshot = await loadMeetingExportSnapshot(recordingsDir, meetingId)
 
-    expect(snapshot.detail).toEqual({
-      title: 'Customer-ready export plan',
-      sourceName: 'Export Design Review',
-      date: metadata.startedAt,
-      durationSeconds: metadata.durationSeconds
+    expect(snapshot).toEqual({
+      detail: {
+        title: 'Customer-ready export plan',
+        sourceName: 'Export Design Review',
+        date: metadata.startedAt,
+        durationSeconds: metadata.durationSeconds
+      },
+      notes: expect.objectContaining({
+        normalizedSchemaVersion: 1,
+        meetingId,
+        source: { format: 'legacy-segments', adapterVersion: 1 },
+        decisions: [
+          expect.objectContaining({
+            id: 'decision-1',
+            title: 'Ship document exports',
+            text: 'Markdown, PDF, and Word will ship together.',
+            owner: 'Chris',
+            deadline: '2026-08-30',
+            provenance: 'legacy',
+            sources: [{ startMs: 1_250, endMs: 4_750 }]
+          })
+        ]
+      })
     })
-    expect(snapshot.transcript).toEqual(transcript)
-    expect(snapshot.speakers).toEqual(speakers)
-    expect(snapshot.notes).toMatchObject({
-      normalizedSchemaVersion: 1,
-      meetingId,
-      source: { format: 'legacy-segments', adapterVersion: 1 },
-      decisions: [
-        {
-          id: 'decision-1',
-          title: 'Ship document exports',
-          text: 'Markdown, PDF, and Word will ship together.',
-          owner: 'Chris',
-          deadline: '2026-08-30',
-          provenance: 'legacy',
-          sources: [{ startMs: 1_250, endMs: 4_750 }]
-        }
-      ]
-    })
-
+    expect(snapshot).not.toHaveProperty('transcript')
+    expect(snapshot).not.toHaveProperty('speakers')
     expect(await Promise.all(sourceFiles.map(fingerprint))).toEqual(before)
     expect((await fsp.readdir(meetingDir)).sort()).toEqual(entriesBefore.sort())
   })
 
-  it('loads and normalizes a valid plaintext Notes V2 document', async () => {
-    const meetingId = 'meeting-v2-export'
+  it('decrypts only Notes V2 and metadata while malformed private sources remain irrelevant', async () => {
+    const meetingId = 'meeting-encrypted-v2-export'
     const meetingDir = await createMeeting(meetingId)
-    const notes = v2Notes(meetingId)
+    const persistedNotes = v2Notes(meetingId)
+    const metadata = {
+      sourceName: 'Entire Screen',
+      startedAt: 1_777_000_000_000,
+      stoppedAt: 1_777_000_060_000,
+      durationSeconds: 60,
+      customTitle: 'Encrypted Notes V2 export'
+    }
     await Promise.all([
-      writeJson(meetingDir, 'notes.json', notes),
-      writeJson(meetingDir, 'metadata.json', {
-        sourceName: 'Entire Screen',
-        startedAt: 1_777_000_000_000,
-        stoppedAt: 1_777_000_060_000,
-        durationSeconds: 60,
-        customTitle: 'Notes V2 export'
-      })
+      encryptJSON(persistedNotes, path.join(meetingDir, 'notes.json')),
+      encryptJSON(metadata, path.join(meetingDir, 'metadata.json')),
+      fsp.writeFile(path.join(meetingDir, 'transcript.json'), '{not valid json'),
+      fsp.writeFile(path.join(meetingDir, 'speakers.json'), '{not valid json')
     ])
 
     const snapshot = await loadMeetingExportSnapshot(recordingsDir, meetingId)
 
-    expect(snapshot.detail.title).toBe('Notes V2 export')
+    expect(snapshot.detail).toEqual({
+      title: 'Encrypted Notes V2 export',
+      sourceName: 'Entire Screen',
+      date: metadata.startedAt,
+      durationSeconds: 60
+    })
     expect(snapshot.notes).toEqual({
       normalizedSchemaVersion: 1,
       meetingId,
       source: { format: 'notes-v2', schemaVersion: 2 },
-      sourceTranscriptRevision: notes.sourceTranscriptRevision,
-      sourceAttributionRevision: notes.sourceAttributionRevision,
-      revision: notes.revision,
-      overview: notes.overview,
+      sourceTranscriptRevision: persistedNotes.sourceTranscriptRevision,
+      sourceAttributionRevision: persistedNotes.sourceAttributionRevision,
+      revision: persistedNotes.revision,
+      overview: persistedNotes.overview,
       keyTakeaways: [],
-      sections: [],
+      sections: persistedNotes.sections.map((section) => ({
+        ...section,
+        keyPoints: [],
+        supportingDetails: []
+      })),
       decisions: [],
       nextSteps: []
     })
+    expect(Object.keys(snapshot).sort()).toEqual(['detail', 'notes'])
   })
 
-  it('treats transcript, speakers, metadata, and notes as independently optional', async () => {
+  it('does not inspect transcript or speaker paths at all', async () => {
+    const meetingId = 'meeting-private-source-directories'
+    const meetingDir = await createMeeting(meetingId)
+    await Promise.all([
+      writeJson(meetingDir, 'segments.json', legacySegments(meetingId)),
+      fsp.mkdir(path.join(meetingDir, 'transcript.json')),
+      fsp.mkdir(path.join(meetingDir, 'speakers.json'))
+    ])
+
+    const snapshot = await loadMeetingExportSnapshot(recordingsDir, meetingId)
+
+    expect(snapshot.notes?.decisions[0].text).toBe('Markdown, PDF, and Word will ship together.')
+    expect(snapshot).not.toHaveProperty('transcript')
+    expect(snapshot).not.toHaveProperty('speakers')
+  })
+
+  it('treats metadata and notes as independently optional', async () => {
     const meetingId = 'meeting-empty-export'
     const meetingDir = await createMeeting(meetingId)
     const meetingStats = await fsp.stat(meetingDir)
@@ -252,9 +274,7 @@ describe('loadMeetingExportSnapshot', () => {
         date: meetingStats.birthtimeMs,
         durationSeconds: null
       },
-      notes: null,
-      transcript: [],
-      speakers: {}
+      notes: null
     })
     expect(await fsp.readdir(meetingDir)).toEqual([])
   })
@@ -264,7 +284,7 @@ describe('loadMeetingExportSnapshot', () => {
     async (meetingId) => {
       const outsideDir = path.join(root, 'outside-meeting')
       await fsp.mkdir(outsideDir, { recursive: true })
-      await fsp.writeFile(path.join(outsideDir, 'transcript.json'), '{deliberately-invalid-json')
+      await fsp.writeFile(path.join(outsideDir, 'metadata.json'), '{deliberately-invalid-json')
 
       await expect(loadMeetingExportSnapshot(recordingsDir, meetingId)).rejects.toMatchObject({
         name: 'NotesRepositoryError',
@@ -273,7 +293,7 @@ describe('loadMeetingExportSnapshot', () => {
     }
   )
 
-  it('rejects a meeting directory symlink', async () => {
+  it.skipIf(process.platform === 'win32')('rejects a meeting directory symlink', async () => {
     const meetingId = 'symlinked-meeting'
     const outsideDir = path.join(root, 'outside-symlink-target')
     await fsp.mkdir(outsideDir)
@@ -285,82 +305,23 @@ describe('loadMeetingExportSnapshot', () => {
     })
   })
 
-  it('rejects a symlinked optional export source file', async () => {
-    const meetingId = 'meeting-symlinked-transcript'
+  it.skipIf(process.platform === 'win32')('rejects a symlinked metadata file', async () => {
+    const meetingId = 'meeting-symlinked-metadata'
     const meetingDir = await createMeeting(meetingId)
-    const outsideTranscript = path.join(root, 'outside-transcript.json')
-    await fsp.writeFile(outsideTranscript, JSON.stringify([transcriptRow(meetingId)]))
-    await fsp.symlink(outsideTranscript, path.join(meetingDir, 'transcript.json'), 'file')
+    const outsideMetadata = path.join(root, 'outside-metadata.json')
+    await fsp.writeFile(
+      outsideMetadata,
+      JSON.stringify({
+        sourceName: 'Screen',
+        startedAt: 1,
+        stoppedAt: 2,
+        durationSeconds: 1
+      })
+    )
+    await fsp.symlink(outsideMetadata, path.join(meetingDir, 'metadata.json'), 'file')
 
     await expect(loadMeetingExportSnapshot(recordingsDir, meetingId)).rejects.toThrow(
       'Unsafe export source data'
-    )
-  })
-
-  it.each([
-    {
-      name: 'an extra field',
-      build: (meetingId: string) => ({ ...transcriptRow(meetingId), privateField: 'leak' })
-    },
-    {
-      name: 'a missing field',
-      build: (meetingId: string) => {
-        const row: Partial<Transcript> = transcriptRow(meetingId)
-        delete row.confidence
-        return row
-      }
-    },
-    {
-      name: 'a mismatched meeting ID',
-      build: (meetingId: string) => ({ ...transcriptRow(meetingId), meetingId: 'another-meeting' })
-    },
-    {
-      name: 'a negative timestamp',
-      build: (meetingId: string) => ({ ...transcriptRow(meetingId), startMs: -1 })
-    },
-    {
-      name: 'an end before its start',
-      build: (meetingId: string) => ({ ...transcriptRow(meetingId), endMs: 1_000 })
-    },
-    {
-      name: 'a nonnumeric confidence',
-      build: (meetingId: string) => ({ ...transcriptRow(meetingId), confidence: 'high' })
-    }
-  ])('rejects transcript rows containing $name', async ({ build }) => {
-    const meetingId = 'meeting-invalid-transcript'
-    const meetingDir = await createMeeting(meetingId)
-    await writeJson(meetingDir, 'transcript.json', [build(meetingId)])
-
-    await expect(loadMeetingExportSnapshot(recordingsDir, meetingId)).rejects.toThrow(
-      /Invalid (transcript|export source) data/
-    )
-  })
-
-  it('rejects syntactically corrupt transcript JSON', async () => {
-    const meetingId = 'meeting-corrupt-transcript'
-    const meetingDir = await createMeeting(meetingId)
-    await fsp.writeFile(path.join(meetingDir, 'transcript.json'), '[{"id":')
-
-    await expect(loadMeetingExportSnapshot(recordingsDir, meetingId)).rejects.toBeInstanceOf(
-      SyntaxError
-    )
-  })
-
-  it.each([
-    { name: 'a non-object speaker map', value: [] },
-    { name: 'an unknown speaker field', value: { 'speaker-1': { label: 'Chris', color: 'sage' } } },
-    { name: 'a non-string label', value: { 'speaker-1': { label: 42 } } },
-    {
-      name: 'a non-string suggestion',
-      value: { 'speaker-1': { label: 'Chris', suggestions: ['Chris', 42] } }
-    }
-  ])('rejects malformed speakers with $name', async ({ value }) => {
-    const meetingId = 'meeting-invalid-speakers'
-    const meetingDir = await createMeeting(meetingId)
-    await writeJson(meetingDir, 'speakers.json', value)
-
-    await expect(loadMeetingExportSnapshot(recordingsDir, meetingId)).rejects.toThrow(
-      /Invalid (export source|speaker) data/
     )
   })
 

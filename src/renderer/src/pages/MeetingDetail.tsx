@@ -8,9 +8,9 @@ import type {
   MeetingSegments,
   MeetingNotesContent,
   MeetingNotesV2,
+  MeetingCopyNotesResult,
   MeetingExportFormat,
   MeetingExportResult,
-  MeetingExportVariant,
   Transcript,
   TranscriptionStatus,
   SegmentationStatus,
@@ -1067,23 +1067,31 @@ export function MeetingDetail() {
     void flushNotesWrites()
   }
 
+  const flushMeetingWrites = useCallback(async (): Promise<boolean> => {
+    if (!id) return false
+    const [notesSaved, legacyNotesSaved] = await Promise.all([
+      flushNotesWrites(),
+      flushSegmentsWritesFor(id),
+      flushAuxiliaryWrites(id)
+    ])
+    return notesSaved && legacyNotesSaved
+  }, [flushAuxiliaryWrites, flushNotesWrites, flushSegmentsWritesFor, id])
+
+  const handleCopyNotes = useCallback(async (): Promise<MeetingCopyNotesResult> => {
+    if (!id) return { status: 'failed', code: 'invalid-request' }
+    if (!(await flushMeetingWrites())) return { status: 'failed', code: 'copy-failed' }
+    return window.electronAPI.invoke('meeting:copy-notes', { meetingId: id })
+  }, [flushMeetingWrites, id])
+
   const handleMeetingExport = useCallback(
-    async (
-      format: MeetingExportFormat,
-      variant: MeetingExportVariant
-    ): Promise<MeetingExportResult> => {
+    async (format: MeetingExportFormat): Promise<MeetingExportResult> => {
       if (!id) return { status: 'failed', code: 'invalid-request' }
-      const [notesSaved, legacyNotesSaved, auxiliaryWritesSaved] = await Promise.all([
-        flushNotesWrites(),
-        flushSegmentsWritesFor(id),
-        flushAuxiliaryWrites(id)
-      ])
-      if (!notesSaved || !legacyNotesSaved || !auxiliaryWritesSaved) {
+      if (!(await flushMeetingWrites())) {
         return { status: 'failed', code: 'write-failed' }
       }
-      return window.electronAPI.invoke('meeting:export', { meetingId: id, format, variant })
+      return window.electronAPI.invoke('meeting:export', { meetingId: id, format })
     },
-    [flushAuxiliaryWrites, flushNotesWrites, flushSegmentsWritesFor, id]
+    [flushMeetingWrites, id]
   )
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -1201,15 +1209,14 @@ export function MeetingDetail() {
     segmentationStatus === 'queued' ||
     segmentationStatus === 'downloading-model' ||
     segmentationStatus === 'segmenting'
-  const exportContentReady =
-    transcriptionStatus === 'complete' &&
-    (segmentationStatus === 'complete' ||
-      segmentationStatus === 'no-notes' ||
-      segmentationStatus === 'failed')
-  const exportDisabled = detail?.isFinalizing === true || !exportContentReady
-  const exportDisabledReason = detail?.isFinalizing
-    ? 'Export is available after this recording finishes.'
-    : 'Export is available when notes are ready.'
+  const hasNotesContent = notesV2 !== null || hasLegacyItems
+  const notesActionsDisabled =
+    detail?.isFinalizing === true || notesGenerationInFlight || !hasNotesContent
+  const notesActionsDisabledReason = detail?.isFinalizing
+    ? 'Notes are available after this recording finishes.'
+    : notesGenerationInFlight
+      ? 'Notes are available when generation finishes.'
+      : 'There aren’t any notes to copy or export.'
 
   const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
     const groups: { topic: string | null; items: Segment[] }[] = []
@@ -1337,8 +1344,9 @@ export function MeetingDetail() {
         </div>
         <div className="pb-1.5">
           <MeetingExportMenu
-            disabled={exportDisabled}
-            disabledReason={exportDisabledReason}
+            disabled={notesActionsDisabled}
+            disabledReason={notesActionsDisabledReason}
+            onCopyNotes={handleCopyNotes}
             onExport={handleMeetingExport}
           />
         </div>
