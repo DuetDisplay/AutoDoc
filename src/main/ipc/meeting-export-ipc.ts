@@ -1,0 +1,286 @@
+import { randomUUID } from 'crypto'
+import { open, rename, unlink } from 'fs/promises'
+import { basename, dirname, join } from 'path'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  type SaveDialogOptions,
+  type WebContents
+} from 'electron'
+import type {
+  MeetingExportFailureCode,
+  MeetingExportFormat,
+  MeetingExportRequest,
+  MeetingExportResult,
+  MeetingExportVariant
+} from '../../shared/types'
+import {
+  createMeetingExportSuggestedFilename,
+  meetingExportExtension,
+  renderMeetingExportDocx,
+  renderMeetingExportHtml,
+  renderMeetingExportMarkdown,
+  type MeetingExportSnapshot
+} from '../services/meeting-export'
+import { loadMeetingExportSnapshot } from '../services/meeting-export-sources'
+
+const EXPORT_FORMATS = ['markdown', 'pdf', 'docx'] as const satisfies readonly MeetingExportFormat[]
+const EXPORT_VARIANTS = ['full', 'concise'] as const satisfies readonly MeetingExportVariant[]
+
+type ShowSaveDialog = (
+  parent: BrowserWindow,
+  options: SaveDialogOptions
+) => Promise<Electron.SaveDialogReturnValue>
+
+export interface RegisterMeetingExportIpcOptions {
+  recordingsBaseDir: string
+  isTrustedSender: (sender: WebContents) => boolean
+  loadSnapshot?: (recordingsBaseDir: string, meetingId: string) => Promise<MeetingExportSnapshot>
+  showSaveDialog?: ShowSaveDialog
+  renderPdf?: (html: string) => Promise<Buffer>
+  writeExportFile?: (filePath: string, data: Buffer) => Promise<void>
+  getDocumentsPath?: () => string
+  getParentWindow?: (sender: WebContents) => BrowserWindow | null
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  )
+}
+
+function isMeetingExportRequest(value: unknown): value is MeetingExportRequest {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  try {
+    const record = value as Record<string, unknown>
+    const keys = Object.keys(record).sort()
+    return (
+      keys.length === 3 &&
+      keys[0] === 'format' &&
+      keys[1] === 'meetingId' &&
+      keys[2] === 'variant' &&
+      typeof record.meetingId === 'string' &&
+      EXPORT_FORMATS.some((format) => format === record.format) &&
+      EXPORT_VARIANTS.some((variant) => variant === record.variant)
+    )
+  } catch {
+    return false
+  }
+}
+
+function failure(code: MeetingExportFailureCode): MeetingExportResult {
+  return { status: 'failed', code }
+}
+
+function mapWriteFailure(error: unknown): MeetingExportFailureCode {
+  if (isNodeError(error, 'ENOSPC') || isNodeError(error, 'EDQUOT')) return 'disk-full'
+  if (isNodeError(error, 'EACCES') || isNodeError(error, 'EPERM') || isNodeError(error, 'EROFS')) {
+    return 'permission-denied'
+  }
+  return 'write-failed'
+}
+
+function saveDialogOptions(
+  snapshot: MeetingExportSnapshot,
+  format: MeetingExportFormat,
+  variant: MeetingExportVariant,
+  documentsPath: string
+): SaveDialogOptions {
+  const extension = meetingExportExtension(format)
+  const formatName = format === 'markdown' ? 'Markdown' : format === 'pdf' ? 'PDF' : 'Word Document'
+  return {
+    title: 'Export meeting',
+    buttonLabel: 'Export',
+    defaultPath: join(
+      documentsPath,
+      createMeetingExportSuggestedFilename(snapshot.detail.title, format, variant)
+    ),
+    message: 'Choose where to save this meeting export.',
+    filters: [{ name: formatName, extensions: [extension] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent']
+  }
+}
+
+interface AtomicWriteOperations {
+  open: (filePath: string, flags: string, mode: number) => ReturnType<typeof open>
+  rename: (source: string, destination: string) => Promise<void>
+  unlink: (filePath: string) => Promise<void>
+}
+
+export async function writeExportFileAtomically(
+  filePath: string,
+  data: Buffer,
+  operations: AtomicWriteOperations = { open, rename, unlink }
+): Promise<void> {
+  const operationId = randomUUID()
+  const tempPath = join(dirname(filePath), `.${basename(filePath)}.autodoc-${operationId}.tmp`)
+  const backupPath = join(dirname(filePath), `.${basename(filePath)}.autodoc-${operationId}.bak`)
+  let handle: Awaited<ReturnType<typeof open>> | null = null
+  let tempExists = false
+  let backupExists = false
+  let replacementInstalled = false
+  try {
+    handle = await operations.open(tempPath, 'wx', 0o600)
+    tempExists = true
+    await handle.writeFile(data)
+    await handle.sync()
+    await handle.close()
+    handle = null
+
+    try {
+      await operations.rename(tempPath, filePath)
+    } catch (error) {
+      if (
+        !isNodeError(error, 'EEXIST') &&
+        !isNodeError(error, 'EPERM') &&
+        !isNodeError(error, 'EACCES')
+      ) {
+        throw error
+      }
+      // The native save dialog already obtained overwrite consent. Windows may
+      // still refuse rename-over-existing. Move the prior export aside first so
+      // it can be restored if installing the complete, synced replacement fails.
+      await operations.rename(filePath, backupPath)
+      backupExists = true
+      try {
+        await operations.rename(tempPath, filePath)
+        tempExists = false
+        replacementInstalled = true
+      } catch (replacementError) {
+        try {
+          await operations.rename(backupPath, filePath)
+          backupExists = false
+        } catch (restoreError) {
+          throw new AggregateError(
+            [replacementError, restoreError],
+            'Failed to install the export and restore the previous file'
+          )
+        }
+        throw replacementError
+      }
+      await operations.unlink(backupPath)
+      backupExists = false
+    }
+    tempExists = false
+  } finally {
+    await handle?.close().catch(() => undefined)
+    if (tempExists) await operations.unlink(tempPath).catch(() => undefined)
+    if (backupExists && replacementInstalled) {
+      await operations.unlink(backupPath).catch(() => undefined)
+    }
+  }
+}
+
+export async function renderMeetingExportPdf(html: string): Promise<Buffer> {
+  const partition = `autodoc-export-${randomUUID()}`
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    width: 816,
+    height: 1056,
+    webPreferences: {
+      partition,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      javascript: false,
+      backgroundThrottling: false
+    }
+  })
+
+  try {
+    const dataUrl = `data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf8').toString('base64')}`
+    await pdfWindow.loadURL(dataUrl)
+    return await pdfWindow.webContents.printToPDF({
+      pageSize: 'Letter',
+      preferCSSPageSize: true,
+      printBackground: true,
+      displayHeaderFooter: true,
+      headerTemplate: '<div></div>',
+      footerTemplate:
+        '<div style="position:relative;width:100%;height:12px;color:#6B6A63;font:9px Arial,sans-serif"><span style="position:absolute;left:.65in">AutoDoc meeting export</span><span style="position:absolute;right:.65in;white-space:nowrap"><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
+      generateTaggedPDF: true,
+      generateDocumentOutline: true
+    })
+  } finally {
+    if (!pdfWindow.isDestroyed()) pdfWindow.destroy()
+  }
+}
+
+async function renderExport(
+  snapshot: MeetingExportSnapshot,
+  format: MeetingExportFormat,
+  variant: MeetingExportVariant,
+  renderPdf: (html: string) => Promise<Buffer>
+): Promise<Buffer> {
+  if (format === 'markdown') {
+    return Buffer.from(renderMeetingExportMarkdown(snapshot, variant), 'utf8')
+  }
+  if (format === 'docx') return renderMeetingExportDocx(snapshot, variant)
+  return renderPdf(renderMeetingExportHtml(snapshot, variant))
+}
+
+export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOptions): void {
+  const loadSnapshot = options.loadSnapshot ?? loadMeetingExportSnapshot
+  const showSaveDialog =
+    options.showSaveDialog ??
+    ((parent, dialogOptions) => dialog.showSaveDialog(parent, dialogOptions))
+  const renderPdf = options.renderPdf ?? renderMeetingExportPdf
+  const writeExportFile = options.writeExportFile ?? writeExportFileAtomically
+  const getDocumentsPath = options.getDocumentsPath ?? (() => app.getPath('documents'))
+  const getParentWindow =
+    options.getParentWindow ?? ((sender: WebContents) => BrowserWindow.fromWebContents(sender))
+
+  ipcMain.handle(
+    'meeting:export',
+    async (event, rawRequest: unknown): Promise<MeetingExportResult> => {
+      if (!options.isTrustedSender(event.sender) || !isMeetingExportRequest(rawRequest)) {
+        return failure('invalid-request')
+      }
+
+      let snapshot: MeetingExportSnapshot
+      try {
+        snapshot = await loadSnapshot(options.recordingsBaseDir, rawRequest.meetingId)
+      } catch {
+        return failure('render-failed')
+      }
+      if (!snapshot.notes && snapshot.transcript.length === 0) {
+        return failure('nothing-to-export')
+      }
+
+      let saveResult: Electron.SaveDialogReturnValue
+      try {
+        const parent = getParentWindow(event.sender)
+        if (!parent || parent.isDestroyed()) return failure('invalid-request')
+        saveResult = await showSaveDialog(
+          parent,
+          saveDialogOptions(snapshot, rawRequest.format, rawRequest.variant, getDocumentsPath())
+        )
+      } catch {
+        return failure('write-failed')
+      }
+      if (saveResult.canceled || !saveResult.filePath) return { status: 'cancelled' }
+
+      let data: Buffer
+      try {
+        data = await renderExport(snapshot, rawRequest.format, rawRequest.variant, renderPdf)
+      } catch {
+        return failure('render-failed')
+      }
+
+      try {
+        // The native dialog owns filename and overwrite consent. Write exactly
+        // the path it returned so a post-dialog extension rewrite cannot target
+        // a different, unconfirmed existing file.
+        await writeExportFile(saveResult.filePath, data)
+        return { status: 'saved' }
+      } catch (error) {
+        return failure(mapWriteFailure(error))
+      }
+    }
+  )
+}

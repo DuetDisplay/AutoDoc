@@ -8,6 +8,9 @@ import type {
   MeetingSegments,
   MeetingNotesContent,
   MeetingNotesV2,
+  MeetingExportFormat,
+  MeetingExportResult,
+  MeetingExportVariant,
   Transcript,
   TranscriptionStatus,
   SegmentationStatus,
@@ -21,10 +24,51 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
+import { MeetingExportMenu } from '../components/MeetingExportMenu'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
 
 type Tab = 'notes' | 'transcript' | 'settings'
+
+interface NotesWriteQueue {
+  notes: MeetingNotesV2 | null
+  pending: MeetingNotesContent | null
+  promise: Promise<boolean> | null
+}
+
+interface SegmentsWriteQueue {
+  failed: boolean
+  pending: MeetingSegments | null
+  promise: Promise<boolean> | null
+  timeout: ReturnType<typeof setTimeout> | undefined
+}
+
+function notesWriteQueueFor(
+  queues: Map<string, NotesWriteQueue>,
+  meetingId: string
+): NotesWriteQueue {
+  const existing = queues.get(meetingId)
+  if (existing) return existing
+  const created: NotesWriteQueue = { notes: null, pending: null, promise: null }
+  queues.set(meetingId, created)
+  return created
+}
+
+function segmentsWriteQueueFor(
+  queues: Map<string, SegmentsWriteQueue>,
+  meetingId: string
+): SegmentsWriteQueue {
+  const existing = queues.get(meetingId)
+  if (existing) return existing
+  const created: SegmentsWriteQueue = {
+    failed: false,
+    pending: null,
+    promise: null,
+    timeout: undefined
+  }
+  queues.set(meetingId, created)
+  return created
+}
 
 function formatDuration(seconds: number): string {
   const mins = Math.ceil(seconds / 60)
@@ -274,7 +318,10 @@ export function MeetingDetail() {
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
   const activeTabRef = useRef<Tab>('notes')
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const activeMeetingIdRef = useRef(id)
+  const segmentsWriteQueuesRef = useRef<Map<string, SegmentsWriteQueue>>(new Map())
+  const auxiliaryWritePromisesRef = useRef<Map<string, Set<Promise<boolean>>>>(new Map())
+  activeMeetingIdRef.current = id
   const lastProgressLogAtRef = useRef(0)
   const lastTimeUpdateLogAtRef = useRef(0)
   const segmentationEventRevisionRef = useRef(0)
@@ -519,30 +566,117 @@ export function MeetingDetail() {
     }
   }, [activeTab, id, media])
 
+  const trackAuxiliaryWrite = useCallback(
+    (meetingId: string, operation: Promise<unknown>, description: string): Promise<boolean> => {
+      let writes = auxiliaryWritePromisesRef.current.get(meetingId)
+      if (!writes) {
+        writes = new Set()
+        auxiliaryWritePromisesRef.current.set(meetingId, writes)
+      }
+
+      const tracked: Promise<boolean> = operation
+        .then(() => true)
+        .catch((error) => {
+          console.warn(`Failed to save ${description}:`, error)
+          return false
+        })
+        .finally(() => {
+          writes?.delete(tracked)
+          if (writes?.size === 0) auxiliaryWritePromisesRef.current.delete(meetingId)
+        })
+      writes.add(tracked)
+      return tracked
+    },
+    []
+  )
+
+  const flushAuxiliaryWrites = useCallback(async (meetingId: string): Promise<boolean> => {
+    let succeeded = true
+    while (auxiliaryWritePromisesRef.current.get(meetingId)?.size) {
+      const writes = Array.from(auxiliaryWritePromisesRef.current.get(meetingId) ?? [])
+      const results = await Promise.all(writes)
+      succeeded = results.every(Boolean) && succeeded
+    }
+    return succeeded
+  }, [])
+
+  const flushSegmentsWritesFor = useCallback(async (meetingId: string): Promise<boolean> => {
+    const queue = segmentsWriteQueueFor(segmentsWriteQueuesRef.current, meetingId)
+    if (queue.timeout !== undefined) {
+      clearTimeout(queue.timeout)
+      queue.timeout = undefined
+    }
+
+    if (queue.promise) {
+      const activeWriteSucceeded = await queue.promise
+      if (queue.pending) {
+        return (await flushSegmentsWritesFor(meetingId)) && activeWriteSucceeded
+      }
+      return activeWriteSucceeded
+    }
+    if (!queue.pending) return !queue.failed
+
+    const pending = queue.pending
+    queue.pending = null
+    const writePromise = window.electronAPI
+      .invoke('segmentation:save-segments', meetingId, pending)
+      .then(
+        () => {
+          queue.failed = false
+          return true
+        },
+        (error) => {
+          queue.failed = true
+          console.warn('Failed to save legacy notes:', error)
+          return false
+        }
+      )
+    queue.promise = writePromise
+    let succeeded: boolean
+    try {
+      succeeded = await writePromise
+    } finally {
+      if (queue.promise === writePromise) queue.promise = null
+    }
+
+    if (queue.pending) return (await flushSegmentsWritesFor(meetingId)) && succeeded
+    if (activeMeetingIdRef.current !== meetingId) segmentsWriteQueuesRef.current.delete(meetingId)
+    return succeeded
+  }, [])
+
   const handleRenameSpeaker = useCallback(
     async (speakerId: string, newLabel: string) => {
       if (!id) return
-      await window.electronAPI.invoke('speakers:rename', id, speakerId, newLabel)
+      const meetingId = id
+      const saved = await trackAuxiliaryWrite(
+        meetingId,
+        window.electronAPI.invoke('speakers:rename', meetingId, speakerId, newLabel),
+        'speaker name'
+      )
+      if (!saved || activeMeetingIdRef.current !== meetingId) return
       setSpeakers((prev) => ({
         ...prev,
         [speakerId]: { ...prev[speakerId], label: newLabel }
       }))
     },
-    [id]
+    [id, trackAuxiliaryWrite]
   )
 
   const saveSegments = useCallback(
     (updated: MeetingSegments) => {
+      if (!id) return
       setSegments(updated)
-      // Debounce save to disk
-      clearTimeout(saveTimeoutRef.current)
-      saveTimeoutRef.current = setTimeout(() => {
-        if (id) {
-          window.electronAPI.invoke('segmentation:save-segments', id, updated)
-        }
+      const meetingId = id
+      const queue = segmentsWriteQueueFor(segmentsWriteQueuesRef.current, meetingId)
+      queue.failed = false
+      queue.pending = updated
+      clearTimeout(queue.timeout)
+      queue.timeout = setTimeout(() => {
+        queue.timeout = undefined
+        void flushSegmentsWritesFor(meetingId)
       }, 500)
     },
-    [id]
+    [flushSegmentsWritesFor, id]
   )
 
   const updateSegmentField = useCallback(
@@ -746,9 +880,9 @@ export function MeetingDetail() {
       unsubTranscription()
       unsubSegmentation()
       unsubSegmentationActivity()
-      clearTimeout(saveTimeoutRef.current)
+      void flushSegmentsWritesFor(id)
     }
-  }, [id])
+  }, [flushSegmentsWritesFor, id])
 
   // Scroll to highlighted search result after content loads
   useEffect(() => {
@@ -836,52 +970,121 @@ export function MeetingDetail() {
     )
   )
 
-  const notesV2Ref = useRef<MeetingNotesV2 | null>(null)
-  const pendingNotesWriteRef = useRef<MeetingNotesContent | null>(null)
-  const notesWriteInFlightRef = useRef(false)
-  notesV2Ref.current = notesV2
+  const notesWriteQueuesRef = useRef<Map<string, NotesWriteQueue>>(new Map())
+  if (id && notesV2?.meetingId === id) {
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    if (!queue.promise && !queue.pending) queue.notes = notesV2
+  }
 
-  const flushNotesWrites = useCallback(async (): Promise<void> => {
-    if (!id || notesWriteInFlightRef.current) return
-    notesWriteInFlightRef.current = true
-    try {
-      while (pendingNotesWriteRef.current) {
-        const draft = pendingNotesWriteRef.current
-        pendingNotesWriteRef.current = null
-        const expected = notesV2Ref.current?.revision
-        if (!expected) break
-        try {
-          const persisted = await window.electronAPI.invoke('notes:write-v2', id, draft, expected)
-          const queued = pendingNotesWriteRef.current
-          const current = notesV2Ref.current
-          const merged =
-            queued && current ? { ...current, revision: persisted.revision } : persisted
-          notesV2Ref.current = merged
-          setNotesV2(merged)
-        } catch (error) {
-          console.warn('Failed to save notes:', error)
-          const fresh = await window.electronAPI.invoke('notes:get-v2', id)
-          notesV2Ref.current = fresh
-          setNotesV2(fresh)
-          pendingNotesWriteRef.current = null
-          break
-        }
+  useEffect(() => {
+    const notesQueues = notesWriteQueuesRef.current
+    const segmentsQueues = segmentsWriteQueuesRef.current
+    return () => {
+      if (!id) return
+      const notesQueue = notesQueues.get(id)
+      if (notesQueue && !notesQueue.pending && !notesQueue.promise) {
+        notesQueues.delete(id)
       }
-    } finally {
-      notesWriteInFlightRef.current = false
-      if (pendingNotesWriteRef.current) void flushNotesWrites()
+      const segmentsQueue = segmentsQueues.get(id)
+      if (
+        segmentsQueue &&
+        !segmentsQueue.pending &&
+        !segmentsQueue.promise &&
+        segmentsQueue.timeout === undefined
+      ) {
+        segmentsQueues.delete(id)
+      }
     }
   }, [id])
 
+  const flushNotesWrites = useCallback(async (): Promise<boolean> => {
+    if (!id) return false
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    const activeWrite = queue.promise
+    if (activeWrite) {
+      const activeWriteSucceeded = await activeWrite
+      if (queue.pending) {
+        return (await flushNotesWrites()) && activeWriteSucceeded
+      }
+      return activeWriteSucceeded
+    }
+
+    const writePromise = (async (): Promise<boolean> => {
+      let succeeded = true
+      while (queue.pending) {
+        const draft = queue.pending
+        queue.pending = null
+        const expected = queue.notes?.revision
+        if (!expected) {
+          succeeded = false
+          break
+        }
+        try {
+          const persisted = await window.electronAPI.invoke('notes:write-v2', id, draft, expected)
+          // A later edit can be queued while the IPC promise is in flight.
+          const queued = queue.pending as MeetingNotesContent | null
+          const merged = queued
+            ? { ...persisted, ...queued, revision: persisted.revision }
+            : persisted
+          queue.notes = merged
+          if (activeMeetingIdRef.current === id) setNotesV2(merged)
+        } catch (error) {
+          succeeded = false
+          console.warn('Failed to save notes:', error)
+          try {
+            const fresh = await window.electronAPI.invoke('notes:get-v2', id)
+            queue.notes = fresh
+            if (activeMeetingIdRef.current === id) setNotesV2(fresh)
+          } catch (refreshError) {
+            console.warn('Failed to refresh notes after save failure:', refreshError)
+          }
+          queue.pending = null
+          break
+        }
+      }
+      return succeeded
+    })()
+    queue.promise = writePromise
+    let succeeded: boolean
+    try {
+      succeeded = await writePromise
+    } finally {
+      if (queue.promise === writePromise) queue.promise = null
+    }
+    if (queue.pending) return (await flushNotesWrites()) && succeeded
+    if (activeMeetingIdRef.current !== id) notesWriteQueuesRef.current.delete(id)
+    return succeeded
+  }, [id])
+
   const handleWriteNotesV2 = (content: MeetingNotesContent): void => {
-    const current = notesV2Ref.current
-    if (!id || !current) return
+    if (!id || notesV2?.meetingId !== id) return
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    const current = queue.notes ?? notesV2
     const optimistic = { ...current, ...content }
-    notesV2Ref.current = optimistic
+    queue.notes = optimistic
+    queue.pending = content
     setNotesV2(optimistic)
-    pendingNotesWriteRef.current = content
     void flushNotesWrites()
   }
+
+  const handleMeetingExport = useCallback(
+    async (
+      format: MeetingExportFormat,
+      variant: MeetingExportVariant
+    ): Promise<MeetingExportResult> => {
+      if (!id) return { status: 'failed', code: 'invalid-request' }
+      const [notesSaved, legacyNotesSaved, auxiliaryWritesSaved] = await Promise.all([
+        flushNotesWrites(),
+        flushSegmentsWritesFor(id),
+        flushAuxiliaryWrites(id)
+      ])
+      if (!notesSaved || !legacyNotesSaved || !auxiliaryWritesSaved) {
+        return { status: 'failed', code: 'write-failed' }
+      }
+      return window.electronAPI.invoke('meeting:export', { meetingId: id, format, variant })
+    },
+    [flushAuxiliaryWrites, flushNotesWrites, flushSegmentsWritesFor, id]
+  )
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -998,6 +1201,15 @@ export function MeetingDetail() {
     segmentationStatus === 'queued' ||
     segmentationStatus === 'downloading-model' ||
     segmentationStatus === 'segmenting'
+  const exportContentReady =
+    transcriptionStatus === 'complete' &&
+    (segmentationStatus === 'complete' ||
+      segmentationStatus === 'no-notes' ||
+      segmentationStatus === 'failed')
+  const exportDisabled = detail?.isFinalizing === true || !exportContentReady
+  const exportDisabledReason = detail?.isFinalizing
+    ? 'Export is available after this recording finishes.'
+    : 'Export is available when notes are ready.'
 
   const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
     const groups: { topic: string | null; items: Segment[] }[] = []
@@ -1053,9 +1265,18 @@ export function MeetingDetail() {
               value={detail?.title ?? 'Meeting'}
               onSave={(newTitle) => {
                 if (!id) return
-                window.electronAPI.invoke('recording:update-title', id, newTitle).then(() => {
-                  setDetail((prev) => (prev ? { ...prev, title: newTitle } : prev))
-                })
+                const meetingId = id
+                void trackAuxiliaryWrite(
+                  meetingId,
+                  window.electronAPI
+                    .invoke('recording:update-title', meetingId, newTitle)
+                    .then(() => {
+                      if (activeMeetingIdRef.current === meetingId) {
+                        setDetail((prev) => (prev ? { ...prev, title: newTitle } : prev))
+                      }
+                    }),
+                  'meeting title'
+                )
               }}
               className="text-ink font-semibold flex-1 min-w-0"
             />
@@ -1098,20 +1319,29 @@ export function MeetingDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-border px-6">
-        {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
-              activeTab === tab
-                ? 'text-ink border-b-2 border-ink -mb-px'
-                : 'text-ink-faint hover:text-ink-muted'
-            }`}
-          >
-            {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
-          </button>
-        ))}
+      <div className="flex items-end justify-between gap-4 border-b border-border px-6">
+        <div className="flex">
+          {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
+                activeTab === tab
+                  ? 'text-ink border-b-2 border-ink -mb-px'
+                  : 'text-ink-faint hover:text-ink-muted'
+              }`}
+            >
+              {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
+            </button>
+          ))}
+        </div>
+        <div className="pb-1.5">
+          <MeetingExportMenu
+            disabled={exportDisabled}
+            disabledReason={exportDisabledReason}
+            onExport={handleMeetingExport}
+          />
+        </div>
       </div>
 
       {/* Content */}

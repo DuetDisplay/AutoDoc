@@ -28,6 +28,8 @@ import type {
   TranscriptionStatus,
   MeetingNotesContent,
   MeetingNotesV2,
+  MeetingExportRequest,
+  MeetingExportResult,
   MeetingSegments,
   NotesRevision,
   SegmentationStatus,
@@ -174,6 +176,7 @@ export interface IpcInvokeEvents {
   'notes:get-v2': [meetingId: string]
   'notes:set-next-step-completed': [meetingId: string, itemId: string, completed: boolean]
   'notes:write-v2': [meetingId: string, content: MeetingNotesContent, expectedRevision: NotesRevision]
+  'meeting:export': [request: MeetingExportRequest]
   'recording:get-media': [meetingId: string]
   'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
@@ -305,6 +308,7 @@ export interface IpcInvokeReturns {
   'notes:get-v2': MeetingNotesV2 | null
   'notes:set-next-step-completed': MeetingNotesV2 | null
   'notes:write-v2': MeetingNotesV2
+  'meeting:export': MeetingExportResult
   'segmentation:retry': void
   'segmentation:save-segments': void
   'recording:get-media': {

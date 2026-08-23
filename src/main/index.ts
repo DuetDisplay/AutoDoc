@@ -54,6 +54,7 @@ import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
+import { registerMeetingExportIpc } from './ipc/meeting-export-ipc'
 import { registerFeedbackPromptIpc } from './ipc/feedback-prompt-ipc'
 import {
   FEEDBACK_REMINDER_DELAY_MS,
@@ -1857,6 +1858,11 @@ app.whenReady().then(async () => {
 
   const isTrustedMainWindowSender = (sender: WebContents): boolean =>
     getMainWindow()?.webContents === sender
+
+  registerMeetingExportIpc({
+    recordingsBaseDir: recordingService.getRecordingsBaseDir(),
+    isTrustedSender: isTrustedMainWindowSender
+  })
 
   registerFeedbackPromptIpc(feedbackPromptService, {
     isTrustedSender: isTrustedMainWindowSender,

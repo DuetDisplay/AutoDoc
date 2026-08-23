@@ -9,6 +9,8 @@ import {
   installMockElectronApi,
   resetRendererStores
 } from '../test/fixtures'
+import type { MockElectronAPI } from '../test/fixtures'
+import type { MeetingNotesV2 } from '../../../shared/types'
 
 beforeEach(() => {
   resetRendererStores()
@@ -116,6 +118,81 @@ function installNoNotesElectronApi() {
   })
 }
 
+function createEditableNotes(meetingId = 'test-123'): MeetingNotesV2 {
+  return {
+    schemaVersion: 2,
+    meetingId,
+    sourceTranscriptRevision:
+      'transcript-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    sourceAttributionRevision:
+      'notes-attribution-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    revision: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    overview: {
+      text: `The team aligned on the export handoff for ${meetingId}.`,
+      sources: [{ startMs: 0, endMs: 5_000 }],
+      provenance: 'generated'
+    },
+    keyTakeaways: [],
+    sections: [
+      {
+        id: `export-section-${meetingId}`,
+        title: 'Export handoff',
+        summary: null,
+        keyPoints: [
+          {
+            id: `export-note-${meetingId}`,
+            title: 'Preserve edits',
+            topic: 'Export handoff',
+            owner: null,
+            deadline: null,
+            text: 'Save the latest note edits before exporting.',
+            sources: [{ startMs: 1_000, endMs: 4_000 }],
+            provenance: 'generated'
+          }
+        ],
+        supportingDetails: []
+      }
+    ],
+    decisions: [],
+    nextSteps: []
+  }
+}
+
+function installExportReadyElectronApi(
+  overrides: Record<string, unknown | ((...args: any[]) => unknown)> = {}
+): MockElectronAPI {
+  return installMockElectronApi({
+    'transcription:get-status': 'complete',
+    'transcription:get-progress': undefined,
+    'transcription:get-transcript': [
+      createTranscript({
+        meetingId: 'test-123',
+        text: 'The latest notes should be included in the exported meeting.'
+      })
+    ],
+    'segmentation:get-status': 'complete',
+    'segmentation:get-progress': undefined,
+    'segmentation:get-error-code': undefined,
+    'segmentation:get-activity': null,
+    'segmentation:get-segments': createMeetingSegments(),
+    'notes:get-v2': null,
+    'recording:get-detail': {
+      title: 'Test Meeting',
+      sourceName: 'Zoom',
+      date: Date.now(),
+      durationSeconds: 300
+    },
+    'recording:get-media': {
+      hasVideo: false,
+      hasAudio: true,
+      mediaBaseUrl: 'http://127.0.0.1:9'
+    },
+    'speakers:get': {},
+    'meeting:export': { status: 'saved' },
+    ...overrides
+  })
+}
+
 describe('MeetingDetail', () => {
   it('renders Notes tab by default with all HOM categories', async () => {
     await renderMeetingDetail()
@@ -193,6 +270,354 @@ describe('MeetingDetail', () => {
 
     await user.click(screen.getByText('Transcript'))
     expect(document.querySelector('video')).toBeInTheDocument()
+  })
+
+  it('keeps Export beside the tabs disabled until transcription and notes reach terminal states', async () => {
+    const api = installMockElectronApi({
+      'transcription:get-status': 'transcribing',
+      'transcription:get-progress': 60,
+      'transcription:get-transcript': [],
+      'segmentation:get-status': 'segmenting',
+      'segmentation:get-progress': 30,
+      'segmentation:get-error-code': undefined,
+      'segmentation:get-activity': null,
+      'segmentation:get-segments': null,
+      'recording:get-detail': {
+        title: 'Test Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      },
+      'recording:get-media': {
+        hasVideo: false,
+        hasAudio: true,
+        mediaBaseUrl: 'http://127.0.0.1:9'
+      },
+      'speakers:get': {}
+    })
+
+    await renderMeetingDetail()
+
+    const exportButton = screen.getByRole('button', { name: 'Export' })
+    expect(exportButton).toBeDisabled()
+    expect(exportButton).toHaveAccessibleDescription('Export is available when notes are ready.')
+    expect(screen.getByRole('button', { name: 'Notes' }).parentElement?.parentElement).toContain(
+      exportButton
+    )
+
+    act(() => {
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        progress: 100
+      })
+    })
+    expect(exportButton).toBeDisabled()
+
+    act(() => {
+      api.emit('segmentation:status-changed', {
+        meetingId: 'test-123',
+        status: 'no-notes'
+      })
+    })
+
+    await waitFor(() => expect(exportButton).toBeEnabled())
+  })
+
+  it('exports the current meeting as Full by default', async () => {
+    const api = installExportReadyElectronApi()
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    const exportButton = screen.getByRole('button', { name: 'Export' })
+    await waitFor(() => expect(exportButton).toBeEnabled())
+    await user.click(exportButton)
+
+    expect(screen.getByRole('button', { name: 'Full' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: /^PDF/ }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
+        meetingId: 'test-123',
+        format: 'pdf',
+        variant: 'full'
+      })
+    })
+  })
+
+  it('forwards the selected Concise variant and format to meeting export', async () => {
+    const api = installExportReadyElectronApi()
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    const exportButton = screen.getByRole('button', { name: 'Export' })
+    await waitFor(() => expect(exportButton).toBeEnabled())
+    await user.click(exportButton)
+    await user.click(screen.getByRole('button', { name: 'Concise' }))
+    await user.click(screen.getByRole('button', { name: /^Markdown/ }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
+        meetingId: 'test-123',
+        format: 'markdown',
+        variant: 'concise'
+      })
+    })
+  })
+
+  it('waits for an in-flight notes write before invoking meeting export', async () => {
+    const notes = createEditableNotes()
+    const order: string[] = []
+    let resolveWrite!: (persisted: MeetingNotesV2) => void
+    const pendingWrite = new Promise<MeetingNotesV2>((resolve) => {
+      resolveWrite = resolve
+    })
+    const api = installExportReadyElectronApi({
+      'notes:get-v2': notes,
+      'notes:write-v2': () => {
+        order.push('notes-write-started')
+        return pendingWrite
+      },
+      'meeting:export': () => {
+        order.push('meeting-exported')
+        return { status: 'saved' }
+      }
+    })
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByRole('button', { name: '+ Add topic' }))
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith(
+        'notes:write-v2',
+        'test-123',
+        expect.any(Object),
+        notes.revision
+      )
+    })
+
+    const exportButton = screen.getByRole('button', { name: 'Export' })
+    await user.click(exportButton)
+    await user.click(screen.getByRole('button', { name: /^Word/ }))
+
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
+    expect(order).toEqual(['notes-write-started'])
+
+    await act(async () => {
+      resolveWrite({
+        ...notes,
+        revision: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      })
+      await pendingWrite
+    })
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
+        meetingId: 'test-123',
+        format: 'docx',
+        variant: 'full'
+      })
+    })
+    expect(order).toEqual(['notes-write-started', 'meeting-exported'])
+  })
+
+  it('does not export stale notes when an in-flight notes write fails', async () => {
+    const notes = createEditableNotes()
+    let rejectWrite!: (error: Error) => void
+    const pendingWrite = new Promise<MeetingNotesV2>((_resolve, reject) => {
+      rejectWrite = reject
+    })
+    const api = installExportReadyElectronApi({
+      'notes:get-v2': notes,
+      'notes:write-v2': () => pendingWrite
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByRole('button', { name: '+ Add topic' }))
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith(
+        'notes:write-v2',
+        'test-123',
+        expect.any(Object),
+        notes.revision
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Export' }))
+    await user.click(screen.getByRole('button', { name: /^Word/ }))
+
+    await act(async () => {
+      rejectWrite(new Error('notes storage unavailable'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'AutoDoc couldn’t export this meeting. Try again.'
+      )
+    })
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
+  })
+
+  it('flushes a debounced legacy notes edit before invoking meeting export', async () => {
+    const order: string[] = []
+    let resolveSegmentsWrite!: () => void
+    const pendingSegmentsWrite = new Promise<void>((resolve) => {
+      resolveSegmentsWrite = resolve
+    })
+    const api = installExportReadyElectronApi({
+      'segmentation:save-segments': () => {
+        order.push('legacy-notes-write-started')
+        return pendingSegmentsWrite
+      },
+      'meeting:export': () => {
+        order.push('meeting-exported')
+        return { status: 'saved' }
+      }
+    })
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByText('Ship transcript highlights'))
+    const editor = screen.getByRole('textbox')
+    await user.clear(editor)
+    await user.type(editor, 'Ship the edited transcript highlights{Enter}')
+
+    await user.click(screen.getByRole('button', { name: 'Export' }))
+    await user.click(screen.getByRole('button', { name: /^Word/ }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith(
+        'segmentation:save-segments',
+        'test-123',
+        expect.objectContaining({
+          decisions: expect.arrayContaining([
+            expect.objectContaining({ title: 'Ship the edited transcript highlights' })
+          ])
+        })
+      )
+    })
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
+    expect(order).toEqual(['legacy-notes-write-started'])
+
+    await act(async () => {
+      resolveSegmentsWrite()
+      await pendingSegmentsWrite
+    })
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('meeting:export', {
+        meetingId: 'test-123',
+        format: 'docx',
+        variant: 'full'
+      })
+    })
+    expect(order).toEqual(['legacy-notes-write-started', 'meeting-exported'])
+  })
+
+  it('does not export stale legacy notes after their background save fails', async () => {
+    const api = installExportReadyElectronApi({
+      'segmentation:save-segments': () => Promise.reject(new Error('legacy notes unavailable'))
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    await renderMeetingDetail()
+
+    await user.click(await screen.findByText('Ship transcript highlights'))
+    const editor = screen.getByRole('textbox')
+    await user.clear(editor)
+    await user.type(editor, 'Keep this failed edit visible{Enter}')
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith(
+        'segmentation:save-segments',
+        'test-123',
+        expect.any(Object)
+      )
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Export' }))
+    await user.click(screen.getByRole('button', { name: /^Word/ }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'AutoDoc couldn’t export this meeting. Try again.'
+      )
+    })
+    expect(api.invoke).not.toHaveBeenCalledWith('meeting:export', expect.anything())
+  })
+
+  it('keeps notes write queues isolated when the recording route changes', async () => {
+    const firstNotes = createEditableNotes('test-123')
+    const nextNotes = createEditableNotes('test-456')
+    let resolveFirstWrite!: (notes: MeetingNotesV2) => void
+    const pendingFirstWrite = new Promise<MeetingNotesV2>((resolve) => {
+      resolveFirstWrite = resolve
+    })
+    const writes: Array<{ meetingId: string; content: MeetingNotesV2 }> = []
+    const api = installExportReadyElectronApi({
+      'notes:get-v2': (meetingId: string) => (meetingId === 'test-123' ? firstNotes : nextNotes),
+      'notes:write-v2': (meetingId: string, content: MeetingNotesV2) => {
+        writes.push({ meetingId, content })
+        if (meetingId === 'test-123') return pendingFirstWrite
+        return {
+          ...nextNotes,
+          ...content,
+          revision: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+        }
+      },
+      'recording:get-detail': (meetingId: string) => ({
+        title: meetingId === 'test-123' ? 'First Meeting' : 'Next Meeting',
+        sourceName: 'Zoom',
+        date: Date.now(),
+        durationSeconds: 300
+      })
+    })
+    const user = userEvent.setup()
+
+    await act(async () => {
+      render(
+        <MemoryRouter initialEntries={['/recordings/test-123']}>
+          <Link to="/recordings/test-456">Open next recording</Link>
+          <Routes>
+            <Route path="/recordings/:id" element={<MeetingDetail />} />
+          </Routes>
+        </MemoryRouter>
+      )
+    })
+
+    expect(await screen.findByText(/export handoff for test-123/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '+ Add topic' }))
+    await waitFor(() => expect(writes.some((write) => write.meetingId === 'test-123')).toBe(true))
+
+    await user.click(screen.getByRole('link', { name: 'Open next recording' }))
+    expect(await screen.findByText(/export handoff for test-456/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '+ Add topic' }))
+    await waitFor(() => expect(writes.some((write) => write.meetingId === 'test-456')).toBe(true))
+
+    expect(
+      writes.every(({ meetingId, content }) => content.overview?.text.includes(meetingId))
+    ).toBe(true)
+
+    await act(async () => {
+      resolveFirstWrite({
+        ...firstNotes,
+        ...writes.find((write) => write.meetingId === 'test-123')?.content,
+        revision: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      })
+      await pendingFirstWrite
+    })
+
+    expect(screen.getByText(/export handoff for test-456/)).toBeInTheDocument()
+    expect(api.invoke).not.toHaveBeenCalledWith(
+      'notes:write-v2',
+      'test-123',
+      expect.objectContaining({
+        overview: expect.objectContaining({ text: expect.stringContaining('test-456') })
+      }),
+      expect.anything()
+    )
   })
 
   it('resets transcript scroll to the media area when clicking a note timestamp', async () => {
