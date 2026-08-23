@@ -21,6 +21,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   constructBrowserWindow: vi.fn(),
+  fromPartition: vi.fn(),
   fromWebContents: vi.fn(),
   appGetPath: vi.fn(),
   dialogShowSaveDialog: vi.fn(),
@@ -37,7 +38,8 @@ const mocks = vi.hoisted(() => ({
   renderDocx: vi.fn(),
   renderHtml: vi.fn(),
   atomicOpen: vi.fn(),
-  actualOpen: undefined as typeof import('fs/promises').open | undefined
+  actualOpen: undefined as typeof import('fs/promises').open | undefined,
+  privilegedSchemeRegistrations: [] as unknown[]
 }))
 
 vi.mock('electron', () => {
@@ -50,6 +52,12 @@ vi.mock('electron', () => {
     app: { getPath: mocks.appGetPath },
     BrowserWindow: BrowserWindowMock,
     dialog: { showSaveDialog: mocks.dialogShowSaveDialog },
+    protocol: {
+      registerSchemesAsPrivileged: vi.fn((schemes: unknown) => {
+        mocks.privilegedSchemeRegistrations.push(schemes)
+      })
+    },
+    session: { fromPartition: mocks.fromPartition },
     ipcMain: {
       handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
         mocks.handlers.set(channel, handler)
@@ -429,28 +437,43 @@ describe('meeting export IPC', () => {
 
 describe('renderMeetingExportPdf', () => {
   function pdfWindow() {
+    const protocol = {
+      handle: vi.fn(),
+      unhandle: vi.fn()
+    }
+    const renderSession = { protocol }
+    mocks.fromPartition.mockReturnValueOnce(renderSession)
     return {
       loadURL: vi.fn().mockResolvedValue(undefined),
       webContents: {
+        session: renderSession,
         printToPDF: vi.fn().mockResolvedValue(Buffer.from('rendered pdf'))
       },
+      protocol,
+      renderSession,
       isDestroyed: vi.fn(() => false),
       destroy: vi.fn()
     }
   }
 
+  it('registers only the standard navigation privilege before Electron is ready', () => {
+    expect(mocks.privilegedSchemeRegistrations).toContainEqual([
+      { scheme: 'autodoc-export', privileges: { standard: true } }
+    ])
+  })
+
   it('creates a hidden hardened window and always destroys it after success', async () => {
     const window = pdfWindow()
     mocks.constructBrowserWindow.mockReturnValueOnce(window)
 
-    await expect(renderMeetingExportPdf('<html>Meeting</html>')).resolves.toEqual(
-      Buffer.from('rendered pdf')
-    )
+    const html = '<html>Meeting</html>'
+    await expect(renderMeetingExportPdf(html)).resolves.toEqual(Buffer.from('rendered pdf'))
 
     expect(mocks.constructBrowserWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         show: false,
         webPreferences: expect.objectContaining({
+          session: window.renderSession,
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
@@ -458,7 +481,33 @@ describe('renderMeetingExportPdf', () => {
         })
       })
     )
-    expect(window.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^data:text\/html/))
+    expect(mocks.fromPartition).toHaveBeenCalledWith(
+      expect.stringMatching(/^autodoc-export-[0-9a-f-]+$/)
+    )
+    expect(mocks.fromPartition.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.constructBrowserWindow.mock.invocationCallOrder[0]
+    )
+    const browserWindowOptions = mocks.constructBrowserWindow.mock.calls[0]?.[0] as {
+      webPreferences: Record<string, unknown>
+    }
+    expect(browserWindowOptions.webPreferences).not.toHaveProperty('partition')
+    expect(window.protocol.handle).toHaveBeenCalledWith('autodoc-export', expect.any(Function))
+    const renderUrl = window.loadURL.mock.calls[0]?.[0]
+    expect(renderUrl).toMatch(/^autodoc-export:\/\/document\/[0-9a-f-]+$/)
+    expect(renderUrl).not.toContain(html)
+
+    const handler = window.protocol.handle.mock.calls[0]?.[1] as unknown as (request: {
+      url: string
+    }) => Response
+    const response = await handler({ url: renderUrl })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
+    await expect(response.text()).resolves.toBe(html)
+
+    const deniedResponse = await handler({ url: 'autodoc-export://document/not-this-export' })
+    expect(deniedResponse.status).toBe(404)
     expect(window.webContents.printToPDF).toHaveBeenCalledWith(
       expect.objectContaining({
         pageSize: 'Letter',
@@ -466,6 +515,28 @@ describe('renderMeetingExportPdf', () => {
         displayHeaderFooter: true
       })
     )
+    expect(window.protocol.unhandle).toHaveBeenCalledWith('autodoc-export')
+    expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('serves large export HTML from memory without putting it in the navigation URL', async () => {
+    const window = pdfWindow()
+    mocks.constructBrowserWindow.mockReturnValueOnce(window)
+    const html = `<!doctype html><html><body>${'Sensitive meeting content. '.repeat(24_000)}</body></html>`
+    expect(Buffer.byteLength(html)).toBeGreaterThan(527 * 1024)
+
+    await expect(renderMeetingExportPdf(html)).resolves.toEqual(Buffer.from('rendered pdf'))
+
+    const renderUrl = window.loadURL.mock.calls[0]?.[0]
+    expect(renderUrl).toMatch(/^autodoc-export:\/\/document\/[0-9a-f-]+$/)
+    expect(renderUrl.length).toBeLessThan(100)
+    const handler = window.protocol.handle.mock.calls[0]?.[1] as unknown as (request: {
+      url: string
+    }) => Response
+    const response = await handler({ url: renderUrl })
+    await expect(response.text()).resolves.toBe(html)
+    expect(window.webContents.printToPDF).toHaveBeenCalledOnce()
+    expect(window.protocol.unhandle).toHaveBeenCalledWith('autodoc-export')
     expect(window.destroy).toHaveBeenCalledOnce()
   })
 
@@ -477,6 +548,7 @@ describe('renderMeetingExportPdf', () => {
     await expect(renderMeetingExportPdf('<html>Meeting</html>')).rejects.toThrow('load failed')
 
     expect(window.webContents.printToPDF).not.toHaveBeenCalled()
+    expect(window.protocol.unhandle).toHaveBeenCalledWith('autodoc-export')
     expect(window.destroy).toHaveBeenCalledOnce()
   })
 
@@ -487,7 +559,23 @@ describe('renderMeetingExportPdf', () => {
 
     await expect(renderMeetingExportPdf('<html>Meeting</html>')).rejects.toThrow('print failed')
 
+    expect(window.protocol.unhandle).toHaveBeenCalledWith('autodoc-export')
     expect(window.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('removes the in-memory protocol handler if window construction fails', async () => {
+    const window = pdfWindow()
+    mocks.constructBrowserWindow.mockImplementationOnce(() => {
+      throw new Error('window construction failed')
+    })
+
+    await expect(renderMeetingExportPdf('<html>Meeting</html>')).rejects.toThrow(
+      'window construction failed'
+    )
+
+    expect(window.protocol.handle).toHaveBeenCalledOnce()
+    expect(window.protocol.unhandle).toHaveBeenCalledWith('autodoc-export')
+    expect(window.destroy).not.toHaveBeenCalled()
   })
 })
 

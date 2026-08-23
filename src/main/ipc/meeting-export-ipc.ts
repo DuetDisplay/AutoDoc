@@ -6,6 +6,8 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  protocol,
+  session,
   type SaveDialogOptions,
   type WebContents
 } from 'electron'
@@ -28,6 +30,17 @@ import { loadMeetingExportSnapshot } from '../services/meeting-export-sources'
 
 const EXPORT_FORMATS = ['markdown', 'pdf', 'docx'] as const satisfies readonly MeetingExportFormat[]
 const EXPORT_VARIANTS = ['full', 'concise'] as const satisfies readonly MeetingExportVariant[]
+const EXPORT_RENDER_SCHEME = 'autodoc-export'
+const EXPORT_RENDER_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+// Custom schemes must be registered before Electron's ready event. `standard`
+// is the only privilege this document-only scheme needs for Chromium to parse
+// and navigate its URL; CSP remains enforced and no fetch, storage, service
+// worker, or CSP-bypass privileges are granted.
+protocol.registerSchemesAsPrivileged([
+  { scheme: EXPORT_RENDER_SCHEME, privileges: { standard: true } }
+])
 
 type ShowSaveDialog = (
   parent: BrowserWindow,
@@ -178,23 +191,49 @@ export async function writeExportFileAtomically(
 
 export async function renderMeetingExportPdf(html: string): Promise<Buffer> {
   const partition = `autodoc-export-${randomUUID()}`
-  const pdfWindow = new BrowserWindow({
-    show: false,
-    width: 816,
-    height: 1056,
-    webPreferences: {
-      partition,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      javascript: false,
-      backgroundThrottling: false
-    }
-  })
+  const renderUrl = `${EXPORT_RENDER_SCHEME}://document/${randomUUID()}`
+  const renderSession = session.fromPartition(partition)
+  const renderProtocol = renderSession.protocol
+  let protocolHandled = false
+  let pdfWindow: BrowserWindow | null = null
 
   try {
-    const dataUrl = `data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf8').toString('base64')}`
-    await pdfWindow.loadURL(dataUrl)
+    // Keep large exports in memory without relying on Chromium's
+    // size-limited data: URL navigation or writing sensitive meeting text to a
+    // plaintext temporary file. The unique, non-persistent partition confines
+    // this handler to the hidden export window.
+    renderProtocol.handle(EXPORT_RENDER_SCHEME, (request) => {
+      if (request.url !== renderUrl) {
+        return new Response(null, { status: 404 })
+      }
+      return new Response(html, {
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy': EXPORT_RENDER_CSP,
+          'Content-Type': 'text/html; charset=utf-8'
+        }
+      })
+    })
+    protocolHandled = true
+
+    // Register the handler before constructing the window. Chromium can begin
+    // initializing a window's session as soon as BrowserWindow is created; a
+    // handler added afterward can miss the first custom-scheme navigation.
+    pdfWindow = new BrowserWindow({
+      show: false,
+      width: 816,
+      height: 1056,
+      webPreferences: {
+        session: renderSession,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        javascript: false,
+        backgroundThrottling: false
+      }
+    })
+
+    await pdfWindow.loadURL(renderUrl)
     return await pdfWindow.webContents.printToPDF({
       pageSize: 'Letter',
       preferCSSPageSize: true,
@@ -207,7 +246,11 @@ export async function renderMeetingExportPdf(html: string): Promise<Buffer> {
       generateDocumentOutline: true
     })
   } finally {
-    if (!pdfWindow.isDestroyed()) pdfWindow.destroy()
+    try {
+      if (protocolHandled) renderProtocol.unhandle(EXPORT_RENDER_SCHEME)
+    } finally {
+      if (pdfWindow && !pdfWindow.isDestroyed()) pdfWindow.destroy()
+    }
   }
 }
 
