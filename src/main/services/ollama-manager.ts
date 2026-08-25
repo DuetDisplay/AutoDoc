@@ -20,6 +20,12 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import {
+  selectOllamaAccelerator,
+  type OllamaAccelerator,
+  type OllamaAcceleratorDecision
+} from './ollama-accelerator'
+import { detectWindowsHardwareProfile } from './windows-transcription-runtime'
 
 const OLLAMA_DOWNLOAD_VERSION = 'v0.30.0'
 const IS_WIN = process.platform === 'win32'
@@ -102,7 +108,8 @@ export function isWindowsManagedNotesRunner(input: {
   const lower = input.command.toLowerCase()
   if (lower.includes('llama-server')) return true
 
-  const isOllamaExe = lower.includes('ollama.exe') || /(^|[\\/])ollama(\.exe)?(\s|$)/i.test(input.command)
+  const isOllamaExe =
+    lower.includes('ollama.exe') || /(^|[\\/])ollama(\.exe)?(\s|$)/i.test(input.command)
   if (!isOllamaExe) return false
   if (/\bserve\b/.test(lower)) return false
   if (/\brunner\b/.test(lower)) return true
@@ -264,6 +271,7 @@ export class OllamaManager extends EventEmitter {
   private adoptedSystemRuntime = false
   private testServerRunning = false
   private didReapAdoptedRunners = false
+  private acceleratorDecision: OllamaAcceleratorDecision | null = null
 
   constructor(modelOrOptions?: string | OllamaManagerOptions) {
     super()
@@ -328,6 +336,68 @@ export class OllamaManager extends EventEmitter {
 
   getModel(): string {
     return this.model
+  }
+
+  getNotesAccelerator(): OllamaAccelerator {
+    if (this.acceleratorDecision) {
+      return this.acceleratorDecision.accelerator
+    }
+    return process.platform === 'darwin' ? 'metal' : 'cpu'
+  }
+
+  private async resolveAcceleratorDecision(): Promise<OllamaAcceleratorDecision> {
+    if (this.acceleratorDecision) {
+      return this.acceleratorDecision
+    }
+
+    if (process.platform === 'darwin') {
+      this.acceleratorDecision = selectOllamaAccelerator({
+        platform: 'darwin',
+        gpus: [],
+        totalMemoryGiB: null,
+        vulkanOverride: process.env.AUTODOC_OLLAMA_VULKAN
+      })
+      return this.acceleratorDecision
+    }
+
+    try {
+      if (process.platform === 'win32') {
+        const hardware = await detectWindowsHardwareProfile()
+        this.acceleratorDecision = selectOllamaAccelerator({
+          platform: 'win32',
+          gpus: hardware.gpus,
+          totalMemoryGiB: hardware.totalMemoryGiB,
+          vulkanOverride: process.env.AUTODOC_OLLAMA_VULKAN
+        })
+      } else {
+        this.acceleratorDecision = selectOllamaAccelerator({
+          platform: process.platform,
+          gpus: [],
+          totalMemoryGiB: null,
+          vulkanOverride: process.env.AUTODOC_OLLAMA_VULKAN
+        })
+      }
+    } catch (error) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama accelerator detection failed; falling back to cpu',
+        level: 'warn',
+        context: { error: error instanceof Error ? error.message : String(error) }
+      })
+      this.acceleratorDecision = {
+        accelerator: 'cpu',
+        env: {},
+        reason: 'GPU detection failed; using CPU'
+      }
+    }
+
+    return (
+      this.acceleratorDecision ?? {
+        accelerator: 'cpu',
+        env: {},
+        reason: 'GPU detection failed; using CPU'
+      }
+    )
   }
 
   setModel(model: string): void {
@@ -577,13 +647,24 @@ export class OllamaManager extends EventEmitter {
 
     const binary = this.getBinaryPath()
     const spawnStartedAt = Date.now()
+    const decision = await this.resolveAcceleratorDecision()
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama accelerator selected',
+      context: {
+        accelerator: decision.accelerator,
+        reason: decision.reason,
+        env: Object.keys(decision.env)
+      }
+    })
 
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(binary, ['serve'], {
         env: {
           ...process.env,
           OLLAMA_HOST: OLLAMA_HOST,
-          OLLAMA_MODELS: this.getOllamaDataDir()
+          OLLAMA_MODELS: this.getOllamaDataDir(),
+          ...decision.env
         },
         stdio: ['ignore', 'pipe', 'pipe']
       })
@@ -633,8 +714,32 @@ export class OllamaManager extends EventEmitter {
         resolve()
       }
 
+      let gpuLinesLogged = 0
       proc.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString()
+        const text = data.toString()
+        stderr += text
+        // Keep only the tail so a long-lived serve cannot grow unbounded, while
+        // preserving enough context to diagnose an exit (300 chars was too
+        // little — it truncated the crash reason on a user machine).
+        if (stderr.length > 8000) {
+          stderr = stderr.slice(-8000)
+        }
+        // GPU discovery and layer placement are the only ground truth for
+        // whether notes actually run accelerated; surface them in our logs.
+        if (gpuLinesLogged < 12) {
+          for (const line of text.split(/\r?\n/)) {
+            if (!/inference compute|dropping integrated GPU|offloaded \d+\/\d+ layers/.test(line)) {
+              continue
+            }
+            gpuLinesLogged += 1
+            logAutodocEvent({
+              area: 'ollama',
+              message: 'ollama runtime gpu report',
+              context: { line: line.trim().slice(0, 500) }
+            })
+            if (gpuLinesLogged >= 12) break
+          }
+        }
         // Ollama logs "Listening on ..." to stderr when ready
         if (stderr.includes('Listening on')) {
           markReady()

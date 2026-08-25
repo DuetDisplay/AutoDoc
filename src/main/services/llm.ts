@@ -21,7 +21,11 @@ export interface LLMProvider {
   getModel?(): string
   setModel?(model: string): void
   setLowMemoryMode?(enabled: boolean): void
+  /** Cap the writer context so the model plus KV cache fits a small-VRAM GPU. */
+  setVramConstrainedContext?(enabled: boolean): void
   releaseResources?(meetingId?: string): Promise<void>
+  /** Decode speed of the most recent Ollama call, if it reported metrics. */
+  getLastEvalTokPerSec?(): number | null
   /** Raw completion for scan-layer restyle/compress. Must not use the notes JSON schema. */
   completePrompt?(
     prompt: string,
@@ -253,7 +257,12 @@ interface TopicGroup {
   labelCounts: Map<string, number>
 }
 
-type OllamaContextProfile = 'standard' | 'windows-balanced' | 'mac-balanced' | 'low-memory'
+type OllamaContextProfile =
+  | 'standard'
+  | 'windows-balanced'
+  | 'mac-balanced'
+  | 'low-memory'
+  | 'windows-vulkan'
 
 interface OllamaCallMetrics {
   totalDurationMs?: number
@@ -313,6 +322,10 @@ export class OllamaProvider implements LLMProvider {
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
   private maybeRecycleRunner?: (meetingId?: string) => void
   private lastOllamaCallMetrics: OllamaCallMetrics | null = null
+
+  getLastEvalTokPerSec(): number | null {
+    return this.lastOllamaCallMetrics?.evalTokPerSec ?? null
+  }
 
   constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
     this.baseUrl = baseUrl
@@ -407,6 +420,22 @@ export class OllamaProvider implements LLMProvider {
 
     this.contextProfile = 'standard'
     this.contextTokens = STANDARD_CONTEXT_TOKENS
+  }
+
+  setVramConstrainedContext(enabled: boolean): void {
+    if (!enabled) {
+      if (this.contextProfile === 'windows-vulkan') {
+        this.setLowMemoryMode(false)
+      }
+      return
+    }
+    if (this.contextProfile === 'low-memory') return
+    // Small-VRAM Vulkan cards (e.g. Arc A370M, 4 GiB) cannot hold the notes
+    // model plus an 8K KV cache, which spills layers to CPU. Writer chunks are
+    // ~1K tokens, so a 4K window costs nothing (macOS has always run at 4K)
+    // and keeps every layer on the GPU.
+    this.contextProfile = 'windows-vulkan'
+    this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
   }
 
   getModel(): string {

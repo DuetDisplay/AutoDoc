@@ -672,6 +672,34 @@ describe('OllamaProvider grounding', () => {
     expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
+  it('caps the writer context for small-VRAM Vulkan GPUs and restores it after', () => {
+    const vramProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(vramProvider as any).contextProfile = 'windows-balanced'
+    ;(vramProvider as any).contextTokens = 8192
+
+    vramProvider.setVramConstrainedContext(true)
+    expect((vramProvider as any).contextProfile).toBe('windows-vulkan')
+    expect((vramProvider as any).contextTokens).toBe(4096)
+
+    vramProvider.setVramConstrainedContext(true)
+    expect((vramProvider as any).contextTokens).toBe(4096)
+
+    vramProvider.setVramConstrainedContext(false)
+    expect((vramProvider as any).contextProfile).not.toBe('windows-vulkan')
+  })
+
+  it('does not override an existing low-memory context when VRAM-constrained', () => {
+    const vramProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    vramProvider.setLowMemoryMode(true)
+
+    vramProvider.setVramConstrainedContext(true)
+    expect((vramProvider as any).contextProfile).toBe('low-memory')
+    expect((vramProvider as any).contextTokens).toBe(4096)
+
+    vramProvider.setVramConstrainedContext(false)
+    expect((vramProvider as any).contextProfile).toBe('low-memory')
+  })
+
   it('can request Ollama to unload the resident model after local notes work', async () => {
     const releaseProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))

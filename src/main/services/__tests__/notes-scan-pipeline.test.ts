@@ -5,6 +5,7 @@ import {
   restyleRejectReason,
   runNotesScanPipeline,
   scanLayerProgress,
+  type NotesRewritePolicy,
   type ScanGenerateRequest
 } from '../notes-scan-pipeline'
 
@@ -145,5 +146,293 @@ describe('scanLayerProgress', () => {
     expect(scanLayerProgress(1)).toBe(99)
     expect(scanLayerProgress(0.5)).toBeGreaterThan(70)
     expect(scanLayerProgress(0.5)).toBeLessThan(99)
+  })
+})
+
+const STRICT_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 2
+}
+
+const FOUR_TOPICS = [
+  {
+    name: 'Checkout Latency Spike',
+    title: 'Checkout latency',
+    content: 'Nora measured 12ms checkout latency.',
+    accepted: '- Nora measured 12ms checkout latency.'
+  },
+  {
+    name: 'HP Gaming Opt-in',
+    title: 'HP opt-in',
+    content: "HP's opt-in analytics rate for gaming PCs is 80-95%.",
+    accepted: "- HP's opt-in analytics rate for gaming PCs is 80-95%."
+  },
+  {
+    name: 'Offline Analytics Ticket',
+    title: 'Offline analytics',
+    content: 'Chris filed DD1450 for offline analytics.',
+    accepted: '- Chris filed DD1450 for offline analytics.'
+  },
+  {
+    name: 'Login Volume Snapshot',
+    title: 'Login volume',
+    content: 'Login events reached 16GB yesterday.',
+    accepted: '- Login events reached 16GB yesterday.'
+  }
+] as const
+
+function fourTopicSegments(): MeetingSegments {
+  return {
+    decisions: [],
+    actionItems: [],
+    information: FOUR_TOPICS.map((topic, index) =>
+      segment({
+        id: `t${index + 1}`,
+        category: 'information',
+        title: topic.title,
+        topic: topic.name,
+        content: topic.content
+      })
+    ),
+    discussion: [],
+    statusUpdates: []
+  }
+}
+
+function groupingJson(): string {
+  return JSON.stringify({
+    groups: FOUR_TOPICS.map((topic, index) => ({
+      name: topic.name,
+      ids: [`i${String(index + 1).padStart(2, '0')}`]
+    }))
+  })
+}
+
+function promptKind(prompt: string): 'group' | 'restyle' | 'compress' | 'overview' {
+  if (prompt.includes('assign existing meeting-note items to topic groups')) return 'group'
+  if (prompt.includes('rewriting one section of existing meeting notes')) return 'restyle'
+  if (prompt.includes('compressing one section of existing meeting notes')) return 'compress'
+  if (prompt.includes('Summarize the finished meeting notes')) return 'overview'
+  throw new Error(`unexpected prompt: ${prompt.slice(0, 80)}`)
+}
+
+function sectionTopic(prompt: string): string {
+  const match = prompt.match(/^Section topic:\s*(.+)$/m)
+  return match?.[1]?.trim() ?? ''
+}
+
+function acceptedRestyle(topicName: string): string {
+  const topic = FOUR_TOPICS.find((row) => row.name === topicName)
+  if (!topic) throw new Error(`unknown restyle topic: ${topicName}`)
+  return topic.accepted
+}
+
+function overviewJson(): string {
+  return JSON.stringify({
+    overview: 'The team reviewed checkout latency, opt-in rate, offline analytics, and login volume.',
+    keyTakeaways: ['Nora measured 12ms checkout latency']
+  })
+}
+
+const REJECTED_REWRITE = 'Talk to Nora about i03'
+
+function recordCalls(): {
+  kinds: Array<'group' | 'restyle' | 'compress' | 'overview'>
+  restyleTopics: string[]
+  compressTopics: string[]
+} {
+  return { kinds: [], restyleTopics: [], compressTopics: [] }
+}
+
+describe('runNotesScanPipeline rewrite policy', () => {
+  it('uses two restyle/compress attempts under the default policy and records no skips', async () => {
+    const calls = recordCalls()
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        calls.kinds.push(kind)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') {
+          calls.restyleTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        if (kind === 'compress') {
+          calls.compressTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        return overviewJson()
+      }
+    })
+
+    expect(new Set(calls.restyleTopics).size).toBe(4)
+    expect(calls.restyleTopics.filter((topic) => topic === FOUR_TOPICS[0].name)).toHaveLength(2)
+    expect(calls.compressTopics.filter((topic) => topic === FOUR_TOPICS[0].name)).toHaveLength(2)
+    expect(result.restyleSkips).toBe(0)
+    expect(result.compressSkips).toBe(0)
+    expect(result.restyleFallbacks).toBe(4)
+    expect(result.compressFallbacks).toBe(4)
+  })
+
+  it('makes one restyle attempt per section when maxAttemptsPerSection is 1', async () => {
+    const calls = recordCalls()
+    await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        calls.kinds.push(kind)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') {
+          calls.restyleTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        if (kind === 'compress') return REJECTED_REWRITE
+        return overviewJson()
+      }
+    })
+
+    expect(calls.restyleTopics.filter((topic) => topic === FOUR_TOPICS[0].name)).toHaveLength(1)
+  })
+
+  it('skips later restyles after consecutive rejects and still runs grouping plus overview', async () => {
+    const calls = recordCalls()
+    const progress: string[] = []
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      onProgress: (update) => {
+        progress.push(update.stage)
+      },
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        calls.kinds.push(kind)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') {
+          calls.restyleTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        if (kind === 'compress') {
+          calls.compressTopics.push(sectionTopic(request.prompt))
+          return acceptedRestyle(sectionTopic(request.prompt))
+        }
+        return overviewJson()
+      }
+    })
+
+    expect(calls.restyleTopics).toEqual([FOUR_TOPICS[0].name, FOUR_TOPICS[1].name])
+    expect(result.restyleFallbacks).toBe(2)
+    expect(result.restyleRejectReasons).toHaveLength(2)
+    expect(result.restyleSkips).toBe(2)
+    expect(calls.kinds.filter((kind) => kind === 'group')).toHaveLength(1)
+    expect(calls.kinds.filter((kind) => kind === 'overview')).toHaveLength(1)
+    expect(progress.filter((stage) => stage === 'restyle')).toHaveLength(4)
+  })
+
+  it('resets the restyle consecutive-reject counter after an accepted rewrite', async () => {
+    const calls = recordCalls()
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        calls.kinds.push(kind)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') {
+          const topic = sectionTopic(request.prompt)
+          calls.restyleTopics.push(topic)
+          return topic === FOUR_TOPICS[1].name ? acceptedRestyle(topic) : REJECTED_REWRITE
+        }
+        if (kind === 'compress') return acceptedRestyle(sectionTopic(request.prompt))
+        return overviewJson()
+      }
+    })
+
+    expect(calls.restyleTopics).toEqual(FOUR_TOPICS.map((topic) => topic.name))
+    expect(result.restyleSkips).toBe(0)
+    expect(result.restyleFallbacks).toBe(3)
+  })
+
+  it('makes one compress attempt per chunk when maxAttemptsPerSection is 1', async () => {
+    const calls = recordCalls()
+    await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') return acceptedRestyle(sectionTopic(request.prompt))
+        if (kind === 'compress') {
+          calls.compressTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        return overviewJson()
+      }
+    })
+
+    expect(calls.compressTopics.filter((topic) => topic === FOUR_TOPICS[0].name)).toHaveLength(1)
+  })
+
+  it('skips later compress chunks after consecutive rejects and leaves skipped text unchanged', async () => {
+    const calls = recordCalls()
+    const progress: string[] = []
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      onProgress: (update) => {
+        progress.push(update.stage)
+      },
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        calls.kinds.push(kind)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') return acceptedRestyle(sectionTopic(request.prompt))
+        if (kind === 'compress') {
+          calls.compressTopics.push(sectionTopic(request.prompt))
+          return REJECTED_REWRITE
+        }
+        return overviewJson()
+      }
+    })
+
+    expect(calls.compressTopics).toEqual([FOUR_TOPICS[0].name, FOUR_TOPICS[1].name])
+    expect(result.compressFallbacks).toBe(2)
+    expect(result.compressRejectReasons).toHaveLength(2)
+    expect(result.compressSkips).toBe(2)
+    expect(result.markdown).toContain('Chris filed DD1450 for offline analytics.')
+    expect(result.markdown).toContain('Login events reached 16GB yesterday.')
+    expect(calls.kinds.filter((kind) => kind === 'group')).toHaveLength(1)
+    expect(calls.kinds.filter((kind) => kind === 'overview')).toHaveLength(1)
+    expect(progress.filter((stage) => stage === 'compress')).toHaveLength(4)
+  })
+
+  it('resets the compress consecutive-reject counter after an accepted rewrite', async () => {
+    const calls = recordCalls()
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: STRICT_REWRITE_POLICY,
+      generate: async (request) => {
+        const kind = promptKind(request.prompt)
+        if (kind === 'group') return groupingJson()
+        if (kind === 'restyle') return acceptedRestyle(sectionTopic(request.prompt))
+        if (kind === 'compress') {
+          const topic = sectionTopic(request.prompt)
+          calls.compressTopics.push(topic)
+          return topic === FOUR_TOPICS[1].name ? acceptedRestyle(topic) : REJECTED_REWRITE
+        }
+        return overviewJson()
+      }
+    })
+
+    expect(calls.compressTopics).toEqual(FOUR_TOPICS.map((topic) => topic.name))
+    expect(result.compressSkips).toBe(0)
+    expect(result.compressFallbacks).toBe(3)
   })
 })

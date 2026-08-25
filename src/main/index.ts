@@ -1148,7 +1148,8 @@ app.whenReady().then(async () => {
       (await managedOllamaManager.hasUsableNotesModel()),
     recoverUnhealthyRuntime: recoverUnhealthyOllamaRuntime,
     reapLeftoverRunners: (reason?: string, meetingId?: string) =>
-      managedOllamaManager.reapLeftoverRunners(reason, meetingId)
+      managedOllamaManager.reapLeftoverRunners(reason, meetingId),
+    getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
   const ollamaRuntime = {
     waitUntilReady: waitUntilOllamaReady,

@@ -343,6 +343,8 @@ describe('SegmentationService', () => {
           groupingFallback: false,
           restyleFallbacks: 0,
           compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
           restyleRejectReasons: [],
           compressRejectReasons: [],
           attachFailed: false,
@@ -398,6 +400,128 @@ describe('SegmentationService', () => {
       pipeline.mock.invocationCallOrder[0]
     )
     expect(mocks.logAutodocFailure).not.toHaveBeenCalled()
+
+    pipeline.mockRestore()
+    promote.mockRestore()
+  })
+
+  it('applies the cpu-constrained rewrite policy only when notes run on CPU', async () => {
+    const capturedPolicies: unknown[] = []
+    const pipeline = vi
+      .spyOn(notesScanPipeline, 'runNotesScanPipeline')
+      .mockImplementation(async (_segments, options) => {
+        capturedPolicies.push(options.rewritePolicy)
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
+          attachFailed: false,
+          overviewFailed: false,
+          overviewFailureReasons: [],
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      })
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+
+    const cases: { accelerator: 'cpu' | 'cuda' | 'vulkan'; measuredTokPerSec: number | null }[] = [
+      { accelerator: 'cpu', measuredTokPerSec: null },
+      { accelerator: 'cuda', measuredTokPerSec: null },
+      { accelerator: 'cuda', measuredTokPerSec: 5 },
+      { accelerator: 'cpu', measuredTokPerSec: 40 },
+      { accelerator: 'vulkan', measuredTokPerSec: null }
+    ]
+    for (const { accelerator, measuredTokPerSec } of cases) {
+      const scanProvider = createMockProvider()
+      vi.mocked(scanProvider.summarize).mockResolvedValue({
+        decisions: [],
+        actionItems: [],
+        information: [
+          {
+            id: 'seg-1',
+            meetingId: 'm1',
+            category: 'information',
+            topic: 'Rollout',
+            title: 'Plan confirmed',
+            content: 'The rollout plan was confirmed.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 0,
+            sourceEndMs: 65_000
+          }
+        ],
+        discussion: [],
+        statusUpdates: []
+      })
+      ;(scanProvider as { completePrompt?: unknown }).completePrompt = vi
+        .fn()
+        .mockResolvedValue('')
+      if (measuredTokPerSec != null) {
+        ;(scanProvider as { getLastEvalTokPerSec?: unknown }).getLastEvalTokPerSec = () =>
+          measuredTokPerSec
+      }
+      const setVramConstrainedContext = vi.fn()
+      ;(scanProvider as { setVramConstrainedContext?: unknown }).setVramConstrainedContext =
+        setVramConstrainedContext
+      const manager = {
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        getNotesAccelerator: () => accelerator
+      } as unknown as OllamaManager
+      const scanService = new SegmentationService(
+        scanProvider,
+        manager,
+        '/mock/home/AutoDoc/recordings'
+      )
+      await (scanService as any).processJob('m1')
+      expect(setVramConstrainedContext).toHaveBeenCalledWith(accelerator === 'vulkan')
+    }
+
+    expect(capturedPolicies).toEqual([
+      { maxAttemptsPerSection: 1, bailAfterConsecutiveRejects: 2 },
+      undefined,
+      { maxAttemptsPerSection: 1, bailAfterConsecutiveRejects: 2 },
+      undefined,
+      undefined
+    ])
 
     pipeline.mockRestore()
     promote.mockRestore()
@@ -870,6 +994,8 @@ describe('SegmentationService', () => {
           groupingFallback: false,
           restyleFallbacks: 0,
           compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
           restyleRejectReasons: [],
           compressRejectReasons: [],
           attachFailed: false,

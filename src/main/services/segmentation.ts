@@ -36,7 +36,12 @@ import {
   computeNotesAttributionRevision,
   computeTranscriptRevision
 } from './notes-revision'
-import { runNotesScanPipeline, scanLayerProgress } from './notes-scan-pipeline'
+import {
+  runNotesScanPipeline,
+  scanLayerProgress,
+  type NotesRewritePolicy
+} from './notes-scan-pipeline'
+import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
 import { meetingSegmentsFromDisk } from './writer-catalog'
 import type { WindowsProcessingProfile } from './windows-processing-profile'
@@ -48,7 +53,25 @@ interface OllamaReadiness {
   isReadyForGeneration?(): Promise<boolean>
   recoverUnhealthyRuntime?(): Promise<void>
   reapLeftoverRunners?(reason?: string, meetingId?: string): void
+  getNotesAccelerator?(): OllamaAccelerator
 }
+
+/**
+ * At ~5 tok/s a rejected restyle/compress costs minutes of compute that gets
+ * thrown away, and the retry doubles it. On slow inference we allow one
+ * attempt and stop rewriting entirely after two consecutive rejections.
+ */
+const CPU_CONSTRAINED_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 2
+}
+
+/**
+ * Below this decode speed the scan's optional rewrite passes cost more time
+ * than they are worth. Measured writer speed is the ground truth (a configured
+ * GPU can still end up CPU-bound when the model does not fit its VRAM).
+ */
+const CONSTRAINED_REWRITE_MAX_TOK_PER_SEC = 12
 
 const EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
@@ -388,6 +411,9 @@ export class SegmentationService {
       this.llmProvider.setLowMemoryMode?.(false)
       this.lastAppliedMacModel = null
     }
+    this.llmProvider.setVramConstrainedContext?.(
+      this.ollamaManager.getNotesAccelerator?.() === 'vulkan'
+    )
     logAutodocEvent({
       area: 'segmentation',
       message: 'notes generation waiting for model',
@@ -592,8 +618,16 @@ export class SegmentationService {
       const metadata = await readMetadata(meetingDir)
       const title = metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
       let loggedScanRequest = false
+      const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
+      const measuredTokPerSec = this.llmProvider.getLastEvalTokPerSec?.() ?? null
+      const constrained =
+        measuredTokPerSec != null
+          ? measuredTokPerSec < CONSTRAINED_REWRITE_MAX_TOK_PER_SEC
+          : notesAccelerator === 'cpu'
+      const rewritePolicy = constrained ? CPU_CONSTRAINED_REWRITE_POLICY : undefined
       const result = await runNotesScanPipeline(segments, {
         title,
+        rewritePolicy,
         spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
         transcript: transcripts.map((row) => ({
           speaker: row.speaker,
@@ -648,6 +682,11 @@ export class SegmentationService {
           groupingFallback: result.groupingFallback,
           restyleFallbacks: result.restyleFallbacks,
           compressFallbacks: result.compressFallbacks,
+          restyleSkips: result.restyleSkips,
+          compressSkips: result.compressSkips,
+          rewritePolicy: rewritePolicy ? 'cpu-constrained' : 'default',
+          notesAccelerator,
+          measuredTokPerSec,
           restyleRejectReasons: result.restyleRejectReasons,
           compressRejectReasons: result.compressRejectReasons,
           attachFailed: result.attachFailed,

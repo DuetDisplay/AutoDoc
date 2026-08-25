@@ -60,6 +60,18 @@ export interface ScanGenerateRequest {
 
 export type ScanGenerateFn = (request: ScanGenerateRequest) => Promise<string>
 
+export interface NotesRewritePolicy {
+  /** LLM attempts per section/chunk before deterministic fallback (today: 2). */
+  maxAttemptsPerSection: 1 | 2
+  /** After this many consecutive rejections, stop attempting LLM rewrites for the remaining sections/chunks (null = never bail, today's behavior). */
+  bailAfterConsecutiveRejects: number | null
+}
+
+export const DEFAULT_NOTES_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 2,
+  bailAfterConsecutiveRejects: null
+}
+
 export interface RunNotesScanOptions {
   title: string
   generate: ScanGenerateFn
@@ -68,6 +80,7 @@ export interface RunNotesScanOptions {
   seed?: number
   temperature?: AllowedTemperature
   onProgress?: (update: { stage: string; fraction: number }) => void
+  rewritePolicy?: NotesRewritePolicy
 }
 
 export function scanLayerProgress(fraction: number): number {
@@ -94,6 +107,8 @@ export interface NotesScanResult {
   groupingFallback: boolean
   restyleFallbacks: number
   compressFallbacks: number
+  restyleSkips: number
+  compressSkips: number
   restyleRejectReasons: ScanRewriteRejectReason[]
   compressRejectReasons: ScanRewriteRejectReason[]
   attachFailed: boolean
@@ -110,6 +125,31 @@ export function restyleRejectReason(
   if (!factsPass(input, output)) return 'facts'
   if (!entitiesPreserved(input, output)) return 'entities'
   return null
+}
+
+function rewriteBailReached(consecutiveRejects: number, policy: NotesRewritePolicy): boolean {
+  return (
+    policy.bailAfterConsecutiveRejects != null &&
+    consecutiveRejects >= policy.bailAfterConsecutiveRejects
+  )
+}
+
+function compressRejectReason(
+  inputText: string,
+  markdown: string,
+  judgmentReason: string
+): ScanRewriteRejectReason {
+  if (!entitiesPreserved(inputText, markdown)) return 'entities'
+  if (countWords(inputText) >= 80 && countWords(markdown) > countWords(inputText)) return 'grew'
+  if (
+    judgmentReason === 'item-id' ||
+    judgmentReason === 'facts' ||
+    judgmentReason === 'ungrounded' ||
+    judgmentReason === 'coverage'
+  ) {
+    return judgmentReason
+  }
+  return 'coverage'
 }
 
 function catalogById(catalog: readonly CatalogItem[]): Map<string, CatalogItem> {
@@ -202,6 +242,7 @@ export async function runNotesScanPipeline(
 ): Promise<NotesScanResult> {
   const seed = options.seed ?? DEFAULT_SEED
   const temperature = options.temperature ?? 0.4
+  const rewritePolicy = options.rewritePolicy ?? DEFAULT_NOTES_REWRITE_POLICY
   const reportProgress = (stage: string, fraction: number): void => {
     options.onProgress?.({ stage, fraction: Math.min(1, Math.max(0, fraction)) })
   }
@@ -240,33 +281,47 @@ export async function runNotesScanPipeline(
   const byId = catalogById(topical)
   const sectionBodies: { name: string; markdown: string }[] = []
   let restyleFallbacks = 0
+  let restyleSkips = 0
+  let consecutiveRestyleRejects = 0
   const restyleRejectReasons: ScanRewriteRejectReason[] = []
   for (const [groupIndex, group] of groups.entries()) {
     const members = itemsForGroup(group, byId)
     const inputText = members.map((row) => row.fullText).join('\n')
-    let markdown = sanitizeMarkdown(
-      await generateFromPlan(
-        options.generate,
-        planArmERestyle(group.name, members, temperature, seed)
-      )
-    )
-    if (
-      !factsPass(inputText, markdown) ||
-      containsCatalogItemId(markdown) ||
-      !entitiesPreserved(inputText, markdown)
-    ) {
+    let markdown: string
+    if (rewriteBailReached(consecutiveRestyleRejects, rewritePolicy)) {
+      // Skips are policy short-circuits, not model rejections — keep them off
+      // restyleFallbacks / reject-reason tallies so quality metrics stay honest.
+      restyleSkips += 1
+      markdown = renderUnrestyledItems(members.map((row) => row.item))
+    } else {
       markdown = sanitizeMarkdown(
         await generateFromPlan(
           options.generate,
-          planArmERestyle(group.name, members, temperature, armERetrySeed())
+          planArmERestyle(group.name, members, temperature, seed)
         )
       )
-    }
-    const restyleRejected = restyleRejectReason(inputText, markdown)
-    if (restyleRejected) {
-      restyleFallbacks += 1
-      restyleRejectReasons.push(restyleRejected)
-      markdown = renderUnrestyledItems(members.map((row) => row.item))
+      if (
+        rewritePolicy.maxAttemptsPerSection === 2 &&
+        (!factsPass(inputText, markdown) ||
+          containsCatalogItemId(markdown) ||
+          !entitiesPreserved(inputText, markdown))
+      ) {
+        markdown = sanitizeMarkdown(
+          await generateFromPlan(
+            options.generate,
+            planArmERestyle(group.name, members, temperature, armERetrySeed())
+          )
+        )
+      }
+      const restyleRejected = restyleRejectReason(inputText, markdown)
+      if (restyleRejected) {
+        restyleFallbacks += 1
+        restyleRejectReasons.push(restyleRejected)
+        markdown = renderUnrestyledItems(members.map((row) => row.item))
+        consecutiveRestyleRejects += 1
+      } else {
+        consecutiveRestyleRejects = 0
+      }
     }
     sectionBodies.push({ name: group.name, markdown })
     reportProgress('restyle', 0.12 + (0.43 * (groupIndex + 1)) / Math.max(groups.length, 1))
@@ -284,6 +339,8 @@ export async function runNotesScanPipeline(
   const chunks = splitNotesDocument(composed)
   let working = chunks.map((chunk) => ({ ...chunk }))
   let compressFallbacks = 0
+  let compressSkips = 0
+  let consecutiveCompressRejects = 0
   const compressRejectReasons: ScanRewriteRejectReason[] = []
   const topicalChunks = working.filter((chunk) => chunk.kind === 'topical')
   let compressDone = 0
@@ -301,46 +358,43 @@ export async function runNotesScanPipeline(
         baselineStrict: scoreCoverage(inputText, coverageItems).strict,
         coverageItems
       }).accept
-    let markdown = stripEmittedHeading(
-      await generateFromPlan(
-        options.generate,
-        planArmFCompress(chunk.name ?? 'Topic', inputText, temperature, seed)
-      ),
-      chunk.name ?? ''
-    )
-    if (!accept(markdown)) {
-      markdown = stripEmittedHeading(
+    if (rewriteBailReached(consecutiveCompressRejects, rewritePolicy)) {
+      // Same honesty rule as restyle: skips are not compressFallbacks.
+      compressSkips += 1
+    } else {
+      let markdown = stripEmittedHeading(
         await generateFromPlan(
           options.generate,
-          planArmFCompress(chunk.name ?? 'Topic', inputText, temperature, armFRetrySeed())
+          planArmFCompress(chunk.name ?? 'Topic', inputText, temperature, seed)
         ),
         chunk.name ?? ''
       )
+      if (rewritePolicy.maxAttemptsPerSection === 2 && !accept(markdown)) {
+        markdown = stripEmittedHeading(
+          await generateFromPlan(
+            options.generate,
+            planArmFCompress(chunk.name ?? 'Topic', inputText, temperature, armFRetrySeed())
+          ),
+          chunk.name ?? ''
+        )
+      }
+      if (!accept(markdown)) {
+        compressFallbacks += 1
+        const judgment = judgeCompression({
+          inputSection: inputText,
+          compressed: markdown,
+          trialDocument: joinNotesDocument(reconstructWith(working, index, markdown)),
+          baselineStrict: scoreCoverage(inputText, coverageItems).strict,
+          coverageItems
+        })
+        compressRejectReasons.push(compressRejectReason(inputText, markdown, judgment.reason))
+        markdown = inputText
+        consecutiveCompressRejects += 1
+      } else {
+        consecutiveCompressRejects = 0
+      }
+      working = reconstructWith(working, index, markdown)
     }
-    if (!accept(markdown)) {
-      compressFallbacks += 1
-      const judgment = judgeCompression({
-        inputSection: inputText,
-        compressed: markdown,
-        trialDocument: joinNotesDocument(reconstructWith(working, index, markdown)),
-        baselineStrict: scoreCoverage(inputText, coverageItems).strict,
-        coverageItems
-      })
-      compressRejectReasons.push(
-        !entitiesPreserved(inputText, markdown)
-          ? 'entities'
-          : countWords(inputText) >= 80 && countWords(markdown) > countWords(inputText)
-            ? 'grew'
-            : judgment.reason === 'item-id' ||
-                judgment.reason === 'facts' ||
-                judgment.reason === 'ungrounded' ||
-                judgment.reason === 'coverage'
-              ? judgment.reason
-              : 'coverage'
-      )
-      markdown = inputText
-    }
-    working = reconstructWith(working, index, markdown)
     compressDone += 1
     reportProgress(
       'compress',
@@ -431,6 +485,8 @@ export async function runNotesScanPipeline(
     groupingFallback,
     restyleFallbacks,
     compressFallbacks,
+    restyleSkips,
+    compressSkips,
     restyleRejectReasons,
     compressRejectReasons,
     attachFailed,
