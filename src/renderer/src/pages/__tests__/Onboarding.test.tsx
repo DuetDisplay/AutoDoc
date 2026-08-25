@@ -80,7 +80,7 @@ describe('Onboarding', () => {
 
     render(<Onboarding onComplete={vi.fn()} />)
 
-    expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Connect Calendar' )).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /back/i }))
 
@@ -104,7 +104,7 @@ describe('Onboarding', () => {
 
     expect(await screen.findByRole('heading', { name: 'Screen Recording' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /^continue/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Connect Calendar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Connect Calendar' )).not.toBeInTheDocument()
   })
 
   it('renders step dots', async () => {
@@ -127,7 +127,7 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip for now/i )).toBeInTheDocument()
   })
 
   it('surfaces onboarding calendar connection failures so users can recover', async () => {
@@ -146,7 +146,7 @@ describe('Onboarding', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       /we couldn't connect google calendar/i
     )
-    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip for now/i )).toBeInTheDocument()
   })
 
   it('persists the analytics opt-in choice and advances to the all-set step', async () => {
@@ -161,7 +161,9 @@ describe('Onboarding', () => {
 
     render(<Onboarding onComplete={vi.fn()} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: /share anonymous data/i }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: /share anonymous product health/i })
+    )
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
@@ -190,11 +192,11 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     expect(checkbox).not.toBeChecked()
 
-    await userEvent.click(screen.getByRole('button', { name: /share anonymous data/i }))
+    await userEvent.click(screen.getByRole('button', { name: /share anonymous product health/i }))
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
@@ -218,7 +220,7 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     await userEvent.click(checkbox)
     expect(checkbox).toBeChecked()
@@ -229,7 +231,7 @@ describe('Onboarding', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
 
     const restoredCheckbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     expect(restoredCheckbox).toBeChecked()
   })
