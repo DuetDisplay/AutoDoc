@@ -33,14 +33,13 @@ export function AnalyticsStep({
       </div>
 
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-        Help Improve AutoDoc
+        Help us make AutoDoc better
       </h2>
 
       <p className="text-[14px] text-ink-muted leading-relaxed mb-4">
-        Share anonymous product health and usage metrics so we can understand which features matter
-        most and fix crashes faster. Meeting content, meeting titles, and recordings are never
-        included in this tracking. If you choose, you can also attach technical app logs to error
-        reports.
+        You can optionally share anonymous product health so we can fix crashes and improve AutoDoc.
+        We never receive your meeting content, titles, transcripts, or recordings, and we never
+        train on them. You can change this later in Settings.
       </p>
 
       {/* What we track disclosure */}
@@ -119,25 +118,16 @@ export function AnalyticsStep({
         </div>
       )}
 
-      <p className="text-[11px] text-ink-faint mb-5">
-        AutoDoc is open source — you can audit our tracking code anytime. You can change this later
-        in Settings.
-      </p>
-
       <label className="flex items-start gap-3 rounded-lg border border-border-subtle bg-bg-accent px-4 py-3 mb-4 text-left">
         <input
           type="checkbox"
           checked={diagnosticLogUploadConsented}
           onChange={(event) => onDiagnosticLogUploadConsentedChange(event.target.checked)}
           className="mt-0.5 h-4 w-4 rounded border-border-subtle text-sage focus:ring-sage"
-          aria-label="Attach technical app logs to error reports"
+          aria-label="Also share anonymous logs if something breaks"
         />
         <span className="text-[12px] text-ink-muted leading-relaxed">
-          <strong className="text-ink font-semibold">
-            Attach technical app logs to error reports
-          </strong>{' '}
-          if I choose to share diagnostics. This can help debug failures faster, and can stay off
-          while analytics remain on.
+          Also share anonymous logs if something breaks
         </span>
       </label>
 
@@ -146,13 +136,13 @@ export function AnalyticsStep({
           onClick={() => onNext(true, diagnosticLogUploadConsented)}
           className="w-full px-6 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Share Anonymous Data
+          Share anonymous product health
         </button>
         <button
           onClick={() => onNext(false, false)}
           className="w-full px-6 py-2.5 text-ink-muted text-[13px] font-medium hover:text-ink transition-colors"
         >
-          No Thanks
+          Not now
         </button>
       </div>
     </div>
