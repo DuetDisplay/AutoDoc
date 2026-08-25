@@ -233,7 +233,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -285,7 +285,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -308,7 +308,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -318,7 +318,7 @@ test.describe('real managed setup downloads', () => {
       await waitForSetupReady(page, 'ollama:get-setup-status', REAL_DOWNLOAD_TIMEOUT_MS)
       await expectAnyHeading(
         page,
-        ['Setting Up AI', 'AI Model Ready', 'Help Improve AutoDoc', "You're All Set"],
+        ['Setting Up AI', 'AI Model Ready', 'Help us make AutoDoc better', "You're All Set"],
         10_000
       )
 
@@ -359,7 +359,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -372,7 +372,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -382,7 +382,7 @@ test.describe('real managed setup downloads', () => {
       await waitForSetupReady(page, 'ollama:get-setup-status', REAL_DOWNLOAD_TIMEOUT_MS)
       await expectAnyHeading(
         page,
-        ['Setting Up AI', 'AI Model Ready', 'Help Improve AutoDoc', "You're All Set"],
+        ['Setting Up AI', 'AI Model Ready', 'Help us make AutoDoc better', "You're All Set"],
         10_000
       )
 
@@ -431,7 +431,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
