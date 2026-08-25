@@ -41,6 +41,7 @@ export function registerLlmIpc(
     }
 
     consecutiveOllamaHealthFailures += 1
+    const setupAlreadyFinished = getOllamaSetupStatus().phase === 'ready'
     if (startSetupFromStatusCheck) {
       // Windows caches startAndPull as already done. A hung serve still listens,
       // so a plain ensureRunning() is a no-op. After two failed polls, force a
@@ -50,6 +51,14 @@ export function registerLlmIpc(
           ? { force: true }
           : undefined
       )
+    } else if (
+      setupAlreadyFinished &&
+      consecutiveOllamaHealthFailures >= UNHEALTHY_OLLAMA_RESTART_AFTER
+    ) {
+      // Coordinated Windows setup already finished. Status checks stay passive
+      // during the first download so they do not abort an in-flight pull, but
+      // a later dead serve will never recover from the cached ready promise.
+      ensureOllamaRunning({ force: true })
     }
     return false
   })

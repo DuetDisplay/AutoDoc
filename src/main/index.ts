@@ -1124,15 +1124,29 @@ app.whenReady().then(async () => {
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
   const waitUntilOllamaReady = async (): Promise<void> => {
     await ollamaReadiness.waitUntilReady()
-    if (windowsOllamaSetupCoordinator) {
+    if (
+      windowsOllamaSetupCoordinator &&
+      (await managedOllamaManager.isServerRunning()) &&
+      (await managedOllamaManager.hasUsableNotesModel())
+    ) {
       markOllamaSetupReady()
     }
+  }
+  const recoverUnhealthyOllamaRuntime = async (): Promise<void> => {
+    ensureOllamaRunning({ force: true })
+    await waitUntilOllamaReady()
+  }
+  const ensureOllamaRunningIfNeeded = (): void => {
+    void managedOllamaManager.isServerRunning().then((running) => {
+      ensureOllamaRunning(running ? undefined : { force: true })
+    })
   }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
     isReadyForGeneration: async () =>
       (await managedOllamaManager.isServerRunning()) &&
       (await managedOllamaManager.hasUsableNotesModel()),
+    recoverUnhealthyRuntime: recoverUnhealthyOllamaRuntime,
     reapLeftoverRunners: (reason?: string, meetingId?: string) =>
       managedOllamaManager.reapLeftoverRunners(reason, meetingId)
   }
@@ -1920,12 +1934,12 @@ app.whenReady().then(async () => {
 
     if (!isRealSetupTest) {
       powerMonitor.on('resume', () => {
-        ensureOllamaRunning()
+        ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
 
       powerMonitor.on('unlock-screen', () => {
-        ensureOllamaRunning()
+        ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
 

@@ -46,6 +46,7 @@ type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-no
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
   isReadyForGeneration?(): Promise<boolean>
+  recoverUnhealthyRuntime?(): Promise<void>
   reapLeftoverRunners?(reason?: string, meetingId?: string): void
 }
 
@@ -750,13 +751,24 @@ export class SegmentationService {
       return true
     }
 
-    const ready = await this.ollamaManager.isReadyForGeneration()
-    if (ready) {
+    if (await this.ollamaManager.isReadyForGeneration()) {
       this.ollamaGenerationDeferCounts.delete(meetingId)
       return true
     }
 
     const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
+    if (deferCount === 0 && this.ollamaManager.recoverUnhealthyRuntime) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes generation recovering unhealthy Ollama runtime',
+        meetingId
+      })
+      await this.ollamaManager.recoverUnhealthyRuntime()
+      if (await this.ollamaManager.isReadyForGeneration()) {
+        this.ollamaGenerationDeferCounts.delete(meetingId)
+        return true
+      }
+    }
     if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
       this.ollamaGenerationDeferCounts.delete(meetingId)
       throw new Error(OLLAMA_UNAVAILABLE_ERROR)

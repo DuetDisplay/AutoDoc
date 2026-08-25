@@ -962,6 +962,21 @@ describe('SegmentationService', () => {
     })
   })
 
+  it('replaces an unhealthy Ollama runtime once before deferring notes', async () => {
+    const recoverUnhealthyRuntime = vi.fn().mockResolvedValue(undefined)
+    const notReadyThenReady = {
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      isReadyForGeneration: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+      recoverUnhealthyRuntime
+    }
+    provider = createMockProvider()
+    service = new SegmentationService(provider, notReadyThenReady, '/mock/home/AutoDoc/recordings')
+
+    await expect((service as any).ensureOllamaReadyForGeneration('m-recover')).resolves.toBe(true)
+    expect(recoverUnhealthyRuntime).toHaveBeenCalledOnce()
+    expect(notReadyThenReady.isReadyForGeneration).toHaveBeenCalledTimes(2)
+  })
+
   it('defers notes generation when Ollama is not ready without consuming recovery retries', async () => {
     vi.useFakeTimers()
     const notReadyOllama = {

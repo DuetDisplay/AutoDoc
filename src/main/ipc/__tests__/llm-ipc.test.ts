@@ -16,7 +16,8 @@ function registerWith(
   isServerRunning: () => Promise<boolean>,
   ensureOllamaRunning: (options?: { force?: boolean }) => void,
   startSetupFromStatusCheck?: boolean,
-  onManualSegmentationRetry?: (meetingId: string) => void
+  onManualSegmentationRetry?: (meetingId: string) => void,
+  setupPhase: 'starting' | 'ready' = 'starting'
 ) {
   const retry = vi.fn()
   const getActivity = vi.fn((): 'waiting-for-local-ai' | null => null)
@@ -31,7 +32,7 @@ function registerWith(
     {
       getModel: () => 'llama3.1'
     } as never,
-    () => ({ phase: 'starting', percent: 0 }),
+    () => ({ phase: setupPhase, percent: setupPhase === 'ready' ? 100 : 0 }),
     ensureOllamaRunning,
     startSetupFromStatusCheck,
     onManualSegmentationRetry
@@ -52,6 +53,17 @@ describe('registerLlmIpc', () => {
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
 
     expect(ensureOllamaRunning).not.toHaveBeenCalled()
+  })
+
+  it('force-replaces a dead serve after coordinated setup already finished', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(vi.fn().mockResolvedValue(false), ensureOllamaRunning, false, undefined, 'ready')
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
   })
 
   it('preserves the existing active status-check behavior by default', async () => {
