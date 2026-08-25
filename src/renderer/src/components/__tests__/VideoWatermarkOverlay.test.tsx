@@ -16,11 +16,11 @@ describe('VideoWatermarkOverlay', () => {
       'top-3',
       'right-3',
       'border-white/5',
-      'bg-ink/25',
-      'text-white/60'
+      'bg-ink/15',
+      'text-white/45'
     )
     expect(watermark?.querySelectorAll('svg rect')).toHaveLength(4)
-    expect(watermark?.querySelector('svg')).toHaveClass('text-sage-light/65')
+    expect(watermark?.querySelector('svg')).toHaveClass('text-sage-light/50')
     expect(screen.getByText('AutoDoc')).toHaveClass('font-serif')
   })
 })

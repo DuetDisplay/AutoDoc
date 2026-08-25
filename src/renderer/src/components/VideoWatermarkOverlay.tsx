@@ -4,12 +4,12 @@ export function VideoWatermarkOverlay(): ReactElement {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute right-3 top-3 z-10 flex select-none items-center gap-1.5 rounded-md border border-white/5 bg-ink/25 px-2 py-1 text-[10px] font-medium tracking-[0.01em] text-white/60 shadow-[0_1px_4px_rgba(0,0,0,0.12)] backdrop-blur-[2px]"
+      className="pointer-events-none absolute right-3 top-3 z-10 flex select-none items-center gap-1.5 rounded-md border border-white/5 bg-ink/15 px-2 py-1 text-[10px] font-medium tracking-[0.01em] text-white/45 shadow-[0_1px_4px_rgba(0,0,0,0.08)] backdrop-blur-[2px]"
     >
       <svg
         viewBox="0 0 16 14"
         fill="currentColor"
-        className="h-3 w-3.5 shrink-0 text-sage-light/65"
+        className="h-3 w-3.5 shrink-0 text-sage-light/50"
       >
         <rect x="0" y="4" width="2" height="6" rx="1" />
         <rect x="4.5" y="1" width="2" height="12" rx="1" />

@@ -270,10 +270,25 @@ describe('MeetingDetail', () => {
     const user = userEvent.setup()
 
     await user.click(screen.getByText('Transcript'))
-    expect(document.querySelector('video')).toBeInTheDocument()
+    const video = document.querySelector('video')
+    expect(video).toBeInTheDocument()
+    expect(video).toHaveAttribute('controlsList', 'nodownload nofullscreen noremoteplayback')
     const watermark = screen.getByText(/Meeting notes by/)
     expect(watermark).toHaveTextContent('Meeting notes by AutoDoc')
-    expect(watermark).toHaveClass('pointer-events-none')
+    const watermarkOverlay = watermark.closest('[aria-hidden="true"]')
+    expect(watermarkOverlay).toHaveClass('pointer-events-none')
+
+    const fullscreenSurface = screen.getByTestId('video-player-surface')
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(fullscreenSurface, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Enter full screen' }))
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    expect(fullscreenSurface).toContainElement(video)
+    expect(fullscreenSurface).toContainElement(watermarkOverlay)
 
     const api = window.electronAPI as unknown as MockElectronAPI
     act(() => {
