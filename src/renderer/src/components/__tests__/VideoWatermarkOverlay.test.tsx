@@ -17,7 +17,8 @@ describe('VideoWatermarkOverlay', () => {
       'right-3',
       'border-white/5',
       'bg-ink/15',
-      'text-white/45'
+      'text-white/45',
+      '[&:popover-open]:fixed'
     )
     expect(watermark?.querySelectorAll('svg rect')).toHaveLength(4)
     expect(watermark?.querySelector('svg')).toHaveClass('text-sage-light/50')

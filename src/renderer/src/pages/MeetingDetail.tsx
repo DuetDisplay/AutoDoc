@@ -316,7 +316,7 @@ export function MeetingDetail() {
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const transcriptTopRef = useRef<HTMLDivElement | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
-  const videoPlayerSurfaceRef = useRef<HTMLDivElement | null>(null)
+  const videoWatermarkRef = useRef<HTMLDivElement | null>(null)
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
   const activeTabRef = useRef<Tab>('notes')
@@ -329,7 +329,6 @@ export function MeetingDetail() {
   const segmentationEventRevisionRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
   const [videoWatermarkVisible, setVideoWatermarkVisible] = useState(true)
-  const [videoFullscreen, setVideoFullscreen] = useState(false)
 
   useEffect(() => {
     activeTabRef.current = activeTab
@@ -340,13 +339,47 @@ export function MeetingDetail() {
   }, [id])
 
   useEffect(() => {
-    const handleFullscreenChange = (): void => {
-      setVideoFullscreen(document.fullscreenElement === videoPlayerSurfaceRef.current)
+    const closeFullscreenWatermark = (): void => {
+      const watermark = videoWatermarkRef.current
+      if (!watermark) return
+      if (watermark.hasAttribute('data-fullscreen-watermark-open')) {
+        try {
+          watermark.hidePopover()
+        } catch {
+          // The browser may already have closed the top-layer popover with fullscreen.
+        }
+      }
+      watermark.removeAttribute('data-fullscreen-watermark-open')
+      watermark.removeAttribute('popover')
     }
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  }, [])
+    const syncFullscreenWatermark = (): void => {
+      const watermark = videoWatermarkRef.current
+      const video = mediaRef.current
+      if (!watermark || typeof watermark.showPopover !== 'function') return
+
+      if (video instanceof HTMLVideoElement && document.fullscreenElement === video) {
+        if (watermark.hasAttribute('data-fullscreen-watermark-open')) return
+        watermark.setAttribute('popover', 'manual')
+        try {
+          watermark.showPopover()
+          watermark.setAttribute('data-fullscreen-watermark-open', '')
+        } catch {
+          watermark.removeAttribute('popover')
+        }
+        return
+      }
+
+      closeFullscreenWatermark()
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenWatermark)
+    syncFullscreenWatermark()
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenWatermark)
+      closeFullscreenWatermark()
+    }
+  }, [videoWatermarkVisible])
 
   useEffect(() => {
     let active = true
@@ -394,21 +427,6 @@ export function MeetingDetail() {
     },
     [id]
   )
-
-  const toggleVideoFullscreen = useCallback(async (): Promise<void> => {
-    const surface = videoPlayerSurfaceRef.current
-    if (!surface) return
-
-    try {
-      if (document.fullscreenElement === surface) {
-        await document.exitFullscreen()
-      } else {
-        await surface.requestFullscreen()
-      }
-    } catch (error) {
-      console.warn('Failed to toggle video fullscreen:', error)
-    }
-  }, [])
 
   const handleSeek = useCallback(
     (ms: number) => {
@@ -1647,81 +1665,23 @@ export function MeetingDetail() {
               </div>
             )}
             {media?.hasVideo && media.mediaBaseUrl && (
-              <div
-                ref={videoPlayerSurfaceRef}
-                data-testid="video-player-surface"
-                className={`overflow-hidden border border-border bg-bg-card ${
-                  videoFullscreen
-                    ? 'flex h-screen w-screen flex-col rounded-none border-0 bg-black'
-                    : 'rounded-xl'
-                }`}
-              >
-                <div
-                  className={`relative ${
-                    videoFullscreen
-                      ? 'flex min-h-0 flex-1 items-center justify-center bg-black'
-                      : ''
-                  }`}
-                >
+              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
+                <div className="relative">
                   <video
                     ref={mediaRef as React.RefObject<HTMLVideoElement>}
                     controls
-                    controlsList="nodownload nofullscreen noremoteplayback"
-                    className={`block w-full ${videoFullscreen ? 'h-full object-contain' : ''}`}
+                    className="block w-full"
                     src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
                     onError={reportRendererMediaError('video')}
-                    onDoubleClick={(event) => {
-                      event.preventDefault()
-                      void toggleVideoFullscreen()
-                    }}
                   />
-                  {videoWatermarkVisible && <VideoWatermarkOverlay />}
+                  {videoWatermarkVisible && <VideoWatermarkOverlay ref={videoWatermarkRef} />}
                 </div>
-                <div
-                  className={`flex justify-end gap-1.5 border-t px-3 py-1.5 ${
-                    videoFullscreen ? 'border-white/10 bg-black' : 'border-border'
-                  }`}
-                >
+                <div className="flex justify-end px-3 py-1.5 border-t border-border">
                   <button
                     onClick={cyclePlaybackRate}
-                    className={`rounded px-2 py-0.5 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 ${
-                      videoFullscreen
-                        ? 'bg-white/10 text-white/65 hover:text-white'
-                        : 'bg-bg-accent text-ink-muted hover:text-ink'
-                    }`}
+                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors"
                   >
                     {playbackRate}x
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void toggleVideoFullscreen()}
-                    aria-label={videoFullscreen ? 'Exit full screen' : 'Enter full screen'}
-                    title={videoFullscreen ? 'Exit full screen' : 'Enter full screen'}
-                    className={`flex size-6 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 ${
-                      videoFullscreen
-                        ? 'bg-white/10 text-white/65 hover:text-white'
-                        : 'bg-bg-accent text-ink-muted hover:text-ink'
-                    }`}
-                  >
-                    <svg
-                      aria-hidden="true"
-                      focusable="false"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      className="size-3.5"
-                    >
-                      <path
-                        d={
-                          videoFullscreen
-                            ? 'M6.25 2.25v4h-4m7.5-4v4h4m-7.5 7.5v-4h-4m7.5 4v-4h4'
-                            : 'M6.25 2.25h-4v4m7.5-4h4v4m-11.5 3.5v4h4m7.5-4v4h-4'
-                        }
-                        stroke="currentColor"
-                        strokeWidth="1.25"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
                   </button>
                 </div>
               </div>

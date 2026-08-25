@@ -272,23 +272,12 @@ describe('MeetingDetail', () => {
     await user.click(screen.getByText('Transcript'))
     const video = document.querySelector('video')
     expect(video).toBeInTheDocument()
-    expect(video).toHaveAttribute('controlsList', 'nodownload nofullscreen noremoteplayback')
+    expect(video).toHaveAttribute('controls')
+    expect(video).not.toHaveAttribute('controlsList')
+    expect(screen.queryByRole('button', { name: /full screen/i })).not.toBeInTheDocument()
     const watermark = screen.getByText(/Meeting notes by/)
     expect(watermark).toHaveTextContent('Meeting notes by AutoDoc')
-    const watermarkOverlay = watermark.closest('[aria-hidden="true"]')
-    expect(watermarkOverlay).toHaveClass('pointer-events-none')
-
-    const fullscreenSurface = screen.getByTestId('video-player-surface')
-    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(fullscreenSurface, 'requestFullscreen', {
-      configurable: true,
-      value: requestFullscreen
-    })
-
-    await user.click(screen.getByRole('button', { name: 'Enter full screen' }))
-    expect(requestFullscreen).toHaveBeenCalledOnce()
-    expect(fullscreenSurface).toContainElement(video)
-    expect(fullscreenSurface).toContainElement(watermarkOverlay)
+    expect(watermark.closest('[aria-hidden="true"]')).toHaveClass('pointer-events-none')
 
     const api = window.electronAPI as unknown as MockElectronAPI
     act(() => {
@@ -310,6 +299,44 @@ describe('MeetingDetail', () => {
 
     expect(document.querySelector('video')).toBeInTheDocument()
     expect(screen.getByText(/Meeting notes by/)).toBeInTheDocument()
+  })
+
+  it('keeps the watermark above the video when native fullscreen opens', async () => {
+    await renderMeetingDetail()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByText('Transcript'))
+    const video = document.querySelector('video')
+    const watermark = screen.getByText(/Meeting notes by/).closest('[aria-hidden="true"]')
+    expect(video).toBeInstanceOf(HTMLVideoElement)
+    expect(watermark).toBeInstanceOf(HTMLDivElement)
+
+    const showPopover = vi.fn()
+    const hidePopover = vi.fn()
+    Object.defineProperties(watermark, {
+      showPopover: { configurable: true, value: showPopover },
+      hidePopover: { configurable: true, value: hidePopover }
+    })
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: video
+    })
+
+    act(() => document.dispatchEvent(new Event('fullscreenchange')))
+
+    expect(showPopover).toHaveBeenCalledOnce()
+    expect(watermark).toHaveAttribute('popover', 'manual')
+    expect(watermark).toHaveAttribute('data-fullscreen-watermark-open')
+
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: null
+    })
+    act(() => document.dispatchEvent(new Event('fullscreenchange')))
+
+    expect(hidePopover).toHaveBeenCalledOnce()
+    expect(watermark).not.toHaveAttribute('popover')
+    expect(watermark).not.toHaveAttribute('data-fullscreen-watermark-open')
   })
 
   it('keeps notes actions disabled while generation runs and when no notes were produced', async () => {
