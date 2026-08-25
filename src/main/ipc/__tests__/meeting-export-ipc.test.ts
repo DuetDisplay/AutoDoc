@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   fromPartition: vi.fn(),
   fromWebContents: vi.fn(),
   appGetPath: vi.fn(),
-  clipboardWriteText: vi.fn(),
+  clipboardWrite: vi.fn(),
   dialogShowSaveDialog: vi.fn(),
   loadSnapshotFromSource: vi.fn(),
   loadSnapshot: vi.fn(),
@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   hasExportNotes: vi.fn(),
   meetingExportExtension: vi.fn(),
   renderMarkdown: vi.fn(),
+  renderPlainText: vi.fn(),
   renderDocx: vi.fn(),
   renderHtml: vi.fn(),
   atomicOpen: vi.fn(),
@@ -53,7 +54,7 @@ vi.mock('electron', () => {
   return {
     app: { getPath: mocks.appGetPath },
     BrowserWindow: BrowserWindowMock,
-    clipboard: { writeText: mocks.clipboardWriteText },
+    clipboard: { write: mocks.clipboardWrite },
     dialog: { showSaveDialog: mocks.dialogShowSaveDialog },
     protocol: {
       registerSchemesAsPrivileged: vi.fn((schemes: unknown) => {
@@ -80,6 +81,7 @@ vi.mock('../../services/meeting-export', () => ({
   hasMeetingExportNotes: mocks.hasExportNotes,
   meetingExportExtension: mocks.meetingExportExtension,
   renderMeetingExportMarkdown: mocks.renderMarkdown,
+  renderMeetingExportPlainText: mocks.renderPlainText,
   renderMeetingExportDocx: mocks.renderDocx,
   renderMeetingExportHtml: mocks.renderHtml
 }))
@@ -195,7 +197,7 @@ beforeEach(() => {
   })
   mocks.renderPdf.mockResolvedValue(Buffer.from('pdf output'))
   mocks.writeExportFile.mockResolvedValue(undefined)
-  mocks.clipboardWriteText.mockReturnValue(undefined)
+  mocks.clipboardWrite.mockReturnValue(undefined)
   mocks.getDocumentsPath.mockReturnValue('/documents')
   mocks.getParentWindow.mockReturnValue(parentWindow)
   mocks.createSuggestedFilename.mockImplementation(
@@ -207,6 +209,7 @@ beforeEach(() => {
     format === 'markdown' ? 'md' : format
   )
   mocks.renderMarkdown.mockReturnValue('markdown output')
+  mocks.renderPlainText.mockReturnValue('plain text output')
   mocks.renderDocx.mockResolvedValue(Buffer.from('docx output'))
   mocks.renderHtml.mockReturnValue('<html><body>PDF output</body></html>')
 })
@@ -509,7 +512,7 @@ describe('meeting export IPC', () => {
 })
 
 describe('meeting copy notes IPC', () => {
-  it('copies the readable Markdown notes for a valid trusted request', async () => {
+  it('copies rich notes with a marker-free plain-text fallback', async () => {
     register()
 
     await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
@@ -518,8 +521,13 @@ describe('meeting copy notes IPC', () => {
 
     expect(mocks.loadSnapshot).toHaveBeenCalledWith('/recordings', 'meeting-123')
     expect(mocks.hasExportNotes).toHaveBeenCalledWith(snapshot)
-    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot)
-    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('markdown output')
+    expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith({
+      text: 'plain text output',
+      html: '<html><body>PDF output</body></html>'
+    })
   })
 
   it('rejects untrusted and malformed requests before reading meeting data', async () => {
@@ -563,7 +571,7 @@ describe('meeting copy notes IPC', () => {
 
     expect(mocks.loadSnapshot).not.toHaveBeenCalled()
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
-    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -592,7 +600,7 @@ describe('meeting copy notes IPC', () => {
 
     expect(mocks.hasExportNotes).toHaveBeenCalledWith(emptySnapshot)
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
-    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
   it('bounds snapshot failures as copy-failed', async () => {
@@ -605,7 +613,7 @@ describe('meeting copy notes IPC', () => {
     })
 
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
-    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
   it('bounds notes inspection failures as copy-failed', async () => {
@@ -620,11 +628,11 @@ describe('meeting copy notes IPC', () => {
     })
 
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
-    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
-  it('bounds Markdown rendering failures as copy-failed', async () => {
-    mocks.renderMarkdown.mockImplementationOnce(() => {
+  it('bounds rich clipboard rendering failures as copy-failed', async () => {
+    mocks.renderPlainText.mockImplementationOnce(() => {
       throw new Error('render failed')
     })
     register()
@@ -634,11 +642,11 @@ describe('meeting copy notes IPC', () => {
       code: 'copy-failed'
     })
 
-    expect(mocks.clipboardWriteText).not.toHaveBeenCalled()
+    expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
   it('bounds clipboard failures as copy-failed', async () => {
-    mocks.clipboardWriteText.mockImplementationOnce(() => {
+    mocks.clipboardWrite.mockImplementationOnce(() => {
       throw new Error('clipboard unavailable')
     })
     register()
@@ -648,8 +656,12 @@ describe('meeting copy notes IPC', () => {
       code: 'copy-failed'
     })
 
-    expect(mocks.renderMarkdown).toHaveBeenCalledWith(snapshot)
-    expect(mocks.clipboardWriteText).toHaveBeenCalledWith('markdown output')
+    expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot)
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith({
+      text: 'plain text output',
+      html: '<html><body>PDF output</body></html>'
+    })
   })
 })
 

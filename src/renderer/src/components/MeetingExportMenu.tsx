@@ -347,15 +347,9 @@ export function MeetingExportMenu({
       ) : null}
 
       {feedback?.kind === 'success' ? (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          className="absolute right-0 top-full z-50 mt-1.5 inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-sage/25 bg-sage-light px-3 py-2 text-[11.5px] font-medium text-sage-dark shadow-sm"
-        >
-          <CheckIcon />
+        <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
           {feedback.message}
-        </div>
+        </span>
       ) : null}
 
       {feedback?.kind === 'failed' ? (

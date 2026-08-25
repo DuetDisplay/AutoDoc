@@ -8,6 +8,7 @@ import {
   renderMeetingExportDocx,
   renderMeetingExportHtml,
   renderMeetingExportMarkdown,
+  renderMeetingExportPlainText,
   type MeetingExportSnapshot
 } from '../meeting-export'
 
@@ -236,6 +237,61 @@ describe('meeting export renderers', () => {
     expect(html).not.toContain('Full-fidelity Record')
   })
 
+  it('renders generated heading and bold markers in rich outputs but keeps Markdown source', async () => {
+    const formatted: MeetingExportSnapshot = {
+      ...snapshot,
+      notes: {
+        ...notes,
+        overview: {
+          ...notes.overview!,
+          text: '## Launch status\n**Retention** improved after onboarding changes.'
+        },
+        sections: [
+          {
+            ...notes.sections[0],
+            title: '## Adoption',
+            summary: {
+              ...notes.sections[0].summary!,
+              text: '**Activation** is trending upward.'
+            },
+            keyPoints: [
+              {
+                ...notes.sections[0].keyPoints[0],
+                text: '**Trial starts** increased week over week.'
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    const markdown = renderMeetingExportMarkdown(formatted)
+    expect(markdown).toContain('## Launch status')
+    expect(markdown).toContain('**Retention**')
+
+    const plainText = renderMeetingExportPlainText(formatted)
+    expect(plainText).toContain('Launch status\nRetention improved')
+    expect(plainText).not.toContain('##')
+    expect(plainText).not.toContain('**')
+
+    const html = renderMeetingExportHtml(formatted)
+    expect(html).toContain('<strong class="embedded-heading">Launch status</strong>')
+    expect(html).toContain('<strong>Retention</strong> improved')
+    expect(html).toContain('<h3 id="note-section-1">Adoption</h3>')
+    expect(html).not.toContain('## Launch status')
+    expect(html).not.toContain('**Retention**')
+
+    const documentXml = xml(
+      readZipEntries(await renderMeetingExportDocx(formatted)),
+      'word/document.xml'
+    )
+    expect(documentXml).toContain('Launch status')
+    expect(documentXml).toContain('Retention')
+    expect(documentXml).toContain('<w:b')
+    expect(documentXml).not.toContain('## Launch status')
+    expect(documentXml).not.toContain('**Retention**')
+  })
+
   it('escapes untrusted meeting and note content in Markdown, HTML, and DOCX XML', async () => {
     const unsafe: MeetingExportSnapshot = {
       ...snapshot,
@@ -327,6 +383,7 @@ describe('meeting export renderers', () => {
     const empty: MeetingExportSnapshot = { ...snapshot, notes: null }
 
     expect(renderMeetingExportMarkdown(empty)).toContain('No notes are available')
+    expect(renderMeetingExportPlainText(empty)).toContain('No notes are available')
     expect(renderMeetingExportHtml(empty)).toContain('No notes are available')
     expect(
       xml(readZipEntries(await renderMeetingExportDocx(empty)), 'word/document.xml')

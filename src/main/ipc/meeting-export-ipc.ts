@@ -28,6 +28,7 @@ import {
   renderMeetingExportDocx,
   renderMeetingExportHtml,
   renderMeetingExportMarkdown,
+  renderMeetingExportPlainText,
   type MeetingExportSnapshot
 } from '../services/meeting-export'
 import { loadMeetingExportSnapshot } from '../services/meeting-export-sources'
@@ -57,7 +58,7 @@ export interface RegisterMeetingExportIpcOptions {
   showSaveDialog?: ShowSaveDialog
   renderPdf?: (html: string) => Promise<Buffer>
   writeExportFile?: (filePath: string, data: Buffer) => Promise<void>
-  writeClipboardText?: (text: string) => void
+  writeClipboard?: (content: { text: string; html: string }) => void
   getDocumentsPath?: () => string
   getParentWindow?: (sender: WebContents) => BrowserWindow | null
 }
@@ -289,8 +290,9 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
     ((parent, dialogOptions) => dialog.showSaveDialog(parent, dialogOptions))
   const renderPdf = options.renderPdf ?? renderMeetingExportPdf
   const writeExportFile = options.writeExportFile ?? writeExportFileAtomically
-  const writeClipboardText =
-    options.writeClipboardText ?? ((text: string) => clipboard.writeText(text))
+  const writeClipboard =
+    options.writeClipboard ??
+    ((content: { text: string; html: string }) => clipboard.write(content))
   const getDocumentsPath = options.getDocumentsPath ?? (() => app.getPath('documents'))
   const getParentWindow =
     options.getParentWindow ?? ((sender: WebContents) => BrowserWindow.fromWebContents(sender))
@@ -360,7 +362,10 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
       }
 
       try {
-        writeClipboardText(renderMeetingExportMarkdown(snapshot))
+        writeClipboard({
+          text: renderMeetingExportPlainText(snapshot),
+          html: renderMeetingExportHtml(snapshot)
+        })
         return { status: 'copied' }
       } catch {
         return copyFailure('copy-failed')

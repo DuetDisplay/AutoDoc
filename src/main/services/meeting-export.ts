@@ -110,6 +110,99 @@ function escapeMarkdown(value: string): string {
     .replace(/\r\n?|\n/g, '  \n  ')
 }
 
+interface NoteMarkupRun {
+  text: string
+  bold: boolean
+}
+
+interface NoteMarkupLine {
+  headingLevel: number | null
+  runs: NoteMarkupRun[]
+}
+
+function parseInlineNoteMarkup(value: string): NoteMarkupRun[] {
+  const runs: NoteMarkupRun[] = []
+  const pattern = /\*\*([^*\r\n]+)\*\*/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(value)) !== null) {
+    if (match.index > cursor) runs.push({ text: value.slice(cursor, match.index), bold: false })
+    runs.push({ text: match[1], bold: true })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < value.length) runs.push({ text: value.slice(cursor), bold: false })
+  return runs.length ? runs : [{ text: value, bold: false }]
+}
+
+function parseNoteMarkup(value: string): NoteMarkupLine[] {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const heading = /^\s{0,3}(#{1,6})[\t ]+(.+?)(?:[\t ]+#+)?[\t ]*$/.exec(line)
+      return {
+        headingLevel: heading?.[1].length ?? null,
+        runs: parseInlineNoteMarkup(heading?.[2] ?? line)
+      }
+    })
+}
+
+function markdownNoteMarkup(value: string): string {
+  return parseNoteMarkup(value)
+    .map((line) => {
+      const content = line.runs
+        .map((run) => {
+          const text = escapeMarkdown(run.text)
+          return run.bold ? `**${text}**` : text
+        })
+        .join('')
+      return line.headingLevel === null ? content : `${'#'.repeat(line.headingLevel)} ${content}`
+    })
+    .join('\n')
+}
+
+function plainNoteMarkup(value: string): string {
+  return parseNoteMarkup(value)
+    .map((line) => line.runs.map((run) => run.text).join(''))
+    .join('\n')
+}
+
+function noteHeadingText(value: string): string {
+  return plainNoteMarkup(value)
+    .replace(/\s*\n\s*/g, ' ')
+    .trim()
+}
+
+function htmlNoteMarkup(value: string): string {
+  return parseNoteMarkup(value)
+    .map((line) => {
+      const content = line.runs
+        .map((run) => {
+          const text = escapeHtml(xmlSafeText(run.text))
+          return run.bold ? `<strong>${text}</strong>` : text
+        })
+        .join('')
+      return line.headingLevel !== null
+        ? `<strong class="embedded-heading">${content}</strong>`
+        : content
+    })
+    .join('<br>')
+}
+
+function docxMarkupRuns(value: string): TextRun[] {
+  const children: TextRun[] = []
+  parseNoteMarkup(value).forEach((line, lineIndex) => {
+    if (lineIndex > 0) children.push(new TextRun({ break: 1 }))
+    for (const run of line.runs) {
+      children.push(
+        new TextRun({ text: xmlSafeText(run.text), bold: line.headingLevel !== null || run.bold })
+      )
+    }
+  })
+  return children
+}
+
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
   if (!Number.isFinite(timestamp) || Number.isNaN(date.getTime())) return 'Unknown date'
@@ -156,10 +249,10 @@ function itemMetadata(item: NormalizedNoteItem): string[] {
 
 function markdownItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
-  const title = item.title ? `**${escapeMarkdown(item.title)}** — ` : ''
+  const title = item.title ? `**${escapeMarkdown(noteHeadingText(item.title))}** — ` : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length ? ` _(${metadata.map(escapeMarkdown).join(' · ')})_` : ''
-  return `- ${checkbox}${title}${escapeMarkdown(item.text)}${suffix}`
+  return `- ${checkbox}${title}${markdownNoteMarkup(item.text)}${suffix}`
 }
 
 function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
@@ -168,7 +261,7 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
 
   const lines = ['## Notes', '']
   if (notes.overview) {
-    lines.push('### Overview', '', escapeMarkdown(notes.overview.text), '')
+    lines.push('### Overview', '', markdownNoteMarkup(notes.overview.text), '')
   }
   if (notes.keyTakeaways.length) {
     lines.push(
@@ -179,8 +272,8 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
     )
   }
   for (const section of notes.sections) {
-    lines.push(`### ${escapeMarkdown(section.title)}`, '')
-    if (section.summary) lines.push(escapeMarkdown(section.summary.text), '')
+    lines.push(`### ${escapeMarkdown(noteHeadingText(section.title))}`, '')
+    if (section.summary) lines.push(markdownNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
       lines.push(
         '**Key points**',
@@ -229,6 +322,66 @@ export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): st
     .trimEnd()}\n`
 }
 
+function plainItem(item: NormalizedNoteItem, checklist: boolean): string {
+  const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
+  const title = item.title ? `${noteHeadingText(item.title)} - ` : ''
+  const metadata = itemMetadata(item)
+  const suffix = metadata.length ? ` (${metadata.map(plainNoteMarkup).join(' | ')})` : ''
+  return `- ${checkbox}${title}${plainNoteMarkup(item.text)}${suffix}`
+}
+
+function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
+  const { notes } = snapshot
+  if (!notes) return ['NOTES', '', 'No notes are available for this meeting.', '']
+
+  const lines = ['NOTES', '']
+  if (notes.overview) lines.push('Overview', '', plainNoteMarkup(notes.overview.text), '')
+  if (notes.keyTakeaways.length) {
+    lines.push('Key Takeaways', '', ...notes.keyTakeaways.map((item) => plainItem(item, false)), '')
+  }
+  for (const section of notes.sections) {
+    lines.push(noteHeadingText(section.title), '')
+    if (section.summary) lines.push(plainNoteMarkup(section.summary.text), '')
+    if (section.keyPoints.length) {
+      lines.push('Key points', '', ...section.keyPoints.map((item) => plainItem(item, false)), '')
+    }
+    if (section.supportingDetails.length) {
+      lines.push(
+        'Supporting details',
+        '',
+        ...section.supportingDetails.map((item) => plainItem(item, false)),
+        ''
+      )
+    }
+  }
+  if (notes.decisions.length) {
+    lines.push('Decisions', '', ...notes.decisions.map((item) => plainItem(item, false)), '')
+  }
+  if (notes.nextSteps.length) {
+    lines.push('Next Steps', '', ...notes.nextSteps.map((item) => plainItem(item, true)), '')
+  }
+  if (lines.length === 2) lines.push('No note content is available for this meeting.', '')
+  return lines
+}
+
+export function renderMeetingExportPlainText(snapshot: MeetingExportSnapshot): string {
+  const lines = [
+    'AUTODOC MEETING MEMO',
+    '',
+    noteHeadingText(snapshot.detail.title || 'Untitled Meeting'),
+    '',
+    `Date: ${formatDate(snapshot.detail.date)}`,
+    `Source: ${plainNoteMarkup(snapshot.detail.sourceName || 'Not specified')}`,
+    `Duration: ${formatDuration(snapshot.detail.durationSeconds)}`,
+    '',
+    ...renderPlainTextNotes(snapshot)
+  ]
+  return `${lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd()}\n`
+}
+
 function htmlText(value: string): string {
   return escapeHtml(value).replace(/\r\n?|\n/g, '<br>')
 }
@@ -238,13 +391,13 @@ function htmlItem(item: NormalizedNoteItem, checklist: boolean): string {
     ? `<span class="check" aria-hidden="true">${item.completed ? '✓' : '○'}</span>`
     : ''
   const title = item.title
-    ? `<strong>${htmlText(item.title)}</strong><span aria-hidden="true"> — </span>`
+    ? `<strong>${escapeHtml(xmlSafeText(noteHeadingText(item.title)))}</strong><span aria-hidden="true"> — </span>`
     : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length
     ? `<small>${metadata.map(htmlText).join(' <span aria-hidden="true">·</span> ')}</small>`
     : ''
-  return `<li>${checked}<span>${title}${htmlText(item.text)}${suffix}</span></li>`
+  return `<li>${checked}<span>${title}${htmlNoteMarkup(item.text)}${suffix}</span></li>`
 }
 
 function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
@@ -256,7 +409,7 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   const content: string[] = ['<section aria-labelledby="notes"><h2 id="notes">Notes</h2>']
   if (notes.overview) {
     content.push(
-      `<section aria-labelledby="overview"><h3 id="overview">Overview</h3><p>${htmlText(notes.overview.text)}</p></section>`
+      `<section aria-labelledby="overview"><h3 id="overview">Overview</h3><p>${htmlNoteMarkup(notes.overview.text)}</p></section>`
     )
   }
   if (notes.keyTakeaways.length) {
@@ -266,8 +419,10 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   }
   notes.sections.forEach((section, index) => {
     const id = `note-section-${index + 1}`
-    content.push(`<section aria-labelledby="${id}"><h3 id="${id}">${htmlText(section.title)}</h3>`)
-    if (section.summary) content.push(`<p>${htmlText(section.summary.text)}</p>`)
+    content.push(
+      `<section aria-labelledby="${id}"><h3 id="${id}">${escapeHtml(xmlSafeText(noteHeadingText(section.title)))}</h3>`
+    )
+    if (section.summary) content.push(`<p>${htmlNoteMarkup(section.summary.text)}</p>`)
     if (section.keyPoints.length) {
       content.push(
         `<h4>Key points</h4><ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
@@ -317,6 +472,7 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
     h2 { margin: 18pt 0 10pt; color: var(--sage-dark); font-size: 16pt; line-height: 1.2; break-after: avoid; }
     h3 { margin: 14pt 0 7pt; color: var(--sage-dark); font-size: 13pt; line-height: 1.25; break-after: avoid; }
     h4 { margin: 10pt 0 5pt; color: var(--secondary); font-size: 11pt; line-height: 1.25; break-after: avoid; }
+    .embedded-heading { display: inline-block; color: var(--secondary); font-weight: 700; }
     p { margin: 0 0 6pt; }
     dl { display: grid; grid-template-columns: max-content 1fr; gap: 3pt 14pt; margin: 0; }
     dt { color: var(--muted); font-weight: 700; }
@@ -349,7 +505,7 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
 }
 
 function docxParagraph(text: string, style = 'Normal'): Paragraph {
-  return new Paragraph({ style, children: [new TextRun(xmlSafeText(text))] })
+  return new Paragraph({ style, children: docxMarkupRuns(text) })
 }
 
 function docxBullet(item: NormalizedNoteItem, checklist: boolean): Paragraph {
@@ -359,8 +515,11 @@ function docxBullet(item: NormalizedNoteItem, checklist: boolean): Paragraph {
     children.push(
       new TextRun({ text: item.completed ? '[x] ' : '[ ] ', color: PALETTE.sageDark, bold: true })
     )
-  if (item.title) children.push(new TextRun({ text: xmlSafeText(`${item.title} — `), bold: true }))
-  children.push(new TextRun(xmlSafeText(item.text)))
+  if (item.title)
+    children.push(
+      new TextRun({ text: xmlSafeText(`${noteHeadingText(item.title)} — `), bold: true })
+    )
+  children.push(...docxMarkupRuns(item.text))
   if (metadata.length)
     children.push(
       new TextRun({
@@ -401,7 +560,7 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     paragraphs.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_2,
-        children: [new TextRun(xmlSafeText(section.title))]
+        children: [new TextRun(xmlSafeText(noteHeadingText(section.title)))]
       })
     )
     if (section.summary) paragraphs.push(docxParagraph(section.summary.text))

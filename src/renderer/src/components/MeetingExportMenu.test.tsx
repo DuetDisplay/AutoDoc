@@ -87,7 +87,7 @@ describe('MeetingExportMenu', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('locks both controls while copy is pending, then politely reports Copied', async () => {
+  it('locks both controls while copy is pending, then announces Copied without a popup', async () => {
     const timeoutSpy = vi.spyOn(window, 'setTimeout')
     const pending = deferred<MeetingCopyNotesResult>()
     const onCopyNotes = vi.fn(() => pending.promise)
@@ -108,6 +108,7 @@ describe('MeetingExportMenu', () => {
     const status = await screen.findByRole('status')
     expect(status).toHaveAttribute('aria-live', 'polite')
     expect(status).toHaveAttribute('aria-atomic', 'true')
+    expect(status).toHaveClass('sr-only')
     expect(status).toHaveTextContent('Copied')
     expect(screen.getByRole('button', { name: 'Copied' })).toHaveClass(
       'bg-sage-light',
@@ -271,7 +272,7 @@ describe('MeetingExportMenu', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('briefly turns Export into a politely announced success', async () => {
+  it('briefly turns Export into an announced success without a duplicate popup', async () => {
     const timeoutSpy = vi.spyOn(window, 'setTimeout')
     const user = userEvent.setup()
     render(
@@ -283,6 +284,7 @@ describe('MeetingExportMenu', () => {
 
     const status = await screen.findByRole('status')
     expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveClass('sr-only')
     expect(status).toHaveTextContent('Exported')
     expect(screen.getByRole('button', { name: 'Exported' })).toHaveClass(
       'bg-sage-light',
