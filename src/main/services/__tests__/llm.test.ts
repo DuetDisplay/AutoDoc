@@ -6,6 +6,8 @@ import {
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CONTEXT_TOKENS,
+  WINDOWS_MAX_OUTPUT_TOKENS,
+  WRITER_PARSE_ERROR_CODE,
   writerProgressPercent
 } from '../llm'
 
@@ -78,6 +80,74 @@ function makeSuccessfulOllamaResponse(): Response {
     }),
     { status: 200 }
   )
+}
+
+function makeOllamaContentResponse(content: string, doneReason = 'stop'): Response {
+  const encoder = new TextEncoder()
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`${JSON.stringify({ message: { content } })}\n`))
+        controller.enqueue(
+          encoder.encode(
+            `${JSON.stringify({
+              done: true,
+              done_reason: doneReason,
+              eval_count: 12,
+              eval_duration: 1_000_000_000
+            })}\n`
+          )
+        )
+        controller.close()
+      }
+    }),
+    { status: 200 }
+  )
+}
+
+function makeIrreparableJsonResponse(): Response {
+  return makeOllamaContentResponse(
+    `{"decisions":[{"topic":"Hold Music","title":"Song","content":"${'na '.repeat(200)}`
+  )
+}
+
+function makeValidChunkResponse(title: string, content: string): Response {
+  return makeOllamaContentResponse(
+    JSON.stringify({
+      decisions: [],
+      action_items: [],
+      information: [
+        {
+          topic: 'Recovery',
+          title,
+          content,
+          sourceStartMs: 0,
+          sourceEndMs: 1_000
+        }
+      ],
+      discussion: [],
+      status_updates: []
+    })
+  )
+}
+
+function makeLongChunkLine(marker: string, phrase: string): string {
+  return `[00:00] [Chris] ${marker} ${phrase} ${'na '.repeat(900)}`
+}
+
+function makeThreeChunkTranscript(): string {
+  return [
+    makeLongChunkLine('CHUNK_ONE_LYRICS', 'hold music and repeated chorus lines'),
+    makeLongChunkLine('CHUNK_TWO_BILLING', 'the billing API migration was confirmed'),
+    makeLongChunkLine('CHUNK_THREE_FLAGS', 'the feature flag rollout was approved')
+  ].join('\n')
+}
+
+function requestUserContent(init?: RequestInit): string {
+  const body = JSON.parse(String(init?.body ?? '{}')) as {
+    messages?: Array<{ role: string; content: string }>
+  }
+  return body.messages?.find((message) => message.role === 'user')?.content ?? ''
 }
 
 const mocks = vi.hoisted(() => ({
@@ -156,6 +226,9 @@ describe('OllamaProvider grounding', () => {
       )
     ).rejects.toThrow('fetch failed')
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'notes llm chunk skipped' })
+    )
   })
 
   it('recovers the serve once after fetch failed and finishes the writer chunk', async () => {
@@ -388,6 +461,10 @@ describe('OllamaProvider grounding', () => {
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toBe('SEGMENTATION_PREEMPTED')
     expect(onActivity.mock.calls).toEqual([['waiting-for-local-ai'], [null]])
+    expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'notes llm chunk skipped' })
+    )
+    expect(provider.getLastWriterSkips()).toEqual([])
   })
 
   it('ignores activity callback errors during Windows notes generation', async () => {
@@ -980,6 +1057,10 @@ describe('OllamaProvider grounding', () => {
       expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
       expect(telemetry).not.toHaveBeenCalled()
     }
+    expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'notes llm chunk skipped' })
+    )
+    expect(adaptiveProvider.getLastWriterSkips()).toEqual([])
   })
 
   it('falls back to a smaller Ollama context after a runner-stop 500 on a low-memory host', async () => {
@@ -1070,6 +1151,10 @@ describe('OllamaProvider grounding', () => {
       expect(requestContextTokens).toEqual([initialContextTokens, initialContextTokens])
       expect(telemetry).not.toHaveBeenCalled()
     }
+    expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'notes llm chunk skipped' })
+    )
+    expect(adaptiveProvider.getLastWriterSkips()).toEqual([])
   })
 
   it('does not force low-memory fallback for a runner-stop 500 on a healthy host', async () => {
@@ -1159,13 +1244,13 @@ describe('OllamaProvider grounding', () => {
     setPlatform('win32')
     const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     expect((windowsProvider as any).getNotesResponseFormat()).toBe('json')
-    expect((windowsProvider as any).getMaxOutputTokens()).toBe(8192)
+    expect((windowsProvider as any).getMaxOutputTokens()).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
     expect((windowsProvider as any).getChunkChars()).toBe(4000)
 
     const requestBodies: Array<{
       format?: unknown
       messages?: Array<{ role: string; content: string }>
-      options?: { num_predict?: number }
+      options?: { num_predict?: number; repeat_penalty?: number }
     }> = []
 
     vi.stubGlobal(
@@ -1218,7 +1303,8 @@ describe('OllamaProvider grounding', () => {
 
     expect(result.information).toHaveLength(1)
     expect(requestBodies[0].format).toBe('json')
-    expect(requestBodies[0].options?.num_predict).toBe(8192)
+    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
+    expect(requestBodies[0].options?.repeat_penalty).toBe(1.05)
     expect(requestBodies[0].messages?.[0]?.content).toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
@@ -1511,5 +1597,149 @@ describe('OllamaProvider runner recycling hook', () => {
 
     expect(output).toBe('restyled text')
     expect(maybeRecycleRunner).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('OllamaProvider writer parse skip and salvage', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  function createChunkedWindowsProvider(): OllamaProvider {
+    setPlatform('win32')
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    provider.setVramConstrainedContext(true, 'windows-vulkan')
+    return provider
+  }
+
+  it('skips one irreparable chunk after a single parse retry and keeps later chunks', async () => {
+    const provider = createChunkedWindowsProvider()
+    let chunkOneCalls = 0
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const user = requestUserContent(init)
+      if (user.includes('CHUNK_ONE_LYRICS')) {
+        chunkOneCalls++
+        return makeIrreparableJsonResponse()
+      }
+      if (user.includes('CHUNK_TWO_BILLING')) {
+        return makeValidChunkResponse(
+          'Billing API migration planned',
+          'The billing API migration was confirmed.'
+        )
+      }
+      return makeValidChunkResponse(
+        'Feature flag rollout approved',
+        'The feature flag rollout was approved.'
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await provider.summarize(
+      'meeting-greg-skip',
+      makeThreeChunkTranscript(),
+      undefined,
+      35
+    )
+
+    expect(result.information.map((item) => item.title)).toEqual([
+      'Billing API migration planned',
+      'Feature flag rollout approved'
+    ])
+    expect(chunkOneCalls).toBe(2)
+    expect(provider.getLastWriterSkips()).toEqual([
+      expect.objectContaining({
+        chunkIndex: 1,
+        attempts: 2,
+        rawHead: expect.stringContaining('{"decisions"'),
+        rawTail: expect.stringContaining('na ')
+      })
+    ])
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'notes llm chunk skipped',
+        level: 'warn',
+        meetingId: 'meeting-greg-skip',
+        context: expect.objectContaining({
+          chunkIndex: 1,
+          chunkCount: 3,
+          rawHead: expect.any(String),
+          rawTail: expect.any(String),
+          ollamaMetrics: expect.objectContaining({ doneReason: 'stop' })
+        })
+      })
+    )
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'notes llm summarize completed',
+        meetingId: 'meeting-greg-skip',
+        context: expect.objectContaining({
+          skippedChunkCount: 1,
+          skippedChunkIndexes: [1]
+        })
+      })
+    )
+  })
+
+  it('salvages complete items when JSON breaks mid-string', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[00:00] [Speaker] The team confirmed the billing API migration.',
+      '[00:05] [Speaker] Chris will own the feature flag rollout.'
+    ].join('\n')
+    const raw =
+      '{"decisions":[],"action_items":[],"information":[' +
+      '{"topic":"Billing","title":"Billing API migration planned","content":"The team confirmed the billing API migration.","sourceStartMs":0,"sourceEndMs":0},' +
+      '{"topic":"Flags","title":"Feature flag rollout owned","content":"Chris will own the feature flag rollout.","sourceStartMs":5000,"sourceEndMs":5000},' +
+      '{"topic":"Flags","title":"Broken item","content":"unterminated chorus that never closes'
+
+    const result = (provider as any).parseResponse(
+      'meeting-clite',
+      raw,
+      undefined,
+      60_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.information).toHaveLength(2)
+    expect(result.information.map((item: { title: string }) => item.title)).toEqual([
+      'Billing API migration planned',
+      'Feature flag rollout owned'
+    ])
+  })
+
+  it('resolves empty segments when every chunk is irreparable', async () => {
+    const provider = createChunkedWindowsProvider()
+    const fetchMock = vi.fn(async () => makeIrreparableJsonResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await provider.summarize(
+      'meeting-all-skipped',
+      makeThreeChunkTranscript(),
+      undefined,
+      35
+    )
+
+    expect(result).toEqual({
+      decisions: [],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+    expect(provider.getLastWriterSkips()).toHaveLength(3)
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'notes llm summarize completed',
+        context: expect.objectContaining({
+          skippedChunkCount: 3,
+          itemCount: 0
+        })
+      })
+    )
+    expect(WRITER_PARSE_ERROR_CODE).toBe('NOTES_WRITER_PARSE_ERROR')
   })
 })

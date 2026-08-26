@@ -26,6 +26,8 @@ export interface LLMProvider {
   releaseResources?(meetingId?: string): Promise<void>
   /** Decode speed of the most recent Ollama call, if it reported metrics. */
   getLastEvalTokPerSec?(): number | null
+  /** Writer chunks skipped after an irreparable parse error in the last summarize(). */
+  getLastWriterSkips?(): WriterChunkSkip[]
   /** Raw completion for scan-layer restyle/compress. Must not use the notes JSON schema. */
   completePrompt?(
     prompt: string,
@@ -41,7 +43,11 @@ export interface LLMProvider {
 }
 
 const MAX_RETRIES = 2
+const WRITER_PARSE_RETRY_LIMIT = 1
 const RETRY_TEMPERATURE = 0.15
+const WRITER_REPEAT_PENALTY = 1.05
+const WRITER_RAW_LOG_CHARS = 400
+export const WRITER_PARSE_ERROR_CODE = 'NOTES_WRITER_PARSE_ERROR'
 export const STANDARD_CONTEXT_TOKENS = 32768 // Request 32K context from Ollama
 export const WINDOWS_CONTEXT_TOKENS = 8192
 export const LOW_MEMORY_CONTEXT_TOKENS = 4096
@@ -274,6 +280,44 @@ export function isTransientOllamaRuntimeError(message: string): boolean {
   )
 }
 
+export interface WriterChunkSkip {
+  chunkIndex: number
+  attempts: number
+  rawHead: string
+  rawTail: string
+}
+
+export function sliceWriterRawEnds(raw: string): { rawHead: string; rawTail: string } {
+  return {
+    rawHead: raw.slice(0, WRITER_RAW_LOG_CHARS),
+    rawTail: raw.slice(-WRITER_RAW_LOG_CHARS)
+  }
+}
+
+export class WriterParseError extends Error {
+  readonly code = WRITER_PARSE_ERROR_CODE
+  readonly rawHead: string
+  readonly rawTail: string
+
+  constructor(raw: string) {
+    const ends = sliceWriterRawEnds(raw)
+    super('Invalid JSON from Ollama')
+    this.name = 'WriterParseError'
+    this.rawHead = ends.rawHead
+    this.rawTail = ends.rawTail
+  }
+}
+
+export function isWriterParseError(error: unknown): error is WriterParseError {
+  if (error instanceof WriterParseError) return true
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === WRITER_PARSE_ERROR_CODE
+  )
+}
+
 interface OllamaCallMetrics {
   totalDurationMs?: number
   loadDurationMs?: number
@@ -282,6 +326,7 @@ interface OllamaCallMetrics {
   evalCount?: number
   evalDurationMs?: number
   evalTokPerSec?: number
+  doneReason?: string
 }
 
 export type OllamaProviderTelemetryEventName =
@@ -334,9 +379,14 @@ export class OllamaProvider implements LLMProvider {
   private maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
   private recoverRuntimeOnce?: () => Promise<void>
   private lastOllamaCallMetrics: OllamaCallMetrics | null = null
+  private lastWriterSkips: WriterChunkSkip[] = []
 
   getLastEvalTokPerSec(): number | null {
     return this.lastOllamaCallMetrics?.evalTokPerSec ?? null
+  }
+
+  getLastWriterSkips(): WriterChunkSkip[] {
+    return this.lastWriterSkips.slice()
   }
 
   constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
@@ -648,6 +698,7 @@ export class OllamaProvider implements LLMProvider {
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
     let recoveredRuntime = false
+    this.lastWriterSkips = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
@@ -657,6 +708,8 @@ export class OllamaProvider implements LLMProvider {
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
       let chunkTokens = 0
+      let parseRetriesUsed = 0
+      let chunkSkipped = false
 
       let attempt = 0
       while (attempt <= MAX_RETRIES) {
@@ -733,7 +786,11 @@ export class OllamaProvider implements LLMProvider {
               attempt,
               elapsedMs: Date.now() - attemptStartedAt,
               tokenCount: chunkTokens,
-              error: lastError.message
+              error: lastError.message,
+              ollamaMetrics: this.lastOllamaCallMetrics,
+              ...(isWriterParseError(lastError)
+                ? { rawHead: lastError.rawHead, rawTail: lastError.rawTail }
+                : {})
             }
           })
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
@@ -761,6 +818,40 @@ export class OllamaProvider implements LLMProvider {
             })
             continue
           }
+          if (isWriterParseError(lastError)) {
+            if (parseRetriesUsed < WRITER_PARSE_RETRY_LIMIT) {
+              parseRetriesUsed++
+              attempt++
+              continue
+            }
+            const skip: WriterChunkSkip = {
+              chunkIndex: i + 1,
+              attempts: parseRetriesUsed + 1,
+              rawHead: lastError.rawHead,
+              rawTail: lastError.rawTail
+            }
+            this.lastWriterSkips.push(skip)
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes llm chunk skipped',
+              meetingId,
+              level: 'warn',
+              context: {
+                model: this.model,
+                contextProfile: this.contextProfile,
+                contextTokens: this.contextTokens,
+                chunkIndex: i + 1,
+                chunkCount: chunks.length,
+                chunkChars: chunks[i].length,
+                tokenCount: chunkTokens,
+                rawHead: lastError.rawHead,
+                rawTail: lastError.rawTail,
+                ollamaMetrics: this.lastOllamaCallMetrics
+              }
+            })
+            chunkSkipped = true
+            break
+          }
           if (attempt < MAX_RETRIES) {
             attempt++
             continue
@@ -770,6 +861,10 @@ export class OllamaProvider implements LLMProvider {
       }
 
       if (!chunkResult) {
+        if (chunkSkipped) {
+          onProgress?.(writerProgressPercent(i, 1, chunks.length))
+          continue
+        }
         if (lowMemoryFallbackActivated) {
           this.recordLowMemoryFallbackEvent(
             'ollama_low_memory_fallback_failed',
@@ -818,7 +913,9 @@ export class OllamaProvider implements LLMProvider {
         chunkCount: chunks.length,
         transcriptChars: transcript.length,
         durationMinutes: estMinutes,
-        itemCount: this.flattenSegments(merged).length
+        itemCount: this.flattenSegments(merged).length,
+        skippedChunkCount: this.lastWriterSkips.length,
+        skippedChunkIndexes: this.lastWriterSkips.map((skip) => skip.chunkIndex)
       }
     })
     return merged
@@ -1024,7 +1121,7 @@ export class OllamaProvider implements LLMProvider {
             // lets retries escape while keeping first attempts untouched.
             temperature: attempt > 0 ? RETRY_TEMPERATURE : 0,
             seed: attempt > 0 ? attempt : undefined,
-            repeat_penalty: 1.3
+            repeat_penalty: WRITER_REPEAT_PENALTY
           }
         }),
         signal: controller.signal
@@ -1105,6 +1202,7 @@ export class OllamaProvider implements LLMProvider {
               message?: { content?: string }
               error?: string
               done?: boolean
+              done_reason?: string
               total_duration?: number
               load_duration?: number
               prompt_eval_count?: number
@@ -1137,6 +1235,7 @@ export class OllamaProvider implements LLMProvider {
             message?: { content?: string }
             error?: string
             done?: boolean
+            done_reason?: string
             total_duration?: number
             load_duration?: number
             prompt_eval_count?: number
@@ -1176,6 +1275,7 @@ export class OllamaProvider implements LLMProvider {
       prompt_eval_duration?: number
       eval_count?: number
       eval_duration?: number
+      done_reason?: string
     },
     requestStartedAt: number
   ): OllamaCallMetrics {
@@ -1194,7 +1294,8 @@ export class OllamaProvider implements LLMProvider {
       evalTokPerSec:
         evalCount != null && evalDurationMs != null && evalDurationMs > 0
           ? Math.round((evalCount / evalDurationMs) * 1000 * 10) / 10
-          : undefined
+          : undefined,
+      doneReason: typeof data.done_reason === 'string' ? data.done_reason : undefined
     }
   }
 
@@ -1207,7 +1308,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getMaxOutputTokens(): number {
-    return MAX_OUTPUT_TOKENS
+    return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
   }
 
 
@@ -1336,38 +1437,65 @@ export class OllamaProvider implements LLMProvider {
    * Tries multiple strategies from least to most aggressive.
    */
   private repairTruncatedJSON(raw: string): Record<string, RawSegment[]> | null {
+    const variants = [raw]
+    const closedString = this.closeUnterminatedString(raw)
+    if (closedString !== raw) variants.push(closedString)
+
     const strategies = [
       // Strategy 1: cut at last complete array item "},"
-      () => {
-        const idx = raw.lastIndexOf('},')
+      (text: string) => {
+        const idx = text.lastIndexOf('},')
         if (idx === -1) return null
-        return this.closeJSON(raw.slice(0, idx + 1))
+        return this.closeJSON(text.slice(0, idx + 1))
       },
       // Strategy 2: cut at last complete array "]"
-      () => {
-        const idx = raw.lastIndexOf(']')
+      (text: string) => {
+        const idx = text.lastIndexOf(']')
         if (idx === -1) return null
-        return this.closeJSON(raw.slice(0, idx + 1))
+        return this.closeJSON(text.slice(0, idx + 1))
       },
       // Strategy 3: cut at last complete key-value with empty array
-      () => {
-        const idx = raw.lastIndexOf('[]')
+      (text: string) => {
+        const idx = text.lastIndexOf('[]')
         if (idx === -1) return null
-        return this.closeJSON(raw.slice(0, idx + 2))
+        return this.closeJSON(text.slice(0, idx + 2))
       }
     ]
 
-    for (const strategy of strategies) {
-      const cut = strategy()
-      if (!cut) continue
-      try {
-        return JSON.parse(cut)
-      } catch {
-        continue
+    for (const text of variants) {
+      for (const strategy of strategies) {
+        const cut = strategy(text)
+        if (!cut) continue
+        try {
+          return JSON.parse(cut)
+        } catch {
+          continue
+        }
       }
     }
 
     return null
+  }
+
+  /** If generation stopped inside a JSON string, close it so cut strategies can run. */
+  private closeUnterminatedString(raw: string): string {
+    let inString = false
+    let escape = false
+    for (const ch of raw) {
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (ch === '\\' && inString) {
+        escape = true
+        continue
+      }
+      if (ch === '"') {
+        inString = !inString
+      }
+    }
+    if (!inString) return raw
+    return escape ? `${raw}\\"` : `${raw}"`
   }
 
   /** Count unclosed brackets/braces and append closers */
@@ -1419,7 +1547,7 @@ export class OllamaProvider implements LLMProvider {
         parsed = repaired
         console.warn('Repaired truncated JSON from Ollama (some items may have been dropped)')
       } else {
-        throw new Error(`Invalid JSON from Ollama: ${raw.slice(0, 200)}`)
+        throw new WriterParseError(raw)
       }
     }
 

@@ -54,7 +54,8 @@ function createMockProvider(): LLMProvider {
     abortActiveRequests: vi.fn(),
     setModel: vi.fn(),
     setLowMemoryMode: vi.fn(),
-    releaseResources: vi.fn().mockResolvedValue(undefined)
+    releaseResources: vi.fn().mockResolvedValue(undefined),
+    getLastWriterSkips: vi.fn().mockReturnValue([])
   }
 }
 
@@ -275,9 +276,24 @@ describe('SegmentationService', () => {
     const onComplete = vi.fn()
     service.onComplete(onComplete)
 
+    vi.mocked(provider.getLastWriterSkips!).mockReturnValue([
+      { chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }
+    ])
+
     await (service as any).processJob('m1')
 
     expect(onComplete).toHaveBeenCalledWith('m1')
+    expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'notes generation completed',
+        meetingId: 'm1',
+        context: expect.objectContaining({
+          writerSkippedChunks: [
+            { chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }
+          ]
+        })
+      })
+    )
   })
 
   it('keeps the LLM provider receiver when the scan layer starts', async () => {
@@ -661,6 +677,10 @@ describe('SegmentationService', () => {
         }
       ]) as any
     )
+
+    vi.mocked(provider.getLastWriterSkips!).mockReturnValue([
+      { chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }
+    ])
 
     await expect((service as any).processJob('m2')).resolves.toBeUndefined()
 

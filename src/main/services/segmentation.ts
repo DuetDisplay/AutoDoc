@@ -549,7 +549,8 @@ export class SegmentationService {
           elapsedMs: Date.now() - t0,
           totalProcessingElapsedMs: Date.now() - jobStartedAt,
           itemCount: totalItems,
-          processingProfile: this.getProcessingProfileLogContext()
+          processingProfile: this.getProcessingProfileLogContext(),
+          writerSkippedChunks: this.llmProvider.getLastWriterSkips?.() ?? []
         }
       })
 
