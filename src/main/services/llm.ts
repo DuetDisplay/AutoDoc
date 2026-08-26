@@ -22,7 +22,7 @@ export interface LLMProvider {
   setModel?(model: string): void
   setLowMemoryMode?(enabled: boolean): void
   /** Cap the writer context so the model plus KV cache fits a small-VRAM GPU. */
-  setVramConstrainedContext?(enabled: boolean): void
+  setVramConstrainedContext?(enabled: boolean, profile?: 'windows-vulkan' | 'windows-cpu'): void
   releaseResources?(meetingId?: string): Promise<void>
   /** Decode speed of the most recent Ollama call, if it reported metrics. */
   getLastEvalTokPerSec?(): number | null
@@ -263,6 +263,16 @@ type OllamaContextProfile =
   | 'mac-balanced'
   | 'low-memory'
   | 'windows-vulkan'
+  | 'windows-cpu'
+
+export function isTransientOllamaRuntimeError(message: string): boolean {
+  return (
+    message.includes('fetch failed') ||
+    message.includes('This operation was aborted') ||
+    message.includes('aborted due to timeout') ||
+    message === 'The operation was aborted'
+  )
+}
 
 interface OllamaCallMetrics {
   totalDurationMs?: number
@@ -292,7 +302,8 @@ interface OllamaProviderOptions {
    * memory growth has degraded decode speed (fresh runner respawns on the next
    * request). Must be cheap and must never throw.
    */
-  maybeRecycleRunner?: (meetingId?: string) => void
+  maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
+  recoverRuntimeOnce?: () => Promise<void>
 }
 
 const LOW_SIGNAL_NOTE_PATTERNS = [
@@ -320,7 +331,8 @@ export class OllamaProvider implements LLMProvider {
   private contextProfile: OllamaContextProfile = 'standard'
   private contextTokens = STANDARD_CONTEXT_TOKENS
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
-  private maybeRecycleRunner?: (meetingId?: string) => void
+  private maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
+  private recoverRuntimeOnce?: () => Promise<void>
   private lastOllamaCallMetrics: OllamaCallMetrics | null = null
 
   getLastEvalTokPerSec(): number | null {
@@ -332,6 +344,7 @@ export class OllamaProvider implements LLMProvider {
     this.model = model
     this.onTelemetry = options.onTelemetry
     this.maybeRecycleRunner = options.maybeRecycleRunner
+    this.recoverRuntimeOnce = options.recoverRuntimeOnce
     this.setInitialContextProfile()
   }
 
@@ -350,7 +363,30 @@ export class OllamaProvider implements LLMProvider {
       format?: unknown
     }
   ): Promise<string> {
-    this.maybeRecycleRunner?.()
+    await this.maybeRecycleRunner?.()
+    try {
+      return await this.generatePrompt(prompt, options)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!this.recoverRuntimeOnce || !isTransientOllamaRuntimeError(message)) {
+        throw error
+      }
+      await this.recoverRuntimeOnce()
+      return await this.generatePrompt(prompt, options)
+    }
+  }
+
+  private async generatePrompt(
+    prompt: string,
+    options: {
+      num_ctx: number
+      num_predict: number
+      temperature: number
+      seed: number
+      stop?: readonly string[]
+      format?: unknown
+    }
+  ): Promise<string> {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
@@ -422,19 +458,21 @@ export class OllamaProvider implements LLMProvider {
     this.contextTokens = STANDARD_CONTEXT_TOKENS
   }
 
-  setVramConstrainedContext(enabled: boolean): void {
+  setVramConstrainedContext(
+    enabled: boolean,
+    profile: 'windows-vulkan' | 'windows-cpu' = 'windows-vulkan'
+  ): void {
     if (!enabled) {
-      if (this.contextProfile === 'windows-vulkan') {
+      if (this.contextProfile === 'windows-vulkan' || this.contextProfile === 'windows-cpu') {
         this.setLowMemoryMode(false)
       }
       return
     }
+    if (process.platform === 'darwin') return
     if (this.contextProfile === 'low-memory') return
-    // Small-VRAM Vulkan cards (e.g. Arc A370M, 4 GiB) cannot hold the notes
-    // model plus an 8K KV cache, which spills layers to CPU. Writer chunks are
-    // ~1K tokens, so a 4K window costs nothing (macOS has always run at 4K)
-    // and keeps every layer on the GPU.
-    this.contextProfile = 'windows-vulkan'
+    // Writer chunks are ~1K tokens. 4K matches macOS and keeps the KV cache
+    // small enough for 4 GB Vulkan cards and Windows CPU RSS.
+    this.contextProfile = profile
     this.contextTokens = LOW_MEMORY_CONTEXT_TOKENS
   }
 
@@ -609,6 +647,7 @@ export class OllamaProvider implements LLMProvider {
 
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
+    let recoveredRuntime = false
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
@@ -633,7 +672,7 @@ export class OllamaProvider implements LLMProvider {
               `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars, ${this.contextProfile} context)...`
             )
           }
-          this.maybeRecycleRunner?.(meetingId)
+          await this.maybeRecycleRunner?.(meetingId)
           const raw = await this.callOllama(
             chunks[i] + chunkLabel,
             this.contextTokens,
@@ -699,6 +738,15 @@ export class OllamaProvider implements LLMProvider {
           })
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
+          }
+          if (
+            !recoveredRuntime &&
+            this.recoverRuntimeOnce &&
+            isTransientOllamaRuntimeError(lastError.message)
+          ) {
+            recoveredRuntime = true
+            await this.recoverRuntimeOnce()
+            continue
           }
           if (
             this.shouldEnableLowMemoryFallback(lastError.message) &&

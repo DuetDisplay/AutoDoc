@@ -512,7 +512,13 @@ describe('SegmentationService', () => {
         '/mock/home/AutoDoc/recordings'
       )
       await (scanService as any).processJob('m1')
-      expect(setVramConstrainedContext).toHaveBeenCalledWith(accelerator === 'vulkan')
+      if (accelerator === 'vulkan') {
+        expect(setVramConstrainedContext).toHaveBeenCalledWith(true, 'windows-vulkan')
+      } else if (accelerator === 'cpu') {
+        expect(setVramConstrainedContext).toHaveBeenCalledWith(true, 'windows-cpu')
+      } else {
+        expect(setVramConstrainedContext).toHaveBeenCalledWith(false)
+      }
     }
 
     expect(capturedPolicies).toEqual([
@@ -943,6 +949,10 @@ describe('SegmentationService', () => {
     const reapLeftoverRunners = vi.fn((reason?: string) => {
       order.push(`reap:${reason}`)
     })
+    const recycleBloatedRunners = vi.fn(async (reason?: string) => {
+      order.push(`recycle:${reason}`)
+      return false
+    })
     provider = createMockProvider()
     provider.completePrompt = vi.fn().mockResolvedValue('')
     vi.mocked(provider.summarize).mockImplementation(async () => {
@@ -1019,7 +1029,11 @@ describe('SegmentationService', () => {
       .mockResolvedValue({} as never)
     service = new SegmentationService(
       provider,
-      { waitUntilReady: vi.fn().mockResolvedValue(undefined), reapLeftoverRunners },
+      {
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        reapLeftoverRunners,
+        recycleBloatedRunners
+      },
       '/mock/home/AutoDoc/recordings'
     )
     fsMock.access.mockImplementation(async (path) => {
@@ -1045,7 +1059,7 @@ describe('SegmentationService', () => {
     expect(order).toEqual([
       'reap:before-notes-profile',
       'writer',
-      'reap:before-scan',
+      process.platform === 'win32' ? 'recycle:before-scan' : 'reap:before-scan',
       'scan',
       'unload',
       'reap:after-notes'

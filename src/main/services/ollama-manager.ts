@@ -22,6 +22,7 @@ import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 import {
   selectOllamaAccelerator,
+  shouldRecycleRunnerBetweenWriterChunks,
   type OllamaAccelerator,
   type OllamaAcceleratorDecision
 } from './ollama-accelerator'
@@ -881,7 +882,16 @@ export class OllamaManager extends EventEmitter {
    * threshold. Ollama respawns a fresh runner on the next request, restoring
    * full decode speed. Returns true if any runner was recycled.
    */
-  maybeRecycleBloatedRunners(meetingId?: string): boolean {
+  async maybeRecycleBloatedRunners(
+    meetingId?: string,
+    options?: { betweenChunks?: boolean }
+  ): Promise<boolean> {
+    if (
+      options?.betweenChunks &&
+      !shouldRecycleRunnerBetweenWriterChunks(process.platform, this.getNotesAccelerator())
+    ) {
+      return false
+    }
     const thresholdMiB = getRunnerRecycleRssThresholdMiB(totalmem())
     const servers = this.listManagedLlamaServers()
     const bloated = selectBloatedLlamaServers(servers, thresholdMiB)
@@ -892,12 +902,26 @@ export class OllamaManager extends EventEmitter {
       context: {
         thresholdMiB,
         servers,
-        bloatedCount: bloated.length
+        bloatedCount: bloated.length,
+        betweenChunks: options?.betweenChunks === true
       }
     })
     if (bloated.length === 0) return false
     this.killManagedLlamaServers(`runner-rss-over-${thresholdMiB}mib`, meetingId)
+    await this.ensureServingAfterRunnerChange(meetingId)
     return true
+  }
+
+  async ensureServingAfterRunnerChange(meetingId?: string): Promise<void> {
+    if (await this.isServerRunning()) {
+      return
+    }
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama serve gone after runner kill; restarting',
+      meetingId
+    })
+    await this.start()
   }
 
   private reapManagedLlamaServersOnce(reason: string): void {

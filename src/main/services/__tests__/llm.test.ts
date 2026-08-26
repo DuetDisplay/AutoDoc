@@ -142,6 +142,45 @@ describe('OllamaProvider grounding', () => {
     expect(cancelFirstStream).toHaveBeenCalledOnce()
   })
 
+  it('fails the writer when fetch failed retries never recover the serve', async () => {
+    setPlatform('win32')
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('fetch failed'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      new OllamaProvider('http://localhost:11434', 'test-model').summarize(
+        'meeting-dead-runner',
+        '[00:00] [Chris] The rollout plan was confirmed after the runner was recycled.',
+        undefined,
+        5
+      )
+    ).rejects.toThrow('fetch failed')
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('recovers the serve once after fetch failed and finishes the writer chunk', async () => {
+    setPlatform('win32')
+    const recoverRuntimeOnce = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValue(makeSuccessfulOllamaResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new OllamaProvider('http://localhost:11434', 'test-model', {
+      recoverRuntimeOnce
+    }).summarize(
+      'meeting-recovered-runner',
+      '[00:00] [Chris] The rollout plan was confirmed after the runner was recycled.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(recoverRuntimeOnce).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the existing macOS stream-timeout retry behavior', async () => {
     setPlatform('darwin')
     vi.useFakeTimers()
@@ -686,6 +725,23 @@ describe('OllamaProvider grounding', () => {
 
     vramProvider.setVramConstrainedContext(false)
     expect((vramProvider as any).contextProfile).not.toBe('windows-vulkan')
+  })
+
+  it('caps the writer context on Windows CPU and does not change macOS', () => {
+    const cpuProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    ;(cpuProvider as any).contextProfile = 'windows-balanced'
+    ;(cpuProvider as any).contextTokens = 8192
+
+    setPlatform('win32')
+    cpuProvider.setVramConstrainedContext(true, 'windows-cpu')
+    expect((cpuProvider as any).contextProfile).toBe('windows-cpu')
+    expect((cpuProvider as any).contextTokens).toBe(4096)
+
+    setPlatform('darwin')
+    const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    macProvider.setVramConstrainedContext(true, 'windows-cpu')
+    expect((macProvider as any).contextProfile).toBe('mac-balanced')
+    expect((macProvider as any).contextTokens).toBe(MAC_CONTEXT_TOKENS)
   })
 
   it('does not override an existing low-memory context when VRAM-constrained', () => {

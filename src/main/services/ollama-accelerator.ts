@@ -2,6 +2,14 @@ import { isLikelyDiscreteGpuName, type WindowsGpuInfo } from './windows-transcri
 
 export type OllamaAccelerator = 'cuda' | 'vulkan' | 'metal' | 'cpu'
 
+/** Mid-writer recycle is a Metal/GPU win. On Windows CPU it killed in-flight notes. */
+export function shouldRecycleRunnerBetweenWriterChunks(
+  platform: NodeJS.Platform,
+  accelerator: OllamaAccelerator
+): boolean {
+  return !(platform === 'win32' && accelerator === 'cpu')
+}
+
 export interface OllamaAcceleratorDecision {
   accelerator: OllamaAccelerator
   env: Record<string, string>

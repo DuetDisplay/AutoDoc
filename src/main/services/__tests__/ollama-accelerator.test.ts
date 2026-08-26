@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectOllamaAccelerator } from '../ollama-accelerator'
+import { selectOllamaAccelerator, shouldRecycleRunnerBetweenWriterChunks } from '../ollama-accelerator'
 import {
   normalizeImplausibleDiscreteVram,
   type WindowsGpuInfo
@@ -168,5 +168,13 @@ describe('selectOllamaAccelerator', () => {
 
     expect(decision.accelerator).toBe('cpu')
     expect(decision.env).toEqual({})
+  })
+
+  it('skips mid-writer recycle only on Windows CPU', () => {
+    expect(shouldRecycleRunnerBetweenWriterChunks('win32', 'cpu')).toBe(false)
+    expect(shouldRecycleRunnerBetweenWriterChunks('win32', 'cuda')).toBe(true)
+    expect(shouldRecycleRunnerBetweenWriterChunks('win32', 'vulkan')).toBe(true)
+    expect(shouldRecycleRunnerBetweenWriterChunks('darwin', 'metal')).toBe(true)
+    expect(shouldRecycleRunnerBetweenWriterChunks('darwin', 'cpu')).toBe(true)
   })
 })

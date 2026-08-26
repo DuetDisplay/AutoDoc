@@ -53,6 +53,7 @@ interface OllamaReadiness {
   isReadyForGeneration?(): Promise<boolean>
   recoverUnhealthyRuntime?(): Promise<void>
   reapLeftoverRunners?(reason?: string, meetingId?: string): void
+  recycleBloatedRunners?(reason?: string, meetingId?: string): void | Promise<boolean>
   getNotesAccelerator?(): OllamaAccelerator
 }
 
@@ -411,9 +412,14 @@ export class SegmentationService {
       this.llmProvider.setLowMemoryMode?.(false)
       this.lastAppliedMacModel = null
     }
-    this.llmProvider.setVramConstrainedContext?.(
-      this.ollamaManager.getNotesAccelerator?.() === 'vulkan'
-    )
+    const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
+    if (notesAccelerator === 'vulkan') {
+      this.llmProvider.setVramConstrainedContext?.(true, 'windows-vulkan')
+    } else if (notesAccelerator === 'cpu') {
+      this.llmProvider.setVramConstrainedContext?.(true, 'windows-cpu')
+    } else {
+      this.llmProvider.setVramConstrainedContext?.(false)
+    }
     logAutodocEvent({
       area: 'segmentation',
       message: 'notes generation waiting for model',
@@ -509,7 +515,11 @@ export class SegmentationService {
 
       await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
       if (this.llmProvider.completePrompt) {
-        this.reapNotesRunners('before-scan', meetingId)
+        if (process.platform === 'win32') {
+          await this.ollamaManager.recycleBloatedRunners?.('before-scan', meetingId)
+        } else {
+          this.reapNotesRunners('before-scan', meetingId)
+        }
         await this.logNotesResourceSnapshot('notes runners reaped before scan', meetingId)
       }
       const scanOutcome = await this.persistScanLayerNotes(

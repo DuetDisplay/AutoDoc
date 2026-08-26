@@ -1103,8 +1103,10 @@ app.whenReady().then(async () => {
     managedOllamaManager.getModel(),
     {
       onTelemetry: broadcastSegmentationDiagnostic,
-      maybeRecycleRunner: (meetingId?: string) =>
-        managedOllamaManager.maybeRecycleBloatedRunners(meetingId)
+      maybeRecycleRunner: async (meetingId?: string) => {
+        await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
+      },
+      recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime()
     }
   )
   managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
@@ -1149,6 +1151,8 @@ app.whenReady().then(async () => {
     recoverUnhealthyRuntime: recoverUnhealthyOllamaRuntime,
     reapLeftoverRunners: (reason?: string, meetingId?: string) =>
       managedOllamaManager.reapLeftoverRunners(reason, meetingId),
+    recycleBloatedRunners: (_reason?: string, meetingId?: string) =>
+      managedOllamaManager.maybeRecycleBloatedRunners(meetingId),
     getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
   const ollamaRuntime = {
