@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
+  isTransientOllamaRuntimeError,
   LOW_MEMORY_CONTEXT_TOKENS,
   MAC_CONTEXT_TOKENS,
   OllamaProvider,
@@ -1250,7 +1251,12 @@ describe('OllamaProvider grounding', () => {
     const requestBodies: Array<{
       format?: unknown
       messages?: Array<{ role: string; content: string }>
-      options?: { num_predict?: number; repeat_penalty?: number }
+      options?: {
+        num_predict?: number
+        repeat_penalty?: number
+        num_gpu?: number
+        num_thread?: number
+      }
     }> = []
 
     vi.stubGlobal(
@@ -1305,7 +1311,69 @@ describe('OllamaProvider grounding', () => {
     expect(requestBodies[0].format).toBe('json')
     expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
     expect(requestBodies[0].options?.repeat_penalty).toBe(1.05)
+    expect(requestBodies[0].options).not.toHaveProperty('num_gpu')
+    expect(requestBodies[0].options).not.toHaveProperty('num_thread')
     expect(requestBodies[0].messages?.[0]?.content).toContain('MAC QUALITY TUNING OVERRIDE')
+  })
+
+  it('injects benchmark num_gpu and num_thread only when setBenchmarkOptions is set', async () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    provider.setBenchmarkOptions({ numGpu: 0, numThread: 8 })
+
+    const requestBodies: Array<{ options?: { num_gpu?: number; num_thread?: number } }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body ?? '{}')))
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder()
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    message: {
+                      content: JSON.stringify({
+                        decisions: [],
+                        action_items: [],
+                        information: [],
+                        discussion: [],
+                        status_updates: []
+                      })
+                    }
+                  })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    await provider.summarize(
+      'meeting-benchmark-options',
+      '[00:00] [Chris] Benchmark CPU placement should force num_gpu 0.',
+      undefined,
+      5
+    )
+
+    expect(requestBodies[0].options?.num_gpu).toBe(0)
+    expect(requestBodies[0].options?.num_thread).toBe(8)
+  })
+
+  it('classifies Run A llama-server 500s as transient and ignores parse errors', () => {
+    expect(
+      isTransientOllamaRuntimeError(
+        'Ollama returned 500: {"error":"llama-server process has terminated: exit status 0xe06d7363: NTSTATUS 0xe06d7363"}'
+      )
+    ).toBe(true)
+    expect(isTransientOllamaRuntimeError('model runner has unexpectedly stopped')).toBe(true)
+    expect(isTransientOllamaRuntimeError('fetch failed')).toBe(true)
+    expect(isTransientOllamaRuntimeError('Invalid JSON from Ollama')).toBe(false)
+    expect(isTransientOllamaRuntimeError('Unexpected token } in JSON at position 12')).toBe(false)
   })
 
   it('keeps low-memory context when setLowMemoryMode(false) runs on a low-RAM Windows host', () => {

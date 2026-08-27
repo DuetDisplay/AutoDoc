@@ -31,7 +31,7 @@ export function selectOllamaAccelerator(input: {
   }
 
   const nvidiaGpu = input.gpus.find((gpu) => gpu.vendor === 'nvidia')
-  const vulkanCandidate = findVulkanCapableGpu(input.gpus, input.totalMemoryGiB)
+  const vulkanCandidate = findVulkanCapableGpu(input.gpus)
   // Without the kill switch: NVIDIA → CUDA, override 1 → Vulkan, else discrete Intel/AMD.
   const wouldChooseVulkan =
     nvidiaGpu == null && (input.vulkanOverride === '1' || vulkanCandidate != null)
@@ -78,15 +78,14 @@ export function selectOllamaAccelerator(input: {
 
   return {
     accelerator: 'cpu',
-    env: {},
+    env: { OLLAMA_VULKAN: '0' },
     reason: 'no CUDA or Vulkan-capable GPU detected'
   }
 }
 
-function findVulkanCapableGpu(
-  gpus: readonly WindowsGpuInfo[],
-  totalMemoryGiB: number | null
-): WindowsGpuInfo | undefined {
+const VULKAN_MIN_KNOWN_VRAM_GIB = 8
+
+function findVulkanCapableGpu(gpus: readonly WindowsGpuInfo[]): WindowsGpuInfo | undefined {
   return gpus.find((gpu) => {
     if (gpu.vendor !== 'intel' && gpu.vendor !== 'amd') {
       return false
@@ -94,9 +93,8 @@ function findVulkanCapableGpu(
     if (!isLikelyDiscreteGpuName(gpu.name, gpu.vendor)) {
       return false
     }
-    if (gpu.adapterRamGiB != null) {
-      return gpu.adapterRamGiB >= 4
-    }
-    return totalMemoryGiB != null && totalMemoryGiB >= 16
+    // Unknown VRAM is CPU. 4 GB Arc cards split-offload and crash; require a
+    // known adapter RAM of at least 8 GiB (RX 6600 / A770 class).
+    return gpu.adapterRamGiB != null && gpu.adapterRamGiB >= VULKAN_MIN_KNOWN_VRAM_GIB
   })
 }

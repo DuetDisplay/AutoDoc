@@ -17,7 +17,14 @@ function registerWith(
   ensureOllamaRunning: (options?: { force?: boolean }) => void,
   startSetupFromStatusCheck?: boolean,
   onManualSegmentationRetry?: (meetingId: string) => void,
-  setupPhase: 'starting' | 'ready' = 'starting'
+  setupPhase: 'starting' | 'ready' = 'starting',
+  lifecycle: {
+    captureLifecycleEpoch: () => number
+    assertLifecycleEpoch: (epoch: number) => void
+  } = {
+    captureLifecycleEpoch: () => 0,
+    assertLifecycleEpoch: () => {}
+  }
 ) {
   const retry = vi.fn()
   const getActivity = vi.fn((): 'waiting-for-local-ai' | null => null)
@@ -27,7 +34,8 @@ function registerWith(
       getActivity
     } as never,
     {
-      isServerRunning
+      isServerRunning,
+      ...lifecycle
     } as never,
     {
       getModel: () => 'llama3.1'
@@ -89,7 +97,8 @@ describe('registerLlmIpc', () => {
 
   it('does not force-restart after a later healthy check', async () => {
     const ensureOllamaRunning = vi.fn()
-    const isServerRunning = vi.fn()
+    const isServerRunning = vi
+      .fn()
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false)
@@ -102,6 +111,33 @@ describe('registerLlmIpc', () => {
     expect(ensureOllamaRunning).toHaveBeenCalledTimes(2)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, undefined)
+  })
+
+  it('does not restart from a stale status check after the manager is stopped', async () => {
+    let lifecycleEpoch = 0
+    let releaseHealthCheck!: (running: boolean) => void
+    const isServerRunning = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseHealthCheck = resolve
+        })
+    )
+    const ensureOllamaRunning = vi.fn()
+    registerWith(isServerRunning, ensureOllamaRunning, true, undefined, 'ready', {
+      captureLifecycleEpoch: () => lifecycleEpoch,
+      assertLifecycleEpoch: (expectedEpoch) => {
+        if (expectedEpoch !== lifecycleEpoch) {
+          throw new Error('start cancelled by stop()')
+        }
+      }
+    })
+
+    const status = handlers.get('ollama:check-status')?.({}) as Promise<boolean>
+    lifecycleEpoch += 1
+    releaseHealthCheck(false)
+
+    await expect(status).resolves.toBe(false)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
   })
 
   it('marks manual segmentation retries before retrying notes', async () => {

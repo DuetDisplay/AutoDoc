@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OllamaSetupCoordinator } from '../ollama-setup-coordinator'
 
 function deferred<T = void>() {
@@ -10,6 +10,10 @@ function deferred<T = void>() {
   })
   return { promise, resolve, reject }
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('OllamaSetupCoordinator', () => {
   it('shares one in-flight setup attempt across callers', async () => {
@@ -109,5 +113,76 @@ describe('OllamaSetupCoordinator', () => {
     await coordinator.ensureRunning({ force: true })
     expect(resetReady).toHaveBeenCalledTimes(1)
     expect(manager.startAndPull).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not let a delayed retry revive a lifecycle cancelled by stop()', async () => {
+    vi.useFakeTimers()
+    let lifecycleEpoch = 0
+    let stopped = false
+    const cancellation = (): Error & { code: string } =>
+      Object.assign(new Error('start cancelled by stop()'), {
+        code: 'OLLAMA_START_CANCELLED'
+      })
+    const manager = {
+      beginSetupLifecycle: vi.fn(() => {
+        stopped = false
+        return lifecycleEpoch
+      }),
+      assertLifecycleEpoch: vi.fn((expectedEpoch: number) => {
+        if (stopped || expectedEpoch !== lifecycleEpoch) throw cancellation()
+      }),
+      startAndPull: vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error('transient download failure'))
+        .mockResolvedValue(undefined)
+    }
+    const onFinalError = vi.fn()
+    const coordinator = new OllamaSetupCoordinator(manager, {
+      retryDelaysMs: [0, 5_000],
+      onFinalError,
+      isCancellationError: (error) =>
+        error instanceof Error && 'code' in error && error.code === 'OLLAMA_START_CANCELLED'
+    })
+
+    const setup = coordinator.ensureRunning()
+    const cancelled = expect(setup).rejects.toMatchObject({
+      code: 'OLLAMA_START_CANCELLED'
+    })
+    await Promise.resolve()
+    expect(manager.startAndPull).toHaveBeenCalledTimes(1)
+
+    stopped = true
+    lifecycleEpoch += 1
+    expect(manager.startAndPull).toHaveBeenCalledTimes(1)
+    const forcedSetup = coordinator.ensureRunning({ force: true })
+    await vi.advanceTimersByTimeAsync(250)
+    await cancelled
+
+    expect(onFinalError).not.toHaveBeenCalled()
+
+    await expect(forcedSetup).resolves.toBeUndefined()
+    expect(manager.startAndPull).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a readiness waiter reactivate a stopped runner', async () => {
+    const cancellation = Object.assign(new Error('start cancelled by stop()'), {
+      code: 'OLLAMA_START_CANCELLED'
+    })
+    const manager = {
+      captureLifecycleEpoch: vi.fn(() => 3),
+      assertLifecycleEpoch: vi.fn(() => {
+        throw cancellation
+      }),
+      beginSetupLifecycle: vi.fn(() => 4),
+      startAndPull: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new OllamaSetupCoordinator(manager, {
+      retryDelaysMs: [0],
+      isCancellationError: (error) => error === cancellation
+    })
+
+    await expect(coordinator.waitUntilReady()).rejects.toBe(cancellation)
+    expect(manager.beginSetupLifecycle).not.toHaveBeenCalled()
+    expect(manager.startAndPull).not.toHaveBeenCalled()
   })
 })

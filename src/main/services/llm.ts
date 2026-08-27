@@ -276,7 +276,10 @@ export function isTransientOllamaRuntimeError(message: string): boolean {
     message.includes('fetch failed') ||
     message.includes('This operation was aborted') ||
     message.includes('aborted due to timeout') ||
-    message === 'The operation was aborted'
+    message === 'The operation was aborted' ||
+    message.includes('llama-server process has terminated') ||
+    message.includes('model runner has unexpectedly stopped') ||
+    message.includes('0xe06d7363')
   )
 }
 
@@ -318,7 +321,7 @@ export function isWriterParseError(error: unknown): error is WriterParseError {
   )
 }
 
-interface OllamaCallMetrics {
+export interface OllamaCallMetrics {
   totalDurationMs?: number
   loadDurationMs?: number
   promptEvalCount?: number
@@ -327,6 +330,12 @@ interface OllamaCallMetrics {
   evalDurationMs?: number
   evalTokPerSec?: number
   doneReason?: string
+}
+
+export interface OllamaBenchmarkOptions {
+  numGpu?: number
+  numThread?: number
+  onCallComplete?: (metrics: OllamaCallMetrics) => void | Promise<void>
 }
 
 export type OllamaProviderTelemetryEventName =
@@ -380,13 +389,27 @@ export class OllamaProvider implements LLMProvider {
   private recoverRuntimeOnce?: () => Promise<void>
   private lastOllamaCallMetrics: OllamaCallMetrics | null = null
   private lastWriterSkips: WriterChunkSkip[] = []
+  private benchmarkNumGpu: number | undefined
+  private benchmarkNumThread: number | undefined
+  private benchmarkOnCallComplete?: (metrics: OllamaCallMetrics) => void | Promise<void>
 
   getLastEvalTokPerSec(): number | null {
     return this.lastOllamaCallMetrics?.evalTokPerSec ?? null
   }
 
+  getLastOllamaCallMetrics(): OllamaCallMetrics | null {
+    return this.lastOllamaCallMetrics
+  }
+
   getLastWriterSkips(): WriterChunkSkip[] {
     return this.lastWriterSkips.slice()
+  }
+
+  /** Eval-only. Unset keeps production request bodies byte-identical. */
+  setBenchmarkOptions(options: OllamaBenchmarkOptions | null): void {
+    this.benchmarkNumGpu = options?.numGpu
+    this.benchmarkNumThread = options?.numThread
+    this.benchmarkOnCallComplete = options?.onCallComplete
   }
 
   constructor(baseUrl: string, model: string, options: OllamaProviderOptions = {}) {
@@ -440,6 +463,8 @@ export class OllamaProvider implements LLMProvider {
     const controller = new AbortController()
     const requestTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     this.activeControllers.add(controller)
+    const requestStartedAt = Date.now()
+    this.lastOllamaCallMetrics = null
     try {
       const res = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
@@ -449,13 +474,13 @@ export class OllamaProvider implements LLMProvider {
           prompt,
           stream: true,
           format: options.format,
-          options: {
+          options: this.mergeOllamaRequestOptions({
             num_ctx: options.num_ctx,
             num_predict: options.num_predict,
             temperature: options.temperature,
             seed: options.seed,
             stop: options.stop ? [...options.stop] : undefined
-          }
+          })
         }),
         signal: controller.signal
       })
@@ -465,7 +490,7 @@ export class OllamaProvider implements LLMProvider {
       if (!res.body) {
         throw new Error('Ollama generate returned no response body')
       }
-      return await this.readGenerateStream(res.body, controller)
+      return await this.readGenerateStream(res.body, controller, requestStartedAt)
     } finally {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
@@ -991,9 +1016,26 @@ export class OllamaProvider implements LLMProvider {
     return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the noteworthy items from THIS section. Be concise. ${itemGuidance}${knownTopicGuidance}`
   }
 
+  private mergeOllamaRequestOptions<T extends Record<string, unknown>>(options: T): T {
+    if (this.benchmarkNumGpu == null && this.benchmarkNumThread == null) {
+      return options
+    }
+    return {
+      ...options,
+      ...(this.benchmarkNumGpu != null ? { num_gpu: this.benchmarkNumGpu } : {}),
+      ...(this.benchmarkNumThread != null ? { num_thread: this.benchmarkNumThread } : {})
+    }
+  }
+
+  private async recordCallMetrics(metrics: OllamaCallMetrics): Promise<void> {
+    this.lastOllamaCallMetrics = metrics
+    await this.benchmarkOnCallComplete?.(metrics)
+  }
+
   private async readGenerateStream(
     body: ReadableStream<Uint8Array>,
-    controller: AbortController
+    controller: AbortController,
+    requestStartedAt: number
   ): Promise<string> {
     const reader = body.getReader()
     const decoder = new TextDecoder()
@@ -1030,9 +1072,23 @@ export class OllamaProvider implements LLMProvider {
         for (const line of lines) {
           if (!line.trim()) continue
           try {
-            const data = JSON.parse(line) as { response?: string; error?: string }
+            const data = JSON.parse(line) as {
+              response?: string
+              error?: string
+              done?: boolean
+              total_duration?: number
+              load_duration?: number
+              prompt_eval_count?: number
+              prompt_eval_duration?: number
+              eval_count?: number
+              eval_duration?: number
+              done_reason?: string
+            }
             if (data.error) throw new Error(`Ollama error: ${data.error}`)
             if (typeof data.response === 'string') content += data.response
+            if (data.done) {
+              await this.recordCallMetrics(this.normalizeOllamaMetrics(data, requestStartedAt))
+            }
           } catch (error) {
             if (error instanceof SyntaxError) {
               console.warn('Ollama: unparseable generate line (skipped):', line.slice(0, 100))
@@ -1045,9 +1101,23 @@ export class OllamaProvider implements LLMProvider {
 
       if (buffer.trim()) {
         try {
-          const data = JSON.parse(buffer) as { response?: string; error?: string }
+          const data = JSON.parse(buffer) as {
+            response?: string
+            error?: string
+            done?: boolean
+            total_duration?: number
+            load_duration?: number
+            prompt_eval_count?: number
+            prompt_eval_duration?: number
+            eval_count?: number
+            eval_duration?: number
+            done_reason?: string
+          }
           if (data.error) throw new Error(`Ollama error: ${data.error}`)
           if (typeof data.response === 'string') content += data.response
+          if (data.done) {
+            await this.recordCallMetrics(this.normalizeOllamaMetrics(data, requestStartedAt))
+          }
         } catch (error) {
           if (!(error instanceof SyntaxError)) throw error
         }
@@ -1112,7 +1182,7 @@ export class OllamaProvider implements LLMProvider {
           ],
           stream: true,
           format: this.getNotesResponseFormat(),
-          options: {
+          options: this.mergeOllamaRequestOptions({
             num_ctx: contextTokens,
             num_predict: this.getMaxOutputTokens(),
             // Retries must not replay the identical request: at temperature 0 a
@@ -1122,7 +1192,7 @@ export class OllamaProvider implements LLMProvider {
             temperature: attempt > 0 ? RETRY_TEMPERATURE : 0,
             seed: attempt > 0 ? attempt : undefined,
             repeat_penalty: WRITER_REPEAT_PENALTY
-          }
+          })
         }),
         signal: controller.signal
       })
@@ -1216,7 +1286,7 @@ export class OllamaProvider implements LLMProvider {
               onToken?.()
             }
             if (data.done) {
-              this.lastOllamaCallMetrics = this.normalizeOllamaMetrics(data, requestStartedAt)
+              await this.recordCallMetrics(this.normalizeOllamaMetrics(data, requestStartedAt))
             }
           } catch (e) {
             if (e instanceof SyntaxError) {
@@ -1249,7 +1319,7 @@ export class OllamaProvider implements LLMProvider {
             onToken?.()
           }
           if (data.done) {
-            this.lastOllamaCallMetrics = this.normalizeOllamaMetrics(data, requestStartedAt)
+            await this.recordCallMetrics(this.normalizeOllamaMetrics(data, requestStartedAt))
           }
         } catch (e) {
           if (!(e instanceof SyntaxError)) throw e
@@ -1310,7 +1380,6 @@ export class OllamaProvider implements LLMProvider {
   private getMaxOutputTokens(): number {
     return process.platform === 'win32' ? WINDOWS_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS
   }
-
 
   private enableLowMemoryContext(
     meetingId: string,

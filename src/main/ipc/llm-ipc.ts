@@ -34,7 +34,18 @@ export function registerLlmIpc(
       return getE2EOllamaStatus().phase === 'ready'
     }
 
+    const lifecycleEpoch = ollamaManager.captureLifecycleEpoch()
+    try {
+      ollamaManager.assertLifecycleEpoch(lifecycleEpoch)
+    } catch {
+      return false
+    }
     const running = await ollamaManager.isServerRunning()
+    try {
+      ollamaManager.assertLifecycleEpoch(lifecycleEpoch)
+    } catch {
+      return false
+    }
     if (running) {
       consecutiveOllamaHealthFailures = 0
       return true

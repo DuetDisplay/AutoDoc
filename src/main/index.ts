@@ -35,7 +35,7 @@ import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
 import { OllamaProvider } from './services/llm'
-import { OllamaManager } from './services/ollama-manager'
+import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
@@ -935,11 +935,15 @@ app.whenReady().then(async () => {
         )
       }
       return (
-        (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+        (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ??
+        DEFAULT_OLLAMA_MODEL
       )
     }
   })
   const managedOllamaManager = ollamaManager
+  if (process.env.AUTODOC_TEST_NOTES_CPU === '1') {
+    managedOllamaManager.latchCpuAccelerator('dev-only CPU notes validation')
+  }
 
   // Mutable state tracking Ollama setup progress
   const ollamaSetupState: OllamaSetupStatus = isE2E
@@ -1054,7 +1058,8 @@ app.whenReady().then(async () => {
       ? new OllamaSetupCoordinator(managedOllamaManager, {
           retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
           onAttemptStart: markOllamaSetupStarting,
-          onFinalError: markOllamaSetupFailed
+          onFinalError: markOllamaSetupFailed,
+          isCancellationError: isOllamaStartCancelledError
         })
       : null
 
@@ -1125,23 +1130,93 @@ app.whenReady().then(async () => {
   })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
   const waitUntilOllamaReady = async (): Promise<void> => {
+    const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
+    managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
     await ollamaReadiness.waitUntilReady()
+    managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
     if (
       windowsOllamaSetupCoordinator &&
       (await managedOllamaManager.isServerRunning()) &&
       (await managedOllamaManager.hasUsableNotesModel())
     ) {
+      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
       markOllamaSetupReady()
     }
   }
   const recoverUnhealthyOllamaRuntime = async (): Promise<void> => {
-    ensureOllamaRunning({ force: true })
-    await waitUntilOllamaReady()
+    const retryDelaysMs = [0, 5_000, 15_000]
+    const recoveryEpoch = managedOllamaManager.captureLifecycleEpoch()
+    managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+    markOllamaSetupStarting()
+    let lastError: Error | null = null
+    for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex++) {
+      const delayMs = retryDelaysMs[attemptIndex]
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+      }
+      try {
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        await managedOllamaManager.recoverUnhealthyRuntime()
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+
+        let serverRunning = await managedOllamaManager.isServerRunning()
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        let hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+
+        if (serverRunning && !hasNotesModel) {
+          await managedOllamaManager.startAndPull()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          serverRunning = await managedOllamaManager.isServerRunning()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        }
+        if (serverRunning && hasNotesModel) {
+          markOllamaSetupReady()
+          return
+        }
+        lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
+      } catch (error) {
+        if (isOllamaStartCancelledError(error)) {
+          throw error
+        }
+        lastError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+    markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
+    throw lastError ?? new Error('Ollama recovery failed')
   }
   const ensureOllamaRunningIfNeeded = (): void => {
-    void managedOllamaManager.isServerRunning().then((running) => {
-      ensureOllamaRunning(running ? undefined : { force: true })
-    })
+    const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
+    try {
+      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+    } catch {
+      return
+    }
+    void managedOllamaManager
+      .isServerRunning()
+      .then((running) => {
+        managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+        if (running) {
+          if (windowsOllamaSetupCoordinator) {
+            ensureOllamaRunning()
+          } else {
+            markOllamaSetupReady()
+          }
+          return
+        }
+        ensureOllamaRunning({ force: true })
+      })
+      .catch((error) => {
+        if (isOllamaStartCancelledError(error)) return
+        logAutodocFailure({
+          area: 'ollama',
+          message: 'Failed to check Ollama after system resume',
+          error
+        })
+      })
   }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { selectOllamaAccelerator, shouldRecycleRunnerBetweenWriterChunks } from '../ollama-accelerator'
+import {
+  selectOllamaAccelerator,
+  shouldRecycleRunnerBetweenWriterChunks
+} from '../ollama-accelerator'
 import {
   normalizeImplausibleDiscreteVram,
   type WindowsGpuInfo
@@ -85,8 +88,8 @@ describe('selectOllamaAccelerator', () => {
   it('falls back to CPU when the Vulkan kill switch blocks a qualifying Intel GPU', () => {
     const decision = selectOllamaAccelerator({
       platform: 'win32',
-      gpus: normalizeImplausibleDiscreteVram(A370M_FIXTURE),
-      totalMemoryGiB: 31.73,
+      gpus: [{ name: 'Intel(R) Arc(TM) A770 Graphics', vendor: 'intel', adapterRamGiB: 16 }],
+      totalMemoryGiB: 32,
       vulkanOverride: '0'
     })
 
@@ -107,16 +110,26 @@ describe('selectOllamaAccelerator', () => {
     expect(decision.reason).toContain('A770')
   })
 
-  it('selects Vulkan for Arc A370M after implausible 1 GiB VRAM is treated as unknown', () => {
+  it('selects CPU for Arc A370M after implausible 1 GiB VRAM is treated as unknown', () => {
     const decision = selectOllamaAccelerator({
       platform: 'win32',
       gpus: normalizeImplausibleDiscreteVram(A370M_FIXTURE),
       totalMemoryGiB: 31.73
     })
 
-    expect(decision.accelerator).toBe('vulkan')
-    expect(decision.env).toEqual({ OLLAMA_VULKAN: '1' })
-    expect(decision.reason).toContain('A370M')
+    expect(decision.accelerator).toBe('cpu')
+    expect(decision.env).toEqual({ OLLAMA_VULKAN: '0' })
+  })
+
+  it('selects CPU for a discrete Intel GPU with known 4 GiB VRAM', () => {
+    const decision = selectOllamaAccelerator({
+      platform: 'win32',
+      gpus: [{ name: 'Intel(R) Arc(TM) A370M Graphics', vendor: 'intel', adapterRamGiB: 4 }],
+      totalMemoryGiB: 31.73
+    })
+
+    expect(decision.accelerator).toBe('cpu')
+    expect(decision.env).toEqual({ OLLAMA_VULKAN: '0' })
   })
 
   it('selects Vulkan for a discrete AMD RX GPU with enough VRAM', () => {
@@ -137,16 +150,22 @@ describe('selectOllamaAccelerator', () => {
         platform: 'win32',
         gpus: [{ name: 'AMD Radeon(TM) Graphics', vendor: 'amd', adapterRamGiB: null }],
         totalMemoryGiB: 32
-      }).accelerator
-    ).toBe('cpu')
+      })
+    ).toMatchObject({
+      accelerator: 'cpu',
+      env: { OLLAMA_VULKAN: '0' }
+    })
 
     expect(
       selectOllamaAccelerator({
         platform: 'win32',
         gpus: [{ name: 'Intel(R) Iris(R) Xe Graphics', vendor: 'intel', adapterRamGiB: 1 }],
         totalMemoryGiB: 32
-      }).accelerator
-    ).toBe('cpu')
+      })
+    ).toMatchObject({
+      accelerator: 'cpu',
+      env: { OLLAMA_VULKAN: '0' }
+    })
   })
 
   it('does not select Vulkan when discrete VRAM is known and below 4 GiB', () => {
@@ -167,7 +186,8 @@ describe('selectOllamaAccelerator', () => {
     })
 
     expect(decision.accelerator).toBe('cpu')
-    expect(decision.env).toEqual({})
+    expect(decision.env).toEqual({ OLLAMA_VULKAN: '0' })
+    expect(decision.reason).toContain('no CUDA or Vulkan-capable GPU')
   })
 
   it('skips mid-writer recycle only on Windows CPU', () => {

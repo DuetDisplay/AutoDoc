@@ -53,6 +53,20 @@ export interface OllamaManagerOptions {
   resolveModel?: PreferredModelResolver
 }
 
+export const OLLAMA_START_CANCELLED_ERROR_CODE = 'OLLAMA_START_CANCELLED'
+
+function createOllamaStartCancelledError(): Error & { code: string } {
+  return Object.assign(new Error('start cancelled by stop()'), {
+    code: OLLAMA_START_CANCELLED_ERROR_CODE
+  })
+}
+
+export function isOllamaStartCancelledError(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && error.code === OLLAMA_START_CANCELLED_ERROR_CODE
+  )
+}
+
 function consumeTestOllamaSetupStep(): string | null {
   return TEST_OLLAMA_SETUP_SEQUENCE.shift() ?? null
 }
@@ -264,11 +278,28 @@ export function selectBloatedLlamaServers(
   return servers.filter((server) => server.rssMiB != null && server.rssMiB > thresholdMiB)
 }
 
+export function parseWindowsNetstatListeningPids(output: string): number[] {
+  const pids: number[] = []
+  for (const line of output.split(/\r?\n/)) {
+    if (!/LISTENING/i.test(line)) continue
+    const pid = Number(line.trim().split(/\s+/).pop())
+    if (Number.isFinite(pid) && pid > 0 && !pids.includes(pid)) {
+      pids.push(pid)
+    }
+  }
+  return pids
+}
+
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   private model: string
   private resolveModel: PreferredModelResolver | null
   private readyPromise: Promise<void> | null = null
+  private startPromise: Promise<void> | null = null
+  private recoveryPromise: Promise<void> | null = null
+  private startEpoch = 0
+  private stopped = false
+  private readyServeProcess: ChildProcess | null = null
   private adoptedSystemRuntime = false
   private testServerRunning = false
   private didReapAdoptedRunners = false
@@ -285,25 +316,40 @@ export class OllamaManager extends EventEmitter {
   /** Call once at startup. Subsequent calls return the same promise. */
   startAndPull(): Promise<void> {
     if (!this.readyPromise) {
-      this.readyPromise = this.selectPreferredModel()
-        .then(() => {
-          const testStep = consumeTestOllamaSetupStep()
-          return testStep
-            ? this.runTestSetupStep(testStep)
-            : this.start()
-                .then(() => this.prepareNotesModels())
-                .then(() => this.pullOptionalEmbeddingModel())
-        })
-        .catch((err) => {
+      const epoch = this.beginSetupLifecycle()
+      const run = this.selectPreferredModel(epoch).then(() => {
+        this.assertStartEpoch(epoch)
+        const testStep = consumeTestOllamaSetupStep()
+        return testStep
+          ? this.runTestSetupStep(testStep, epoch)
+          : this.start({}, epoch)
+              .then(() => {
+                this.assertStartEpoch(epoch)
+                return this.prepareNotesModels(epoch)
+              })
+              .then(() => {
+                this.assertStartEpoch(epoch)
+                return this.pullOptionalEmbeddingModel(epoch)
+              })
+              .then(() => {
+                this.assertStartEpoch(epoch)
+              })
+      })
+      const promise = run.catch((err) => {
+        if (this.readyPromise === promise) {
           // Reset so the next call retries instead of permanently failing
           this.readyPromise = null
-          throw err
-        })
+        }
+        this.assertStartEpoch(epoch)
+        throw err
+      })
+      this.readyPromise = promise
     }
     return this.readyPromise
   }
 
-  private async runTestSetupStep(step: string): Promise<void> {
+  private async runTestSetupStep(step: string, epoch: number): Promise<void> {
+    this.assertStartEpoch(epoch)
     if (step === 'download-fail') {
       this.testServerRunning = false
       this.emit('download-start', 'ollama')
@@ -322,12 +368,17 @@ export class OllamaManager extends EventEmitter {
       return
     }
 
-    await this.start()
-    await this.pullModel()
+    await this.start({}, epoch)
+    this.assertStartEpoch(epoch)
+    await this.pullModel(this.model, epoch)
+    this.assertStartEpoch(epoch)
   }
 
   /** Wait for startup + model pull to complete. */
   waitUntilReady(): Promise<void> {
+    if (this.stopped) {
+      return Promise.reject(createOllamaStartCancelledError())
+    }
     return this.readyPromise ?? this.startAndPull()
   }
 
@@ -344,6 +395,113 @@ export class OllamaManager extends EventEmitter {
       return this.acceleratorDecision.accelerator
     }
     return process.platform === 'darwin' ? 'metal' : 'cpu'
+  }
+
+  captureLifecycleEpoch(): number {
+    return this.startEpoch
+  }
+
+  beginSetupLifecycle(): number {
+    if (this.stopped) {
+      this.startEpoch += 1
+    }
+    this.stopped = false
+    return this.startEpoch
+  }
+
+  assertLifecycleEpoch(epoch: number): void {
+    this.assertStartEpoch(epoch)
+  }
+
+  latchCpuAccelerator(reason: string): void {
+    this.acceleratorDecision = {
+      accelerator: 'cpu',
+      env: { OLLAMA_VULKAN: '0' },
+      reason
+    }
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama accelerator latched to cpu',
+      context: { reason }
+    })
+  }
+
+  recoverUnhealthyRuntime(): Promise<void> {
+    if (this.stopped) {
+      return Promise.reject(createOllamaStartCancelledError())
+    }
+    if (this.recoveryPromise) {
+      return this.recoveryPromise
+    }
+    const run = this.runUnhealthyRecovery()
+    const promise = run.finally(() => {
+      if (this.recoveryPromise === promise) {
+        this.recoveryPromise = null
+      }
+    })
+    this.recoveryPromise = promise
+    return promise
+  }
+
+  private async runUnhealthyRecovery(): Promise<void> {
+    const epoch = this.startEpoch
+    this.assertStartEpoch(epoch)
+    if (this.acceleratorDecision?.accelerator === 'vulkan') {
+      this.latchCpuAccelerator('vulkan runner died; latched CPU for process lifetime')
+    }
+
+    const previousStart = this.startPromise
+    const previousProc = this.process
+    const run = this.stopThenRespawn(previousStart, previousProc, epoch)
+    const occupied = run.finally(() => {
+      if (this.startPromise === occupied) {
+        this.startPromise = null
+      }
+    })
+    this.startPromise = occupied
+    return occupied
+  }
+
+  private async stopThenRespawn(
+    previousStart: Promise<void> | null,
+    previousProc: ChildProcess | null,
+    epoch: number
+  ): Promise<void> {
+    this.assertStartEpoch(epoch)
+    if (previousProc) {
+      const killed = await this.killProcessAndWait(previousProc)
+      this.assertStartEpoch(epoch)
+      if (!killed) {
+        throw new Error(
+          `Ollama serve pid ${previousProc.pid ?? 'unknown'} did not exit; refusing to respawn beside orphan`
+        )
+      }
+      if (this.process === previousProc) {
+        this.process = null
+      }
+      if (this.readyServeProcess === previousProc) {
+        this.readyServeProcess = null
+      }
+    }
+    this.assertStartEpoch(epoch)
+    this.killProcessOnPort()
+    this.killManagedLlamaServers()
+    this.didReapAdoptedRunners = false
+    this.readyPromise = null
+    this.testServerRunning = false
+    if (previousStart) {
+      await previousStart.catch(() => {})
+      this.assertStartEpoch(epoch)
+    }
+    this.reapLeftoverRunners('recover-unhealthy-runtime')
+    this.resetReady()
+    this.assertStartEpoch(epoch)
+    try {
+      await this.startServe({ forceRespawn: true }, epoch)
+    } catch (error) {
+      this.assertStartEpoch(epoch)
+      throw error
+    }
   }
 
   private async resolveAcceleratorDecision(): Promise<OllamaAcceleratorDecision> {
@@ -387,7 +545,7 @@ export class OllamaManager extends EventEmitter {
       })
       this.acceleratorDecision = {
         accelerator: 'cpu',
-        env: {},
+        env: { OLLAMA_VULKAN: '0' },
         reason: 'GPU detection failed; using CPU'
       }
     }
@@ -395,7 +553,7 @@ export class OllamaManager extends EventEmitter {
     return (
       this.acceleratorDecision ?? {
         accelerator: 'cpu',
-        env: {},
+        env: { OLLAMA_VULKAN: '0' },
         reason: 'GPU detection failed; using CPU'
       }
     )
@@ -407,10 +565,11 @@ export class OllamaManager extends EventEmitter {
     this.emit('model-selected', model)
   }
 
-  private async selectPreferredModel(): Promise<void> {
+  private async selectPreferredModel(epoch: number): Promise<void> {
     if (!this.resolveModel) return
 
     const preferredModel = await this.resolveModel()
+    this.assertStartEpoch(epoch)
     if (!preferredModel) return
 
     this.setModel(preferredModel)
@@ -515,41 +674,55 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  private async prepareNotesModels(): Promise<void> {
+  private async prepareNotesModels(epoch: number): Promise<void> {
     const preferred = this.model
+    const installedModels = await this.listInstalledModels()
+    this.assertStartEpoch(epoch)
     const plan = resolveNotesModelMigration({
       preferredModel: preferred,
-      installedModels: await this.listInstalledModels()
+      installedModels
     })
     this.setModel(plan.activeModel)
     this.emit('notes-model-plan', plan)
 
     if (plan.pullBeforeReady) {
-      await this.pullModel(plan.pullModel)
+      await this.pullModel(plan.pullModel, epoch)
+      this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
-      await this.deleteLeftoverModels(plan)
+      await this.deleteLeftoverModels(plan, epoch)
+      this.assertStartEpoch(epoch)
       return
     }
 
     const installed = await this.listInstalledModels()
+    this.assertStartEpoch(epoch)
     if (!isModelInstalled(installed, plan.pullModel)) {
-      void this.pullPreferredInBackground(plan)
+      void this.pullPreferredInBackground(plan, epoch)
       return
     }
 
-    await this.deleteLeftoverModels(plan)
+    await this.deleteLeftoverModels(plan, epoch)
+    this.assertStartEpoch(epoch)
   }
 
-  private async pullPreferredInBackground(plan: NotesModelMigrationPlan): Promise<void> {
+  private async pullPreferredInBackground(
+    plan: NotesModelMigrationPlan,
+    epoch: number
+  ): Promise<void> {
     try {
-      await this.pullModel(plan.pullModel)
+      this.assertStartEpoch(epoch)
+      await this.pullModel(plan.pullModel, epoch)
+      this.assertStartEpoch(epoch)
       this.setModel(plan.pullModel)
+      const installedModels = await this.listInstalledModels()
+      this.assertStartEpoch(epoch)
       const next = resolveNotesModelMigration({
         preferredModel: plan.pullModel,
-        installedModels: await this.listInstalledModels()
+        installedModels
       })
-      await this.deleteLeftoverModels(next)
+      await this.deleteLeftoverModels(next, epoch)
     } catch (error) {
+      if (isOllamaStartCancelledError(error)) return
       logAutodocFailure({
         area: 'ollama',
         message: 'background preferred notes model pull failed',
@@ -559,10 +732,13 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  private async deleteLeftoverModels(plan: NotesModelMigrationPlan): Promise<void> {
+  private async deleteLeftoverModels(plan: NotesModelMigrationPlan, epoch: number): Promise<void> {
     for (const model of plan.leftoverModels) {
-      if (isModelInstalled(await this.listInstalledModels(), model)) {
+      const installedModels = await this.listInstalledModels()
+      this.assertStartEpoch(epoch)
+      if (isModelInstalled(installedModels, model)) {
         await this.deleteModel(model)
+        this.assertStartEpoch(epoch)
       }
     }
   }
@@ -633,10 +809,73 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async start(): Promise<void> {
-    await this.ensureReady()
+  start(options: { forceRespawn?: boolean } = {}, expectedEpoch?: number): Promise<void> {
+    const epoch = expectedEpoch ?? this.beginSetupLifecycle()
+    this.assertStartEpoch(epoch)
+    if (this.startPromise) {
+      return this.startPromise
+    }
+    const run = this.startServe(options, epoch).catch((error) => {
+      this.assertStartEpoch(epoch)
+      throw error
+    })
+    const promise = run.finally(() => {
+      if (this.startPromise === promise) {
+        this.startPromise = null
+      }
+    })
+    this.startPromise = promise
+    return promise
+  }
 
-    if (await this.isServerRunning()) {
+  private async startServe(
+    options: { forceRespawn?: boolean } = {},
+    epoch = this.startEpoch
+  ): Promise<void> {
+    this.assertStartEpoch(epoch)
+    await this.ensureReady()
+    this.assertStartEpoch(epoch)
+
+    const tracked = this.process
+    if (tracked && tracked.exitCode == null && tracked.signalCode == null) {
+      if (!options.forceRespawn && this.readyServeProcess === tracked) {
+        const running = await this.isServerRunning()
+        this.assertStartEpoch(epoch)
+        const ownsPort =
+          !IS_WIN ||
+          (tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid))
+        if (running && ownsPort) {
+          this.reapManagedLlamaServersOnce('adopt-existing-server')
+          return
+        }
+      }
+      const killed = await this.killProcessAndWait(tracked)
+      this.assertStartEpoch(epoch)
+      if (!killed) {
+        throw new Error(
+          `Ollama serve pid ${tracked.pid ?? 'unknown'} did not exit; refusing to start beside orphan`
+        )
+      }
+      if (this.process === tracked) {
+        this.process = null
+      }
+      if (this.readyServeProcess === tracked) {
+        this.readyServeProcess = null
+      }
+    } else if (tracked) {
+      if (this.process === tracked) {
+        this.process = null
+      }
+      if (this.readyServeProcess === tracked) {
+        this.readyServeProcess = null
+      }
+    }
+
+    this.assertStartEpoch(epoch)
+
+    const existingServerRunning = !options.forceRespawn && (await this.isServerRunning())
+    this.assertStartEpoch(epoch)
+    if (existingServerRunning) {
       this.reapManagedLlamaServersOnce('adopt-existing-server')
       return
     }
@@ -645,6 +884,7 @@ export class OllamaManager extends EventEmitter {
     this.killProcessOnPort()
     this.reapManagedLlamaServersOnce('replace-orphaned-server')
     await new Promise((r) => setTimeout(r, 1000))
+    this.assertStartEpoch(epoch)
 
     const binary = this.getBinaryPath()
     const spawnStartedAt = Date.now()
@@ -659,31 +899,65 @@ export class OllamaManager extends EventEmitter {
       }
     })
 
+    this.assertStartEpoch(epoch)
+
+    const proc = spawn(binary, ['serve'], {
+      env: {
+        ...process.env,
+        OLLAMA_HOST: OLLAMA_HOST,
+        OLLAMA_MODELS: this.getOllamaDataDir(),
+        ...decision.env
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+
+    this.process = proc
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama server spawn attempt',
+      context: { binaryPath: binary, pid: proc.pid ?? null }
+    })
+
+    if (this.startEpoch !== epoch) {
+      const killed = await this.killProcessAndWait(proc)
+      if (killed && this.process === proc) {
+        this.process = null
+      }
+      if (killed && this.readyServeProcess === proc) {
+        this.readyServeProcess = null
+      }
+      if (!killed) {
+        throw new Error(
+          `Ollama serve pid ${proc.pid ?? 'unknown'} did not exit after stop; refusing to continue`
+        )
+      }
+      throw createOllamaStartCancelledError()
+    }
+
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(binary, ['serve'], {
-        env: {
-          ...process.env,
-          OLLAMA_HOST: OLLAMA_HOST,
-          OLLAMA_MODELS: this.getOllamaDataDir(),
-          ...decision.env
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-
-      this.process = proc
-      logAutodocEvent({
-        area: 'ollama',
-        message: 'ollama server spawn attempt',
-        context: { pid: proc.pid ?? null }
-      })
-
       let stderr = ''
       let settled = false
 
-      const pollInterval = setInterval(async () => {
-        if (await this.isServerRunning()) {
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearInterval(pollInterval)
+        clearTimeout(timeoutHandle)
+        fn()
+      }
+
+      const pollInterval = setInterval(() => {
+        void (async () => {
+          if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
+          const running = await this.isServerRunning()
+          if (!running) return
+          if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
+          if (IS_WIN) {
+            const ownerPids = this.getListeningPidsOnOllamaPort()
+            if (proc.pid == null || !ownerPids.includes(proc.pid)) return
+          }
           markReady()
-        }
+        })()
       }, 500)
 
       const timeoutHandle = setTimeout(() => {
@@ -694,25 +968,45 @@ export class OllamaManager extends EventEmitter {
           area: 'ollama',
           message: 'ollama server failed to start within timeout',
           error: new Error('Ollama server failed to start within 30 seconds'),
-          context: { timeoutMs: 30_000 }
+          context: { timeoutMs: 30_000, binaryPath: binary, pid: proc.pid ?? null }
         })
-        reject(new Error('Ollama server failed to start within 30 seconds'))
+        void this.killProcessAndWait(proc).then((killed) => {
+          if (killed) {
+            if (this.process === proc) {
+              this.process = null
+            }
+            if (this.readyServeProcess === proc) {
+              this.readyServeProcess = null
+            }
+          } else {
+            logAutodocFailure({
+              area: 'ollama',
+              message: 'ollama server start timeout left an orphan process',
+              error: new Error(
+                `Ollama serve pid ${proc.pid ?? 'unknown'} did not exit after timeout kill`
+              ),
+              context: { pid: proc.pid ?? null, binaryPath: binary }
+            })
+          }
+          reject(new Error('Ollama server failed to start within 30 seconds'))
+        })
       }, 30_000)
 
-      function markReady(): void {
-        if (settled) return
-        settled = true
-        clearInterval(pollInterval)
-        clearTimeout(timeoutHandle)
-        logAutodocEvent({
-          area: 'ollama',
-          message: 'ollama server became ready',
-          context: {
-            startupMs: Date.now() - spawnStartedAt,
-            pid: proc.pid ?? null
-          }
+      const markReady = (): void => {
+        if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
+        finish(() => {
+          this.readyServeProcess = proc
+          logAutodocEvent({
+            area: 'ollama',
+            message: 'ollama server became ready',
+            context: {
+              startupMs: Date.now() - spawnStartedAt,
+              pid: proc.pid ?? null,
+              binaryPath: binary
+            }
+          })
+          resolve()
         })
-        resolve()
       }
 
       let gpuLinesLogged = 0
@@ -748,16 +1042,24 @@ export class OllamaManager extends EventEmitter {
       })
 
       proc.on('error', (err) => {
-        this.process = null
-        if (settled) return
-        settled = true
-        clearInterval(pollInterval)
-        clearTimeout(timeoutHandle)
-        reject(new Error(`Failed to start Ollama: ${err.message}`))
+        if (this.process === proc) {
+          this.process = null
+        }
+        if (this.readyServeProcess === proc) {
+          this.readyServeProcess = null
+        }
+        finish(() => {
+          reject(new Error(`Failed to start Ollama: ${err.message}`))
+        })
       })
 
       proc.on('exit', (code, signal) => {
-        this.process = null
+        if (this.process === proc) {
+          this.process = null
+        }
+        if (this.readyServeProcess === proc) {
+          this.readyServeProcess = null
+        }
         const exitContext = {
           exitCode: code,
           signal: signal ?? null,
@@ -785,37 +1087,143 @@ export class OllamaManager extends EventEmitter {
             context: exitContext
           })
         }
-        if (!settled && exitError) {
-          settled = true
-          clearInterval(pollInterval)
-          clearTimeout(timeoutHandle)
-          reject(exitError)
+        if (!settled) {
+          finish(() => {
+            reject(
+              exitError ??
+                new Error(`Ollama exited with code ${code}, signal ${signal}: ${sanitizedStderrTail}`)
+            )
+          })
         }
       })
     })
+    this.assertStartEpoch(epoch)
   }
 
   stop(): void {
-    if (this.process) {
-      if (IS_WIN) {
-        spawn('taskkill', ['/pid', String(this.process.pid), '/f', '/t']).on('error', () => {})
-      } else {
-        this.process.kill('SIGTERM')
-      }
-      this.process = null
+    this.stopped = true
+    this.startEpoch += 1
+    const proc = this.process
+    this.readyServeProcess = null
+    if (proc) {
+      void this.killProcessAndWait(proc).then((killed) => {
+        if (killed && this.process === proc) {
+          this.process = null
+        }
+        if (!killed) {
+          logAutodocFailure({
+            area: 'ollama',
+            message: 'ollama stop left an orphan process',
+            error: new Error(`Ollama serve pid ${proc.pid ?? 'unknown'} did not exit during stop`),
+            context: { pid: proc.pid ?? null }
+          })
+        }
+      })
     }
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
     this.killProcessOnPort()
     this.killManagedLlamaServers()
     this.didReapAdoptedRunners = false
     this.readyPromise = null
+    this.startPromise = null
+    this.recoveryPromise = null
     this.testServerRunning = false
   }
 
   /** Clear cached ready state so the next startAndPull() actually restarts. */
   resetReady(): void {
     this.readyPromise = null
+    this.readyServeProcess = null
     this.testServerRunning = false
+  }
+
+  private isCurrentLiveChild(proc: ChildProcess): boolean {
+    return this.process === proc && proc.exitCode == null && proc.signalCode == null
+  }
+
+  private isStartEpochCurrent(epoch: number): boolean {
+    return !this.stopped && this.startEpoch === epoch
+  }
+
+  private assertStartEpoch(epoch: number): void {
+    if (!this.isStartEpochCurrent(epoch)) {
+      throw createOllamaStartCancelledError()
+    }
+  }
+
+  private getListeningPidsOnOllamaPort(): number[] {
+    try {
+      const output = execSync(`netstat -ano | findstr "LISTENING" | findstr ":${OLLAMA_PORT}"`, {
+        encoding: 'utf-8',
+        timeout: 5000
+      }).trim()
+      return parseWindowsNetstatListeningPids(output)
+    } catch {
+      return []
+    }
+  }
+
+  private async killProcessByPid(pid: number): Promise<void> {
+    if (!IS_WIN) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // already dead
+      }
+      return
+    }
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const done = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(done, 5_000)
+      try {
+        const killer = spawn('taskkill', ['/pid', String(pid), '/f', '/t'])
+        if (!killer?.on) {
+          done()
+          return
+        }
+        killer.on('error', done)
+        killer.on('exit', done)
+      } catch {
+        done()
+      }
+    })
+  }
+
+  private waitForProcessExit(proc: ChildProcess, timeoutMs = 5000): Promise<boolean> {
+    if (proc.exitCode != null || proc.signalCode != null) {
+      return Promise.resolve(true)
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs)
+      proc.once('exit', () => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+    })
+  }
+
+  private async killProcessAndWait(proc: ChildProcess): Promise<boolean> {
+    if (proc.pid != null) {
+      await this.killProcessByPid(proc.pid)
+    } else if (!IS_WIN) {
+      proc.kill('SIGTERM')
+    }
+    if (await this.waitForProcessExit(proc)) {
+      return true
+    }
+    if (proc.pid != null) {
+      await this.killProcessByPid(proc.pid)
+    } else if (!IS_WIN) {
+      proc.kill('SIGTERM')
+    }
+    return this.waitForProcessExit(proc)
   }
 
   /**
@@ -913,7 +1321,11 @@ export class OllamaManager extends EventEmitter {
   }
 
   async ensureServingAfterRunnerChange(meetingId?: string): Promise<void> {
-    if (await this.isServerRunning()) {
+    const epoch = this.captureLifecycleEpoch()
+    this.assertLifecycleEpoch(epoch)
+    const running = await this.isServerRunning()
+    this.assertLifecycleEpoch(epoch)
+    if (running) {
       return
     }
     logAutodocEvent({
@@ -921,7 +1333,7 @@ export class OllamaManager extends EventEmitter {
       message: 'ollama serve gone after runner kill; restarting',
       meetingId
     })
-    await this.start()
+    await this.start({}, epoch)
   }
 
   private reapManagedLlamaServersOnce(reason: string): void {
@@ -1004,8 +1416,14 @@ export class OllamaManager extends EventEmitter {
     })
   }
 
-  async pullModel(model = this.model): Promise<void> {
-    if (await this.hasModel(model)) {
+  async pullModel(model = this.model, expectedEpoch?: number): Promise<void> {
+    const assertCurrentSetup = (): void => {
+      if (expectedEpoch != null) this.assertStartEpoch(expectedEpoch)
+    }
+    assertCurrentSetup()
+    const alreadyInstalled = await this.hasModel(model)
+    assertCurrentSetup()
+    if (alreadyInstalled) {
       this.emit('pull-complete', model)
       return
     }
@@ -1017,6 +1435,7 @@ export class OllamaManager extends EventEmitter {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: model, stream: true })
     })
+    assertCurrentSetup()
 
     if (!res.ok) {
       throw new Error(`Failed to pull model ${model}: ${res.status}`)
@@ -1030,6 +1449,7 @@ export class OllamaManager extends EventEmitter {
 
     while (true) {
       const { done, value } = await reader.read()
+      assertCurrentSetup()
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
@@ -1056,12 +1476,13 @@ export class OllamaManager extends EventEmitter {
     this.emit('pull-complete', model)
   }
 
-  private async pullOptionalEmbeddingModel(): Promise<void> {
+  private async pullOptionalEmbeddingModel(epoch: number): Promise<void> {
     if (!SHOULD_PULL_ASK_AI_EMBEDDING_MODEL) return
     const model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL
     try {
-      await this.pullModel(model)
-    } catch {
+      await this.pullModel(model, epoch)
+    } catch (error) {
+      if (isOllamaStartCancelledError(error)) throw error
       this.emit('pull-complete', model)
     }
   }
