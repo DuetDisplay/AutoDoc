@@ -18,8 +18,15 @@ import {
   stripEmittedHeading
 } from '../../../scripts/notes-writer-probe/arm-f.ts'
 import { applyArmG } from '../../../scripts/notes-writer-probe/arm-g.ts'
-import { composeDocument, renderUnrestyledItems, unionNextSteps } from '../../../scripts/notes-writer-probe/compose.ts'
-import { DEFAULT_SEED, type AllowedTemperature } from '../../../scripts/notes-writer-probe/constants.ts'
+import {
+  composeDocument,
+  renderUnrestyledItems,
+  unionNextSteps
+} from '../../../scripts/notes-writer-probe/compose.ts'
+import {
+  DEFAULT_SEED,
+  type AllowedTemperature
+} from '../../../scripts/notes-writer-probe/constants.ts'
 import { scoreCoverage, type CoverageItem } from '../../../scripts/notes-writer-probe/coverage.ts'
 import { factsPass } from '../../../scripts/notes-writer-probe/facts.ts'
 import {
@@ -31,9 +38,17 @@ import {
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
 import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
-import type { MeetingNotesContent, MeetingSegments } from '../../shared/types'
+import type { MeetingNotesContent, MeetingSegments, Transcript } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
-import { emptyValidationStats, type NotesValidationStats, type TranscriptRow } from './notes-evidence-validate'
+import {
+  emptyValidationStats,
+  type NotesValidationStats,
+  type TranscriptRow
+} from './notes-evidence-validate'
+import { presentMeetingSegmentsLosslessly } from './notes-lossless-presenter'
+import { recoverExplicitTranscriptActions } from './notes-explicit-action-recovery'
+import { recoverExplicitTranscriptDecisions } from './notes-explicit-decision-recovery'
+import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
 import { generateNotesOverview } from './notes-overview'
 import { fallbackMeetingOverviewFromNotes } from '../../shared/notes-overview-text'
 import { meetingSpanSources, parseScanMarkdown } from './notes-scan-markdown'
@@ -82,6 +97,14 @@ export interface RunNotesScanOptions {
   generate: ScanGenerateFn
   spanSources: { startMs: number; endMs: number }[]
   transcript?: readonly TranscriptRow[]
+  /** Explicitly selects the model-free structured presenter. Omission keeps the legacy scan path. */
+  presentationMode?: 'lossless'
+  /** Required evidence for conservative action-owner attribution in lossless mode. */
+  attributionTranscript?: readonly Transcript[]
+  /** Safe local label for explicit commitments spoken on the captured `me` channel. */
+  localOwnerLabel?: string | null
+  /** Required by the lossless presenter, including when the writer returned no records. */
+  meetingId?: string
   seed?: number
   temperature?: AllowedTemperature
   onProgress?: (update: { stage: string; fraction: number }) => void
@@ -109,6 +132,19 @@ export type ScanRewriteRejectReason =
 export interface NotesScanResult {
   markdown: string
   content: MeetingNotesContent
+  presentationMode?: 'lossless' | 'scan'
+  exactWriterCoverage?: boolean
+  attributionOwnersAdded?: number
+  attributionOwnersStripped?: number
+  attributionOwnersPreserved?: number
+  attributionOwnersChanged?: number
+  recoveredActionCount?: number
+  promotedActionCount?: number
+  dedupedRecoveredActionCount?: number
+  recoveredDecisionCount?: number
+  promotedDecisionCount?: number
+  dedupedRecoveredDecisionCount?: number
+  overviewSkipped?: boolean
   groupingFallback: boolean
   restyleFallbacks: number
   compressFallbacks: number
@@ -253,6 +289,80 @@ export async function runNotesScanPipeline(
     options.onProgress?.({ stage, fraction: Math.min(1, Math.max(0, fraction)) })
   }
   reportProgress('scan-start', 0)
+
+  if (options.presentationMode === 'lossless') {
+    if (!options.meetingId) {
+      throw new Error('Lossless notes presentation requires a meeting ID')
+    }
+
+    const attributionTranscript = options.attributionTranscript
+    if (!attributionTranscript) {
+      throw new Error('Lossless notes presentation requires attribution evidence')
+    }
+    const decisionRecovery = recoverExplicitTranscriptDecisions(segments, attributionTranscript)
+    const recovery = recoverExplicitTranscriptActions(
+      decisionRecovery.segments,
+      attributionTranscript,
+      {
+        localOwnerLabel: options.localOwnerLabel?.trim() || undefined
+      }
+    )
+    let attributionOwnersAdded = 0
+    let attributionOwnersStripped = 0
+    let attributionOwnersPreserved = 0
+    let attributionOwnersChanged = 0
+    const actionItems = recovery.segments.actionItems.map((segment) => {
+      const resolvedOwner = resolveSpeakerAwareOwner(
+        segment,
+        attributionTranscript,
+        options.localOwnerLabel
+      )
+      const originalOwner = segment.assignee?.trim() || null
+      if (!originalOwner && resolvedOwner) attributionOwnersAdded += 1
+      if (originalOwner && !resolvedOwner) attributionOwnersStripped += 1
+      if (originalOwner && resolvedOwner === originalOwner) attributionOwnersPreserved += 1
+      if (originalOwner && resolvedOwner && resolvedOwner !== originalOwner) {
+        attributionOwnersChanged += 1
+      }
+      return { ...segment, assignee: resolvedOwner }
+    })
+    const presentedSegments: MeetingSegments = {
+      ...recovery.segments,
+      actionItems
+    }
+    const content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments)
+    reportProgress('lossless-presentation', 1)
+
+    return {
+      markdown: '',
+      content,
+      presentationMode: 'lossless',
+      exactWriterCoverage: true,
+      attributionOwnersAdded,
+      attributionOwnersStripped,
+      attributionOwnersPreserved,
+      attributionOwnersChanged,
+      recoveredActionCount: recovery.recoveredActionCount,
+      promotedActionCount: recovery.promotedActionCount,
+      dedupedRecoveredActionCount: recovery.dedupedRecoveredActionCount,
+      recoveredDecisionCount: decisionRecovery.recoveredDecisionCount,
+      promotedDecisionCount: decisionRecovery.promotedDecisionCount,
+      dedupedRecoveredDecisionCount: decisionRecovery.dedupedRecoveredDecisionCount,
+      overviewSkipped: false,
+      groupingFallback: false,
+      restyleFallbacks: 0,
+      compressFallbacks: 0,
+      restyleSkips: 0,
+      compressSkips: 0,
+      restyleRejectReasons: [],
+      compressRejectReasons: [],
+      attachFailed: false,
+      overviewFailed: false,
+      overviewFailureReasons: [],
+      validation: emptyValidationStats(false)
+    }
+  }
+
   const split = splitLegacyItems(segments)
   const topical = [
     ...split.topical,
@@ -279,9 +389,9 @@ export async function runNotesScanPipeline(
   }
   const chosen = chooseScanGroups(llmGroups, writerTopicGroups, topical)
   const groupingFallback =
-    chosen.groupingFallback && (chosen.groups.length === 0 || fallbackBucketGroups(topical).length === 0)
-  const groups =
-    chosen.groups.length > 0 ? chosen.groups : fallbackBucketGroups(topical)
+    chosen.groupingFallback &&
+    (chosen.groups.length === 0 || fallbackBucketGroups(topical).length === 0)
+  const groups = chosen.groups.length > 0 ? chosen.groups : fallbackBucketGroups(topical)
   reportProgress('grouping', 0.12)
 
   const byId = catalogById(topical)
@@ -402,10 +512,7 @@ export async function runNotesScanPipeline(
       working = reconstructWith(working, index, markdown)
     }
     compressDone += 1
-    reportProgress(
-      'compress',
-      0.55 + (0.32 * compressDone) / Math.max(topicalChunks.length, 1)
-    )
+    reportProgress('compress', 0.55 + (0.32 * compressDone) / Math.max(topicalChunks.length, 1))
   }
 
   const compressed = joinNotesDocument(working)
@@ -496,6 +603,8 @@ export async function runNotesScanPipeline(
   return {
     markdown: presented.markdown,
     content,
+    presentationMode: 'scan',
+    exactWriterCoverage: false,
     groupingFallback,
     restyleFallbacks,
     compressFallbacks,

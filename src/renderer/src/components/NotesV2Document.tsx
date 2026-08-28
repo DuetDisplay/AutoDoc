@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactElement
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type {
   MeetingNotesContent,
   MeetingNotesV2,
@@ -33,10 +26,24 @@ function earliestStart(sources: readonly NoteSourceRange[]): number | null {
   return sources.reduce((min, source) => Math.min(min, source.startMs), sources[0].startMs)
 }
 
-function meetingSummary(notes: MeetingNotesV2, title?: string): string {
+function meetingSummary(
+  notes: MeetingNotesV2,
+  title: string | undefined,
+  useMacLosslessPresentation: boolean
+): string {
   const overview = notes.overview?.text.trim()
   if (overview) return overview
-  return fallbackMeetingOverviewFromNotes(notes.sections, title)
+  if (!useMacLosslessPresentation) return fallbackMeetingOverviewFromNotes(notes.sections, title)
+  return fallbackMeetingOverviewFromNotes(
+    [
+      ...notes.sections,
+      {
+        title: '',
+        keyPoints: [...notes.decisions, ...notes.nextSteps]
+      }
+    ],
+    title
+  )
 }
 
 function RemoveButton({
@@ -90,12 +97,20 @@ function createUserItem(text: string, topic: string | null = null): NoteItem {
   }
 }
 
-function markEdited(item: NoteItem, text: string): NoteItem {
+function markEdited(item: NoteItem, text: string, clearDistinctTitle: boolean): NoteItem {
   const sameTitle = Boolean(item.title?.trim()) && item.title?.trim() === item.text.trim()
   return {
     ...item,
     text,
-    title: sameTitle ? text : item.title,
+    title: sameTitle ? text : clearDistinctTitle ? null : item.title,
+    provenance: item.provenance === 'user-created' ? 'user-created' : 'user-edited'
+  }
+}
+
+function markTitleEdited(item: NoteItem, title: string): NoteItem {
+  return {
+    ...item,
+    title,
     provenance: item.provenance === 'user-created' ? 'user-created' : 'user-edited'
   }
 }
@@ -108,8 +123,14 @@ function markOwnerEdited(item: NoteItem, owner: string | null): NoteItem {
   }
 }
 
-function mapItems(items: NoteItem[], itemId: string, map: (item: NoteItem) => NoteItem | null): NoteItem[] {
-  return items.map((item) => (item.id === itemId ? map(item) : item)).filter((item): item is NoteItem => item != null)
+function mapItems(
+  items: NoteItem[],
+  itemId: string,
+  map: (item: NoteItem) => NoteItem | null
+): NoteItem[] {
+  return items
+    .map((item) => (item.id === itemId ? map(item) : item))
+    .filter((item): item is NoteItem => item != null)
 }
 
 function mapNotesItems(
@@ -198,7 +219,11 @@ function InlineEdit({
   }
 
   return (
-    <Tag className={`${className ?? ''} cursor-text`} style={style} onClick={() => setEditing(true)}>
+    <Tag
+      className={`${className ?? ''} cursor-text`}
+      style={style}
+      onClick={() => setEditing(true)}
+    >
       {renderNoteMarkup(value)}
     </Tag>
   )
@@ -319,56 +344,98 @@ function JumpButton({
 
 function NextStepRow({
   item,
+  useMacLosslessPresentation,
   meetingSpan,
   onSeek,
   onSave,
+  onSaveTitle,
   onSaveOwner,
   onDelete
 }: {
   item: NoteItem
+  useMacLosslessPresentation: boolean
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
+  onSaveTitle?: (itemId: string, title: string) => void
   onSaveOwner?: (itemId: string, owner: string | null) => void
   onDelete?: (itemId: string) => void
 }): ReactElement {
-  const label = item.title?.trim() || item.text
+  const title = item.title?.trim() ?? ''
+  const body = item.text.trim()
+  const label = useMacLosslessPresentation ? body || title : title || body
+  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && body && title !== body)
+  const saveLabel =
+    !useMacLosslessPresentation && title && onSaveTitle
+      ? (text: string) => onSaveTitle(item.id, text)
+      : onSave
+        ? (text: string) => onSave(item.id, text)
+        : undefined
   return (
     <div className="group flex items-start gap-2.5 py-1">
       <span aria-hidden className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-muted" />
-      <span className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
+        {hasDistinctTitle ? (
+          <div className="text-[13px] font-medium leading-relaxed text-ink">
+            {renderNoteMarkup(title)}
+          </div>
+        ) : null}
         <InlineEdit
           value={label}
-          onSave={onSave ? (text) => onSave(item.id, text) : undefined}
-          className="text-[13px] leading-relaxed text-ink"
+          onSave={saveLabel}
+          className={
+            hasDistinctTitle
+              ? 'text-[12.5px] leading-relaxed text-ink-secondary'
+              : 'text-[13px] leading-relaxed text-ink'
+          }
         />
-        <OwnerEdit
-          owner={item.owner}
-          onSave={onSaveOwner ? (owner) => onSaveOwner(item.id, owner) : undefined}
-        />
-      </span>
+        {useMacLosslessPresentation && (item.owner || item.deadline || onSaveOwner) ? (
+          <div className="flex min-h-4 items-center">
+            <OwnerEdit
+              owner={item.owner}
+              onSave={onSaveOwner ? (owner) => onSaveOwner(item.id, owner) : undefined}
+            />
+            {item.deadline ? (
+              <span className="ml-1.5 text-[11.5px] text-ink-muted">Due: {item.deadline}</span>
+            ) : null}
+          </div>
+        ) : (
+          <OwnerEdit
+            owner={item.owner}
+            onSave={onSaveOwner ? (owner) => onSaveOwner(item.id, owner) : undefined}
+          />
+        )}
+      </div>
       <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
-      {onDelete ? <RemoveButton label="Delete next step" onClick={() => onDelete(item.id)} /> : null}
+      {onDelete ? (
+        <RemoveButton label="Delete next step" onClick={() => onDelete(item.id)} />
+      ) : null}
     </div>
   )
 }
 
 function Bullet({
   item,
+  useMacLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
   onSave,
-  onDelete
+  onDelete,
+  deleteLabel = 'Delete note'
 }: {
   item: NoteItem
+  useMacLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
   onDelete?: (itemId: string) => void
+  deleteLabel?: string
 }): ReactElement {
   const parsed = stripAgreed(item.text)
+  const title = item.title?.trim() ?? ''
+  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && title !== parsed.text)
   const start = earliestStart(item.sources)
   const showTime = !isMeetingSpanOnly(item.sources, meetingSpan) && start != null
   const saveText = onSave
@@ -393,11 +460,26 @@ function Bullet({
           ) : null}
         </div>
         <div className="text-[13.5px] leading-relaxed text-ink">
+          {hasDistinctTitle ? (
+            <div className="font-medium text-ink">{renderNoteMarkup(title)}</div>
+          ) : null}
           {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
-          <InlineEdit value={parsed.text} onSave={saveText} className="text-[13.5px] leading-relaxed text-ink" />
+          <InlineEdit
+            value={parsed.text}
+            onSave={saveText}
+            className={
+              hasDistinctTitle
+                ? 'text-[12.5px] leading-relaxed text-ink-secondary'
+                : 'text-[13.5px] leading-relaxed text-ink'
+            }
+          />
         </div>
         {onDelete ? (
-          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
+          <RemoveButton
+            label={deleteLabel}
+            testId={`delete-${item.id}`}
+            onClick={() => onDelete(item.id)}
+          />
         ) : null}
       </div>
     )
@@ -406,25 +488,151 @@ function Bullet({
   return (
     <div className="group flex items-start justify-between gap-3 py-1">
       <div className="min-w-0 text-[13.5px] leading-relaxed text-ink">
+        {hasDistinctTitle ? (
+          <div className="font-medium text-ink">{renderNoteMarkup(title)}</div>
+        ) : null}
         {parsed.agreed ? (
           <span className="mr-1.5 inline-flex items-center rounded-full bg-sage-light px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sage-dark">
             Agreed
           </span>
         ) : null}
-        <InlineEdit value={parsed.text} onSave={saveText} className="text-[13.5px] leading-relaxed text-ink" />
+        <InlineEdit
+          value={parsed.text}
+          onSave={saveText}
+          className={
+            hasDistinctTitle
+              ? 'text-[12.5px] leading-relaxed text-ink-secondary'
+              : 'text-[13.5px] leading-relaxed text-ink'
+          }
+        />
       </div>
       <div className="flex items-center gap-2">
         <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
         {onDelete ? (
-          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
+          <RemoveButton
+            label={deleteLabel}
+            testId={`delete-${item.id}`}
+            onClick={() => onDelete(item.id)}
+          />
         ) : null}
       </div>
     </div>
   )
 }
 
+function DecisionsSection({
+  items,
+  useMacLosslessPresentation,
+  option,
+  meetingSpan,
+  onSeek,
+  onSave,
+  onDelete
+}: {
+  items: readonly NoteItem[]
+  useMacLosslessPresentation: boolean
+  option: NotesOption
+  meetingSpan: readonly NoteSourceRange[]
+  onSeek: (startMs: number) => void
+  onSave?: (itemId: string, text: string) => void
+  onDelete?: (itemId: string) => void
+}): ReactElement | null {
+  if (items.length === 0) return null
+
+  const decisions = items.map((item) => (
+    <Bullet
+      key={item.id}
+      item={item}
+      useMacLosslessPresentation={useMacLosslessPresentation}
+      option={option}
+      meetingSpan={meetingSpan}
+      onSeek={onSeek}
+      onSave={onSave}
+      onDelete={onDelete}
+      deleteLabel="Delete decision"
+    />
+  ))
+
+  if (option === 'option-2') {
+    return (
+      <section
+        id="notes-decisions"
+        className="rounded-xl border border-border bg-bg-card px-4 py-3"
+      >
+        <h3 className="mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted">
+          Decisions
+        </h3>
+        {decisions}
+      </section>
+    )
+  }
+
+  return (
+    <section
+      id="notes-decisions"
+      className="mx-auto w-full max-w-[560px] border-t border-border pt-4"
+    >
+      <h3 className="mb-2 text-[17px] font-semibold text-ink">Decisions</h3>
+      {decisions}
+    </section>
+  )
+}
+
+function KeyTakeawaysSection({
+  items,
+  option,
+  meetingSpan,
+  onSeek,
+  onSave,
+  onDelete
+}: {
+  items: readonly NoteItem[]
+  option: NotesOption
+  meetingSpan: readonly NoteSourceRange[]
+  onSeek: (startMs: number) => void
+  onSave?: (itemId: string, text: string) => void
+  onDelete?: (itemId: string) => void
+}): ReactElement | null {
+  if (items.length === 0) return null
+
+  return (
+    <section
+      id="notes-key-takeaways"
+      className={
+        option === 'option-1'
+          ? 'mx-auto w-full max-w-[560px] border-y border-border py-3'
+          : 'rounded-xl border border-border bg-bg-card px-4 py-3'
+      }
+    >
+      <h3
+        className={
+          option === 'option-1'
+            ? 'mb-1 text-[13px] font-semibold text-ink'
+            : 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
+        }
+      >
+        Key Takeaways
+      </h3>
+      {items.map((item) => (
+        <Bullet
+          key={item.id}
+          item={item}
+          useMacLosslessPresentation
+          option={option}
+          meetingSpan={meetingSpan}
+          onSeek={onSeek}
+          onSave={onSave}
+          onDelete={onDelete}
+          deleteLabel="Delete key takeaway"
+        />
+      ))}
+    </section>
+  )
+}
+
 function SubBullet({
   item,
+  useMacLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -432,6 +640,7 @@ function SubBullet({
   onDelete
 }: {
   item: NoteItem
+  useMacLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -439,6 +648,8 @@ function SubBullet({
   onDelete?: (itemId: string) => void
 }): ReactElement {
   const parsed = stripAgreed(item.text)
+  const title = item.title?.trim() ?? ''
+  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && title !== parsed.text)
   const saveText = onSave
     ? (text: string) => onSave(item.id, parsed.agreed ? `Agreed: ${text}` : text)
     : undefined
@@ -452,6 +663,9 @@ function SubBullet({
     >
       <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
       <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-secondary">
+        {hasDistinctTitle ? (
+          <div className="font-medium text-ink-secondary">{renderNoteMarkup(title)}</div>
+        ) : null}
         {parsed.agreed ? (
           option === 'option-2' ? (
             <span className="mr-1.5 inline-flex items-center rounded-full bg-sage-light px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sage-dark">
@@ -470,7 +684,11 @@ function SubBullet({
       <div className="flex items-center gap-1">
         <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
         {onDelete ? (
-          <RemoveButton label="Delete note" testId={`delete-${item.id}`} onClick={() => onDelete(item.id)} />
+          <RemoveButton
+            label="Delete note"
+            testId={`delete-${item.id}`}
+            onClick={() => onDelete(item.id)}
+          />
         ) : null}
       </div>
     </div>
@@ -480,6 +698,7 @@ function SubBullet({
 function BulletGroup({
   item,
   children,
+  useMacLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -488,6 +707,7 @@ function BulletGroup({
 }: {
   item: NoteItem
   children: readonly NoteItem[]
+  useMacLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -498,6 +718,7 @@ function BulletGroup({
     <div>
       <Bullet
         item={item}
+        useMacLosslessPresentation={useMacLosslessPresentation}
         option={option}
         meetingSpan={meetingSpan}
         onSeek={onSeek}
@@ -505,15 +726,12 @@ function BulletGroup({
         onDelete={onDelete}
       />
       {children.length > 0 ? (
-        <div
-          className={
-            option === 'option-1' ? '' : 'ml-0 border-l border-border'
-          }
-        >
+        <div className={option === 'option-1' ? '' : 'ml-0 border-l border-border'}>
           {children.map((child) => (
             <SubBullet
               key={child.id}
               item={child}
+              useMacLosslessPresentation={useMacLosslessPresentation}
               option={option}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
@@ -545,10 +763,16 @@ export function NotesV2Document({
       ? 'option-2'
       : 'option-1'
   })
-  const summary = meetingSummary(notes, title)
+  const useMacLosslessPresentation = !isWindowsRenderer()
+  const summary = meetingSummary(notes, title, useMacLosslessPresentation)
 
   const saveItem = (itemId: string, text: string): void => {
-    onWrite?.(mapNotesItems(notes, itemId, (item) => markEdited(item, text)))
+    onWrite?.(
+      mapNotesItems(notes, itemId, (item) => markEdited(item, text, useMacLosslessPresentation))
+    )
+  }
+  const saveItemTitle = (itemId: string, itemTitle: string): void => {
+    onWrite?.(mapNotesItems(notes, itemId, (item) => markTitleEdited(item, itemTitle)))
   }
   const saveOwner = (itemId: string, owner: string | null): void => {
     onWrite?.(mapNotesItems(notes, itemId, (item) => markOwnerEdited(item, owner)))
@@ -646,6 +870,29 @@ export function NotesV2Document({
         </div>
       ) : null}
 
+      {useMacLosslessPresentation ? (
+        <KeyTakeawaysSection
+          items={notes.keyTakeaways}
+          option={option}
+          meetingSpan={meetingSpan}
+          onSeek={onSeek}
+          onSave={itemEdit.onSave}
+          onDelete={itemEdit.onDelete}
+        />
+      ) : null}
+
+      {useMacLosslessPresentation && option === 'option-2' ? (
+        <DecisionsSection
+          items={notes.decisions}
+          useMacLosslessPresentation={useMacLosslessPresentation}
+          option={option}
+          meetingSpan={meetingSpan}
+          onSeek={onSeek}
+          onSave={itemEdit.onSave}
+          onDelete={itemEdit.onDelete}
+        />
+      ) : null}
+
       {option === 'option-2' && (notes.nextSteps.length > 0 || onWrite) ? (
         <div
           id="notes-next-steps"
@@ -658,8 +905,10 @@ export function NotesV2Document({
             <NextStepRow
               key={item.id}
               item={item}
+              useMacLosslessPresentation={useMacLosslessPresentation}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
+              onSaveTitle={onWrite ? saveItemTitle : undefined}
               {...itemEdit}
             />
           ))}
@@ -675,7 +924,11 @@ export function NotesV2Document({
         </div>
       ) : null}
 
-      <div className={option === 'option-1' ? 'mx-auto w-full max-w-[560px] py-2' : 'flex flex-col gap-5'}>
+      <div
+        className={
+          option === 'option-1' ? 'mx-auto w-full max-w-[560px] py-2' : 'flex flex-col gap-5'
+        }
+      >
         {option === 'option-1' ? (
           <h2 className="mb-4 text-[22px] font-semibold tracking-tight text-ink">
             {title?.trim() || 'Notes'}
@@ -702,6 +955,7 @@ export function NotesV2Document({
                   key={item.id}
                   item={item}
                   children={index === lastParentIndex ? extra : []}
+                  useMacLosslessPresentation={useMacLosslessPresentation}
                   option={option}
                   meetingSpan={meetingSpan}
                   onSeek={onSeek}
@@ -713,6 +967,7 @@ export function NotesV2Document({
                     <Bullet
                       key={item.id}
                       item={item}
+                      useMacLosslessPresentation={useMacLosslessPresentation}
                       option={option}
                       meetingSpan={meetingSpan}
                       onSeek={onSeek}
@@ -743,15 +998,32 @@ export function NotesV2Document({
         ) : null}
       </div>
 
+      {useMacLosslessPresentation && option === 'option-1' ? (
+        <DecisionsSection
+          items={notes.decisions}
+          useMacLosslessPresentation={useMacLosslessPresentation}
+          option={option}
+          meetingSpan={meetingSpan}
+          onSeek={onSeek}
+          onSave={itemEdit.onSave}
+          onDelete={itemEdit.onDelete}
+        />
+      ) : null}
+
       {option === 'option-1' && (notes.nextSteps.length > 0 || onWrite) ? (
-        <div id="notes-next-steps" className="mx-auto w-full max-w-[560px] border-t border-border pt-4">
+        <div
+          id="notes-next-steps"
+          className="mx-auto w-full max-w-[560px] border-t border-border pt-4"
+        >
           <h3 className="mb-2 text-[17px] font-semibold text-ink">Next Steps</h3>
           {notes.nextSteps.map((item) => (
             <NextStepRow
               key={item.id}
               item={item}
+              useMacLosslessPresentation={useMacLosslessPresentation}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
+              onSaveTitle={onWrite ? saveItemTitle : undefined}
               {...itemEdit}
             />
           ))}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import { emptyValidationStats } from '../notes-evidence-validate'
 import {
@@ -55,6 +55,274 @@ function segments(): MeetingSegments {
 }
 
 describe('runNotesScanPipeline', () => {
+  it('presents every writer record without model calls in lossless mode', async () => {
+    const input = segments()
+    input.actionItems.push(
+      segment({
+        id: 'a2',
+        category: 'action_item',
+        title: 'Send the rollout update',
+        content: 'Send the rollout update after QA clears.',
+        sourceStartMs: 3000,
+        sourceEndMs: 4000
+      }),
+      segment({
+        id: 'a3',
+        category: 'action_item',
+        title: 'Share the signed build',
+        content: 'Share the signed build with beta users.',
+        assignee: 'them',
+        sourceStartMs: 5000,
+        sourceEndMs: 6000
+      })
+    )
+    const generate = vi.fn(async () => 'must not be called')
+    const progress: string[] = []
+
+    const result = await runNotesScanPipeline(input, {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless',
+      attributionTranscript: [
+        {
+          id: 't0',
+          meetingId: 'meeting-1',
+          speaker: 'them',
+          text: 'I asked Norbert about the offline analytics PR.',
+          startMs: 100,
+          endMs: 500,
+          confidence: 1
+        },
+        {
+          id: 't1',
+          meetingId: 'meeting-1',
+          speaker: 'them',
+          text: 'Norbert will review the offline analytics PR.',
+          startMs: 1100,
+          endMs: 1900,
+          confidence: 1
+        },
+        {
+          id: 't2',
+          meetingId: 'meeting-1',
+          speaker: 'me',
+          text: "I'll send the rollout update after QA clears.",
+          startMs: 3100,
+          endMs: 3900,
+          confidence: 1
+        },
+        {
+          id: 't3',
+          meetingId: 'meeting-1',
+          speaker: 'them',
+          text: "I'll share the signed build with beta users.",
+          startMs: 5100,
+          endMs: 5900,
+          confidence: 1
+        }
+      ],
+      localOwnerLabel: 'Me',
+      spanSources: [{ startMs: 0, endMs: 7000 }],
+      generate,
+      onProgress: (update) => progress.push(update.stage)
+    })
+
+    const presentedItems = [
+      ...result.content.decisions,
+      ...result.content.nextSteps,
+      ...result.content.sections.flatMap((section) => [
+        ...section.keyPoints,
+        ...section.supportingDetails
+      ])
+    ]
+    expect(generate).not.toHaveBeenCalled()
+    expect(presentedItems.map((item) => item.id).sort()).toEqual(['a1', 'a2', 'a3', 'd1', 'i1'])
+    expect(result.content.decisions[0]).toMatchObject({
+      id: 'd1',
+      text: 'The team decided to collect login events from all users.'
+    })
+    expect(result.content.nextSteps).toEqual([
+      expect.objectContaining({ id: 'a1', owner: 'Norbert' }),
+      expect.objectContaining({ id: 'a2', owner: 'Me' }),
+      expect.objectContaining({ id: 'a3', owner: null })
+    ])
+    expect(progress).toEqual(['scan-start', 'lossless-presentation'])
+    expect(result.validation).toEqual(emptyValidationStats(false))
+    expect(result).toMatchObject({
+      presentationMode: 'lossless',
+      exactWriterCoverage: true,
+      attributionOwnersAdded: 1,
+      attributionOwnersStripped: 1,
+      attributionOwnersPreserved: 1,
+      recoveredActionCount: 0,
+      dedupedRecoveredActionCount: 3,
+      recoveredDecisionCount: 0,
+      overviewSkipped: false
+    })
+    expect(result.content.overview?.text).toBe(
+      'The team decided to collect login events from all users.'
+    )
+    expect(result.content.keyTakeaways.length).toBeGreaterThan(0)
+  })
+
+  it('recovers accepted decisions before presentation without another model call', async () => {
+    const generate = vi.fn(async () => 'must not be called')
+    const result = await runNotesScanPipeline(
+      {
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      },
+      {
+        title: 'Launch planning',
+        meetingId: 'meeting-1',
+        presentationMode: 'lossless',
+        attributionTranscript: [
+          {
+            id: 'proposal',
+            meetingId: 'meeting-1',
+            speaker: 'me',
+            text: 'Should we ship the beta on Friday?',
+            startMs: 1_000,
+            endMs: 2_000,
+            confidence: 1
+          },
+          {
+            id: 'acceptance',
+            meetingId: 'meeting-1',
+            speaker: 'them',
+            text: 'Yeah, sounds good.',
+            startMs: 2_500,
+            endMs: 3_500,
+            confidence: 1
+          }
+        ],
+        spanSources: [{ startMs: 1_000, endMs: 3_500 }],
+        generate
+      }
+    )
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.decisions).toEqual([
+      expect.objectContaining({
+        title: 'Ship the beta on Friday',
+        text: 'Ship the beta on Friday.'
+      })
+    ])
+    expect(result.content.overview?.text).toBe('Ship the beta on Friday.')
+    expect(result).toMatchObject({
+      recoveredDecisionCount: 1,
+      promotedDecisionCount: 0,
+      exactWriterCoverage: true
+    })
+  })
+
+  it('recovers an uncovered local commitment before lossless presentation without another model call', async () => {
+    const generate = vi.fn(async () => 'must not be called')
+    const result = await runNotesScanPipeline(
+      {
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      },
+      {
+        title: 'Release review',
+        meetingId: 'meeting-1',
+        presentationMode: 'lossless',
+        attributionTranscript: [
+          {
+            id: 'sergio-commitment',
+            meetingId: 'meeting-1',
+            speaker: 'me',
+            text: "Yeah, I'll ping Sergio after the meeting just to find out when they'll be done testing.",
+            startMs: 1_515_000,
+            endMs: 1_521_000,
+            confidence: 1
+          }
+        ],
+        localOwnerLabel: 'Me',
+        spanSources: [{ startMs: 1_515_000, endMs: 1_521_000 }],
+        generate
+      }
+    )
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.nextSteps).toEqual([
+      expect.objectContaining({
+        title: 'Ping Sergio after the meeting',
+        text: "Ping Sergio after the meeting just to find out when they'll be done testing.",
+        owner: 'Me',
+        deadline: null,
+        sources: [{ startMs: 1_515_000, endMs: 1_521_000 }]
+      })
+    ])
+    expect(result).toMatchObject({
+      recoveredActionCount: 1,
+      promotedActionCount: 0,
+      exactWriterCoverage: true
+    })
+  })
+
+  it('preserves exact-millisecond ownership and dedupes recovery for a cited local commitment', async () => {
+    const generate = vi.fn(async () => 'must not be called')
+    const result = await runNotesScanPipeline(
+      {
+        decisions: [],
+        actionItems: [
+          segment({
+            id: 'writer-action',
+            category: 'action_item',
+            title: 'Send the estimate',
+            content: 'Send the estimate after receiving the build.',
+            sourceStartMs: 1100,
+            sourceEndMs: 1100
+          })
+        ],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      },
+      {
+        title: 'Release review',
+        meetingId: 'meeting-1',
+        presentationMode: 'lossless',
+        attributionTranscript: [
+          {
+            id: 'local-commitment',
+            meetingId: 'meeting-1',
+            speaker: 'me',
+            text: "I'll send the estimate after receiving the build.",
+            startMs: 1100,
+            endMs: 1900,
+            confidence: 1
+          }
+        ],
+        localOwnerLabel: 'Me',
+        spanSources: [{ startMs: 1100, endMs: 1900 }],
+        generate
+      }
+    )
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.nextSteps).toEqual([
+      expect.objectContaining({
+        id: 'writer-action',
+        owner: 'Me',
+        sources: [{ startMs: 1100, endMs: 1100 }]
+      })
+    ])
+    expect(result).toMatchObject({
+      attributionOwnersAdded: 1,
+      recoveredActionCount: 0,
+      dedupedRecoveredActionCount: 1,
+      exactWriterCoverage: true
+    })
+  })
+
   it('falls back to unrestyled topical text and still emits Next Steps without a Decisions footer', async () => {
     const result = await runNotesScanPipeline(segments(), {
       title: 'Standup',
@@ -72,7 +340,9 @@ describe('runNotesScanPipeline', () => {
     expect(result.markdown).toMatch(/## (Analytics|HP opt-in rate)/)
     expect(result.attachFailed).toBe(false)
     expect(result.overviewFailed).toBe(true)
-    expect(result.content.overview?.text).toMatch(/opt-in analytics rate|login events|offline analytics/i)
+    expect(result.content.overview?.text).toMatch(
+      /opt-in analytics rate|login events|offline analytics/i
+    )
     expect(result.content.overview?.text).not.toMatch(/^This meeting (covered|focused on)/)
     expect(result.content.sections[0]?.keyPoints[0]?.sources[0]?.startMs).toBe(1000)
     expect(result.validation).toEqual(emptyValidationStats(false))
@@ -229,7 +499,8 @@ function acceptedRestyle(topicName: string): string {
 
 function overviewJson(): string {
   return JSON.stringify({
-    overview: 'The team reviewed checkout latency, opt-in rate, offline analytics, and login volume.',
+    overview:
+      'The team reviewed checkout latency, opt-in rate, offline analytics, and login volume.',
     keyTakeaways: ['Nora measured 12ms checkout latency']
   })
 }

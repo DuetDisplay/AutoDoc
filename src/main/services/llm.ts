@@ -10,6 +10,16 @@ import type {
 } from '../../shared/types'
 import { logAutodocEvent } from './autodoc-log'
 import { captureMessage } from './sentry-reporter'
+import {
+  explicitActionSpeechActClauses,
+  hasExplicitFirstPersonCommitment
+} from './notes-action-speech'
+import {
+  areQuantitiesGrounded,
+  extractQuantityMentions,
+  quantityMentionsEquivalent
+} from './notes-quantity-canonicalizer'
+import { sanitizeMacWriterRecords, type WriterGroundingCategory } from './notes-writer-grounding'
 
 export interface LLMProvider {
   summarize(
@@ -62,7 +72,9 @@ export const WINDOWS_CHUNK_CHARS = 8000
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token is received for 2 minutes
 const SLOW_STREAM_ACTIVITY_DELAY_MS = 60_000
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
-const MAX_OUTPUT_TOKENS = 8192 // Safety cap — model should stop naturally when JSON is complete
+const MAX_OUTPUT_TOKENS = 8192 // Legacy cap for platforms outside the Mac/Windows writer paths.
+/** Six compact Mac records fit comfortably; bounds malformed generations without changing hardware support. */
+export const MAC_MAX_OUTPUT_TOKENS = 1024
 // Healthy chunks produce well under 1K tokens; runaway generations otherwise ramble
 // to the cap at ~9 tok/s on CPU inference (4096 tokens ≈ 7.5 min stuck at 99%).
 // 2048 bounds that tail while leaving generous headroom, and parseResponse already
@@ -101,20 +113,28 @@ export function getDevNotesChunkCharsOverride(): number | undefined {
 export function packTranscriptChunks(
   transcript: string,
   chunkChars: number,
-  absorbShortTail = false
+  absorbShortTail = false,
+  ignoreTimestampMilliseconds = false
 ): string[] {
   if (transcript.length <= chunkChars) return [transcript]
 
   const lines = transcript.split('\n')
   const chunks: string[] = []
   let current = ''
+  let currentBudgetChars = 0
 
   for (const line of lines) {
-    if (current.length + line.length + 1 > chunkChars && current.length > 0) {
+    const ignoredChars = ignoreTimestampMilliseconds
+      ? (line.match(/^\s*\[\d+:\d+(?::\d+)?(\.\d{3})\]/u)?.[1]?.length ?? 0)
+      : 0
+    const lineBudgetChars = line.length - ignoredChars
+    if (currentBudgetChars + lineBudgetChars + 1 > chunkChars && current.length > 0) {
       chunks.push(current)
       current = ''
+      currentBudgetChars = 0
     }
     current += current ? `\n${line}` : line
+    currentBudgetChars += (currentBudgetChars > 0 ? 1 : 0) + lineBudgetChars
   }
   if (current) chunks.push(current)
 
@@ -135,15 +155,19 @@ export interface NotesWriterTranscriptRow {
   text: string
 }
 
-export function formatNotesWriterTimestamp(startMs: number): string {
+export function formatNotesWriterTimestamp(startMs: number, includeMilliseconds = false): string {
   const totalSec = Math.floor(Math.max(0, startMs) / 1000)
   const hours = Math.floor(totalSec / 3600)
   const minutes = Math.floor((totalSec % 3600) / 60)
   const seconds = totalSec % 60
-  if (hours > 0) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-  }
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  const clock =
+    hours > 0
+      ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+      : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  const milliseconds = Math.floor(Math.max(0, startMs)) % 1000
+  return includeMilliseconds && milliseconds > 0
+    ? `${clock}.${String(milliseconds).padStart(3, '0')}`
+    : clock
 }
 
 /** Kept for tests. Speaker-omit densified chunks and dropped 4.3.5; do not enable. */
@@ -175,13 +199,14 @@ export function shouldStripWindowsTightBackchannel(
 
 export function formatNotesWriterTranscript(
   rows: readonly NotesWriterTranscriptRow[],
-  omitSpeaker = shouldOmitWindowsTightSpeakerLabels()
+  omitSpeaker = shouldOmitWindowsTightSpeakerLabels(),
+  platform: NodeJS.Platform = process.platform
 ): string {
-  const stripBackchannel = shouldStripWindowsTightBackchannel()
+  const stripBackchannel = shouldStripWindowsTightBackchannel(platform)
   return rows
     .filter((row) => !stripBackchannel || !isNotesWriterBackchannelOnly(row.text ?? ''))
     .map((row) => {
-      const timestamp = formatNotesWriterTimestamp(row.startMs)
+      const timestamp = formatNotesWriterTimestamp(row.startMs, platform === 'darwin')
       const text = row.text ?? ''
       const speaker = row.speaker?.trim()
       if (!omitSpeaker && speaker) {
@@ -190,6 +215,42 @@ export function formatNotesWriterTranscript(
       return `[${timestamp}] ${text}`
     })
     .join('\n')
+}
+
+export interface MacNotesLineReferences {
+  /** Transcript shown to the model, with cheap copyable line IDs instead of clocks. */
+  promptTranscript: string
+  /** Deterministic citation lookup used after generation; IDs are local to one chunk. */
+  startMsByLineId: ReadonlyMap<number, number>
+}
+
+/**
+ * Replaces macOS writer clock arithmetic with local line citations. The model
+ * copies `L17`; application code performs the only line-ID -> millisecond
+ * conversion. Windows keeps its existing timestamp contract unchanged.
+ */
+export function encodeMacNotesLineReferences(transcriptChunk: string): MacNotesLineReferences {
+  const startMsByLineId = new Map<number, number>()
+  let lineId = 0
+  const promptTranscript = transcriptChunk
+    .split('\n')
+    .map((line) => {
+      const match = line.match(/^(\s*)\[(\d+):(\d+)(?::(\d+))?(?:\.(\d{1,3}))?\](\s*)/)
+      if (!match) return line
+
+      const hours = match[4] != null ? Number(match[2]) : 0
+      const minutes = match[4] != null ? Number(match[3]) : Number(match[2])
+      const seconds = match[4] != null ? Number(match[4]) : Number(match[3])
+      const milliseconds = match[5] != null ? Number(match[5].padEnd(3, '0')) : 0
+      if (minutes >= 60 || seconds >= 60) return line
+
+      lineId += 1
+      startMsByLineId.set(lineId, (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds)
+      return `${match[1]}[L${lineId}]${match[6]}${line.slice(match[0].length)}`
+    })
+    .join('\n')
+
+  return { promptTranscript, startMsByLineId }
 }
 
 function isNotesEvalInstrumentationEnabled(): boolean {
@@ -207,9 +268,7 @@ export function isCompactWriterEnabled(): boolean {
 }
 
 /** Windows notes writer (tight v7 + v14). macOS stays on the shared V2 prompt. */
-export function isTightWriterEnabled(
-  platform: NodeJS.Platform = process.platform
-): boolean {
+export function isTightWriterEnabled(platform: NodeJS.Platform = process.platform): boolean {
   if (process.env.AUTODOC_TEST_NOTES_TIGHT === '0') return false
   return platform === 'win32'
 }
@@ -274,35 +333,6 @@ export function writerProgressPercent(
   const fraction = Math.min(1, Math.max(0, (chunkIndex + chunkFraction) / chunkCount))
   return Math.min(NOTES_WRITER_PROGRESS_END, Math.round(fraction * NOTES_WRITER_PROGRESS_END))
 }
-const NOTES_RESPONSE_ITEM_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    topic: { type: 'string' },
-    title: { type: 'string' },
-    content: { type: 'string' },
-    // Optional: Windows Ollama structured outputs grammar-forbid any key not listed
-    // here (additionalProperties: false). parseResponse already reads both fields.
-    assignee: { type: 'string' },
-    deadline: { type: 'string' },
-    sourceStartMs: { type: 'number' },
-    sourceEndMs: { type: 'number' }
-  },
-  required: ['topic', 'title', 'content', 'sourceStartMs', 'sourceEndMs']
-} as const
-
-const NOTES_RESPONSE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    decisions: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
-    action_items: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
-    information: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
-    discussion: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA },
-    status_updates: { type: 'array', items: NOTES_RESPONSE_ITEM_SCHEMA }
-  },
-  required: ['decisions', 'action_items', 'information', 'discussion', 'status_updates']
-} as const
 const TOPIC_STOP_WORDS = new Set([
   'a',
   'an',
@@ -529,6 +559,7 @@ export type WriterDropReason =
   | 'missing_title'
   | 'missing_content'
   | 'duplicate_title'
+  | 'invalid_citation'
   | 'ungrounded'
 
 export interface WriterDrop {
@@ -697,6 +728,37 @@ function matchJsonBracket(raw: string, openIdx: number): number {
   return -1
 }
 
+function matchJsonBrace(raw: string, openIdx: number): number {
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = openIdx; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (ch === '\\') {
+        escape = true
+        continue
+      }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 /** Count finished tight tuples in a possibly truncated writer payload. */
 export function countCompleteTightWriterItems(raw: string): number {
   let count = 0
@@ -723,6 +785,171 @@ export function countCompleteTightWriterItems(raw: string): number {
 }
 
 const WINDOWS_TIGHT_STREAM_ITEM_CAP = 6
+// The prompt promises six records. Stop at that boundary so a small model
+// cannot spend another minute ignoring the selection contract.
+const MAC_STREAM_ITEM_CAP = 6
+
+function scanCompleteMacWriterItems(raw: string): { count: number; lastEnd: number } {
+  let count = 0
+  let lastEnd = -1
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== '{') continue
+    const end = matchJsonBrace(raw, i)
+    if (end < 0) continue
+    try {
+      const parsed = JSON.parse(raw.slice(i, end + 1)) as Record<string, unknown>
+      const title = parsed.h ?? parsed.title
+      const content = parsed.c ?? parsed.content
+      const start = parsed.s ?? parsed.sourceStartMs
+      const finish = parsed.e ?? parsed.sourceEndMs
+      if (
+        typeof title === 'string' &&
+        typeof content === 'string' &&
+        start != null &&
+        finish != null
+      ) {
+        count += 1
+        lastEnd = end
+        i = end
+      }
+    } catch {
+      // Keep scanning; later record objects may still be complete.
+    }
+  }
+  return { count, lastEnd }
+}
+
+/** Count complete semantic record objects in a possibly truncated Mac payload. */
+export function countCompleteMacWriterItems(raw: string): number {
+  return scanCompleteMacWriterItems(raw).count
+}
+
+/** macOS: bound local decode time once the prompt's six-record cap is on the wire. */
+export function shouldStopMacWriterStream(
+  raw: string,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  if (platform !== 'darwin') return false
+  const scan = scanCompleteMacWriterItems(raw)
+  if (scan.count < MAC_STREAM_ITEM_CAP || scan.lastEnd < 0) return false
+  // Wait for the delimiter after the safety-cap object. The truncated-JSON
+  // repair path can then retain that complete record rather than trimming it.
+  return /^\s*(?:,|\])/u.test(raw.slice(scan.lastEnd + 1))
+}
+
+const MAC_ACTION_CANDIDATE_LIMIT = 8
+const MAC_ACTION_CANDIDATE_HEDGE =
+  /\b(?:maybe|might|probably|possibly|not\s+sure|i\s+think|i\s+guess|if|unless|whether)\b/iu
+
+/**
+ * Finds local line IDs worth auditing for action recall. This adds no action
+ * text or inference to the prompt; the writer still has to quote and ground it.
+ */
+export function macActionCandidateLineIds(promptTranscript: string): number[] {
+  const candidates: Array<{ id: number; priority: number; index: number }> = []
+  for (const [index, line] of promptTranscript.split(/\r?\n/u).entries()) {
+    const match = /^\[L(\d+)\]\s+\[(me|them)\]\s+(.+)$/iu.exec(line.trim())
+    if (!match) continue
+    const text = match[3]!.trim()
+    if (MAC_ACTION_CANDIDATE_HEDGE.test(text)) continue
+    if (explicitActionSpeechActClauses(text).length === 0) continue
+    const localCommitment =
+      match[2]!.toLowerCase() === 'me' && hasExplicitFirstPersonCommitment(text)
+    candidates.push({
+      id: Number(match[1]),
+      priority: localCommitment ? 0 : hasExplicitFirstPersonCommitment(text) ? 1 : 2,
+      index
+    })
+  }
+
+  return candidates
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .slice(0, MAC_ACTION_CANDIDATE_LIMIT)
+    .map((candidate) => candidate.id)
+}
+
+export function macActionCandidateGuidance(promptTranscript: string): string {
+  const ids = macActionCandidateLineIds(promptTranscript)
+  if (ids.length === 0) return ''
+  return ` Action-candidate audit: inspect ${ids.map((id) => `L${id}`).join(', ')} before information; include only lines that explicitly request or commit to an action.`
+}
+
+const MAC_ROLLOUT_CONDITION =
+  /\b(?:after|as\s+soon\s+as|once|only\s+if|pending|until|when|whenever)\b/iu
+const MAC_ROLLOUT_VERB =
+  /\b(?:approv(?:e|al)|launch|releas(?:e|ed|ing)|roll(?:out|\s+out)|ship(?:ped|ping)?)\b/iu
+
+export function macRolloutGateCandidateLineIds(promptTranscript: string): number[] {
+  return promptTranscript
+    .split(/\r?\n/u)
+    .flatMap((line) => {
+      const match = /^\[L(\d+)\]\s+\[(?:me|them)\]\s+(.+)$/iu.exec(line.trim())
+      if (!match) return []
+      return MAC_ROLLOUT_CONDITION.test(match[2]!) && MAC_ROLLOUT_VERB.test(match[2]!)
+        ? [Number(match[1])]
+        : []
+    })
+    .slice(0, 4)
+}
+
+export function macRolloutGateCandidateGuidance(promptTranscript: string): string {
+  const ids = macRolloutGateCandidateLineIds(promptTranscript)
+  if (ids.length === 0) return ''
+  return ` Rollout-gate audit: inspect ${ids.map((id) => `L${id}`).join(', ')} before routine status; use up to two prior lines only to name its subject, and keep its explicit condition/value separate from any following platform.`
+}
+
+const MAC_HIGH_SIGNAL_CANDIDATE_LIMIT = 10
+const MAC_EXPLICIT_DECISION =
+  /\b(?:agreed?|approved?|chose|decided?|go(?:ing)?\s+with|let['’]s|the\s+plan\s+is|we(?:['’]ll|\s+will)\s+go\s+ahead)\b/iu
+const MAC_QUANTITY =
+  /(?:\b\d+(?:[.,]\d+)?\s*(?:%|percent|per\s+cent|gb|mb|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?)?\b|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|hundred)\b)/iu
+const MAC_QUANTIFIED_RESULT =
+  /\b(?:average|baseline|build|cancel|churn|conversion|cost|count|download|faster|gain|growth|higher|increase|latency|lower|memory|metric|price|rate|release|result|revenue|sales|slower|subscriber|test|time|trial|user|version|week\s+over\s+week)\b/iu
+const MAC_MATERIAL_STATUS =
+  /\b(?:blocked|blocking|complete|completed|failed|finished|in\s+progress|in\s+qa|launched|passed|pending|released|rolled\s+out|sent\s+to\s+qa|shipped|started|waiting\s+for)\b/iu
+const MAC_MATERIAL_TRADEOFF =
+  /\b(?:alternative|blocker|cannibali[sz]|concern|depends?|risk|sacrifice|trade[ -]?off|uncertain|uncertainty|unresolved)\b/iu
+const MAC_SETUP_OR_SCHEDULING =
+  /\b(?:can\s+you\s+hear|can\s+you\s+see|give\s+me\s+(?:a|one)\s+(?:minute|second)|join(?:ing)?\s+the\s+call|start(?:ing)?\s+the\s+(?:call|meeting)|what\s+time)\b/iu
+
+/**
+ * Ranks potentially high-signal lines without copying their claims into the
+ * prompt. The model still decides whether each line is complete and grounded.
+ */
+export function macHighSignalCandidateLineIds(promptTranscript: string): number[] {
+  const candidates: Array<{ id: number; priority: number; index: number }> = []
+  for (const [index, line] of promptTranscript.split(/\r?\n/u).entries()) {
+    const match = /^\[L(\d+)\]\s+\[(?:me|them)\]\s+(.+)$/iu.exec(line.trim())
+    if (!match) continue
+    const text = match[2]!.trim()
+    if (MAC_SETUP_OR_SCHEDULING.test(text)) continue
+
+    const priority = MAC_EXPLICIT_DECISION.test(text)
+      ? 0
+      : MAC_QUANTITY.test(text) && MAC_QUANTIFIED_RESULT.test(text)
+        ? 1
+        : MAC_ROLLOUT_CONDITION.test(text) && MAC_ROLLOUT_VERB.test(text)
+          ? 2
+          : MAC_MATERIAL_TRADEOFF.test(text)
+            ? 3
+            : MAC_MATERIAL_STATUS.test(text)
+              ? 4
+              : null
+    if (priority == null) continue
+    candidates.push({ id: Number(match[1]), priority, index })
+  }
+
+  return candidates
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .slice(0, MAC_HIGH_SIGNAL_CANDIDATE_LIMIT)
+    .map((candidate) => candidate.id)
+}
+
+export function macHighSignalCandidateGuidance(promptTranscript: string): string {
+  const ids = macHighSignalCandidateLineIds(promptTranscript)
+  if (ids.length === 0) return ''
+  return ` High-signal audit: inspect ${ids.map((id) => `L${id}`).join(', ')} before routine context; keep distinct supported decisions, metrics, tradeoffs, gates, blockers, and material status changes.`
+}
 
 /** Win32 tight: stop decode once the 6-item cap is already on the wire. */
 export function shouldStopWindowsTightWriterStream(
@@ -802,9 +1029,7 @@ function flattenWriterItem(item: unknown): unknown {
   return item
 }
 
-export function inspectCompactWriterPayload(
-  parsed: Record<string, unknown>
-): WriterExpandResult {
+export function inspectCompactWriterPayload(parsed: Record<string, unknown>): WriterExpandResult {
   const expanded: Record<string, RawSegment[]> = {}
   const drops: WriterDrop[] = []
   let rawItemCount = 0
@@ -938,23 +1163,56 @@ function pickCompactNumber(
   return coerceWriterTimestampValue(value)
 }
 
-const MAC_NOTES_PROMPT_SUFFIX = `
+const MAC_NOTES_SYSTEM_PROMPT = `You extract high-signal meeting notes from one timestamped transcript section. Output only valid JSON with no markdown or explanation.
 
-MAC QUALITY TUNING OVERRIDE:
-- Match the baseline AutoDoc note style: useful, complete, and scan-friendly, but not exhaustive.
-- Target roughly 40-55 total final items for a normal-length product or engineering huddle.
-- A topic is a broad chapter heading for the meeting, not a restatement of one item title.
-- Reuse broad topic labels across chunks and categories whenever they fit.
-- Do not create a new topic for a single feature, status update, person update, bug, customer complaint, or implementation detail unless it is truly a major new subject.
-- Avoid near-duplicate topic labels. For example, do not split release-related notes across both "Release Timing" and "Release Plan".
-- Topic names must come from this meeting's material. Do not map items onto a fixed list of department headings.
-- Decisions require an explicit choice, approval, rejection, or agreed direction. Do not classify general discussion, concern, or preference as a decision.
-- Action items require a clear next step, owner, request, or follow-up. Do not turn vague possibilities into tasks.
-- Copy product names, feature names, and domain words exactly as spoken in the transcript; never substitute a similar-sounding word (the transcript word is correct even if unusual).
-- Prefer one strong item over separate overlapping decision, information, and discussion items about the same underlying point.
-- If a point is already captured as a decision, only add context as information when it includes a distinct durable fact someone would search for later.
-- Keep the "decisions" category especially selective; over-reporting decisions is worse than omitting weak ones.
-- Prefer empty arrays over weak, repeated, speculative, or low-signal notes.`
+GROUNDING:
+- Use only explicit evidence in this section. Never guess, repair garbled speech, or invent facts, decisions, names, owners, deadlines, reasons, metrics, or versions.
+- Preserve spoken product names, build labels, quantities, units, platforms, and rollout conditions exactly.
+- Spoken digit sequences are plain labels or numbers: "four four three" means 443, never 4.4.3. Add dots only when the transcript contains dots or says "dot".
+- A percentage requires the transcript to say percent/per cent or show %. "Twelve more trials" does not support 12%.
+- Bind each quantity only to the metric named in the same line or a directly continuing fragment. An isolated 5% does not become a cancellation metric merely because cancellation is discussed next.
+- Build one record from one continuous evidence span. Treat facts more than 30 seconds apart as separate unless the transcript explicitly reconnects them.
+- Keep related dimensions in one comparison record only when nearby evidence says they belong to the same experiment and metric. Do not merge conversion, trial-start, cancellation, or revenue figures merely because they discuss the same version. Never attach a metric from another topic or distant statement.
+- Do not emit unclear names or labels seen once in garbled speech. Skip attendance or scheduling chatter unless it changes a decision or deliverable.
+- Preserve uncertainty as uncertainty. If evidence is weak, omit the item.
+- Skip greetings, setup chatter, filler, background media, repeated points, and transcription noise.
+
+SELECTION — HARD LIMIT: at most 6 records total across the sum of all five arrays. Count the objects before responding and never emit a seventh. Category does not affect priority. Always keep a clear explicit request, assignment, or first-person commitment before lower-value information. Then prefer decisions or gates, quantified results and comparisons, rollout conditions, blockers, material status changes, and durable tradeoffs. When six distinct supported priorities exist, use all six; concise does not mean omitting them. Most sections have no decision or action item; leave those arrays empty unless the cited words explicitly support them.
+Before returning JSON, verify that every selected number, percentage, build/version, platform comparison, owner, and deadline occurs in its cited evidence. Do not repeat a comparison or any subset of it in another record or category.
+
+CATEGORIES:
+- decisions: an explicit choice or agreed direction, not a prediction or suggestion.
+- action_items: a clear request, commitment, or assigned follow-up. Include owner/deadline only when explicit.
+- information: grounded facts, measurements, context, or results.
+- discussion: a material tradeoff, disagreement, alternative, or unresolved question.
+- status_updates: completed, in-progress, blocked, released, or pending work.
+
+WRITING:
+- Use one concise, self-contained sentence of 8-24 words for content and a specific 3-8 word title.
+- One record is one claim from one cited contiguous span. Separate metric or platform claims when their evidence spans differ.
+- For an action item, state the cited request or commitment directly. Do not append rationale unless the same cited line explicitly states it.
+- Use 3-6 broad meeting-specific topics across the whole meeting. Topic values are normal title text with spaces, never snake_case. Reuse a known topic label when it fits; do not create a topic per item.
+
+SPEAKER SOURCE (not diarization):
+- [me] explicit first-person commitment: assignee may be "Me".
+- [them] first-person commitment: assignee stays null unless cited speech explicitly names a person.
+- Named assignee only if that name occurs in cited assignment evidence.
+
+LINE CITATIONS:
+- Every transcript line starts with a local ID such as [L7]. Set s/e to the integer IDs of the first/last directly supporting lines; [L7] through [L9] means "s":7,"e":9.
+- Copy the IDs. Do not convert them into clocks or milliseconds. Keep each cited span within 30 seconds of transcript unless one sentence explicitly reconnects it.
+
+Return compact JSON to leave room for complete notes:
+- Use semantic category keys: decisions, action_items, information, discussion, status_updates.
+- Record keys: t=topic, h=title, c=content, o=assignee, l=deadline, s=sourceStartMs, e=sourceEndMs.
+- Every array element must be an object with t,h,c,s,e, never a bare string. Omit o/l unless explicit. Use [] for empty categories.
+{"decisions":[],"action_items":[],"information":[{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}],"discussion":[],"status_updates":[]}`
+
+const MAC_NOTES_PRIORITY_LABEL =
+  'HARD LIMIT 6 NEW records; never emit a seventh. Keep cited requests/commitments before lower-value information; never infer them.'
+
+const MAC_NOTES_COMPARISON_LABEL =
+  'One record is one claim from one contiguous cited span; separate claims when their evidence spans differ.'
 
 interface RawSegment {
   topic?: string
@@ -1048,6 +1306,8 @@ export interface OllamaCallMetrics {
   evalDurationMs?: number
   evalTokPerSec?: number
   doneReason?: string
+  /** Local Mac safety cap ended the stream before Ollama emitted its final metrics record. */
+  streamCapped?: boolean
 }
 
 export interface OllamaBenchmarkOptions {
@@ -1088,6 +1348,21 @@ const LOW_SIGNAL_NOTE_PATTERNS = [
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function writerSegmentId(
+  meetingId: string,
+  category: SegmentCategory,
+  title: string,
+  content: string,
+  sourceStartMs: number,
+  sourceEndMs: number
+): string {
+  const digest = createHash('sha256')
+    .update([meetingId, category, sourceStartMs, sourceEndMs, title, content].join('\n'))
+    .digest('hex')
+    .slice(0, 16)
+  return `${meetingId}-${category}:${digest}`
 }
 
 const CATEGORY_MAP: Record<string, SegmentCategory> = {
@@ -1467,8 +1742,17 @@ export class OllamaProvider implements LLMProvider {
     for (let i = 0; i < chunks.length; i++) {
       this.writerContinuation = i > 0
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
+      const macLineReferences =
+        process.platform === 'darwin' ? encodeMacNotesLineReferences(chunks[i]) : null
+      const writerTranscript = macLineReferences?.promptTranscript ?? chunks[i]
       const knownTopics = this.extractKnownTopics(merged)
-      const chunkLabel = this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics)
+      const chunkLabel =
+        this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics) +
+        (macLineReferences
+          ? macActionCandidateGuidance(writerTranscript) +
+            macRolloutGateCandidateGuidance(writerTranscript) +
+            macHighSignalCandidateGuidance(writerTranscript)
+          : '')
 
       let lastError: Error | null = null
       let chunkResult: MeetingSegments | null = null
@@ -1492,7 +1776,7 @@ export class OllamaProvider implements LLMProvider {
           }
           await this.maybeRecycleRunner?.(meetingId)
           const raw = await this.callOllama(
-            chunks[i] + chunkLabel,
+            writerTranscript + chunkLabel,
             this.contextTokens,
             attempt,
             () => {
@@ -1513,7 +1797,8 @@ export class OllamaProvider implements LLMProvider {
             merged,
             durationMs,
             transcriptTimestamps,
-            chunkTranscriptLines
+            chunkTranscriptLines,
+            macLineReferences?.startMsByLineId
           )
           chunkResult = parsedChunk.segments
           this.lastWriterParseDrops.push(...parsedChunk.drops)
@@ -1727,7 +2012,8 @@ export class OllamaProvider implements LLMProvider {
     return packTranscriptChunks(
       transcript,
       this.getChunkChars(),
-      shouldAbsorbWindowsTightShortTail()
+      shouldAbsorbWindowsTightShortTail(),
+      process.platform === 'darwin'
     )
   }
 
@@ -1749,8 +2035,7 @@ export class OllamaProvider implements LLMProvider {
 
   private getSystemPrompt(): string {
     if (isTightWriterEnabled()) {
-      const omitWindowsTightSuffix =
-        process.platform === 'win32' && this.writerContinuation
+      const omitWindowsTightSuffix = process.platform === 'win32' && this.writerContinuation
       return this.usesSharedNotesWriter() && !omitWindowsTightSuffix
         ? `${SYSTEM_PROMPT_TIGHT}${TIGHT_NOTES_PROMPT_SUFFIX}`
         : SYSTEM_PROMPT_TIGHT
@@ -1760,16 +2045,15 @@ export class OllamaProvider implements LLMProvider {
         ? NOTES_WRITER_SHORT_CONTINUATION_COMPACT
         : NOTES_WRITER_SHORT_CONTINUATION
     }
-    const prompt = isCompactWriterEnabled()
-      ? SYSTEM_PROMPT.replace(NOTES_WRITER_JSON_CONTRACT, NOTES_WRITER_COMPACT_JSON_CONTRACT).replace(
-          NOTES_WRITER_TIMESTAMPS,
-          NOTES_WRITER_COMPACT_TIMESTAMPS
-        )
-      : SYSTEM_PROMPT
-    if (this.usesSharedNotesWriter()) {
-      return `${prompt}${MAC_NOTES_PROMPT_SUFFIX}`
+    if (process.platform === 'darwin' && !isCompactWriterEnabled()) {
+      return MAC_NOTES_SYSTEM_PROMPT
     }
-
+    const prompt = isCompactWriterEnabled()
+      ? SYSTEM_PROMPT.replace(
+          NOTES_WRITER_JSON_CONTRACT,
+          NOTES_WRITER_COMPACT_JSON_CONTRACT
+        ).replace(NOTES_WRITER_TIMESTAMPS, NOTES_WRITER_COMPACT_TIMESTAMPS)
+      : SYSTEM_PROMPT
     return prompt
   }
 
@@ -1784,15 +2068,29 @@ export class OllamaProvider implements LLMProvider {
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
         : ''
 
+    const macKnownTopicGuidance =
+      process.platform === 'darwin' && knownTopics.length > 0
+        ? ` Reuse topic labels when relevant: ${knownTopics.join('; ')}.`
+        : knownTopicGuidance
+
     if (chunkCount <= 1) {
-      return `\n\n${itemGuidance}${knownTopicGuidance}`
+      return process.platform === 'darwin'
+        ? `\n\n${MAC_NOTES_PRIORITY_LABEL} ${MAC_NOTES_COMPARISON_LABEL}${macKnownTopicGuidance}`
+        : `\n\n${itemGuidance}${knownTopicGuidance}`
     }
 
     if (isTightWriterEnabled()) {
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Strongest NEW notes only, at most 6 items. One fact in one category. Omit empty categories.`
     }
 
-    if (this.usesSharedNotesWriter() && process.env.AUTODOC_TEST_NOTES_WHOLE_MEETING_BUDGET !== '1') {
+    if (
+      this.usesSharedNotesWriter() &&
+      process.env.AUTODOC_TEST_NOTES_WHOLE_MEETING_BUDGET !== '1'
+    ) {
+      if (process.platform === 'darwin') {
+        return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount}. NEW notes only. ${MAC_NOTES_PRIORITY_LABEL} At most 6 records. ${MAC_NOTES_COMPARISON_LABEL}${macKnownTopicGuidance}`
+      }
+
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Extract only the strongest NEW notes from this section, at most 6 total items across all categories. Use broad reusable topic headings, not per-item headings. Do not create a new topic unless this section introduces a genuinely new major subject. Empty arrays are preferred for repeated or weak content.${knownTopicGuidance}`
     }
 
@@ -1802,8 +2100,7 @@ export class OllamaProvider implements LLMProvider {
   private mergeOllamaRequestOptions<T extends Record<string, unknown>>(options: T): T {
     const numThread = this.benchmarkNumThread ?? getDevNotesNumThreadOverride()
     const numBatch = getDevNotesNumBatchOverride()
-    const numGpu =
-      this.benchmarkNumGpu ?? (this.contextProfile === 'windows-cpu' ? 0 : undefined)
+    const numGpu = this.benchmarkNumGpu ?? (this.contextProfile === 'windows-cpu' ? 0 : undefined)
     if (numGpu == null && numThread == null && numBatch == null) {
       return options
     }
@@ -2042,6 +2339,7 @@ export class OllamaProvider implements LLMProvider {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let streamedTokenCount = 0
 
     try {
       while (true) {
@@ -2103,9 +2401,25 @@ export class OllamaProvider implements LLMProvider {
             if (data.error) throw new Error(`Ollama error: ${data.error}`)
             if (data.message?.content) {
               content += data.message.content
+              streamedTokenCount += 1
               onToken?.()
-              if (shouldStopWindowsTightWriterStream(content)) {
+              const windowsStreamCapped = shouldStopWindowsTightWriterStream(content)
+              const macStreamCapped = shouldStopMacWriterStream(content)
+              if (windowsStreamCapped || macStreamCapped) {
+                const macElapsedMs = macStreamCapped
+                  ? Math.max(1, Date.now() - requestStartedAt)
+                  : null
                 await reader.cancel().catch(() => {})
+                if (macElapsedMs != null) {
+                  await this.recordCallMetrics({
+                    totalDurationMs: macElapsedMs,
+                    evalCount: streamedTokenCount,
+                    evalDurationMs: macElapsedMs,
+                    evalTokPerSec: Math.round((streamedTokenCount / macElapsedMs) * 1000 * 10) / 10,
+                    doneReason: 'stream_cap',
+                    streamCapped: true
+                  })
+                }
                 return content
               }
             }
@@ -2197,11 +2511,12 @@ export class OllamaProvider implements LLMProvider {
     return process.platform === 'darwin' || process.platform === 'win32'
   }
 
-  private getNotesResponseFormat(): 'json' | typeof NOTES_RESPONSE_SCHEMA {
+  private getNotesResponseFormat(): 'json' {
     return 'json'
   }
 
   private getMaxOutputTokens(): number {
+    if (process.platform === 'darwin') return MAC_MAX_OUTPUT_TOKENS
     if (process.platform !== 'win32') return MAX_OUTPUT_TOKENS
     if (isTightWriterEnabled()) return WINDOWS_TIGHT_MAX_OUTPUT_TOKENS
     return WINDOWS_MAX_OUTPUT_TOKENS
@@ -2424,7 +2739,7 @@ export class OllamaProvider implements LLMProvider {
     return result
   }
 
-  private parseResponse(
+  parseResponse(
     meetingId: string,
     raw: string,
     existing?: MeetingSegments,
@@ -2448,7 +2763,8 @@ export class OllamaProvider implements LLMProvider {
     existing?: MeetingSegments,
     durationMs?: number,
     transcriptTimestamps?: number[],
-    transcriptLines: TranscriptLine[] = []
+    transcriptLines: TranscriptLine[] = [],
+    macLineStartMsById?: ReadonlyMap<number, number>
   ): {
     segments: MeetingSegments
     rawItemCount: number
@@ -2467,6 +2783,23 @@ export class OllamaProvider implements LLMProvider {
         console.warn('Repaired truncated JSON from Ollama (some items may have been dropped)')
       } else {
         throw new WriterParseError(raw)
+      }
+    }
+
+    // The tolerant category extractor can return a usable partial object while
+    // silently omitting the currently open category array. When the raw payload
+    // is invalid JSON, also inspect structural repair and keep whichever path
+    // retains more complete records.
+    try {
+      JSON.parse(raw)
+    } catch {
+      const repaired = this.repairTruncatedJSON(raw)
+      if (repaired) {
+        const repairedInspection = inspectCompactWriterPayload(repaired)
+        if (repairedInspection.expandedItemCount > inspected.expandedItemCount) {
+          inspected = repairedInspection
+          console.warn('Repaired truncated JSON from Ollama (complete records retained)')
+        }
       }
     }
 
@@ -2497,13 +2830,10 @@ export class OllamaProvider implements LLMProvider {
       if (!Array.isArray(items)) continue
 
       const category = CATEGORY_MAP[rawKey]
-      const existingCount = existing ? existing[resultKey].length : 0
       const existingTitles = new Set(
         existing ? existing[resultKey].map((s) => s.title.toLowerCase()) : []
       )
       const seenTitles = new Set<string>()
-      let index = existingCount
-
       for (const item of items) {
         if (!item.title) {
           drops.push({ reason: 'missing_title', category: rawKey })
@@ -2518,31 +2848,103 @@ export class OllamaProvider implements LLMProvider {
           drops.push({ reason: 'duplicate_title', category: rawKey, detail: String(item.title) })
           continue
         }
-        const sourceRange = this.resolveGroundedSourceRange(
-          item,
-          durationMs,
-          scopedTranscriptTimestamps,
-          transcriptLines
-        )
-        if (!sourceRange) {
+        const groundedItem = macLineStartMsById
+          ? this.materializeMacLineReferences(item, macLineStartMsById)
+          : item
+        if (!groundedItem) {
+          drops.push({ reason: 'invalid_citation', category: rawKey, detail: String(item.title) })
+          continue
+        }
+        let acceptedCandidates: Array<{
+          destinationKey: keyof MeetingSegments
+          destinationCategory: SegmentCategory
+          item: RawSegment
+          sourceRange: SourceRange
+        }> = []
+
+        if (macLineStartMsById) {
+          const citedRange = this.resolveSourceRange(
+            groundedItem,
+            durationMs,
+            scopedTranscriptTimestamps,
+            transcriptLines,
+            false
+          )
+          const sanitizedRecords = sanitizeMacWriterRecords(
+            rawKey as WriterGroundingCategory,
+            groundedItem,
+            citedRange,
+            transcriptLines
+          )
+          acceptedCandidates = sanitizedRecords.map((sanitized) => ({
+            destinationKey: fieldMap[sanitized.category],
+            destinationCategory: CATEGORY_MAP[sanitized.category],
+            item: {
+              ...groundedItem,
+              title: sanitized.title,
+              content: sanitized.content,
+              deadline: sanitized.deadline,
+              sourceStartMs: sanitized.sourceStartMs,
+              sourceEndMs: sanitized.sourceEndMs
+            },
+            sourceRange: {
+              startMs: sanitized.sourceStartMs,
+              endMs: sanitized.sourceEndMs
+            }
+          }))
+        } else {
+          const sourceRange = this.resolveGroundedSourceRange(
+            groundedItem,
+            durationMs,
+            scopedTranscriptTimestamps,
+            transcriptLines
+          )
+          if (sourceRange) {
+            acceptedCandidates = [
+              {
+                destinationKey: resultKey,
+                destinationCategory: category,
+                item: groundedItem,
+                sourceRange
+              }
+            ]
+          }
+        }
+        if (acceptedCandidates.length === 0) {
           drops.push({ reason: 'ungrounded', category: rawKey, detail: String(item.title) })
           continue
         }
         seenTitles.add(titleKey)
 
-        result[resultKey].push({
-          id: `${meetingId}-${rawKey}-${index}`,
-          meetingId,
-          category,
-          topic: item.topic ? capitalize(String(item.topic)) : null,
-          title: capitalize(String(item.title)),
-          content: capitalize(String(item.content)),
-          assignee: item.assignee ? String(item.assignee) : null,
-          deadline: item.deadline ? String(item.deadline) : null,
-          sourceStartMs: sourceRange.startMs,
-          sourceEndMs: sourceRange.endMs
-        })
-        index++
+        for (const candidate of acceptedCandidates) {
+          const candidateTitle = capitalize(String(candidate.item.title))
+          const candidateContent = capitalize(String(candidate.item.content))
+          result[candidate.destinationKey].push({
+            id: writerSegmentId(
+              meetingId,
+              candidate.destinationCategory,
+              candidateTitle,
+              candidateContent,
+              candidate.sourceRange.startMs,
+              candidate.sourceRange.endMs
+            ),
+            meetingId,
+            category: candidate.destinationCategory,
+            topic: candidate.item.topic
+              ? capitalize(
+                  macLineStartMsById
+                    ? String(candidate.item.topic).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim()
+                    : String(candidate.item.topic)
+                )
+              : null,
+            title: candidateTitle,
+            content: candidateContent,
+            assignee: candidate.item.assignee ? String(candidate.item.assignee) : null,
+            deadline: candidate.item.deadline ? String(candidate.item.deadline) : null,
+            sourceStartMs: candidate.sourceRange.startMs,
+            sourceEndMs: candidate.sourceRange.endMs
+          })
+        }
       }
     }
 
@@ -2840,14 +3242,17 @@ export class OllamaProvider implements LLMProvider {
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
       .map((line) => {
-        const match = line.match(/^\[(\d+):(\d+)(?::(\d+))?\]\s+(?:\[[^\]]+\]\s+)?(.+)$/)
+        const match = line.match(
+          /^\[(\d+):(\d+)(?::(\d+))?(?:\.(\d{1,3}))?\]\s+(?:\[[^\]]+\]\s+)?(.+)$/
+        )
         if (!match) return null
         const hours = match[3] !== undefined ? parseInt(match[1], 10) : 0
         const minutes = match[3] !== undefined ? parseInt(match[2], 10) : parseInt(match[1], 10)
         const seconds = match[3] !== undefined ? parseInt(match[3], 10) : parseInt(match[2], 10)
+        const milliseconds = match[4] !== undefined ? Number(match[4].padEnd(3, '0')) : 0
         return {
-          startMs: (hours * 3600 + minutes * 60 + seconds) * 1000,
-          text: match[4].trim()
+          startMs: (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds,
+          text: match[5].trim()
         }
       })
       .filter((line): line is TranscriptLine => line !== null)
@@ -2912,7 +3317,8 @@ export class OllamaProvider implements LLMProvider {
     item: RawSegment,
     durationMs?: number,
     transcriptTimestamps?: number[],
-    transcriptLines: TranscriptLine[] = []
+    transcriptLines: TranscriptLine[] = [],
+    allowEvidenceReanchor = true
   ): SourceRange {
     const sourceStartMs = this.snapTimestamp(item.sourceStartMs, durationMs, transcriptTimestamps)
     const sourceEndMs = this.snapTimestamp(item.sourceEndMs, durationMs, transcriptTimestamps)
@@ -2923,9 +3329,30 @@ export class OllamaProvider implements LLMProvider {
         }
       : { startMs: sourceStartMs, endMs: sourceEndMs }
 
-    if (!this.usesSharedNotesWriter() || transcriptLines.length === 0) return fallbackRange
+    if (!allowEvidenceReanchor || !this.usesSharedNotesWriter() || transcriptLines.length === 0) {
+      return fallbackRange
+    }
 
     return this.findBestEvidenceRange(item, fallbackRange, transcriptLines) ?? fallbackRange
+  }
+
+  private materializeMacLineReferences(
+    item: RawSegment,
+    startMsByLineId: ReadonlyMap<number, number>
+  ): RawSegment | null {
+    const resolve = (value: unknown): number | null => {
+      const lineId = coerceWriterTimestampValue(value)
+      if (lineId == null || !Number.isInteger(lineId)) return null
+      return startMsByLineId.get(lineId) ?? null
+    }
+    const sourceStartMs = resolve(item.sourceStartMs)
+    const sourceEndMs = resolve(item.sourceEndMs)
+    if (sourceStartMs == null || sourceEndMs == null) return null
+    return {
+      ...item,
+      sourceStartMs,
+      sourceEndMs
+    }
   }
 
   private findBestEvidenceRange(
@@ -3064,6 +3491,15 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private countSharedQuantities(summaryText: string, windowText: string): number {
+    if (process.platform === 'darwin') {
+      const evidenceMentions = extractQuantityMentions(windowText)
+      return extractQuantityMentions(summaryText).filter((summaryMention) =>
+        evidenceMentions.some((evidenceMention) =>
+          quantityMentionsEquivalent(summaryMention, evidenceMention)
+        )
+      ).length
+    }
+
     const windowQuantities = new Set(this.extractQuantityTokens(windowText))
     return this.extractQuantityTokens(summaryText).filter((token) => windowQuantities.has(token))
       .length
@@ -3111,11 +3547,17 @@ export class OllamaProvider implements LLMProvider {
     if (LOW_SIGNAL_NOTE_PATTERNS.some((pattern) => pattern.test(summaryText))) {
       return false
     }
-    const summaryQuantities = this.extractQuantityTokens(summaryText)
-    if (summaryQuantities.length > 0) {
-      const evidenceQuantities = new Set(this.extractQuantityTokens(evidenceText))
-      if (summaryQuantities.some((token) => !evidenceQuantities.has(token))) {
+    if (process.platform === 'darwin') {
+      if (!areQuantitiesGrounded(summaryText, evidenceText)) {
         return false
+      }
+    } else {
+      const summaryQuantities = this.extractQuantityTokens(summaryText)
+      if (summaryQuantities.length > 0) {
+        const evidenceQuantities = new Set(this.extractQuantityTokens(evidenceText))
+        if (summaryQuantities.some((token) => !evidenceQuantities.has(token))) {
+          return false
+        }
       }
     }
     return true
@@ -3215,7 +3657,9 @@ export class OllamaProvider implements LLMProvider {
     lower = lower.replace(/one\s+dot\s+one\s+dot\s+two/g, ' 1 1 2 ')
     lower = lower.replace(/\bfour\s+three\s+five\b/g, ' 4 3 5 ')
     lower = lower.replace(/\b(\d+)\.(\d+)\.(\d+)\b/g, ' $1 $2 $3 ')
-    const digits = (lower.match(/[$€£]?\d+(?:[.,]\d+)?%?/g) ?? []).map((token) => token.toLowerCase())
+    const digits = (lower.match(/[$€£]?\d+(?:[.,]\d+)?%?/g) ?? []).map((token) =>
+      token.toLowerCase()
+    )
     const words: string[] = []
     for (const [word, digit] of Object.entries(SPOKEN_QUANTITY_WORDS)) {
       if (new RegExp(`\\b${word}\\b`).test(lower)) words.push(digit)
@@ -3226,17 +3670,21 @@ export class OllamaProvider implements LLMProvider {
   /** Extract all timestamp positions (in ms) from transcript lines like [02:30] or [01:05:30] */
   private extractTimestampsMs(transcript: string): number[] {
     const timestamps: number[] = []
-    const regex = /\[(\d+):(\d+)(?::(\d+))?\]/g
+    const regex = /\[(\d+):(\d+)(?::(\d+))?(?:\.(\d{1,3}))?\]/g
     let match
     while ((match = regex.exec(transcript)) !== null) {
       if (match[3] !== undefined) {
         // HH:MM:SS
         timestamps.push(
-          (parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3])) * 1000
+          (parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3])) * 1000 +
+            (match[4] ? Number(match[4].padEnd(3, '0')) : 0)
         )
       } else {
         // MM:SS
-        timestamps.push((parseInt(match[1]) * 60 + parseInt(match[2])) * 1000)
+        timestamps.push(
+          (parseInt(match[1]) * 60 + parseInt(match[2])) * 1000 +
+            (match[4] ? Number(match[4].padEnd(3, '0')) : 0)
+        )
       }
     }
     return timestamps

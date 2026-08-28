@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
@@ -11,17 +12,27 @@ import {
   isTransientOllamaRuntimeError,
   LOW_MEMORY_CONTEXT_TOKENS,
   MAC_CONTEXT_TOKENS,
+  MAC_MAX_OUTPUT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CONTEXT_TOKENS,
   WINDOWS_TIGHT_MAX_OUTPUT_TOKENS,
+  encodeMacNotesLineReferences,
   formatNotesWriterTranscript,
   isNotesWriterBackchannelOnly,
+  macActionCandidateGuidance,
+  macActionCandidateLineIds,
+  macHighSignalCandidateGuidance,
+  macHighSignalCandidateLineIds,
+  macRolloutGateCandidateGuidance,
+  macRolloutGateCandidateLineIds,
   packTranscriptChunks,
   shouldOmitWindowsTightSpeakerLabels,
   shouldStripWindowsTightBackchannel,
   shouldSkipWindowsTightScanRewrites,
+  countCompleteMacWriterItems,
   countCompleteTightWriterItems,
+  shouldStopMacWriterStream,
   shouldStopWindowsTightWriterStream,
   shouldOmitWindowsTightResponseFormat,
   shouldAbsorbWindowsTightShortTail,
@@ -77,8 +88,8 @@ function makeSuccessfulOllamaChunk(): Uint8Array {
         topic: 'Recovery',
         title: 'Windows notes retry completed',
         content: 'The Windows notes retry completed after the stalled request was cancelled.',
-        sourceStartMs: 0,
-        sourceEndMs: 1_000
+        sourceStartMs: 1,
+        sourceEndMs: 1
       }
     ],
     discussion: [],
@@ -786,7 +797,8 @@ describe('OllamaProvider grounding', () => {
 
     if (process.platform === 'darwin') {
       expect(chunks).toHaveLength(3)
-      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).toContain('You extract high-signal meeting notes')
+      expect(systemPrompt).toContain('Spoken digit sequences are plain labels or numbers')
 
       tunedProvider.setLowMemoryMode(true)
       expect((tunedProvider as any).chunkTranscript(longTranscript)).toHaveLength(3)
@@ -804,10 +816,11 @@ describe('OllamaProvider grounding', () => {
     }
 
     expect(chunks).toHaveLength(3)
-    expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
+    expect(systemPrompt).not.toContain('You extract high-signal meeting notes')
   })
 
   it('caps the writer context for small-VRAM Vulkan GPUs and restores it after', () => {
+    setPlatform('win32')
     const vramProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     ;(vramProvider as any).contextProfile = 'windows-balanced'
     ;(vramProvider as any).contextTokens = 8192
@@ -915,11 +928,234 @@ describe('OllamaProvider grounding', () => {
     const systemPrompt = (
       new OllamaProvider('http://localhost:11434', 'test-model') as any
     ).getSystemPrompt() as string
-    const goodExamples = systemPrompt.split('GOOD topics')[1]?.split('BAD topics')[0] ?? ''
-    expect(goodExamples).not.toContain('Pricing & Costs')
-    expect(goodExamples).not.toContain('Technical Architecture')
-    expect(systemPrompt).toContain('Invent the names from the transcript')
-    expect(systemPrompt).toContain('Windows Tickets')
+    expect(systemPrompt).not.toContain('GOOD topics')
+    expect(systemPrompt).not.toContain('Pricing & Costs')
+    expect(systemPrompt).not.toContain('Technical Architecture')
+    expect(systemPrompt).not.toContain('Windows Tickets')
+    expect(systemPrompt).toContain('broad meeting-specific topics')
+  })
+
+  it('encodes Mac writer clocks as local line IDs without losing their millisecond mapping', () => {
+    const encoded = encodeMacNotesLineReferences(
+      [
+        '[00:49.858] [me] Build 443 is barely behind on Mac.',
+        '[01:04.898] [me] Trial starts are better on 443 than 435.',
+        'un-timestamped context'
+      ].join('\n')
+    )
+
+    expect(encoded.promptTranscript).toBe(
+      [
+        '[L1] [me] Build 443 is barely behind on Mac.',
+        '[L2] [me] Trial starts are better on 443 than 435.',
+        'un-timestamped context'
+      ].join('\n')
+    )
+    expect([...encoded.startMsByLineId]).toEqual([
+      [1, 49_858],
+      [2, 64_898]
+    ])
+  })
+
+  it('maps Mac line-ID citations back to transcript milliseconds', async () => {
+    setPlatform('darwin')
+    const requestBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body ?? '{}')))
+        return makeOllamaContentResponse(
+          JSON.stringify({
+            decisions: [],
+            action_items: [],
+            information: [
+              {
+                t: 'Release',
+                h: 'Feature flag ready',
+                c: 'The feature flag is ready.',
+                s: 1,
+                e: 1
+              },
+              {
+                t: 'Release',
+                h: 'Feature flag ships after QA',
+                c: 'The feature flag will ship after QA.',
+                s: 2,
+                e: 2
+              }
+            ],
+            discussion: [],
+            status_updates: []
+          })
+        )
+      })
+    )
+
+    const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const result = await macProvider.summarize(
+      'meeting-mac-line-refs',
+      ['[10:00] [them] The feature flag is ready.', '[10:05] [them] It will ship after QA.'].join(
+        '\n'
+      ),
+      undefined,
+      11
+    )
+
+    expect(requestBodies[0].messages?.[1]?.content).toContain('[L1] [them]')
+    expect(requestBodies[0].messages?.[1]?.content).not.toContain('[10:00]')
+    expect(requestBodies[0].messages?.[0]?.content).toContain('"information"')
+    expect(result.information[0]).toMatchObject({
+      sourceStartMs: 600_000,
+      sourceEndMs: 600_000
+    })
+    expect(result.information[1]).toMatchObject({
+      sourceStartMs: 600_000,
+      sourceEndMs: 605_000
+    })
+  })
+
+  it('drops unknown or malformed Mac line-ID citations instead of snapping them', () => {
+    setPlatform('darwin')
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = '[10:00] [them] The feature flag is ready.'
+    const references = encodeMacNotesLineReferences(transcript)
+    const parsed = (provider as any).parseResponseWithStats(
+      'meeting-invalid-line-refs',
+      JSON.stringify({
+        decisions: [],
+        action_items: [],
+        information: [
+          {
+            t: 'Release',
+            h: 'Unknown citation',
+            c: 'The feature flag is ready.',
+            s: 999,
+            e: 999
+          },
+          {
+            t: 'Release',
+            h: 'Malformed citation',
+            c: 'The feature flag is ready.',
+            s: 'L1',
+            e: 'L1'
+          }
+        ],
+        discussion: [],
+        status_updates: []
+      }),
+      undefined,
+      660_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript),
+      references.startMsByLineId
+    )
+
+    expect(parsed.segments.information).toEqual([])
+    expect(
+      parsed.drops.filter((drop: { reason: string }) => drop.reason === 'invalid_citation')
+    ).toHaveLength(2)
+  })
+
+  it("keeps grounded clauses and rejects the exported meeting writer's false metric bindings", () => {
+    setPlatform('darwin')
+    const fixtureProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[00:49] [me] win windows, it is just barely. With Mac, four four three is behind, but just barely. The numbers are coming together.',
+      '[01:04] [me] Trial starts on four four are better than 435 on both.',
+      '[01:43] [them] Especially on Mac, yesterday there was twelve.',
+      '[01:52] [them] On the new version.',
+      '[01:54] [them] Windows converged more today, but yesterday was five percent more.',
+      '[02:03] [them] I think that had an effect on the cancellation rate.',
+      '[02:11] [them] The higher cancel rate is going to be.',
+      '[02:14] [them] But still a gain in the long run.',
+      '[04:15] [them] You can see here it is like a twenty-five percent increase.',
+      '[04:23] [me] Money overall is good.',
+      '[04:35] [me] You want that country.',
+      '[04:54] [me] We do not want lifetime to cannibalize one to feed the other.',
+      '[05:04] [them] The North Star is the revenue of the company.',
+      '[05:14] [them] Move one subscriber to lifetime if they would not stick around.',
+      '[05:20] [them] We want to do that because we will make more.'
+    ].join('\n')
+    const lineMap = new Map([
+      [4, 49_000],
+      [6, 72_000],
+      [9, 86_000],
+      [14, 103_000],
+      [18, 114_000],
+      [22, 127_000],
+      [25, 134_000],
+      [55, 255_000],
+      [61, 275_000],
+      [67, 294_000],
+      [71, 320_000]
+    ])
+    const raw = JSON.stringify({
+      information: [
+        {
+          t: 'trial_start_trend',
+          h: 'Windows vs Mac trial starts',
+          c: 'Trial starts on 443 are better than 435 on Blues, with Mac showing a slight gap closing',
+          s: 4,
+          e: 6
+        },
+        {
+          t: 'cancellation_behavior',
+          h: 'version-specific cancellation patterns',
+          c: 'Cancellation rates are higher on the older version, with new version showing reduced cancellation and a 25% increase in converted trial numbers',
+          s: 14,
+          e: 25
+        },
+        {
+          t: 'platform_performance',
+          h: 'Mac and Windows performance comparison',
+          c: 'On Mac, 443 is behind but only barely; on Windows, trial start trend is stronger and converging',
+          s: 4,
+          e: 9
+        },
+        {
+          t: 'conversion_trend',
+          h: 'long-term trial conversion impact',
+          c: 'Long-term trial start numbers are increasing, with a 25% increase in converted trial numbers observed on the new version',
+          s: 55,
+          e: 61
+        },
+        {
+          t: 'revenue_strategy',
+          h: 'lifetime vs subscription balance',
+          c: 'The goal is to maximize revenue without cannibalizing between lifetime and subscription models',
+          s: 67,
+          e: 71
+        },
+        {
+          t: 'version_stability',
+          h: 'Wtenant and AU performance',
+          c: 'AU performance is converged today, with a 5% higher performance yesterday',
+          s: 18,
+          e: 22
+        }
+      ],
+      action_items: [],
+      decisions: [],
+      discussion: [],
+      status_updates: []
+    })
+
+    const parsed = (fixtureProvider as any).parseResponseWithStats(
+      'fixture-meeting',
+      raw,
+      undefined,
+      330_000,
+      (fixtureProvider as any).extractTimestampsMs(transcript),
+      (fixtureProvider as any).parseTranscriptLines(transcript),
+      lineMap
+    )
+
+    expect(parsed.segments.information.map((item: Segment) => item.content)).toEqual([
+      'On Mac, 443 is behind but only barely',
+      'The goal is to maximize revenue without cannibalizing between lifetime and subscription models'
+    ])
+    const rendered = JSON.stringify(parsed.segments)
+    expect(rendered).not.toMatch(/5%|25%|reduced cancellation|older version/i)
   })
 
   it('leaves meeting-specific topics alone after merge', () => {
@@ -1029,8 +1265,8 @@ describe('OllamaProvider grounding', () => {
                             topic: 'Planning',
                             title: 'Launch plan confirmed',
                             content: 'The launch plan was confirmed for next week.',
-                            sourceStartMs: 0,
-                            sourceEndMs: 0
+                            sourceStartMs: 1,
+                            sourceEndMs: 1
                           }
                         ],
                         discussion: [],
@@ -1123,8 +1359,8 @@ describe('OllamaProvider grounding', () => {
                             topic: 'Planning',
                             title: 'Launch plan confirmed',
                             content: 'The launch plan was confirmed for next week.',
-                            sourceStartMs: 0,
-                            sourceEndMs: 0
+                            sourceStartMs: 1,
+                            sourceEndMs: 1
                           }
                         ],
                         discussion: [],
@@ -1586,7 +1822,57 @@ describe('OllamaProvider grounding', () => {
     })
   })
 
-  describe('Windows chunk label guidance', () => {
+  describe('platform writer prompt and chunk label guidance', () => {
+    it('selects Mac notes category-neutrally and keeps claims on contiguous evidence', () => {
+      setPlatform('darwin')
+      const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (macProvider as any).getSystemPrompt() as string
+      const label = (macProvider as any).buildChunkLabel(
+        1,
+        3,
+        'Target a focused final note set around 40-55 total items.',
+        ['Experiment Rollout']
+      ) as string
+      const singleChunkLabel = (macProvider as any).buildChunkLabel(
+        0,
+        1,
+        'Target a focused final note set around 40-55 total items.',
+        []
+      ) as string
+      expect(systemPrompt).toContain('Category does not affect priority')
+      expect(systemPrompt).toContain(
+        'Always keep a clear explicit request, assignment, or first-person commitment before lower-value information'
+      )
+      expect(systemPrompt).toContain('Most sections have no decision or action item')
+      expect(systemPrompt).toContain('one claim from one cited contiguous span')
+      expect(label).toContain('At most 6 records')
+      expect(label).toContain('Keep cited requests/commitments')
+      expect(label).toContain('one claim from one contiguous cited span')
+      expect(systemPrompt).toContain('Before returning JSON, verify that every selected number')
+      expect(label).not.toContain('Before JSON')
+      expect(label).toContain('Experiment Rollout')
+      expect(singleChunkLabel).not.toContain('40-55')
+      expect(singleChunkLabel).toContain('Keep cited requests/commitments')
+      // Leave enough of the 4K context for a complete six-record response.
+      expect(systemPrompt.length).toBeLessThanOrEqual(5_000)
+      expect(label.length).toBeLessThanOrEqual(360)
+    })
+
+    it('uses me and them as Mac source labels without claiming diarization', () => {
+      setPlatform('darwin')
+      const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (macProvider as any).getSystemPrompt() as string
+
+      expect(systemPrompt).toContain('SPEAKER SOURCE (not diarization)')
+      expect(systemPrompt).toContain('[me] explicit first-person commitment: assignee may be "Me"')
+      expect(systemPrompt).toContain(
+        '[them] first-person commitment: assignee stays null unless cited speech explicitly names a person'
+      )
+      expect(systemPrompt).toContain(
+        'Named assignee only if that name occurs in cited assignment evidence'
+      )
+    })
+
     it('uses the tight writer guidance on later Windows chunks', () => {
       setPlatform('win32')
       const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
@@ -1602,16 +1888,44 @@ describe('OllamaProvider grounding', () => {
       expect(label).not.toContain('Product Planning')
     })
 
-    it('keeps the shared V2 quality override on macOS', () => {
+    it('keeps the Windows tight prompt and chunk label byte-for-byte unchanged', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
+      const label = (windowsProvider as any).buildChunkLabel(
+        1,
+        3,
+        'Target a focused final note set around 40-55 total items.',
+        ['Product Planning']
+      ) as string
+
+      expect(createHash('sha256').update(systemPrompt).digest('hex')).toBe(
+        '0de4d99f6e42a13eab92dd024b646d7652750d7fe59fdde6fcba743ce5aa876f'
+      )
+      expect(label).toBe(
+        '\n\nThis is part 2 of 3 of the meeting. Strongest NEW notes only, at most 6 items. One fact in one category. Omit empty categories.'
+      )
+      expect(systemPrompt).not.toContain('Selection order when limited')
+      expect(systemPrompt).not.toContain('[me]')
+      expect(label).not.toContain('explicit requests, commitments, and assigned follow-ups')
+    })
+
+    it('uses the compact high-signal writer prompt on macOS', () => {
       setPlatform('darwin')
       const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
       const systemPrompt = (macProvider as any).getSystemPrompt() as string
 
-      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
-      expect(systemPrompt).toContain('Target roughly 40-55 total final items')
+      expect(systemPrompt).toContain('You extract high-signal meeting notes')
+      expect(systemPrompt).toContain('at most 6 records total across the sum of all five arrays')
       expect(systemPrompt).toContain(
-        'Copy product names, feature names, and domain words exactly as spoken in the transcript'
+        'Preserve spoken product names, build labels, quantities, units, platforms'
       )
+      expect(systemPrompt).toContain('Use semantic category keys: decisions, action_items')
+      expect(systemPrompt).toContain('Record keys: t=topic')
+      expect(systemPrompt).toContain(
+        'Copy the IDs. Do not convert them into clocks or milliseconds'
+      )
+      expect((macProvider as any).getMaxOutputTokens()).toBe(MAC_MAX_OUTPUT_TOKENS)
     })
 
     it('uses the tight tuple prompt and omits topic reuse on Windows only', () => {
@@ -1626,7 +1940,7 @@ describe('OllamaProvider grounding', () => {
       ) as string
       expect(systemPrompt).toContain('[title, content, s, e]')
       expect(systemPrompt).toContain('Keep exact numbers, names, versions, and dates')
-      expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).not.toContain('You extract high-signal meeting notes')
       expect(systemPrompt).not.toContain('GROUPING')
       expect(label).toContain('at most 6 items')
       expect(systemPrompt).toContain('At most 6 items')
@@ -1641,8 +1955,12 @@ describe('OllamaProvider grounding', () => {
       expect(continuationPrompt).not.toContain('Target roughly 40-55 total final items')
       setPlatform('darwin')
       expect((windowsProvider as any).getChunkChars()).toBe(4000)
-      expect((windowsProvider as any).getSystemPrompt()).toContain('MAC QUALITY TUNING OVERRIDE')
-      expect((windowsProvider as any).getMaxOutputTokens()).not.toBe(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
+      expect((windowsProvider as any).getSystemPrompt()).toContain(
+        'You extract high-signal meeting notes'
+      )
+      expect((windowsProvider as any).getMaxOutputTokens()).not.toBe(
+        WINDOWS_TIGHT_MAX_OUTPUT_TOKENS
+      )
       setPlatform('win32')
       expect(shouldSkipWindowsTightScanRewrites('win32')).toBe(true)
       expect(shouldSkipWindowsTightScanRewrites('darwin')).toBe(false)
@@ -1694,6 +2012,17 @@ describe('formatNotesWriterTranscript', () => {
       '[00:01] [them] yeah\n[00:02] [me] four three five is definitely higher\n[00:03] [them] okay'
     )
   })
+
+  it('keeps exact Mac row starts internally while Windows clocks stay byte-identical', () => {
+    const rows = [{ startMs: 1_100, speaker: 'me', text: "I'll send the estimate." }]
+
+    expect(formatNotesWriterTranscript(rows, false, 'darwin')).toBe(
+      "[00:01.100] [me] I'll send the estimate."
+    )
+    expect(formatNotesWriterTranscript(rows, false, 'win32')).toBe(
+      "[00:01] [me] I'll send the estimate."
+    )
+  })
 })
 
 describe('Windows tight writer stream cap', () => {
@@ -1709,8 +2038,7 @@ describe('Windows tight writer stream cap', () => {
   })
 
   it('counts title-content pairs so clockless 768 runaways still hit the cap', () => {
-    const runaway =
-      '{"i":[["a","b"],["c","d"],["e","f"],["g","h"],["i","j"],["k","l"],["m"'
+    const runaway = '{"i":[["a","b"],["c","d"],["e","f"],["g","h"],["i","j"],["k","l"],["m"'
     expect(countCompleteTightWriterItems(runaway)).toBe(6)
     expect(shouldStopWindowsTightWriterStream(runaway, 'win32')).toBe(true)
   })
@@ -1722,6 +2050,148 @@ describe('Windows tight writer stream cap', () => {
     expect(shouldStopWindowsTightWriterStream(six, 'darwin')).toBe(false)
     process.env.AUTODOC_TEST_NOTES_TIGHT = '0'
     expect(shouldStopWindowsTightWriterStream(six, 'win32')).toBe(false)
+  })
+})
+
+describe('Mac writer stream cap', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it('stops at the promised six-record boundary', () => {
+    const records = Array.from(
+      { length: 8 },
+      (_, index) => `{"t":"Theme","h":"Title ${index}","c":"Grounded content ${index}","s":1,"e":2}`
+    )
+    const withoutDelimiter = `{"decisions":[],"action_items":[],"information":[${records.join(',')}`
+    const partial = `${withoutDelimiter},`
+
+    expect(countCompleteMacWriterItems(partial)).toBe(8)
+    expect(shouldStopMacWriterStream(partial, 'darwin')).toBe(true)
+    expect(shouldStopMacWriterStream(withoutDelimiter, 'darwin')).toBe(false)
+    expect(shouldStopMacWriterStream(partial, 'win32')).toBe(false)
+    const sixOnly = `{"decisions":[],"information":[${records.slice(0, 6).join(',')},`
+    expect(shouldStopMacWriterStream(sixOnly, 'darwin')).toBe(true)
+    expect(countCompleteMacWriterItems(partial.replace(`,${records[7]}`, ''))).toBe(7)
+
+    const repaired = (
+      new OllamaProvider('http://localhost:11434', 'test-model') as any
+    ).repairTruncatedJSON(partial)
+    expect(repaired?.information).toHaveLength(8)
+  })
+
+  it('records observable performance telemetry before cancelling a capped Mac stream', async () => {
+    setPlatform('darwin')
+    const records = Array.from(
+      { length: 8 },
+      (_, index) => `{"t":"Theme","h":"Title ${index}","c":"Grounded content ${index}","s":1,"e":2}`
+    )
+    const partial = `{"decisions":[],"action_items":[],"information":[${records.join(',')},`
+    const cancelStream = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(`${JSON.stringify({ message: { content: partial } })}\n`)
+                )
+              },
+              cancel: cancelStream
+            }),
+            { status: 200 }
+          )
+      )
+    )
+    const onCallComplete = vi.fn()
+    const cappedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+    cappedProvider.setBenchmarkOptions({ onCallComplete })
+
+    await expect(
+      (cappedProvider as any).callOllama('[L1] [me] Grounded content.', MAC_CONTEXT_TOKENS)
+    ).resolves.toBe(partial)
+
+    expect(cancelStream).toHaveBeenCalledOnce()
+    expect(cappedProvider.getLastOllamaCallMetrics()).toMatchObject({
+      streamCapped: true,
+      doneReason: 'stream_cap',
+      evalCount: 1,
+      totalDurationMs: expect.any(Number),
+      evalDurationMs: expect.any(Number),
+      evalTokPerSec: expect.any(Number)
+    })
+    expect(cappedProvider.getLastEvalTokPerSec()).toBeGreaterThan(0)
+    expect(onCallComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ streamCapped: true, doneReason: 'stream_cap' })
+    )
+  })
+
+  it('keeps normal Windows final metrics uncapped', async () => {
+    setPlatform('win32')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeOllamaContentResponse('{"d":[],"a":[],"i":[],"u":[],"s":[]}'))
+    )
+    const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+
+    await (windowsProvider as any).callOllama('[00:00] [me] Test.', WINDOWS_CONTEXT_TOKENS)
+
+    expect(windowsProvider.getLastOllamaCallMetrics()).toMatchObject({
+      doneReason: 'stop',
+      evalCount: 12
+    })
+    expect(windowsProvider.getLastOllamaCallMetrics()).not.toHaveProperty('streamCapped')
+  })
+})
+
+describe('Mac action-candidate audit', () => {
+  it('prioritizes local commitments and flags explicit remote plans and requests by line ID', () => {
+    const transcript = [
+      '[L1] [them] I will start the Android release today.',
+      '[L2] [them] The iOS RC is in QA.',
+      '[L3] [them] My plan is to reach out to beta users.',
+      "[L4] [me] Yeah, I'll ping Sergio after the meeting.",
+      '[L5] [me] Maybe I will ask again tomorrow.',
+      '[L6] [them] Just make sure you approve both apps.'
+    ].join('\n')
+
+    expect(macActionCandidateLineIds(transcript)).toEqual([4, 1, 3, 6])
+    expect(macActionCandidateGuidance(transcript)).toContain(
+      'inspect L4, L1, L3, L6 before information'
+    )
+    expect(macActionCandidateGuidance('[L1] [them] The RC passed QA.')).toBe('')
+  })
+
+  it('flags explicit rollout conditions without copying transcript prose into the audit', () => {
+    const transcript = [
+      '[L1] [them] The iOS RC is in QA.',
+      '[L2] [them] Whenever smoke tests finish, we will release it at fifty fifty.',
+      '[L3] [them] The Android release started today.'
+    ].join('\n')
+
+    expect(macRolloutGateCandidateLineIds(transcript)).toEqual([2])
+    expect(macRolloutGateCandidateGuidance(transcript)).toContain('inspect L2')
+    expect(macRolloutGateCandidateGuidance(transcript)).not.toContain('fifty fifty')
+  })
+
+  it('ranks generic decisions, measured results, tradeoffs, gates, and material status', () => {
+    const transcript = [
+      '[L1] [them] The deployment completed this morning.',
+      '[L2] [them] Conversion increased by 14 percent in the test.',
+      '[L3] [me] We decided to use the staged rollout.',
+      '[L4] [them] The tradeoff is higher cost for lower latency.',
+      '[L5] [them] Once review passes, we will release the update.',
+      '[L6] [them] Can you hear me for one second?',
+      '[L7] [them] The migration is blocked on credentials.'
+    ].join('\n')
+
+    expect(macHighSignalCandidateLineIds(transcript)).toEqual([3, 2, 5, 4, 1, 7])
+    expect(macHighSignalCandidateGuidance(transcript)).toContain('inspect L3, L2, L5, L4, L1, L7')
+    expect(macHighSignalCandidateGuidance(transcript)).not.toContain('14 percent')
   })
 })
 
@@ -1738,6 +2208,19 @@ describe('packTranscriptChunks', () => {
     expect(absorbed).toHaveLength(1)
     expect(absorbed[0]).toContain('b'.repeat(200))
     expect(packTranscriptChunks(withTail, 6000, false)).toHaveLength(2)
+  })
+
+  it('does not charge hidden Mac millisecond precision against the prompt chunk budget', () => {
+    const precise = [
+      `[00:01.100] [me] ${'a'.repeat(80)}`,
+      `[00:02.200] [them] ${'b'.repeat(80)}`,
+      `[00:03.300] [me] ${'c'.repeat(80)}`
+    ].join('\n')
+    const wholeSeconds = precise.replace(/\.\d{3}\]/gu, ']')
+    const preciseChunks = packTranscriptChunks(precise, 130, false, true)
+    const originalChunks = packTranscriptChunks(wholeSeconds, 130, false)
+
+    expect(preciseChunks.map((chunk) => chunk.replace(/\.\d{3}\]/gu, ']'))).toEqual(originalChunks)
   })
 })
 
@@ -1976,6 +2459,36 @@ describe('OllamaProvider writer parse skip and salvage', () => {
     ])
   })
 
+  it('retains a complete open category when earlier categories already parsed', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[00:00] [Speaker] The first rollout action was recorded.',
+      '[00:05] [Speaker] There are sixteen opted-in testers.',
+      '[00:10] [Speaker] The monthly limit remains active.'
+    ].join('\n')
+    const raw =
+      '{"decisions":[],"action_items":[' +
+      '{"h":"Record rollout action","c":"The first rollout action was recorded.","s":0,"e":0}' +
+      '],"information":[' +
+      '{"h":"Tester count","c":"There are sixteen opted-in testers.","s":5000,"e":5000},' +
+      '{"h":"Monthly limit","c":"The monthly limit remains active.","s":10000,"e":10000},'
+
+    const result = (provider as any).parseResponse(
+      'meeting-open-category',
+      raw,
+      undefined,
+      60_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.information.map((item: { title: string }) => item.title)).toEqual([
+      'Tester count',
+      'Monthly limit'
+    ])
+  })
+
   it('resolves empty segments when every chunk is irreparable', async () => {
     const provider = createChunkedWindowsProvider()
     const fetchMock = vi.fn(async () => makeIrreparableJsonResponse())
@@ -2029,8 +2542,24 @@ describe('compact writer inspect and weighted decode', () => {
 
   it('expands tight [title, content, s, e] tuples without treating title as topic', () => {
     const result = inspectCompactWriterPayload({
-      a: [['Raise Windows min RAM to 16GB', 'Change the Windows minimum from 8GB to 16GB.', 1_061_000, 1_071_000]],
-      i: [['14 starts and 6 cancels', 'Latest period had 14 starts and 6 cancellations.', 22_000, 28_000, null, null]]
+      a: [
+        [
+          'Raise Windows min RAM to 16GB',
+          'Change the Windows minimum from 8GB to 16GB.',
+          1_061_000,
+          1_071_000
+        ]
+      ],
+      i: [
+        [
+          '14 starts and 6 cancels',
+          'Latest period had 14 starts and 6 cancellations.',
+          22_000,
+          28_000,
+          null,
+          null
+        ]
+      ]
     })
     expect(result.expandedItemCount).toBe(2)
     expect(result.expanded.action_items?.[0]).toMatchObject({
@@ -2070,8 +2599,7 @@ describe('compact writer inspect and weighted decode', () => {
       )
     ).toEqual([22_000])
     expect(extractProseClockMs('as observed at 02:03 and again at [17:41]')).toEqual([
-      123_000,
-      1_061_000
+      123_000, 1_061_000
     ])
   })
 
@@ -2150,9 +2678,84 @@ describe('compact timestamp and spoken-quantity grounding', () => {
     setPlatform(originalPlatform)
   })
 
+  function parseInformationNote(
+    platform: NodeJS.Platform,
+    transcript: string,
+    title: string,
+    content: string
+  ): MeetingSegments {
+    setPlatform(platform)
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    return (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        information: [
+          {
+            topic: 'Metrics',
+            title,
+            content,
+            sourceStartMs: 10_000,
+            sourceEndMs: 10_000
+          }
+        ]
+      }),
+      undefined,
+      60_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+  }
+
+  it('grounds written percentages against spoken-word evidence on Mac', () => {
+    const result = parseInformationNote(
+      'darwin',
+      '[00:10] [them] Trial starts on Mac improved twelve percent.',
+      'Mac trial starts improved 12%',
+      'Trial starts on Mac improved 12%.'
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].content).toContain('12%')
+  })
+
+  it('grounds build comparisons against sequential spoken digits on Mac', () => {
+    const result = parseInformationNote(
+      'darwin',
+      '[00:10] [them] Four four three was narrowly ahead of four three five on Windows.',
+      '443 narrowly led 435 on Windows',
+      'Build 443 was narrowly ahead of 435 on Windows.'
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].content).toContain('443')
+    expect(result.information[0].content).toContain('435')
+  })
+
+  it('rejects a percentage when Mac evidence only contains the same count of users', () => {
+    const result = parseInformationNote(
+      'darwin',
+      '[00:10] [them] We invited twelve users to test the build.',
+      'Trial conversion improved 12%',
+      'Trial conversion improved 12%.'
+    )
+
+    expect(result.information).toHaveLength(0)
+  })
+
+  it('leaves the existing Windows quantity policy unchanged', () => {
+    const result = parseInformationNote(
+      'win32',
+      '[00:10] [them] Trial starts improved twelve percent.',
+      'Trial starts improved 12%',
+      'Trial starts improved 12%.'
+    )
+
+    expect(result.information).toHaveLength(0)
+  })
+
   it('keeps a compact item whose s/e overflowed as clock digits', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[17:40] [Chris] Eight gigabytes of RAM on Windows is a miserable experience.',
       '[17:41] [Chris] I raised the minimum spec for Windows to sixteen gigs.',
@@ -2191,7 +2794,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps spoken fourteen/six when the note writes digits', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels in less than twenty four hours.',
       '[00:28] [Matt] That is what the data is saying.',
@@ -2223,7 +2826,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps 1.1.3 when compact s/e used in-range mmss×1000', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[17:07] [Chris] I noticed a minor bug with one dot one dot two of Auto Doc where the email us text would not go away.',
       '[17:20] [Chris] So I made a PR and got a one dot one dot three out release for Mac OS and Windows.'
@@ -2260,7 +2863,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps 4.3.5 when the transcript says four three five', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[14:15] [Matt] We just released the four three five build.',
       '[14:19] [Matt] So I think we should run that for the week instead of releasing another build.'
@@ -2296,7 +2899,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps a count fact when a later line supplies an extra duration', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels.',
       '[00:28] [Matt] That is what the data is saying.',
@@ -2332,7 +2935,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps a count fact when the writer added an extra duration that is also in the transcript', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels in less than twenty four hours.',
       '[00:28] [Matt] That is what the data is saying.',
@@ -2364,7 +2967,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('does not treat a product channel like V2 as a required quantity', () => {
     setPlatform('win32')
-    const provider = new OllamaProvider()
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[18:20] [Chris] The V2 bake-off picked a smaller and faster model.',
       '[18:24] [Chris] That architecture change is the clear winner.'

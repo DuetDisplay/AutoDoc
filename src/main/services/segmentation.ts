@@ -87,15 +87,24 @@ const WINDOWS_TIGHT_SCAN_POLICY: NotesRewritePolicy = {
 }
 
 /**
+ * macOS is the proving ground for the model-free, exact-coverage presenter.
+ * Windows remains on its current tight scan until the Mac quality gate passes.
+ */
+export function shouldUseMacLosslessPresentation(
+  platform: NodeJS.Platform = process.platform,
+  disabled: string | undefined = process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES
+): boolean {
+  return platform === 'darwin' && disabled !== '1'
+}
+
+/**
  * Below this decode speed the scan's optional rewrite passes cost more time
  * than they are worth. Measured writer speed is the ground truth (a configured
  * GPU can still end up CPU-bound when the model does not fit its VRAM).
  */
 const CONSTRAINED_REWRITE_MAX_TOK_PER_SEC = 12
 
-function parseDevNotesScanPolicy(
-  raw: string | undefined
-): 'cpu-constrained' | 'default' | null {
+function parseDevNotesScanPolicy(raw: string | undefined): 'cpu-constrained' | 'default' | null {
   const value = raw?.trim()
   if (value === 'cpu-constrained' || value === 'default') return value
   return null
@@ -419,9 +428,7 @@ export class SegmentationService {
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(
-        getDevNotesModelOverride() ?? windowsProcessingProfile.notesModel
-      )
+      this.llmProvider.setModel?.(getDevNotesModelOverride() ?? windowsProcessingProfile.notesModel)
       this.llmProvider.setLowMemoryMode?.(
         windowsProcessingProfile.id === 'win-low-spec' ||
           windowsProcessingProfile.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
@@ -431,8 +438,7 @@ export class SegmentationService {
         area: 'segmentation',
         message: 'notes effective processing profile selected',
         meetingId,
-        context:
-          this.getWindowsProcessingProfileLogContext(windowsProcessingProfile) ?? undefined
+        context: this.getWindowsProcessingProfileLogContext(windowsProcessingProfile) ?? undefined
       })
     } else {
       if (this.baselineLlmModel) {
@@ -636,7 +642,8 @@ export class SegmentationService {
     userReason?: string
     groupingFallback?: boolean
   }> {
-    if (!this.llmProvider.completePrompt) {
+    const presentationMode = shouldUseMacLosslessPresentation() ? 'lossless' : undefined
+    if (!this.llmProvider.completePrompt && !presentationMode) {
       return { notesLayout: 'v1' }
     }
 
@@ -644,7 +651,8 @@ export class SegmentationService {
     try {
       const meetingDir = join(this.recordingsBaseDir, meetingId)
       const metadata = await readMetadata(meetingDir)
-      const title = metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
+      const title =
+        metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
       let loggedScanRequest = false
       const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
       const lastEvalTokPerSec = this.llmProvider.getLastEvalTokPerSec?.() ?? null
@@ -668,6 +676,10 @@ export class SegmentationService {
             : undefined
       const result = await runNotesScanPipeline(segments, {
         title,
+        meetingId,
+        presentationMode,
+        attributionTranscript: presentationMode ? transcripts : undefined,
+        localOwnerLabel: presentationMode ? 'Me' : undefined,
         rewritePolicy,
         spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
         transcript: transcripts.map((row) => ({
@@ -714,6 +726,18 @@ export class SegmentationService {
         sourceTranscriptRevision: computeTranscriptRevision(meetingId, transcripts),
         sourceAttributionRevision: computeNotesAttributionRevision(meetingId, transcripts)
       })
+      const writerItemCount = Object.values(segments).reduce(
+        (total, bucket) => total + bucket.length,
+        0
+      )
+      const presentedItemCount =
+        result.content.keyTakeaways.length +
+        result.content.decisions.length +
+        result.content.nextSteps.length +
+        result.content.sections.reduce(
+          (total, section) => total + section.keyPoints.length + section.supportingDetails.length,
+          0
+        )
       logAutodocEvent({
         area: 'segmentation',
         message: 'notes scan layer completed',
@@ -736,10 +760,23 @@ export class SegmentationService {
           measuredTokPerSec,
           lastEvalTokPerSec,
           forcedScanPolicy,
+          presentationMode: result.presentationMode ?? presentationMode ?? 'scan',
+          exactWriterCoverage: result.exactWriterCoverage ?? false,
+          attributionOwnersAdded: result.attributionOwnersAdded ?? 0,
+          attributionOwnersStripped: result.attributionOwnersStripped ?? 0,
+          attributionOwnersPreserved: result.attributionOwnersPreserved ?? 0,
+          attributionOwnersChanged: result.attributionOwnersChanged ?? 0,
+          recoveredActionCount: result.recoveredActionCount ?? 0,
+          promotedActionCount: result.promotedActionCount ?? 0,
+          dedupedRecoveredActionCount: result.dedupedRecoveredActionCount ?? 0,
+          recoveredDecisionCount: result.recoveredDecisionCount ?? 0,
+          promotedDecisionCount: result.promotedDecisionCount ?? 0,
+          dedupedRecoveredDecisionCount: result.dedupedRecoveredDecisionCount ?? 0,
           restyleRejectReasons: result.restyleRejectReasons,
           compressRejectReasons: result.compressRejectReasons,
           attachFailed: result.attachFailed,
           overviewFailed: result.overviewFailed,
+          overviewSkipped: result.overviewSkipped ?? false,
           validationRan: result.validation.ran,
           validationError: result.validation.error,
           ledgerChunksFailed: result.validation.ledgerChunksFailed,
@@ -748,7 +785,10 @@ export class SegmentationService {
           ownersStripped: result.validation.ownersStripped,
           ledgerAppends: result.validation.ledgerAppends,
           unvalidatedClaims: result.validation.unvalidatedClaims,
+          writerItemCount,
+          presentedItemCount,
           sectionCount: result.content.sections.length,
+          decisionCount: result.content.decisions.length,
           nextStepCount: result.content.nextSteps.length,
           notesLayout: 'v2'
         }
@@ -786,7 +826,11 @@ export class SegmentationService {
         message: 'notes scan layer failed; keeping legacy segments',
         error,
         meetingId,
-        context: { elapsedMs: Date.now() - startedAt, notesLayout: 'v1', errorCode: 'scan_or_persist' }
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          notesLayout: 'v1',
+          errorCode: 'scan_or_persist'
+        }
       })
       captureMessage('notes_layout_degraded', {
         area: 'segmentation',
@@ -1021,9 +1065,10 @@ export class SegmentationService {
               ? parsed.errorCode
               : classifyError(typeof parsed.error === 'string' ? parsed.error : raw),
           userReason: typeof parsed.userReason === 'string' ? parsed.userReason : undefined,
-          notesLayout: parsed.notesLayout === 'v2' || parsed.notesLayout === 'v1'
-            ? parsed.notesLayout
-            : undefined,
+          notesLayout:
+            parsed.notesLayout === 'v2' || parsed.notesLayout === 'v1'
+              ? parsed.notesLayout
+              : undefined,
           groupingFallback:
             typeof parsed.groupingFallback === 'boolean' ? parsed.groupingFallback : undefined
         }
