@@ -1390,6 +1390,53 @@ describe('OllamaProvider grounding', () => {
     expect(requestBodies[0].options?.num_thread).toBe(8)
   })
 
+  it('forces num_gpu 0 when the writer profile is windows-cpu', async () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    provider.setVramConstrainedContext(true, 'windows-cpu')
+
+    const requestBodies: Array<{ options?: { num_gpu?: number } }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body ?? '{}')))
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder()
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    message: {
+                      content: JSON.stringify({
+                        decisions: [],
+                        action_items: [],
+                        information: [],
+                        discussion: [],
+                        status_updates: []
+                      })
+                    }
+                  })}\n`
+                )
+              )
+              controller.close()
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    await provider.summarize(
+      'meeting-windows-cpu-num-gpu',
+      '[00:00] [Chris] Windows CPU notes should keep layers on the host.',
+      undefined,
+      5
+    )
+
+    expect(requestBodies[0].options?.num_gpu).toBe(0)
+  })
+
   it('classifies Run A llama-server 500s as transient and ignores parse errors', () => {
     expect(
       isTransientOllamaRuntimeError(

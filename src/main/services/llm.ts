@@ -1802,12 +1802,14 @@ export class OllamaProvider implements LLMProvider {
   private mergeOllamaRequestOptions<T extends Record<string, unknown>>(options: T): T {
     const numThread = this.benchmarkNumThread ?? getDevNotesNumThreadOverride()
     const numBatch = getDevNotesNumBatchOverride()
-    if (this.benchmarkNumGpu == null && numThread == null && numBatch == null) {
+    const numGpu =
+      this.benchmarkNumGpu ?? (this.contextProfile === 'windows-cpu' ? 0 : undefined)
+    if (numGpu == null && numThread == null && numBatch == null) {
       return options
     }
     return {
       ...options,
-      ...(this.benchmarkNumGpu != null ? { num_gpu: this.benchmarkNumGpu } : {}),
+      ...(numGpu != null ? { num_gpu: numGpu } : {}),
       ...(numThread != null ? { num_thread: numThread } : {}),
       ...(numBatch != null ? { num_batch: numBatch } : {})
     }
