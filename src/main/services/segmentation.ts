@@ -12,6 +12,12 @@ import type {
   SegmentationStatusPayload
 } from '../../shared/types'
 import type { LLMProvider } from './llm'
+import {
+  formatNotesWriterTranscript,
+  getDevNotesModelOverride,
+  isDevNotesSkipScanRewritesEnabled,
+  shouldSkipWindowsTightScanRewrites
+} from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { readMetadata } from './calendar-matcher'
@@ -67,12 +73,33 @@ const CPU_CONSTRAINED_REWRITE_POLICY: NotesRewritePolicy = {
   bailAfterConsecutiveRejects: 2
 }
 
+const SKIP_SCAN_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 0,
+  skipRewrites: true
+}
+
+const WINDOWS_TIGHT_SCAN_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 0,
+  skipRewrites: true,
+  skipStructureLlm: true
+}
+
 /**
  * Below this decode speed the scan's optional rewrite passes cost more time
  * than they are worth. Measured writer speed is the ground truth (a configured
  * GPU can still end up CPU-bound when the model does not fit its VRAM).
  */
 const CONSTRAINED_REWRITE_MAX_TOK_PER_SEC = 12
+
+function parseDevNotesScanPolicy(
+  raw: string | undefined
+): 'cpu-constrained' | 'default' | null {
+  const value = raw?.trim()
+  if (value === 'cpu-constrained' || value === 'default') return value
+  return null
+}
 
 const EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
@@ -378,7 +405,7 @@ export class SegmentationService {
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(macProcessingProfile.notesModel)
+      this.llmProvider.setModel?.(getDevNotesModelOverride() ?? macProcessingProfile.notesModel)
       this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
       this.lastAppliedMacModel = macProcessingProfile.notesModel
       logAutodocEvent({
@@ -392,7 +419,9 @@ export class SegmentationService {
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(windowsProcessingProfile.notesModel)
+      this.llmProvider.setModel?.(
+        getDevNotesModelOverride() ?? windowsProcessingProfile.notesModel
+      )
       this.llmProvider.setLowMemoryMode?.(
         windowsProcessingProfile.id === 'win-low-spec' ||
           windowsProcessingProfile.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
@@ -457,19 +486,7 @@ export class SegmentationService {
       }
     })
 
-    const fullText = transcripts
-      .map((t) => {
-        const totalSec = Math.floor(t.startMs / 1000)
-        const h = Math.floor(totalSec / 3600)
-        const m = Math.floor((totalSec % 3600) / 60)
-        const s = totalSec % 60
-        const ts =
-          h > 0
-            ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-            : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-        return `[${ts}] [${t.speaker}] ${t.text}`
-      })
-      .join('\n')
+    const fullText = formatNotesWriterTranscript(transcripts)
 
     console.log(`[perf] Segmentation input: ${fullText.length} chars (${meetingId})`)
 
@@ -630,12 +647,25 @@ export class SegmentationService {
       const title = metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
       let loggedScanRequest = false
       const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
-      const measuredTokPerSec = this.llmProvider.getLastEvalTokPerSec?.() ?? null
+      const lastEvalTokPerSec = this.llmProvider.getLastEvalTokPerSec?.() ?? null
+      const measuredTokPerSec =
+        this.llmProvider.getWriterWeightedEvalTokPerSec?.() ?? lastEvalTokPerSec
+      const forcedScanPolicy = parseDevNotesScanPolicy(process.env.AUTODOC_TEST_NOTES_SCAN_POLICY)
       const constrained =
-        measuredTokPerSec != null
-          ? measuredTokPerSec < CONSTRAINED_REWRITE_MAX_TOK_PER_SEC
-          : notesAccelerator === 'cpu'
-      const rewritePolicy = constrained ? CPU_CONSTRAINED_REWRITE_POLICY : undefined
+        forcedScanPolicy === 'cpu-constrained'
+          ? true
+          : forcedScanPolicy === 'default'
+            ? false
+            : measuredTokPerSec != null
+              ? measuredTokPerSec < CONSTRAINED_REWRITE_MAX_TOK_PER_SEC
+              : notesAccelerator === 'cpu'
+      const rewritePolicy = shouldSkipWindowsTightScanRewrites()
+        ? WINDOWS_TIGHT_SCAN_POLICY
+        : isDevNotesSkipScanRewritesEnabled()
+          ? SKIP_SCAN_REWRITE_POLICY
+          : constrained
+            ? CPU_CONSTRAINED_REWRITE_POLICY
+            : undefined
       const result = await runNotesScanPipeline(segments, {
         title,
         rewritePolicy,
@@ -695,9 +725,17 @@ export class SegmentationService {
           compressFallbacks: result.compressFallbacks,
           restyleSkips: result.restyleSkips,
           compressSkips: result.compressSkips,
-          rewritePolicy: rewritePolicy ? 'cpu-constrained' : 'default',
+          rewritePolicy: rewritePolicy?.skipStructureLlm
+            ? 'skip-structure'
+            : rewritePolicy?.skipRewrites
+              ? 'skip-rewrites'
+              : rewritePolicy
+                ? 'cpu-constrained'
+                : 'default',
           notesAccelerator,
           measuredTokPerSec,
+          lastEvalTokPerSec,
+          forcedScanPolicy,
           restyleRejectReasons: result.restyleRejectReasons,
           compressRejectReasons: result.compressRejectReasons,
           attachFailed: result.attachFailed,

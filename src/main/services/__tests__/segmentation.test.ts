@@ -422,6 +422,13 @@ describe('SegmentationService', () => {
   })
 
   it('applies the cpu-constrained rewrite policy only when notes run on CPU', async () => {
+    const previousTight = process.env.AUTODOC_TEST_NOTES_TIGHT
+    const previousPolicy = process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+    const previousSkip = process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES
+    process.env.AUTODOC_TEST_NOTES_TIGHT = '0'
+    delete process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+    delete process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES
+    try {
     const capturedPolicies: unknown[] = []
     const pipeline = vi
       .spyOn(notesScanPipeline, 'runNotesScanPipeline')
@@ -547,6 +554,303 @@ describe('SegmentationService', () => {
 
     pipeline.mockRestore()
     promote.mockRestore()
+    } finally {
+      if (previousTight == null) delete process.env.AUTODOC_TEST_NOTES_TIGHT
+      else process.env.AUTODOC_TEST_NOTES_TIGHT = previousTight
+      if (previousPolicy == null) delete process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+      else process.env.AUTODOC_TEST_NOTES_SCAN_POLICY = previousPolicy
+      if (previousSkip == null) delete process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES
+      else process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES = previousSkip
+    }
+  })
+
+  it('uses writer-weighted decode speed, not the last sample, for scan policy', async () => {
+    const previousTight = process.env.AUTODOC_TEST_NOTES_TIGHT
+    process.env.AUTODOC_TEST_NOTES_TIGHT = '0'
+    const capturedPolicies: unknown[] = []
+    const pipeline = vi
+      .spyOn(notesScanPipeline, 'runNotesScanPipeline')
+      .mockImplementation(async (_segments, options) => {
+        capturedPolicies.push(options.rewritePolicy)
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
+          attachFailed: false,
+          overviewFailed: false,
+          overviewFailureReasons: [],
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      })
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    const scanProvider = createMockProvider()
+    vi.mocked(scanProvider.summarize).mockResolvedValue({
+      decisions: [],
+      actionItems: [],
+      information: [],
+      discussion: [],
+      statusUpdates: []
+    })
+    ;(scanProvider as { completePrompt?: unknown }).completePrompt = vi.fn().mockResolvedValue('')
+    ;(scanProvider as { getLastEvalTokPerSec?: unknown }).getLastEvalTokPerSec = () => 12.2
+    ;(scanProvider as { getWriterWeightedEvalTokPerSec?: unknown }).getWriterWeightedEvalTokPerSec =
+      () => 10.1
+    try {
+      const scanService = new SegmentationService(
+        scanProvider,
+        {
+          waitUntilReady: vi.fn().mockResolvedValue(undefined),
+          getNotesAccelerator: () => 'cpu'
+        } as unknown as OllamaManager,
+        '/mock/home/AutoDoc/recordings'
+      )
+      await (scanService as any).processJob('m1')
+      expect(capturedPolicies[0]).toEqual({
+        maxAttemptsPerSection: 1,
+        bailAfterConsecutiveRejects: 2
+      })
+    } finally {
+      pipeline.mockRestore()
+      promote.mockRestore()
+      if (previousTight == null) delete process.env.AUTODOC_TEST_NOTES_TIGHT
+      else process.env.AUTODOC_TEST_NOTES_TIGHT = previousTight
+    }
+  })
+
+  it('honors AUTODOC_TEST_NOTES_SCAN_POLICY over measured speed', async () => {
+    const previous = process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+    const previousTight = process.env.AUTODOC_TEST_NOTES_TIGHT
+    process.env.AUTODOC_TEST_NOTES_TIGHT = '0'
+    process.env.AUTODOC_TEST_NOTES_SCAN_POLICY = 'cpu-constrained'
+    const capturedPolicies: unknown[] = []
+    const pipeline = vi
+      .spyOn(notesScanPipeline, 'runNotesScanPipeline')
+      .mockImplementation(async (_segments, options) => {
+        capturedPolicies.push(options.rewritePolicy)
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
+          attachFailed: false,
+          overviewFailed: false,
+          overviewFailureReasons: [],
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      })
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    try {
+      const scanProvider = createMockProvider()
+      vi.mocked(scanProvider.summarize).mockResolvedValue({
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      })
+      ;(scanProvider as { completePrompt?: unknown }).completePrompt = vi.fn().mockResolvedValue('')
+      ;(scanProvider as { getLastEvalTokPerSec?: unknown }).getLastEvalTokPerSec = () => 40
+      ;(scanProvider as { getWriterWeightedEvalTokPerSec?: unknown }).getWriterWeightedEvalTokPerSec =
+        () => 40
+      const scanService = new SegmentationService(
+        scanProvider,
+        {
+          waitUntilReady: vi.fn().mockResolvedValue(undefined),
+          getNotesAccelerator: () => 'cuda'
+        } as unknown as OllamaManager,
+        '/mock/home/AutoDoc/recordings'
+      )
+      await (scanService as any).processJob('m1')
+      expect(capturedPolicies[0]).toEqual({
+        maxAttemptsPerSection: 1,
+        bailAfterConsecutiveRejects: 2
+      })
+    } finally {
+      if (previous == null) delete process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+      else process.env.AUTODOC_TEST_NOTES_SCAN_POLICY = previous
+      if (previousTight == null) delete process.env.AUTODOC_TEST_NOTES_TIGHT
+      else process.env.AUTODOC_TEST_NOTES_TIGHT = previousTight
+      pipeline.mockRestore()
+      promote.mockRestore()
+    }
+  })
+
+  it('skips scan restyle and compress for Windows tight notes', async () => {
+    const previousTight = process.env.AUTODOC_TEST_NOTES_TIGHT
+    const previousPolicy = process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+    delete process.env.AUTODOC_TEST_NOTES_TIGHT
+    delete process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const capturedPolicies: unknown[] = []
+    const pipeline = vi
+      .spyOn(notesScanPipeline, 'runNotesScanPipeline')
+      .mockImplementation(async (_segments, options) => {
+        capturedPolicies.push(options.rewritePolicy)
+        return {
+          markdown: '',
+          content: {
+            overview: null,
+            keyTakeaways: [],
+            sections: [],
+            decisions: [],
+            nextSteps: []
+          },
+          groupingFallback: false,
+          restyleFallbacks: 0,
+          compressFallbacks: 0,
+          restyleSkips: 0,
+          compressSkips: 0,
+          restyleRejectReasons: [],
+          compressRejectReasons: [],
+          attachFailed: false,
+          overviewFailed: false,
+          overviewFailureReasons: [],
+          validation: {
+            ran: false,
+            error: null,
+            ledgerChunksFailed: 0,
+            claimsChecked: 0,
+            claimsDropped: 0,
+            ownersStripped: 0,
+            ledgerAppends: 0,
+            unvalidatedClaims: 0
+          }
+        }
+      })
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('transcript.json')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify([
+        {
+          id: 'm1-0',
+          meetingId: 'm1',
+          speaker: 'Chris',
+          text: 'We confirmed the rollout plan.',
+          startMs: 0,
+          endMs: 65_000,
+          confidence: 0.9
+        }
+      ]) as any
+    )
+    try {
+      const scanProvider = createMockProvider()
+      vi.mocked(scanProvider.summarize).mockResolvedValue({
+        decisions: [],
+        actionItems: [],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      })
+      ;(scanProvider as { completePrompt?: unknown }).completePrompt = vi.fn().mockResolvedValue('')
+      const scanService = new SegmentationService(
+        scanProvider,
+        {
+          waitUntilReady: vi.fn().mockResolvedValue(undefined),
+          getNotesAccelerator: () => 'cpu'
+        } as unknown as OllamaManager,
+        '/mock/home/AutoDoc/recordings'
+      )
+      await (scanService as any).processJob('m1')
+      expect(capturedPolicies[0]).toEqual({
+        maxAttemptsPerSection: 1,
+        bailAfterConsecutiveRejects: 0,
+        skipRewrites: true,
+        skipStructureLlm: true
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+      if (previousTight == null) delete process.env.AUTODOC_TEST_NOTES_TIGHT
+      else process.env.AUTODOC_TEST_NOTES_TIGHT = previousTight
+      if (previousPolicy == null) delete process.env.AUTODOC_TEST_NOTES_SCAN_POLICY
+      else process.env.AUTODOC_TEST_NOTES_SCAN_POLICY = previousPolicy
+      pipeline.mockRestore()
+      promote.mockRestore()
+    }
   })
 
   it('logs onComplete callback failures without failing completed segmentation', async () => {

@@ -1,13 +1,30 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
+  computeWriterWeightedEvalTokPerSec,
+  extractWriterCategoryObject,
+  inspectCompactWriterPayload,
+  parseWriterJsonRecord,
+  salvageWriterTimestampMs,
+  alternateClockTimestampMs,
+  extractProseClockMs,
   isTransientOllamaRuntimeError,
   LOW_MEMORY_CONTEXT_TOKENS,
   MAC_CONTEXT_TOKENS,
   OllamaProvider,
   STANDARD_CONTEXT_TOKENS,
   WINDOWS_CONTEXT_TOKENS,
-  WINDOWS_MAX_OUTPUT_TOKENS,
+  WINDOWS_TIGHT_MAX_OUTPUT_TOKENS,
+  formatNotesWriterTranscript,
+  isNotesWriterBackchannelOnly,
+  packTranscriptChunks,
+  shouldOmitWindowsTightSpeakerLabels,
+  shouldStripWindowsTightBackchannel,
+  shouldSkipWindowsTightScanRewrites,
+  countCompleteTightWriterItems,
+  shouldStopWindowsTightWriterStream,
+  shouldOmitWindowsTightResponseFormat,
+  shouldAbsorbWindowsTightShortTail,
   WRITER_PARSE_ERROR_CODE,
   writerProgressPercent
 } from '../llm'
@@ -778,7 +795,8 @@ describe('OllamaProvider grounding', () => {
 
     if (process.platform === 'win32') {
       expect(chunks).toHaveLength(3)
-      expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).toContain('[title, content, s, e]')
+      expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
 
       tunedProvider.setLowMemoryMode(true)
       expect((tunedProvider as any).chunkTranscript(longTranscript)).toHaveLength(3)
@@ -887,9 +905,16 @@ describe('OllamaProvider grounding', () => {
   })
 
   it('does not teach the writer a canned topic taxonomy', () => {
-    const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
-    const systemPrompt = (tunedProvider as any).getSystemPrompt() as string
+    setPlatform('win32')
+    const windowsPrompt = new OllamaProvider('http://localhost:11434', 'test-model') as any
+    expect(windowsPrompt.getSystemPrompt()).not.toContain('GOOD topics')
+    expect(windowsPrompt.getSystemPrompt()).not.toContain('Pricing & Costs')
+    expect(windowsPrompt.getSystemPrompt()).not.toContain('Technical Architecture')
 
+    setPlatform('darwin')
+    const systemPrompt = (
+      new OllamaProvider('http://localhost:11434', 'test-model') as any
+    ).getSystemPrompt() as string
     const goodExamples = systemPrompt.split('GOOD topics')[1]?.split('BAD topics')[0] ?? ''
     expect(goodExamples).not.toContain('Pricing & Costs')
     expect(goodExamples).not.toContain('Technical Architecture')
@@ -1241,11 +1266,11 @@ describe('OllamaProvider grounding', () => {
     expect(result.actionItems[0].deadline).toBe('Friday')
   })
 
-  it('uses the shared V2 writer schema and budgets on Windows', async () => {
+  it('uses the tight Windows writer schema and 768-token budget', async () => {
     setPlatform('win32')
     const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     expect((windowsProvider as any).getNotesResponseFormat()).toBe('json')
-    expect((windowsProvider as any).getMaxOutputTokens()).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
+    expect((windowsProvider as any).getMaxOutputTokens()).toBe(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
     expect((windowsProvider as any).getChunkChars()).toBe(4000)
 
     const requestBodies: Array<{
@@ -1309,11 +1334,12 @@ describe('OllamaProvider grounding', () => {
 
     expect(result.information).toHaveLength(1)
     expect(requestBodies[0].format).toBe('json')
-    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_MAX_OUTPUT_TOKENS)
+    expect(requestBodies[0].options?.num_predict).toBe(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
     expect(requestBodies[0].options?.repeat_penalty).toBe(1.05)
     expect(requestBodies[0].options).not.toHaveProperty('num_gpu')
     expect(requestBodies[0].options).not.toHaveProperty('num_thread')
-    expect(requestBodies[0].messages?.[0]?.content).toContain('MAC QUALITY TUNING OVERRIDE')
+    expect(requestBodies[0].messages?.[0]?.content).toContain('[title, content, s, e]')
+    expect(requestBodies[0].messages?.[0]?.content).not.toContain('MAC QUALITY TUNING OVERRIDE')
   })
 
   it('injects benchmark num_gpu and num_thread only when setBenchmarkOptions is set', async () => {
@@ -1514,7 +1540,7 @@ describe('OllamaProvider grounding', () => {
   })
 
   describe('Windows chunk label guidance', () => {
-    it('uses the shared V2 writer guidance on later chunks', () => {
+    it('uses the tight writer guidance on later Windows chunks', () => {
       setPlatform('win32')
       const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
       const label = (windowsProvider as any).buildChunkLabel(
@@ -1524,15 +1550,15 @@ describe('OllamaProvider grounding', () => {
         ['Product Planning']
       ) as string
 
-      expect(label).toContain('at most 6 total items across all categories')
-      expect(label).toContain('Use broad reusable topic headings')
-      expect(label).toContain('Product Planning')
+      expect(label).toContain('at most 6 items')
+      expect(label).not.toContain('Use broad reusable topic headings')
+      expect(label).not.toContain('Product Planning')
     })
 
-    it('adds the shared V2 quality override to the Windows system prompt', () => {
-      setPlatform('win32')
-      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
-      const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
+    it('keeps the shared V2 quality override on macOS', () => {
+      setPlatform('darwin')
+      const macProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (macProvider as any).getSystemPrompt() as string
 
       expect(systemPrompt).toContain('MAC QUALITY TUNING OVERRIDE')
       expect(systemPrompt).toContain('Target roughly 40-55 total final items')
@@ -1540,6 +1566,131 @@ describe('OllamaProvider grounding', () => {
         'Copy product names, feature names, and domain words exactly as spoken in the transcript'
       )
     })
+
+    it('uses the tight tuple prompt and omits topic reuse on Windows only', () => {
+      setPlatform('win32')
+      const windowsProvider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const systemPrompt = (windowsProvider as any).getSystemPrompt() as string
+      const label = (windowsProvider as any).buildChunkLabel(
+        1,
+        3,
+        'Target a focused final note set around 40-55 total items.',
+        ['Product Planning']
+      ) as string
+      expect(systemPrompt).toContain('[title, content, s, e]')
+      expect(systemPrompt).toContain('Keep exact numbers, names, versions, and dates')
+      expect(systemPrompt).not.toContain('MAC QUALITY TUNING OVERRIDE')
+      expect(systemPrompt).not.toContain('GROUPING')
+      expect(label).toContain('at most 6 items')
+      expect(systemPrompt).toContain('At most 6 items')
+      expect(label).not.toContain('Product Planning')
+      expect(label).not.toContain('topic headings')
+      expect((windowsProvider as any).getMaxOutputTokens()).toBe(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
+      expect((windowsProvider as any).getChunkChars()).toBe(4000)
+      expect(systemPrompt).toContain('Target roughly 40-55 total final items')
+      ;(windowsProvider as any).writerContinuation = true
+      const continuationPrompt = (windowsProvider as any).getSystemPrompt() as string
+      expect(continuationPrompt).toContain('[title, content, s, e]')
+      expect(continuationPrompt).not.toContain('Target roughly 40-55 total final items')
+      setPlatform('darwin')
+      expect((windowsProvider as any).getChunkChars()).toBe(4000)
+      expect((windowsProvider as any).getSystemPrompt()).toContain('MAC QUALITY TUNING OVERRIDE')
+      expect((windowsProvider as any).getMaxOutputTokens()).not.toBe(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
+      setPlatform('win32')
+      expect(shouldSkipWindowsTightScanRewrites('win32')).toBe(true)
+      expect(shouldSkipWindowsTightScanRewrites('darwin')).toBe(false)
+      expect(shouldOmitWindowsTightResponseFormat('win32')).toBe(false)
+      expect(shouldOmitWindowsTightResponseFormat('darwin')).toBe(false)
+      expect(shouldAbsorbWindowsTightShortTail('win32')).toBe(false)
+      const withTail = `${'a'.repeat(3900)}\n${'b'.repeat(200)}`
+      expect((windowsProvider as any).chunkTranscript(withTail)).toHaveLength(2)
+    })
+  })
+})
+
+describe('formatNotesWriterTranscript', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+    delete process.env.AUTODOC_TEST_NOTES_TIGHT
+  })
+
+  it('keeps speaker labels on Windows tight after speaker-omit was rejected', () => {
+    const rows = [
+      { startMs: 22_000, speaker: 'Matt', text: '14 starts and 6 cancellations' },
+      { startMs: 3_661_000, speaker: 'Chris', text: 'one dot one dot three' }
+    ]
+    expect(formatNotesWriterTranscript(rows, false)).toBe(
+      '[00:22] [Matt] 14 starts and 6 cancellations\n[01:01:01] [Chris] one dot one dot three'
+    )
+
+    setPlatform('win32')
+    expect(shouldOmitWindowsTightSpeakerLabels('win32')).toBe(false)
+    expect(formatNotesWriterTranscript(rows)).toBe(
+      '[00:22] [Matt] 14 starts and 6 cancellations\n[01:01:01] [Chris] one dot one dot three'
+    )
+  })
+
+  it('classifies ack-only lines but does not strip them after the v12 reject', () => {
+    expect(isNotesWriterBackchannelOnly('yeah')).toBe(true)
+    expect(isNotesWriterBackchannelOnly('Okay.')).toBe(true)
+    expect(isNotesWriterBackchannelOnly('four three five is definitely higher')).toBe(false)
+    expect(isNotesWriterBackchannelOnly('14 starts and 6 cancellations')).toBe(false)
+
+    const rows = [
+      { startMs: 1000, speaker: 'them', text: 'yeah' },
+      { startMs: 2000, speaker: 'me', text: 'four three five is definitely higher' },
+      { startMs: 3000, speaker: 'them', text: 'okay' }
+    ]
+    setPlatform('win32')
+    expect(shouldStripWindowsTightBackchannel('win32')).toBe(false)
+    expect(formatNotesWriterTranscript(rows)).toBe(
+      '[00:01] [them] yeah\n[00:02] [me] four three five is definitely higher\n[00:03] [them] okay'
+    )
+  })
+})
+
+describe('Windows tight writer stream cap', () => {
+  afterEach(() => {
+    delete process.env.AUTODOC_TEST_NOTES_TIGHT
+  })
+
+  it('counts finished tuples in truncated JSON and ignores the outer category array', () => {
+    const partial =
+      '{"i":[["14 starts","There are 14 starts and 6 cancellations.",22000,26000],["eight to sixteen","Raised RAM from 8 to 16 GB.",1061000,1071000],["four three five","Use the four-three-five build.",1419000,1429000],["one one three","Shipped one dot one dot three.",1040000,1049000],["fifth","Fifth fact.",1,2],["sixth","Sixth fact.",3,4],["seventh"'
+    expect(countCompleteTightWriterItems(partial)).toBe(6)
+    expect(countCompleteTightWriterItems('{"i":[["only","two fields"')).toBe(0)
+  })
+
+  it('counts title-content pairs so clockless 768 runaways still hit the cap', () => {
+    const runaway =
+      '{"i":[["a","b"],["c","d"],["e","f"],["g","h"],["i","j"],["k","l"],["m"'
+    expect(countCompleteTightWriterItems(runaway)).toBe(6)
+    expect(shouldStopWindowsTightWriterStream(runaway, 'win32')).toBe(true)
+  })
+
+  it('stops only on Windows tight once six items are complete', () => {
+    const six =
+      '{"i":[["a","b",1,2],["c","d",3,4],["e","f",5,6],["g","h",7,8],["i","j",9,10],["k","l",11,12]]}'
+    expect(shouldStopWindowsTightWriterStream(six, 'win32')).toBe(true)
+    expect(shouldStopWindowsTightWriterStream(six, 'darwin')).toBe(false)
+    process.env.AUTODOC_TEST_NOTES_TIGHT = '0'
+    expect(shouldStopWindowsTightWriterStream(six, 'win32')).toBe(false)
+  })
+})
+
+describe('packTranscriptChunks', () => {
+  it('packs to the char budget and folds a short leftover when asked', () => {
+    const lines = Array.from({ length: 40 }, (_, index) => `line-${index} ${'x'.repeat(240)}`)
+    const transcript = lines.join('\n')
+    const packed = packTranscriptChunks(transcript, 6000, false)
+    expect(packed.length).toBeGreaterThan(1)
+    expect(packed.slice(0, -1).every((chunk) => chunk.length <= 6000)).toBe(true)
+
+    const withTail = `${'a'.repeat(5900)}\n${'b'.repeat(200)}`
+    const absorbed = packTranscriptChunks(withTail, 6000, true)
+    expect(absorbed).toHaveLength(1)
+    expect(absorbed[0]).toContain('b'.repeat(200))
+    expect(packTranscriptChunks(withTail, 6000, false)).toHaveLength(2)
   })
 })
 
@@ -1809,5 +1960,397 @@ describe('OllamaProvider writer parse skip and salvage', () => {
       })
     )
     expect(WRITER_PARSE_ERROR_CODE).toBe('NOTES_WRITER_PARSE_ERROR')
+  })
+})
+
+describe('compact writer inspect and weighted decode', () => {
+  it('records unknown categories and unexpandable items as silent drops', () => {
+    const result = inspectCompactWriterPayload({
+      d: [{ t: 'Theme', h: 'Ok', c: 'Body', s: 1, e: 2 }],
+      extra: [{ title: 'Lost' }],
+      i: 'not-an-array',
+      a: [null, 12]
+    })
+    expect(result.rawItemCount).toBe(3)
+    expect(result.expandedItemCount).toBe(1)
+    expect(result.drops.map((drop) => drop.reason).sort()).toEqual([
+      'category_not_array',
+      'unexpandable_item',
+      'unknown_category'
+    ])
+  })
+
+  it('expands tight [title, content, s, e] tuples without treating title as topic', () => {
+    const result = inspectCompactWriterPayload({
+      a: [['Raise Windows min RAM to 16GB', 'Change the Windows minimum from 8GB to 16GB.', 1_061_000, 1_071_000]],
+      i: [['14 starts and 6 cancels', 'Latest period had 14 starts and 6 cancellations.', 22_000, 28_000, null, null]]
+    })
+    expect(result.expandedItemCount).toBe(2)
+    expect(result.expanded.action_items?.[0]).toMatchObject({
+      title: 'Raise Windows min RAM to 16GB',
+      content: 'Change the Windows minimum from 8GB to 16GB.',
+      sourceStartMs: 1_061_000,
+      sourceEndMs: 1_071_000
+    })
+    expect(result.expanded.action_items?.[0].topic).toBeUndefined()
+    expect(result.expanded.information?.[0]).toMatchObject({
+      title: '14 starts and 6 cancels',
+      sourceStartMs: 22_000
+    })
+  })
+
+  it('merges duplicate category keys and missing colons from raw JSON', () => {
+    const raw =
+      '{"i":[["14 starts and 6 cancellations","Latest period had 14 starts and 6 cancellations.",22000,28000]],"a":[["Submit PR","Matt will submit the PR.",68000,70000]],"i":[["Free tier doc","Roel posted the free tier doc.",158000,166000]],"x":[["Timeout debate","Team is reconsidering the timeout."],1061000,1071000]}'
+    const parsed = parseWriterJsonRecord(raw)
+    expect(parsed).not.toBeNull()
+    const result = inspectCompactWriterPayload(parsed as Record<string, unknown>)
+    expect(result.expanded.information?.map((row) => row.title)).toEqual([
+      '14 starts and 6 cancellations',
+      'Free tier doc'
+    ])
+    expect(result.expanded.discussion?.[0]).toMatchObject({
+      title: 'Timeout debate',
+      sourceStartMs: 1_061_000,
+      sourceEndMs: 1_071_000
+    })
+  })
+
+  it('reads mm:ss clocks out of tight writer prose', () => {
+    expect(
+      extractProseClockMs(
+        'There are fourteen starts and six cancellations in the data as of 00:22.'
+      )
+    ).toEqual([22_000])
+    expect(extractProseClockMs('as observed at 02:03 and again at [17:41]')).toEqual([
+      123_000,
+      1_061_000
+    ])
+  })
+
+  it('recovers tight items when category keys use commas instead of colons', () => {
+    const raw =
+      '{"d":[["Raise Windows min RAM to 16GB","Change the Windows minimum from 8GB to 16GB."]],"a",[["Draft Brevo email","Send Greg the Windows RAM note."]],"i",[["Auto Doc 1.1.3","Patch 1.1.3 fixed the email-us bug."]]}'
+    const extracted = extractWriterCategoryObject(raw)
+    expect(extracted?.a).toHaveLength(1)
+    expect(extracted?.i).toHaveLength(1)
+    const result = inspectCompactWriterPayload(extracted as Record<string, unknown>)
+    expect(result.expanded.action_items?.[0].title).toBe('Draft Brevo email')
+    expect(result.expanded.information?.[0].title).toBe('Auto Doc 1.1.3')
+    expect(result.expanded.decisions?.[0].title).toBe('Raise Windows min RAM to 16GB')
+  })
+
+  it('still expands legacy [topic, title, content, ...] tuples', () => {
+    const result = inspectCompactWriterPayload({
+      d: [['Theme', 'Decided', 'We chose 16GB.', null, null, 12_000, 45_000]]
+    })
+    expect(result.expanded.decisions?.[0]).toMatchObject({
+      topic: 'Theme',
+      title: 'Decided',
+      content: 'We chose 16GB.',
+      sourceStartMs: 12_000,
+      sourceEndMs: 45_000
+    })
+  })
+
+  it('weights writer decode by duration instead of the last sample', () => {
+    expect(
+      computeWriterWeightedEvalTokPerSec([
+        { evalCount: 5000, evalDurationMs: 500_000 },
+        { evalCount: 266, evalDurationMs: 21_800 }
+      ])
+    ).toBe(10.1)
+  })
+})
+
+describe('writer timestamp salvage', () => {
+  const meetingMs = 1_982_686
+
+  it('leaves in-range millisecond values alone', () => {
+    expect(salvageWriterTimestampMs(22_000, meetingMs)).toBe(22_000)
+    expect(salvageWriterTimestampMs(1_061_000, meetingMs)).toBe(1_061_000)
+  })
+
+  it('decodes compact clock overflow 17:41 → 17410000', () => {
+    expect(salvageWriterTimestampMs(17_410_000, meetingMs)).toBe(1_061_000)
+  })
+
+  it('decodes slightly-over 2012000 as 20:12', () => {
+    expect(salvageWriterTimestampMs(2_012_000, meetingMs)).toBe(1_212_000)
+  })
+
+  it('divides a 10x millisecond overflow when it is not a clock reading', () => {
+    expect(salvageWriterTimestampMs(10_610_000, meetingMs)).toBe(1_061_000)
+  })
+
+  it('exposes an in-range clock alternate without rewriting real milliseconds', () => {
+    expect(alternateClockTimestampMs(1_741_000, meetingMs)).toBe(1_061_000)
+    expect(alternateClockTimestampMs(1_720_000, meetingMs)).toBe(1_040_000)
+    expect(alternateClockTimestampMs(141_500, meetingMs)).toBe(855_000)
+    expect(salvageWriterTimestampMs(1_741_000, meetingMs)).toBe(1_741_000)
+    expect(salvageWriterTimestampMs(150_000, meetingMs)).toBe(150_000)
+  })
+
+  it('coerces numeric timestamp strings', () => {
+    expect(salvageWriterTimestampMs('22000', meetingMs)).toBe(22_000)
+    expect(salvageWriterTimestampMs('1061000', meetingMs)).toBe(1_061_000)
+    expect(alternateClockTimestampMs('1741000', meetingMs)).toBe(1_061_000)
+  })
+})
+
+describe('compact timestamp and spoken-quantity grounding', () => {
+  afterEach(() => {
+    setPlatform(originalPlatform)
+  })
+
+  it('keeps a compact item whose s/e overflowed as clock digits', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[17:40] [Chris] Eight gigabytes of RAM on Windows is a miserable experience.',
+      '[17:41] [Chris] I raised the minimum spec for Windows to sixteen gigs.',
+      '[18:12] [Chris] I drafted a Brevo email for Greg.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        d: [],
+        a: [
+          {
+            t: 'Windows spec',
+            h: 'Update minimum RAM requirement for Windows',
+            c: 'Raised the Windows minimum from 8GB to 16GB and drafted a Brevo email for Greg.',
+            o: 'Chris',
+            s: 17_410_000,
+            e: 18_000_000
+          }
+        ],
+        i: [],
+        x: [],
+        u: []
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.actionItems).toHaveLength(1)
+    expect(result.actionItems[0].title).toContain('minimum RAM')
+    expect(result.actionItems[0].sourceStartMs).toBeGreaterThanOrEqual(1_060_000)
+    expect(result.actionItems[0].sourceStartMs).toBeLessThan(1_200_000)
+  })
+
+  it('keeps spoken fourteen/six when the note writes digits', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels in less than twenty four hours.',
+      '[00:28] [Matt] That is what the data is saying.',
+      '[03:40] [Matt] I posted the working requirements document.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        information: [
+          {
+            topic: 'Cancellations',
+            title: '14 starts, 6 cancellations reported',
+            content: 'The data shows 14 starts and 6 cancellations in less than 24 hours.',
+            sourceStartMs: 220_000,
+            sourceEndMs: 280_000
+          }
+        ]
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].title).toContain('14 starts')
+  })
+
+  it('keeps 1.1.3 when compact s/e used in-range mmss×1000', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[17:07] [Chris] I noticed a minor bug with one dot one dot two of Auto Doc where the email us text would not go away.',
+      '[17:20] [Chris] So I made a PR and got a one dot one dot three out release for Mac OS and Windows.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        d: [],
+        a: [],
+        i: [
+          {
+            t: 'Patch',
+            h: 'PR and release details for Auto Doc 1.1.3',
+            c: 'A minor patch release (1.1.3) was issued for Mac OS and Windows to fix a persistent email text bug.',
+            s: 1_720_000,
+            e: 1_731_000
+          }
+        ],
+        x: [],
+        u: []
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].title).toContain('1.1.3')
+    expect(result.information[0].sourceStartMs).toBeGreaterThanOrEqual(1_020_000)
+    expect(result.information[0].sourceStartMs).toBeLessThan(1_100_000)
+  })
+
+  it('keeps 4.3.5 when the transcript says four three five', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[14:15] [Matt] We just released the four three five build.',
+      '[14:19] [Matt] So I think we should run that for the week instead of releasing another build.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        d: [],
+        a: [],
+        i: [],
+        x: [],
+        u: [
+          {
+            t: 'Release',
+            h: 'Current build in use',
+            c: 'The 4.3.5 build is currently running and will be used for the week unless there are critical issues.',
+            s: 141_500,
+            e: 142_900
+          }
+        ]
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.statusUpdates).toHaveLength(1)
+    expect(result.statusUpdates[0].content).toContain('4.3.5')
+    expect(result.statusUpdates[0].sourceStartMs).toBe(855_000)
+  })
+
+  it('keeps a count fact when a later line supplies an extra duration', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels.',
+      '[00:28] [Matt] That is what the data is saying.',
+      '[00:40] [Matt] Analytics on local discovery only shows QA traffic.',
+      '[00:50] [Matt] The upgrade panel looks wrong in QA.',
+      '[01:00] [Matt] Feature flags may be mis-assigned.',
+      '[01:10] [Matt] Timeout might be too short.',
+      '[02:30] [Matt] It has been less than twenty four hours so it is too early.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        i: [
+          [
+            'Data shows 14 starts and 6 cancellations in less than 24 hours',
+            'The data indicates 14 starts and 6 cancellations, suggesting a potential common issue.',
+            22_000,
+            150_000
+          ]
+        ]
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].title).toContain('14 starts')
+    expect(result.information[0].sourceStartMs).toBeLessThan(60_000)
+  })
+
+  it('keeps a count fact when the writer added an extra duration that is also in the transcript', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels in less than twenty four hours.',
+      '[00:28] [Matt] That is what the data is saying.',
+      '[02:30] [Matt] Analytics on local discovery only shows QA traffic.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        i: [
+          [
+            'Data shows 14 starts and 6 cancellations in less than 24 hours',
+            'The data indicates 14 starts and 6 cancellations, suggesting a potential common issue.',
+            22_000,
+            150_000
+          ]
+        ]
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(result.information[0].title).toContain('14 starts')
+    expect(result.information[0].sourceStartMs).toBeLessThan(60_000)
+  })
+
+  it('does not treat a product channel like V2 as a required quantity', () => {
+    setPlatform('win32')
+    const provider = new OllamaProvider()
+    const transcript = [
+      '[18:20] [Chris] The V2 bake-off picked a smaller and faster model.',
+      '[18:24] [Chris] That architecture change is the clear winner.'
+    ].join('\n')
+
+    const result = (provider as any).parseResponse(
+      'meeting-1',
+      JSON.stringify({
+        x: [
+          [
+            'V2 model bake-off results in clear winner',
+            'A bake-off between current and potential models for V2 identified a smaller, faster model.',
+            1_909_000,
+            1_928_000
+          ]
+        ]
+      }),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+
+    expect(result.discussion).toHaveLength(1)
+    expect(result.discussion[0].title).toMatch(/bake-off/i)
+  })
+
+  it('expands tight tuples whose clocks arrived as strings', () => {
+    const inspected = inspectCompactWriterPayload({
+      i: [['Staging copy', 'Gabriel updated staging wordings.', '2303000', '2309000']]
+    })
+    expect(inspected.expanded.information).toHaveLength(1)
+    expect(inspected.expanded.information[0].sourceStartMs).toBe(2_303_000)
+    expect(inspected.expanded.information[0].sourceEndMs).toBe(2_309_000)
   })
 })

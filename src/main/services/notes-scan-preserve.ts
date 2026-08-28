@@ -6,6 +6,21 @@ import type { MeetingNotesContent, NoteItem, NoteSourceRange } from '../../share
 export const TICKET_RE = /\bDD[- ]?\d{3,5}\b/gi
 export const WRITER_QUANTITY_RE =
   /\b(?:\d+\s+starts?|(?:six|6)\s+cancels?|\d+(?:\.\d+){1,3})\b/gi
+const SPOKEN_DIGIT =
+  'zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen'
+const WINDOWS_MEMORY_SIZE_RE = /\b\d+(?:\.\d+)?\s*(?:gb|gib|mb|mib|tb|tib)\b/gi
+const WINDOWS_SPOKEN_MEMORY_RE = new RegExp(
+  `\\b(?:${SPOKEN_DIGIT}|\\d+)\\s+(?:gb|gib|gig|gigs|gigabytes?|mb|mib|tb|tib)\\b`,
+  'gi'
+)
+const WINDOWS_SPOKEN_VERSION_RE = new RegExp(
+  `\\b(?:${SPOKEN_DIGIT})(?:(?:\\s+dot\\s+|\\s+|-)(?:${SPOKEN_DIGIT})){2,}\\b`,
+  'gi'
+)
+const WINDOWS_SPOKEN_COUNT_RE = new RegExp(
+  `\\b(?:${SPOKEN_DIGIT}|\\d+)\\s+(?:starts?|cancels?|cancellations?)\\b`,
+  'gi'
+)
 
 const GENERIC_GROUP_NAMES = new Set([
   'technical architecture',
@@ -47,14 +62,28 @@ export function ticketsInText(text: string): string[] {
   return ids
 }
 
-export function writerQuantitiesInText(text: string): string[] {
+export function writerQuantitiesInText(
+  text: string,
+  platform: NodeJS.Platform = process.platform
+): string[] {
   const seen = new Set<string>()
   const values: string[] = []
-  for (const match of text.matchAll(new RegExp(WRITER_QUANTITY_RE.source, WRITER_QUANTITY_RE.flags))) {
-    const key = match[0].toLowerCase().replace(/\s+/g, ' ')
-    if (seen.has(key)) continue
-    seen.add(key)
-    values.push(match[0].replace(/\s+/g, ' '))
+  const patterns = [WRITER_QUANTITY_RE]
+  if (platform === 'win32') {
+    patterns.push(
+      WINDOWS_MEMORY_SIZE_RE,
+      WINDOWS_SPOKEN_MEMORY_RE,
+      WINDOWS_SPOKEN_VERSION_RE,
+      WINDOWS_SPOKEN_COUNT_RE
+    )
+  }
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags))) {
+      const key = match[0].toLowerCase().replace(/\s+/g, ' ')
+      if (seen.has(key)) continue
+      seen.add(key)
+      values.push(match[0].replace(/\s+/g, ' '))
+    }
   }
   return values
 }
@@ -283,6 +312,25 @@ export function appendTranscriptTickets(
       working = appendDetail(working, `${ticket} — ${snippet}`, [{ startMs: row.startMs, endMs: row.endMs }])
       seen.add(ticket)
     }
+  }
+  return working
+}
+
+export function appendTranscriptQuantities(
+  content: MeetingNotesContent,
+  rows: readonly { text: string; startMs: number; endMs: number }[],
+  platform: NodeJS.Platform = process.platform
+): MeetingNotesContent {
+  if (platform !== 'win32') return content
+  let working = content
+  for (const row of rows) {
+    const quantities = writerQuantitiesInText(row.text, platform)
+    if (quantities.length === 0) continue
+    const flattened = flattenNotes(working).toLowerCase()
+    const missing = quantities.filter((quantity) => !flattened.includes(quantity.toLowerCase()))
+    if (missing.length === 0) continue
+    const snippet = row.text.trim().replace(/\s+/g, ' ').slice(0, 160)
+    working = appendDetail(working, snippet, [{ startMs: row.startMs, endMs: row.endMs }])
   }
   return working
 }

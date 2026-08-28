@@ -4,6 +4,7 @@ import type { CatalogItem } from '../../../../scripts/notes-writer-probe/groups.
 import type { IaItem } from '../../../../scripts/notes-ia/types.ts'
 import type { MeetingNotesContent, NoteItem, NoteSection } from '../../../shared/types'
 import {
+  appendTranscriptQuantities,
   appendTranscriptTickets,
   chooseScanGroups,
   dropAssertiveTakeaways,
@@ -159,6 +160,61 @@ describe('preserveWriterEntities', () => {
     expect(details.some((row) => /14 starts/i.test(row.text))).toBe(true)
     expect(ticketsInText(details.map((row) => row.text).join(' '))).toContain('DD1417')
   })
+
+  it('reinserts Windows memory sizes the scan dropped', () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      const rows = catalog([
+        iaItem({
+          id: 'ram',
+          title: 'Auto Doc minimum RAM updated to 16GB for Windows',
+          content:
+            'The minimum system specification for Windows was raised from 8GB to 16GB.',
+          sources: [{ startMs: 1_061_000, endMs: 1_071_000 }]
+        })
+      ])
+      const result = preserveWriterEntities(notes(), rows)
+      const details = result.sections[0]?.supportingDetails ?? []
+      expect(details.some((row) => /16\s*gb/i.test(row.text))).toBe(true)
+      expect(details.some((row) => /8\s*gb/i.test(row.text))).toBe(true)
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: original })
+    }
+  })
+})
+
+describe('appendTranscriptQuantities', () => {
+  it('on Windows reinserts spoken counts and dotted versions from the transcript', () => {
+    const result = appendTranscriptQuantities(
+      notes(),
+      [
+        {
+          text: "Yeah, I mean there's fourteen Starts and Six cancels.",
+          startMs: 22_000,
+          endMs: 26_000
+        },
+        {
+          text: 'So I made a PR and got a one dot one dot three out release.',
+          startMs: 1_040_000,
+          endMs: 1_050_000
+        }
+      ],
+      'win32'
+    )
+    const text = (result.sections[0]?.supportingDetails ?? []).map((row) => row.text).join(' ')
+    expect(text).toMatch(/fourteen Starts/i)
+    expect(text).toMatch(/one dot one dot three/i)
+  })
+
+  it('does nothing on macOS', () => {
+    const result = appendTranscriptQuantities(
+      notes(),
+      [{ text: 'Raised the minimum to 16GB.', startMs: 1000, endMs: 2000 }],
+      'darwin'
+    )
+    expect(result.sections[0]?.supportingDetails).toEqual([])
+  })
 })
 
 describe('appendTranscriptTickets', () => {
@@ -200,5 +256,16 @@ describe('writer-card entity extractors', () => {
     expect(writerQuantitiesInText(standup).some((value) => /14 starts/i.test(value))).toBe(true)
     expect(writerQuantitiesInText(standup).some((value) => /six cancels/i.test(value))).toBe(true)
     expect(ticketsInText(sync)).toContain('DD1417')
+  })
+
+  it('on Windows also keeps memory sizes and spoken dotted versions', () => {
+    const ram = 'Raised the Windows minimum from 8GB to 16GB.'
+    const spoken = 'Use the four-three-five build for the week.'
+    expect(writerQuantitiesInText(ram, 'win32').some((value) => /8\s*gb/i.test(value))).toBe(true)
+    expect(writerQuantitiesInText(ram, 'win32').some((value) => /16\s*gb/i.test(value))).toBe(true)
+    expect(writerQuantitiesInText(spoken, 'win32').some((value) => /four-three-five/i.test(value))).toBe(
+      true
+    )
+    expect(writerQuantitiesInText(ram, 'darwin')).toEqual([])
   })
 })

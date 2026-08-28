@@ -1285,6 +1285,14 @@ export class OllamaManager extends EventEmitter {
     this.killManagedLlamaServers(reason, meetingId)
   }
 
+  snapshotManagedRunners(): ManagedLlamaServer[] {
+    try {
+      return this.listManagedLlamaServers()
+    } catch {
+      return []
+    }
+  }
+
   /**
    * Kill managed llama-server runners whose RSS has grown past the recycle
    * threshold. Ollama respawns a fresh runner on the next request, restoring

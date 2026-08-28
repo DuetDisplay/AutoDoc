@@ -34,7 +34,7 @@ import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
-import { OllamaProvider } from './services/llm'
+import { isTightWriterEnabled, OllamaProvider } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService } from './services/segmentation'
@@ -1111,7 +1111,8 @@ app.whenReady().then(async () => {
       maybeRecycleRunner: async (meetingId?: string) => {
         await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
       },
-      recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime()
+      recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
+      snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
     }
   )
   managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
@@ -1377,6 +1378,84 @@ app.whenReady().then(async () => {
   const pendingReprocessNotificationMeetingIds = new Set<string>()
   const markReprocessNotificationPending = (meetingId: string): void => {
     pendingReprocessNotificationMeetingIds.add(meetingId)
+  }
+  const maybeStartDevTranscriptionRetry = (): void => {
+    const meetingId = process.env.AUTODOC_TEST_RETRY_TRANSCRIPTION_MEETING_ID?.trim()
+    if (!meetingId) return
+    void (async () => {
+      try {
+        await waitUntilOllamaReady()
+        if (pendingRecoveryPromise) {
+          await pendingRecoveryPromise
+        }
+        markReprocessNotificationPending(meetingId)
+        logAutodocEvent({
+          area: 'transcription',
+          message: 'dev-only transcription retry starting',
+          meetingId,
+          context: {
+            cpuLatch: process.env.AUTODOC_TEST_NOTES_CPU === '1',
+            tightWriter: isTightWriterEnabled(),
+            scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
+            captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null
+          }
+        })
+        transcriptionService.retry(meetingId)
+      } catch (error) {
+        logAutodocFailure({
+          area: 'transcription',
+          message: 'dev-only transcription retry failed to start',
+          meetingId,
+          error
+        })
+      }
+    })()
+  }
+  const maybeStartDevNotesRetry = (): void => {
+    if (process.env.AUTODOC_TEST_RETRY_TRANSCRIPTION_MEETING_ID?.trim()) return
+    const meetingId = process.env.AUTODOC_TEST_RETRY_NOTES_MEETING_ID?.trim()
+    if (!meetingId) return
+    void (async () => {
+      try {
+        await waitUntilOllamaReady()
+        if (pendingRecoveryPromise) {
+          await pendingRecoveryPromise
+        }
+        const requestedModel = process.env.AUTODOC_TEST_NOTES_MODEL?.trim()
+        if (requestedModel) {
+          await ollamaManager?.pullModel(requestedModel)
+        }
+        markReprocessNotificationPending(meetingId)
+        logAutodocEvent({
+          area: 'segmentation',
+          message: 'dev-only notes retry starting',
+          meetingId,
+          context: {
+            cpuLatch: process.env.AUTODOC_TEST_NOTES_CPU === '1',
+            numCtxOverride: process.env.AUTODOC_TEST_NOTES_NUM_CTX ?? null,
+            chunkCharsOverride: process.env.AUTODOC_TEST_NOTES_CHUNK_CHARS ?? null,
+            compactWriter: process.env.AUTODOC_TEST_NOTES_COMPACT === '1',
+            tightWriter: isTightWriterEnabled(),
+            wholeMeetingBudget: process.env.AUTODOC_TEST_NOTES_WHOLE_MEETING_BUDGET === '1',
+            scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
+            captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null,
+            notesModel: process.env.AUTODOC_TEST_NOTES_MODEL ?? null,
+            numBatch: process.env.AUTODOC_TEST_NOTES_NUM_BATCH ?? null,
+            numThread: process.env.AUTODOC_TEST_NOTES_NUM_THREAD ?? null,
+            shortPrompt: process.env.AUTODOC_TEST_NOTES_SHORT_PROMPT === '1',
+            skipScanRewrites: process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES === '1'
+          }
+        })
+        segmentationService.retry(meetingId)
+      } catch (error) {
+        logAutodocFailure({
+          area: 'segmentation',
+          message: 'dev-only notes retry failed to start',
+          meetingId,
+          error
+        })
+      }
+    })()
   }
   segmentationService.onComplete((meetingId) => {
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
@@ -2008,6 +2087,8 @@ app.whenReady().then(async () => {
       ensureOllamaRunning()
       void whisperManager.resolveWindowsTranscriptionBackend()
     }
+    maybeStartDevTranscriptionRetry()
+    maybeStartDevNotesRetry()
     if (!isRealSetupTest) {
       detectionService.start()
     }

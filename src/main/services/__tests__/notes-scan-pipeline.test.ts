@@ -435,4 +435,29 @@ describe('runNotesScanPipeline rewrite policy', () => {
     expect(result.compressSkips).toBe(0)
     expect(result.compressFallbacks).toBe(3)
   })
+
+  it('skips grouping and overview LLM when skipStructureLlm is set', async () => {
+    const calls = recordCalls()
+    const result = await runNotesScanPipeline(fourTopicSegments(), {
+      title: 'Standup',
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      rewritePolicy: {
+        maxAttemptsPerSection: 1,
+        bailAfterConsecutiveRejects: 0,
+        skipRewrites: true,
+        skipStructureLlm: true
+      },
+      generate: async (request) => {
+        calls.kinds.push(promptKind(request.prompt))
+        throw new Error(`unexpected generate: ${request.prompt.slice(0, 40)}`)
+      }
+    })
+
+    expect(calls.kinds).toEqual([])
+    expect(result.overviewFailed).toBe(true)
+    expect(result.overviewFailureReasons).toEqual(['structure-llm-skipped'])
+    expect(result.content.overview?.text).toMatch(/opt-in|login|analytics|latency/i)
+    expect(result.restyleSkips).toBe(4)
+    expect(result.compressSkips).toBeGreaterThan(0)
+  })
 })

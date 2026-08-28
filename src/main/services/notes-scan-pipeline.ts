@@ -40,6 +40,7 @@ import { meetingSpanSources, parseScanMarkdown } from './notes-scan-markdown'
 import { NOTES_SCAN_PROGRESS_END, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import { applyNotesBudget, countWords } from './notes-scan-budget'
 import {
+  appendTranscriptQuantities,
   appendTranscriptTickets,
   chooseScanGroups,
   dropAssertiveTakeaways,
@@ -65,6 +66,10 @@ export interface NotesRewritePolicy {
   maxAttemptsPerSection: 1 | 2
   /** After this many consecutive rejections, stop attempting LLM rewrites for the remaining sections/chunks (null = never bail, today's behavior). */
   bailAfterConsecutiveRejects: number | null
+  /** Skip restyle and compress entirely (eval-only Item 4 extreme). */
+  skipRewrites?: boolean
+  /** Skip grouping and overview LLM calls; use writer/catalog groups and fallback overview. */
+  skipStructureLlm?: boolean
 }
 
 export const DEFAULT_NOTES_REWRITE_POLICY: NotesRewritePolicy = {
@@ -128,6 +133,7 @@ export function restyleRejectReason(
 }
 
 function rewriteBailReached(consecutiveRejects: number, policy: NotesRewritePolicy): boolean {
+  if (policy.skipRewrites) return true
   return (
     policy.bailAfterConsecutiveRejects != null &&
     consecutiveRejects >= policy.bailAfterConsecutiveRejects
@@ -257,21 +263,21 @@ export async function runNotesScanPipeline(
   const groupingLimits = { minGroups: 2, maxGroups: 8 }
 
   const groupPlan = planArmEGroup(topical, seed)
-  let groupingText = await generateFromPlan(options.generate, groupPlan)
-  let groupingValidation = parseGroupingJson(groupingText, topicalIds, topical, groupingLimits)
-  if (!groupingValidation.ok) {
-    groupingText = await generateFromPlan(
-      options.generate,
-      planArmEGroup(topical, armERetrySeed())
-    )
-    groupingValidation = parseGroupingJson(groupingText, topicalIds, topical, groupingLimits)
-  }
   const writerTopicGroups = fallbackWriterTopicGroups(topical)
-  const chosen = chooseScanGroups(
-    groupingValidation.ok ? groupingValidation.groups : null,
-    writerTopicGroups,
-    topical
-  )
+  let llmGroups: TopicGroup[] | null = null
+  if (!rewritePolicy.skipStructureLlm) {
+    let groupingText = await generateFromPlan(options.generate, groupPlan)
+    let groupingValidation = parseGroupingJson(groupingText, topicalIds, topical, groupingLimits)
+    if (!groupingValidation.ok) {
+      groupingText = await generateFromPlan(
+        options.generate,
+        planArmEGroup(topical, armERetrySeed())
+      )
+      groupingValidation = parseGroupingJson(groupingText, topicalIds, topical, groupingLimits)
+    }
+    llmGroups = groupingValidation.ok ? groupingValidation.groups : null
+  }
+  const chosen = chooseScanGroups(llmGroups, writerTopicGroups, topical)
   const groupingFallback =
     chosen.groupingFallback && (chosen.groups.length === 0 || fallbackBucketGroups(topical).length === 0)
   const groups =
@@ -423,30 +429,35 @@ export async function runNotesScanPipeline(
   let overviewFailed = false
   let overviewFailureReasons: string[] = []
   reportProgress('overview', 0.9)
-  try {
-    const overview = await generateNotesOverview(
-      presented.markdown,
-      (request) =>
-        options.generate({
-          ...request,
-          seed,
-          stop: []
-        }),
-      meetingSpan,
-      { numCtx: groupPlan.request.options.num_ctx }
-    )
-    overviewFailed = !overview.usedModel
-    overviewFailureReasons = overview.failureReasons
-    content = dropAssertiveTakeaways({
-      ...content,
-      overview: overview.overview,
-      keyTakeaways: overview.keyTakeaways
-    })
-  } catch (error) {
+  if (rewritePolicy.skipStructureLlm) {
     overviewFailed = true
-    overviewFailureReasons = [
-      `overview pass threw: ${error instanceof Error ? error.message : String(error)}`
-    ]
+    overviewFailureReasons = ['structure-llm-skipped']
+  } else {
+    try {
+      const overview = await generateNotesOverview(
+        presented.markdown,
+        (request) =>
+          options.generate({
+            ...request,
+            seed,
+            stop: []
+          }),
+        meetingSpan,
+        { numCtx: groupPlan.request.options.num_ctx }
+      )
+      overviewFailed = !overview.usedModel
+      overviewFailureReasons = overview.failureReasons
+      content = dropAssertiveTakeaways({
+        ...content,
+        overview: overview.overview,
+        keyTakeaways: overview.keyTakeaways
+      })
+    } catch (error) {
+      overviewFailed = true
+      overviewFailureReasons = [
+        `overview pass threw: ${error instanceof Error ? error.message : String(error)}`
+      ]
+    }
   }
   if (!content.overview?.text.trim()) {
     const fallbackText = fallbackMeetingOverviewFromNotes(content.sections, options.title)
@@ -467,6 +478,9 @@ export async function runNotesScanPipeline(
   const transcript = options.transcript ?? []
   if (transcript.length > 0) {
     content = appendTranscriptTickets(content, transcript)
+    if (process.platform === 'win32') {
+      content = appendTranscriptQuantities(content, transcript)
+    }
   }
   const durationMs = meetingSpan[0] ? meetingSpan[0].endMs - meetingSpan[0].startMs : 0
   content = applyNotesBudget(content, durationMs)
