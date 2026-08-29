@@ -446,7 +446,7 @@ function Bullet({
   if (option === 'option-1') {
     return (
       <div
-        className={`group grid grid-cols-[52px_minmax(0,1fr)_auto] gap-x-3 py-1.5 ${parsed.agreed ? 'border-l-2 border-sage pl-3' : ''}`}
+        className={`group grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-3 py-1.5 ${parsed.agreed ? 'border-l-2 border-sage pl-3' : ''}`}
       >
         <div className="pt-0.5 text-right">
           {showTime ? (
@@ -456,7 +456,7 @@ function Bullet({
               className="text-[11px] tabular-nums text-ink-faint hover:text-ink"
               title={`Jump to ${formatClock(start)}`}
             >
-              {formatClock(start)}
+              ▶ {formatClock(start)}
             </button>
           ) : null}
         </div>
@@ -659,7 +659,7 @@ function SubBullet({
     <div
       data-testid={`sub-${item.id}`}
       className={`group flex items-start gap-2 py-0.5 ${
-        option === 'option-1' ? 'pl-[64px]' : 'pl-5'
+        option === 'option-1' ? 'pl-[76px]' : 'pl-5'
       }`}
     >
       <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
@@ -982,7 +982,7 @@ export function NotesV2Document({
               {onWrite ? (
                 <button
                   type="button"
-                  className={`mt-1 text-[11px] font-semibold text-ink-faint hover:text-sage ${option === 'option-1' ? 'pl-[64px]' : ''}`}
+                  className={`mt-1 text-[11px] font-semibold text-ink-faint hover:text-sage ${option === 'option-1' ? 'pl-[76px]' : ''}`}
                   onClick={() => addKeyPoint(section)}
                 >
                   + Add

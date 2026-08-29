@@ -262,7 +262,7 @@ describe('NotesV2Document', () => {
     expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 1' }))
-    await userEvent.click(screen.getByRole('button', { name: '0:01' }))
+    await userEvent.click(screen.getByRole('button', { name: '▶ 0:01' }))
     expect(onSeek).toHaveBeenCalledWith(1200)
   })
 
@@ -296,7 +296,7 @@ describe('NotesV2Document', () => {
       screen.getByText('Release the free tier at a 50/50 split after smoke testing passes.')
     ).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '0:05' }))
+    await userEvent.click(screen.getByRole('button', { name: '▶ 0:05' }))
     expect(onSeek).toHaveBeenLastCalledWith(5200)
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
