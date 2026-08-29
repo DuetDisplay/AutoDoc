@@ -26,7 +26,7 @@ function notes(): MeetingNotesV2 {
     },
     keyTakeaways: [
       {
-        id: 't1',
+        id: 'lossless-takeaway:t1',
         title: 'Collect login events',
         topic: null,
         owner: null,
@@ -38,7 +38,7 @@ function notes(): MeetingNotesV2 {
     ],
     sections: [
       {
-        id: 's1',
+        id: 'lossless-section:topical:s1',
         title: 'Analytics',
         summary: null,
         keyPoints: [
@@ -92,6 +92,20 @@ function notes(): MeetingNotesV2 {
       }
     ]
   }
+}
+
+/** Notes saved before the lossless presenter carry no lossless IDs. */
+function legacyNotes(): MeetingNotesV2 {
+  const sample = notes()
+  sample.keyTakeaways = sample.keyTakeaways.map((item, index) => ({
+    ...item,
+    id: `t${index + 1}`
+  }))
+  sample.sections = sample.sections.map((section, index) => ({
+    ...section,
+    id: `s${index + 1}`
+  }))
+  return sample
 }
 
 describe('NotesV2Document', () => {
@@ -396,7 +410,7 @@ describe('NotesV2Document', () => {
 
   it('nests extra Windows key points when the scan left supporting details empty', () => {
     isWindowsRenderer.mockReturnValue(true)
-    const sample = notes()
+    const sample = legacyNotes()
     sample.sections[0].keyPoints = [
       sample.sections[0].keyPoints[0],
       {
@@ -417,9 +431,9 @@ describe('NotesV2Document', () => {
     expect(screen.getByTestId('sub-p2')).toHaveTextContent('Users have not encountered instability')
   })
 
-  it('keeps the existing Windows presentation while macOS lossless notes are proven', () => {
+  it('keeps the existing Windows presentation for notes without lossless IDs', () => {
     isWindowsRenderer.mockReturnValue(true)
-    const sample = notes()
+    const sample = legacyNotes()
     sample.overview = null
     sample.decisions = [
       {
@@ -465,7 +479,7 @@ describe('NotesV2Document', () => {
   it('edits the displayed Windows next-step title without replacing its detailed body', async () => {
     isWindowsRenderer.mockReturnValue(true)
     const onWrite = vi.fn()
-    const sample = notes()
+    const sample = legacyNotes()
     sample.nextSteps = [
       {
         ...sample.nextSteps[0],
@@ -498,6 +512,74 @@ describe('NotesV2Document', () => {
       owner: 'Norbert',
       provenance: 'user-edited'
     })
+  })
+
+  it('renders the full lossless hierarchy on Windows when the notes carry lossless IDs', async () => {
+    isWindowsRenderer.mockReturnValue(true)
+    const sample = notes()
+    sample.decisions = [
+      {
+        id: 'decision-1',
+        title: 'Release at 50/50',
+        topic: null,
+        owner: null,
+        deadline: null,
+        text: 'Release at 50/50 after smoke testing passes.',
+        sources: [{ startMs: 5200, endMs: 5900 }],
+        provenance: 'generated'
+      }
+    ]
+    sample.nextSteps = [
+      {
+        ...sample.nextSteps[0],
+        title: 'Follow up on QA',
+        text: 'Ask Sergio for a smoke-test estimate as soon as the build arrives.',
+        deadline: 'When the build arrives'
+      }
+    ]
+
+    render(
+      <NotesV2Document
+        notes={sample}
+        title="Release review"
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Key Takeaways' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Decisions' })).toBeInTheDocument()
+    expect(screen.getByText('Release at 50/50 after smoke testing passes.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Next Steps' })).toBeInTheDocument()
+    expect(
+      screen.getByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
+    ).toBeInTheDocument()
+    expect(screen.getByText('Due: When the build arrives')).toBeInTheDocument()
+  })
+
+  it('keeps extra Windows key points as peers when the notes carry lossless IDs', () => {
+    isWindowsRenderer.mockReturnValue(true)
+    const sample = notes()
+    sample.sections[0].keyPoints = [
+      sample.sections[0].keyPoints[0],
+      {
+        ...sample.sections[0].keyPoints[0],
+        id: 'p2',
+        text: 'Users have not encountered instability'
+      }
+    ]
+    sample.sections[0].supportingDetails = []
+    render(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('sub-p2')).not.toBeInTheDocument()
+    expect(screen.getByText('Users have not encountered instability')).toBeInTheDocument()
   })
 
   it('keeps extra Mac key points as peers when supporting details are empty', () => {

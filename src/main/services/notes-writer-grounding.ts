@@ -28,7 +28,7 @@ export interface WriterGroundingLine {
   text: string
 }
 
-export interface GroundedMacWriterRecord {
+export interface GroundedWriterRecord {
   category: WriterGroundingCategory
   title: string
   content: string
@@ -38,9 +38,22 @@ export interface GroundedMacWriterRecord {
   salvaged: boolean
 }
 
+/**
+ * `verbatim` (macOS writer) expects near-verbatim claims and verifies lexical
+ * anchoring, entity casing, and relationship markers against narrow cited
+ * windows. `paraphrase` (Windows tight writer) verifies only the checkable
+ * atoms — quantities, polarity, completion, platform terms, script sanity, and
+ * a minimal citation-overlap guard — against wider synthesis windows, because
+ * the tight writer compresses several lines into one claim by design.
+ */
+export type WriterGroundingMode = 'verbatim' | 'paraphrase'
+
 const MAX_EVIDENCE_SPAN_MS = 30_000
 const CITATION_NEIGHBOR_TOLERANCE_MS = 12_000
 const CITATION_NEIGHBOR_LINE_LIMIT = 2
+/** Tight-writer citations are coarse; paraphrase may look one extra nearby line. */
+const PARAPHRASE_NEIGHBOR_TOLERANCE_MS = 20_000
+const PARAPHRASE_NEIGHBOR_LINE_LIMIT = 3
 
 const WORD_STOP = new Set([
   'about',
@@ -600,6 +613,12 @@ function hasExplicitNegation(text: string): boolean {
   const withoutConversationalResponses = text
     .replace(/\bnot\s+only\b/gi, ' ')
     .replace(/\bno(?:\s+no)?\s+(?:fair|okay|right|sure|yeah|that(?:'s|\s+is))\b/gi, ' ')
+    // "those without" / "users without" names the complement group; it is not
+    // a claim-level negation the way "without evidence" or "did not" is.
+    .replace(/\b(?:those|these|people|users|customers|ones)\s+without\b/gi, ' ')
+    // Contrastive "relative, not absolute" pairs two poles; it does not flip
+    // the surrounding quantitative claim.
+    .replace(/\b[\p{L}]+,\s+not\s+[\p{L}]+\b/giu, ' ')
   return ASSERTION_NEGATION.test(withoutConversationalResponses)
 }
 
@@ -608,10 +627,21 @@ function hasNonAssertiveModality(text: string): boolean {
   if (DECISION_EVIDENCE.test(comparable)) {
     comparable = comparable.replace(/\b(?:can|could|should|would)\b/gi, ' ')
   }
-  return NON_ASSERTIVE_MODALITY.test(comparable) || LEADING_QUESTION.test(comparable.trim())
+  // ASR often stutters a copula at a stitch ("are are that's the rate");
+  // that is not an interrogative lead.
+  const withoutAuxiliaryStutter = comparable
+    .trim()
+    .replace(/^(?:(?:is|are|was|were|do|does|did)\s+){2,}/i, '')
+  return (
+    NON_ASSERTIVE_MODALITY.test(comparable) || LEADING_QUESTION.test(withoutAuxiliaryStutter)
+  )
 }
 
-function relevantEvidenceSpan(summaryClause: string, evidenceClause: string): string {
+function relevantEvidenceSpan(
+  summaryClause: string,
+  evidenceClause: string,
+  leadWords = 8
+): string {
   const summaryTokens = distinctiveTokens(summaryClause)
   const words = [...evidenceClause.matchAll(/[a-z][a-z'-]+/gi)]
   const sharedWordIndexes = words
@@ -621,7 +651,7 @@ function relevantEvidenceSpan(summaryClause: string, evidenceClause: string): st
 
   // Keep enough leading context to retain question/tentative markers such as
   // "do you think" while still excluding unrelated clauses in long ASR rows.
-  const first = Math.max(0, Math.min(...sharedWordIndexes) - 8)
+  const first = Math.max(0, Math.min(...sharedWordIndexes) - leadWords)
   const last = Math.min(words.length - 1, Math.max(...sharedWordIndexes) + 5)
   const start = words[first]?.index ?? 0
   const lastMatch = words[last]
@@ -635,7 +665,10 @@ function relevantEvidenceSpan(summaryClause: string, evidenceClause: string): st
 
 function assertionPolarityIsGrounded(
   summary: string,
-  evidenceLines: readonly WriterGroundingLine[]
+  evidenceLines: readonly WriterGroundingLine[],
+  // Paraphrase mode trims the lead so a negation stitched in from the previous
+  // ASR sentence fragment does not flip the polarity of an unrelated claim.
+  leadWords = 8
 ): boolean {
   const evidenceClauses = evidenceClaimClauses(evidenceLines)
 
@@ -644,7 +677,7 @@ function assertionPolarityIsGrounded(
     if (summaryTokens.size === 0) return true
 
     const scored = evidenceClauses.map(({ text }) => {
-      const relevantText = relevantEvidenceSpan(summaryClause, text)
+      const relevantText = relevantEvidenceSpan(summaryClause, text, leadWords)
       return {
         text: relevantText,
         shared: sharedTokenCount(summaryTokens, distinctiveTokens(relevantText))
@@ -716,7 +749,8 @@ function relationshipRequirementsAreGrounded(
 
 function explicitAlternativesAreGrounded(
   summary: string,
-  evidenceLines: readonly WriterGroundingLine[]
+  evidenceLines: readonly WriterGroundingLine[],
+  skipTentativeClauses = false
 ): boolean {
   const evidenceClauses = evidenceClaimClauses(evidenceLines)
 
@@ -726,6 +760,8 @@ function explicitAlternativesAreGrounded(
       .map((alternative) => alternative.trim())
       .filter(Boolean)
     if (alternatives.length < 2) return true
+    // A tentative option list ("unclear whether A or B") asserts nothing firm.
+    if (skipTentativeClauses && hasNonAssertiveModality(summaryClause)) return true
 
     const directStates = alternatives.map(claimState)
     const inheritedStates = new Set(directStates.filter((state) => state !== 'neutral'))
@@ -935,11 +971,19 @@ function directionsBindToTheirMetrics(
   })
 }
 
-function platformTermsAreGrounded(summary: string, evidence: string): boolean {
+/** "new"/"old" are synthesis modifiers, not platforms; paraphrase mode skips them. */
+const GENERIC_PLATFORM_MODIFIERS = new Set(['new', 'old', 'older', 'previous'])
+
+function platformTermsAreGrounded(
+  summary: string,
+  evidence: string,
+  corePlatformsOnly = false
+): boolean {
   const normalizedSummary = summary.toLowerCase()
   const normalizedEvidence = evidence.toLowerCase()
   return PLATFORM_TERMS.every(
     (term) =>
+      (corePlatformsOnly && GENERIC_PLATFORM_MODIFIERS.has(term)) ||
       !new RegExp(`\\b${term}\\b`).test(normalizedSummary) ||
       new RegExp(`\\b${term}\\b`).test(normalizedEvidence)
   )
@@ -1074,12 +1118,33 @@ function purposeTailsAreGrounded(summary: string, evidence: string): boolean {
 function textIsGrounded(
   summary: string,
   evidenceLines: readonly WriterGroundingLine[],
-  allowAcceptedProposal = false
+  allowAcceptedProposal = false,
+  mode: WriterGroundingMode = 'verbatim'
 ): boolean {
   const trimmed = summary.replace(/\s+/g, ' ').trim()
   if (!trimmed || evidenceLines.length === 0) return false
   if (hasMixedScriptToken(trimmed)) return false
   const evidence = evidenceLines.map((line) => line.text).join(' ')
+
+  if (mode === 'paraphrase') {
+    if (!explicitAlternativesAreGrounded(trimmed, evidenceLines, true)) return false
+    if (!completionClaimsAreGrounded(trimmed, evidenceLines)) return false
+    if (
+      !assertionPolarityIsGrounded(trimmed, evidenceLines, 4) &&
+      !(allowAcceptedProposal && decisionEvidenceSupportsSummary(trimmed, evidenceLines))
+    ) {
+      return false
+    }
+    if (!areQuantitiesGrounded(trimmed, evidence, { allowDerivedQuantities: true })) return false
+    if (!platformTermsAreGrounded(trimmed, evidence, true)) return false
+    // Zero distinctive-token overlap means the citation resolved to unrelated
+    // speech; any real synthesis shares at least one anchor with its source.
+    const summaryTokens = distinctiveTokens(trimmed)
+    if (summaryTokens.size === 0) return true
+    const shared = sharedTokenCount(summaryTokens, distinctiveTokens(evidence))
+    return shared + releaseLifecycleLexicalBonus(trimmed, evidence, shared) >= 1
+  }
+
   if (!explicitAlternativesAreGrounded(trimmed, evidenceLines)) return false
   if (!completionClaimsAreGrounded(trimmed, evidenceLines)) return false
   if (
@@ -1111,12 +1176,16 @@ function textIsGrounded(
   return shared >= 2 && (coverage >= 0.2 || shared >= 4)
 }
 
-function evidenceWindows(lines: readonly WriterGroundingLine[]): WriterGroundingLine[][] {
+function evidenceWindows(
+  lines: readonly WriterGroundingLine[],
+  maxLines = 3,
+  maxSpanMs = MAX_EVIDENCE_SPAN_MS
+): WriterGroundingLine[][] {
   const windows: WriterGroundingLine[][] = []
   for (let start = 0; start < lines.length; start += 1) {
     for (let end = start; end < lines.length; end += 1) {
-      if (end - start >= 3) break
-      if (lines[end]!.startMs - lines[start]!.startMs > MAX_EVIDENCE_SPAN_MS) break
+      if (end - start >= maxLines) break
+      if (lines[end]!.startMs - lines[start]!.startMs > maxSpanMs) break
       windows.push(lines.slice(start, end + 1))
     }
   }
@@ -1126,11 +1195,14 @@ function evidenceWindows(lines: readonly WriterGroundingLine[]): WriterGrounding
 function bestGroundedWindow(
   text: string,
   lines: readonly WriterGroundingLine[],
-  allowAcceptedProposal = false
+  allowAcceptedProposal = false,
+  mode: WriterGroundingMode = 'verbatim'
 ): WriterGroundingLine[] | null {
   const summaryTokens = distinctiveTokens(text)
-  const candidates = evidenceWindows(lines)
-    .filter((window) => textIsGrounded(text, window, allowAcceptedProposal))
+  const windows =
+    mode === 'paraphrase' ? evidenceWindows(lines, 6, 60_000) : evidenceWindows(lines)
+  const candidates = windows
+    .filter((window) => textIsGrounded(text, window, allowAcceptedProposal, mode))
     .map((window) => {
       const evidenceTokens = distinctiveTokens(window.map((line) => line.text).join(' '))
       return {
@@ -1263,7 +1335,9 @@ function splitConservativeClauses(content: string): ConservativeClauseCandidate[
 function linesForCitedRange(
   transcriptLines: readonly WriterGroundingLine[],
   startMs: number,
-  endMs: number
+  endMs: number,
+  toleranceMs = CITATION_NEIGHBOR_TOLERANCE_MS,
+  lineLimit = CITATION_NEIGHBOR_LINE_LIMIT
 ): WriterGroundingLine[] {
   const firstIndex = transcriptLines.findIndex(
     (line) => line.startMs >= startMs && line.startMs <= endMs
@@ -1279,11 +1353,11 @@ function linesForCitedRange(
   }
 
   let expandedFirstIndex = firstIndex
-  for (let count = 0; count < CITATION_NEIGHBOR_LINE_LIMIT && expandedFirstIndex > 0; count += 1) {
+  for (let count = 0; count < lineLimit && expandedFirstIndex > 0; count += 1) {
     if (
       transcriptLines[expandedFirstIndex]!.startMs -
         transcriptLines[expandedFirstIndex - 1]!.startMs >
-      CITATION_NEIGHBOR_TOLERANCE_MS
+      toleranceMs
     ) {
       break
     }
@@ -1293,13 +1367,12 @@ function linesForCitedRange(
   let expandedLastIndex = lastIndex
   for (
     let count = 0;
-    count < CITATION_NEIGHBOR_LINE_LIMIT && expandedLastIndex + 1 < transcriptLines.length;
+    count < lineLimit && expandedLastIndex + 1 < transcriptLines.length;
     count += 1
   ) {
     if (
-      transcriptLines[expandedLastIndex + 1]!.startMs -
-        transcriptLines[expandedLastIndex]!.startMs >
-      CITATION_NEIGHBOR_TOLERANCE_MS
+      transcriptLines[expandedLastIndex + 1]!.startMs - transcriptLines[expandedLastIndex]!.startMs >
+      toleranceMs
     ) {
       break
     }
@@ -1418,16 +1491,19 @@ function resolveCategory(
 }
 
 /**
- * Conservative macOS writer boundary. It never invents replacement prose: when
- * a bundled record is unsafe, it may retain one verbatim grounded clause and
- * discard the rest. Windows does not call this function.
+ * Conservative writer boundary shared across platforms. It never invents
+ * replacement prose: when a bundled record is unsafe, it may retain one
+ * verbatim grounded clause and discard the rest. macOS calls it with exact
+ * line-ID citations; Windows calls it (behind its grounding flag) with the
+ * resolved tight-tuple source range.
  */
-export function sanitizeMacWriterRecords(
+export function sanitizeWriterRecords(
   category: WriterGroundingCategory,
   draft: WriterGroundingDraft,
   citedRange: { startMs: number; endMs: number },
-  transcriptLines: readonly WriterGroundingLine[]
-): GroundedMacWriterRecord[] {
+  transcriptLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode = 'verbatim'
+): GroundedWriterRecord[] {
   const title = draft.title?.replace(/\s+/g, ' ').trim() ?? ''
   const content = draft.content?.replace(/\s+/g, ' ').trim() ?? ''
   if (!title || !content || !noteTextLooksCoherent(content)) return []
@@ -1439,9 +1515,9 @@ export function sanitizeMacWriterRecords(
   )
   if (exactCitedLines.length === 0) return []
 
-  const evaluate = (citedLines: readonly WriterGroundingLine[]): GroundedMacWriterRecord[] => {
+  const evaluate = (citedLines: readonly WriterGroundingLine[]): GroundedWriterRecord[] => {
     const allowAcceptedProposal = category === 'decisions'
-    const wholeWindow = bestGroundedWindow(content, citedLines, allowAcceptedProposal)
+    const wholeWindow = bestGroundedWindow(content, citedLines, allowAcceptedProposal, mode)
     const candidates: Array<{
       content: string
       window: WriterGroundingLine[]
@@ -1454,7 +1530,8 @@ export function sanitizeMacWriterRecords(
             const window = bestGroundedWindow(
               clause.groundingText,
               citedLines,
-              allowAcceptedProposal
+              allowAcceptedProposal,
+              mode
             )
             return window
               ? [
@@ -1468,14 +1545,14 @@ export function sanitizeMacWriterRecords(
           })
           .map((candidate) => ({ ...candidate, salvaged: true }))
 
-    const recordsForCandidates = (records: typeof candidates): GroundedMacWriterRecord[] =>
+    const recordsForCandidates = (records: typeof candidates): GroundedWriterRecord[] =>
       records
         .flatMap((candidate) => {
           if (candidate.salvaged && VAGUE_PASSIVE_FUTURE.test(candidate.content)) return []
           if (!noteTextLooksCoherent(candidate.content)) return []
           const evidence = candidate.window.map((line) => line.text).join(' ')
           const selectedTitle =
-            !candidate.salvaged && textIsGrounded(title, candidate.window)
+            !candidate.salvaged && textIsGrounded(title, candidate.window, false, mode)
               ? title
               : candidate.content
           const resolvedCategory = resolveCategory(
@@ -1520,10 +1597,16 @@ export function sanitizeMacWriterRecords(
   if (exactRecords.length >= recordLimit) return exactRecords
 
   // The 4B writer occasionally ends a citation one local line early or late.
-  // Supplement a partially grounded multi-clause information record from at
-  // most two nearby lines. Action records never borrow a second candidate.
-  // All grounding, binding, and 30-second checks still apply afterward.
-  const neighboringLines = linesForCitedRange(transcriptLines, startMs, endMs)
+  // Supplement a partially grounded multi-clause information record from
+  // nearby lines. Paraphrase uses a wider gap (20s / 3 lines) because tight
+  // citations are coarse resolved ranges; verbatim/Mac stay at 12s / 2.
+  const neighboringLines = linesForCitedRange(
+    transcriptLines,
+    startMs,
+    endMs,
+    mode === 'paraphrase' ? PARAPHRASE_NEIGHBOR_TOLERANCE_MS : CITATION_NEIGHBOR_TOLERANCE_MS,
+    mode === 'paraphrase' ? PARAPHRASE_NEIGHBOR_LINE_LIMIT : CITATION_NEIGHBOR_LINE_LIMIT
+  )
   if (neighboringLines.length === exactCitedLines.length) return exactRecords
 
   const neighboringRecords = evaluate(neighboringLines)
@@ -1546,12 +1629,80 @@ export function sanitizeMacWriterRecords(
     .slice(0, recordLimit)
 }
 
-/** Convenience for focused callers; production parsing keeps up to two grounded clauses. */
-export function sanitizeMacWriterRecord(
+/**
+ * Reports each grounding check independently against the record's best-matching
+ * evidence window. Diagnostic only: sanitizeWriterRecords remains the boundary.
+ */
+export function diagnoseWriterRecord(
   category: WriterGroundingCategory,
   draft: WriterGroundingDraft,
   citedRange: { startMs: number; endMs: number },
-  transcriptLines: readonly WriterGroundingLine[]
-): GroundedMacWriterRecord | null {
-  return sanitizeMacWriterRecords(category, draft, citedRange, transcriptLines)[0] ?? null
+  transcriptLines: readonly WriterGroundingLine[],
+  windowShape: { maxLines: number; maxSpanMs: number } = { maxLines: 3, maxSpanMs: 30_000 }
+): {
+  citedLineCount: number
+  bestWindow: string[]
+  checks: Record<string, boolean>
+  resolvedCategory: WriterGroundingCategory | null
+} | null {
+  const title = draft.title?.replace(/\s+/g, ' ').trim() ?? ''
+  const content = draft.content?.replace(/\s+/g, ' ').trim() ?? ''
+  const startMs = Math.min(citedRange.startMs, citedRange.endMs)
+  const endMs = Math.max(citedRange.startMs, citedRange.endMs)
+  const citedLines = linesForCitedRange(transcriptLines, startMs, endMs)
+  if (!title || !content || citedLines.length === 0) return null
+
+  const summaryTokens = distinctiveTokens(content)
+  const windows = evidenceWindows(citedLines, windowShape.maxLines, windowShape.maxSpanMs)
+  const scored = windows
+    .map((window) => ({
+      window,
+      shared: sharedTokenCount(
+        summaryTokens,
+        distinctiveTokens(window.map((line) => line.text).join(' '))
+      )
+    }))
+    .sort((left, right) => right.shared - left.shared)
+  const best = scored[0]?.window ?? citedLines
+  const evidence = best.map((line) => line.text).join(' ')
+  const shared = scored[0]?.shared ?? 0
+  const lexicalShared = shared + releaseLifecycleLexicalBonus(content, evidence, shared)
+
+  return {
+    citedLineCount: citedLines.length,
+    bestWindow: best.map((line) => line.text),
+    checks: {
+      coherent: noteTextLooksCoherent(content),
+      alternatives: explicitAlternativesAreGrounded(content, best),
+      completion: completionClaimsAreGrounded(content, best),
+      polarity: assertionPolarityIsGrounded(content, best),
+      quantities: areQuantitiesGrounded(content, evidence),
+      quantityBinding: quantitiesBindToTheirMetrics(content, best),
+      directionBinding: directionsBindToTheirMetrics(content, best),
+      platformTerms: platformTermsAreGrounded(content, evidence),
+      platformClaims: platformClaimsAreGrounded(content, best),
+      uppercaseEntities: uppercaseEntitiesAreGrounded(content, evidence),
+      capitalizedEntities: capitalizedEntitiesAreGrounded(content, evidence),
+      purposeTails: purposeTailsAreGrounded(content, evidence),
+      relationships: relationshipMarkersAreGrounded(content, best),
+      coordinatedPlans: coordinatedPlanActionsAreGrounded(content, best),
+      lexicalAnchor:
+        extractQuantityMentions(content).length > 0 ||
+        (summaryTokens.size <= 3
+          ? lexicalShared >= 1
+          : lexicalShared >= 2 && (lexicalShared / summaryTokens.size >= 0.2 || lexicalShared >= 4))
+    },
+    resolvedCategory: resolveCategory(category, title, content, best)
+  }
+}
+
+/** Convenience for focused callers; production parsing keeps up to two grounded clauses. */
+export function sanitizeWriterRecord(
+  category: WriterGroundingCategory,
+  draft: WriterGroundingDraft,
+  citedRange: { startMs: number; endMs: number },
+  transcriptLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode = 'verbatim'
+): GroundedWriterRecord | null {
+  return sanitizeWriterRecords(category, draft, citedRange, transcriptLines, mode)[0] ?? null
 }

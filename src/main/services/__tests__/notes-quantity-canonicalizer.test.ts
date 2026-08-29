@@ -217,4 +217,19 @@ describe('typed quantitative grounding', () => {
     expect(consumed.supported).toBe(false)
     expect(consumed.unsupported.map((mention) => mention.raw)).toEqual(['12%'])
   })
+
+  it('grounds a fractional difference only when derived quantities are allowed and the arithmetic holds', () => {
+    const evidence = 'the 30.88 versus 28.4'
+    const derived = 'a 2.48% absolute difference'
+    const wrong = 'a 2.5% difference'
+    const integerDelta = '3 more bugs'
+    const integerEvidence = 'There were 8 open and 5 closed.'
+
+    expect(areQuantitiesGrounded(derived, evidence, { allowDerivedQuantities: true })).toBe(true)
+    expect(areQuantitiesGrounded(derived, evidence)).toBe(false)
+    expect(areQuantitiesGrounded(wrong, evidence, { allowDerivedQuantities: true })).toBe(false)
+    expect(areQuantitiesGrounded(integerDelta, integerEvidence, { allowDerivedQuantities: true })).toBe(
+      false
+    )
+  })
 })

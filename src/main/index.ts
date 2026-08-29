@@ -34,10 +34,10 @@ import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
-import { isTightWriterEnabled, OllamaProvider } from './services/llm'
+import { isTightWriterEnabled, OllamaProvider, shouldSanitizeWindowsWriterRecords } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
-import { SegmentationService } from './services/segmentation'
+import { SegmentationService, shouldUseLosslessPresentation } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
@@ -1396,6 +1396,7 @@ app.whenReady().then(async () => {
           context: {
             cpuLatch: process.env.AUTODOC_TEST_NOTES_CPU === '1',
             tightWriter: isTightWriterEnabled(),
+            losslessPresentation: shouldUseLosslessPresentation(),
             scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
             captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null
           }
@@ -1436,6 +1437,8 @@ app.whenReady().then(async () => {
             chunkCharsOverride: process.env.AUTODOC_TEST_NOTES_CHUNK_CHARS ?? null,
             compactWriter: process.env.AUTODOC_TEST_NOTES_COMPACT === '1',
             tightWriter: isTightWriterEnabled(),
+            losslessPresentation: shouldUseLosslessPresentation(),
+            writerGrounding: shouldSanitizeWindowsWriterRecords(),
             wholeMeetingBudget: process.env.AUTODOC_TEST_NOTES_WHOLE_MEETING_BUDGET === '1',
             scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
             captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null,

@@ -19,7 +19,7 @@ import {
   extractQuantityMentions,
   quantityMentionsEquivalent
 } from './notes-quantity-canonicalizer'
-import { sanitizeMacWriterRecords, type WriterGroundingCategory } from './notes-writer-grounding'
+import { sanitizeWriterRecords, type WriterGroundingCategory } from './notes-writer-grounding'
 
 export interface LLMProvider {
   summarize(
@@ -271,6 +271,19 @@ export function isCompactWriterEnabled(): boolean {
 export function isTightWriterEnabled(platform: NodeJS.Platform = process.platform): boolean {
   if (process.env.AUTODOC_TEST_NOTES_TIGHT === '0') return false
   return platform === 'win32'
+}
+
+/**
+ * Runs the shared writer-grounding boundary on Windows tight records. On by
+ * default on win32; the kill switch rolls it back. macOS sanitizes
+ * unconditionally on its line-ID path and ignores this flag.
+ */
+export function shouldSanitizeWindowsWriterRecords(
+  platform: NodeJS.Platform = process.platform,
+  disabled: string | undefined = process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
+): boolean {
+  if (platform !== 'win32') return false
+  return disabled !== '1'
 }
 
 /** Dev-only. Override the notes model after the processing profile picks one. */
@@ -561,6 +574,7 @@ export type WriterDropReason =
   | 'duplicate_title'
   | 'invalid_citation'
   | 'ungrounded'
+  | 'grounding_rejected'
 
 export interface WriterDrop {
   reason: WriterDropReason
@@ -1828,6 +1842,9 @@ export class OllamaProvider implements LLMProvider {
                 rawItemCount: parsedChunk.rawItemCount,
                 expandedItemCount: parsedChunk.expandedItemCount,
                 acceptedItemCount: parsedChunk.acceptedItemCount,
+                groundingAccepted: parsedChunk.groundingAccepted,
+                groundingSalvaged: parsedChunk.groundingSalvaged,
+                groundingDropped: parsedChunk.groundingDropped,
                 drops: parsedChunk.drops
               },
               ...(isNotesEvalInstrumentationEnabled()
@@ -2770,6 +2787,9 @@ export class OllamaProvider implements LLMProvider {
     rawItemCount: number
     expandedItemCount: number
     acceptedItemCount: number
+    groundingAccepted: number
+    groundingSalvaged: number
+    groundingDropped: number
     drops: WriterDrop[]
   } {
     let inspected: WriterExpandResult
@@ -2824,6 +2844,10 @@ export class OllamaProvider implements LLMProvider {
       transcriptLines.length > 0
         ? transcriptLines.map((line) => line.startMs)
         : transcriptTimestamps
+    const sanitizeWindowsRecords = shouldSanitizeWindowsWriterRecords()
+    let groundingAccepted = 0
+    let groundingSalvaged = 0
+    let groundingDropped = 0
 
     for (const [rawKey, resultKey] of Object.entries(fieldMap)) {
       const items = parsed[rawKey]
@@ -2870,7 +2894,7 @@ export class OllamaProvider implements LLMProvider {
             transcriptLines,
             false
           )
-          const sanitizedRecords = sanitizeMacWriterRecords(
+          const sanitizedRecords = sanitizeWriterRecords(
             rawKey as WriterGroundingCategory,
             groundedItem,
             citedRange,
@@ -2899,7 +2923,46 @@ export class OllamaProvider implements LLMProvider {
             scopedTranscriptTimestamps,
             transcriptLines
           )
-          if (sourceRange) {
+          if (sourceRange && sanitizeWindowsRecords) {
+            // The tight writer synthesizes paraphrased claims, so grounding
+            // verifies checkable atoms rather than verbatim anchoring.
+            const sanitizedRecords = sanitizeWriterRecords(
+              rawKey as WriterGroundingCategory,
+              groundedItem,
+              sourceRange,
+              transcriptLines,
+              'paraphrase'
+            )
+            if (sanitizedRecords.length === 0) {
+              groundingDropped += 1
+              drops.push({
+                reason: 'grounding_rejected',
+                category: rawKey,
+                detail: String(item.title)
+              })
+              continue
+            }
+            for (const sanitized of sanitizedRecords) {
+              if (sanitized.salvaged) groundingSalvaged += 1
+              else groundingAccepted += 1
+            }
+            acceptedCandidates = sanitizedRecords.map((sanitized) => ({
+              destinationKey: fieldMap[sanitized.category],
+              destinationCategory: CATEGORY_MAP[sanitized.category],
+              item: {
+                ...groundedItem,
+                title: sanitized.title,
+                content: sanitized.content,
+                deadline: sanitized.deadline,
+                sourceStartMs: sanitized.sourceStartMs,
+                sourceEndMs: sanitized.sourceEndMs
+              },
+              sourceRange: {
+                startMs: sanitized.sourceStartMs,
+                endMs: sanitized.sourceEndMs
+              }
+            }))
+          } else if (sourceRange) {
             acceptedCandidates = [
               {
                 destinationKey: resultKey,
@@ -2953,6 +3016,9 @@ export class OllamaProvider implements LLMProvider {
       rawItemCount: inspected.rawItemCount,
       expandedItemCount: inspected.expandedItemCount,
       acceptedItemCount: this.flattenSegments(result).length,
+      groundingAccepted,
+      groundingSalvaged,
+      groundingDropped,
       drops
     }
   }
@@ -2965,6 +3031,9 @@ export class OllamaProvider implements LLMProvider {
       rawItemCount: number
       expandedItemCount: number
       acceptedItemCount: number
+      groundingAccepted: number
+      groundingSalvaged: number
+      groundingDropped: number
       drops: WriterDrop[]
     }
   ): Promise<void> {

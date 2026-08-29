@@ -9,6 +9,7 @@ import type {
 import { fallbackMeetingOverviewFromNotes } from '../../../shared/notes-overview-text'
 import { displayNoteSectionHierarchy } from '../../../shared/notes-section-display'
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
+import { notesUseLosslessPresentation } from '../../../shared/notes-lossless-ids'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { renderNoteMarkup } from './NoteMarkup'
 
@@ -29,11 +30,11 @@ function earliestStart(sources: readonly NoteSourceRange[]): number | null {
 function meetingSummary(
   notes: MeetingNotesV2,
   title: string | undefined,
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
 ): string {
   const overview = notes.overview?.text.trim()
   if (overview) return overview
-  if (!useMacLosslessPresentation) return fallbackMeetingOverviewFromNotes(notes.sections, title)
+  if (!useLosslessPresentation) return fallbackMeetingOverviewFromNotes(notes.sections, title)
   return fallbackMeetingOverviewFromNotes(
     [
       ...notes.sections,
@@ -344,7 +345,7 @@ function JumpButton({
 
 function NextStepRow({
   item,
-  useMacLosslessPresentation,
+  useLosslessPresentation,
   meetingSpan,
   onSeek,
   onSave,
@@ -353,7 +354,7 @@ function NextStepRow({
   onDelete
 }: {
   item: NoteItem
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -363,10 +364,10 @@ function NextStepRow({
 }): ReactElement {
   const title = item.title?.trim() ?? ''
   const body = item.text.trim()
-  const label = useMacLosslessPresentation ? body || title : title || body
-  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && body && title !== body)
+  const label = useLosslessPresentation ? body || title : title || body
+  const hasDistinctTitle = Boolean(useLosslessPresentation && title && body && title !== body)
   const saveLabel =
-    !useMacLosslessPresentation && title && onSaveTitle
+    !useLosslessPresentation && title && onSaveTitle
       ? (text: string) => onSaveTitle(item.id, text)
       : onSave
         ? (text: string) => onSave(item.id, text)
@@ -389,7 +390,7 @@ function NextStepRow({
               : 'text-[13px] leading-relaxed text-ink'
           }
         />
-        {useMacLosslessPresentation && (item.owner || item.deadline || onSaveOwner) ? (
+        {useLosslessPresentation && (item.owner || item.deadline || onSaveOwner) ? (
           <div className="flex min-h-4 items-center">
             <OwnerEdit
               owner={item.owner}
@@ -416,7 +417,7 @@ function NextStepRow({
 
 function Bullet({
   item,
-  useMacLosslessPresentation,
+  useLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -425,7 +426,7 @@ function Bullet({
   deleteLabel = 'Delete note'
 }: {
   item: NoteItem
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -435,7 +436,7 @@ function Bullet({
 }): ReactElement {
   const parsed = stripAgreed(item.text)
   const title = item.title?.trim() ?? ''
-  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && title !== parsed.text)
+  const hasDistinctTitle = Boolean(useLosslessPresentation && title && title !== parsed.text)
   const start = earliestStart(item.sources)
   const showTime = !isMeetingSpanOnly(item.sources, meetingSpan) && start != null
   const saveText = onSave
@@ -522,7 +523,7 @@ function Bullet({
 
 function DecisionsSection({
   items,
-  useMacLosslessPresentation,
+  useLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -530,7 +531,7 @@ function DecisionsSection({
   onDelete
 }: {
   items: readonly NoteItem[]
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -543,7 +544,7 @@ function DecisionsSection({
     <Bullet
       key={item.id}
       item={item}
-      useMacLosslessPresentation={useMacLosslessPresentation}
+      useLosslessPresentation={useLosslessPresentation}
       option={option}
       meetingSpan={meetingSpan}
       onSeek={onSeek}
@@ -617,7 +618,7 @@ function KeyTakeawaysSection({
         <Bullet
           key={item.id}
           item={item}
-          useMacLosslessPresentation
+          useLosslessPresentation
           option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
@@ -632,7 +633,7 @@ function KeyTakeawaysSection({
 
 function SubBullet({
   item,
-  useMacLosslessPresentation,
+  useLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -640,7 +641,7 @@ function SubBullet({
   onDelete
 }: {
   item: NoteItem
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -649,7 +650,7 @@ function SubBullet({
 }): ReactElement {
   const parsed = stripAgreed(item.text)
   const title = item.title?.trim() ?? ''
-  const hasDistinctTitle = Boolean(useMacLosslessPresentation && title && title !== parsed.text)
+  const hasDistinctTitle = Boolean(useLosslessPresentation && title && title !== parsed.text)
   const saveText = onSave
     ? (text: string) => onSave(item.id, parsed.agreed ? `Agreed: ${text}` : text)
     : undefined
@@ -698,7 +699,7 @@ function SubBullet({
 function BulletGroup({
   item,
   children,
-  useMacLosslessPresentation,
+  useLosslessPresentation,
   option,
   meetingSpan,
   onSeek,
@@ -707,7 +708,7 @@ function BulletGroup({
 }: {
   item: NoteItem
   children: readonly NoteItem[]
-  useMacLosslessPresentation: boolean
+  useLosslessPresentation: boolean
   option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -718,7 +719,7 @@ function BulletGroup({
     <div>
       <Bullet
         item={item}
-        useMacLosslessPresentation={useMacLosslessPresentation}
+        useLosslessPresentation={useLosslessPresentation}
         option={option}
         meetingSpan={meetingSpan}
         onSeek={onSeek}
@@ -731,7 +732,7 @@ function BulletGroup({
             <SubBullet
               key={child.id}
               item={child}
-              useMacLosslessPresentation={useMacLosslessPresentation}
+              useLosslessPresentation={useLosslessPresentation}
               option={option}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
@@ -763,12 +764,12 @@ export function NotesV2Document({
       ? 'option-2'
       : 'option-1'
   })
-  const useMacLosslessPresentation = !isWindowsRenderer()
-  const summary = meetingSummary(notes, title, useMacLosslessPresentation)
+  const useLosslessPresentation = notesUseLosslessPresentation(notes)
+  const summary = meetingSummary(notes, title, useLosslessPresentation)
 
   const saveItem = (itemId: string, text: string): void => {
     onWrite?.(
-      mapNotesItems(notes, itemId, (item) => markEdited(item, text, useMacLosslessPresentation))
+      mapNotesItems(notes, itemId, (item) => markEdited(item, text, useLosslessPresentation))
     )
   }
   const saveItemTitle = (itemId: string, itemTitle: string): void => {
@@ -870,7 +871,7 @@ export function NotesV2Document({
         </div>
       ) : null}
 
-      {useMacLosslessPresentation ? (
+      {useLosslessPresentation ? (
         <KeyTakeawaysSection
           items={notes.keyTakeaways}
           option={option}
@@ -881,10 +882,10 @@ export function NotesV2Document({
         />
       ) : null}
 
-      {useMacLosslessPresentation && option === 'option-2' ? (
+      {useLosslessPresentation && option === 'option-2' ? (
         <DecisionsSection
           items={notes.decisions}
-          useMacLosslessPresentation={useMacLosslessPresentation}
+          useLosslessPresentation={useLosslessPresentation}
           option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
@@ -905,7 +906,7 @@ export function NotesV2Document({
             <NextStepRow
               key={item.id}
               item={item}
-              useMacLosslessPresentation={useMacLosslessPresentation}
+              useLosslessPresentation={useLosslessPresentation}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
               onSaveTitle={onWrite ? saveItemTitle : undefined}
@@ -935,7 +936,10 @@ export function NotesV2Document({
           </h2>
         ) : null}
         {notes.sections.map((section) => {
-          const hierarchy = displayNoteSectionHierarchy(section, isWindowsRenderer())
+          const hierarchy = displayNoteSectionHierarchy(
+            section,
+            isWindowsRenderer() && !useLosslessPresentation
+          )
           const extra = hierarchy.supportingDetails
           const lastParentIndex = hierarchy.keyPoints.length - 1
           return (
@@ -955,7 +959,7 @@ export function NotesV2Document({
                   key={item.id}
                   item={item}
                   children={index === lastParentIndex ? extra : []}
-                  useMacLosslessPresentation={useMacLosslessPresentation}
+                  useLosslessPresentation={useLosslessPresentation}
                   option={option}
                   meetingSpan={meetingSpan}
                   onSeek={onSeek}
@@ -967,7 +971,7 @@ export function NotesV2Document({
                     <Bullet
                       key={item.id}
                       item={item}
-                      useMacLosslessPresentation={useMacLosslessPresentation}
+                      useLosslessPresentation={useLosslessPresentation}
                       option={option}
                       meetingSpan={meetingSpan}
                       onSeek={onSeek}
@@ -998,10 +1002,10 @@ export function NotesV2Document({
         ) : null}
       </div>
 
-      {useMacLosslessPresentation && option === 'option-1' ? (
+      {useLosslessPresentation && option === 'option-1' ? (
         <DecisionsSection
           items={notes.decisions}
-          useMacLosslessPresentation={useMacLosslessPresentation}
+          useLosslessPresentation={useLosslessPresentation}
           option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
@@ -1020,7 +1024,7 @@ export function NotesV2Document({
             <NextStepRow
               key={item.id}
               item={item}
-              useMacLosslessPresentation={useMacLosslessPresentation}
+              useLosslessPresentation={useLosslessPresentation}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
               onSaveTitle={onWrite ? saveItemTitle : undefined}

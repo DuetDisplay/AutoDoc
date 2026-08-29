@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  sanitizeMacWriterRecord,
-  sanitizeMacWriterRecords,
+  sanitizeWriterRecord,
+  sanitizeWriterRecords,
   type WriterGroundingLine
 } from '../notes-writer-grounding'
 
-describe('sanitizeMacWriterRecord', () => {
+describe('sanitizeWriterRecord', () => {
   it('does not mistake the first word of a sentence for an unsupported proper name', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Opted-in tester count',
@@ -23,7 +23,7 @@ describe('sanitizeMacWriterRecord', () => {
     })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Tester count', content: 'There are 16 Nimbus testers.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -34,7 +34,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('keeps a strongly related, safely grounded paraphrase', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Navigation remains confusing',
@@ -53,7 +53,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('localizes polarity and modality within long punctuation-poor ASR rows', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Navigation issue', content: 'Customers find the report confusing to navigate.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -67,7 +67,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toMatchObject({ category: 'information' })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Release sequence',
@@ -86,7 +86,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('drops vague passive fragments produced by conservative clause salvage', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Review process',
@@ -100,7 +100,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('does not use a cited clause fallback without strong subject overlap', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Deployment result', content: 'The deployment completed successfully.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -111,7 +111,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('keeps a cited long-row commitment verbatim when the action paraphrase is too loose', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Prepare reviewer build', content: 'Prepare an internal build for review.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -131,7 +131,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('rejects an action item whose grounded text ends as an incomplete request', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Reproduction request',
@@ -160,7 +160,7 @@ describe('sanitizeMacWriterRecord', () => {
       }
     ]
 
-    const result = sanitizeMacWriterRecord(
+    const result = sanitizeWriterRecord(
       'information',
       {
         title: 'Mac trial start rate behind Windows but converging',
@@ -183,7 +183,7 @@ describe('sanitizeMacWriterRecord', () => {
     expect(result?.content).not.toContain('435')
 
     expect(
-      sanitizeMacWriterRecords(
+      sanitizeWriterRecords(
         'information',
         {
           title: 'Mac trial start rate behind Windows but converging',
@@ -206,7 +206,7 @@ describe('sanitizeMacWriterRecord', () => {
     ]
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'New version shows 5% higher cancellation rate',
@@ -225,7 +225,7 @@ describe('sanitizeMacWriterRecord', () => {
     ]
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Lifetime trial conversion shows 25% increase',
@@ -238,7 +238,7 @@ describe('sanitizeMacWriterRecord', () => {
   })
 
   it('reclassifies a factual result presented under decisions', () => {
-    const result = sanitizeMacWriterRecord(
+    const result = sanitizeWriterRecord(
       'decisions',
       {
         title: 'Build 443 is ahead on Windows',
@@ -253,7 +253,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('rejects a false Stripe action but keeps an explicit first-person commitment', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Review Stripe performance',
@@ -265,7 +265,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Ask Sergio for the QA estimate',
@@ -281,7 +281,7 @@ describe('sanitizeMacWriterRecord', () => {
     })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Handle the follow-up', content: 'Handle the follow-up.' },
         { startMs: 30_000, endMs: 30_000 },
@@ -290,7 +290,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toMatchObject({ category: 'action_items' })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Handle the follow-up', content: 'Handle the follow-up.' },
         { startMs: 40_000, endMs: 40_000 },
@@ -300,7 +300,7 @@ describe('sanitizeMacWriterRecord', () => {
   })
 
   it('tolerates one nearby transcript line when the writer citation ends early', () => {
-    const result = sanitizeMacWriterRecord(
+    const result = sanitizeWriterRecord(
       'action_items',
       {
         title: 'Add local discovery analytics to iOS',
@@ -322,7 +322,7 @@ describe('sanitizeMacWriterRecord', () => {
   })
 
   it('uses at most two nearby lines to salvage a rollout gate without its unsupported platform tail', () => {
-    const results = sanitizeMacWriterRecords(
+    const results = sanitizeWriterRecords(
       'information',
       {
         title: 'Free tier release timing',
@@ -353,7 +353,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('grounds an explicit beta-program plan even when Planned begins the summary', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Plan Android rewrite beta test',
@@ -372,7 +372,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('salvages an Android release commitment before an unsupported QA rationale', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Start Android RC release',
@@ -396,7 +396,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('rejects visibly mixed-script transcription garbage', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Connection report',
@@ -410,7 +410,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('supplements a grounded first clause with a nearby cited-tail detail', () => {
     expect(
-      sanitizeMacWriterRecords(
+      sanitizeWriterRecords(
         'information',
         {
           title: 'Android rewrite beta plan',
@@ -429,7 +429,7 @@ describe('sanitizeMacWriterRecord', () => {
   })
 
   it('rejects a tentative action instead of promoting it to a commitment', () => {
-    const results = sanitizeMacWriterRecords(
+    const results = sanitizeWriterRecords(
       'action_items',
       {
         title: 'Add local connection changes to iOS',
@@ -449,7 +449,7 @@ describe('sanitizeMacWriterRecord', () => {
   })
 
   it('keeps the grounded trial/revenue tradeoff as discussion', () => {
-    const result = sanitizeMacWriterRecord(
+    const result = sanitizeWriterRecord(
       'discussion',
       {
         title: 'More trials can raise revenue despite lower conversion',
@@ -474,7 +474,7 @@ describe('sanitizeMacWriterRecord', () => {
     ]
 
     expect(
-      sanitizeMacWriterRecords(
+      sanitizeWriterRecords(
         'information',
         {
           title: 'Trial starts by platform',
@@ -486,7 +486,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toEqual([])
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Mac is behind', content: 'Mac is behind.' },
         { startMs: 30_000, endMs: 38_000 },
@@ -500,7 +500,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('keeps an exact rollout percentage without a hard-coded metric name', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         {
           title: 'Desktop free tier rollout',
@@ -516,12 +516,12 @@ describe('sanitizeMacWriterRecord', () => {
     const draft = { title: 'Add iOS analytics', content: 'Add iOS analytics.' }
 
     expect(
-      sanitizeMacWriterRecord('action_items', draft, { startMs: 10_000, endMs: 10_000 }, [
+      sanitizeWriterRecord('action_items', draft, { startMs: 10_000, endMs: 10_000 }, [
         { startMs: 10_000, text: 'I will definitely not add iOS analytics.' }
       ])
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Check Stripe', content: 'Check Stripe.' },
         { startMs: 20_000, endMs: 20_000 },
@@ -529,7 +529,7 @@ describe('sanitizeMacWriterRecord', () => {
       )
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Send QA estimate', content: 'Send the QA estimate.' },
         { startMs: 30_000, endMs: 30_000 },
@@ -537,7 +537,7 @@ describe('sanitizeMacWriterRecord', () => {
       )
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Investigate the failure', content: 'Investigate the failure.' },
         { startMs: 40_000, endMs: 40_000 },
@@ -548,7 +548,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('does not attach an unsupported person or causal rationale', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Ping Sergio', content: 'Ping Sergio.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -556,7 +556,7 @@ describe('sanitizeMacWriterRecord', () => {
       )
     ).toBeNull()
 
-    const causal = sanitizeMacWriterRecords(
+    const causal = sanitizeWriterRecords(
       'information',
       { title: 'Release timing', content: 'Release today because QA passed.' },
       { startMs: 20_000, endMs: 28_000 },
@@ -570,7 +570,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('strips unsupported tokenless deadlines and does not borrow a distant action cue', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         {
           title: 'Approve payment',
@@ -583,7 +583,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toMatchObject({ deadline: null })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Review QA estimate', content: 'Review the QA estimate.' },
         { startMs: 20_000, endMs: 40_000 },
@@ -600,7 +600,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('rejects factual summaries contradicted by negation or tentative evidence', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Encryption enabled', content: 'Encryption is enabled.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -609,7 +609,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Release timing', content: 'The release ships Friday.' },
         { startMs: 20_000, endMs: 20_000 },
@@ -618,7 +618,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'discussion',
         { title: 'Release risk', content: 'The release may slip.' },
         { startMs: 30_000, endMs: 30_000 },
@@ -636,7 +636,7 @@ describe('sanitizeMacWriterRecord', () => {
     ]
 
     expect(
-      sanitizeMacWriterRecords(
+      sanitizeWriterRecords(
         'information',
         {
           title: 'Trial starts by platform',
@@ -648,7 +648,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toEqual([])
 
     expect(
-      sanitizeMacWriterRecords(
+      sanitizeWriterRecords(
         'information',
         {
           title: 'Trial and cancellation direction',
@@ -667,7 +667,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('requires causal subjects and objects in the same causal clause', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Pricing caused churn', content: 'Pricing caused churn.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -676,7 +676,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Pricing caused churn', content: 'Pricing caused churn.' },
         { startMs: 20_000, endMs: 20_000 },
@@ -687,7 +687,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('requires the concrete decision object to occur in the decision speech act', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'decisions',
         {
           title: 'Monthly pricing decision',
@@ -704,7 +704,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'decisions',
         {
           title: 'Annual pricing decision',
@@ -718,7 +718,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('grounds a concrete proposal explicitly accepted on the following line', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'decisions',
         {
           title: 'Delay broad launch',
@@ -736,7 +736,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toMatchObject({ category: 'decisions' })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'decisions',
         { title: 'Delay broad launch', content: 'We will delay the broad launch.' },
         { startMs: 20_000, endMs: 22_000 },
@@ -755,7 +755,7 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 10_000, endMs: 50_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 10_000, endMs: 50_000 }, [
         {
           startMs: 10_000,
           text: 'The approval will come later through Play Console.'
@@ -772,7 +772,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 60_000, endMs: 60_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 60_000, endMs: 60_000 }, [
         {
           startMs: 60_000,
           text: 'Approval will be granted via a button in Play Console or an email.'
@@ -788,7 +788,7 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 10_000 }, [
+      sanitizeWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 10_000 }, [
         {
           startMs: 10_000,
           text: 'Android RC will finish testing, so I will start the release today.'
@@ -797,7 +797,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 18_000 }, [
+      sanitizeWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 18_000 }, [
         {
           startMs: 10_000,
           text: 'Android RC will finish testing, so I will start the release today.'
@@ -814,7 +814,7 @@ describe('sanitizeMacWriterRecord', () => {
       title: 'Android RC release status',
       content: 'Android RC testing completed; release scheduled to start today.'
     }
-    const futureOnly = sanitizeMacWriterRecords(
+    const futureOnly = sanitizeWriterRecords(
       'status_updates',
       compoundDraft,
       { startMs: 10_000, endMs: 10_000 },
@@ -828,7 +828,7 @@ describe('sanitizeMacWriterRecord', () => {
     expect(futureOnly.every((record) => !/completed/i.test(record.content))).toBe(true)
 
     expect(
-      sanitizeMacWriterRecord('status_updates', compoundDraft, { startMs: 10_000, endMs: 18_000 }, [
+      sanitizeWriterRecord('status_updates', compoundDraft, { startMs: 10_000, endMs: 18_000 }, [
         {
           startMs: 10_000,
           text: 'Android RC will finish testing, so I will start the release today.'
@@ -850,7 +850,7 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('information', platformDraft, { startMs: 10_000, endMs: 10_000 }, [
+      sanitizeWriterRecord('information', platformDraft, { startMs: 10_000, endMs: 10_000 }, [
         {
           startMs: 10_000,
           text: 'Trial starts increased 14% on Mac and 8% on Windows.'
@@ -858,7 +858,7 @@ describe('sanitizeMacWriterRecord', () => {
       ])
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord('information', platformDraft, { startMs: 20_000, endMs: 20_000 }, [
+      sanitizeWriterRecord('information', platformDraft, { startMs: 20_000, endMs: 20_000 }, [
         { startMs: 20_000, text: platformDraft.content }
       ])
     ).toMatchObject({ category: 'information' })
@@ -868,12 +868,12 @@ describe('sanitizeMacWriterRecord', () => {
       content: 'Build 701 is on Mac and build 702 is on Windows.'
     }
     expect(
-      sanitizeMacWriterRecord('information', buildDraft, { startMs: 30_000, endMs: 30_000 }, [
+      sanitizeWriterRecord('information', buildDraft, { startMs: 30_000, endMs: 30_000 }, [
         { startMs: 30_000, text: 'Build 702 is on Mac and build 701 is on Windows.' }
       ])
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord('information', buildDraft, { startMs: 40_000, endMs: 40_000 }, [
+      sanitizeWriterRecord('information', buildDraft, { startMs: 40_000, endMs: 40_000 }, [
         { startMs: 40_000, text: buildDraft.content }
       ])
     ).toMatchObject({ category: 'information' })
@@ -886,13 +886,13 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 18_000 }, [
+      sanitizeWriterRecord('status_updates', draft, { startMs: 10_000, endMs: 18_000 }, [
         { startMs: 10_000, text: 'Windows client testing will finish tomorrow.' },
         { startMs: 18_000, text: 'Mac client passed QA.' }
       ])
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord('status_updates', draft, { startMs: 30_000, endMs: 30_000 }, [
+      sanitizeWriterRecord('status_updates', draft, { startMs: 30_000, endMs: 30_000 }, [
         { startMs: 30_000, text: 'Windows client passed QA.' }
       ])
     ).toMatchObject({ category: 'status_updates' })
@@ -900,7 +900,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('does not bind completion across desktop or product entity boundaries', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'status_updates',
         {
           title: 'Android RC testing completed',
@@ -915,7 +915,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'status_updates',
         {
           title: 'Android Orchid rewrite testing completed',
@@ -930,7 +930,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'status_updates',
         {
           title: 'Orchid client testing completed',
@@ -945,7 +945,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'status_updates',
         {
           title: 'Orchid client testing completed',
@@ -957,7 +957,7 @@ describe('sanitizeMacWriterRecord', () => {
     ).toMatchObject({ category: 'status_updates' })
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'status_updates',
         {
           title: 'Desktop smoke testing completed',
@@ -976,12 +976,12 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 10_000, endMs: 18_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 10_000, endMs: 18_000 }, [
         { startMs: 10_000, text: 'Code access will be available after review.' },
         { startMs: 18_000, text: 'Link access is unavailable after review.' }
       ])
     ).toBeNull()
-    const relationshipMismatch = sanitizeMacWriterRecord(
+    const relationshipMismatch = sanitizeWriterRecord(
       'information',
       draft,
       { startMs: 30_000, endMs: 38_000 },
@@ -996,7 +996,7 @@ describe('sanitizeMacWriterRecord', () => {
     })
     expect(relationshipMismatch?.content).not.toContain('after review')
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 50_000, endMs: 58_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 50_000, endMs: 58_000 }, [
         { startMs: 50_000, text: 'Code access will be available after review.' },
         { startMs: 58_000, text: 'Link access will be available after review.' }
       ])
@@ -1005,7 +1005,7 @@ describe('sanitizeMacWriterRecord', () => {
 
   it('requires the action body predicate without borrowing support from its title', () => {
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Review deployment report', content: 'Send the deployment report.' },
         { startMs: 10_000, endMs: 10_000 },
@@ -1013,7 +1013,7 @@ describe('sanitizeMacWriterRecord', () => {
       )
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'action_items',
         { title: 'Deployment follow-up', content: 'Review the deployment report.' },
         { startMs: 20_000, endMs: 20_000 },
@@ -1029,7 +1029,7 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 10_000, endMs: 10_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 10_000, endMs: 10_000 }, [
         {
           startMs: 10_000,
           text: 'The rollout metric covers thirty-seven percent of users.'
@@ -1037,7 +1037,7 @@ describe('sanitizeMacWriterRecord', () => {
       ])
     ).toBeNull()
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 20_000, endMs: 20_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 20_000, endMs: 20_000 }, [
         {
           startMs: 20_000,
           text: 'The adoption metric covers thirty-seven percent of users.'
@@ -1061,7 +1061,7 @@ describe('sanitizeMacWriterRecord', () => {
     ]
 
     expect(
-      sanitizeMacWriterRecord('action_items', draft, { startMs: 10_000, endMs: 18_000 }, evidence)
+      sanitizeWriterRecord('action_items', draft, { startMs: 10_000, endMs: 18_000 }, evidence)
     ).toMatchObject({
       category: 'action_items',
       content:
@@ -1069,7 +1069,7 @@ describe('sanitizeMacWriterRecord', () => {
       salvaged: true
     })
 
-    const partiallyGrounded = sanitizeMacWriterRecord(
+    const partiallyGrounded = sanitizeWriterRecord(
       'action_items',
       draft,
       { startMs: 30_000, endMs: 30_000 },
@@ -1081,7 +1081,7 @@ describe('sanitizeMacWriterRecord', () => {
     })
     expect(partiallyGrounded?.content).not.toMatch(/distribute|without/i)
 
-    const inheritedPlanBranch = sanitizeMacWriterRecord(
+    const inheritedPlanBranch = sanitizeWriterRecord(
       'action_items',
       {
         title: 'Rewrite beta plan',
@@ -1122,7 +1122,7 @@ describe('sanitizeMacWriterRecord', () => {
     }
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 10_000, endMs: 10_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 10_000, endMs: 10_000 }, [
         {
           startMs: 10_000,
           text: 'Whenever smoke tests are done, we are going to release it at fifty fifty.'
@@ -1134,7 +1134,7 @@ describe('sanitizeMacWriterRecord', () => {
     })
 
     expect(
-      sanitizeMacWriterRecord('information', draft, { startMs: 20_000, endMs: 20_000 }, [
+      sanitizeWriterRecord('information', draft, { startMs: 20_000, endMs: 20_000 }, [
         {
           startMs: 20_000,
           text: 'Whenever smoke tests are done, we are going to release it at sixty forty.'
@@ -1143,12 +1143,82 @@ describe('sanitizeMacWriterRecord', () => {
     ).toBeNull()
 
     expect(
-      sanitizeMacWriterRecord(
+      sanitizeWriterRecord(
         'information',
         { title: 'Shipping plan', content: 'Ship the customer package.' },
         { startMs: 30_000, endMs: 30_000 },
         [{ startMs: 30_000, text: 'Launch the unrelated campaign.' }]
       )
     ).toBeNull()
+  })
+
+  it('salvages the grounded clause in paraphrase mode when a bundled clause fails the quantity atom', () => {
+    const records = sanitizeWriterRecords(
+      'action_items',
+      {
+        title: 'Start Android RC release',
+        content: 'Begin Android RC release today. Raise the trial price by 12%.'
+      },
+      { startMs: 10_000, endMs: 18_000 },
+      [
+        {
+          startMs: 10_000,
+          text: 'The Android RC finished testing, so I will start the release today.'
+        },
+        { startMs: 18_000, text: 'It passed QA.' }
+      ],
+      'paraphrase'
+    )
+
+    expect(records).toHaveLength(1)
+    expect(records[0].content).toBe('Begin Android RC release today')
+    expect(records[0].salvaged).toBe(true)
+  })
+
+  it('rejects a polarity flip in paraphrase mode', () => {
+    expect(
+      sanitizeWriterRecords(
+        'information',
+        { title: 'Rollout status', content: 'The rollout is not paused.' },
+        { startMs: 10_000, endMs: 10_000 },
+        [{ startMs: 10_000, text: 'The rollout is paused until the crash rate drops.' }],
+        'paraphrase'
+      )
+    ).toEqual([])
+  })
+
+  it('grounds a correctly derived fractional difference in paraphrase mode', () => {
+    // Real m2 spacings: the 6–7% neighbor starts 13.2s after the cited 30.88
+    // line (1_933_154 − 1_919_906). Verbatim's 12s neighbor cap misses it;
+    // paraphrase's 20s / 3-line window must pull it in.
+    const records = sanitizeWriterRecords(
+      'information',
+      {
+        title: 'Cancellation rate comparison',
+        content:
+          'The cancellation rate for users with full features is 30.88% versus 28.4% for those without, indicating a 2.48% absolute difference, or about 6–7% relative.'
+      },
+      { startMs: 1_919_906, endMs: 1_932_574 },
+      [
+        { startMs: 1_916_546, text: 'Um Yeah, the reason.' },
+        {
+          startMs: 1_919_906,
+          text: "Oh you is it this number that you're showing me, the 30.88 versus 28.4. Yeah, so the the true, the true are are are that's the cancellation rate of people who got the full features. The false is the cancellation rate of people who did not get it."
+        },
+        {
+          startMs: 1_933_154,
+          text: "Uh well so two percent is is um Is larger than it seems, right? It's like six or seven percent relative, not absolute."
+        },
+        {
+          startMs: 1_941_442,
+          text: 'Okay. Well, I was I was trying to measure like the statistical significance using the mixed panel.'
+        }
+      ],
+      'paraphrase'
+    )
+
+    expect(records.length).toBeGreaterThanOrEqual(1)
+    expect(records[0]?.salvaged).not.toBe(true)
+    expect(records[0]?.content).toContain('2.48')
   })
 })

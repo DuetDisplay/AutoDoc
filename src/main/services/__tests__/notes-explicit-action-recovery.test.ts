@@ -62,6 +62,36 @@ describe('recoverExplicitTranscriptActions', () => {
     expect(result.segments.actionItems).toEqual([])
   })
 
+  it('rejects object-less looks, status promises, and presentational speech', () => {
+    const result = recoverExplicitTranscriptActions(
+      emptySegments(),
+      [
+        transcript('me', "I'll take a look."),
+        transcript('me', "I'll keep you posted.", { startMs: 2_000, endMs: 3_000 }),
+        transcript('me', "Oh, I'll say here's a good question.", { startMs: 4_000, endMs: 5_000 }),
+        transcript('me', "Well, I'll keep them in the loop after standup.", {
+          startMs: 6_000,
+          endMs: 7_000
+        })
+      ],
+      { localOwnerLabel: 'Me' }
+    )
+
+    expect(result.recoveredActionCount).toBe(0)
+    expect(result.segments.actionItems).toEqual([])
+  })
+
+  it('still recovers a look commitment with a concrete object', () => {
+    const result = recoverExplicitTranscriptActions(
+      emptySegments(),
+      [transcript('me', "I'll take a look at the crash dashboard tomorrow.")],
+      { localOwnerLabel: 'Me' }
+    )
+
+    expect(result.recoveredActionCount).toBe(1)
+    expect(result.segments.actionItems[0].content).toContain('crash dashboard')
+  })
+
   it('recovers the truncated canary commitment without rewriting its purpose', () => {
     const result = recoverExplicitTranscriptActions(
       emptySegments(),

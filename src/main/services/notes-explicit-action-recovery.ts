@@ -159,7 +159,7 @@ const GENERIC_ACTION_HEAD_STOPWORDS = new Set([
 
 const ACTION_LEADING_MODIFIERS = new Set(['definitely', 'just', 'really', 'uh', 'um'])
 const ACTION_LEADING_FILLERS =
-  /^(?:(?:also|always|definitely|just|like|okay|really|uh+|um+|yeah)\b[,\s]*|go\s+ahead\s+and\s+)+/iu
+  /^(?:(?:also|always|definitely|just|like|oh|okay|really|uh+|um+|well|yeah)\b[,\s]*|go\s+ahead\s+and\s+)+/iu
 
 const ACTION_FAMILIES: ReadonlyArray<{ canonical: string; pattern: RegExp }> = [
   { canonical: 'add', pattern: /^(?:add|include|put|extend)$/iu },
@@ -303,6 +303,13 @@ const UNSCOPED_SOCIAL_ACTION =
   /^(?:catch\s+up|meet|speak|talk)(?:\s+(?:to|with))?(?:\s+(?:him|her|me|them|us|you))?(?:\s+(?:again|later|today|tomorrow))?(?:\s+(?:and|at|during|in)\s+(?:stand\s*up|the\s+meeting))?\s*$/iu
 const DEICTIC_SOCIAL_ACTION =
   /^(?:catch\s+up|speak|talk)\s+(?:to|with)\s+(?:him|her|them|you)\s+about\s+(?:it|that|this)\b/iu
+/** "I'll take a look" with no object commits to nothing a reader can act on. */
+const OBJECTLESS_LOOK_ACTION = /^(?:take\s+(?:a\s+)?look|have\s+a\s+look|look)\s*$/iu
+/** Conversational status promises carry no deliverable. */
+const SOCIAL_STATUS_PROMISE =
+  /^keep\s+(?:each\s+other|everyone|him|her|me|them|us|you)\s+(?:posted|updated|in\s+the\s+loop)\b/iu
+/** Presentational speech ("here's ...") introduces content, it does not commit to work. */
+const PRESENTATIONAL_ACTION_HEAD = /^here(?:'s|\s+is)\b/iu
 
 const SCOPED_PRONOUN_REQUEST =
   /\b(?:just\s+)?make\s+sure\s+(?:that\s+)?(?:you\s+)?(?:do|apply|handle)\s+(?:it|that)\s+for\s+(?<scope>both\s+.+)$/iu
@@ -594,7 +601,10 @@ function candidateFromMatch(
     BROKEN_PREPOSITION_SEQUENCE.test(core) ||
     BROKEN_DETAIL_PHRASE.test(core) ||
     UNSCOPED_SOCIAL_ACTION.test(core) ||
-    DEICTIC_SOCIAL_ACTION.test(core)
+    DEICTIC_SOCIAL_ACTION.test(core) ||
+    OBJECTLESS_LOOK_ACTION.test(core) ||
+    SOCIAL_STATUS_PROMISE.test(core) ||
+    PRESENTATIONAL_ACTION_HEAD.test(core)
   ) {
     return null
   }

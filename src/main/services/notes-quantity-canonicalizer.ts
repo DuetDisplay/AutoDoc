@@ -46,6 +46,12 @@ export interface QuantityGroundingOptions {
    * both an overview and a detail section.
    */
   consumeEvidenceMentions?: boolean
+  /**
+   * When true, a fractional summary mention may be grounded as the absolute
+   * difference of two evidence mentions (correct arithmetic, never spoken).
+   * Integer deltas stay ungrounded so coincidental small counts cannot pair.
+   */
+  allowDerivedQuantities?: boolean
 }
 
 export interface QuantityGroundingResult {
@@ -239,8 +245,12 @@ const UNIT_ALIASES: Readonly<Record<string, string>> = {
   megabyte: 'megabyte',
   megabytes: 'megabyte',
   gb: 'gigabyte',
+  gig: 'gigabyte',
+  gigs: 'gigabyte',
   gigabyte: 'gigabyte',
   gigabytes: 'gigabyte',
+  meg: 'megabyte',
+  megs: 'megabyte',
   tb: 'terabyte',
   terabyte: 'terabyte',
   terabytes: 'terabyte',
@@ -1390,6 +1400,107 @@ export function quantityMentionsEquivalent(left: QuantityMention, right: Quantit
   return left.canonical === right.canonical
 }
 
+/**
+ * A range like "8 to 16 gigabytes" is grounded when both endpoints appear in
+ * the evidence, even as separate mentions ("eight gigabytes ... sixteen gigs"):
+ * speakers rarely restate a span as one contiguous phrase.
+ */
+function rangeEndpointsGrounded(
+  range: QuantityMention,
+  evidenceMentions: readonly QuantityMention[]
+): boolean {
+  if (range.kind !== 'range') return false
+  return range.values.every((value) =>
+    evidenceMentions.some((evidence) => {
+      if (evidence.kind === 'number') return evidence.values[0] === value
+      if (evidence.kind !== range.rangeKind) return false
+      if (range.rangeKind === 'unit' && evidence.unit !== range.unit) return false
+      return evidence.values[0] === value
+    })
+  )
+}
+
+function decimalPlaceCount(value: string): number {
+  const dot = value.indexOf('.')
+  return dot < 0 ? 0 : value.length - dot - 1
+}
+
+function mentionScalarValue(mention: QuantityMention): string | null {
+  return mention.values[0] ?? null
+}
+
+function derivedOperandsCompatible(summary: QuantityMention, evidence: QuantityMention): boolean {
+  if (summary.kind === 'unit') {
+    return evidence.kind === 'unit' && evidence.unit === summary.unit
+  }
+  if (summary.kind === 'percentage' || summary.kind === 'number') {
+    return evidence.kind === 'percentage' || evidence.kind === 'number'
+  }
+  return false
+}
+
+/**
+ * A spoken "30.88 versus 28.4" often drops the % sign that the note restores.
+ * Under derived-quantity mode only, a percentage or number may rest on the
+ * other kind at the same scalar value.
+ */
+function scalarValueGrounded(
+  summary: QuantityMention,
+  evidenceMentions: readonly QuantityMention[]
+): number {
+  const summaryValue = mentionScalarValue(summary)
+  if (summaryValue == null) return -1
+  if (summary.kind !== 'percentage' && summary.kind !== 'number') return -1
+  return evidenceMentions.findIndex(
+    (evidence) =>
+      (evidence.kind === 'percentage' || evidence.kind === 'number') &&
+      mentionScalarValue(evidence) === summaryValue
+  )
+}
+
+/**
+ * Accepts a fractional summary value when it equals |a − b| of two compatible
+ * evidence mentions, rounded to the finest decimal precision among the three
+ * so "2.48" matches 30.88 − 28.4 but "2.5" does not.
+ */
+function derivedDifferenceGrounded(
+  summary: QuantityMention,
+  evidenceMentions: readonly QuantityMention[]
+): number {
+  const summaryValue = mentionScalarValue(summary)
+  if (summaryValue == null || !summaryValue.includes('.')) return -1
+  if (!derivedOperandsCompatible(summary, summary)) return -1
+  const target = Number(summaryValue)
+  if (!Number.isFinite(target)) return -1
+
+  for (let left = 0; left < evidenceMentions.length; left += 1) {
+    const first = evidenceMentions[left]!
+    if (!derivedOperandsCompatible(summary, first)) continue
+    const firstValue = mentionScalarValue(first)
+    if (firstValue == null) continue
+    const firstNumber = Number(firstValue)
+    if (!Number.isFinite(firstNumber)) continue
+
+    for (let right = left + 1; right < evidenceMentions.length; right += 1) {
+      const second = evidenceMentions[right]!
+      if (!derivedOperandsCompatible(summary, second)) continue
+      const secondValue = mentionScalarValue(second)
+      if (secondValue == null) continue
+      const secondNumber = Number(secondValue)
+      if (!Number.isFinite(secondNumber)) continue
+      const decimals = Math.max(
+        decimalPlaceCount(summaryValue),
+        decimalPlaceCount(firstValue),
+        decimalPlaceCount(secondValue)
+      )
+      if (Math.abs(firstNumber - secondNumber).toFixed(decimals) === target.toFixed(decimals)) {
+        return left
+      }
+    }
+  }
+  return -1
+}
+
 /** Checks that every quantitative summary mention has compatible evidence. */
 export function checkQuantityGrounding(
   summaryText: string,
@@ -1402,11 +1513,20 @@ export function checkQuantityGrounding(
   const matches: QuantityMentionMatch[] = []
 
   for (const summary of summaryMentions) {
-    const evidenceIndex = evidenceMentions.findIndex(
+    let evidenceIndex = evidenceMentions.findIndex(
       (evidence, index) =>
         (!options.consumeEvidenceMentions || !usedEvidence.has(index)) &&
         quantityMentionsEquivalent(summary, evidence)
     )
+    if (evidenceIndex < 0 && rangeEndpointsGrounded(summary, evidenceMentions)) {
+      evidenceIndex = evidenceMentions.findIndex((evidence) =>
+        evidence.values.includes(summary.values[0]!)
+      )
+    }
+    if (evidenceIndex < 0 && options.allowDerivedQuantities) {
+      evidenceIndex = scalarValueGrounded(summary, evidenceMentions)
+      if (evidenceIndex < 0) evidenceIndex = derivedDifferenceGrounded(summary, evidenceMentions)
+    }
     if (evidenceIndex >= 0 && options.consumeEvidenceMentions) usedEvidence.add(evidenceIndex)
     matches.push({
       summary,

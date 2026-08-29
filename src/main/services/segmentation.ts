@@ -87,14 +87,23 @@ const WINDOWS_TIGHT_SCAN_POLICY: NotesRewritePolicy = {
 }
 
 /**
- * macOS is the proving ground for the model-free, exact-coverage presenter.
- * Windows remains on its current tight scan until the Mac quality gate passes.
+ * The model-free, exact-coverage presenter is on by default on both desktop
+ * platforms; each keeps its own kill switch so QA can roll one platform back
+ * without touching the other.
  */
-export function shouldUseMacLosslessPresentation(
+export function shouldUseLosslessPresentation(
   platform: NodeJS.Platform = process.platform,
-  disabled: string | undefined = process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES
+  flags: {
+    disableMac?: string
+    disableWindows?: string
+  } = {
+    disableMac: process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES,
+    disableWindows: process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES
+  }
 ): boolean {
-  return platform === 'darwin' && disabled !== '1'
+  if (platform === 'darwin') return flags.disableMac !== '1'
+  if (platform === 'win32') return flags.disableWindows !== '1'
+  return false
 }
 
 /**
@@ -642,7 +651,7 @@ export class SegmentationService {
     userReason?: string
     groupingFallback?: boolean
   }> {
-    const presentationMode = shouldUseMacLosslessPresentation() ? 'lossless' : undefined
+    const presentationMode = shouldUseLosslessPresentation() ? 'lossless' : undefined
     if (!this.llmProvider.completePrompt && !presentationMode) {
       return { notesLayout: 'v1' }
     }

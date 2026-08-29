@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { join } from 'path'
 import { BrowserWindow } from 'electron'
-import { SegmentationService, shouldUseMacLosslessPresentation } from '../segmentation'
+import { SegmentationService, shouldUseLosslessPresentation } from '../segmentation'
 import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 import { NotesRepository } from '../notes-repository'
@@ -41,13 +41,21 @@ vi.mock('../autodoc-log', () => ({
 const fsMock = vi.mocked(await import('fs/promises'))
 const cryptoMock = vi.mocked(await import('../crypto'))
 
-describe('shouldUseMacLosslessPresentation', () => {
-  it('enables the proving path only on macOS and supports a rollback switch', () => {
-    expect(shouldUseMacLosslessPresentation('darwin', undefined)).toBe(true)
-    expect(shouldUseMacLosslessPresentation('darwin', '0')).toBe(true)
-    expect(shouldUseMacLosslessPresentation('darwin', '1')).toBe(false)
-    expect(shouldUseMacLosslessPresentation('win32', undefined)).toBe(false)
-    expect(shouldUseMacLosslessPresentation('win32', '0')).toBe(false)
+describe('shouldUseLosslessPresentation', () => {
+  it('keeps macOS default-on with its rollback switch', () => {
+    expect(shouldUseLosslessPresentation('darwin', {})).toBe(true)
+    expect(shouldUseLosslessPresentation('darwin', { disableMac: '0' })).toBe(true)
+    expect(shouldUseLosslessPresentation('darwin', { disableMac: '1' })).toBe(false)
+  })
+
+  it('keeps Windows default-on with its rollback switch', () => {
+    expect(shouldUseLosslessPresentation('win32', {})).toBe(true)
+    expect(shouldUseLosslessPresentation('win32', { disableWindows: '0' })).toBe(true)
+    expect(shouldUseLosslessPresentation('win32', { disableWindows: '1' })).toBe(false)
+  })
+
+  it('leaves other platforms unchanged', () => {
+    expect(shouldUseLosslessPresentation('linux', {})).toBe(false)
   })
 })
 
@@ -216,6 +224,124 @@ describe('SegmentationService', () => {
       })
       if (previousDisable == null) delete process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES
       else process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES = previousDisable
+    }
+  })
+
+  it('persists the default Windows lossless path with full evidence and no scan model calls', async () => {
+    const originalPlatform = process.platform
+    const previousDisable = process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES
+    const scanProvider = createMockProvider()
+    const scanService = new SegmentationService(
+      scanProvider,
+      createMockOllamaManager(),
+      '/mock/home/AutoDoc/recordings'
+    )
+    const promote = vi
+      .spyOn(NotesRepository.prototype, 'promoteLegacyToV2')
+      .mockResolvedValue({} as never)
+    fsMock.readFile.mockRejectedValue({ code: 'ENOENT' } as any)
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    delete process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES
+
+    try {
+      const segments = {
+        decisions: [
+          {
+            id: 'decision-1',
+            meetingId: 'meeting-win-lossless',
+            category: 'decision' as const,
+            topic: 'Release',
+            title: 'Hold release until QA clears',
+            content: 'The release will wait until QA clears.',
+            assignee: null,
+            deadline: null,
+            sourceStartMs: 3_000,
+            sourceEndMs: 4_000
+          }
+        ],
+        actionItems: [
+          {
+            id: 'action-1',
+            meetingId: 'meeting-win-lossless',
+            category: 'action_item' as const,
+            topic: 'Release',
+            title: 'Send the QA estimate',
+            content: 'Send the QA estimate when the build arrives.',
+            assignee: null,
+            deadline: 'When the build arrives',
+            sourceStartMs: 1_000,
+            sourceEndMs: 2_000
+          }
+        ],
+        information: [],
+        discussion: [],
+        statusUpdates: []
+      }
+      const transcripts = [
+        {
+          id: 'transcript-1',
+          meetingId: 'meeting-win-lossless',
+          speaker: 'me',
+          text: "I'll send the QA estimate when the build arrives.",
+          startMs: 1_100,
+          endMs: 1_900,
+          confidence: 1
+        },
+        {
+          id: 'transcript-2',
+          meetingId: 'meeting-win-lossless',
+          speaker: 'them',
+          text: 'The release will wait until QA clears.',
+          startMs: 3_100,
+          endMs: 3_900,
+          confidence: 1
+        }
+      ]
+
+      const result = await (scanService as any).persistScanLayerNotes(
+        'meeting-win-lossless',
+        segments,
+        transcripts
+      )
+
+      expect(result).toEqual({ notesLayout: 'v2', groupingFallback: false })
+      expect(scanProvider.completePrompt).toBeUndefined()
+      expect(promote).toHaveBeenCalledTimes(1)
+      const promotedContent = promote.mock.calls[0][1]
+      expect(promotedContent.decisions).toEqual([
+        expect.objectContaining({
+          id: 'decision-1',
+          text: 'The release will wait until QA clears.'
+        })
+      ])
+      expect(promotedContent.nextSteps).toEqual([
+        expect.objectContaining({
+          id: 'action-1',
+          owner: 'Me',
+          deadline: 'When the build arrives',
+          text: 'Send the QA estimate when the build arrives.'
+        })
+      ])
+      expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'notes scan layer completed',
+          context: expect.objectContaining({
+            presentationMode: 'lossless',
+            exactWriterCoverage: true,
+            writerItemCount: 2,
+            presentedItemCount: 3,
+            attributionOwnersAdded: 1
+          })
+        })
+      )
+    } finally {
+      promote.mockRestore()
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+      if (previousDisable == null) delete process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES
+      else process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES = previousDisable
     }
   })
 
@@ -976,7 +1102,7 @@ describe('SegmentationService', () => {
         skipRewrites: true,
         skipStructureLlm: true
       })
-      expect(capturedPresentationModes[0]).toBeUndefined()
+      expect(capturedPresentationModes[0]).toBe('lossless')
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
       if (previousTight == null) delete process.env.AUTODOC_TEST_NOTES_TIGHT

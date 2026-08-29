@@ -9,7 +9,9 @@ describe('note text coherence', () => {
     'the the rollout is ready',
     'It is working now',
     'The release is waiting for',
-    'Share the debug endpoints that Okay.'
+    'Share the debug endpoints that Okay.',
+    "Give you an update as to As to when that'll be ready",
+    'Get the back to the And second thing about the feature flag'
   ])('rejects transcript-shaped fragments: %s', (text) => {
     expect(noteTextLooksCoherent(text)).toBe(false)
   })
@@ -20,7 +22,8 @@ describe('note text coherence', () => {
     'Connect equals Pro.',
     'Released on Friday.',
     'Review the deployment report.',
-    'The customer cannot reconnect in the background.'
+    'The customer cannot reconnect in the background.',
+    'Compare the A build and the B build side by side.'
   ])('keeps concise standalone notes: %s', (text) => {
     expect(noteTextLooksCoherent(text)).toBe(true)
   })

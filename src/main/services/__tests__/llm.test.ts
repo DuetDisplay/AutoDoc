@@ -28,6 +28,7 @@ import {
   macRolloutGateCandidateLineIds,
   packTranscriptChunks,
   shouldOmitWindowsTightSpeakerLabels,
+  shouldSanitizeWindowsWriterRecords,
   shouldStripWindowsTightBackchannel,
   shouldSkipWindowsTightScanRewrites,
   countCompleteMacWriterItems,
@@ -273,7 +274,7 @@ describe('OllamaProvider grounding', () => {
       recoverRuntimeOnce
     }).summarize(
       'meeting-recovered-runner',
-      '[00:00] [Chris] The rollout plan was confirmed after the runner was recycled.',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
       undefined,
       5
     )
@@ -567,6 +568,7 @@ describe('OllamaProvider grounding', () => {
   })
 
   it('keeps grounded items that match the cited transcript span', () => {
+    setPlatform('darwin')
     const transcript = [
       '[00:00] [Speaker] Latest Windows desktop installs are 73 for this build.',
       '[00:05] [Speaker] We are still rolling 30% to rewrite and 70% to legacy Windows.'
@@ -643,6 +645,7 @@ describe('OllamaProvider grounding', () => {
   })
 
   it('anchors macOS note timestamps to the strongest matching transcript evidence', () => {
+    setPlatform('darwin')
     const transcript = [
       '[10:00] [Speaker] We are going to switch topics after the release discussion.',
       '[10:20] [Speaker] Chris will enable the feature flag after QA signs off.',
@@ -1188,6 +1191,7 @@ describe('OllamaProvider grounding', () => {
   })
 
   it('stores ordered timestamp ranges for macOS notes', () => {
+    setPlatform('darwin')
     const tunedProvider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[10:00] [Speaker] The team discussed the release plan.',
@@ -2352,6 +2356,7 @@ describe('OllamaProvider runner recycling hook', () => {
 describe('OllamaProvider writer parse skip and salvage', () => {
   afterEach(() => {
     setPlatform(originalPlatform)
+    delete process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -2460,6 +2465,7 @@ describe('OllamaProvider writer parse skip and salvage', () => {
   })
 
   it('retains a complete open category when earlier categories already parsed', () => {
+    process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING = '1'
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[00:00] [Speaker] The first rollout action was recorded.',
@@ -2487,6 +2493,7 @@ describe('OllamaProvider writer parse skip and salvage', () => {
       'Tester count',
       'Monthly limit'
     ])
+    delete process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
   })
 
   it('resolves empty segments when every chunk is irreparable', async () => {
@@ -2676,6 +2683,7 @@ describe('writer timestamp salvage', () => {
 describe('compact timestamp and spoken-quantity grounding', () => {
   afterEach(() => {
     setPlatform(originalPlatform)
+    delete process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
   })
 
   function parseInformationNote(
@@ -2755,6 +2763,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps a compact item whose s/e overflowed as clock digits', () => {
     setPlatform('win32')
+    process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING = '1'
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[17:40] [Chris] Eight gigabytes of RAM on Windows is a miserable experience.',
@@ -2790,6 +2799,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
     expect(result.actionItems[0].title).toContain('minimum RAM')
     expect(result.actionItems[0].sourceStartMs).toBeGreaterThanOrEqual(1_060_000)
     expect(result.actionItems[0].sourceStartMs).toBeLessThan(1_200_000)
+    delete process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
   })
 
   it('keeps spoken fourteen/six when the note writes digits', () => {
@@ -2826,6 +2836,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps 1.1.3 when compact s/e used in-range mmss×1000', () => {
     setPlatform('win32')
+    process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING = '1'
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[17:07] [Chris] I noticed a minor bug with one dot one dot two of Auto Doc where the email us text would not go away.',
@@ -2863,6 +2874,7 @@ describe('compact timestamp and spoken-quantity grounding', () => {
 
   it('keeps 4.3.5 when the transcript says four three five', () => {
     setPlatform('win32')
+    process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING = '1'
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[14:15] [Matt] We just released the four three five build.',
@@ -3002,5 +3014,248 @@ describe('compact timestamp and spoken-quantity grounding', () => {
     expect(inspected.expanded.information).toHaveLength(1)
     expect(inspected.expanded.information[0].sourceStartMs).toBe(2_303_000)
     expect(inspected.expanded.information[0].sourceEndMs).toBe(2_309_000)
+  })
+})
+
+describe('Windows writer grounding boundary', () => {
+  afterEach(() => {
+    delete process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING
+    setPlatform(originalPlatform)
+  })
+
+  function parseWithStats(
+    transcript: string,
+    payload: Record<string, unknown>
+  ): {
+    segments: MeetingSegments
+    groundingAccepted: number
+    groundingSalvaged: number
+    groundingDropped: number
+    drops: Array<{ reason: string; category?: string; detail?: string }>
+  } {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    return (provider as any).parseResponseWithStats(
+      'meeting-1',
+      JSON.stringify(payload),
+      undefined,
+      1_982_686,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript)
+    )
+  }
+
+  it('sanitizes on win32 by default, and the disable switch wins', () => {
+    expect(shouldSanitizeWindowsWriterRecords('win32', undefined)).toBe(true)
+    expect(shouldSanitizeWindowsWriterRecords('win32', '0')).toBe(true)
+    expect(shouldSanitizeWindowsWriterRecords('win32', '1')).toBe(false)
+    expect(shouldSanitizeWindowsWriterRecords('darwin', undefined)).toBe(false)
+    expect(shouldSanitizeWindowsWriterRecords('linux', undefined)).toBe(false)
+  })
+
+  it('is not a backdoor around the Windows digit-token quantity policy', () => {
+    setPlatform('win32')
+    const result = parseWithStats('[00:10] [them] Trial starts improved twelve percent.', {
+      information: [
+        {
+          topic: 'Metrics',
+          title: 'Trial starts improved 12%',
+          content: 'Trial starts improved 12%.',
+          sourceStartMs: 10_000,
+          sourceEndMs: 10_000
+        }
+      ]
+    })
+
+    expect(result.segments.information).toHaveLength(0)
+    expect(result.groundingDropped).toBe(0)
+    expect(result.drops.some((drop) => drop.reason === 'ungrounded')).toBe(true)
+  })
+
+  it('accepts a grounded tight information tuple and counts it', () => {
+    setPlatform('win32')
+    const result = parseWithStats(
+      '[00:10] [them] The rollout is paused until the crash rate drops.',
+      {
+        i: [['Rollout paused', 'The rollout is paused until the crash rate drops.', 10_000, 10_000]]
+      }
+    )
+
+    expect(result.segments.information).toHaveLength(1)
+    expect(result.segments.information[0].content).toContain('rollout is paused')
+    expect(result.groundingAccepted).toBe(1)
+    expect(result.groundingDropped).toBe(0)
+  })
+
+  it('accepts a paraphrased bundled action tuple whole once its atoms verify', () => {
+    setPlatform('win32')
+    const transcript = [
+      '[00:10] [Chris] The Android RC finished testing, so I will start the release today.',
+      '[00:18] [Chris] It passed QA.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      a: [
+        {
+          t: 'Release',
+          h: 'Start Android RC release',
+          c: 'Begin Android RC release today after QA approval.',
+          s: 10_000,
+          e: 18_000
+        }
+      ]
+    })
+
+    expect(result.segments.actionItems).toHaveLength(1)
+    expect(result.segments.actionItems[0].content).toBe(
+      'Begin Android RC release today after QA approval.'
+    )
+    expect(result.groundingAccepted).toBe(1)
+    expect(result.groundingDropped).toBe(0)
+  })
+
+  it('grounds a spoken gigabyte range cited across neighboring lines', () => {
+    setPlatform('win32')
+    const transcript = [
+      '[00:10] [me] The minimum spec was eight gigs on Windows.',
+      '[00:16] [me] Eight gigabytes of RAM on Windows is a miserable experience.',
+      '[00:22] [me] So I raised it, at least right now, to sixteen gigs.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      i: [
+        [
+          'Minimum RAM requirement updated',
+          'Raised the Windows minimum RAM requirement from 8 to 16 gigabytes.',
+          10_000,
+          22_000
+        ]
+      ]
+    })
+
+    expect(result.segments.information).toHaveLength(1)
+    expect(result.segments.information[0].content).toContain('8 to 16 gigabytes')
+    expect(result.groundingAccepted).toBe(1)
+    expect(result.groundingDropped).toBe(0)
+  })
+
+  it('does not read a stitched-in hearing negation as a claim polarity flip', () => {
+    setPlatform('win32')
+    const transcript = [
+      "[00:10] [them] Oh say that again, I didn't get the last We just released the four three five build.",
+      '[00:18] [me] So I think we should run that for the week.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      i: [
+        [
+          'Current build for the week',
+          'The team agrees to use the four three five build for the week.',
+          10_000,
+          18_000
+        ]
+      ]
+    })
+
+    expect(result.segments.information).toHaveLength(1)
+    expect(result.groundingAccepted).toBe(1)
+    expect(result.groundingDropped).toBe(0)
+  })
+
+  it('drops a record whose citation resolves to unrelated speech', () => {
+    setPlatform('win32')
+    const transcript = [
+      '[00:10] [them] Yeah.',
+      '[00:12] [me] Sounds good, talk soon.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      x: [
+        [
+          'Architecture changes required',
+          'The new model requires architectural adjustments to function properly.',
+          10_000,
+          12_000
+        ]
+      ]
+    })
+
+    expect(result.segments.discussion).toHaveLength(0)
+    expect(result.groundingDropped).toBe(1)
+  })
+
+  it('rejects a polarity flip and records the grounding drop', () => {
+    setPlatform('win32')
+    const result = parseWithStats(
+      '[00:10] [them] The beta rollout is not paused for review.',
+      {
+        i: [['Beta rollout paused', 'The beta rollout is paused for review.', 10_000, 10_000]]
+      }
+    )
+
+    expect(result.segments.information).toHaveLength(0)
+    expect(result.groundingDropped).toBe(1)
+    expect(result.drops.some((drop) => drop.reason === 'grounding_rejected')).toBe(true)
+  })
+
+  it('keeps the old Windows accept path when the disable switch is set', () => {
+    setPlatform('win32')
+    process.env.AUTODOC_DISABLE_WINDOWS_WRITER_GROUNDING = '1'
+
+    const result = parseWithStats(
+      '[00:10] [them] The beta rollout is not paused for review.',
+      {
+        i: [['Beta rollout paused', 'The beta rollout is paused for review.', 10_000, 10_000]]
+      }
+    )
+
+    expect(result.segments.information).toHaveLength(1)
+    expect(result.groundingDropped).toBe(0)
+    expect(result.drops.some((drop) => drop.reason === 'grounding_rejected')).toBe(false)
+  })
+
+  it('keeps spoken fourteen/six coverage with grounding enabled', () => {
+    setPlatform('win32')
+    const transcript = [
+      '[00:22] [Matt] Yeah, I mean there is fourteen Starts and Six cancels in less than twenty four hours.',
+      '[00:28] [Matt] That is what the data is saying.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      information: [
+        {
+          topic: 'Cancellations',
+          title: '14 starts, 6 cancellations reported',
+          content: 'The data shows 14 starts and 6 cancellations in less than 24 hours.',
+          sourceStartMs: 220_000,
+          sourceEndMs: 280_000
+        }
+      ]
+    })
+
+    expect(result.segments.information).toHaveLength(1)
+    expect(result.segments.information[0].title).toContain('14 starts')
+  })
+
+  it('rejects a tentative proposal written as a firm plan, unlike the range-only path', () => {
+    setPlatform('win32')
+    // The evidence says the build was "just released" and that the speaker
+    // "thinks we should" run it for the week; the note asserts it "is
+    // currently running and will be used ... unless there are critical
+    // issues". The boundary rejects that state shift by design. Whether the
+    // page still covers the build number is an E2E gate, not a unit gate.
+    const transcript = [
+      '[14:15] [Matt] We just released the four three five build.',
+      '[14:19] [Matt] So I think we should run that for the week instead of releasing another build.'
+    ].join('\n')
+    const result = parseWithStats(transcript, {
+      u: [
+        {
+          t: 'Release',
+          h: 'Current build in use',
+          c: 'The 4.3.5 build is currently running and will be used for the week unless there are critical issues.',
+          s: 141_500,
+          e: 142_900
+        }
+      ]
+    })
+
+    expect(result.segments.statusUpdates).toHaveLength(0)
+    expect(result.groundingDropped).toBe(1)
+    expect(result.drops.some((drop) => drop.reason === 'grounding_rejected')).toBe(true)
   })
 })

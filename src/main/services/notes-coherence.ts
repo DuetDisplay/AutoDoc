@@ -1,5 +1,6 @@
+// Terminal object pronouns ("resolved it") are grammatical and stay allowed.
 const INCOMPLETE_END =
-  /\b(?:a|an|and|as|at|because|but|by|for|from|he|if|in|it|of|on|or|she|that|the|their|them|then|this|to|we|when|where|which|with|you)\s*[.!?]*$/iu
+  /\b(?:a|an|and|as|at|because|but|by|for|from|he|if|in|of|on|or|she|that|the|their|them|then|this|to|we|when|where|which|with|you)\s*[.!?]*$/iu
 
 const SUBJECT_GERUND_WITHOUT_AUXILIARY =
   /^(?:i|we|you|he|she|they|it)\s+(?!am\b|are\b|is\b|was\b|were\b|will\b|would\b|have\b|has\b|had\b)[\p{L}'’-]{3,}ing\b/iu
@@ -8,6 +9,12 @@ const PLACEHOLDER_SPEAKER_GRAMMAR =
   /\b(?:me\s+and\s+them|them\s+and\s+me|me\s+and\s+him|me\s+and\s+her)\b/iu
 
 const REPEATED_ADJACENT_WORD = /\b([\p{L}]{2,})\s+\1\b/iu
+
+/** ASR stitches replay short phrases: "an update as to As to when ...". */
+const REPEATED_ADJACENT_BIGRAM = /\b([\p{L}'’]+)\s+([\p{L}'’]+)\s+\1\s+\2\b/iu
+
+/** An article directly followed by a conjunction or copula is a splice, never grammar. */
+const ARTICLE_CONJUNCTION_COLLISION = /\bthe\s+(?:and|but|is|was)\b/iu
 
 const BARE_PARTICIPLE_PREPOSITION =
   /^[\p{L}'’-]{4,}(?:ed|en)\s+(?:at|by|for|from|in|into|of|on|onto|to|with)\b/iu
@@ -37,6 +44,8 @@ export function noteTextLooksCoherent(text: string): boolean {
   if (SUBJECT_GERUND_WITHOUT_AUXILIARY.test(compact)) return false
   if (PLACEHOLDER_SPEAKER_GRAMMAR.test(compact)) return false
   if (REPEATED_ADJACENT_WORD.test(compact)) return false
+  if (REPEATED_ADJACENT_BIGRAM.test(compact)) return false
+  if (ARTICLE_CONJUNCTION_COLLISION.test(compact)) return false
   if (ONLY_DEICTIC_STATUS.test(compact)) return false
   if (BROKEN_DISCOURSE_TAIL.test(compact)) return false
   if (BARE_PARTICIPLE_PREPOSITION.test(compact) && !TEMPORAL_OR_QUANTIFIED_ANCHOR.test(compact)) {
