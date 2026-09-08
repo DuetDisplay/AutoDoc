@@ -109,6 +109,28 @@ describe('SegmentationService', () => {
     )
   })
 
+  it('does not announce old notes as a completed Windows experimental regeneration after presentation fails', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    vi.stubEnv('AUTODOC_TEST_WINDOWS_TOPIC_WRITER', 'lines')
+    const complete = vi.fn()
+    service.onComplete(complete)
+    const scan = vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v1', errorCode: 'scan_or_persist', userReason: 'Could not update notes.' })
+    const broadcast = vi.spyOn(service as any, 'broadcastStatus')
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockResolvedValue(JSON.stringify([{ id: 'row', meetingId: 'failure-case', speaker: 'them', text: 'The supplier renewed the agreement.', startMs: 0, endMs: 65000, confidence: 1 }]) as any)
+    vi.mocked(provider.summarize).mockResolvedValue({ decisions: [], actionItems: [], discussion: [], statusUpdates: [], information: [{ id: 'note', meetingId: 'failure-case', category: 'information', title: 'Renewal', content: 'The supplier renewed the agreement.', topic: 'Contract', assignee: null, deadline: null, sourceStartMs: 0, sourceEndMs: 65000 }] })
+    try {
+      await (service as any).processJob('failure-case')
+      expect(broadcast).toHaveBeenCalledWith('failure-case', 'failed', undefined, 'scan_or_persist', expect.any(Object))
+      expect(complete).not.toHaveBeenCalled()
+      expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'notes generation completed' }))
+    } finally {
+      scan.mockRestore(); broadcast.mockRestore(); vi.unstubAllEnvs()
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
   it('persists the real Mac lossless path with full evidence and no scan model calls', async () => {
     const originalPlatform = process.platform
     const previousDisable = process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES
@@ -211,7 +233,7 @@ describe('SegmentationService', () => {
             presentationMode: 'lossless',
             exactWriterCoverage: true,
             writerItemCount: 2,
-            presentedItemCount: 3,
+            presentedItemCount: 4,
             attributionOwnersAdded: 1
           })
         })
@@ -329,7 +351,7 @@ describe('SegmentationService', () => {
             presentationMode: 'lossless',
             exactWriterCoverage: true,
             writerItemCount: 2,
-            presentedItemCount: 3,
+            presentedItemCount: 4,
             attributionOwnersAdded: 1
           })
         })

@@ -4,6 +4,11 @@ import { actionPredicatesOverlap, actionSpeechActSupportsSummary } from './notes
 import { noteTextLooksCoherent } from './notes-coherence'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
 import { isPlausiblePersonOwner } from './notes-scan-markdown'
+import {
+  isWindowsTopicWriterEnabled,
+  windowsPersonPattern,
+  windowsRecoveryIsUsable
+} from './windows-notes-experiment'
 
 export interface RecoverExplicitTranscriptActionsOptions {
   /** The trusted label for transcript rows whose speaker is `[me]`. */
@@ -582,7 +587,10 @@ function candidateFromMatch(
   provisionalOwner: string | null
 ): ActionCandidate | null {
   const cleanedActionText = cleanActionText(match.actionText)
+  if (isWindowsTopicWriterEnabled() && !windowsRecoveryIsUsable(cleanedActionText)) return null
   const core = actionCore(cleanedActionText)
+  if (isWindowsTopicWriterEnabled() && kind === 'unassigned-commitment' &&
+      /^(?:use|keep|adopt|choose|default|postpone|defer)\b/iu.test(core)) return null
   if (
     !cleanedActionText ||
     !noteTextLooksCoherent(cleanedActionText) ||
@@ -684,7 +692,7 @@ function candidatesForRow(
       break
     }
 
-    const namedAssignment = matchingTail(clause, NAMED_ASSIGNMENT)
+    const namedAssignment = matchingTail(clause, windowsPersonPattern(NAMED_ASSIGNMENT))
     if (
       namedAssignment?.owner &&
       isPlausibleExplicitOwner(
@@ -704,7 +712,7 @@ function candidatesForRow(
       if (candidate) candidates.push(candidate)
     }
 
-    const namedRequest = matchingTail(clause, NAMED_REQUEST)
+    const namedRequest = matchingTail(clause, windowsPersonPattern(NAMED_REQUEST))
     if (
       namedRequest?.owner &&
       isPlausibleExplicitOwner(
@@ -891,6 +899,13 @@ function overlapsRow(segment: Segment, row: Transcript): boolean {
 
 function isExistingActionDuplicate(candidate: ActionCandidate, segment: Segment): boolean {
   const summary = segmentSummary(segment)
+  if (isWindowsTopicWriterEnabled() && candidate.primaryAction === 'handle' &&
+      overlapsRow(segment, candidate.row) && candidate.provisionalOwner &&
+      segment.content.startsWith(`${candidate.provisionalOwner} `)) {
+    const nominalStem = (token: string): string => token.replace(/(?:ment|ing|ed|s)$/iu, '')
+    const summaryTokens = new Set(normalizedWords(summary).map(nominalStem))
+    if (candidate.objectTokens.size > 0 && [...candidate.objectTokens].every((token) => summaryTokens.has(nominalStem(token)))) return true
+  }
   return (
     !hasConflictingNamedObjects(candidate, summary, segment.assignee ?? undefined) &&
     actionPredicatesOverlap(candidate.actionText, summary) &&
@@ -1126,6 +1141,7 @@ export function recoverExplicitTranscriptActions(
   }
 
   for (const request of scopedContextualRequests(transcriptRows)) {
+    if (isWindowsTopicWriterEnabled() && !windowsRecoveryIsUsable(request.actionText)) continue
     if (augmented.actionItems.some((segment) => isScopedRequestDuplicate(request, segment))) {
       dedupedRecoveredActionCount += 1
       continue

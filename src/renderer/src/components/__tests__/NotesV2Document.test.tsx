@@ -651,4 +651,128 @@ describe('NotesV2Document', () => {
       (onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>).nextSteps[0].owner
     ).toBeNull()
   })
+
+  it('does not repeat the section topic on bullets or takeaways', () => {
+    const sample = notes()
+    sample.overview = {
+      ...sample.overview!,
+      text: [
+        'Cancellations — The data indicates 14 starts and 6 cancellations.',
+        'Minimum RAM requirement updated for Autodoc — Raised Windows minimum RAM to 16 GB.',
+        'Granola format limitations — Local models struggle with formatting.',
+        'App icon does not update in dark mode — The icon stays stale until restart.'
+      ].join('\n')
+    }
+    sample.keyTakeaways = [
+      {
+        id: 'lossless-takeaway:cancels',
+        title: 'Cancellations',
+        topic: 'Cancellations',
+        owner: null,
+        deadline: null,
+        text: 'The data indicates 14 starts and 6 cancellations.',
+        sources: [{ startMs: 1000, endMs: 2000 }],
+        provenance: 'generated'
+      }
+    ]
+    sample.sections.unshift({
+      id: 'lossless-section:topical:other',
+      title: 'Other Notes',
+      summary: null,
+      keyPoints: [
+        {
+          id: 'other-1',
+          title: 'Cable redesign',
+          topic: 'Other Notes',
+          owner: null,
+          deadline: null,
+          text: 'The cable connection element was redesigned.',
+          sources: [{ startMs: 3000, endMs: 4000 }],
+          provenance: 'generated'
+        }
+      ],
+      supportingDetails: []
+    })
+
+    render(
+      <NotesV2Document notes={sample} meetingSpan={[{ startMs: 0, endMs: 10_000 }]} onSeek={vi.fn()} />
+    )
+
+    expect(screen.getByText(
+      'The data indicates 14 starts and 6 cancellations. Raised Windows minimum RAM to 16 GB.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText(/Cancellations —/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Granola format limitations/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('Analytics')).toHaveLength(1)
+    expect(screen.queryByText('Cancellations')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('The data indicates 14 starts and 6 cancellations.')
+    ).toBeInTheDocument()
+    expect(screen.getAllByText('Other Notes')).toHaveLength(1)
+    expect(screen.getByText('The cable connection element was redesigned.')).toBeInTheDocument()
+    const analytics = screen.getByRole('heading', { name: 'Analytics' })
+    const otherNotes = screen.getByRole('heading', { name: 'Other Notes' })
+    const nextSteps = screen.getByRole('heading', { name: 'Next Steps' })
+    expect(analytics.compareDocumentPosition(otherNotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(otherNotes.compareDocumentPosition(nextSteps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('hides Needs Review leftovers from the customer document', () => {
+    const sample = notes()
+    sample.decisions = [
+      {
+        id: 'junk-decision',
+        title: 'Um Get the nines',
+        topic: 'Needs Review',
+        owner: null,
+        deadline: null,
+        text: 'Um Get the nines repositioned.',
+        sources: [{ startMs: 1000, endMs: 2000 }],
+        provenance: 'generated'
+      }
+    ]
+    sample.nextSteps = [
+      ...sample.nextSteps,
+      {
+        id: 'junk-step',
+        title: 'Share Politic',
+        topic: 'Needs Review',
+        owner: 'Me',
+        deadline: null,
+        text: 'Share Politic.',
+        sources: [{ startMs: 3000, endMs: 4000 }],
+        provenance: 'generated',
+        completed: false
+      }
+    ]
+    sample.sections.push({
+      id: 'lossless-section:topical:review',
+      title: 'Needs Review',
+      summary: null,
+      keyPoints: [
+        {
+          id: 'junk-body',
+          title: 'But logs show it was running',
+          topic: 'Needs Review',
+          owner: null,
+          deadline: null,
+          text: 'But logs show it was running',
+          sources: [{ startMs: 5000, endMs: 6000 }],
+          provenance: 'generated'
+        }
+      ],
+      supportingDetails: []
+    })
+
+    render(
+      <NotesV2Document notes={sample} meetingSpan={[{ startMs: 0, endMs: 10_000 }]} onSeek={vi.fn()} />
+    )
+
+    expect(screen.queryByRole('heading', { name: 'Needs Review' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Decisions' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Share Politic.')).not.toBeInTheDocument()
+    expect(screen.queryByText('But logs show it was running')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Next Steps' })).toBeInTheDocument()
+    expect(screen.getByText('Review the offline analytics PR')).toBeInTheDocument()
+  })
 })

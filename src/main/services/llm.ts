@@ -19,9 +19,29 @@ import {
   extractQuantityMentions,
   quantityMentionsEquivalent
 } from './notes-quantity-canonicalizer'
-import { sanitizeWriterRecords, type WriterGroundingCategory } from './notes-writer-grounding'
+import { sanitizeWriterRecords, classifyLiteralWriterEvidence, type WriterGroundingCategory } from './notes-writer-grounding'
+import {
+  isWindowsTopicWriterEnabled,
+  isWindowsTopicLineWriterEnabled,
+  isWindowsCatalogWriterEnabled,
+  isWindowsWholeWriterEnabled,
+  isWindowsWideWriterEnabled,
+  isWindowsSemanticWriterEnabled,
+  isWindowsOutlineWriterEnabled,
+  WINDOWS_WHOLE_WRITER_PROMPT,
+  WINDOWS_WIDE_WRITER_PROMPT,
+  WINDOWS_CATALOG_WRITER_PROMPT,
+  WINDOWS_CATALOG_WRITER_FORMAT,
+  WINDOWS_TOPIC_WRITER_PROMPT,
+  WINDOWS_TOPIC_LINE_WRITER_PROMPT
+} from './windows-notes-experiment'
+import { OllamaEmbeddingProvider } from './ollama-embedding'
+import { WINDOWS_OUTLINE_PROMPT, countCompleteOutlineBullets, outlineToWriterJson } from './windows-notes-outline'
+import { windowsNotesModelExperiment } from './windows-notes-model-experiment'
+import { isWindowsEvidenceWriterEnabled, WINDOWS_EVIDENCE_WRITER_PROMPT, WINDOWS_EVIDENCE_WRITER_FORMAT, evidenceToWriterJson } from './windows-notes-evidence'
 
 export interface LLMProvider {
+  embedNotes?(texts: string[]): Promise<number[][]>
   summarize(
     meetingId: string,
     transcript: string,
@@ -628,6 +648,7 @@ function coerceWriterTimestampValue(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
     const trimmed = value.trim()
+    if (isWindowsTopicLineWriterEnabled() && /^L\d+$/u.test(trimmed)) return Number(trimmed.slice(1))
     if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
       const parsed = Number(trimmed)
       if (Number.isFinite(parsed)) return parsed
@@ -777,6 +798,15 @@ function matchJsonBrace(raw: string, openIdx: number): number {
 export function countCompleteTightWriterItems(raw: string): number {
   let count = 0
   for (let i = 0; i < raw.length; i++) {
+    if (isWindowsCatalogWriterEnabled() && raw[i] === '{') {
+      const end = matchJsonBrace(raw, i)
+      if (end >= 0) {
+        try {
+          const row = JSON.parse(raw.slice(i, end + 1))
+          if (typeof row.c === 'string' && typeof row.s === 'number' && typeof row.e === 'number') { count++; i = end; continue }
+        } catch { /* Continue scanning incomplete catalog output. */ }
+      }
+    }
     if (raw[i] !== '[') continue
     const end = matchJsonBracket(raw, i)
     if (end < 0) continue
@@ -786,7 +816,9 @@ export function countCompleteTightWriterItems(raw: string): number {
         Array.isArray(parsed) &&
         parsed.length >= 2 &&
         typeof parsed[0] === 'string' &&
-        typeof parsed[1] === 'string'
+        (typeof parsed[1] === 'string' ||
+          (isWindowsCatalogWriterEnabled() && parsed.length >= 3 &&
+            typeof parsed[1] === 'number' && typeof parsed[2] === 'number'))
       ) {
         count += 1
         i = end
@@ -968,11 +1000,13 @@ export function macHighSignalCandidateGuidance(promptTranscript: string): string
 /** Win32 tight: stop decode once the 6-item cap is already on the wire. */
 export function shouldStopWindowsTightWriterStream(
   raw: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  itemCap = WINDOWS_TIGHT_STREAM_ITEM_CAP
 ): boolean {
+  if (platform === 'win32' && isWindowsOutlineWriterEnabled()) return countCompleteOutlineBullets(raw) >= itemCap
   return (
     isTightWriterEnabled(platform) &&
-    countCompleteTightWriterItems(raw) >= WINDOWS_TIGHT_STREAM_ITEM_CAP
+    countCompleteTightWriterItems(raw) >= itemCap
   )
 }
 
@@ -1043,7 +1077,10 @@ function flattenWriterItem(item: unknown): unknown {
   return item
 }
 
-export function inspectCompactWriterPayload(parsed: Record<string, unknown>): WriterExpandResult {
+export function inspectCompactWriterPayload(
+  parsed: Record<string, unknown>,
+  topicTuples = false
+): WriterExpandResult {
   const expanded: Record<string, RawSegment[]> = {}
   const drops: WriterDrop[] = []
   let rawItemCount = 0
@@ -1065,6 +1102,11 @@ export function inspectCompactWriterPayload(parsed: Record<string, unknown>): Wr
       const next = queue.shift()
       if (typeof next === 'number') continue
       let item: unknown = flattenWriterItem(next)
+      if (topicTuples && isWindowsCatalogWriterEnabled() && Array.isArray(item) &&
+          item.length >= 3 && typeof item[0] === 'string' &&
+          typeof item[1] === 'number' && typeof item[2] === 'number') {
+        item = ['', item[0], item[1], item[2], ...item.slice(3)]
+      }
       if (
         Array.isArray(item) &&
         item.length === 2 &&
@@ -1077,6 +1119,19 @@ export function inspectCompactWriterPayload(parsed: Record<string, unknown>): Wr
       if (expandedItem == null) {
         drops.push({ reason: 'unexpandable_item', category: dest })
         continue
+      }
+      if (topicTuples && isWindowsCatalogWriterEnabled() && !Array.isArray(item) && expandedItem.content && !expandedItem.title) expandedItem.title = expandedItem.content
+      // Preserve the experimental tuple meaning through the same 2/3-field
+      // recovery accepted by the tight writer. Never reinterpret the topic as
+      // a record title merely because the model omitted its citation slots.
+      if (
+        topicTuples &&
+        Array.isArray(item) &&
+        typeof item[0] === 'string' &&
+        typeof item[1] === 'string'
+      ) {
+        expandedItem.topic = item[0]
+        expandedItem.title = item[1]
       }
       items.push(expandedItem)
       expandedItemCount += 1
@@ -1292,9 +1347,9 @@ export class WriterParseError extends Error {
   readonly rawHead: string
   readonly rawTail: string
 
-  constructor(raw: string) {
+  constructor(raw: string, detail?: string) {
     const ends = sliceWriterRawEnds(raw)
-    super('Invalid JSON from Ollama')
+    super(detail ? `Invalid writer response: ${detail}` : 'Invalid JSON from Ollama')
     this.name = 'WriterParseError'
     this.rawHead = ends.rawHead
     this.rawTail = ends.rawTail
@@ -1409,6 +1464,9 @@ export class OllamaProvider implements LLMProvider {
   private benchmarkNumThread: number | undefined
   private benchmarkOnCallComplete?: (metrics: OllamaCallMetrics) => void | Promise<void>
   private writerContinuation = false
+  private windowsCatalogTuples = false
+  private windowsWholeMeeting = false
+  private windowsWideChunks = false
 
   getLastEvalTokPerSec(): number | null {
     return this.lastOllamaCallMetrics?.evalTokPerSec ?? null
@@ -1471,6 +1529,13 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
+  async embedNotes(texts: string[]): Promise<number[][]> {
+    if (!isWindowsSemanticWriterEnabled()) throw new Error('Windows semantic experiment is disabled')
+    const provider = new OllamaEmbeddingProvider(this.baseUrl, undefined, { num_gpu: 0 }, 0)
+    if (!await provider.isAvailable()) throw new Error('Local embedding model is unavailable')
+    return provider.embed(texts)
+  }
+
   private async generatePrompt(
     prompt: string,
     options: {
@@ -1495,6 +1560,7 @@ export class OllamaProvider implements LLMProvider {
           model: this.model,
           prompt,
           stream: true,
+          ...(windowsNotesModelExperiment(this.model) ? { think: false } : {}),
           format: options.format,
           options: this.mergeOllamaRequestOptions({
             num_ctx: options.num_ctx,
@@ -1677,6 +1743,7 @@ export class OllamaProvider implements LLMProvider {
     onActivity?: (activity: SegmentationActivity | null) => void
   ): Promise<MeetingSegments> {
     let currentActivity: SegmentationActivity | null = null
+    const priorContextTokens = this.contextTokens
     const reportActivity =
       process.platform === 'win32' && onActivity
         ? (activity: SegmentationActivity | null): void => {
@@ -1699,6 +1766,9 @@ export class OllamaProvider implements LLMProvider {
         reportActivity
       )
     } finally {
+      if (this.windowsWholeMeeting || this.windowsWideChunks) this.contextTokens = priorContextTokens
+      this.windowsWholeMeeting = false
+      this.windowsWideChunks = false
       reportActivity?.(null)
     }
   }
@@ -1710,7 +1780,18 @@ export class OllamaProvider implements LLMProvider {
     durationMinutes?: number,
     reportActivity?: (activity: SegmentationActivity | null) => void
   ): Promise<MeetingSegments> {
+    // Opt-in CPU experiment: bound both input size and available host memory.
+    // Longer meetings and constrained hosts keep the existing chunked path.
+    const memory = isWindowsWholeWriterEnabled() || isWindowsWideWriterEnabled() ? this.getHostMemorySnapshot() : null
+    this.windowsWholeMeeting = isWindowsWholeWriterEnabled() && this.contextProfile === 'windows-cpu' &&
+      transcript.length > 4000 && transcript.length <= 60000 &&
+      (memory?.totalGiB ?? 0) >= 16 && (memory?.freeGiB ?? 0) >= 8
+    if (this.windowsWholeMeeting) this.contextTokens = 32768
+    this.windowsWideChunks = isWindowsWideWriterEnabled() && this.contextProfile === 'windows-cpu' &&
+      transcript.length > 4000 && (memory?.totalGiB ?? 0) >= 16 && (memory?.freeGiB ?? 0) >= 5
+    if (this.windowsWideChunks) this.contextTokens = 8192
     const chunks = this.chunkTranscript(transcript)
+    this.windowsCatalogTuples = isWindowsCatalogWriterEnabled() && !isWindowsWholeWriterEnabled() && !isWindowsWideWriterEnabled() && !isWindowsSemanticWriterEnabled() && !isWindowsOutlineWriterEnabled() && chunks.length > 1
     const estMinutes = durationMinutes ?? Math.max(5, Math.round(transcript.length / 750))
     const durationMs = estMinutes * 60 * 1000
     const transcriptTimestamps = this.extractTimestampsMs(transcript)
@@ -1757,12 +1838,14 @@ export class OllamaProvider implements LLMProvider {
       this.writerContinuation = i > 0
       const chunkTranscriptLines = this.parseTranscriptLines(chunks[i])
       const macLineReferences =
-        process.platform === 'darwin' ? encodeMacNotesLineReferences(chunks[i]) : null
+        process.platform === 'darwin' || isWindowsTopicLineWriterEnabled()
+          ? encodeMacNotesLineReferences(chunks[i])
+          : null
       const writerTranscript = macLineReferences?.promptTranscript ?? chunks[i]
       const knownTopics = this.extractKnownTopics(merged)
       const chunkLabel =
         this.buildChunkLabel(i, chunks.length, itemGuidance, knownTopics) +
-        (macLineReferences
+        (macLineReferences && process.platform === 'darwin'
           ? macActionCandidateGuidance(writerTranscript) +
             macRolloutGateCandidateGuidance(writerTranscript) +
             macHighSignalCandidateGuidance(writerTranscript)
@@ -1812,7 +1895,8 @@ export class OllamaProvider implements LLMProvider {
             durationMs,
             transcriptTimestamps,
             chunkTranscriptLines,
-            macLineReferences?.startMsByLineId
+            macLineReferences?.startMsByLineId,
+            macLineReferences?.promptTranscript
           )
           chunkResult = parsedChunk.segments
           this.lastWriterParseDrops.push(...parsedChunk.drops)
@@ -1879,6 +1963,18 @@ export class OllamaProvider implements LLMProvider {
             }
           })
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
+            throw lastError
+          }
+          if (
+            isWriterParseError(lastError) &&
+            isWindowsTopicWriterEnabled() &&
+            process.env.AUTODOC_TEST_NOTES_FAIL_FAST === '1'
+          ) {
+            console.error(`Windows notes experiment stopped early: writer parse failure in chunk ${i + 1}/${chunks.length}`)
+            logAutodocEvent({
+              area: 'segmentation', message: 'notes experiment stopped early', meetingId,
+              level: 'warn', context: { reason: 'writer_parse', chunkIndex: i + 1, chunkCount: chunks.length }
+            })
             throw lastError
           }
           if (
@@ -2010,6 +2106,17 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private extractKnownTopics(segments: MeetingSegments): string[] {
+    if (isWindowsOutlineWriterEnabled()) {
+      const recent = new Map<string, string>()
+      for (const item of this.flattenSegments(segments).sort((a, b) => a.sourceStartMs - b.sourceStartMs)) {
+        const label = item.topic?.trim()
+        if (!label) continue
+        const key = label.normalize('NFKC').toLocaleLowerCase().replace(/\s+/gu, ' ')
+        recent.delete(key)
+        recent.set(key, label)
+      }
+      return [...recent.values()].slice(-12)
+    }
     const seen = new Set<string>()
     const topics: string[] = []
 
@@ -2035,6 +2142,8 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
+    if (this.windowsWholeMeeting) return 60000
+    if (this.windowsWideChunks) return 12000
     return getDevNotesChunkCharsOverride() ?? CHUNK_CHARS
   }
 
@@ -2051,6 +2160,14 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getSystemPrompt(): string {
+    if (isWindowsEvidenceWriterEnabled()) return WINDOWS_EVIDENCE_WRITER_PROMPT
+    if (isWindowsOutlineWriterEnabled() && isTightWriterEnabled()) return WINDOWS_OUTLINE_PROMPT
+    if (this.windowsWholeMeeting && isWindowsWholeWriterEnabled()) return WINDOWS_WHOLE_WRITER_PROMPT
+    if (this.windowsWideChunks && isWindowsWideWriterEnabled()) return WINDOWS_WIDE_WRITER_PROMPT
+    if (this.windowsCatalogTuples && isWindowsCatalogWriterEnabled()) return WINDOWS_CATALOG_WRITER_PROMPT
+    if (isWindowsTopicLineWriterEnabled() && isTightWriterEnabled())
+      return WINDOWS_TOPIC_LINE_WRITER_PROMPT
+    if (isWindowsTopicWriterEnabled() && isTightWriterEnabled()) return WINDOWS_TOPIC_WRITER_PROMPT
     if (isTightWriterEnabled()) {
       const omitWindowsTightSuffix = process.platform === 'win32' && this.writerContinuation
       return this.usesSharedNotesWriter() && !omitWindowsTightSuffix
@@ -2080,6 +2197,15 @@ export class OllamaProvider implements LLMProvider {
     itemGuidance: string,
     knownTopics: string[]
   ): string {
+    if (isWindowsEvidenceWriterEnabled()) {
+      return `\n\nExcerpt ${chunkIndex + 1}/${chunkCount}. Select complete source exchanges; do not repeat an unchanged point.${knownTopics.length ? ` Earlier subjects: ${knownTopics.join('; ')}. Reuse a heading only for the same subject.` : ''}`
+    }
+    if (isWindowsOutlineWriterEnabled()) {
+      const previous = knownTopics.slice(-12)
+      return `\n\nExcerpt ${chunkIndex + 1}/${chunkCount}. At most 6 new bullets. Do not summarize subjects absent from this excerpt.${previous.length ? ` Earlier subject headings (context only): ${JSON.stringify(previous)}. Reuse an exact heading when this excerpt continues that subject; otherwise name the new subject.` : ''}`
+    }
+    if (this.windowsWholeMeeting) return '\n\nThis is the complete meeting. Summarize its important outcomes and follow-ups, at most 32 records.'
+    if (this.windowsWideChunks) return `\n\nPart ${chunkIndex + 1}/${chunkCount}. Strongest NEW notes only, at most 12 records. Use broad subject headings that cover related details.`
     const knownTopicGuidance =
       !isTightWriterEnabled() && knownTopics.length > 0
         ? ` Reuse these exact topic strings whenever they fit instead of inventing a new one: ${knownTopics.join('; ')}.`
@@ -2097,6 +2223,10 @@ export class OllamaProvider implements LLMProvider {
     }
 
     if (isTightWriterEnabled()) {
+      if (isWindowsTopicWriterEnabled()) {
+        if (this.windowsCatalogTuples) return `\n\nPart ${chunkIndex + 1}/${chunkCount}. Strongest NEW records only; at most 6 items. No headings.`
+        return `\n\nPart ${chunkIndex + 1}/${chunkCount}. Strongest NEW notes only; at most 6 items. Label each subject from this excerpt.`
+      }
       return `\n\nThis is part ${chunkIndex + 1} of ${chunkCount} of the meeting. Strongest NEW notes only, at most 6 items. One fact in one category. Omit empty categories.`
     }
 
@@ -2115,6 +2245,8 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private mergeOllamaRequestOptions<T extends Record<string, unknown>>(options: T): T {
+    const experiment = windowsNotesModelExperiment(this.model)
+    if (experiment) options = { ...options, ...experiment.sampling, seed: options.seed ?? 42 }
     const numThread = this.benchmarkNumThread ?? getDevNotesNumThreadOverride()
     const numBatch = getDevNotesNumBatchOverride()
     const numGpu = this.benchmarkNumGpu ?? (this.contextProfile === 'windows-cpu' ? 0 : undefined)
@@ -2300,7 +2432,7 @@ export class OllamaProvider implements LLMProvider {
           promptHash,
           systemChars: systemPrompt.length,
           userChars: userContent.length,
-          format: shouldOmitWindowsTightResponseFormat()
+          format: isWindowsOutlineWriterEnabled() || shouldOmitWindowsTightResponseFormat()
             ? 'none'
             : this.getNotesResponseFormat() === 'json'
               ? 'json'
@@ -2312,18 +2444,30 @@ export class OllamaProvider implements LLMProvider {
     }
 
     let res: Response
+    let wholeMeetingDispatcher: import('undici').Agent | undefined
     try {
-      res = await fetch(`${this.baseUrl}/api/chat`, {
+      // Older local runtimes ignore chat format constraints for Qwen3.5 with
+      // think=false. The generation endpoint enforces the same JSON grammar.
+      const modelExperiment = windowsNotesModelExperiment(this.model)
+      if (modelExperiment && this.windowsWholeMeeting) {
+        const { Agent } = await import('undici')
+        wholeMeetingDispatcher = new Agent({ headersTimeout: REQUEST_TIMEOUT_MS, bodyTimeout: STREAM_TIMEOUT_MS })
+      }
+      res = await fetch(`${this.baseUrl}/api/${modelExperiment ? 'generate' : 'chat'}`, {
+        ...(wholeMeetingDispatcher ? { dispatcher: wholeMeetingDispatcher } : {}),
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent }
-          ],
+          ...(modelExperiment
+            ? { system: systemPrompt, prompt: userContent }
+            : { messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userContent }
+              ] }),
           stream: true,
-          ...(shouldOmitWindowsTightResponseFormat()
+          ...(windowsNotesModelExperiment(this.model) ? { think: false } : {}),
+          ...(isWindowsOutlineWriterEnabled() || shouldOmitWindowsTightResponseFormat()
             ? {}
             : { format: this.getNotesResponseFormat() }),
           options: requestOptions
@@ -2333,6 +2477,7 @@ export class OllamaProvider implements LLMProvider {
     } catch (err) {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
+      await wholeMeetingDispatcher?.destroy().catch(() => {})
       if (controller.signal.aborted && controller.signal.reason === 'SEGMENTATION_PREEMPTED') {
         throw new Error('SEGMENTATION_PREEMPTED')
       }
@@ -2343,12 +2488,14 @@ export class OllamaProvider implements LLMProvider {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
       const text = await res.text().catch(() => '')
+      await wholeMeetingDispatcher?.destroy().catch(() => {})
       throw new Error(`Ollama returned ${res.status}: ${text.slice(0, 200)}`)
     }
 
     if (!res.body) {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
+      await wholeMeetingDispatcher?.destroy().catch(() => {})
       throw new Error('Ollama returned no response body')
     }
 
@@ -2405,6 +2552,7 @@ export class OllamaProvider implements LLMProvider {
           try {
             const data = JSON.parse(line) as {
               message?: { content?: string }
+              response?: string
               error?: string
               done?: boolean
               done_reason?: string
@@ -2416,11 +2564,12 @@ export class OllamaProvider implements LLMProvider {
               eval_duration?: number
             }
             if (data.error) throw new Error(`Ollama error: ${data.error}`)
-            if (data.message?.content) {
-              content += data.message.content
+            const responseText = data.message?.content ?? data.response
+            if (responseText) {
+              content += responseText
               streamedTokenCount += 1
               onToken?.()
-              const windowsStreamCapped = shouldStopWindowsTightWriterStream(content)
+              const windowsStreamCapped = shouldStopWindowsTightWriterStream(content, process.platform, this.windowsWholeMeeting ? 32 : this.windowsWideChunks ? 12 : WINDOWS_TIGHT_STREAM_ITEM_CAP)
               const macStreamCapped = shouldStopMacWriterStream(content)
               if (windowsStreamCapped || macStreamCapped) {
                 const macElapsedMs = macStreamCapped
@@ -2458,6 +2607,7 @@ export class OllamaProvider implements LLMProvider {
         try {
           const data = JSON.parse(buffer) as {
             message?: { content?: string }
+            response?: string
             error?: string
             done?: boolean
             done_reason?: string
@@ -2469,8 +2619,9 @@ export class OllamaProvider implements LLMProvider {
             eval_duration?: number
           }
           if (data.error) throw new Error(`Ollama error: ${data.error}`)
-          if (data.message?.content) {
-            content += data.message.content
+          const responseText = data.message?.content ?? data.response
+          if (responseText) {
+            content += responseText
             onToken?.()
           }
           if (data.done) {
@@ -2483,6 +2634,7 @@ export class OllamaProvider implements LLMProvider {
     } finally {
       clearTimeout(requestTimer)
       this.activeControllers.delete(controller)
+      await wholeMeetingDispatcher?.destroy().catch(() => {})
     }
 
     if (!content) {
@@ -2528,11 +2680,15 @@ export class OllamaProvider implements LLMProvider {
     return process.platform === 'darwin' || process.platform === 'win32'
   }
 
-  private getNotesResponseFormat(): 'json' {
+  private getNotesResponseFormat(): 'json' | typeof WINDOWS_CATALOG_WRITER_FORMAT | typeof WINDOWS_EVIDENCE_WRITER_FORMAT {
+    if (isWindowsEvidenceWriterEnabled()) return WINDOWS_EVIDENCE_WRITER_FORMAT
+    if (this.windowsCatalogTuples && isWindowsCatalogWriterEnabled()) return WINDOWS_CATALOG_WRITER_FORMAT
     return 'json'
   }
 
   private getMaxOutputTokens(): number {
+    if (this.windowsWholeMeeting && isWindowsWholeWriterEnabled()) return 3072
+    if (this.windowsWideChunks && isWindowsWideWriterEnabled()) return 1536
     if (process.platform === 'darwin') return MAC_MAX_OUTPUT_TOKENS
     if (process.platform !== 'win32') return MAX_OUTPUT_TOKENS
     if (isTightWriterEnabled()) return WINDOWS_TIGHT_MAX_OUTPUT_TOKENS
@@ -2669,6 +2825,11 @@ export class OllamaProvider implements LLMProvider {
     if (closedString !== raw) variants.push(closedString)
 
     const strategies = [
+      // An intentional Windows catalog stream stop ends at a complete object.
+      // Close only its containers instead of trimming off the last valid note.
+      (text: string) => isWindowsCatalogWriterEnabled() && /\}\s*$/u.test(text)
+        ? this.closeJSON(text)
+        : null,
       // Strategy 1: cut at last complete array item "},"
       (text: string) => {
         const idx = text.lastIndexOf('},')
@@ -2781,7 +2942,8 @@ export class OllamaProvider implements LLMProvider {
     durationMs?: number,
     transcriptTimestamps?: number[],
     transcriptLines: TranscriptLine[] = [],
-    macLineStartMsById?: ReadonlyMap<number, number>
+    macLineStartMsById?: ReadonlyMap<number, number>,
+    promptTranscript?: string
   ): {
     segments: MeetingSegments
     rawItemCount: number
@@ -2793,13 +2955,21 @@ export class OllamaProvider implements LLMProvider {
     drops: WriterDrop[]
   } {
     let inspected: WriterExpandResult
+    if (isWindowsEvidenceWriterEnabled()) {
+      try {
+        if (!promptTranscript || !macLineStartMsById) throw new Error('Missing literal source map')
+        raw = evidenceToWriterJson(raw, promptTranscript)
+      } catch (error) { throw new WriterParseError(raw, error instanceof Error ? error.message : String(error)) }
+    }
+    if (isWindowsOutlineWriterEnabled()) raw = outlineToWriterJson(raw)
+    const topicTuples = isWindowsTopicWriterEnabled() && isTightWriterEnabled()
     const record = parseWriterJsonRecord(raw)
     if (record) {
-      inspected = inspectCompactWriterPayload(record)
+      inspected = inspectCompactWriterPayload(record, topicTuples)
     } else {
       const repaired = this.repairTruncatedJSON(raw)
       if (repaired) {
-        inspected = inspectCompactWriterPayload(repaired)
+        inspected = inspectCompactWriterPayload(repaired, topicTuples)
         console.warn('Repaired truncated JSON from Ollama (some items may have been dropped)')
       } else {
         throw new WriterParseError(raw)
@@ -2815,7 +2985,7 @@ export class OllamaProvider implements LLMProvider {
     } catch {
       const repaired = this.repairTruncatedJSON(raw)
       if (repaired) {
-        const repairedInspection = inspectCompactWriterPayload(repaired)
+        const repairedInspection = inspectCompactWriterPayload(repaired, topicTuples)
         if (repairedInspection.expandedItemCount > inspected.expandedItemCount) {
           inspected = repairedInspection
           console.warn('Repaired truncated JSON from Ollama (complete records retained)')
@@ -2848,6 +3018,7 @@ export class OllamaProvider implements LLMProvider {
     let groundingAccepted = 0
     let groundingSalvaged = 0
     let groundingDropped = 0
+    const acceptedRecordIds = new Set<string>()
 
     for (const [rawKey, resultKey] of Object.entries(fieldMap)) {
       const items = parsed[rawKey]
@@ -2886,7 +3057,7 @@ export class OllamaProvider implements LLMProvider {
           sourceRange: SourceRange
         }> = []
 
-        if (macLineStartMsById) {
+        if (macLineStartMsById && !topicTuples) {
           const citedRange = this.resolveSourceRange(
             groundedItem,
             durationMs,
@@ -2917,13 +3088,26 @@ export class OllamaProvider implements LLMProvider {
             }
           }))
         } else {
-          const sourceRange = this.resolveGroundedSourceRange(
-            groundedItem,
-            durationMs,
-            scopedTranscriptTimestamps,
-            transcriptLines
-          )
-          if (sourceRange && sanitizeWindowsRecords) {
+          const sourceRange = macLineStartMsById
+            ? this.resolveSourceRange(
+                groundedItem,
+                durationMs,
+                scopedTranscriptTimestamps,
+                transcriptLines,
+                false
+              )
+            : this.resolveGroundedSourceRange(
+                groundedItem,
+                durationMs,
+                scopedTranscriptTimestamps,
+                transcriptLines
+              )
+          if (sourceRange && isWindowsEvidenceWriterEnabled()) {
+            const exactLines = transcriptLines.filter(line => line.startMs >= sourceRange.startMs && line.startMs <= sourceRange.endMs)
+            const evidenceCategory = classifyLiteralWriterEvidence(rawKey as WriterGroundingCategory, String(groundedItem.content), exactLines)
+            groundingAccepted += 1
+            acceptedCandidates = [{ destinationKey: fieldMap[evidenceCategory], destinationCategory: CATEGORY_MAP[evidenceCategory], item: groundedItem, sourceRange }]
+          } else if (sourceRange && sanitizeWindowsRecords) {
             // The tight writer synthesizes paraphrased claims, so grounding
             // verifies checkable atoms rather than verbatim anchoring.
             const sanitizedRecords = sanitizeWriterRecords(
@@ -2982,7 +3166,7 @@ export class OllamaProvider implements LLMProvider {
         for (const candidate of acceptedCandidates) {
           const candidateTitle = capitalize(String(candidate.item.title))
           const candidateContent = capitalize(String(candidate.item.content))
-          result[candidate.destinationKey].push({
+          const segment: Segment = {
             id: writerSegmentId(
               meetingId,
               candidate.destinationCategory,
@@ -3006,7 +3190,15 @@ export class OllamaProvider implements LLMProvider {
             deadline: candidate.item.deadline ? String(candidate.item.deadline) : null,
             sourceStartMs: candidate.sourceRange.startMs,
             sourceEndMs: candidate.sourceRange.endMs
-          })
+          }
+          // Malformed category arrays may be recovered along two paths, then
+          // grounded into the same destination. Preserve that exact record once.
+          if (topicTuples && acceptedRecordIds.has(segment.id)) {
+            drops.push({ reason: 'duplicate_title', category: rawKey, detail: segment.title })
+            continue
+          }
+          acceptedRecordIds.add(segment.id)
+          result[candidate.destinationKey].push(segment)
         }
       }
     }
@@ -3040,10 +3232,15 @@ export class OllamaProvider implements LLMProvider {
     const captureDir = process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR?.trim()
     if (!captureDir) return
     try {
-      await mkdir(captureDir, { recursive: true })
-      await writeFile(join(captureDir, `chunk-${chunkIndex}-raw.json`), raw, 'utf8')
+      const requestedMeeting = process.env.AUTODOC_TEST_RETRY_NOTES_MEETING_ID?.trim()
+      const outputDir =
+        requestedMeeting && requestedMeeting !== meetingId
+          ? join(captureDir, meetingId)
+          : captureDir
+      await mkdir(outputDir, { recursive: true })
+      await writeFile(join(outputDir, `chunk-${chunkIndex}-raw.json`), raw, 'utf8')
       await writeFile(
-        join(captureDir, `chunk-${chunkIndex}-parse.json`),
+        join(outputDir, `chunk-${chunkIndex}-parse.json`),
         JSON.stringify({ meetingId, chunkIndex, ...parsed }, null, 2),
         'utf8'
       )
@@ -3064,6 +3261,16 @@ export class OllamaProvider implements LLMProvider {
   private normalizeMergedTopics(segments: MeetingSegments): void {
     const items = this.flattenSegments(segments).filter((item) => item.topic?.trim())
     if (items.length === 0) return
+    if (isWindowsTopicWriterEnabled()) {
+      const labels = new Map<string, string>()
+      for (const item of items) {
+        const label = item.topic!.replace(/\s+/gu, ' ').trim()
+        const key = label.toLocaleLowerCase()
+        item.topic = labels.get(key) ?? label
+        labels.set(key, item.topic)
+      }
+      return
+    }
 
     let groups = this.buildTopicGroups(items)
     groups = this.mergeExactAndNearDuplicateTopics(groups)

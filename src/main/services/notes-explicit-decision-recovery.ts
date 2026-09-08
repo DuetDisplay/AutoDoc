@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import type { MeetingSegments, Segment, Transcript } from '../../shared/types'
 import { noteTextLooksCoherent } from './notes-coherence'
+import { isWindowsTopicWriterEnabled, windowsRecoveryIsUsable } from './windows-notes-experiment'
 
 export interface ExplicitTranscriptDecisionRecoveryResult {
   segments: MeetingSegments
@@ -181,6 +182,7 @@ function directCandidate(row: Transcript, clause: string): DecisionCandidate | n
     const match = pattern.exec(clause)
     const rawBody = match?.groups?.body?.trim() ?? ''
     const body = cleanBody(rawBody)
+    if (isWindowsTopicWriterEnabled() && !windowsRecoveryIsUsable(body)) continue
     if (
       !match ||
       UNCERTAIN_CONTEXT.test(clause) ||

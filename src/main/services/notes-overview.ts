@@ -1,5 +1,8 @@
 import { createHash } from 'crypto'
+import { mkdir, writeFile } from 'fs/promises'
+import { join } from 'path'
 import type { MeetingNotesContent, NoteItem, NoteSourceRange, NoteTextBlock } from '../../shared/types'
+import { isNeedsReviewTopic } from '../../shared/notes-presentation'
 
 export interface NotesOverviewGenerateRequest {
   prompt: string
@@ -35,6 +38,53 @@ Rules:
 
 NOTES:
 `
+
+const OVERVIEW_ONLY_PROMPT = `Summarize the finished meeting notes below for a busy reader.
+Return ONLY JSON with this shape:
+{"overview":"one or two short sentences"}
+Rules:
+- Use only facts that appear in the notes
+- State the meeting's direction, outcomes, and unresolved conditions
+- Do not invent owners, dates, or decisions
+- Do not list section headings
+- Do not copy two bullets verbatim as the overview
+- No markdown
+
+NOTES:
+`
+
+const OVERVIEW_ONLY_FORMAT = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    overview: { type: 'string' }
+  },
+  required: ['overview']
+} as const
+
+function noteItemLines(items: readonly NoteItem[]): string[] {
+  return items
+    .filter((item) => !isNeedsReviewTopic(item.topic) && item.text.trim())
+    .map((item) => `- ${item.text.replace(/\s+/gu, ' ').trim()}`)
+}
+
+/** Compact notes dump for the overview-only call. Omits the copied highlight overview. */
+export function notesCatalogMarkdown(content: MeetingNotesContent): string {
+  const lines: string[] = []
+  const takeaways = noteItemLines(content.keyTakeaways)
+  if (takeaways.length) lines.push('## Key Takeaways', ...takeaways, '')
+  for (const section of content.sections) {
+    if (isNeedsReviewTopic(section.title)) continue
+    const bullets = noteItemLines([...section.keyPoints, ...section.supportingDetails])
+    if (bullets.length === 0) continue
+    lines.push(`## ${section.title.trim()}`, ...bullets, '')
+  }
+  const decisions = noteItemLines(content.decisions)
+  if (decisions.length) lines.push('## Decisions', ...decisions, '')
+  const nextSteps = noteItemLines(content.nextSteps)
+  if (nextSteps.length) lines.push('## Next Steps', ...nextSteps, '')
+  return lines.join('\n').trim()
+}
 
 export function notesHeadingsFromMarkdown(markdown: string): string[] {
   return [...markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
@@ -119,16 +169,17 @@ async function requestOverview(
   markdown: string,
   generate: NotesOverviewGenerateFn,
   temperature: number,
-  numCtx: number
+  numCtx: number,
+  overviewOnly: boolean
 ): Promise<OverviewAttempt> {
   let raw: string
   try {
     raw = await generate({
-      prompt: `${OVERVIEW_PROMPT}${markdown.trim()}`,
+      prompt: `${overviewOnly ? OVERVIEW_ONLY_PROMPT : OVERVIEW_PROMPT}${markdown.trim()}`,
       num_ctx: numCtx,
-      num_predict: 400,
+      num_predict: overviewOnly ? 256 : 400,
       temperature,
-      format: OVERVIEW_RESPONSE_FORMAT
+      format: overviewOnly ? OVERVIEW_ONLY_FORMAT : OVERVIEW_RESPONSE_FORMAT
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -145,8 +196,10 @@ export async function generateNotesOverview(
   markdown: string,
   generate: NotesOverviewGenerateFn,
   sources: readonly NoteSourceRange[],
-  options?: { numCtx?: number }
+  options?: { numCtx?: number; overviewOnly?: boolean; meetingId?: string }
 ): Promise<NotesOverviewResult> {
+  const startedAt = Date.now()
+  const overviewOnly = options?.overviewOnly === true
   const numCtx = options?.numCtx && options.numCtx > 0 ? options.numCtx : 4096
   const fallbackSources = sources.length > 0 ? sources : [{ startMs: 0, endMs: 0 }]
   const headings = notesHeadingsFromMarkdown(markdown)
@@ -173,29 +226,51 @@ export async function generateNotesOverview(
     }
   }
 
-  const first = await requestOverview(markdown, generate, 0.2, numCtx)
+  const first = await requestOverview(markdown, generate, 0.2, numCtx, overviewOnly)
   let parsed = first.parsed
   if (!usable(parsed)) {
     noteRejection(first, 'attempt 1')
-    const retry = await requestOverview(markdown, generate, 0.35, numCtx)
+    const retry = await requestOverview(markdown, generate, 0.35, numCtx, overviewOnly)
     if (usable(retry.parsed) || (!parsed?.overview && retry.parsed?.overview)) {
       parsed = retry.parsed
     } else {
       noteRejection(retry, 'attempt 2')
     }
   }
-  if (!parsed?.overview) {
-    return {
-      overview: null,
-      keyTakeaways: (parsed?.keyTakeaways ?? []).map((text) => takeaway(text, fallbackSources)),
-      usedModel: false,
-      failureReasons
-    }
+  const result: NotesOverviewResult = !parsed?.overview
+    ? {
+        overview: null,
+        keyTakeaways: overviewOnly
+          ? []
+          : (parsed?.keyTakeaways ?? []).map((text) => takeaway(text, fallbackSources)),
+        usedModel: false,
+        failureReasons
+      }
+    : {
+        overview: block(parsed.overview, fallbackSources),
+        keyTakeaways: overviewOnly
+          ? []
+          : parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
+        usedModel: true,
+        failureReasons
+      }
+  const captureDir = process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR
+  if (captureDir && options?.meetingId) {
+    await mkdir(captureDir, { recursive: true })
+    await writeFile(
+      join(captureDir, `overview-${options.meetingId}.json`),
+      JSON.stringify(
+        {
+          elapsedMs: Date.now() - startedAt,
+          overviewOnly,
+          usedModel: result.usedModel,
+          overview: result.overview?.text ?? null,
+          failureReasons
+        },
+        null,
+        2
+      )
+    )
   }
-  return {
-    overview: block(parsed.overview, fallbackSources),
-    keyTakeaways: parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
-    usedModel: true,
-    failureReasons
-  }
+  return result
 }

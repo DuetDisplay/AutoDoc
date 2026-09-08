@@ -7,8 +7,27 @@ import type {
   Segment,
   SegmentCategory
 } from '../../shared/types'
+import {
+  distinctNoteTitle,
+  GENERIC_SECTION_TITLES,
+  isLeftoverPresentationTitle,
+  NEEDS_REVIEW_TOPIC,
+  OTHER_NOTES_TOPIC,
+  isOtherNotesTopic
+} from '../../shared/notes-presentation'
+import { normalizeNoteSources } from './notes-revision'
 import { parseMeetingNotesContent } from './notes-schema'
-import { noteTextLooksCoherent } from './notes-coherence'
+import {
+  noteRecordNeedsReview,
+  noteSubjectIsResolved,
+  noteTextLooksCoherent
+} from './notes-coherence'
+import { assignPresentationTopics } from './notes-topic-grouper'
+import {
+  assignWindowsPresentationTopics,
+  isWindowsTopicWriterEnabled,
+  windowsNoteNeedsReview
+} from './windows-notes-experiment'
 
 const SEGMENT_BUCKETS = [
   { key: 'decisions', category: 'decision', location: 'decision' },
@@ -63,11 +82,20 @@ interface PresentedItem {
 }
 
 const DERIVED_TAKEAWAY_ID = /^lossless-takeaway:/u
-const QUANTIFIED_SIGNAL =
-  /(?:\b\d+(?:[.,]\d+)?\b|%|\b(?:today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday)\b)/iu
+const QUANTIFIED_SIGNAL = /(?:\b\d+(?:[.,]\d+)?\b|%)/u
 const MATERIAL_SIGNAL =
   /\b(?:approved|blocked|canceled|cancelled|changed|complete|completed|decreased|failed|failure|increased|launched|passed|resolved|risk|shipped|waiting)\b/iu
+const UNRESOLVED_COMPARISON =
+  /\b(?:the same as|still the same|same as yesterday|do this properly)\b/iu
 const SUMMARY_WORD = /[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu
+
+export interface LosslessPresentationStats {
+  topicCoveragePercent: number
+  genericHeadingPercent: number
+  needsReviewCount: number
+  contextDependentRejected: number
+  groupingFallback: boolean
+}
 
 function standaloneCompletenessScore(text: string): number {
   const wordCount = text.match(SUMMARY_WORD)?.length ?? 0
@@ -133,27 +161,98 @@ function stableSortSegments(segments: readonly Segment[]): Segment[] {
 
 function summaryScore(segment: Segment): number {
   const categoryScore: Record<SegmentCategory, number> = {
-    decision: 100,
+    decision: 70,
     status_update: 60,
     information: 50,
     action_item: 40,
     discussion: 30
   }
   const text = `${segment.title} ${segment.content}`
+  const topic = segment.topic?.trim() ?? ''
+  const topicBonus = topic && topic !== OTHER_NOTES_TOPIC && topic !== NEEDS_REVIEW_TOPIC ? 8 : 0
   return (
     categoryScore[segment.category] +
     (QUANTIFIED_SIGNAL.test(text) ? 20 : 0) +
     (MATERIAL_SIGNAL.test(text) ? 12 : 0) +
     standaloneCompletenessScore(segment.content) +
     (segment.deadline ? 8 : 0) +
-    (segment.topic?.trim() ? 3 : 0)
+    topicBonus -
+    (UNRESOLVED_COMPARISON.test(text) ? 24 : 0)
   )
 }
 
-function summarySegments(segments: MeetingSegments): Segment[] {
-  const ranked = Object.values(segments)
+function isPromotable(segment: Segment): boolean {
+  if (segment.topic === NEEDS_REVIEW_TOPIC) return false
+  if (windowsNoteNeedsReview(segment) || noteRecordNeedsReview(segment.content)) return false
+  if (!noteTextLooksCoherent(segment.content)) return false
+  return noteSubjectIsResolved(segment.content, segment.title, segment.topic)
+}
+
+function isOverviewCandidate(segment: Segment): boolean {
+  if (!isPromotable(segment)) return false
+  if (UNRESOLVED_COMPARISON.test(segment.content)) return false
+  if (isLeftoverPresentationTitle(segment.title) || isLeftoverPresentationTitle(segment.topic)) {
+    return false
+  }
+  const text = `${segment.title} ${segment.content}`
+  return (
+    standaloneCompletenessScore(segment.content) > 0 ||
+    QUANTIFIED_SIGNAL.test(text) ||
+    MATERIAL_SIGNAL.test(text)
+  )
+}
+
+function composeOverview(selected: readonly Segment[]): MeetingNotesContent['overview'] {
+  if (selected.length === 0) return null
+  return {
+    text: selected
+      .map((segment) => segment.content.trim())
+      .filter((line) => line.length > 0)
+      .slice(0, 2)
+      .join(' '),
+    sources: normalizeNoteSources(
+      selected.map((segment) => ({
+        startMs: segment.sourceStartMs,
+        endMs: segment.sourceEndMs
+      }))
+    ),
+    provenance: 'generated'
+  }
+}
+
+function pickDiverse(
+  ranked: ReadonlyArray<{ segment: Segment; index: number }>,
+  limit: number
+): Segment[] {
+  const selected: Segment[] = []
+  const selectedIds = new Set<string>()
+  const selectedTopics = new Set<string>()
+  for (const row of ranked) {
+    const topic = row.segment.topic?.trim().toLocaleLowerCase() ?? ''
+    if (!topic || topic === OTHER_NOTES_TOPIC.toLocaleLowerCase() || selectedTopics.has(topic)) {
+      continue
+    }
+    selected.push(row.segment)
+    selectedIds.add(row.segment.id)
+    selectedTopics.add(topic)
+    if (selected.length >= limit) return selected
+  }
+  for (const row of ranked) {
+    if (selectedIds.has(row.segment.id)) continue
+    selected.push(row.segment)
+    selectedIds.add(row.segment.id)
+    if (selected.length >= limit) break
+  }
+  return selected
+}
+
+function rankSegments(
+  segments: MeetingSegments,
+  predicate: (segment: Segment) => boolean
+): Array<{ segment: Segment; index: number; score: number }> {
+  return Object.values(segments)
     .flat()
-    .filter((segment) => noteTextLooksCoherent(segment.content))
+    .filter(predicate)
     .map((segment, index) => ({ segment, index, score: summaryScore(segment) }))
     .sort(
       (left, right) =>
@@ -161,25 +260,33 @@ function summarySegments(segments: MeetingSegments): Segment[] {
         left.segment.sourceStartMs - right.segment.sourceStartMs ||
         left.index - right.index
     )
+}
 
-  const selected: Segment[] = []
-  const selectedIds = new Set<string>()
-  const selectedTopics = new Set<string>()
-  for (const row of ranked) {
-    const topic = row.segment.topic?.trim().toLocaleLowerCase() ?? ''
-    if (!topic || selectedTopics.has(topic)) continue
-    selected.push(row.segment)
-    selectedIds.add(row.segment.id)
-    selectedTopics.add(topic)
-    if (selected.length >= 4) return selected
-  }
-  for (const row of ranked) {
-    if (selectedIds.has(row.segment.id)) continue
-    selected.push(row.segment)
-    selectedIds.add(row.segment.id)
-    if (selected.length >= 4) break
-  }
-  return selected
+function summarySegments(segments: MeetingSegments): Segment[] {
+  if (isWindowsTopicWriterEnabled()) return []
+  return pickDiverse(rankSegments(segments, isPromotable), 4)
+}
+
+function overviewSegments(segments: MeetingSegments): Segment[] {
+  const preferred = pickDiverse(rankSegments(segments, isOverviewCandidate), 2)
+  if (preferred.length > 0) return preferred
+  return pickDiverse(rankSegments(segments, isPromotable), 2)
+}
+
+export function countContextDependentRejections(segments: MeetingSegments): number {
+  return Object.values(segments)
+    .flat()
+    .filter((segment) => noteTextLooksCoherent(segment.content))
+    .filter((segment) => !isPromotable(segment)).length
+}
+
+function takeawayHeading(segment: Segment): string {
+  return (
+    distinctNoteTitle(segment.title, segment.content, {
+      topic: segment.topic,
+      sectionTitle: segment.topic
+    }) ?? ''
+  )
 }
 
 function takeawayId(meetingId: string, segment: Segment, index: number): string {
@@ -199,19 +306,12 @@ function withSummaryHierarchy(
   content: MeetingNotesContent
 ): MeetingNotesContent {
   const selected = summarySegments(segments)
-  const overviewSource = selected[0]
   return {
     ...content,
-    overview: overviewSource
-      ? {
-          text: overviewSource.content,
-          sources: [{ startMs: overviewSource.sourceStartMs, endMs: overviewSource.sourceEndMs }],
-          provenance: 'generated'
-        }
-      : null,
-    keyTakeaways: selected.slice(1).map((segment, index) => ({
+    overview: composeOverview(overviewSegments(segments)),
+    keyTakeaways: selected.map((segment, index) => ({
       id: takeawayId(meetingId, segment, index),
-      title: segment.title,
+      title: takeawayHeading(segment),
       topic: segment.topic,
       owner: null,
       deadline: null,
@@ -224,9 +324,12 @@ function withSummaryHierarchy(
 }
 
 function compareSectionGroups(
-  left: { segments: readonly Segment[]; index: number },
-  right: { segments: readonly Segment[]; index: number }
+  left: { title?: string; segments: readonly Segment[]; index: number },
+  right: { title?: string; segments: readonly Segment[]; index: number }
 ): number {
+  const leftOther = isOtherNotesTopic(left.title) || isOtherNotesTopic(left.segments[0]?.topic)
+  const rightOther = isOtherNotesTopic(right.title) || isOtherNotesTopic(right.segments[0]?.topic)
+  if (leftOther !== rightOther) return leftOther ? 1 : -1
   const leftFirst = left.segments[0]
   const rightFirst = right.segments[0]
   if (!leftFirst || !rightFirst) return left.index - right.index
@@ -394,30 +497,54 @@ function sourceMatchesSegment(sources: NoteItem['sources'], segment: Segment): b
   )
 }
 
+function overviewSourcesMatch(sources: NoteItem['sources'], selected: readonly Segment[]): boolean {
+  const expected = normalizeNoteSources(
+    selected.map((segment) => ({
+      startMs: segment.sourceStartMs,
+      endMs: segment.sourceEndMs
+    }))
+  )
+  if (sources.length !== expected.length) return false
+  return expected.every(
+    (source, index) =>
+      sources[index]?.startMs === source.startMs && sources[index]?.endMs === source.endMs
+  )
+}
+
+function presentedTopicMatches(
+  itemTopic: string | null | undefined,
+  segmentTopic: string | null | undefined
+): boolean {
+  const expected = segmentTopic?.trim() ?? ''
+  const actual = itemTopic?.trim() ?? ''
+  if (expected) return actual === expected
+  return true
+}
+
 function hasSourceBackedSummaryHierarchy(
   segments: MeetingSegments,
   content: MeetingNotesContent
 ): boolean {
   const expected = summarySegments(segments)
-  const overviewSource = expected[0]
-  if (!overviewSource) return content.overview === null && content.keyTakeaways.length === 0
+  const overviewExpected = overviewSegments(segments)
+  const overview = composeOverview(overviewExpected)
+  if (!overview) return content.overview === null && content.keyTakeaways.length === 0
   if (
-    content.overview?.text !== overviewSource.content ||
+    content.overview?.text !== overview.text ||
     content.overview.provenance !== 'generated' ||
-    !sourceMatchesSegment(content.overview.sources, overviewSource)
+    !overviewSourcesMatch(content.overview.sources, overviewExpected)
   ) {
     return false
   }
 
-  const expectedTakeaways = expected.slice(1)
-  if (content.keyTakeaways.length !== expectedTakeaways.length) return false
+  if (content.keyTakeaways.length !== expected.length) return false
   return content.keyTakeaways.every((item, index) => {
-    const segment = expectedTakeaways[index]
+    const segment = expected[index]
     return (
       segment !== undefined &&
       DERIVED_TAKEAWAY_ID.test(item.id) &&
-      item.title === segment.title &&
-      item.topic === segment.topic &&
+      item.title === takeawayHeading(segment) &&
+      presentedTopicMatches(item.topic, segment.topic) &&
       item.owner === null &&
       item.deadline === null &&
       item.text === segment.content &&
@@ -433,7 +560,7 @@ function itemMatchesSegment(item: NoteItem, segment: Segment): boolean {
   return (
     item.id === segment.id &&
     item.title === segment.title &&
-    item.topic === segment.topic &&
+    presentedTopicMatches(item.topic, segment.topic) &&
     item.owner === segment.assignee &&
     item.deadline === segment.deadline &&
     item.text === segment.content &&
@@ -449,10 +576,55 @@ function itemMatchesSegment(item: NoteItem, segment: Segment): boolean {
  * Verifies a one-to-one, field-exact projection of writer segments. All three
  * non-footer categories share the same structured V2 section location.
  */
+export function presentationSegments(segments: MeetingSegments): MeetingSegments {
+  if (isWindowsTopicWriterEnabled()) return assignWindowsPresentationTopics(segments)
+  return assignPresentationTopics(segments)
+}
+
+export function losslessPresentationStats(
+  segments: MeetingSegments,
+  content: MeetingNotesContent
+): LosslessPresentationStats {
+  const presented = presentationSegments(segments)
+  const bodyRecords = [
+    ...presented.information,
+    ...presented.discussion,
+    ...presented.statusUpdates
+  ]
+  const topical = bodyRecords.filter((segment) => {
+    const topic = segment.topic?.trim() ?? ''
+    return topic.length > 0 && topic !== OTHER_NOTES_TOPIC && topic !== NEEDS_REVIEW_TOPIC
+  }).length
+  const genericSections = content.sections.filter((section) =>
+    GENERIC_SECTION_TITLES.has(section.title.trim())
+  ).length
+  const needsReviewCount = Object.values(presented)
+    .flat()
+    .filter((segment) => segment.topic?.trim() === NEEDS_REVIEW_TOPIC).length
+  return {
+    topicCoveragePercent:
+      bodyRecords.length === 0 ? 100 : Math.round((100 * topical) / bodyRecords.length),
+    genericHeadingPercent:
+      content.sections.length === 0
+        ? 0
+        : Math.round((100 * genericSections) / content.sections.length),
+    needsReviewCount,
+    contextDependentRejected: countContextDependentRejections(presented),
+    groupingFallback:
+      content.sections.length > 0 &&
+      content.sections.every(
+        (section) =>
+          GENERIC_SECTION_TITLES.has(section.title.trim()) ||
+          section.title.trim() === OTHER_NOTES_TOPIC
+      )
+  }
+}
+
 export function hasExactLosslessCoverage(
   segments: MeetingSegments,
   content: MeetingNotesContent
 ): boolean {
+  segments = presentationSegments(segments)
   if (!hasSourceBackedSummaryHierarchy(segments, content)) return false
   if (
     content.sections.some(
@@ -491,6 +663,7 @@ export function ensureExactLosslessCoverage(
   segments: MeetingSegments,
   candidate: MeetingNotesContent
 ): MeetingNotesContent {
+  segments = presentationSegments(segments)
   validateInput(meetingId, segments)
 
   try {
@@ -518,9 +691,10 @@ export function presentMeetingSegmentsLosslessly(
   segments: MeetingSegments
 ): MeetingNotesContent {
   validateInput(meetingId, segments)
+  const presented = presentationSegments(segments)
   return ensureExactLosslessCoverage(
     meetingId,
-    segments,
-    buildGroupedCandidate(meetingId, segments)
+    presented,
+    buildGroupedCandidate(meetingId, presented)
   )
 }

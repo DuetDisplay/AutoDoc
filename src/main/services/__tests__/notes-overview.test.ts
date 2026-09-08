@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   generateNotesOverview,
+  notesCatalogMarkdown,
   notesHeadingsFromMarkdown,
   overviewLooksLikeHeadingList
 } from '../notes-overview'
@@ -111,6 +112,73 @@ describe('generateNotesOverview', () => {
       'attempt 1: generate failed: runner recycled',
       'attempt 2: generate failed: runner recycled'
     ])
+  })
+
+  it('requests an overview-only JSON object with a 256-token cap', async () => {
+    const requests: Array<{ num_predict: number; format: unknown; prompt: string }> = []
+    const result = await generateNotesOverview(
+      '## Analytics\n- Collect login events from all users\n',
+      async (request) => {
+        requests.push({
+          num_predict: request.num_predict,
+          format: request.format,
+          prompt: request.prompt
+        })
+        return JSON.stringify({ overview: 'The team aligned on login analytics coverage.' })
+      },
+      [{ startMs: 0, endMs: 10 }],
+      { overviewOnly: true }
+    )
+    expect(result.usedModel).toBe(true)
+    expect(result.overview?.text).toBe('The team aligned on login analytics coverage.')
+    expect(result.keyTakeaways).toEqual([])
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.num_predict).toBe(256)
+    expect(requests[0]?.format).toMatchObject({ required: ['overview'] })
+    expect(requests[0]?.prompt).not.toContain('keyTakeaways')
+  })
+
+  it('builds a catalog dump without the copied overview or leftover review notes', () => {
+    const markdown = notesCatalogMarkdown({
+      overview: { text: 'Cancellations — starts looked odd.', sources: [], provenance: 'generated' },
+      keyTakeaways: [
+        {
+          id: 't1',
+          title: '',
+          topic: 'Cancellations',
+          owner: null,
+          deadline: null,
+          text: 'Starts and cancels looked unusual.',
+          sources: [],
+          provenance: 'generated'
+        }
+      ],
+      sections: [
+        {
+          id: 's1',
+          title: 'Needs Review',
+          summary: null,
+          keyPoints: [
+            {
+              id: 'junk',
+              title: 'Um',
+              topic: 'Needs Review',
+              owner: null,
+              deadline: null,
+              text: 'Um Get the nines.',
+              sources: [],
+              provenance: 'generated'
+            }
+          ],
+          supportingDetails: []
+        }
+      ],
+      decisions: [],
+      nextSteps: []
+    } as never)
+    expect(markdown).toContain('Starts and cancels looked unusual.')
+    expect(markdown).not.toContain('Cancellations —')
+    expect(markdown).not.toContain('Um Get the nines.')
   })
 
   it('requests grammar-constrained JSON output from the model', async () => {

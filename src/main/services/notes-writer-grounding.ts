@@ -9,6 +9,11 @@ import {
   actionSpeechActSupportsSummary
 } from './notes-action-speech'
 import { noteTextLooksCoherent } from './notes-coherence'
+import {
+  isWindowsCatalogWriterEnabled,
+  isWindowsTopicWriterEnabled,
+  windowsNumberWordCompletionEnabled
+} from './windows-notes-experiment'
 
 export type WriterGroundingCategory =
   | 'decisions'
@@ -324,6 +329,56 @@ const ASSOCIATED_CLAIM_BOUNDARY = /(?:,(?!\d)\s*|\s+and\s+)/gi
 const SUBORDINATE_CLAIM_START =
   /^(?:after|although|because|before|due\s+to|even\s+if|if|once|so\s+that|unless|when|with|without)\b/i
 
+const WINDOWS_DEPENDENT_CLAIM_START =
+  /^(?:(?:but|while|whereas)\s+)?(?:after|although|because|before|due\s+to|even\s+if|if|once|only\s+if|provided\s+that|so\s+that|unless|until|when|while|with|without|in\s+order\s+to|leading\s+to|resulting\s+in|to\s+enable)\b/i
+
+const PERIOD_ABBREVIATION =
+  /(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|rev|hon|capt|lt|sgt|gen|no|vs|etc|cf|approx|fig|dept|inc|ltd)\.|(?:\p{L}\.){2,}|\b\p{Lu}\.)$/iu
+
+function isSentencePeriod(text: string, index: number): boolean {
+  const following = text.slice(index + 1)
+  if (!following.trim()) return true
+  // Internal abbreviation/version/decimal punctuation is not a sentence end.
+  if (!/^\s/u.test(following)) return false
+  return !PERIOD_ABBREVIATION.test(text.slice(0, index + 1))
+}
+
+/** Keep qualifiers and parenthetical examples intact while isolating claims. */
+function splitWindowsClaimBoundaries(text: string, boundary: RegExp): string[] {
+  const clauses: string[] = []
+  const grouping: string[] = []
+  let scanned = 0
+  let start = 0
+  for (const match of text.matchAll(new RegExp(boundary.source, `${boundary.flags.replace(/g/g, '')}g`))) {
+    const index = match.index ?? 0
+    for (; scanned < index; scanned += 1) {
+      const character = text[scanned]!
+      if (character === '(' || character === '[') grouping.push(character)
+      if ((character === ')' && grouping.at(-1) === '(') ||
+          (character === ']' && grouping.at(-1) === '[')) grouping.pop()
+    }
+    if (grouping.length > 0) continue
+    if (match[0] === '.' && !isSentencePeriod(text, index)) continue
+    if (/\bwhile\b/i.test(match[0])) continue
+    if (WINDOWS_DEPENDENT_CLAIM_START.test(text.slice(index + match[0].length).trimStart())) continue
+    clauses.push(text.slice(start, index))
+    start = index + match[0].length
+  }
+  clauses.push(text.slice(start))
+  return clauses
+}
+
+function hasBalancedClaimGrouping(text: string): boolean {
+  const grouping: string[] = []
+  for (const character of text) {
+    if (character === '(' || character === '[') grouping.push(character)
+    if (character === ')' || character === ']') {
+      if (grouping.pop() !== (character === ')' ? '(' : '[')) return false
+    }
+  }
+  return grouping.length === 0
+}
+
 const RELATIONSHIP_MARKERS: ReadonlyArray<{
   summary: RegExp
   evidence: RegExp
@@ -541,8 +596,8 @@ function hasClaimPredicate(text: string): boolean {
 }
 
 function splitClaimClauses(text: string): string[] {
-  return text
-    .split(CLAIM_SPLIT)
+  const safeBoundaries = isWindowsTopicWriterEnabled()
+  return (safeBoundaries ? splitWindowsClaimBoundaries(text, CLAIM_SPLIT) : text.split(CLAIM_SPLIT))
     .flatMap((clause) => {
       const claims: string[] = []
       let claimStart = 0
@@ -551,6 +606,8 @@ function splitClaimClauses(text: string): string[] {
         const boundaryIndex = match.index ?? 0
         const fragment = clause.slice(claimStart, boundaryIndex)
         const remainder = clause.slice(boundaryIndex + match[0].length)
+        if (safeBoundaries && !hasBalancedClaimGrouping(clause.slice(0, boundaryIndex))) continue
+        if (safeBoundaries && WINDOWS_DEPENDENT_CLAIM_START.test(remainder.trim())) continue
         if (SUBORDINATE_CLAIM_START.test(remainder.trim())) continue
         if (!hasClaimPredicate(fragment) || !hasClaimPredicate(remainder)) continue
         claims.push(fragment)
@@ -668,16 +725,36 @@ function assertionPolarityIsGrounded(
   evidenceLines: readonly WriterGroundingLine[],
   // Paraphrase mode trims the lead so a negation stitched in from the previous
   // ASR sentence fragment does not flip the polarity of an unrelated claim.
-  leadWords = 8
+  leadWords = 8,
+  scoped = false
 ): boolean {
-  const evidenceClauses = evidenceClaimClauses(evidenceLines)
+  // A hold can be definite while the event ending it remains uncertain. Only
+  // compare these parts separately when the summary also retains the qualifier;
+  // an unqualified claim must still face the complete conditional evidence.
+  const compareOngoingQualifier = scoped && /\S\s+(?:until|while)\s+\S/iu.test(summary)
+  const ongoingParts = (clause: string): string[] => {
+    if (!compareOngoingQualifier) return [clause]
+    for (const match of clause.matchAll(/\s+(?=(?:until|while)\b)/giu)) {
+      const index = match.index ?? 0
+      if (!hasBalancedClaimGrouping(clause.slice(0, index))) continue
+      return [clause.slice(0, index), clause.slice(index).trimStart()]
+    }
+    return [clause]
+  }
+  const clauses = (text: string): string[] =>
+    splitClaimClauses(scoped ? text.replace(/^\s*no,\s*/iu, '') : text).flatMap((clause) =>
+      scoped ? clause.split(/,\s+(?:then\s+|with\s+(?=no\b)|(?=focusing\s+on\b))|\s+and\s+(?=remains?\s+undecided\b)/iu) : [clause]
+    ).flatMap(ongoingParts)
+  const evidenceClauses = evidenceLines.flatMap((line) => clauses(line.text).map((text) => ({ text })))
 
-  return splitClaimClauses(summary).every((summaryClause) => {
+  return clauses(summary).every((summaryClause) => {
     const summaryTokens = distinctiveTokens(summaryClause)
     if (summaryTokens.size === 0) return true
 
     const scored = evidenceClauses.map(({ text }) => {
-      const relevantText = relevantEvidenceSpan(summaryClause, text, leadWords)
+      // Preserve the entire clause in the line-cited experiment. Cutting the
+      // first four words could remove an "if"/"unless" governing the claim.
+      const relevantText = scoped ? text : relevantEvidenceSpan(summaryClause, text, leadWords)
       return {
         text: relevantText,
         shared: sharedTokenCount(summaryTokens, distinctiveTokens(relevantText))
@@ -686,14 +763,51 @@ function assertionPolarityIsGrounded(
     const bestShared = Math.max(0, ...scored.map((candidate) => candidate.shared))
     if (bestShared === 0) return true
 
-    const summaryNegated = hasExplicitNegation(summaryClause)
-    const summaryNonAssertive = hasNonAssertiveModality(summaryClause)
+    const negated = (text: string): boolean => hasExplicitNegation(text) || (scoped && /\b(?:undecided|unapproved)\b/iu.test(text))
+    const summaryNegated = negated(summaryClause)
+    const nonAssertive = (text: string): boolean =>
+      (compareOngoingQualifier && /^(?:until|while)\b/iu.test(text)) || hasNonAssertiveModality(scoped
+      ? text.replace(/\bso\s+(?:that\s+)?(?:we|they|you|i)\s+can\s+/giu, 'so ')
+      : text)
+    const summaryNonAssertive = nonAssertive(summaryClause)
     return scored.some(
       (candidate) =>
         candidate.shared === bestShared &&
-        hasExplicitNegation(candidate.text) === summaryNegated &&
-        (summaryNonAssertive || !hasNonAssertiveModality(candidate.text))
+        negated(candidate.text) === summaryNegated &&
+        (summaryNonAssertive || !nonAssertive(candidate.text) ||
+          // A prescribed question in a script describes its intended focus;
+          // it does not make the preceding commitment tentative.
+          (scoped && /^focusing\s+on\b/iu.test(summaryClause) &&
+            /\bshould\s+(?:ask|focus|cover|include)\b/iu.test(candidate.text) &&
+            !/\b(?:if|unless|might|maybe|perhaps)\b/iu.test(candidate.text)))
     )
+  })
+}
+
+/** Bind asserted states and contrastive quantity subjects, not just shared nouns. */
+function windowsClaimBindingsAreGrounded(summary: string, lines: readonly WriterGroundingLine[]): boolean {
+  const evidence = evidenceClaimClauses(lines).flatMap(({ text }) => text.split(/,\s+then\s+/iu))
+  const allTokens = distinctiveTokens(evidence.join(' '))
+  return splitClaimClauses(summary).every((clause) => {
+    const states = clause.match(/\b(?:approved|available|enabled|disabled|rejected)\b/giu) ?? []
+    if (!hasNonAssertiveModality(clause) && states.some((state) =>
+      !evidence.some((text) => new RegExp(`\\b${state === 'approved' ? 'approv(?:ed|ing|e|es)' : state}\\b`, 'iu').test(text) &&
+        hasExplicitNegation(text) === hasExplicitNegation(clause) && !hasNonAssertiveModality(text))
+    )) return false
+    const mentions = extractQuantityMentions(clause)
+    const metrics = requiredMetricGroups(clause)
+    // Apply subject contrast only to single-quantity claims with a repeated
+    // metric. A combined registration/target fact legitimately spans clauses.
+    if (mentions.length !== 1 || metrics.length === 0 ||
+        evidence.filter((text) => metrics.some((metric) => metric.test(text)) && extractQuantityMentions(text).length > 0).length < 2) return true
+    const summaryTokens = distinctiveTokens(clause)
+    return mentions.every((mention) => evidence.some((text) => {
+      if (!extractQuantityMentions(text).some((other) => quantityMentionsEquivalent(mention, other))) return false
+      const localTokens = distinctiveTokens(text)
+      // A subject explicitly named elsewhere in this citation cannot borrow
+      // this clause's quantity merely because both clauses mention a rate.
+      return [...summaryTokens].every((token) => !allTokens.has(token) || localTokens.has(token))
+    }))
   })
 }
 
@@ -800,11 +914,19 @@ function hasNonFutureCompletion(text: string): boolean {
 }
 
 function completionSubjectTokens(text: string): Set<string> {
-  return new Set(
-    (text.toLowerCase().match(/[a-z0-9][a-z0-9'-]*/g) ?? [])
+  const quantities = windowsNumberWordCompletionEnabled() ? extractQuantityMentions(text) : []
+  let lexicalText = text
+  for (const mention of [...quantities].reverse()) {
+    lexicalText = lexicalText.slice(0, mention.start) + ' ' + lexicalText.slice(mention.end)
+  }
+  const tokens = new Set(
+    (lexicalText.toLowerCase().match(/[a-z0-9][a-z0-9'-]*/g) ?? [])
       .map(normalizeToken)
       .filter((token) => token.length >= 2 && !COMPLETION_SUBJECT_STOP.has(token))
   )
+  // Preserve numeric subjects, including one-digit counts, across written/spoken forms.
+  for (const mention of quantities) tokens.add(`quantity:${mention.canonical}`)
+  return tokens
 }
 
 function completionSubjectIsSupported(
@@ -821,6 +943,17 @@ function completionSubjectIsSupported(
   }
   if (requireExplicitPlatform && summaryPlatforms.length > 0 && !hasEverySummaryPlatform) {
     return false
+  }
+
+  if (windowsNumberWordCompletionEnabled()) {
+    const summaryQuantities = extractQuantityMentions(summaryClause)
+    const evidenceQuantities = extractQuantityMentions(evidenceContext)
+    // A mixed cohort such as "18 of 24 passed" cannot support picking either count
+    // as the completed subject. Compare within this predicate, never the full citation.
+    if (summaryQuantities.length > 0 && (
+      summaryQuantities.length !== evidenceQuantities.length ||
+      !areQuantitiesGrounded(summaryClause, evidenceContext, { consumeEvidenceMentions: true })
+    )) return false
   }
 
   const platformSet = new Set<string>(summaryPlatforms)
@@ -1115,6 +1248,67 @@ function purposeTailsAreGrounded(summary: string, evidence: string): boolean {
   return [...purposeTokens].every((token) => evidenceTokens.has(token))
 }
 
+const FAILURE_PREDICATE = /\b(?:fail(?:ed|ing|s)?|failures?|unsuccessful)\b/giu
+const STATED_FAILURE_NOUN =
+  /\b(?:is|are|was|were|confirmed|recorded|identified|reported|found)\s+(?:(?:a|the|confirmed|actual)\s+)*failures?\b|\bfailures?\s+(?:is|are|was|were)\s+confirmed\b/iu
+
+function isAffirmativeFailureClaim(text: string): boolean {
+  if (!/\b(?:fail(?:ed|ing|s)?|unsuccessful)\b/iu.test(text) && !STATED_FAILURE_NOUN.test(text)) return false
+  // "Failed to compile" asserts failure; "did not fail to compile" does not.
+  if (hasExplicitNegation(text.replace(/\bfail(?:ed|s)?\s+to\b/giu, ' ')) ||
+      hasNonAssertiveModality(text) || /\b(?:unconfirmed|awaiting|suspected|potential|possible)\b/iu.test(text)) return false
+  return [...text.matchAll(FAILURE_PREDICATE)].some((match) => {
+    const prefix = text.slice(Math.max(0, (match.index ?? 0) - 80), match.index)
+    return !FUTURE_COMPLETION_PREFIX.test(prefix)
+  })
+}
+
+/** A failure outcome needs affirmative evidence for that subject and cohort. */
+function windowsFailureClaimsAreGrounded(
+  summary: string,
+  evidenceLines: readonly WriterGroundingLine[]
+): boolean {
+  const evidenceClauses = evidenceClaimClauses(evidenceLines)
+  const subject = (text: string): string => text.replace(FAILURE_PREDICATE, ' ').replace(/\bconfirmed\b/giu, ' ')
+  // Bind letter labels such as "Build A", not a sentence-initial article "A".
+  const letterIdentifiers = (text: string): string[] =>
+    [...text.matchAll(/\b[\p{L}][\p{L}\d-]+\s+([A-Z])\b/gu)].map((match) => match[1]!)
+  return splitClaimClauses(summary).every((summaryClause) => {
+    if (!isAffirmativeFailureClaim(summaryClause)) return true
+    const negativeAction = /\bfail(?:ed|s)?\s+to\b/iu.exec(summaryClause)
+    if (negativeAction) {
+      // Negative-action paraphrases also have explicit forms such as "does not
+      // update". Keep subject/cohort binding here; scoped polarity checks the
+      // paraphrase rather than requiring the source to repeat the word "fail".
+      const summarySubject = summaryClause.slice(0, negativeAction.index)
+      return evidenceClauses.some(({ text }) => {
+        const negative = /\b(?:fail(?:ed|s)?\s+to|(?:do|does|did|has|have|had)\s+not|don't|doesn't|didn't|hasn't|haven't|hadn't)\b/iu.exec(text)
+        if (!negative || hasNonAssertiveModality(text)) return false
+        if (/^\s*(?:fail(?:ed|s)?|not|never)\b/iu.test(text.slice(negative.index + negative[0].length))) return false
+        const evidenceSubject = text.slice(0, negative.index)
+        return !hasExplicitNegation(evidenceSubject) &&
+          !FUTURE_COMPLETION_PREFIX.test(evidenceSubject) &&
+          completionSubjectIsSupported(summarySubject, evidenceSubject, true) &&
+          letterIdentifiers(summarySubject).every((identifier) => letterIdentifiers(evidenceSubject).includes(identifier))
+      })
+    }
+    return evidenceClauses.some(({ text }) =>
+      isAffirmativeFailureClaim(text) &&
+      completionSubjectIsSupported(subject(summaryClause), subject(text), true) &&
+      letterIdentifiers(summaryClause).every((identifier) => letterIdentifiers(text).includes(identifier))
+    )
+  })
+}
+
+function windowsPurposeIsGrounded(summary: string, evidence: string): boolean {
+  const purpose = summary.match(/\b(?:created|drafted|written|released|sent|designed|updated|raised|lowered)\b[\s\S]*?\bto\s+([a-z][\s\S]*)/iu)?.[1]
+  if (!purpose) return true
+  const tokens = distinctiveTokens(purpose)
+  if (tokens.size === 0) return true
+  const shared = sharedTokenCount(tokens, distinctiveTokens(evidence))
+  return shared >= Math.min(3, tokens.size) && shared / tokens.size >= 0.7
+}
+
 function textIsGrounded(
   summary: string,
   evidenceLines: readonly WriterGroundingLine[],
@@ -1129,13 +1323,19 @@ function textIsGrounded(
   if (mode === 'paraphrase') {
     if (!explicitAlternativesAreGrounded(trimmed, evidenceLines, true)) return false
     if (!completionClaimsAreGrounded(trimmed, evidenceLines)) return false
+    if (isWindowsTopicWriterEnabled() && !windowsFailureClaimsAreGrounded(trimmed, evidenceLines)) return false
     if (
-      !assertionPolarityIsGrounded(trimmed, evidenceLines, 4) &&
-      !(allowAcceptedProposal && decisionEvidenceSupportsSummary(trimmed, evidenceLines))
+      !assertionPolarityIsGrounded(trimmed, evidenceLines, 4, isWindowsTopicWriterEnabled()) &&
+      !(allowAcceptedProposal && decisionEvidenceSupportsSummary(trimmed, evidenceLines) &&
+        (!isWindowsTopicWriterEnabled() || !/\b(?:if|unless|depending\s+on)\b/iu.test(evidence)))
     ) {
       return false
     }
     if (!areQuantitiesGrounded(trimmed, evidence, { allowDerivedQuantities: true })) return false
+    if (isWindowsTopicWriterEnabled() && !windowsClaimBindingsAreGrounded(trimmed, evidenceLines)) return false
+    if (isWindowsCatalogWriterEnabled() && /\b(?:because|due\s+to|resulting\s+in|so\s+that|in\s+order\s+to)\b/iu.test(trimmed) &&
+        !relationshipMarkersAreGrounded(trimmed, evidenceLines)) return false
+    if (isWindowsCatalogWriterEnabled() && !windowsPurposeIsGrounded(trimmed, evidence)) return false
     if (!platformTermsAreGrounded(trimmed, evidence, true)) return false
     // Zero distinctive-token overlap means the citation resolved to unrelated
     // speech; any real synthesis shares at least one anchor with its source.
@@ -1302,12 +1502,14 @@ function claimBindingsAreSafe(
 }
 
 function splitConservativeClauses(content: string): ConservativeClauseCandidate[] {
+  const safeBoundaries = isWindowsTopicWriterEnabled()
   const hasCoordinatedPlan = plannedActionBranches(content).length > 0
-  const clauses = content
-    .split(
+  const clauses = (safeBoundaries
+    ? splitWindowsClaimBoundaries(content, /(?:[;!?]|\.(?!\d)|\s+[—–]\s+|,\s+(?=(?:but|while|whereas)\b))/i)
+    : content.split(
       /(?:;|\.(?!\d)|\s+[—–]\s+|,\s+(?=(?:but|while|whereas|with)\b)|\s+(?=(?:after|because|due\s+to|in\s+order\s+to|leading\s+to|resulting\s+in|so\s+that|to\s+enable)\b))/i
-    )
-    .flatMap((clause) => (hasCoordinatedPlan ? clause.split(/\s+(?=without\b)/i) : [clause]))
+    ))
+    .flatMap((clause) => (!safeBoundaries && hasCoordinatedPlan ? clause.split(/\s+(?=without\b)/i) : [clause]))
     .map((clause) => clause.replace(/\s+/g, ' ').trim())
     .filter((clause) => clause.length >= 8)
     .filter((clause) => !SUBORDINATE_CLAIM_START.test(clause))
@@ -1315,6 +1517,9 @@ function splitConservativeClauses(content: string): ConservativeClauseCandidate[
   const candidates: ConservativeClauseCandidate[] = []
   for (const clause of clauses) {
     candidates.push({ content: clause, groundingText: clause })
+    // A trailing qualifier can govern every planned action or only the last.
+    // Keep the authored plan intact on Windows instead of guessing that scope.
+    if (safeBoundaries) continue
     for (const branch of plannedActionBranches(clause)) {
       candidates.push({
         content: branch.text,
@@ -1480,13 +1685,21 @@ function resolveCategory(
   if (category === 'action_items') {
     if (VERBATIM_INCOMPLETE_END.test(content)) return null
     const evidence = evidenceLines.map((line) => line.text).join(' ')
-    return evidenceLines.some((line) => actionSpeechActSupportsSummary(line.text, content)) ||
-      explicitPlanSupportsActionBody(content, evidence, plannedContext)
-      ? category
-      : null
+    if (evidenceLines.some((line) => actionSpeechActSupportsSummary(line.text, content)) ||
+      explicitPlanSupportsActionBody(content, evidence, plannedContext)) return category
+    if (isWindowsTopicWriterEnabled() && decisionEvidenceSupportsSummary(content, evidenceLines)) return 'decisions'
+    return null
   }
   if (category !== 'decisions') return category
   if (decisionEvidenceSupportsSummary(`${title} ${content}`, evidenceLines)) return category
+  if (isWindowsTopicWriterEnabled()) {
+    // Negative approvals and unresolved choices are useful grounded facts,
+    // even when the writer put them in the decision bucket. Never turn a
+    // positive invented approval into a fact through this fallback.
+    if (/\b(?:not\s+approved|no\s+\w+\s+is\s+approved|undecided|unapproved|postpon(?:e|ed|ing)|defer(?:red|ring)?)\b/iu.test(content)) {
+      return /\b(?:undecided|unapproved|not\s+approved)\b/iu.test(content) ? 'discussion' : 'information'
+    }
+  }
   return DECISION_ASSERTION.test(`${title} ${content}`) ? null : 'information'
 }
 
@@ -1548,8 +1761,11 @@ export function sanitizeWriterRecords(
     const recordsForCandidates = (records: typeof candidates): GroundedWriterRecord[] =>
       records
         .flatMap((candidate) => {
+          if (isWindowsTopicWriterEnabled() && !hasBalancedClaimGrouping(candidate.content)) return []
           if (candidate.salvaged && VAGUE_PASSIVE_FUTURE.test(candidate.content)) return []
           if (!noteTextLooksCoherent(candidate.content)) return []
+          if (isWindowsTopicWriterEnabled() && /\b(?:until|unless|if|after|before|because)\s*$/iu.test(candidate.content)) return []
+          if (isWindowsCatalogWriterEnabled() && /^to\s+(?:clarify|improve|avoid|prevent|reduce|ensure|explain)\b/iu.test(candidate.content)) return []
           const evidence = candidate.window.map((line) => line.text).join(' ')
           const selectedTitle =
             !candidate.salvaged && textIsGrounded(title, candidate.window, false, mode)
@@ -1627,6 +1843,17 @@ export function sanitizeWriterRecords(
         left.sourceStartMs - right.sourceStartMs
     )
     .slice(0, recordLimit)
+}
+
+/** Classifies literal source evidence without rewriting its text. */
+export function classifyLiteralWriterEvidence(
+  category: WriterGroundingCategory,
+  content: string,
+  lines: readonly WriterGroundingLine[]
+): WriterGroundingCategory {
+  // This caller supplies literal source text, not a generated claim. Category
+  // selection still needs speech-act support; failure must not rewrite text.
+  return resolveCategory(category, content, content, lines) ?? 'information'
 }
 
 /**

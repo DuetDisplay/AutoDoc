@@ -4,6 +4,7 @@ import {
   hasExplicitSingularFirstPersonCommitment
 } from './notes-action-speech'
 import { isPlausiblePersonOwner } from './notes-scan-markdown'
+import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
 
 const GENERIC_OWNER_LABEL =
   /^(?:i|me|myself|you|them|they|we|us|owner|speaker|someone|unknown|unassigned|tbd)$/iu
@@ -264,7 +265,10 @@ export function resolveSpeakerAwareOwner(
   const evidence = citedTranscriptRows(segment, transcriptRows)
   if (evidence.length === 0) return null
 
-  const namedOwner = explicitNamedOwner(segment.assignee)
+  const namedInSentence = isWindowsTopicWriterEnabled()
+    ? segment.content.match(/^(\p{Lu}[\p{L}'’-]+(?:\s+\p{Lu}[\p{L}'’-]+)?)\s+(?:will|must|needs?\s+to)\b/u)?.[1]
+    : undefined
+  const namedOwner = explicitNamedOwner(segment.assignee ?? namedInSentence ?? null)
   if (
     namedOwner &&
     namedOwnerHasPersonContext(namedOwner, evidence, transcriptRows, segment.meetingId) &&

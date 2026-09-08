@@ -51,6 +51,7 @@ import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
 import { meetingSegmentsFromDisk } from './writer-catalog'
 import type { WindowsProcessingProfile } from './windows-processing-profile'
+import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
@@ -569,6 +570,16 @@ export class SegmentationService {
       if (scanOutcome.notesLayout === 'v2') {
         await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       }
+      if (isWindowsTopicWriterEnabled() && scanOutcome.errorCode) {
+        // A failed regeneration may leave an older V2 revision available.
+        // Keep it, but never announce that revision as a successful new run.
+        this.activeStatus = 'failed'
+        this.broadcastStatus(meetingId, 'failed', undefined, scanOutcome.errorCode, {
+          userReason: scanOutcome.userReason,
+          notesLayout: scanOutcome.notesLayout
+        })
+        return
+      }
 
       console.log(
         `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
@@ -684,6 +695,7 @@ export class SegmentationService {
             ? CPU_CONSTRAINED_REWRITE_POLICY
             : undefined
       const result = await runNotesScanPipeline(segments, {
+        embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
         title,
         meetingId,
         presentationMode,
@@ -771,6 +783,9 @@ export class SegmentationService {
           forcedScanPolicy,
           presentationMode: result.presentationMode ?? presentationMode ?? 'scan',
           exactWriterCoverage: result.exactWriterCoverage ?? false,
+          organizationAttempted: result.organizationAttempted,
+          organizationAccepted: result.organizationAccepted,
+          organizationOverviewAccepted: result.organizationOverviewAccepted,
           attributionOwnersAdded: result.attributionOwnersAdded ?? 0,
           attributionOwnersStripped: result.attributionOwnersStripped ?? 0,
           attributionOwnersPreserved: result.attributionOwnersPreserved ?? 0,
@@ -796,6 +811,10 @@ export class SegmentationService {
           unvalidatedClaims: result.validation.unvalidatedClaims,
           writerItemCount,
           presentedItemCount,
+          topicCoveragePercent: result.topicCoveragePercent,
+          genericHeadingPercent: result.genericHeadingPercent,
+          needsReviewCount: result.needsReviewCount,
+          contextDependentRejected: result.contextDependentRejected,
           sectionCount: result.content.sections.length,
           decisionCount: result.content.decisions.length,
           nextStepCount: result.content.nextSteps.length,
@@ -851,7 +870,7 @@ export class SegmentationService {
       await this.writeOutcomeFile(meetingId, {
         error: error instanceof Error ? error.message : String(error),
         retries: 0,
-        status: 'complete',
+        status: isWindowsTopicWriterEnabled() ? 'failed' : 'complete',
         errorCode: 'scan_or_persist',
         userReason: `${copy.title}. ${copy.body}`,
         notesLayout: 'v1'

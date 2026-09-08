@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { noteTextLooksCoherent } from '../notes-coherence'
+import {
+  noteRecordNeedsReview,
+  noteSubjectIsResolved,
+  noteTextLooksCoherent,
+  noteTextLooksCorrupted
+} from '../notes-coherence'
 
 describe('note text coherence', () => {
   it.each([
@@ -26,5 +31,28 @@ describe('note text coherence', () => {
     'Compare the A build and the B build side by side.'
   ])('keeps concise standalone notes: %s', (text) => {
     expect(noteTextLooksCoherent(text)).toBe(true)
+  })
+
+  it('flags encoding corruption and empty tasks for review', () => {
+    expect(noteTextLooksCorrupted('KeŰ runningŰ This Annual default test')).toBe(true)
+    expect(noteRecordNeedsReview('Ask you a question')).toBe(true)
+    expect(noteRecordNeedsReview('Give some feedback')).toBe(true)
+    expect(
+      noteRecordNeedsReview('Um Get the nines repositioned uh like we have them uh in the current website.')
+    ).toBe(true)
+    expect(noteRecordNeedsReview('Trial starts increased by 12% on Mac.')).toBe(false)
+  })
+
+  it('requires a resolvable subject before promoting a comparison', () => {
+    expect(
+      noteSubjectIsResolved('The spread and leaders are still the same as yesterday.')
+    ).toBe(false)
+    expect(
+      noteSubjectIsResolved(
+        'The spread and leaders are still the same as yesterday.',
+        'Trial spread',
+        'Data and metrics'
+      )
+    ).toBe(true)
   })
 })

@@ -122,7 +122,6 @@ const visibleNoteContent = [
   'OVERVIEW_TEXT_VISIBLE',
   'TAKEAWAY_TITLE_VISIBLE',
   'TAKEAWAY_TEXT_VISIBLE',
-  'TAKEAWAY_TOPIC_VISIBLE',
   'TAKEAWAY_OWNER_VISIBLE',
   'TAKEAWAY_DEADLINE_VISIBLE',
   'SECTION_TITLE_VISIBLE',
@@ -377,6 +376,63 @@ describe('meeting export renderers', () => {
     expect(footerXml).toContain('PAGE')
     expect(coreXml).toContain('<dc:creator>AutoDoc</dc:creator>')
     expect(coreXml).toContain('2026-05-06T14:07:08.000Z')
+  })
+
+  it('strips topic-prefix overview, repeated takeaway headings, and Key points labels', () => {
+    const messy: MeetingExportSnapshot = {
+      ...snapshot,
+      notes: {
+        ...notes,
+        overview: {
+          ...notes.overview!,
+          text: [
+            'Cancellations — The data indicates 14 starts and 6 cancellations.',
+            'Minimum RAM requirement updated for Autodoc — Raised Windows minimum RAM to 16 GB.',
+            'Granola format limitations — Local models struggle with formatting.'
+          ].join('\n')
+        },
+        keyTakeaways: [
+          item('takeaway-cancels', 'The data indicates 14 starts and 6 cancellations.', {
+            title: 'Cancellations',
+            topic: 'Cancellations',
+            owner: null,
+            deadline: null
+          })
+        ],
+        sections: [
+          {
+            id: 'section-cancels',
+            title: 'Cancellations',
+            summary: null,
+            keyPoints: [
+              item('point-cancels', 'The data indicates 14 starts and 6 cancellations.', {
+                title: 'The data indicates 14 starts and 6 cancellations.',
+                topic: 'Cancellations',
+                owner: null,
+                deadline: null
+              })
+            ],
+            supportingDetails: []
+          }
+        ],
+        decisions: [],
+        nextSteps: []
+      }
+    }
+
+    const plainText = renderMeetingExportPlainText(messy)
+    expect(plainText).toContain(
+      'The data indicates 14 starts and 6 cancellations. Raised Windows minimum RAM to 16 GB.'
+    )
+    expect(plainText).not.toContain('Cancellations —')
+    expect(plainText).not.toContain('Granola format limitations')
+    expect(plainText).not.toContain('Topic: Cancellations')
+    expect(plainText).not.toContain('Key points')
+    expect(plainText.match(/^- The data indicates 14 starts/gmu)).toHaveLength(2)
+
+    const html = renderMeetingExportHtml(messy)
+    expect(html).not.toContain('<h4>Key points</h4>')
+    expect(html).not.toContain('Topic: Cancellations')
   })
 
   it('renders a quiet empty state when no normalized notes are present', async () => {

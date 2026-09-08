@@ -1,3 +1,5 @@
+import { isWindowsTopicWriterEnabled, windowsPersonPattern } from './windows-notes-experiment'
+
 const FIRST_PERSON_COMMITMENT =
   /\b(?:i(?:['’]ll|\s+will|\s+need\s+to|\s+have\s+to|\s+plan\s+to|\s+commit\s+to|\s+promise\s+to|(?:['’]m|\s+am)\s+(?:(?:going|gonna)\s+to|planning\s+to))|we(?:['’]ll|\s+will|\s+need\s+to|\s+have\s+to|\s+plan\s+to|(?:['’]re|\s+are)\s+(?:(?:going|gonna)\s+to|planning\s+to)))\b/iu
 
@@ -282,7 +284,7 @@ function explicitGenericAction(clause: string): {
 function explicitActionTail(clause: string): string | null {
   for (const pattern of EXPLICIT_GENERIC_ACTION_TAILS) {
     pattern.lastIndex = 0
-    const match = pattern.exec(clause)
+    const match = windowsPersonPattern(pattern).exec(clause)
     const action = match?.groups?.action?.trim() ?? ''
     if (!match || !action || REPORTED_SPEECH_PREFIX.test(clause.slice(0, match.index))) continue
     return action
@@ -347,7 +349,7 @@ function splitEmbeddedSpeechActs(clause: string): string[] {
 }
 
 function hasUnreportedUnnegatedMatch(clause: string, pattern: RegExp): boolean {
-  const match = pattern.exec(clause)
+  const match = windowsPersonPattern(pattern).exec(clause)
   if (!match || REPORTED_SPEECH_PREFIX.test(clause.slice(0, match.index))) return false
   const nearby = clause.slice(Math.max(0, match.index - 32), match.index + match[0].length + 80)
   return !ACTION_NEGATION.test(nearby)
@@ -425,7 +427,9 @@ export function actionSpeechActSupportsSummary(
     }
 
     const genericAction = explicitGenericAction(clause)
-    const summaryHead = leadingGenericActionWord(summaryText)
+    const summaryHead = leadingGenericActionWord(isWindowsTopicWriterEnabled()
+      ? explicitActionTail(summaryText) ?? summaryText
+      : summaryText)
     if (!genericAction || !summaryHead) return false
     const summaryHeadForms = genericVerbForms(summaryHead)
     if (![...genericAction.verbForms].some((form) => summaryHeadForms.has(form))) return false

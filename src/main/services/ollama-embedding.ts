@@ -13,7 +13,9 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
 
   constructor(
     private baseUrl: string,
-    model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL
+    model = process.env.AUTODOC_ASK_AI_EMBEDDING_MODEL ?? DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    private requestOptions?: { num_gpu: number },
+    private keepAlive: string | number = EMBED_KEEP_ALIVE
   ) {
     this.model = model
   }
@@ -63,7 +65,8 @@ export class OllamaEmbeddingProvider implements ChatEmbeddingProvider {
       body: JSON.stringify({
         model: this.model,
         input: texts,
-        keep_alive: EMBED_KEEP_ALIVE,
+        keep_alive: this.keepAlive,
+        ...(this.requestOptions ? { options: this.requestOptions } : {}),
         truncate: true
       })
     })

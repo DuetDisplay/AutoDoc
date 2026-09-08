@@ -22,6 +22,12 @@ function segment(partial: Partial<Segment> & Pick<Segment, 'id' | 'category' | '
   }
 }
 
+const SYNTHESIZED_OVERVIEW = 'The team locked login analytics coverage and assigned the offline review.'
+
+function overviewGenerate(): ReturnType<typeof vi.fn> {
+  return vi.fn(async () => JSON.stringify({ overview: SYNTHESIZED_OVERVIEW }))
+}
+
 function segments(): MeetingSegments {
   return {
     decisions: [
@@ -55,7 +61,7 @@ function segments(): MeetingSegments {
 }
 
 describe('runNotesScanPipeline', () => {
-  it('presents every writer record without model calls in lossless mode', async () => {
+  it('presents every writer record and asks only for a synthesized overview', async () => {
     const input = segments()
     input.actionItems.push(
       segment({
@@ -76,7 +82,7 @@ describe('runNotesScanPipeline', () => {
         sourceEndMs: 6000
       })
     )
-    const generate = vi.fn(async () => 'must not be called')
+    const generate = overviewGenerate()
     const progress: string[] = []
 
     const result = await runNotesScanPipeline(input, {
@@ -135,7 +141,13 @@ describe('runNotesScanPipeline', () => {
         ...section.supportingDetails
       ])
     ]
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({
+      num_predict: 256,
+      format: { required: ['overview'] }
+    })
+    expect(generate.mock.calls[0]?.[0].prompt).toContain('one or two short sentences')
+    expect(generate.mock.calls[0]?.[0].prompt).not.toContain('keyTakeaways')
     expect(presentedItems.map((item) => item.id).sort()).toEqual(['a1', 'a2', 'a3', 'd1', 'i1'])
     expect(result.content.decisions[0]).toMatchObject({
       id: 'd1',
@@ -146,7 +158,7 @@ describe('runNotesScanPipeline', () => {
       expect.objectContaining({ id: 'a2', owner: 'Me' }),
       expect.objectContaining({ id: 'a3', owner: null })
     ])
-    expect(progress).toEqual(['scan-start', 'lossless-presentation'])
+    expect(progress).toEqual(['scan-start', 'overview', 'lossless-presentation'])
     expect(result.validation).toEqual(emptyValidationStats(false))
     expect(result).toMatchObject({
       presentationMode: 'lossless',
@@ -159,14 +171,16 @@ describe('runNotesScanPipeline', () => {
       recoveredDecisionCount: 0,
       overviewSkipped: false
     })
-    expect(result.content.overview?.text).toBe(
-      'The team decided to collect login events from all users.'
-    )
+    expect(result.content.overview?.text).toBe(SYNTHESIZED_OVERVIEW)
+    expect(result.overviewFailed).toBe(false)
     expect(result.content.keyTakeaways.length).toBeGreaterThan(0)
+    expect(result.content.keyTakeaways.every((item) => item.id.startsWith('lossless-takeaway:'))).toBe(
+      true
+    )
   })
 
   it('recovers accepted decisions before presentation without another model call', async () => {
-    const generate = vi.fn(async () => 'must not be called')
+    const generate = overviewGenerate()
     const result = await runNotesScanPipeline(
       {
         decisions: [],
@@ -204,14 +218,14 @@ describe('runNotesScanPipeline', () => {
       }
     )
 
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
     expect(result.content.decisions).toEqual([
       expect.objectContaining({
         title: 'Ship the beta on Friday',
         text: 'Ship the beta on Friday.'
       })
     ])
-    expect(result.content.overview?.text).toBe('Ship the beta on Friday.')
+    expect(result.content.overview?.text).toBe(SYNTHESIZED_OVERVIEW)
     expect(result).toMatchObject({
       recoveredDecisionCount: 1,
       promotedDecisionCount: 0,
@@ -220,7 +234,7 @@ describe('runNotesScanPipeline', () => {
   })
 
   it('recovers an uncovered local commitment before lossless presentation without another model call', async () => {
-    const generate = vi.fn(async () => 'must not be called')
+    const generate = overviewGenerate()
     const result = await runNotesScanPipeline(
       {
         decisions: [],
@@ -250,7 +264,7 @@ describe('runNotesScanPipeline', () => {
       }
     )
 
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
     expect(result.content.nextSteps).toEqual([
       expect.objectContaining({
         title: 'Ping Sergio after the meeting',
@@ -268,7 +282,7 @@ describe('runNotesScanPipeline', () => {
   })
 
   it('preserves exact-millisecond ownership and dedupes recovery for a cited local commitment', async () => {
-    const generate = vi.fn(async () => 'must not be called')
+    const generate = overviewGenerate()
     const result = await runNotesScanPipeline(
       {
         decisions: [],
@@ -307,7 +321,7 @@ describe('runNotesScanPipeline', () => {
       }
     )
 
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
     expect(result.content.nextSteps).toEqual([
       expect.objectContaining({
         id: 'writer-action',

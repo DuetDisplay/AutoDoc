@@ -13,6 +13,7 @@ import {
   TextRun
 } from 'docx'
 import type { MeetingExportFormat, NormalizedNoteItem, NormalizedNotes } from '../../shared/types'
+import { toCustomerFacingNotes } from '../../shared/notes-presentation'
 
 export interface MeetingExportSnapshot {
   detail: {
@@ -247,16 +248,31 @@ function itemMetadata(item: NormalizedNoteItem): string[] {
   ].filter(Boolean)
 }
 
+function distinctItemTitle(item: NormalizedNoteItem): string | null {
+  const normalize = (text: string): string =>
+    text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const title = normalize(item.title ?? '')
+  const body = normalize(item.text)
+  if (!title) return null
+  if (title === body || (title.split(' ').length >= 4 && body.startsWith(`${title} `))) return null
+  return item.title
+}
+
+function customerFacingNotes(notes: NormalizedNotes | null): NormalizedNotes | null {
+  return notes ? toCustomerFacingNotes(notes) : null
+}
+
 function markdownItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
-  const title = item.title ? `**${escapeMarkdown(noteHeadingText(item.title))}** — ` : ''
+  const heading = distinctItemTitle(item)
+  const title = heading ? `**${escapeMarkdown(noteHeadingText(heading))}** — ` : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length ? ` _(${metadata.map(escapeMarkdown).join(' · ')})_` : ''
   return `- ${checkbox}${title}${markdownNoteMarkup(item.text)}${suffix}`
 }
 
 function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
-  const { notes } = snapshot
+  const notes = customerFacingNotes(snapshot.notes)
   if (!notes) return ['## Notes', '', '_No notes are available for this meeting._', '']
 
   const lines = ['## Notes', '']
@@ -275,12 +291,7 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
     lines.push(`### ${escapeMarkdown(noteHeadingText(section.title))}`, '')
     if (section.summary) lines.push(markdownNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      lines.push(
-        '**Key points**',
-        '',
-        ...section.keyPoints.map((item) => markdownItem(item, false)),
-        ''
-      )
+      lines.push(...section.keyPoints.map((item) => markdownItem(item, false)), '')
     }
     if (section.supportingDetails.length) {
       lines.push(
@@ -324,14 +335,15 @@ export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): st
 
 function plainItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
-  const title = item.title ? `${noteHeadingText(item.title)} - ` : ''
+  const heading = distinctItemTitle(item)
+  const title = heading ? `${noteHeadingText(heading)} - ` : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length ? ` (${metadata.map(plainNoteMarkup).join(' | ')})` : ''
   return `- ${checkbox}${title}${plainNoteMarkup(item.text)}${suffix}`
 }
 
 function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
-  const { notes } = snapshot
+  const notes = customerFacingNotes(snapshot.notes)
   if (!notes) return ['NOTES', '', 'No notes are available for this meeting.', '']
 
   const lines = ['NOTES', '']
@@ -343,7 +355,7 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
     lines.push(noteHeadingText(section.title), '')
     if (section.summary) lines.push(plainNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      lines.push('Key points', '', ...section.keyPoints.map((item) => plainItem(item, false)), '')
+      lines.push(...section.keyPoints.map((item) => plainItem(item, false)), '')
     }
     if (section.supportingDetails.length) {
       lines.push(
@@ -390,8 +402,9 @@ function htmlItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checked = checklist
     ? `<span class="check" aria-hidden="true">${item.completed ? '✓' : '○'}</span>`
     : ''
-  const title = item.title
-    ? `<strong>${escapeHtml(xmlSafeText(noteHeadingText(item.title)))}</strong><span aria-hidden="true"> — </span>`
+  const heading = distinctItemTitle(item)
+  const title = heading
+    ? `<strong>${escapeHtml(xmlSafeText(noteHeadingText(heading)))}</strong><span aria-hidden="true"> — </span>`
     : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length
@@ -401,7 +414,7 @@ function htmlItem(item: NormalizedNoteItem, checklist: boolean): string {
 }
 
 function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
-  const { notes } = snapshot
+  const notes = customerFacingNotes(snapshot.notes)
   if (!notes) {
     return '<section aria-labelledby="notes"><h2 id="notes">Notes</h2><p class="empty">No notes are available for this meeting.</p></section>'
   }
@@ -424,9 +437,7 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
     )
     if (section.summary) content.push(`<p>${htmlNoteMarkup(section.summary.text)}</p>`)
     if (section.keyPoints.length) {
-      content.push(
-        `<h4>Key points</h4><ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
-      )
+      content.push(`<ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`)
     }
     if (section.supportingDetails.length) {
       content.push(
@@ -515,10 +526,9 @@ function docxBullet(item: NormalizedNoteItem, checklist: boolean): Paragraph {
     children.push(
       new TextRun({ text: item.completed ? '[x] ' : '[ ] ', color: PALETTE.sageDark, bold: true })
     )
-  if (item.title)
-    children.push(
-      new TextRun({ text: xmlSafeText(`${noteHeadingText(item.title)} — `), bold: true })
-    )
+  const heading = distinctItemTitle(item)
+  if (heading)
+    children.push(new TextRun({ text: xmlSafeText(`${noteHeadingText(heading)} — `), bold: true }))
   children.push(...docxMarkupRuns(item.text))
   if (metadata.length)
     children.push(
@@ -540,7 +550,7 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
   const paragraphs = [
     new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Notes')] })
   ]
-  const { notes } = snapshot
+  const notes = customerFacingNotes(snapshot.notes)
   if (!notes)
     return [...paragraphs, docxParagraph('No notes are available for this meeting.', 'EmptyState')]
 
@@ -565,9 +575,6 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     )
     if (section.summary) paragraphs.push(docxParagraph(section.summary.text))
     if (section.keyPoints.length) {
-      paragraphs.push(
-        new Paragraph({ heading: HeadingLevel.HEADING_3, children: [new TextRun('Key points')] })
-      )
       paragraphs.push(...section.keyPoints.map((item) => docxBullet(item, false)))
     }
     if (section.supportingDetails.length) {

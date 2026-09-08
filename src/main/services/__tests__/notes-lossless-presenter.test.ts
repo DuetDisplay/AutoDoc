@@ -115,12 +115,9 @@ describe('lossless notes presenter', () => {
     expect(segments).toEqual(before)
     expect(() => parseMeetingNotesContent(content)).not.toThrow()
     expect(hasExactLosslessCoverage(segments, content)).toBe(true)
-    expect(content.overview).toEqual({
-      text: 'Release the free tier at a 50/50 split after QA clears.',
-      sources: [{ startMs: 10_000, endMs: 12_000 }],
-      provenance: 'generated'
-    })
-    expect(content.keyTakeaways).toHaveLength(3)
+    expect(content.overview?.provenance).toBe('generated')
+    expect(content.overview?.text).toContain('Release the free tier at a 50/50 split after QA clears.')
+    expect(content.keyTakeaways.length).toBeGreaterThanOrEqual(3)
     expect(content.keyTakeaways.every((item) => item.id.startsWith('lossless-takeaway:'))).toBe(
       true
     )
@@ -158,30 +155,32 @@ describe('lossless notes presenter', () => {
   it('merges trimmed writer topics across all non-footer categories without dropping IDs', () => {
     const content = presentMeetingSegmentsLosslessly(MEETING_ID, fixture())
 
-    expect(content.sections.map((section) => section.title)).toEqual([
-      'A/B Tests',
-      'Information',
-      'Mobile Releases'
-    ])
-    expect(content.sections.map((section) => section.id)).toEqual([
-      expect.stringMatching(/^lossless-section:topical:/),
-      expect.stringMatching(/^lossless-section:information:/),
-      expect.stringMatching(/^lossless-section:topical:/)
-    ])
-    expect(content.sections[0]?.keyPoints.map((item) => item.id)).toEqual([
+    expect(content.sections.map((section) => section.title)).toEqual(
+      expect.arrayContaining(['A/B Tests', 'Mobile Releases'])
+    )
+    expect(content.sections.some((section) => section.title === 'Information')).toBe(false)
+    expect(content.sections.every((section) => section.id.startsWith('lossless-section:topical:'))).toBe(
+      true
+    )
+    const abTests = content.sections.find((section) => section.title === 'A/B Tests')
+    expect(abTests?.keyPoints.map((item) => item.id)).toEqual([
       'info-1',
       'info-2',
       'discussion-1'
     ])
-    expect(content.sections[0]?.keyPoints.map((item) => item.topic)).toEqual([
+    expect(abTests?.keyPoints.map((item) => item.topic)).toEqual([
       'A/B Tests',
-      ' A/B Tests ',
+      'A/B Tests',
       'A/B Tests'
     ])
-    expect(content.sections[2]?.keyPoints.map((item) => item.id)).toEqual(['status-1'])
+    expect(
+      content.sections.find((section) => section.title === 'Mobile Releases')?.keyPoints.map(
+        (item) => item.id
+      )
+    ).toEqual(['status-1'])
   })
 
-  it('keeps separate category fallback headings for records without a writer topic', () => {
+  it('places weak topicless records in Other Notes instead of generic categories', () => {
     const segments: MeetingSegments = {
       decisions: [],
       actionItems: [],
@@ -192,16 +191,39 @@ describe('lossless notes presenter', () => {
 
     const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
 
-    expect(content.sections.map((section) => section.title)).toEqual([
-      'Information',
-      'Discussion',
-      'Status Updates'
-    ])
-    expect(content.sections.map((section) => section.id)).toEqual([
-      expect.stringMatching(/^lossless-section:information:/),
-      expect.stringMatching(/^lossless-section:discussion:/),
-      expect.stringMatching(/^lossless-section:status_update:/)
-    ])
+    expect(content.sections.some((section) => section.title === 'Information')).toBe(false)
+    expect(content.sections.flatMap((section) => section.keyPoints.map((item) => item.id)).sort()).toEqual(
+      ['discussion', 'info', 'status']
+    )
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
+  })
+
+  it('keeps Other Notes after named chapters even when leftovers start earlier', () => {
+    const segments: MeetingSegments = {
+      decisions: [],
+      actionItems: [],
+      information: [
+        segment('early-leftover', 'information', {
+          title: 'Note',
+          content: 'The build shipped.',
+          sourceStartMs: 1_000,
+          sourceEndMs: 2_000
+        }),
+        segment('analytics', 'information', {
+          topic: 'Analytics',
+          title: 'Login events need consent',
+          content: 'A fix is needed on the Consent to Analytics event.',
+          sourceStartMs: 8_000,
+          sourceEndMs: 9_000
+        })
+      ],
+      discussion: [],
+      statusUpdates: []
+    }
+
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+
+    expect(content.sections.map((section) => section.title)).toEqual(['Analytics', 'Other Notes'])
     expect(hasExactLosslessCoverage(segments, content)).toBe(true)
   })
 
@@ -246,9 +268,10 @@ describe('lossless notes presenter', () => {
 
     const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
 
-    expect(content.overview?.text).toBe(
+    expect(content.overview?.text).toContain(
       'The hiring panel found that the candidate met the role requirements and communicated clearly.'
     )
+    expect(content.overview?.text).not.toContain('Candidates were discussed.')
   })
 
   it('orders merged items, sections, decisions, and next steps by source chronology', () => {
@@ -400,6 +423,104 @@ describe('lossless notes presenter', () => {
       decisions: [],
       nextSteps: []
     })
+  })
+
+  it('does not promote unresolved comparisons or vague decisions as the overview', () => {
+    const segments: MeetingSegments = {
+      decisions: [
+        segment('vague', 'decision', {
+          title: 'Do this properly',
+          content: "Let's make sure we do this properly.",
+          sourceStartMs: 1_000,
+          sourceEndMs: 1_500
+        })
+      ],
+      actionItems: [],
+      information: [
+        segment('spread', 'information', {
+          title: 'The spread and leaders',
+          content: 'The spread and leaders are still the same as yesterday.',
+          sourceStartMs: 2_000,
+          sourceEndMs: 2_500
+        }),
+        segment('trials', 'information', {
+          title: 'Mac trial starts increased',
+          content: 'Trial starts increased by 12% on Mac after the free-tier experiment.',
+          sourceStartMs: 3_000,
+          sourceEndMs: 3_500
+        })
+      ],
+      discussion: [],
+      statusUpdates: []
+    }
+
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+
+    expect(content.overview?.text).toContain('Trial starts increased by 12% on Mac')
+    expect(content.overview?.text).not.toContain('same as yesterday')
+    expect(content.overview?.text).not.toContain('do this properly')
+    expect(content.sections.some((section) => section.title === 'Information')).toBe(false)
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
+  })
+
+  it('indexes takeaways by topic instead of repeating the body sentence', () => {
+    const body =
+      'The data indicates 14 starts and 6 cancellations, which the team considers unusual and potentially coincidental, with no common problem identified.'
+    const segments: MeetingSegments = {
+      decisions: [],
+      actionItems: [],
+      information: [
+        segment('cancels', 'information', {
+          topic: 'Cancellations',
+          title: body,
+          content: body,
+          sourceStartMs: 1_000
+        })
+      ],
+      discussion: [],
+      statusUpdates: []
+    }
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+
+    const takeaway = content.keyTakeaways.find((item) => item.topic === 'Cancellations')
+    expect(takeaway?.title).toBe('')
+    expect(takeaway?.text).toBe(body)
+    expect(content.overview?.text).not.toContain('Cancellations —')
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
+  })
+
+  it('keeps corrupted next steps in coverage under Needs Review', () => {
+    const segments: MeetingSegments = {
+      decisions: [],
+      actionItems: [
+        segment('junk', 'action_item', {
+          title: 'Broken annual test',
+          content: 'KeŰ runningŰ This Annual default test for a cŰ',
+          sourceStartMs: 1_000
+        })
+      ],
+      information: [
+        segment('metric', 'information', {
+          title: 'Average daily app registrations',
+          content: 'Average daily app registrations are under ten, including Sundays.',
+          sourceStartMs: 2_000
+        })
+      ],
+      discussion: [],
+      statusUpdates: []
+    }
+
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+
+    expect(content.nextSteps).toEqual([
+      expect.objectContaining({
+        id: 'junk',
+        text: 'KeŰ runningŰ This Annual default test for a cŰ',
+        topic: 'Needs Review'
+      })
+    ])
+    expect(content.overview?.text).toContain('Average daily app registrations')
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
   })
 
   it('fails closed when source identity or category cannot be preserved', () => {

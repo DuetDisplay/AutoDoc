@@ -30,6 +30,17 @@ const BROKEN_DISCOURSE_TAIL =
 
 const WORD = /[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu
 
+const REPLACEMENT_CHAR = /\uFFFD/u
+/** Latin-extended or symbol jammed into an otherwise ASCII token: KeŰ, GetŰorant. */
+const INWORD_MOJIBAKE = /[A-Za-z][^\x00-\x7F\s]/u
+const EMPTY_TASK =
+  /^(?:ask you(?: a question)?|give some feedback|make sure we do this(?: properly)?)\b/iu
+const LEADING_DISFLUENCY = /^(?:um+|uh+|uhh|er+|ah+)\b/iu
+const UNRESOLVED_COMPARISON =
+  /\b(?:the same as|still the same|same as yesterday|same as today|do this properly)\b/iu
+const LEADING_DEIXIS = /^(?:it|this|that|they|those|these)\b/iu
+const NUMBER_OR_PERCENT = /(?:\b\d+(?:[.,]\d+)?\b|%)/u
+
 /**
  * Rejects transcript-shaped fragments that are readable as speech but not as
  * standalone notes. It intentionally avoids style rewriting: surviving text
@@ -52,4 +63,35 @@ export function noteTextLooksCoherent(text: string): boolean {
     return false
   }
   return true
+}
+
+export function noteTextLooksCorrupted(text: string): boolean {
+  const compact = text.replace(/\s+/gu, ' ').trim()
+  if (!compact) return false
+  return REPLACEMENT_CHAR.test(compact) || INWORD_MOJIBAKE.test(compact)
+}
+
+export function noteRecordNeedsReview(text: string): boolean {
+  const compact = text.replace(/\s+/gu, ' ').trim()
+  if (noteTextLooksCorrupted(compact)) return true
+  if (!noteTextLooksCoherent(compact)) return true
+  if (EMPTY_TASK.test(compact)) return true
+  return LEADING_DISFLUENCY.test(compact)
+}
+
+export function noteSubjectIsResolved(
+  text: string,
+  title?: string | null,
+  topic?: string | null
+): boolean {
+  const compact = text.replace(/\s+/gu, ' ').trim()
+  const heading = title?.trim() ?? ''
+  const chapter = topic?.trim() ?? ''
+  if (noteRecordNeedsReview(compact)) return false
+  if (UNRESOLVED_COMPARISON.test(compact) && !chapter && !NUMBER_OR_PERCENT.test(compact)) {
+    return false
+  }
+  if (LEADING_DEIXIS.test(compact) && !chapter && heading.length < 8) return false
+  if (chapter || heading.length >= 8) return true
+  return !LEADING_DEIXIS.test(compact)
 }

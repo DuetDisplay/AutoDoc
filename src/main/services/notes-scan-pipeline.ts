@@ -45,11 +45,17 @@ import {
   type NotesValidationStats,
   type TranscriptRow
 } from './notes-evidence-validate'
-import { presentMeetingSegmentsLosslessly } from './notes-lossless-presenter'
+import {
+  losslessPresentationStats,
+  presentMeetingSegmentsLosslessly
+} from './notes-lossless-presenter'
 import { recoverExplicitTranscriptActions } from './notes-explicit-action-recovery'
 import { recoverExplicitTranscriptDecisions } from './notes-explicit-decision-recovery'
+import { dedupeWindowsNotes, isWindowsTopicWriterEnabled } from './windows-notes-experiment'
+import { organizeWindowsNotes } from './windows-notes-organization'
+import { isWindowsEvidenceWriterEnabled } from './windows-notes-evidence'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
-import { generateNotesOverview } from './notes-overview'
+import { generateNotesOverview, notesCatalogMarkdown } from './notes-overview'
 import { fallbackMeetingOverviewFromNotes } from '../../shared/notes-overview-text'
 import { meetingSpanSources, parseScanMarkdown } from './notes-scan-markdown'
 import { NOTES_SCAN_PROGRESS_END, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
@@ -93,6 +99,7 @@ export const DEFAULT_NOTES_REWRITE_POLICY: NotesRewritePolicy = {
 }
 
 export interface RunNotesScanOptions {
+  embed?: (texts: string[]) => Promise<number[][]>
   title: string
   generate: ScanGenerateFn
   spanSources: { startMs: number; endMs: number }[]
@@ -134,6 +141,9 @@ export interface NotesScanResult {
   content: MeetingNotesContent
   presentationMode?: 'lossless' | 'scan'
   exactWriterCoverage?: boolean
+  organizationAttempted?: boolean
+  organizationAccepted?: boolean
+  organizationOverviewAccepted?: boolean
   attributionOwnersAdded?: number
   attributionOwnersStripped?: number
   attributionOwnersPreserved?: number
@@ -146,6 +156,10 @@ export interface NotesScanResult {
   dedupedRecoveredDecisionCount?: number
   overviewSkipped?: boolean
   groupingFallback: boolean
+  topicCoveragePercent?: number
+  genericHeadingPercent?: number
+  needsReviewCount?: number
+  contextDependentRejected?: number
   restyleFallbacks: number
   compressFallbacks: number
   restyleSkips: number
@@ -299,8 +313,12 @@ export async function runNotesScanPipeline(
     if (!attributionTranscript) {
       throw new Error('Lossless notes presentation requires attribution evidence')
     }
-    const decisionRecovery = recoverExplicitTranscriptDecisions(segments, attributionTranscript)
-    const recovery = recoverExplicitTranscriptActions(
+    const decisionRecovery = isWindowsEvidenceWriterEnabled()
+      ? { segments, recoveredDecisionCount: 0, promotedDecisionCount: 0, dedupedRecoveredDecisionCount: 0 }
+      : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
+    const recovery = isWindowsEvidenceWriterEnabled()
+      ? { segments: decisionRecovery.segments, recoveredActionCount: 0, promotedActionCount: 0, dedupedRecoveredActionCount: 0 }
+      : recoverExplicitTranscriptActions(
       decisionRecovery.segments,
       attributionTranscript,
       {
@@ -326,11 +344,51 @@ export async function runNotesScanPipeline(
       }
       return { ...segment, assignee: resolvedOwner }
     })
-    const presentedSegments: MeetingSegments = {
+    let presentedSegments: MeetingSegments = {
       ...recovery.segments,
       actionItems
     }
-    const content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments)
+    const organization = isWindowsTopicWriterEnabled() && !isWindowsEvidenceWriterEnabled()
+      ? await organizeWindowsNotes(dedupeWindowsNotes(presentedSegments), options.generate, options.meetingId, options.embed)
+      : null
+    if (organization) presentedSegments = organization.segments
+    let content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments)
+    if (organization?.overview) content.overview = organization.overview
+    // An overview must add a grounded synthesis; copying selected body records
+    // into another area adds repetition without adding meaning.
+    if (isWindowsTopicWriterEnabled()) content.overview = organization?.overview ?? null
+    let overviewFailed = false
+    let overviewFailureReasons: string[] = []
+    if (!isWindowsTopicWriterEnabled() && !organization?.overview) {
+      const catalog = notesCatalogMarkdown(content)
+      if (catalog) {
+        reportProgress('overview', 0.95)
+        try {
+          const overview = await generateNotesOverview(
+            catalog,
+            (request) =>
+              options.generate({
+                ...request,
+                seed,
+                stop: []
+              }),
+            meetingSpanSources(options.spanSources),
+            { overviewOnly: true, meetingId: options.meetingId }
+          )
+          overviewFailed = !overview.usedModel
+          overviewFailureReasons = overview.failureReasons
+          if (overview.overview?.text.trim()) {
+            content = { ...content, overview: overview.overview }
+          }
+        } catch (error) {
+          overviewFailed = true
+          overviewFailureReasons = [
+            `overview pass threw: ${error instanceof Error ? error.message : String(error)}`
+          ]
+        }
+      }
+    }
+    const presentationStats = losslessPresentationStats(presentedSegments, content)
     reportProgress('lossless-presentation', 1)
 
     return {
@@ -338,6 +396,9 @@ export async function runNotesScanPipeline(
       content,
       presentationMode: 'lossless',
       exactWriterCoverage: true,
+      organizationAttempted: organization?.attempted ?? false,
+      organizationAccepted: organization?.grouped ?? false,
+      organizationOverviewAccepted: organization?.overviewAccepted ?? false,
       attributionOwnersAdded,
       attributionOwnersStripped,
       attributionOwnersPreserved,
@@ -349,7 +410,11 @@ export async function runNotesScanPipeline(
       promotedDecisionCount: decisionRecovery.promotedDecisionCount,
       dedupedRecoveredDecisionCount: decisionRecovery.dedupedRecoveredDecisionCount,
       overviewSkipped: false,
-      groupingFallback: false,
+      groupingFallback: (organization?.attempted && !organization.grouped) || presentationStats.groupingFallback,
+      topicCoveragePercent: presentationStats.topicCoveragePercent,
+      genericHeadingPercent: presentationStats.genericHeadingPercent,
+      needsReviewCount: presentationStats.needsReviewCount,
+      contextDependentRejected: presentationStats.contextDependentRejected,
       restyleFallbacks: 0,
       compressFallbacks: 0,
       restyleSkips: 0,
@@ -357,8 +422,8 @@ export async function runNotesScanPipeline(
       restyleRejectReasons: [],
       compressRejectReasons: [],
       attachFailed: false,
-      overviewFailed: false,
-      overviewFailureReasons: [],
+      overviewFailed,
+      overviewFailureReasons,
       validation: emptyValidationStats(false)
     }
   }
