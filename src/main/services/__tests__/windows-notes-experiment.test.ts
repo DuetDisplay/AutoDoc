@@ -12,6 +12,7 @@ import {
 } from '../notes-lossless-presenter'
 import {
   assignWindowsPresentationTopics,
+  isWindowsNotesQualityEnabled,
   isWindowsTopicWriterEnabled,
   windowsNoteNeedsReview
 } from '../windows-notes-experiment'
@@ -48,6 +49,12 @@ function inventory(information: Segment[]): MeetingSegments {
 }
 
 describe('Windows topic writer experiment', () => {
+  it('keeps default notes quality on Windows only', () => {
+    expect(isWindowsNotesQualityEnabled('win32')).toBe(true)
+    expect(isWindowsNotesQualityEnabled('darwin')).toBe(false)
+    expect(isWindowsNotesQualityEnabled('linux')).toBe(false)
+  })
+
   it('is opt-in and cannot enable on macOS or Linux', () => {
     expect(isWindowsTopicWriterEnabled('win32', '1')).toBe(true)
     expect(isWindowsTopicWriterEnabled('win32', undefined)).toBe(false)

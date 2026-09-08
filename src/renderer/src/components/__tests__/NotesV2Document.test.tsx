@@ -653,6 +653,7 @@ describe('NotesV2Document', () => {
   })
 
   it('does not repeat the section topic on bullets or takeaways', () => {
+    isWindowsRenderer.mockReturnValue(true)
     const sample = notes()
     sample.overview = {
       ...sample.overview!,
@@ -718,6 +719,7 @@ describe('NotesV2Document', () => {
   })
 
   it('hides Needs Review leftovers from the customer document', () => {
+    isWindowsRenderer.mockReturnValue(true)
     const sample = notes()
     sample.decisions = [
       {

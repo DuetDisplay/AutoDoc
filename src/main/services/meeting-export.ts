@@ -14,6 +14,7 @@ import {
 } from 'docx'
 import type { MeetingExportFormat, NormalizedNoteItem, NormalizedNotes } from '../../shared/types'
 import { toCustomerFacingNotes } from '../../shared/notes-presentation'
+import { isWindowsNotesQualityEnabled } from './windows-notes-experiment'
 
 export interface MeetingExportSnapshot {
   detail: {
@@ -258,13 +259,17 @@ function distinctItemTitle(item: NormalizedNoteItem): string | null {
   return item.title
 }
 
+function exportItemTitle(item: NormalizedNoteItem): string | null {
+  return isWindowsNotesQualityEnabled() ? distinctItemTitle(item) : item.title
+}
+
 function customerFacingNotes(notes: NormalizedNotes | null): NormalizedNotes | null {
-  return notes ? toCustomerFacingNotes(notes) : null
+  return notes ? toCustomerFacingNotes(notes, isWindowsNotesQualityEnabled()) : null
 }
 
 function markdownItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
-  const heading = distinctItemTitle(item)
+  const heading = exportItemTitle(item)
   const title = heading ? `**${escapeMarkdown(noteHeadingText(heading))}** — ` : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length ? ` _(${metadata.map(escapeMarkdown).join(' · ')})_` : ''
@@ -291,7 +296,16 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
     lines.push(`### ${escapeMarkdown(noteHeadingText(section.title))}`, '')
     if (section.summary) lines.push(markdownNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      lines.push(...section.keyPoints.map((item) => markdownItem(item, false)), '')
+      if (isWindowsNotesQualityEnabled()) {
+        lines.push(...section.keyPoints.map((item) => markdownItem(item, false)), '')
+      } else {
+        lines.push(
+          '**Key points**',
+          '',
+          ...section.keyPoints.map((item) => markdownItem(item, false)),
+          ''
+        )
+      }
     }
     if (section.supportingDetails.length) {
       lines.push(
@@ -335,7 +349,7 @@ export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): st
 
 function plainItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checkbox = checklist ? `[${item.completed ? 'x' : ' '}] ` : ''
-  const heading = distinctItemTitle(item)
+  const heading = exportItemTitle(item)
   const title = heading ? `${noteHeadingText(heading)} - ` : ''
   const metadata = itemMetadata(item)
   const suffix = metadata.length ? ` (${metadata.map(plainNoteMarkup).join(' | ')})` : ''
@@ -355,7 +369,11 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
     lines.push(noteHeadingText(section.title), '')
     if (section.summary) lines.push(plainNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      lines.push(...section.keyPoints.map((item) => plainItem(item, false)), '')
+      if (isWindowsNotesQualityEnabled()) {
+        lines.push(...section.keyPoints.map((item) => plainItem(item, false)), '')
+      } else {
+        lines.push('Key points', '', ...section.keyPoints.map((item) => plainItem(item, false)), '')
+      }
     }
     if (section.supportingDetails.length) {
       lines.push(
@@ -402,7 +420,7 @@ function htmlItem(item: NormalizedNoteItem, checklist: boolean): string {
   const checked = checklist
     ? `<span class="check" aria-hidden="true">${item.completed ? '✓' : '○'}</span>`
     : ''
-  const heading = distinctItemTitle(item)
+  const heading = exportItemTitle(item)
   const title = heading
     ? `<strong>${escapeHtml(xmlSafeText(noteHeadingText(heading)))}</strong><span aria-hidden="true"> — </span>`
     : ''
@@ -437,7 +455,11 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
     )
     if (section.summary) content.push(`<p>${htmlNoteMarkup(section.summary.text)}</p>`)
     if (section.keyPoints.length) {
-      content.push(`<ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`)
+      content.push(
+        isWindowsNotesQualityEnabled()
+          ? `<ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
+          : `<h4>Key points</h4><ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
+      )
     }
     if (section.supportingDetails.length) {
       content.push(
@@ -526,7 +548,7 @@ function docxBullet(item: NormalizedNoteItem, checklist: boolean): Paragraph {
     children.push(
       new TextRun({ text: item.completed ? '[x] ' : '[ ] ', color: PALETTE.sageDark, bold: true })
     )
-  const heading = distinctItemTitle(item)
+  const heading = exportItemTitle(item)
   if (heading)
     children.push(new TextRun({ text: xmlSafeText(`${noteHeadingText(heading)} — `), bold: true }))
   children.push(...docxMarkupRuns(item.text))
@@ -575,6 +597,11 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     )
     if (section.summary) paragraphs.push(docxParagraph(section.summary.text))
     if (section.keyPoints.length) {
+      if (!isWindowsNotesQualityEnabled()) {
+        paragraphs.push(
+          new Paragraph({ heading: HeadingLevel.HEADING_3, children: [new TextRun('Key points')] })
+        )
+      }
       paragraphs.push(...section.keyPoints.map((item) => docxBullet(item, false)))
     }
     if (section.supportingDetails.length) {

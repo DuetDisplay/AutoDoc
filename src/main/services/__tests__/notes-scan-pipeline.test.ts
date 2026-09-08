@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeetingSegments, Segment } from '../../../shared/types'
 import { emptyValidationStats } from '../notes-evidence-validate'
 import {
@@ -60,7 +60,17 @@ function segments(): MeetingSegments {
   }
 }
 
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+
 describe('runNotesScanPipeline', () => {
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  })
+
+  afterEach(() => {
+    if (platform) Object.defineProperty(process, 'platform', platform)
+  })
+
   it('presents every writer record and asks only for a synthesized overview', async () => {
     const input = segments()
     input.actionItems.push(
@@ -413,6 +423,36 @@ describe('runNotesScanPipeline', () => {
     expect(seen.at(-1)).toBe(99)
     expect(Math.max(...seen)).toBe(99)
     expect(seen.some((percent) => percent > 70 && percent < 99)).toBe(true)
+  })
+
+  it('does not make an overview model call on macOS lossless notes', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const generate = overviewGenerate()
+    const result = await runNotesScanPipeline(segments(), {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless',
+      attributionTranscript: [
+        {
+          id: 't1',
+          meetingId: 'meeting-1',
+          speaker: 'them',
+          text: 'The team decided to collect login events from all users.',
+          startMs: 1100,
+          endMs: 1900,
+          confidence: 1
+        }
+      ],
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      generate
+    })
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.overview?.text).toBe(
+      'The team decided to collect login events from all users.'
+    )
+    expect(result.overviewFailed).toBe(false)
+    expect(result.content.sections.some((section) => section.title === 'Other Notes')).toBe(false)
   })
 })
 

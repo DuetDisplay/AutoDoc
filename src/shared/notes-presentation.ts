@@ -129,7 +129,8 @@ function cleanItem<T extends CustomerNoteItem>(
 }
 
 /** Reader-facing notes: no leftover review bucket, no repeated topic/title chrome. */
-export function toCustomerFacingNotes<T extends CustomerNotes>(notes: T): T {
+export function toCustomerFacingNotes<T extends CustomerNotes>(notes: T, enabled = false): T {
+  if (!enabled) return notes
   const overview = notes.overview
     ? { ...notes.overview, text: normalizeCustomerOverview(notes.overview.text) }
     : notes.overview

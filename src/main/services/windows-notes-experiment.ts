@@ -2,6 +2,16 @@ import type { MeetingSegments, Segment } from '../../shared/types'
 import { NEEDS_REVIEW_TOPIC, OTHER_NOTES_TOPIC } from '../../shared/notes-presentation'
 import { noteTextLooksCoherent } from './notes-coherence'
 
+/**
+ * Default Windows notes quality path added after internal-v1.2.0.6.
+ * macOS stays on last-release lossless present / export / overview.
+ */
+export function isWindowsNotesQualityEnabled(
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  return platform === 'win32'
+}
+
 /** Opt-in experiment. The platform guard is mandatory even when the flag is set. */
 export function isWindowsTopicWriterEnabled(
   platform: NodeJS.Platform = process.platform,

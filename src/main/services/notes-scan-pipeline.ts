@@ -51,7 +51,11 @@ import {
 } from './notes-lossless-presenter'
 import { recoverExplicitTranscriptActions } from './notes-explicit-action-recovery'
 import { recoverExplicitTranscriptDecisions } from './notes-explicit-decision-recovery'
-import { dedupeWindowsNotes, isWindowsTopicWriterEnabled } from './windows-notes-experiment'
+import {
+  dedupeWindowsNotes,
+  isWindowsNotesQualityEnabled,
+  isWindowsTopicWriterEnabled
+} from './windows-notes-experiment'
 import { organizeWindowsNotes } from './windows-notes-organization'
 import { isWindowsEvidenceWriterEnabled } from './windows-notes-evidence'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
@@ -359,7 +363,11 @@ export async function runNotesScanPipeline(
     if (isWindowsTopicWriterEnabled()) content.overview = organization?.overview ?? null
     let overviewFailed = false
     let overviewFailureReasons: string[] = []
-    if (!isWindowsTopicWriterEnabled() && !organization?.overview) {
+    if (
+      isWindowsNotesQualityEnabled() &&
+      !isWindowsTopicWriterEnabled() &&
+      !organization?.overview
+    ) {
       const catalog = notesCatalogMarkdown(content)
       if (catalog) {
         reportProgress('overview', 0.95)

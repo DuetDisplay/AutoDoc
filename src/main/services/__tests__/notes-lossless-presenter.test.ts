@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   MeetingNotesContent,
   MeetingSegments,
@@ -105,7 +105,17 @@ function allItems(content: MeetingNotesContent) {
   ]
 }
 
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+
 describe('lossless notes presenter', () => {
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  })
+
+  afterEach(() => {
+    if (platform) Object.defineProperty(process, 'platform', platform)
+  })
+
   it('preserves every writer record and its fields without mutating the input', () => {
     const segments = fixture()
     const before = structuredClone(segments)
@@ -541,5 +551,49 @@ describe('lossless notes presenter', () => {
     expect(() => presentMeetingSegmentsLosslessly(MEETING_ID, mismatchedCategory)).toThrowError(
       expect.objectContaining<Partial<LosslessPresenterError>>({ code: 'category-mismatch' })
     )
+  })
+})
+
+describe('lossless notes presenter on macOS', () => {
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+  })
+
+  afterEach(() => {
+    if (platform) Object.defineProperty(process, 'platform', platform)
+  })
+
+  it('keeps last-release grouping and a single copied overview', () => {
+    const segments: MeetingSegments = {
+      decisions: [
+        segment('decision-1', 'decision', {
+          topic: 'Rollout',
+          title: 'Release at a 50/50 split',
+          content: 'Release the free tier at a 50/50 split after QA clears.',
+          sourceStartMs: 10_000,
+          sourceEndMs: 12_000
+        })
+      ],
+      actionItems: [],
+      information: [
+        segment('info-1', 'information', {
+          topic: null,
+          title: 'Stripe improved',
+          content: 'Stripe was higher week over week for two consecutive days.',
+          sourceStartMs: 35_000,
+          sourceEndMs: 36_000
+        })
+      ],
+      discussion: [],
+      statusUpdates: []
+    }
+
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+
+    expect(content.sections.map((section) => section.title)).toEqual(['Information'])
+    expect(content.decisions.map((item) => item.topic)).toEqual(['Rollout'])
+    expect(content.overview?.text).toBe('Release the free tier at a 50/50 split after QA clears.')
+    expect(content.keyTakeaways.map((item) => item.title)).toEqual(['Stripe improved'])
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
   })
 })

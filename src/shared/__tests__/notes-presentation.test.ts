@@ -71,7 +71,7 @@ describe('customer-facing notes', () => {
         { title: 'Share Politic', topic: 'Needs Review', text: 'Share Politic.' },
         { title: 'Ping QA', topic: 'Subscription', text: 'Ask Sergio for the smoke-test ETA.' }
       ]
-    })
+    }, true)
 
     expect(cleaned.overview?.text).toBe('Starts and cancels looked unusual. Minimum RAM is now 16 GB.')
     expect(cleaned.keyTakeaways[0]?.title).toBeNull()
@@ -106,8 +106,25 @@ describe('customer-facing notes', () => {
       ],
       decisions: [],
       nextSteps: []
-    })
+    }, true)
 
     expect(cleaned.sections.map((section) => section.title)).toEqual(['Analytics', 'Other Notes'])
+  })
+
+  it('leaves notes unchanged when the Windows display transform is off', () => {
+    const notes = {
+      overview: { text: 'Cancellations — Starts looked unusual.' },
+      keyTakeaways: [],
+      sections: [
+        {
+          title: 'Needs Review',
+          keyPoints: [{ title: 'But logs', topic: 'Needs Review', text: 'But logs show it was running' }],
+          supportingDetails: []
+        }
+      ],
+      decisions: [],
+      nextSteps: []
+    }
+    expect(toCustomerFacingNotes(notes)).toEqual(notes)
   })
 })

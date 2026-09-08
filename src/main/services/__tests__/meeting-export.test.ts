@@ -1,5 +1,5 @@
 import { inflateRawSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { NormalizedNoteItem, NormalizedNotes } from '../../../shared/types'
 import {
   createMeetingExportSuggestedFilename,
@@ -202,7 +202,17 @@ function xml(entries: Map<string, Buffer>, path: string): string {
   return entry.toString('utf8')
 }
 
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+
 describe('meeting export renderers', () => {
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  })
+
+  afterEach(() => {
+    if (platform) Object.defineProperty(process, 'platform', platform)
+  })
+
   it('renders every human-readable notes field in Markdown without private source records', () => {
     const markdown = renderMeetingExportMarkdown(withIgnoredPrivateData(snapshot))
     const readable = markdown.replace(/\\/g, '')
@@ -433,6 +443,44 @@ describe('meeting export renderers', () => {
     const html = renderMeetingExportHtml(messy)
     expect(html).not.toContain('<h4>Key points</h4>')
     expect(html).not.toContain('Topic: Cancellations')
+  })
+
+  it('keeps last-release export chrome on macOS', () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const messy: MeetingExportSnapshot = {
+      ...snapshot,
+      notes: {
+        ...notes,
+        overview: {
+          ...notes.overview!,
+          text: 'Cancellations — The data indicates 14 starts and 6 cancellations.'
+        },
+        sections: [
+          {
+            id: 'section-cancels',
+            title: 'Cancellations',
+            summary: null,
+            keyPoints: [
+              item('point-cancels', 'The data indicates 14 starts and 6 cancellations.', {
+                title: 'Cancellations',
+                topic: 'Cancellations',
+                owner: null,
+                deadline: null
+              })
+            ],
+            supportingDetails: []
+          }
+        ],
+        decisions: [],
+        nextSteps: []
+      }
+    }
+
+    const plainText = renderMeetingExportPlainText(messy)
+    expect(plainText).toContain('Cancellations — The data indicates 14 starts and 6 cancellations.')
+    expect(plainText).toContain('Key points')
+    expect(plainText).toContain('Topic: Cancellations')
+    expect(renderMeetingExportHtml(messy)).toContain('<h4>Key points</h4>')
   })
 
   it('renders a quiet empty state when no normalized notes are present', async () => {

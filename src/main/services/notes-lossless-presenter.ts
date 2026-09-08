@@ -25,6 +25,7 @@ import {
 import { assignPresentationTopics } from './notes-topic-grouper'
 import {
   assignWindowsPresentationTopics,
+  isWindowsNotesQualityEnabled,
   isWindowsTopicWriterEnabled,
   windowsNoteNeedsReview
 } from './windows-notes-experiment'
@@ -83,6 +84,8 @@ interface PresentedItem {
 
 const DERIVED_TAKEAWAY_ID = /^lossless-takeaway:/u
 const QUANTIFIED_SIGNAL = /(?:\b\d+(?:[.,]\d+)?\b|%)/u
+const MAC_QUANTIFIED_SIGNAL =
+  /(?:\b\d+(?:[.,]\d+)?\b|%|\b(?:today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday)\b)/iu
 const MATERIAL_SIGNAL =
   /\b(?:approved|blocked|canceled|cancelled|changed|complete|completed|decreased|failed|failure|increased|launched|passed|resolved|risk|shipped|waiting)\b/iu
 const UNRESOLVED_COMPARISON =
@@ -160,6 +163,24 @@ function stableSortSegments(segments: readonly Segment[]): Segment[] {
 }
 
 function summaryScore(segment: Segment): number {
+  const text = `${segment.title} ${segment.content}`
+  if (!isWindowsNotesQualityEnabled()) {
+    const categoryScore: Record<SegmentCategory, number> = {
+      decision: 100,
+      status_update: 60,
+      information: 50,
+      action_item: 40,
+      discussion: 30
+    }
+    return (
+      categoryScore[segment.category] +
+      (MAC_QUANTIFIED_SIGNAL.test(text) ? 20 : 0) +
+      (MATERIAL_SIGNAL.test(text) ? 12 : 0) +
+      standaloneCompletenessScore(segment.content) +
+      (segment.deadline ? 8 : 0) +
+      (segment.topic?.trim() ? 3 : 0)
+    )
+  }
   const categoryScore: Record<SegmentCategory, number> = {
     decision: 70,
     status_update: 60,
@@ -167,7 +188,6 @@ function summaryScore(segment: Segment): number {
     action_item: 40,
     discussion: 30
   }
-  const text = `${segment.title} ${segment.content}`
   const topic = segment.topic?.trim() ?? ''
   const topicBonus = topic && topic !== OTHER_NOTES_TOPIC && topic !== NEEDS_REVIEW_TOPIC ? 8 : 0
   return (
@@ -204,6 +224,15 @@ function isOverviewCandidate(segment: Segment): boolean {
 
 function composeOverview(selected: readonly Segment[]): MeetingNotesContent['overview'] {
   if (selected.length === 0) return null
+  if (!isWindowsNotesQualityEnabled()) {
+    const overviewSource = selected[0]
+    if (!overviewSource) return null
+    return {
+      text: overviewSource.content,
+      sources: [{ startMs: overviewSource.sourceStartMs, endMs: overviewSource.sourceEndMs }],
+      provenance: 'generated'
+    }
+  }
   return {
     text: selected
       .map((segment) => segment.content.trim())
@@ -262,12 +291,48 @@ function rankSegments(
     )
 }
 
+function lastReleaseSummarySegments(segments: MeetingSegments): Segment[] {
+  const ranked = Object.values(segments)
+    .flat()
+    .filter((segment) => noteTextLooksCoherent(segment.content))
+    .map((segment, index) => ({ segment, index, score: summaryScore(segment) }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.segment.sourceStartMs - right.segment.sourceStartMs ||
+        left.index - right.index
+    )
+  const selected: Segment[] = []
+  const selectedIds = new Set<string>()
+  const selectedTopics = new Set<string>()
+  for (const row of ranked) {
+    const topic = row.segment.topic?.trim().toLocaleLowerCase() ?? ''
+    if (!topic || selectedTopics.has(topic)) continue
+    selected.push(row.segment)
+    selectedIds.add(row.segment.id)
+    selectedTopics.add(topic)
+    if (selected.length >= 4) return selected
+  }
+  for (const row of ranked) {
+    if (selectedIds.has(row.segment.id)) continue
+    selected.push(row.segment)
+    selectedIds.add(row.segment.id)
+    if (selected.length >= 4) break
+  }
+  return selected
+}
+
 function summarySegments(segments: MeetingSegments): Segment[] {
   if (isWindowsTopicWriterEnabled()) return []
+  if (!isWindowsNotesQualityEnabled()) return lastReleaseSummarySegments(segments)
   return pickDiverse(rankSegments(segments, isPromotable), 4)
 }
 
 function overviewSegments(segments: MeetingSegments): Segment[] {
+  if (!isWindowsNotesQualityEnabled()) {
+    const first = lastReleaseSummarySegments(segments)[0]
+    return first ? [first] : []
+  }
   const preferred = pickDiverse(rankSegments(segments, isOverviewCandidate), 2)
   if (preferred.length > 0) return preferred
   return pickDiverse(rankSegments(segments, isPromotable), 2)
@@ -281,6 +346,7 @@ export function countContextDependentRejections(segments: MeetingSegments): numb
 }
 
 function takeawayHeading(segment: Segment): string {
+  if (!isWindowsNotesQualityEnabled()) return segment.title
   return (
     distinctNoteTitle(segment.title, segment.content, {
       topic: segment.topic,
@@ -306,10 +372,11 @@ function withSummaryHierarchy(
   content: MeetingNotesContent
 ): MeetingNotesContent {
   const selected = summarySegments(segments)
+  const takeaways = isWindowsNotesQualityEnabled() ? selected : selected.slice(1)
   return {
     ...content,
     overview: composeOverview(overviewSegments(segments)),
-    keyTakeaways: selected.map((segment, index) => ({
+    keyTakeaways: takeaways.map((segment, index) => ({
       id: takeawayId(meetingId, segment, index),
       title: takeawayHeading(segment),
       topic: segment.topic,
@@ -327,9 +394,11 @@ function compareSectionGroups(
   left: { title?: string; segments: readonly Segment[]; index: number },
   right: { title?: string; segments: readonly Segment[]; index: number }
 ): number {
-  const leftOther = isOtherNotesTopic(left.title) || isOtherNotesTopic(left.segments[0]?.topic)
-  const rightOther = isOtherNotesTopic(right.title) || isOtherNotesTopic(right.segments[0]?.topic)
-  if (leftOther !== rightOther) return leftOther ? 1 : -1
+  if (isWindowsNotesQualityEnabled()) {
+    const leftOther = isOtherNotesTopic(left.title) || isOtherNotesTopic(left.segments[0]?.topic)
+    const rightOther = isOtherNotesTopic(right.title) || isOtherNotesTopic(right.segments[0]?.topic)
+    if (leftOther !== rightOther) return leftOther ? 1 : -1
+  }
   const leftFirst = left.segments[0]
   const rightFirst = right.segments[0]
   if (!leftFirst || !rightFirst) return left.index - right.index
@@ -532,19 +601,24 @@ function hasSourceBackedSummaryHierarchy(
   if (
     content.overview?.text !== overview.text ||
     content.overview.provenance !== 'generated' ||
-    !overviewSourcesMatch(content.overview.sources, overviewExpected)
+    !(isWindowsNotesQualityEnabled()
+      ? overviewSourcesMatch(content.overview.sources, overviewExpected)
+      : sourceMatchesSegment(content.overview.sources, overviewExpected[0]!))
   ) {
     return false
   }
 
-  if (content.keyTakeaways.length !== expected.length) return false
+  const expectedTakeaways = isWindowsNotesQualityEnabled() ? expected : expected.slice(1)
+  if (content.keyTakeaways.length !== expectedTakeaways.length) return false
   return content.keyTakeaways.every((item, index) => {
-    const segment = expected[index]
+    const segment = expectedTakeaways[index]
     return (
       segment !== undefined &&
       DERIVED_TAKEAWAY_ID.test(item.id) &&
       item.title === takeawayHeading(segment) &&
-      presentedTopicMatches(item.topic, segment.topic) &&
+      (isWindowsNotesQualityEnabled()
+        ? presentedTopicMatches(item.topic, segment.topic)
+        : item.topic === segment.topic) &&
       item.owner === null &&
       item.deadline === null &&
       item.text === segment.content &&
@@ -560,7 +634,9 @@ function itemMatchesSegment(item: NoteItem, segment: Segment): boolean {
   return (
     item.id === segment.id &&
     item.title === segment.title &&
-    presentedTopicMatches(item.topic, segment.topic) &&
+    (isWindowsNotesQualityEnabled()
+      ? presentedTopicMatches(item.topic, segment.topic)
+      : item.topic === segment.topic) &&
     item.owner === segment.assignee &&
     item.deadline === segment.deadline &&
     item.text === segment.content &&
@@ -578,7 +654,8 @@ function itemMatchesSegment(item: NoteItem, segment: Segment): boolean {
  */
 export function presentationSegments(segments: MeetingSegments): MeetingSegments {
   if (isWindowsTopicWriterEnabled()) return assignWindowsPresentationTopics(segments)
-  return assignPresentationTopics(segments)
+  if (isWindowsNotesQualityEnabled()) return assignPresentationTopics(segments)
+  return segments
 }
 
 export function losslessPresentationStats(

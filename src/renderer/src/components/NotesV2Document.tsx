@@ -383,7 +383,7 @@ function NextStepRow({
       <div className="min-w-0 flex-1">
         <TopicLabel
           topic={
-            useLosslessPresentation
+            useLosslessPresentation && isWindowsRenderer()
               ? displayTopicLabel(item.topic, { itemTitle: title })
               : null
           }
@@ -460,9 +460,10 @@ function Bullet({
   const title = item.title?.trim() ?? ''
   const hasDistinctTitle = Boolean(useLosslessPresentation && title && title !== parsed.text)
   const showBody = !indexOnly || !title
-  const topic = useLosslessPresentation
-    ? displayTopicLabel(item.topic, { sectionTitle, itemTitle: title })
-    : null
+  const topic =
+    useLosslessPresentation && isWindowsRenderer()
+      ? displayTopicLabel(item.topic, { sectionTitle, itemTitle: title })
+      : null
   const start = earliestStart(item.sources)
   const showTime = !isMeetingSpanOnly(item.sources, meetingSpan) && start != null
   const saveText = onSave
@@ -572,7 +573,9 @@ function DecisionsSection({
 }): ReactElement | null {
   if (items.length === 0) return null
 
-  const ready = items.filter((item) => !isNeedsReviewTopic(item.topic))
+  const ready = isWindowsRenderer()
+    ? items.filter((item) => !isNeedsReviewTopic(item.topic))
+    : items
   if (ready.length === 0) return null
   const renderItems = (visible: readonly NoteItem[]): ReactElement[] =>
     visible.map((item) => (
@@ -803,7 +806,9 @@ export function NotesV2Document({
       : 'option-1'
   })
   const useLosslessPresentation = notesUseLosslessPresentation(notes)
-  const documentNotes = useLosslessPresentation ? toCustomerFacingNotes(notes) : notes
+  const windowsQuality = isWindowsRenderer()
+  const documentNotes =
+    useLosslessPresentation && windowsQuality ? toCustomerFacingNotes(notes, true) : notes
   const summary = meetingSummary(documentNotes, title, useLosslessPresentation)
 
   const saveItem = (itemId: string, text: string): void => {
@@ -872,8 +877,12 @@ export function NotesV2Document({
   const itemEdit = onWrite
     ? { onSave: saveItem, onSaveOwner: saveOwner, onDelete: deleteItem }
     : { onSave: undefined, onSaveOwner: undefined, onDelete: undefined }
-  const visibleNextSteps = documentNotes.nextSteps.filter((item) => !isNeedsReviewTopic(item.topic))
-  const visibleSections = documentNotes.sections.filter((section) => !isNeedsReviewTopic(section.title))
+  const visibleNextSteps = windowsQuality
+    ? documentNotes.nextSteps.filter((item) => !isNeedsReviewTopic(item.topic))
+    : documentNotes.nextSteps
+  const visibleSections = windowsQuality
+    ? documentNotes.sections.filter((section) => !isNeedsReviewTopic(section.title))
+    : documentNotes.sections
 
   return (
     <div className="flex flex-col gap-3">
