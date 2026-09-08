@@ -124,6 +124,7 @@ describe('NotesV2Document', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Option 1' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Key Takeaways' })).toBeInTheDocument()
     expect(screen.getByText('Collect login events')).toBeInTheDocument()
@@ -132,10 +133,36 @@ describe('NotesV2Document', () => {
     expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByText('Collect login events')).toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
+  })
+
+  it('puts the meeting title at the top and labels the overview Summary in both options', async () => {
+    const { container } = render(
+      <NotesV2Document
+        notes={notes()}
+        title="duet-display - Slack"
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Recorded meeting')).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { name: 'duet-display - Slack' })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
+    const title = container.querySelector('h2')
+    const summary = container.querySelector('#notes-summary')
+    expect(title?.textContent).toBe('duet-display - Slack')
+    expect(summary).not.toBeNull()
+    expect(title?.compareDocumentPosition(summary!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
+    expect(screen.getByText('Recorded meeting')).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { name: 'duet-display - Slack' })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
   })
 
   it('shows a distinct next-step title, complete body, and deadline without duplication', async () => {

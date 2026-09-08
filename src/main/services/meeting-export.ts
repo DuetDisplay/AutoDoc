@@ -278,22 +278,22 @@ function markdownItem(item: NormalizedNoteItem, checklist: boolean): string {
 
 function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
   const notes = customerFacingNotes(snapshot.notes)
-  if (!notes) return ['## Notes', '', '_No notes are available for this meeting._', '']
+  if (!notes) return ['_No notes are available for this meeting._', '']
 
-  const lines = ['## Notes', '']
+  const lines: string[] = []
   if (notes.overview) {
-    lines.push('### Overview', '', markdownNoteMarkup(notes.overview.text), '')
+    lines.push('## Summary', '', markdownNoteMarkup(notes.overview.text), '')
   }
   if (notes.keyTakeaways.length) {
     lines.push(
-      '### Key Takeaways',
+      '## Key Takeaways',
       '',
       ...notes.keyTakeaways.map((item) => markdownItem(item, false)),
       ''
     )
   }
   for (const section of notes.sections) {
-    lines.push(`### ${escapeMarkdown(noteHeadingText(section.title))}`, '')
+    lines.push(`## ${escapeMarkdown(noteHeadingText(section.title))}`, '')
     if (section.summary) lines.push(markdownNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
       if (isWindowsNotesQualityEnabled()) {
@@ -317,18 +317,18 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
     }
   }
   if (notes.decisions.length) {
-    lines.push('### Decisions', '', ...notes.decisions.map((item) => markdownItem(item, false)), '')
+    lines.push('## Decisions', '', ...notes.decisions.map((item) => markdownItem(item, false)), '')
   }
   if (notes.nextSteps.length) {
-    lines.push('### Next Steps', '', ...notes.nextSteps.map((item) => markdownItem(item, true)), '')
+    lines.push('## Next Steps', '', ...notes.nextSteps.map((item) => markdownItem(item, true)), '')
   }
-  if (lines.length === 2) lines.push('_No note content is available for this meeting._', '')
+  if (lines.length === 0) lines.push('_No note content is available for this meeting._', '')
   return lines
 }
 
 export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): string {
   const lines = [
-    'AUTODOC MEETING MEMO',
+    'Recorded meeting',
     '',
     `# ${escapeMarkdown(snapshot.detail.title || 'Untitled Meeting')}`,
     '',
@@ -358,10 +358,10 @@ function plainItem(item: NormalizedNoteItem, checklist: boolean): string {
 
 function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
   const notes = customerFacingNotes(snapshot.notes)
-  if (!notes) return ['NOTES', '', 'No notes are available for this meeting.', '']
+  if (!notes) return ['No notes are available for this meeting.', '']
 
-  const lines = ['NOTES', '']
-  if (notes.overview) lines.push('Overview', '', plainNoteMarkup(notes.overview.text), '')
+  const lines: string[] = []
+  if (notes.overview) lines.push('Summary', '', plainNoteMarkup(notes.overview.text), '')
   if (notes.keyTakeaways.length) {
     lines.push('Key Takeaways', '', ...notes.keyTakeaways.map((item) => plainItem(item, false)), '')
   }
@@ -390,13 +390,13 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
   if (notes.nextSteps.length) {
     lines.push('Next Steps', '', ...notes.nextSteps.map((item) => plainItem(item, true)), '')
   }
-  if (lines.length === 2) lines.push('No note content is available for this meeting.', '')
+  if (lines.length === 0) lines.push('No note content is available for this meeting.', '')
   return lines
 }
 
 export function renderMeetingExportPlainText(snapshot: MeetingExportSnapshot): string {
   const lines = [
-    'AUTODOC MEETING MEMO',
+    'Recorded meeting',
     '',
     noteHeadingText(snapshot.detail.title || 'Untitled Meeting'),
     '',
@@ -434,24 +434,24 @@ function htmlItem(item: NormalizedNoteItem, checklist: boolean): string {
 function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   const notes = customerFacingNotes(snapshot.notes)
   if (!notes) {
-    return '<section aria-labelledby="notes"><h2 id="notes">Notes</h2><p class="empty">No notes are available for this meeting.</p></section>'
+    return '<p class="empty">No notes are available for this meeting.</p>'
   }
 
-  const content: string[] = ['<section aria-labelledby="notes"><h2 id="notes">Notes</h2>']
+  const content: string[] = []
   if (notes.overview) {
     content.push(
-      `<section aria-labelledby="overview"><h3 id="overview">Overview</h3><p>${htmlNoteMarkup(notes.overview.text)}</p></section>`
+      `<section aria-labelledby="summary"><h2 id="summary">Summary</h2><p>${htmlNoteMarkup(notes.overview.text)}</p></section>`
     )
   }
   if (notes.keyTakeaways.length) {
     content.push(
-      `<section aria-labelledby="takeaways"><h3 id="takeaways">Key Takeaways</h3><ul>${notes.keyTakeaways.map((item) => htmlItem(item, false)).join('')}</ul></section>`
+      `<section aria-labelledby="takeaways"><h2 id="takeaways">Key Takeaways</h2><ul>${notes.keyTakeaways.map((item) => htmlItem(item, false)).join('')}</ul></section>`
     )
   }
   notes.sections.forEach((section, index) => {
     const id = `note-section-${index + 1}`
     content.push(
-      `<section aria-labelledby="${id}"><h3 id="${id}">${escapeHtml(xmlSafeText(noteHeadingText(section.title)))}</h3>`
+      `<section aria-labelledby="${id}"><h2 id="${id}">${escapeHtml(xmlSafeText(noteHeadingText(section.title)))}</h2>`
     )
     if (section.summary) content.push(`<p>${htmlNoteMarkup(section.summary.text)}</p>`)
     if (section.keyPoints.length) {
@@ -470,17 +470,16 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   })
   if (notes.decisions.length) {
     content.push(
-      `<section aria-labelledby="decisions"><h3 id="decisions">Decisions</h3><ul>${notes.decisions.map((item) => htmlItem(item, false)).join('')}</ul></section>`
+      `<section aria-labelledby="decisions"><h2 id="decisions">Decisions</h2><ul>${notes.decisions.map((item) => htmlItem(item, false)).join('')}</ul></section>`
     )
   }
   if (notes.nextSteps.length) {
     content.push(
-      `<section aria-labelledby="next-steps"><h3 id="next-steps">Next Steps</h3><ul class="checklist">${notes.nextSteps.map((item) => htmlItem(item, true)).join('')}</ul></section>`
+      `<section aria-labelledby="next-steps"><h2 id="next-steps">Next Steps</h2><ul class="checklist">${notes.nextSteps.map((item) => htmlItem(item, true)).join('')}</ul></section>`
     )
   }
-  if (content.length === 1)
+  if (content.length === 0)
     content.push('<p class="empty">No note content is available for this meeting.</p>')
-  content.push('</section>')
   return content.join('')
 }
 
@@ -491,7 +490,7 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
-  <title>${escapeHtml(snapshot.detail.title || 'Untitled Meeting')} — AutoDoc Meeting Memo</title>
+  <title>${escapeHtml(snapshot.detail.title || 'Untitled Meeting')}</title>
   <style>
     :root { --paper: #${PALETTE.paper}; --surface: #${PALETTE.surface}; --ink: #${PALETTE.ink}; --secondary: #${PALETTE.secondaryInk}; --muted: #${PALETTE.muted}; --sage: #${PALETTE.sage}; --sage-dark: #${PALETTE.sageDark}; }
     @page { size: Letter portrait; margin: 1in; }
@@ -523,7 +522,7 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
 <body>
   <main>
     <header class="masthead">
-      <p class="kicker">AutoDoc Meeting Memo</p>
+      <p class="kicker">Recorded meeting</p>
       <h1>${htmlText(snapshot.detail.title || 'Untitled Meeting')}</h1>
       <dl>
         <dt>Date</dt><dd>${htmlText(formatDate(snapshot.detail.date))}</dd>
@@ -569,16 +568,14 @@ function docxBullet(item: NormalizedNoteItem, checklist: boolean): Paragraph {
 }
 
 function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
-  const paragraphs = [
-    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Notes')] })
-  ]
+  const paragraphs: Paragraph[] = []
   const notes = customerFacingNotes(snapshot.notes)
   if (!notes)
-    return [...paragraphs, docxParagraph('No notes are available for this meeting.', 'EmptyState')]
+    return [docxParagraph('No notes are available for this meeting.', 'EmptyState')]
 
   if (notes.overview) {
     paragraphs.push(
-      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun('Overview')] }),
+      new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Summary')] }),
       docxParagraph(notes.overview.text)
     )
   }
@@ -626,7 +623,7 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     )
     paragraphs.push(...notes.nextSteps.map((item) => docxBullet(item, true)))
   }
-  if (paragraphs.length === 1)
+  if (paragraphs.length === 0)
     paragraphs.push(docxParagraph('No note content is available for this meeting.', 'EmptyState'))
   return paragraphs
 }
@@ -693,7 +690,7 @@ function normalizeZipTimestamps(buffer: Buffer): Buffer {
 
 export async function renderMeetingExportDocx(snapshot: MeetingExportSnapshot): Promise<Buffer> {
   const children: Paragraph[] = [
-    new Paragraph({ style: 'MastheadKicker', children: [new TextRun('AUTODOC MEETING MEMO')] }),
+    new Paragraph({ style: 'MastheadKicker', children: [new TextRun('RECORDED MEETING')] }),
     new Paragraph({
       style: 'Title',
       children: [new TextRun(xmlSafeText(snapshot.detail.title || 'Untitled Meeting'))]

@@ -20,6 +20,15 @@ import { renderNoteMarkup } from './NoteMarkup'
 
 type NotesOption = 'option-1' | 'option-2'
 
+function optionHeadingClass(option: NotesOption, kind: 'section' | 'kicker'): string {
+  if (option === 'option-1') {
+    return kind === 'kicker'
+      ? 'mb-1 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted'
+      : 'mb-1 text-[13px] font-semibold text-ink'
+  }
+  return 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
+}
+
 function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const minutes = Math.floor(total / 60)
@@ -883,6 +892,8 @@ export function NotesV2Document({
   const visibleSections = windowsQuality
     ? documentNotes.sections.filter((section) => !isNeedsReviewTopic(section.title))
     : documentNotes.sections
+  const meetingTitle = title?.trim() ?? ''
+  const optionColumn = option === 'option-1' ? 'mx-auto w-full max-w-[560px]' : ''
 
   return (
     <div className="flex flex-col gap-3">
@@ -904,21 +915,40 @@ export function NotesV2Document({
         ))}
       </div>
 
+      {meetingTitle ? (
+        <header className={optionColumn}>
+          <p className={optionHeadingClass(option, 'kicker')}>Recorded meeting</p>
+          <h2
+            className={
+              option === 'option-1'
+                ? 'text-[22px] font-semibold tracking-tight text-ink'
+                : 'text-[18px] font-semibold tracking-tight text-ink'
+            }
+          >
+            {meetingTitle}
+          </h2>
+        </header>
+      ) : null}
+
       {summary ? (
-        <div
+        <section
+          aria-labelledby="notes-summary"
           className={
             option === 'option-1'
-              ? 'mx-auto w-full max-w-[560px] pb-2'
+              ? `${optionColumn} pb-2`
               : 'rounded-xl border border-border bg-bg-card px-4 py-3'
           }
         >
+          <h3 id="notes-summary" className={optionHeadingClass(option, 'section')}>
+            Summary
+          </h3>
           <InlineEdit
             value={summary}
             onSave={notes.overview && onWrite ? saveOverview : undefined}
             className="text-[13.5px] leading-relaxed text-ink-secondary"
             as="p"
           />
-        </div>
+        </section>
       ) : null}
 
       {useLosslessPresentation ? (
@@ -980,11 +1010,6 @@ export function NotesV2Document({
           option === 'option-1' ? 'mx-auto w-full max-w-[560px] py-2' : 'flex flex-col gap-5'
         }
       >
-        {option === 'option-1' ? (
-          <h2 className="mb-4 text-[22px] font-semibold tracking-tight text-ink">
-            {title?.trim() || 'Notes'}
-          </h2>
-        ) : null}
         {visibleSections.map((section) => {
           const hierarchy = displayNoteSectionHierarchy(
             section,

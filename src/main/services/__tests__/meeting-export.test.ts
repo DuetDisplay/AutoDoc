@@ -217,7 +217,12 @@ describe('meeting export renderers', () => {
     const markdown = renderMeetingExportMarkdown(withIgnoredPrivateData(snapshot))
     const readable = markdown.replace(/\\/g, '')
 
+    expect(readable).toContain('Recorded meeting')
     expect(readable).toContain('# MEETING_TITLE_VISIBLE')
+    expect(readable).toContain('## Summary')
+    expect(readable).not.toContain('AUTODOC MEETING MEMO')
+    expect(readable).not.toContain('## Notes')
+    expect(readable).not.toContain('### Overview')
     expect(readable).toContain('May 6, 2026 at 2:07 PM UTC')
     expect(readable).toContain('SOURCE_NAME_VISIBLE')
     expect(readable).toContain('1h 1m 1s')
@@ -235,7 +240,12 @@ describe('meeting export renderers', () => {
     expect(html.startsWith('<!doctype html>')).toBe(true)
     expect(html).toContain('<main>')
     expect(html).toContain('<header class="masthead">')
-    expect(html).toContain('<section aria-labelledby="notes">')
+    expect(html).toContain('<p class="kicker">Recorded meeting</p>')
+    expect(html).toContain('<section aria-labelledby="summary">')
+    expect(html).toContain('<h2 id="summary">Summary</h2>')
+    expect(html).not.toContain('AutoDoc Meeting Memo')
+    expect(html).not.toContain('id="notes"')
+    expect(html).not.toContain('Overview')
     expect(html).toContain("default-src 'none'")
     expect(html).toContain('@page { size: Letter portrait; margin: 1in; }')
     expect(html).toContain('--paper: #FAFAF7')
@@ -286,7 +296,7 @@ describe('meeting export renderers', () => {
     const html = renderMeetingExportHtml(formatted)
     expect(html).toContain('<strong class="embedded-heading">Launch status</strong>')
     expect(html).toContain('<strong>Retention</strong> improved')
-    expect(html).toContain('<h3 id="note-section-1">Adoption</h3>')
+    expect(html).toContain('<h2 id="note-section-1">Adoption</h2>')
     expect(html).not.toContain('## Launch status')
     expect(html).not.toContain('**Retention**')
 
@@ -363,7 +373,10 @@ describe('meeting export renderers', () => {
     expect(contentTypes).toContain(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'
     )
-    expect(documentXml).toContain('AUTODOC MEETING MEMO')
+    expect(documentXml).toContain('RECORDED MEETING')
+    expect(documentXml).toContain('Summary')
+    expect(documentXml).not.toContain('AUTODOC MEETING MEMO')
+    expect(documentXml).not.toContain('Overview')
     for (const visible of visibleNoteContent) expect(documentXml).toContain(visible)
     for (const internal of internalContent) expect(documentXml).not.toContain(internal)
     expect(documentXml).not.toContain('Transcript')
@@ -477,6 +490,9 @@ describe('meeting export renderers', () => {
     }
 
     const plainText = renderMeetingExportPlainText(messy)
+    expect(plainText).toContain('Recorded meeting')
+    expect(plainText).toContain('Summary')
+    expect(plainText).not.toContain('AUTODOC MEETING MEMO')
     expect(plainText).toContain('Cancellations — The data indicates 14 starts and 6 cancellations.')
     expect(plainText).toContain('Key points')
     expect(plainText).toContain('Topic: Cancellations')
