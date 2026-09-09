@@ -116,6 +116,29 @@ describe('runNotesScanPipeline', () => {
     expect(options.generate).not.toHaveBeenCalled()
   })
 
+  it('restores a recovered task’s explanation without changing writer records or requesting inference', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const input = segments()
+    const original = structuredClone(input)
+    const rows = [
+      { id: 'commitment', meetingId: 'meeting-1', speaker: 'me',
+        text: 'I need to get more information about the setup.', startMs: 60_000, endMs: 65_000, confidence: 1 },
+      { id: 'explanation', meetingId: 'meeting-1', speaker: 'me',
+        text: 'Because the ticket reports the local mouse stops working when Duet runs.', startMs: 65_200, endMs: 70_000, confidence: 1 }
+    ]
+    const generate = vi.fn(async () => { throw Error('Unexpected inference') })
+    const result = await runNotesScanPipeline(input, {
+      title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless',
+      attributionTranscript: rows, spanSources: [], generate
+    })
+    const recovered = result.content.nextSteps.find((item) => item.id.startsWith('recovered-action:'))
+    expect(recovered?.text).toBe('Get more information about the setup. Because the ticket reports the local mouse stops working when Duet runs.')
+    expect(recovered?.sources).toEqual([{ startMs: 60_000, endMs: 70_000 }])
+    expect(result.contextualizedNextStepCount).toBe(1)
+    expect(input).toEqual(original)
+    expect(generate).not.toHaveBeenCalled()
+  })
+
   it('presents every writer record and asks only for a synthesized overview', async () => {
     const input = segments()
     input.actionItems.push(

@@ -52,6 +52,7 @@ import {
 import { recoverExplicitTranscriptActions } from './notes-explicit-action-recovery'
 import { withoutNextStepCandidates } from './writer-catalog'
 import { presentActionContext, refineNextSteps } from './notes-action-context'
+import { restoreActionContinuations } from './notes-action-continuation'
 import { recoverExplicitTranscriptDecisions } from './notes-explicit-decision-recovery'
 import {
   dedupeWindowsNotes,
@@ -404,14 +405,15 @@ export async function runNotesScanPipeline(
     const presentationStats = losslessPresentationStats(presentedSegments, content)
     const contextualized = presentActionContext(content, presentedSegments.actionItems)
     const refined = refineNextSteps(contextualized.content, nextStepCandidates, attributionTranscript, options.localOwnerLabel)
+    const continued = restoreActionContinuations(refined.content, attributionTranscript)
     reportProgress('lossless-presentation', 1)
 
     return {
       markdown: '',
-      content: refined.content,
+      content: continued.content,
       presentationMode: 'lossless',
-      exactWriterCoverage: contextualized.count + refined.count === 0,
-      contextualizedNextStepCount: contextualized.count + refined.count,
+      exactWriterCoverage: contextualized.count + refined.count + continued.count === 0,
+      contextualizedNextStepCount: contextualized.count + refined.count + continued.count,
       organizationAttempted: organization?.attempted ?? false,
       organizationAccepted: organization?.grouped ?? false,
       organizationOverviewAccepted: organization?.overviewAccepted ?? false,

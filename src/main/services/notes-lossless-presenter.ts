@@ -328,9 +328,13 @@ function summarySegments(segments: MeetingSegments): Segment[] {
   return pickDiverse(rankSegments(segments, isPromotable), 4)
 }
 
-function overviewSegments(segments: MeetingSegments): Segment[] {
+function overviewSegments(segments: MeetingSegments, selectedSummary?: Segment[]): Segment[] {
   if (!isWindowsNotesQualityEnabled()) {
-    const first = lastReleaseSummarySegments(segments)[0]
+    // On Mac the overview is the first item in the very same ranked summary.
+    // Reuse that local result instead of repeating coherence checks and ranking.
+    const first = (process.platform === 'darwin' && selectedSummary
+      ? selectedSummary
+      : lastReleaseSummarySegments(segments))[0]
     return first ? [first] : []
   }
   const preferred = pickDiverse(rankSegments(segments, isOverviewCandidate), 2)
@@ -375,7 +379,7 @@ function withSummaryHierarchy(
   const takeaways = isWindowsNotesQualityEnabled() ? selected : selected.slice(1)
   return {
     ...content,
-    overview: composeOverview(overviewSegments(segments)),
+    overview: composeOverview(overviewSegments(segments, selected)),
     keyTakeaways: takeaways.map((segment, index) => ({
       id: takeawayId(meetingId, segment, index),
       title: takeawayHeading(segment),
@@ -595,7 +599,7 @@ function hasSourceBackedSummaryHierarchy(
   content: MeetingNotesContent
 ): boolean {
   const expected = summarySegments(segments)
-  const overviewExpected = overviewSegments(segments)
+  const overviewExpected = overviewSegments(segments, expected)
   const overview = composeOverview(overviewExpected)
   if (!overview) return content.overview === null && content.keyTakeaways.length === 0
   if (
