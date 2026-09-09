@@ -38,7 +38,7 @@ import {
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
 import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
-import type { MeetingNotesContent, MeetingSegments, Transcript } from '../../shared/types'
+import type { MeetingNotesContent, MeetingSegments, MeetingSegmentsWithCandidates, Transcript } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
 import {
   emptyValidationStats,
@@ -50,6 +50,8 @@ import {
   presentMeetingSegmentsLosslessly
 } from './notes-lossless-presenter'
 import { recoverExplicitTranscriptActions } from './notes-explicit-action-recovery'
+import { withoutNextStepCandidates } from './writer-catalog'
+import { presentActionContext, refineNextSteps } from './notes-action-context'
 import { recoverExplicitTranscriptDecisions } from './notes-explicit-decision-recovery'
 import {
   dedupeWindowsNotes,
@@ -145,6 +147,7 @@ export interface NotesScanResult {
   content: MeetingNotesContent
   presentationMode?: 'lossless' | 'scan'
   exactWriterCoverage?: boolean
+  contextualizedNextStepCount?: number
   organizationAttempted?: boolean
   organizationAccepted?: boolean
   organizationOverviewAccepted?: boolean
@@ -297,9 +300,11 @@ async function generateFromPlan(
 }
 
 export async function runNotesScanPipeline(
-  segments: MeetingSegments,
+  segments: MeetingSegmentsWithCandidates,
   options: RunNotesScanOptions
 ): Promise<NotesScanResult> {
+  const nextStepCandidates = segments.nextStepCandidates ?? []
+  segments = withoutNextStepCandidates(segments)
   const seed = options.seed ?? DEFAULT_SEED
   const temperature = options.temperature ?? 0.4
   const rewritePolicy = options.rewritePolicy ?? DEFAULT_NOTES_REWRITE_POLICY
@@ -397,13 +402,16 @@ export async function runNotesScanPipeline(
       }
     }
     const presentationStats = losslessPresentationStats(presentedSegments, content)
+    const contextualized = presentActionContext(content, presentedSegments.actionItems)
+    const refined = refineNextSteps(contextualized.content, nextStepCandidates, attributionTranscript, options.localOwnerLabel)
     reportProgress('lossless-presentation', 1)
 
     return {
       markdown: '',
-      content,
+      content: refined.content,
       presentationMode: 'lossless',
-      exactWriterCoverage: true,
+      exactWriterCoverage: contextualized.count + refined.count === 0,
+      contextualizedNextStepCount: contextualized.count + refined.count,
       organizationAttempted: organization?.attempted ?? false,
       organizationAccepted: organization?.grouped ?? false,
       organizationOverviewAccepted: organization?.overviewAccepted ?? false,

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import type {
   MeetingSegments,
+  MeetingSegmentsWithCandidates,
   Segment,
   SegmentCategory,
   SegmentationActivity
@@ -1291,6 +1292,7 @@ interface RawSegment {
   deadline?: string | null
   sourceStartMs?: number
   sourceEndMs?: number
+  actionContext?: Segment['actionContext']
 }
 
 interface TranscriptLine {
@@ -1819,7 +1821,7 @@ export class OllamaProvider implements LLMProvider {
       }
     })
 
-    const merged: MeetingSegments = {
+    const merged: MeetingSegmentsWithCandidates = {
       decisions: [],
       actionItems: [],
       information: [],
@@ -1852,7 +1854,7 @@ export class OllamaProvider implements LLMProvider {
           : '')
 
       let lastError: Error | null = null
-      let chunkResult: MeetingSegments | null = null
+      let chunkResult: MeetingSegmentsWithCandidates | null = null
       let chunkTokens = 0
       let parseRetriesUsed = 0
       let chunkSkipped = false
@@ -2070,6 +2072,10 @@ export class OllamaProvider implements LLMProvider {
       merged.information.push(...chunkResult.information)
       merged.discussion.push(...chunkResult.discussion)
       merged.statusUpdates.push(...chunkResult.statusUpdates)
+      if (chunkResult.nextStepCandidates?.length) {
+        merged.nextStepCandidates ??= []
+        merged.nextStepCandidates.push(...chunkResult.nextStepCandidates)
+      }
 
       onProgress?.(writerProgressPercent(i, 1, chunks.length))
     }
@@ -2945,7 +2951,7 @@ export class OllamaProvider implements LLMProvider {
     macLineStartMsById?: ReadonlyMap<number, number>,
     promptTranscript?: string
   ): {
-    segments: MeetingSegments
+    segments: MeetingSegmentsWithCandidates
     rawItemCount: number
     expandedItemCount: number
     acceptedItemCount: number
@@ -2995,7 +3001,7 @@ export class OllamaProvider implements LLMProvider {
 
     const parsed = inspected.expanded
     const drops = [...inspected.drops]
-    const result: MeetingSegments = {
+    const result: MeetingSegmentsWithCandidates = {
       decisions: [],
       actionItems: [],
       information: [],
@@ -3071,6 +3077,34 @@ export class OllamaProvider implements LLMProvider {
             citedRange,
             transcriptLines
           )
+          // Preserve the existing writer/summary result exactly. Rejected or
+          // shortened actions can be checked against complete transcript turns
+          // for Next Steps later, without another model request.
+          if (
+            process.platform === 'darwin' &&
+            rawKey === 'action_items' &&
+            !sanitizedRecords.some(
+              (record) => record.category === 'action_items' && record.content === groundedItem.content
+            )
+          ) {
+            const title = capitalize(String(groundedItem.title))
+            const content = capitalize(String(groundedItem.content))
+            result.nextStepCandidates ??= []
+            result.nextStepCandidates.push({
+              id: writerSegmentId(
+                meetingId, 'action_item', title, content, citedRange.startMs, citedRange.endMs
+              ),
+              meetingId,
+              category: 'action_item',
+              title,
+              content,
+              topic: groundedItem.topic ? String(groundedItem.topic) : null,
+              assignee: groundedItem.assignee ?? null,
+              deadline: groundedItem.deadline ?? null,
+              sourceStartMs: citedRange.startMs,
+              sourceEndMs: citedRange.endMs
+            })
+          }
           acceptedCandidates = sanitizedRecords.map((sanitized) => ({
             destinationKey: fieldMap[sanitized.category],
             destinationCategory: CATEGORY_MAP[sanitized.category],
@@ -3080,7 +3114,8 @@ export class OllamaProvider implements LLMProvider {
               content: sanitized.content,
               deadline: sanitized.deadline,
               sourceStartMs: sanitized.sourceStartMs,
-              sourceEndMs: sanitized.sourceEndMs
+              sourceEndMs: sanitized.sourceEndMs,
+              ...(sanitized.actionContext ? { actionContext: sanitized.actionContext } : {})
             },
             sourceRange: {
               startMs: sanitized.sourceStartMs,
@@ -3189,7 +3224,8 @@ export class OllamaProvider implements LLMProvider {
             assignee: candidate.item.assignee ? String(candidate.item.assignee) : null,
             deadline: candidate.item.deadline ? String(candidate.item.deadline) : null,
             sourceStartMs: candidate.sourceRange.startMs,
-            sourceEndMs: candidate.sourceRange.endMs
+            sourceEndMs: candidate.sourceRange.endMs,
+            ...(candidate.item.actionContext ? { actionContext: candidate.item.actionContext } : {})
           }
           // Malformed category arrays may be recovered along two paths, then
           // grounded into the same destination. Preserve that exact record once.

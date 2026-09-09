@@ -1,4 +1,16 @@
-import type { MeetingSegments, Segment } from '../../shared/types'
+import type { MeetingSegments, MeetingSegmentsWithCandidates, Segment } from '../../shared/types'
+
+/** Unaccepted writer drafts are transient input to Next Steps validation only. */
+export function withoutNextStepCandidates(segments: MeetingSegmentsWithCandidates): MeetingSegments {
+  if (!('nextStepCandidates' in segments)) return segments
+  return {
+    decisions: segments.decisions,
+    actionItems: segments.actionItems,
+    information: segments.information,
+    discussion: segments.discussion,
+    statusUpdates: segments.statusUpdates
+  }
+}
 
 export interface WriterCatalog {
   items: Segment[]
@@ -64,7 +76,7 @@ export function meetingSegmentsFromDisk(value: unknown): MeetingSegments {
     return meetingSegmentsFromWriterCatalog(value)
   }
   if (isLegacyMeetingSegments(value)) {
-    return value
+    return withoutNextStepCandidates(value)
   }
   return emptyMeetingSegments()
 }

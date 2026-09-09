@@ -233,6 +233,15 @@ describe('NotesV2Document', () => {
     })
   })
 
+  it('shows a next step only once when its title differs only by punctuation', async () => {
+    const sample = notes()
+    sample.nextSteps = [{ ...sample.nextSteps[0], title: 'Review API contract', text: 'Review API contract.' }]
+    render(<NotesV2Document notes={sample} meetingSpan={[{ startMs: 0, endMs: 10_000 }]} onSeek={vi.fn()} />)
+    expect(screen.getAllByText(/^Review API contract\.?$/)).toHaveLength(1)
+    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
+    expect(screen.getAllByText(/^Review API contract\.?$/)).toHaveLength(1)
+  })
+
   it('edits, deletes, and adds through writeV2 without regenerating', async () => {
     const onWrite = vi.fn()
     render(

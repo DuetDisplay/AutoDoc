@@ -3,6 +3,7 @@ import type { MeetingSegments, Segment } from '../../../shared/types'
 import {
   isWriterCatalog,
   meetingSegmentsFromDisk,
+  withoutNextStepCandidates,
   writerCatalogFromSegments
 } from '../writer-catalog'
 
@@ -73,5 +74,16 @@ describe('writer-catalog', () => {
     }
 
     expect(meetingSegmentsFromDisk(legacy)).toEqual(legacy)
+  })
+
+  it('keeps rejected writer drafts out of persisted canonical notes and legacy search input', () => {
+    const canonical: MeetingSegments = {
+      decisions: [], actionItems: [], information: [segment('accepted', 'Accepted fact')],
+      discussion: [], statusUpdates: []
+    }
+    const withDrafts = { ...canonical, nextStepCandidates: [segment('draft', 'Unsupported draft')] }
+    expect(JSON.parse(JSON.stringify(withoutNextStepCandidates(withDrafts)))).toEqual(canonical)
+    expect(meetingSegmentsFromDisk(JSON.parse(JSON.stringify(withDrafts)))).toEqual(canonical)
+    expect(withDrafts.nextStepCandidates).toHaveLength(1)
   })
 })

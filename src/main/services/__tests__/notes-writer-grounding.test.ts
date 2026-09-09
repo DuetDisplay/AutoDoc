@@ -6,6 +6,44 @@ import {
 } from '../notes-writer-grounding'
 
 describe('sanitizeWriterRecord', () => {
+  it('retains grounded action-title context without changing the canonical body or citation', () => {
+    const result = sanitizeWriterRecord('action_items', {
+      title: 'Review the authentication API contract', content: "I'll review it tomorrow."
+    }, { startMs: 1000, endMs: 5000 }, [
+      { startMs: 1000, text: 'The authentication API contract needs a review.' },
+      { startMs: 5000, text: "I'll review it tomorrow." }
+    ])
+    expect(result).toEqual({
+      category: 'action_items', title: "I'll review it tomorrow.", content: "I'll review it tomorrow.",
+      deadline: null, sourceStartMs: 5000, sourceEndMs: 5000, salvaged: false,
+      actionContext: { title: 'Review the authentication API contract', sourceStartMs: 1000, sourceEndMs: 5000 }
+    })
+  })
+
+  it('does not borrow action-title context outside the explicit citation', () => {
+    const result = sanitizeWriterRecord('action_items', {
+      title: 'Review the authentication API contract', content: "I'll review it tomorrow."
+    }, { startMs: 5000, endMs: 5000 }, [
+      { startMs: 1000, text: 'The authentication API contract needs a review.' },
+      { startMs: 5000, text: "I'll review it tomorrow." }
+    ])
+    expect(result?.actionContext).toBeUndefined()
+    expect(result?.title).toBe("I'll review it tomorrow.")
+  })
+
+  it.each([
+    'Review the authentication API contract for Sergio',
+    'Review the authentication API contract by Friday',
+    'Review the authentication API contract for 25 customers'
+  ])('keeps the original fallback when a contextual title adds unsupported detail: %s', (title) => {
+    const result = sanitizeWriterRecord('action_items', { title, content: "I'll review it tomorrow." },
+      { startMs: 1000, endMs: 5000 }, [
+        { startMs: 1000, text: 'The authentication API contract needs a review.' },
+        { startMs: 5000, text: "I'll review it tomorrow." }
+      ])
+    expect(result?.actionContext).toBeUndefined()
+  })
+
   it('does not mistake the first word of a sentence for an unsupported proper name', () => {
     expect(
       sanitizeWriterRecord(

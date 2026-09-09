@@ -40,6 +40,12 @@ export interface Segment {
   deadline: string | null
   sourceStartMs: number
   sourceEndMs: number
+  /** Grounded writer title for Next Steps; kept out of summary ranking and ownership. */
+  actionContext?: {
+    title: string
+    sourceStartMs: number
+    sourceEndMs: number
+  }
 }
 
 export type AutoRecordMode = 'off' | 'once' | 'series'
@@ -74,6 +80,11 @@ export interface MeetingSegments {
   information: Segment[]
   discussion: Segment[]
   statusUpdates: Segment[]
+}
+
+export interface MeetingSegmentsWithCandidates extends MeetingSegments {
+  /** Unaccepted Mac writer drafts; never include in canonical notes or summary ranking. */
+  nextStepCandidates?: Segment[]
 }
 
 /** A canonical hash of a complete Notes V2 document. */

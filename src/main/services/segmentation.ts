@@ -49,7 +49,7 @@ import {
 } from './notes-scan-pipeline'
 import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
-import { meetingSegmentsFromDisk } from './writer-catalog'
+import { meetingSegmentsFromDisk, withoutNextStepCandidates } from './writer-catalog'
 import type { WindowsProcessingProfile } from './windows-processing-profile'
 import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
 
@@ -743,11 +743,12 @@ export class SegmentationService {
       })
       const repository = new NotesRepository(this.recordingsBaseDir)
       await repository.promoteLegacyToV2(meetingId, result.content, {
-        expectedLegacyRevision: computeLegacyNotesRevision(meetingId, segments),
+        expectedLegacyRevision: computeLegacyNotesRevision(meetingId, withoutNextStepCandidates(segments)),
         sourceTranscriptRevision: computeTranscriptRevision(meetingId, transcripts),
         sourceAttributionRevision: computeNotesAttributionRevision(meetingId, transcripts)
       })
-      const writerItemCount = Object.values(segments).reduce(
+      const writerItemCount = [segments.decisions, segments.actionItems, segments.information,
+        segments.discussion, segments.statusUpdates].reduce(
         (total, bucket) => total + bucket.length,
         0
       )
@@ -791,6 +792,7 @@ export class SegmentationService {
           attributionOwnersPreserved: result.attributionOwnersPreserved ?? 0,
           attributionOwnersChanged: result.attributionOwnersChanged ?? 0,
           recoveredActionCount: result.recoveredActionCount ?? 0,
+          contextualizedNextStepCount: result.contextualizedNextStepCount ?? 0,
           promotedActionCount: result.promotedActionCount ?? 0,
           dedupedRecoveredActionCount: result.dedupedRecoveredActionCount ?? 0,
           recoveredDecisionCount: result.recoveredDecisionCount ?? 0,
@@ -900,7 +902,7 @@ export class SegmentationService {
           }
         }
       }
-      await encryptJSON(segments, join(meetingDir, 'segments.json'))
+      await encryptJSON(withoutNextStepCandidates(segments), join(meetingDir, 'segments.json'))
     })
   }
 

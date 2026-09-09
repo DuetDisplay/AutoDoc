@@ -71,6 +71,51 @@ describe('runNotesScanPipeline', () => {
     if (platform) Object.defineProperty(process, 'platform', platform)
   })
 
+  it('applies context only to next-step headings after summary selection and ownership', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const input = segments()
+    input.actionItems = [segment({ id: 'action', category: 'action_item',
+      title: "I'll review it tomorrow.", content: "I'll review it tomorrow.",
+      sourceStartMs: 5000, sourceEndMs: 5000 })]
+    const options = { title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless' as const,
+      attributionTranscript: [], spanSources: [], generate: vi.fn(async () => { throw Error('Unexpected inference') }) }
+    const before = await runNotesScanPipeline(input, options)
+    input.actionItems[0].actionContext = {
+      title: 'Review the authentication API contract', sourceStartMs: 1000, sourceEndMs: 5000
+    }
+    const after = await runNotesScanPipeline(input, options)
+    expect(after.content).toEqual({ ...before.content, nextSteps: [{
+      ...before.content.nextSteps[0], title: 'Review the authentication API contract',
+      sources: [{ startMs: 1000, endMs: 5000 }]
+    }] })
+    expect(after.contextualizedNextStepCount).toBe(1)
+    expect(after.exactWriterCoverage).toBe(false)
+    expect(options.generate).not.toHaveBeenCalled()
+    expect(input.actionItems[0].title).toBe("I'll review it tomorrow.")
+  })
+
+  it('isolates action drafts from every other section and never invokes the model to refine them', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const input = segments()
+    const rows = [
+      { id: 'r', meetingId: 'meeting-1', speaker: 'me', text: 'I will review the authentication contract.',
+        startMs: 60_000, endMs: 65_000, confidence: 1 }
+    ]
+    const options = { title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless' as const,
+      attributionTranscript: rows, spanSources: [], generate: vi.fn(async () => { throw Error('Unexpected inference') }) }
+    const before = await runNotesScanPipeline(input, options)
+    const candidate = segment({ id: 'draft', category: 'action_item', title: 'Review authentication',
+      content: 'I will review the authentication contract.', sourceStartMs: 60_000, sourceEndMs: 60_000 })
+    const withDrafts = { ...input, nextStepCandidates: [candidate] }
+    const after = await runNotesScanPipeline(withDrafts, options)
+    for (const key of ['overview', 'keyTakeaways', 'sections', 'decisions'] as const) {
+      expect(after.content[key]).toEqual(before.content[key])
+    }
+    expect(after.content.nextSteps).toHaveLength(before.content.nextSteps.length)
+    expect(withDrafts.nextStepCandidates).toEqual([candidate])
+    expect(options.generate).not.toHaveBeenCalled()
+  })
+
   it('presents every writer record and asks only for a synthesized overview', async () => {
     const input = segments()
     input.actionItems.push(

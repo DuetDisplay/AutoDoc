@@ -1017,6 +1017,60 @@ describe('OllamaProvider grounding', () => {
     })
   })
 
+  it('carries grounded action-title context through Mac parsing without replacing the canonical record', () => {
+    setPlatform('darwin')
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[00:01] [them] The authentication API contract needs a review.',
+      "[00:05] [me] I'll review it tomorrow."
+    ].join('\n')
+    const references = encodeMacNotesLineReferences(transcript)
+    const parsed = (provider as any).parseResponseWithStats(
+      'meeting-context',
+      JSON.stringify({ action_items: [{ h: 'Review the authentication API contract',
+        c: "I'll review it tomorrow.", s: 1, e: 2 }] }),
+      undefined, 60_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript), references.startMsByLineId
+    )
+    const saved = JSON.parse(JSON.stringify(parsed.segments))
+    expect(saved.actionItems).toHaveLength(1)
+    expect(saved.actionItems[0]).toMatchObject({
+      title: "I'll review it tomorrow.", content: "I'll review it tomorrow.",
+      sourceStartMs: 5000, sourceEndMs: 5000,
+      actionContext: { title: 'Review the authentication API contract', sourceStartMs: 1000, sourceEndMs: 5000 }
+    })
+  })
+
+  it('retains rejected action drafts separately on Mac without changing canonical notes or Windows', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+    const transcript = [
+      '[00:01] [them] Mac testing is still in progress.',
+      "[00:05] [them] I will ping Jordan to see where we're at."
+    ].join('\n')
+    const references = encodeMacNotesLineReferences(transcript)
+    const parse = () => (provider as any).parseResponseWithStats(
+      'meeting-draft',
+      JSON.stringify({ action_items: [{ h: 'Check Mac testing',
+        c: 'I will ping Jordan to see where Mac testing is at.', s: 2, e: 2 }] }),
+      undefined, 60_000,
+      (provider as any).extractTimestampsMs(transcript),
+      (provider as any).parseTranscriptLines(transcript), references.startMsByLineId
+    )
+    setPlatform('darwin')
+    const mac = parse()
+    expect(mac.segments.actionItems).toEqual([])
+    expect(mac.segments.nextStepCandidates).toEqual([expect.objectContaining({
+      category: 'action_item', content: 'I will ping Jordan to see where Mac testing is at.',
+      sourceStartMs: 5000, sourceEndMs: 5000
+    })])
+    expect(mac.acceptedItemCount).toBe(0)
+    setPlatform('win32')
+    const windows = parse()
+    expect(windows.segments.actionItems).toEqual([])
+    expect(windows.segments.nextStepCandidates).toBeUndefined()
+  })
+
   it('drops unknown or malformed Mac line-ID citations instead of snapping them', () => {
     setPlatform('darwin')
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')

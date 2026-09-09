@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { MeetingSegments, Segment, Transcript } from '../../shared/types'
-import { actionPredicatesOverlap, actionSpeechActSupportsSummary } from './notes-action-speech'
+import { actionPredicatesOverlap, actionSpeechActSupportsSummary, isUnscopedSocialAction } from './notes-action-speech'
 import { noteTextLooksCoherent } from './notes-coherence'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
 import { isPlausiblePersonOwner } from './notes-scan-markdown'
@@ -304,8 +304,6 @@ const BROKEN_DETAIL_PHRASE = /\bof\s+more\s+detail\b/iu
 const DEICTIC_WORKING_CHECK =
   /^(?:(?:double[- ]?)?check(?:\s+and)?|make\s+sure)\b[\s\S]*\b(?:it|that|this|everything)\b[\s\S]*\bworking\s*$/iu
 const DEICTIC_DO_ACTION = /^do\s+(?:it|that|this)\b/iu
-const UNSCOPED_SOCIAL_ACTION =
-  /^(?:catch\s+up|meet|speak|talk)(?:\s+(?:to|with))?(?:\s+(?:him|her|me|them|us|you))?(?:\s+(?:again|later|today|tomorrow))?(?:\s+(?:and|at|during|in)\s+(?:stand\s*up|the\s+meeting))?\s*$/iu
 const DEICTIC_SOCIAL_ACTION =
   /^(?:catch\s+up|speak|talk)\s+(?:to|with)\s+(?:him|her|them|you)\s+about\s+(?:it|that|this)\b/iu
 /** "I'll take a look" with no object commits to nothing a reader can act on. */
@@ -608,7 +606,7 @@ function candidateFromMatch(
     RUN_ON_BACKCHANNEL.test(core) ||
     BROKEN_PREPOSITION_SEQUENCE.test(core) ||
     BROKEN_DETAIL_PHRASE.test(core) ||
-    UNSCOPED_SOCIAL_ACTION.test(core) ||
+    isUnscopedSocialAction(core) ||
     DEICTIC_SOCIAL_ACTION.test(core) ||
     OBJECTLESS_LOOK_ACTION.test(core) ||
     SOCIAL_STATUS_PROMISE.test(core) ||

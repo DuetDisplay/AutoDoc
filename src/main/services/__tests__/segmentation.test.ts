@@ -6,6 +6,7 @@ import type { LLMProvider } from '../llm'
 import type { OllamaManager } from '../ollama-manager'
 import { NotesRepository } from '../notes-repository'
 import * as notesScanPipeline from '../notes-scan-pipeline'
+import { computeLegacyNotesRevision } from '../notes-revision'
 import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 
 const mocks = vi.hoisted(() => ({
@@ -202,10 +203,20 @@ describe('SegmentationService', () => {
         }
       ]
 
+      const withDrafts = { ...segments, nextStepCandidates: [{
+        ...segments.actionItems[0], id: 'rejected-draft', sourceStartMs: 90_000, sourceEndMs: 90_000
+      }] }
+      await scanService.saveSegments('meeting-mac-lossless', withDrafts)
+      expect(cryptoMock.encryptJSON).toHaveBeenCalledWith(
+        segments, join('/mock/home/AutoDoc/recordings', 'meeting-mac-lossless', 'segments.json')
+      )
       const result = await (scanService as any).persistScanLayerNotes(
         'meeting-mac-lossless',
-        segments,
+        withDrafts,
         transcripts
+      )
+      expect(promote.mock.calls[0][2].expectedLegacyRevision).toBe(
+        computeLegacyNotesRevision('meeting-mac-lossless', segments)
       )
 
       expect(result).toEqual({ notesLayout: 'v2', groupingFallback: false })
@@ -233,7 +244,8 @@ describe('SegmentationService', () => {
             presentationMode: 'lossless',
             exactWriterCoverage: true,
             writerItemCount: 2,
-            presentedItemCount: 4,
+            // Mac uses the first summary record as the overview, leaving one takeaway.
+            presentedItemCount: 3,
             attributionOwnersAdded: 1
           })
         })

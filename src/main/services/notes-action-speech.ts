@@ -292,6 +292,16 @@ function explicitActionTail(clause: string): string | null {
   return null
 }
 
+/** Scheduling chatter without a subject is not a concrete follow-up. */
+export function isUnscopedSocialAction(action: string): boolean {
+  return /^(?:catch\s+up|meet|speak|talk)(?:\s+(?:to|with))?(?:\s+(?:him|her|me|them|us|you))?(?:\s+(?:again|later|today|tomorrow))?(?:\s+(?:and|at|during|in)\s+(?:stand\s*up|the\s+meeting))?\s*$/iu.test(action)
+}
+
+export function isUnscopedSocialCommitment(text: string): boolean {
+  const action = (explicitActionTail(text) ?? text).trim().replace(/[.!?]+$/u, '').trim()
+  return isUnscopedSocialAction(action)
+}
+
 function namedResponsibilityObject(clause: string, owner: string): string | null {
   const escapedOwner = owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = new RegExp(
@@ -400,8 +410,24 @@ export function explicitActionSpeechActClauses(text: string): string[] {
 export function actionSpeechActSupportsSummary(
   evidenceText: string,
   summaryText: string,
-  excludedLiteral?: string
+  excludedLiteral?: string,
+  normalizeLeadIns = false
 ): boolean {
+  if (normalizeLeadIns) {
+    // These lead-ins modify an explicit commitment, not its action verb.
+    // Never remove negation, conditions, or tentative modifiers such as maybe.
+    const leadIn = new RegExp(
+      `(${EMBEDDED_SPEECH_ACT_MARKER.source})(?:(?:just|also)\\s+|go\\s+ahead\\s+and\\s+)+`,
+      'giu'
+    )
+    evidenceText = evidenceText.replace(leadIn, '$1')
+    summaryText = summaryText.replace(leadIn, '$1')
+    // "Go" is normally an auxiliary/lead-in, but "go through" is a complete
+    // phrasal predicate. Compare that whole predicate on both sides.
+    const phrasalHead = new RegExp(`(${EMBEDDED_SPEECH_ACT_MARKER.source})go\\s+through\\b`, 'giu')
+    evidenceText = evidenceText.replace(phrasalHead, '$1go-through')
+    summaryText = summaryText.replace(phrasalHead, '$1go-through')
+  }
   const summaryTokens = actionRelationTokens(summaryText, excludedLiteral)
   if (summaryTokens.size === 0) return false
 
@@ -427,7 +453,7 @@ export function actionSpeechActSupportsSummary(
     }
 
     const genericAction = explicitGenericAction(clause)
-    const summaryHead = leadingGenericActionWord(isWindowsTopicWriterEnabled()
+    const summaryHead = leadingGenericActionWord(normalizeLeadIns || isWindowsTopicWriterEnabled()
       ? explicitActionTail(summaryText) ?? summaryText
       : summaryText)
     if (!genericAction || !summaryHead) return false
@@ -435,6 +461,7 @@ export function actionSpeechActSupportsSummary(
     if (![...genericAction.verbForms].some((form) => summaryHeadForms.has(form))) return false
 
     const summaryObjects = genericActionObjectTokens(summaryText, summaryHead)
+    if (normalizeLeadIns && summaryHead === 'go-through') summaryObjects.delete('through')
     return [...genericAction.objectTokens].some((token) => summaryObjects.has(token))
   })
 }

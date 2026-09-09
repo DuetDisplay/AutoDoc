@@ -9,6 +9,8 @@ import {
   actionSpeechActSupportsSummary
 } from './notes-action-speech'
 import { noteTextLooksCoherent } from './notes-coherence'
+import type { Segment, Transcript } from '../../shared/types'
+import { actionEvidenceNeighborhood, actionEvidenceTurns } from './notes-action-evidence'
 import {
   isWindowsCatalogWriterEnabled,
   isWindowsTopicWriterEnabled,
@@ -41,6 +43,11 @@ export interface GroundedWriterRecord {
   sourceStartMs: number
   sourceEndMs: number
   salvaged: boolean
+  actionContext?: {
+    title: string
+    sourceStartMs: number
+    sourceEndMs: number
+  }
 }
 
 /**
@@ -488,12 +495,31 @@ function normalizeToken(token: string): string {
   return normalized
 }
 
+let activeTokenCache: Map<string, readonly string[]> | undefined
+let activeGroundingCache: Map<string, boolean> | undefined
+
+/** Cache only during one synchronous record validation; retain no meeting text afterward. */
+function withGroundingCache<T>(validate: () => T): T {
+  if (process.platform !== 'darwin' || activeTokenCache) return validate()
+  activeTokenCache = new Map()
+  activeGroundingCache = new Map()
+  try {
+    return validate()
+  } finally {
+    activeTokenCache = undefined
+    activeGroundingCache = undefined
+  }
+}
+
 function distinctiveTokens(text: string): Set<string> {
-  return new Set(
-    (text.toLowerCase().match(/[a-z][a-z'-]{2,}/g) ?? [])
-      .map(normalizeToken)
-      .filter((token) => token.length >= 4 && !WORD_STOP.has(token))
-  )
+  const cached = activeTokenCache?.get(text)
+  // Callers sometimes add/remove tokens, so never share a mutable Set.
+  if (cached) return new Set(cached)
+  const tokens = (text.toLowerCase().match(/[a-z][a-z'-]{2,}/g) ?? [])
+    .map(normalizeToken)
+    .filter((token) => token.length >= 4 && !WORD_STOP.has(token))
+  if (activeTokenCache && activeTokenCache.size < 512) activeTokenCache.set(text, tokens)
+  return new Set(tokens)
 }
 
 function sharedTokenCount(left: Set<string>, right: Set<string>): number {
@@ -697,10 +723,11 @@ function hasNonAssertiveModality(text: string): boolean {
 function relevantEvidenceSpan(
   summaryClause: string,
   evidenceClause: string,
-  leadWords = 8
+  leadWords = 8,
+  preserveSingleLetterWords = false
 ): string {
   const summaryTokens = distinctiveTokens(summaryClause)
-  const words = [...evidenceClause.matchAll(/[a-z][a-z'-]+/gi)]
+  const words = [...evidenceClause.matchAll(preserveSingleLetterWords ? /[a-z][a-z'-]*/gi : /[a-z][a-z'-]+/gi)]
   const sharedWordIndexes = words
     .map((match, index) => (summaryTokens.has(normalizeToken(match[0])) ? index : -1))
     .filter((index) => index >= 0)
@@ -726,7 +753,8 @@ function assertionPolarityIsGrounded(
   // Paraphrase mode trims the lead so a negation stitched in from the previous
   // ASR sentence fragment does not flip the polarity of an unrelated claim.
   leadWords = 8,
-  scoped = false
+  scoped = false,
+  preserveSingleLetterWords = false
 ): boolean {
   // A hold can be definite while the event ending it remains uncertain. Only
   // compare these parts separately when the summary also retains the qualifier;
@@ -754,7 +782,7 @@ function assertionPolarityIsGrounded(
     const scored = evidenceClauses.map(({ text }) => {
       // Preserve the entire clause in the line-cited experiment. Cutting the
       // first four words could remove an "if"/"unless" governing the claim.
-      const relevantText = scoped ? text : relevantEvidenceSpan(summaryClause, text, leadWords)
+      const relevantText = scoped ? text : relevantEvidenceSpan(summaryClause, text, leadWords, preserveSingleLetterWords)
       return {
         text: relevantText,
         shared: sharedTokenCount(summaryTokens, distinctiveTokens(relevantText))
@@ -1313,7 +1341,44 @@ function textIsGrounded(
   summary: string,
   evidenceLines: readonly WriterGroundingLine[],
   allowAcceptedProposal = false,
-  mode: WriterGroundingMode = 'verbatim'
+  mode: WriterGroundingMode = 'verbatim',
+  preserveSingleLetterWords = false
+): boolean {
+  if (!activeGroundingCache) {
+    return evaluateTextGrounding(
+      summary,
+      evidenceLines,
+      allowAcceptedProposal,
+      mode,
+      preserveSingleLetterWords
+    )
+  }
+  const key = JSON.stringify([
+    summary,
+    evidenceLines.map((line) => [line.startMs, line.text]),
+    allowAcceptedProposal,
+    mode,
+    preserveSingleLetterWords
+  ])
+  const cached = activeGroundingCache.get(key)
+  if (cached !== undefined) return cached
+  const grounded = evaluateTextGrounding(
+    summary,
+    evidenceLines,
+    allowAcceptedProposal,
+    mode,
+    preserveSingleLetterWords
+  )
+  if (activeGroundingCache.size < 512) activeGroundingCache.set(key, grounded)
+  return grounded
+}
+
+function evaluateTextGrounding(
+  summary: string,
+  evidenceLines: readonly WriterGroundingLine[],
+  allowAcceptedProposal = false,
+  mode: WriterGroundingMode = 'verbatim',
+  preserveSingleLetterWords = false
 ): boolean {
   const trimmed = summary.replace(/\s+/g, ' ').trim()
   if (!trimmed || evidenceLines.length === 0) return false
@@ -1348,7 +1413,7 @@ function textIsGrounded(
   if (!explicitAlternativesAreGrounded(trimmed, evidenceLines)) return false
   if (!completionClaimsAreGrounded(trimmed, evidenceLines)) return false
   if (
-    !assertionPolarityIsGrounded(trimmed, evidenceLines) &&
+    !assertionPolarityIsGrounded(trimmed, evidenceLines, 8, false, preserveSingleLetterWords) &&
     !(allowAcceptedProposal && decisionEvidenceSupportsSummary(trimmed, evidenceLines))
   ) {
     return false
@@ -1376,12 +1441,12 @@ function textIsGrounded(
   return shared >= 2 && (coverage >= 0.2 || shared >= 4)
 }
 
-function evidenceWindows(
-  lines: readonly WriterGroundingLine[],
+function evidenceWindows<T extends WriterGroundingLine>(
+  lines: readonly T[],
   maxLines = 3,
   maxSpanMs = MAX_EVIDENCE_SPAN_MS
-): WriterGroundingLine[][] {
-  const windows: WriterGroundingLine[][] = []
+): T[][] {
+  const windows: T[][] = []
   for (let start = 0; start < lines.length; start += 1) {
     for (let end = start; end < lines.length; end += 1) {
       if (end - start >= maxLines) break
@@ -1414,6 +1479,37 @@ function bestGroundedWindow(
 
   candidates.sort((left, right) => right.shared - left.shared || left.span - right.span)
   return candidates[0]?.window ?? null
+}
+
+/**
+ * An action's object may be named in its title and introduced before the
+ * commitment. Keep that context within the writer's citation instead of
+ * testing the title against the shortest body-only window. This cannot admit
+ * a rejected body, salvage a discarded claim, or search outside citedLines.
+ */
+function actionTitleWindow(
+  title: string,
+  bodyWindow: WriterGroundingLine[],
+  citedLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode
+): WriterGroundingLine[] {
+  const tokens = distinctiveTokens(title)
+  const overlap = (window: readonly WriterGroundingLine[]): number =>
+    sharedTokenCount(tokens, distinctiveTokens(window.map((line) => line.text).join(' ')))
+  let best = bodyWindow
+  let bestShared = overlap(best)
+  if (bestShared === tokens.size) return best
+  const windows =
+    mode === 'paraphrase' ? evidenceWindows(citedLines, 6, 60_000) : evidenceWindows(citedLines)
+  for (const window of windows) {
+    // Keep every original supporting row, including simultaneous speakers.
+    if (!bodyWindow.every((line) => window.includes(line))) continue
+    const shared = overlap(window)
+    if (shared <= bestShared || !textIsGrounded(title, window, false, mode)) continue
+    best = window
+    bestShared = shared
+  }
+  return best
 }
 
 interface ConservativeClauseCandidate {
@@ -1537,13 +1633,13 @@ function splitConservativeClauses(content: string): ConservativeClauseCandidate[
   )
 }
 
-function linesForCitedRange(
-  transcriptLines: readonly WriterGroundingLine[],
+function linesForCitedRange<T extends WriterGroundingLine>(
+  transcriptLines: readonly T[],
   startMs: number,
   endMs: number,
   toleranceMs = CITATION_NEIGHBOR_TOLERANCE_MS,
   lineLimit = CITATION_NEIGHBOR_LINE_LIMIT
-): WriterGroundingLine[] {
+): T[] {
   const firstIndex = transcriptLines.findIndex(
     (line) => line.startMs >= startMs && line.startMs <= endMs
   )
@@ -1717,6 +1813,18 @@ export function sanitizeWriterRecords(
   transcriptLines: readonly WriterGroundingLine[],
   mode: WriterGroundingMode = 'verbatim'
 ): GroundedWriterRecord[] {
+  return withGroundingCache(() =>
+    evaluateWriterRecords(category, draft, citedRange, transcriptLines, mode)
+  )
+}
+
+function evaluateWriterRecords(
+  category: WriterGroundingCategory,
+  draft: WriterGroundingDraft,
+  citedRange: { startMs: number; endMs: number },
+  transcriptLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode = 'verbatim'
+): GroundedWriterRecord[] {
   const title = draft.title?.replace(/\s+/g, ' ').trim() ?? ''
   const content = draft.content?.replace(/\s+/g, ' ').trim() ?? ''
   if (!title || !content || !noteTextLooksCoherent(content)) return []
@@ -1780,6 +1888,14 @@ export function sanitizeWriterRecords(
           )
           if (!resolvedCategory) return []
 
+          // Apply only after the original content/category checks succeeded.
+          // Use the original explicit citation, not neighboring-line salvage,
+          // to avoid borrowing a title's subject from a nearby unrelated task.
+          const titleWindow = mode === 'verbatim' && resolvedCategory === 'action_items' && !candidate.salvaged &&
+            title !== selectedTitle && candidate.window.every((line) => exactCitedLines.includes(line))
+            ? actionTitleWindow(title, candidate.window, exactCitedLines, mode)
+            : candidate.window
+
           return [
             {
               category: resolvedCategory,
@@ -1788,7 +1904,14 @@ export function sanitizeWriterRecords(
               deadline: groundedDeadline(draft.deadline, evidence),
               sourceStartMs: candidate.window[0]!.startMs,
               sourceEndMs: candidate.window[candidate.window.length - 1]!.startMs,
-              salvaged: candidate.salvaged
+              salvaged: candidate.salvaged,
+              ...(titleWindow !== candidate.window ? {
+                actionContext: {
+                  title,
+                  sourceStartMs: titleWindow[0]!.startMs,
+                  sourceEndMs: titleWindow[titleWindow.length - 1]!.startMs
+                }
+              } : {})
             }
           ]
         })
@@ -1843,6 +1966,100 @@ export function sanitizeWriterRecords(
         left.sourceStartMs - right.sourceStartMs
     )
     .slice(0, recordLimit)
+}
+
+/**
+ * Next Steps only: validate the existing writer's complete action against its
+ * local evidence. Canonical writer records and their summary ranking are not
+ * changed. No prose is generated and no grounding threshold is lowered.
+ */
+export function refineWriterAction(
+  draft: Segment,
+  transcript: readonly Transcript[]
+): { segment: Segment; commitmentRows: Transcript[]; contextRows: Transcript[] } | null {
+  return withGroundingCache(() => evaluateWriterAction(draft, transcript))
+}
+
+function evaluateWriterAction(
+  draft: Segment,
+  transcript: readonly Transcript[]
+): { segment: Segment; commitmentRows: Transcript[]; contextRows: Transcript[] } | null {
+  if (draft.category !== 'action_item' || !draft.title?.trim() || !draft.content?.trim())
+    return null
+  if (
+    !Number.isFinite(draft.sourceStartMs) ||
+    !Number.isFinite(draft.sourceEndMs) ||
+    draft.sourceStartMs < 0 ||
+    draft.sourceEndMs < draft.sourceStartMs
+  )
+    return null
+  const content = draft.content.trim()
+  // A stranded preposition in an embedded question is complete speech; the
+  // general fragment detector deliberately does not attempt this grammar.
+  const hasStrandedQuestion =
+    /\bwhere\s+.{1,80}\b(?:is|are|was|were|[\p{L}]+['’](?:s|re))\s+at[.!?]*$/iu.test(content)
+  if (
+    !noteTextLooksCoherent(
+      hasStrandedQuestion ? content.replace(/\s+at([.!?]*)$/iu, '$1') : content
+    )
+  )
+    return null
+  const rows = transcript.filter((row) => row.meetingId === draft.meetingId)
+  const nearby = actionEvidenceNeighborhood(rows, draft.sourceStartMs, draft.sourceEndMs)
+  const inCitation = (row: Transcript): boolean =>
+    row.startMs >= draft.sourceStartMs && row.startMs <= draft.sourceEndMs
+  const citedRows = nearby.filter(inCitation)
+  if (!citedRows.length) return null
+  // ASR may split one continuous sentence into several short rows. Retain the
+  // same 30-second limit while allowing six rows, as used by the tight writer.
+  const windows = evidenceWindows(nearby, 6).sort((a, b) => a.length - b.length)
+  for (const window of windows) {
+    // Keep the writer's complete citation. Selecting a tiny overlapping window
+    // can omit a qualifier or validate only the generic words of a longer task.
+    if (!citedRows.every((row) => window.includes(row))) continue
+    const speech = actionEvidenceTurns(window).filter(
+      (turn) =>
+        turn.rows.some(inCitation) &&
+        actionSpeechActSupportsSummary(turn.text, content, undefined, true)
+    )
+    if (!speech.length) continue
+    // Retain single-letter words such as "I" when finding the relevant span;
+    // dropping I turns "I will ..." into an apparent "will ...?" question.
+    if (!textIsGrounded(content, window, false, 'verbatim', true)) continue
+    const title =
+      textIsGrounded(draft.title, window) && !actionPredicatesConflict(draft.title, content)
+        ? draft.title
+        : content
+    // Include the bounded neighboring context when linking the task back to
+    // speech, so a resolved subject introduced before the commitment is visible.
+    const citationWindow =
+      windows
+        .filter(
+          (candidate) =>
+            candidate[0].startMs <= window[0].startMs &&
+            candidate[candidate.length - 1].startMs >= window[window.length - 1].startMs
+        )
+        .at(-1) ?? window
+    return {
+      segment: {
+        ...draft,
+        title,
+        content,
+        deadline: groundedDeadline(
+          draft.deadline,
+          rows
+            .filter(inCitation)
+            .map((row) => row.text)
+            .join(' ')
+        ),
+        sourceStartMs: citationWindow[0].startMs,
+        sourceEndMs: Math.max(...citationWindow.map((row) => row.endMs))
+      },
+      commitmentRows: speech.flatMap((turn) => turn.rows),
+      contextRows: nearby
+    }
+  }
+  return null
 }
 
 /** Classifies literal source evidence without rewriting its text. */

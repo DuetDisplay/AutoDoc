@@ -379,7 +379,11 @@ function NextStepRow({
   const title = item.title?.trim() ?? ''
   const body = item.text.trim()
   const label = useLosslessPresentation ? body || title : title || body
-  const hasDistinctTitle = Boolean(useLosslessPresentation && title && body && title !== body)
+  const normalizedLabel = (text: string): string =>
+    text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const hasDistinctTitle = Boolean(
+    useLosslessPresentation && title && body && normalizedLabel(title) !== normalizedLabel(body)
+  )
   const saveLabel =
     !useLosslessPresentation && title && onSaveTitle
       ? (text: string) => onSaveTitle(item.id, text)
