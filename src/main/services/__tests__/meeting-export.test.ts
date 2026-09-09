@@ -509,6 +509,45 @@ describe('meeting export renderers', () => {
       xml(readZipEntries(await renderMeetingExportDocx(empty)), 'word/document.xml')
     ).toContain('No notes are available')
   })
+
+  it('exports untitled notes without inventing a heading', async () => {
+    const untitled: MeetingExportSnapshot = {
+      ...snapshot,
+      notes: {
+        ...notes,
+        sections: [
+          {
+            id: 'untitled',
+            title: '',
+            summary: null,
+            keyPoints: [
+              item('open', 'Stripe was higher week over week.', {
+                title: 'Stripe improved',
+                topic: null,
+                owner: null,
+                deadline: null
+              })
+            ],
+            supportingDetails: []
+          }
+        ],
+        decisions: []
+      }
+    }
+
+    const markdown = renderMeetingExportMarkdown(untitled)
+    const plain = renderMeetingExportPlainText(untitled)
+    const html = renderMeetingExportHtml(untitled)
+    expect(markdown).toContain('Stripe was higher week over week')
+    expect(markdown).not.toMatch(/^##\s*$/m)
+    expect(plain).toContain('Stripe was higher week over week')
+    expect(plain).not.toMatch(/^Key points$/m)
+    expect(html).toContain('Stripe was higher week over week')
+    expect(html).not.toContain('<h2 id="note-section-1"></h2>')
+    expect(
+      xml(readZipEntries(await renderMeetingExportDocx(untitled)), 'word/document.xml')
+    ).toContain('Stripe was higher week over week')
+  })
 })
 
 describe('hasMeetingExportNotes', () => {

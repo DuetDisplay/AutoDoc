@@ -78,7 +78,7 @@ describe('runNotesScanPipeline', () => {
       title: "I'll review it tomorrow.", content: "I'll review it tomorrow.",
       sourceStartMs: 5000, sourceEndMs: 5000 })]
     const options = { title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless' as const,
-      attributionTranscript: [], spanSources: [], generate: vi.fn(async () => { throw Error('Unexpected inference') }) }
+      attributionTranscript: [], spanSources: [], generate: overviewGenerate() }
     const before = await runNotesScanPipeline(input, options)
     input.actionItems[0].actionContext = {
       title: 'Review the authentication API contract', sourceStartMs: 1000, sourceEndMs: 5000
@@ -90,7 +90,10 @@ describe('runNotesScanPipeline', () => {
     }] })
     expect(after.contextualizedNextStepCount).toBe(1)
     expect(after.exactWriterCoverage).toBe(false)
-    expect(options.generate).not.toHaveBeenCalled()
+    expect(options.generate).toHaveBeenCalledTimes(2)
+    expect(options.generate.mock.calls.every(([request]) =>
+      request.prompt.includes('Summarize the finished meeting notes')
+    )).toBe(true)
     expect(input.actionItems[0].title).toBe("I'll review it tomorrow.")
   })
 
@@ -102,7 +105,7 @@ describe('runNotesScanPipeline', () => {
         startMs: 60_000, endMs: 65_000, confidence: 1 }
     ]
     const options = { title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless' as const,
-      attributionTranscript: rows, spanSources: [], generate: vi.fn(async () => { throw Error('Unexpected inference') }) }
+      attributionTranscript: rows, spanSources: [], generate: overviewGenerate() }
     const before = await runNotesScanPipeline(input, options)
     const candidate = segment({ id: 'draft', category: 'action_item', title: 'Review authentication',
       content: 'I will review the authentication contract.', sourceStartMs: 60_000, sourceEndMs: 60_000 })
@@ -113,7 +116,9 @@ describe('runNotesScanPipeline', () => {
     }
     expect(after.content.nextSteps).toHaveLength(before.content.nextSteps.length)
     expect(withDrafts.nextStepCandidates).toEqual([candidate])
-    expect(options.generate).not.toHaveBeenCalled()
+    expect(options.generate.mock.calls.every(([request]) =>
+      request.prompt.includes('Summarize the finished meeting notes')
+    )).toBe(true)
   })
 
   it('restores a recovered task’s explanation without changing writer records or requesting inference', async () => {
@@ -126,7 +131,7 @@ describe('runNotesScanPipeline', () => {
       { id: 'explanation', meetingId: 'meeting-1', speaker: 'me',
         text: 'Because the ticket reports the local mouse stops working when Duet runs.', startMs: 65_200, endMs: 70_000, confidence: 1 }
     ]
-    const generate = vi.fn(async () => { throw Error('Unexpected inference') })
+    const generate = overviewGenerate()
     const result = await runNotesScanPipeline(input, {
       title: 'Meeting', meetingId: 'meeting-1', presentationMode: 'lossless',
       attributionTranscript: rows, spanSources: [], generate
@@ -136,7 +141,8 @@ describe('runNotesScanPipeline', () => {
     expect(recovered?.sources).toEqual([{ startMs: 60_000, endMs: 70_000 }])
     expect(result.contextualizedNextStepCount).toBe(1)
     expect(input).toEqual(original)
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0]?.[0].prompt).toContain('Summarize the finished meeting notes')
   })
 
   it('presents every writer record and asks only for a synthesized overview', async () => {
@@ -224,7 +230,7 @@ describe('runNotesScanPipeline', () => {
       num_predict: 256,
       format: { required: ['overview'] }
     })
-    expect(generate.mock.calls[0]?.[0].prompt).toContain('one or two short sentences')
+    expect(generate.mock.calls[0]?.[0].prompt).toContain('concise meeting summary')
     expect(generate.mock.calls[0]?.[0].prompt).not.toContain('keyTakeaways')
     expect(presentedItems.map((item) => item.id).sort()).toEqual(['a1', 'a2', 'a3', 'd1', 'i1'])
     expect(result.content.decisions[0]).toMatchObject({
@@ -493,7 +499,7 @@ describe('runNotesScanPipeline', () => {
     expect(seen.some((percent) => percent > 70 && percent < 99)).toBe(true)
   })
 
-  it('does not make an overview model call on macOS lossless notes', async () => {
+  it('synthesizes a Mac overview without rewriting takeaways or next steps', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const generate = overviewGenerate()
     const result = await runNotesScanPipeline(segments(), {
@@ -515,12 +521,56 @@ describe('runNotesScanPipeline', () => {
       generate
     })
 
-    expect(generate).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0]?.[0]).toMatchObject({
+      num_predict: 256,
+      format: { required: ['overview'] }
+    })
+    expect(result.content.overview?.text).toBe(SYNTHESIZED_OVERVIEW)
+    expect(result.overviewFailed).toBe(false)
+    expect(result.content.decisions).toEqual([])
+    expect(result.content.sections.map((section) => section.title)).toEqual(['Analytics'])
+    expect(result.content.sections[0]?.keyPoints.map((item) => item.id).sort()).toEqual(['d1', 'i1'])
+    expect(result.content.keyTakeaways.map((item) => item.text)).toEqual([
+      "HP's opt-in analytics rate for gaming PCs is 80-95%.",
+      'Norbert will review the offline analytics PR.'
+    ])
+    expect(result.content.nextSteps).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        text: 'Norbert will review the offline analytics PR.'
+      })
+    ])
+    expect(result.content.sections.some((section) => section.title === 'Other Notes')).toBe(false)
+    expect(
+      result.content.sections.some((section) =>
+        ['Information', 'Discussion', 'Status Updates'].includes(section.title)
+      )
+    ).toBe(false)
+  })
+
+  it('keeps the first-fact Mac overview when generated text is rejected', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const result = await runNotesScanPipeline(segments(), {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless',
+      attributionTranscript: [],
+      spanSources: [{ startMs: 0, endMs: 5000 }],
+      generate: async () =>
+        JSON.stringify({
+          overview: 'This meeting covered Analytics.'
+        })
+    })
+
+    expect(result.overviewFailed).toBe(true)
     expect(result.content.overview?.text).toBe(
       'The team decided to collect login events from all users.'
     )
-    expect(result.overviewFailed).toBe(false)
-    expect(result.content.sections.some((section) => section.title === 'Other Notes')).toBe(false)
+    expect(result.content.keyTakeaways.map((item) => item.text)).toEqual([
+      "HP's opt-in analytics rate for gaming PCs is 80-95%.",
+      'Norbert will review the offline analytics PR.'
+    ])
   })
 })
 

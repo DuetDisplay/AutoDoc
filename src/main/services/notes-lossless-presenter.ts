@@ -63,6 +63,7 @@ export type LosslessPresenterErrorCode =
   | 'meeting-mismatch'
   | 'category-mismatch'
   | 'duplicate-segment-id'
+  | 'incompatible-summary-catalog'
   | 'coverage-fallback-failed'
 
 export class LosslessPresenterError extends Error {
@@ -100,6 +101,11 @@ export interface LosslessPresentationStats {
   groupingFallback: boolean
 }
 
+export interface LosslessPresentationOptions {
+  /** Same records and factual fields, used so body regrouping cannot reshuffle highlights. */
+  summarySegments?: MeetingSegments
+}
+
 function standaloneCompletenessScore(text: string): number {
   const wordCount = text.match(SUMMARY_WORD)?.length ?? 0
   if (wordCount >= 12) return 8
@@ -111,7 +117,7 @@ function expectedItems(segments: MeetingSegments): ExpectedItem[] {
   return SEGMENT_BUCKETS.flatMap(({ key, location }) =>
     segments[key].map((segment) => ({
       segment,
-      location
+      location: process.platform === 'darwin' && location === 'decision' ? 'section' : location
     }))
   )
 }
@@ -461,6 +467,7 @@ function makeSection(id: string, title: string, segments: readonly Segment[]): N
 }
 
 function buildGroupedSections(meetingId: string, segments: MeetingSegments): NoteSection[] {
+  if (process.platform === 'darwin') return buildSubjectSections(meetingId, segments)
   const ids = createSectionIdAllocator(meetingId, segments)
   const groups = new Map<string, { kind: SectionKind; title: string; segments: Segment[] }>()
 
@@ -499,7 +506,34 @@ function buildGroupedSections(meetingId: string, segments: MeetingSegments): Not
     )
 }
 
-function buildDirectFallback(meetingId: string, segments: MeetingSegments): MeetingNotesContent {
+/** Decisions belong with their subject. Untitled records stay visible without a bucket name. */
+function buildSubjectSections(meetingId: string, segments: MeetingSegments): NoteSection[] {
+  const ids = createSectionIdAllocator(meetingId, segments)
+  const groups = new Map<string, { title: string; segments: Segment[]; index: number }>()
+  const body = stableSortSegments([
+    ...segments.information,
+    ...segments.discussion,
+    ...segments.statusUpdates,
+    ...segments.decisions
+  ])
+  for (const segment of body) {
+    const title = segment.topic?.replace(/\s+/gu, ' ').trim() ?? ''
+    const key = title ? `topic:${title.toLocaleLowerCase()}` : `unassigned:${segment.id}`
+    const existing = groups.get(key)
+    if (existing) existing.segments.push(segment)
+    else groups.set(key, { title, segments: [segment], index: groups.size })
+  }
+  return [...groups.entries()].map(([key, group]) =>
+    makeSection(ids.allocate('topical', key, group.index), group.title, group.segments)
+  )
+}
+
+function buildDirectFallback(
+  meetingId: string,
+  segments: MeetingSegments,
+  options: LosslessPresentationOptions
+): MeetingNotesContent {
+  if (process.platform === 'darwin') return buildGroupedCandidate(meetingId, segments, options)
   const ids = createSectionIdAllocator(meetingId, segments)
   const sectionGroups: Array<{
     category: SectionCategory
@@ -528,7 +562,7 @@ function buildDirectFallback(meetingId: string, segments: MeetingSegments): Meet
       )
     )
 
-  return withSummaryHierarchy(meetingId, segments, {
+  return withSummaryHierarchy(meetingId, options.summarySegments ?? segments, {
     overview: null,
     keyTakeaways: [],
     sections,
@@ -537,12 +571,17 @@ function buildDirectFallback(meetingId: string, segments: MeetingSegments): Meet
   })
 }
 
-function buildGroupedCandidate(meetingId: string, segments: MeetingSegments): MeetingNotesContent {
-  return withSummaryHierarchy(meetingId, segments, {
+function buildGroupedCandidate(
+  meetingId: string,
+  segments: MeetingSegments,
+  options: LosslessPresentationOptions
+): MeetingNotesContent {
+  return withSummaryHierarchy(meetingId, options.summarySegments ?? segments, {
     overview: null,
     keyTakeaways: [],
     sections: buildGroupedSections(meetingId, segments),
-    decisions: stableSortSegments(segments.decisions).map(toNoteItem),
+    decisions:
+      process.platform === 'darwin' ? [] : stableSortSegments(segments.decisions).map(toNoteItem),
     nextSteps: stableSortSegments(segments.actionItems).map(toNoteItem)
   })
 }
@@ -633,6 +672,28 @@ function hasSourceBackedSummaryHierarchy(
   })
 }
 
+/** A separate highlight catalog may differ in topics, never in factual content. */
+function hasCompatibleSummaryCatalog(segments: MeetingSegments, summary: MeetingSegments): boolean {
+  const records = Object.values(segments).flat()
+  const originals = new Map(records.map((segment) => [segment.id, segment]))
+  const highlights = Object.values(summary).flat()
+  if (
+    highlights.length !== records.length ||
+    new Set(highlights.map((row) => row.id)).size !== records.length
+  ) {
+    return false
+  }
+  return highlights.every((segment) => {
+    const original = originals.get(segment.id)
+    return (
+      original !== undefined &&
+      segment.category === original.category &&
+      segment.meetingId === original.meetingId &&
+      itemMatchesSegment(toNoteItem({ ...segment, topic: original.topic }), original)
+    )
+  })
+}
+
 function itemMatchesSegment(item: NoteItem, segment: Segment): boolean {
   const source = item.sources[0]
   return (
@@ -668,6 +729,7 @@ export function losslessPresentationStats(
 ): LosslessPresentationStats {
   const presented = presentationSegments(segments)
   const bodyRecords = [
+    ...(process.platform === 'darwin' ? presented.decisions : []),
     ...presented.information,
     ...presented.discussion,
     ...presented.statusUpdates
@@ -703,10 +765,14 @@ export function losslessPresentationStats(
 
 export function hasExactLosslessCoverage(
   segments: MeetingSegments,
-  content: MeetingNotesContent
+  content: MeetingNotesContent,
+  options: LosslessPresentationOptions = {}
 ): boolean {
   segments = presentationSegments(segments)
-  if (!hasSourceBackedSummaryHierarchy(segments, content)) return false
+  if (options.summarySegments && !hasCompatibleSummaryCatalog(segments, options.summarySegments)) {
+    return false
+  }
+  if (!hasSourceBackedSummaryHierarchy(options.summarySegments ?? segments, content)) return false
   if (
     content.sections.some(
       (section) =>
@@ -742,21 +808,25 @@ export function hasExactLosslessCoverage(
 export function ensureExactLosslessCoverage(
   meetingId: string,
   segments: MeetingSegments,
-  candidate: MeetingNotesContent
+  candidate: MeetingNotesContent,
+  options: LosslessPresentationOptions = {}
 ): MeetingNotesContent {
   segments = presentationSegments(segments)
   validateInput(meetingId, segments)
+  if (options.summarySegments && !hasCompatibleSummaryCatalog(segments, options.summarySegments)) {
+    throw new LosslessPresenterError('incompatible-summary-catalog')
+  }
 
   try {
     const parsed = parseMeetingNotesContent(candidate)
-    if (hasExactLosslessCoverage(segments, parsed)) return parsed
+    if (hasExactLosslessCoverage(segments, parsed, options)) return parsed
   } catch {
     // The direct fallback below is the authoritative fail-closed path.
   }
 
   try {
-    const fallback = parseMeetingNotesContent(buildDirectFallback(meetingId, segments))
-    if (hasExactLosslessCoverage(segments, fallback)) return fallback
+    const fallback = parseMeetingNotesContent(buildDirectFallback(meetingId, segments, options))
+    if (hasExactLosslessCoverage(segments, fallback, options)) return fallback
   } catch {
     // Convert schema/capacity failures into one content-free presenter error.
   }
@@ -769,13 +839,15 @@ export function ensureExactLosslessCoverage(
  */
 export function presentMeetingSegmentsLosslessly(
   meetingId: string,
-  segments: MeetingSegments
+  segments: MeetingSegments,
+  options: LosslessPresentationOptions = {}
 ): MeetingNotesContent {
   validateInput(meetingId, segments)
   const presented = presentationSegments(segments)
   return ensureExactLosslessCoverage(
     meetingId,
     presented,
-    buildGroupedCandidate(meetingId, presented)
+    buildGroupedCandidate(meetingId, presented, options),
+    options
   )
 }

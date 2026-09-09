@@ -358,11 +358,15 @@ export async function runNotesScanPipeline(
       ...recovery.segments,
       actionItems
     }
+    // Body regrouping must not implicitly change highlight selection.
+    const summarySegments = process.platform === 'darwin' ? presentedSegments : undefined
     const organization = isWindowsTopicWriterEnabled() && !isWindowsEvidenceWriterEnabled()
       ? await organizeWindowsNotes(dedupeWindowsNotes(presentedSegments), options.generate, options.meetingId, options.embed)
       : null
     if (organization) presentedSegments = organization.segments
-    let content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments)
+    let content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
+      summarySegments
+    })
     if (organization?.overview) content.overview = organization.overview
     // An overview must add a grounded synthesis; copying selected body records
     // into another area adds repetition without adding meaning.
@@ -370,7 +374,7 @@ export async function runNotesScanPipeline(
     let overviewFailed = false
     let overviewFailureReasons: string[] = []
     if (
-      isWindowsNotesQualityEnabled() &&
+      (isWindowsNotesQualityEnabled() || process.platform === 'darwin') &&
       !isWindowsTopicWriterEnabled() &&
       !organization?.overview
     ) {
@@ -391,7 +395,7 @@ export async function runNotesScanPipeline(
           )
           overviewFailed = !overview.usedModel
           overviewFailureReasons = overview.failureReasons
-          if (overview.overview?.text.trim()) {
+          if (overview.usedModel && overview.overview?.text.trim()) {
             content = { ...content, overview: overview.overview }
           }
         } catch (error) {

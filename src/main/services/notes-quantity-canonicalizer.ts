@@ -832,11 +832,16 @@ function spokenVersionComponents(spoken: {
 function versionAliases(components: readonly string[]): string[] {
   const dotted = components.join('.')
   const spokenDigits = components
-    .flatMap((component) => [...component])
+    .flatMap((component) => [...component].filter((digit) => /^\d$/u.test(digit)))
     .map((digit) => integerToWords(BigInt(digit)))
     .join(' ')
   const spokenPoints = components
-    .map((component) => [...component].map((digit) => integerToWords(BigInt(digit))).join(' '))
+    .map((component) =>
+      [...component]
+        .filter((digit) => /^\d$/u.test(digit))
+        .map((digit) => integerToWords(BigInt(digit)))
+        .join(' ')
+    )
     .join(' point ')
   return uniqueAliases([dotted, `v${dotted}`, `version ${dotted}`, spokenDigits, spokenPoints])
 }

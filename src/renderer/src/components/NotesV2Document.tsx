@@ -1023,16 +1023,18 @@ export function NotesV2Document({
           const lastParentIndex = hierarchy.keyPoints.length - 1
           return (
             <section key={section.id} className="mb-6">
-              <InlineEdit
-                value={section.title}
-                onSave={onWrite ? (next) => saveSectionTitle(section.id, next) : undefined}
-                className={
-                  option === 'option-1'
-                    ? 'mb-2 text-[17px] font-semibold text-ink'
-                    : 'mb-2 text-[18px] font-semibold tracking-tight text-ink'
-                }
-                as="h3"
-              />
+              {section.title.trim() ? (
+                <InlineEdit
+                  value={section.title}
+                  onSave={onWrite ? (next) => saveSectionTitle(section.id, next) : undefined}
+                  className={
+                    option === 'option-1'
+                      ? 'mb-2 text-[17px] font-semibold text-ink'
+                      : 'mb-2 text-[18px] font-semibold tracking-tight text-ink'
+                  }
+                  as="h3"
+                />
+              ) : null}
               {hierarchy.keyPoints.map((item, index) => (
                 <BulletGroup
                   key={item.id}

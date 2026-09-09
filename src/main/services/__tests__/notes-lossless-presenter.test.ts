@@ -563,7 +563,61 @@ describe('lossless notes presenter on macOS', () => {
     if (platform) Object.defineProperty(process, 'platform', platform)
   })
 
-  it('keeps last-release grouping and a single copied overview', () => {
+  it('keeps highlight selection stable when body subjects are split or repaired', () => {
+    const rows = [
+      ['downloads', 'Adoption', 'The application now has over 100 downloads, which the team described as encouraging.'],
+      ['optins', 'Adoption', 'There are now 16 people who have opted into the application analytics collection.'],
+      ['rate', 'Email delivery', 'The email send rate will be reduced by 50% to keep within the monthly limit.'],
+      ['feedback', 'Note usability', 'Feedback from 3 participants identified confusion about how to navigate the meeting notes.'],
+      ['campaign', 'Launch', 'The major marketing campaign will begin after version 1.2 is available to all users.']
+    ]
+    const summarySegments: MeetingSegments = {
+      decisions: [],
+      actionItems: [],
+      discussion: [],
+      statusUpdates: [],
+      information: rows.map(([id, topic, content], index) =>
+        segment(id, 'information', {
+          topic,
+          content,
+          sourceStartMs: index * 10000,
+          sourceEndMs: index * 10000 + 1000
+        })
+      )
+    }
+    const baseline = presentMeetingSegmentsLosslessly(MEETING_ID, summarySegments)
+    const body = structuredClone(summarySegments)
+    body.information[0]!.topic = 'Downloads'
+    body.information[1]!.topic = 'Analytics opt-ins'
+    const coupled = presentMeetingSegmentsLosslessly(MEETING_ID, body)
+    expect(coupled.keyTakeaways).not.toEqual(baseline.keyTakeaways)
+
+    const options = { summarySegments }
+    const result = presentMeetingSegmentsLosslessly(MEETING_ID, body, options)
+    expect(result.sections.map((section) => section.title)).toContain('Analytics opt-ins')
+    expect(result.keyTakeaways).toEqual(baseline.keyTakeaways)
+    expect(result.overview).toEqual(baseline.overview)
+    expect(hasExactLosslessCoverage(body, result, options)).toBe(true)
+
+    const corrupted = structuredClone(result)
+    corrupted.sections[0]!.keyPoints = []
+    const fallback = ensureExactLosslessCoverage(MEETING_ID, body, corrupted, options)
+    expect(fallback.keyTakeaways).toEqual(baseline.keyTakeaways)
+    expect(hasExactLosslessCoverage(body, fallback, options)).toBe(true)
+  })
+
+  it('rejects a highlight catalog that changes facts instead of only organization', () => {
+    const body = fixture()
+    const summarySegments = structuredClone(body)
+    summarySegments.information[0]!.content = 'Trial starts increased by 90% on Mac.'
+    const candidate = presentMeetingSegmentsLosslessly(MEETING_ID, body)
+    expect(hasExactLosslessCoverage(body, candidate, { summarySegments })).toBe(false)
+    expect(() => presentMeetingSegmentsLosslessly(MEETING_ID, body, { summarySegments })).toThrow(
+      expect.objectContaining({ code: 'incompatible-summary-catalog' })
+    )
+  })
+
+  it('places decisions under their subjects and preserves unresolved records without a bucket', () => {
     const segments: MeetingSegments = {
       decisions: [
         segment('decision-1', 'decision', {
@@ -590,10 +644,44 @@ describe('lossless notes presenter on macOS', () => {
 
     const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
 
-    expect(content.sections.map((section) => section.title)).toEqual(['Information'])
-    expect(content.decisions.map((item) => item.topic)).toEqual(['Rollout'])
+    expect(content.sections.map((section) => section.title)).toEqual(['Rollout', ''])
+    expect(content.decisions).toEqual([])
+    expect(content.sections[0]?.keyPoints.map((item) => item.id)).toEqual(['decision-1'])
+    expect(content.sections[1]?.keyPoints.map((item) => item.id)).toEqual(['info-1'])
     expect(content.overview?.text).toBe('Release the free tier at a 50/50 split after QA clears.')
     expect(content.keyTakeaways.map((item) => item.title)).toEqual(['Stripe improved'])
     expect(hasExactLosslessCoverage(segments, content)).toBe(true)
+  })
+
+  it('groups a subject across categories without merging unrelated subjects or losing task fields', () => {
+    const segments = fixture()
+    segments.statusUpdates[0]!.topic = 'Rollout'
+    const before = structuredClone(segments)
+    const content = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+    const rollout = content.sections.find((section) => section.title === 'Rollout')
+    expect(rollout?.keyPoints.map((item) => item.id)).toEqual(['decision-1', 'status-1'])
+    expect(
+      content.sections.find((section) => section.title === 'A/B Tests')?.keyPoints
+    ).toHaveLength(3)
+    expect(content.decisions).toEqual([])
+    expect(content.nextSteps).toHaveLength(1)
+    expect(content.nextSteps[0]).toMatchObject({
+      id: 'action-1',
+      owner: 'Greg',
+      deadline: 'When the build arrives',
+      sources: [{ startMs: 20_000, endMs: 24_000 }]
+    })
+    expect(hasExactLosslessCoverage(segments, content)).toBe(true)
+    expect(segments).toEqual(before)
+
+    const missingDecision = structuredClone(content)
+    missingDecision.sections[0]!.keyPoints.shift()
+    expect(hasExactLosslessCoverage(segments, missingDecision)).toBe(false)
+    const repaired = ensureExactLosslessCoverage(MEETING_ID, segments, missingDecision)
+    expect(hasExactLosslessCoverage(segments, repaired)).toBe(true)
+    expect(repaired.decisions).toEqual([])
+    expect(repaired.sections.map((section) => section.title)).toEqual(
+      content.sections.map((section) => section.title)
+    )
   })
 })

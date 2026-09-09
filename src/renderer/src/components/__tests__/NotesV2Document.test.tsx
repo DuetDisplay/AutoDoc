@@ -341,6 +341,40 @@ describe('NotesV2Document', () => {
     expect(onSeek).toHaveBeenLastCalledWith(5200)
   })
 
+  it('keeps untitled notes visible without inventing a heading', () => {
+    const sample = notes()
+    sample.decisions = []
+    sample.sections = [
+      {
+        id: 'lossless-section:topical:untitled',
+        title: '',
+        summary: null,
+        keyPoints: [
+          {
+            id: 'open-1',
+            title: 'Stripe improved',
+            topic: null,
+            owner: null,
+            deadline: null,
+            text: 'Stripe was higher week over week.',
+            sources: [{ startMs: 3500, endMs: 3600 }],
+            provenance: 'generated'
+          }
+        ],
+        supportingDetails: []
+      }
+    ]
+
+    render(
+      <NotesV2Document notes={sample} meetingSpan={[{ startMs: 0, endMs: 10_000 }]} onSeek={vi.fn()} />
+    )
+
+    expect(screen.getByText('Stripe was higher week over week.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Information' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Decisions' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
+  })
+
   it('uses grounded decisions and actions for the summary when there are no topic sections', () => {
     const sample = notes()
     sample.overview = null

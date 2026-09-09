@@ -3,6 +3,7 @@ import {
   generateNotesOverview,
   notesCatalogMarkdown,
   notesHeadingsFromMarkdown,
+  overviewConflictsWithCatalog,
   overviewLooksLikeHeadingList
 } from '../notes-overview'
 
@@ -75,6 +76,77 @@ describe('generateNotesOverview', () => {
     expect(result.overview?.text).toContain('Idle replicas')
   })
 
+  it('rejects overviews that invent quantities or harden tentative catalog wording', () => {
+    const catalog = [
+      '## Email capacity',
+      '- The vendor allows up to 10 batches, requiring 334 batches for a million-email list.',
+      '- The team should run a 50-50 split in the next release.',
+      "- I'm going to change the architecture to support a smaller, faster model on desktop."
+    ].join('\n')
+
+    expect(
+      overviewConflictsWithCatalog('Signups reached 40 people this week.', catalog)
+    ).toBe('invented-quantity')
+    expect(
+      overviewConflictsWithCatalog(
+        'The vendor batch limit is 334 batches for a million-email list.',
+        catalog
+      )
+    ).toBe('quantity-constraint-mismatch')
+    expect(
+      overviewConflictsWithCatalog('The next release will run a 50-50 split.', catalog)
+    ).toBe('modality-promotion')
+    expect(
+      overviewConflictsWithCatalog(
+        'Desktop now has a new architecture supporting a faster model.',
+        catalog
+      )
+    ).toBe('intent-as-state')
+    expect(
+      overviewConflictsWithCatalog(
+        'The vendor allows 10 batches and would need 334 for a million emails. The team should run a 50-50 split, and a faster desktop model is planned.',
+        catalog
+      )
+    ).toBeNull()
+    expect(
+      overviewConflictsWithCatalog(
+        'The 1.1.1 patch addresses the feedback banner.',
+        '## Patch\n- 1.1.1 patch includes bug fixes for the feedback banner.\n'
+      )
+    ).toBeNull()
+    expect(
+      overviewConflictsWithCatalog(
+        'A major campaign is planned after the 1.2 release.',
+        '## Campaign\n- Major campaign after 1.2 release\n'
+      )
+    ).toBeNull()
+    expect(
+      overviewConflictsWithCatalog(
+        'A campaign is planned for LinkedIn, Twitter, and Brevo post-1.2 release.',
+        '## Campaign\n- Major campaign after 1.2 release\n'
+      )
+    ).toBeNull()
+  })
+
+  it('retries when the first overview conflicts with the notes catalog', async () => {
+    let calls = 0
+    const result = await generateNotesOverview(
+      '## Release\n- The team should run a 50-50 split in the next release.\n',
+      async () => {
+        calls += 1
+        return calls === 1
+          ? JSON.stringify({ overview: 'The next release will run a 50-50 split.' })
+          : JSON.stringify({ overview: 'The team should run a 50-50 split in the next release.' })
+      },
+      [{ startMs: 0, endMs: 10 }],
+      { overviewOnly: true }
+    )
+    expect(calls).toBe(2)
+    expect(result.usedModel).toBe(true)
+    expect(result.overview?.text).toContain('should run a 50-50')
+    expect(result.failureReasons[0]).toContain('modality promotion')
+  })
+
   it('treats a title-join overview as a heading list', () => {
     expect(
       overviewLooksLikeHeadingList('This meeting covered Relay hosting, and Offline analytics.', [
@@ -85,6 +157,31 @@ describe('generateNotesOverview', () => {
     expect(
       notesHeadingsFromMarkdown('## Relay hosting capacity review\n## Next Steps\n- Ship it\n')
     ).toEqual(['Relay hosting capacity review'])
+  })
+
+  it.each([
+    ['heading list', 'heading list'],
+    ['heading list', 'invalid json'],
+    ['invalid json', 'heading list']
+  ])('does not accept rejected output after %s followed by %s', async (first, second) => {
+    const outputs = [first, second]
+    let calls = 0
+    const result = await generateNotesOverview(
+      '## Hosting\n- Remove idle replicas.\n## Analytics\n- Include consent flags.',
+      async () => {
+        const kind = outputs[calls++]
+        return kind === 'heading list'
+          ? JSON.stringify({ overview: 'This meeting covered Hosting and Analytics.' })
+          : 'not json'
+      },
+      [{ startMs: 0, endMs: 10 }],
+      { overviewOnly: true }
+    )
+    expect(calls).toBe(2)
+    expect(result.usedModel).toBe(false)
+    expect(result.overview).toBeNull()
+    expect(result.keyTakeaways).toEqual([])
+    expect(result.failureReasons).toHaveLength(2)
   })
 
   it('returns empty when both attempts are unusable and names each failure', async () => {
@@ -179,6 +276,37 @@ describe('generateNotesOverview', () => {
     expect(markdown).toContain('Starts and cancels looked unusual.')
     expect(markdown).not.toContain('Cancellations —')
     expect(markdown).not.toContain('Um Get the nines.')
+  })
+
+  it('keeps untitled section bullets without inventing a heading', () => {
+    const markdown = notesCatalogMarkdown({
+      overview: null,
+      keyTakeaways: [],
+      sections: [
+        {
+          id: 's1',
+          title: '',
+          summary: null,
+          keyPoints: [
+            {
+              id: 'open',
+              title: 'Stripe improved',
+              topic: null,
+              owner: null,
+              deadline: null,
+              text: 'Stripe was higher week over week.',
+              sources: [],
+              provenance: 'generated'
+            }
+          ],
+          supportingDetails: []
+        }
+      ],
+      decisions: [],
+      nextSteps: []
+    } as never)
+    expect(markdown).toContain('- Stripe was higher week over week.')
+    expect(markdown).not.toMatch(/^##\s*$/m)
   })
 
   it('requests grammar-constrained JSON output from the model', async () => {

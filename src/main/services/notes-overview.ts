@@ -3,6 +3,12 @@ import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import type { MeetingNotesContent, NoteItem, NoteSourceRange, NoteTextBlock } from '../../shared/types'
 import { isNeedsReviewTopic } from '../../shared/notes-presentation'
+import {
+  checkQuantityGrounding,
+  extractQuantityMentions,
+  quantityMentionsEquivalent,
+  type QuantityMention
+} from './notes-quantity-canonicalizer'
 
 export interface NotesOverviewGenerateRequest {
   prompt: string
@@ -41,17 +47,199 @@ NOTES:
 
 const OVERVIEW_ONLY_PROMPT = `Summarize the finished meeting notes below for a busy reader.
 Return ONLY JSON with this shape:
-{"overview":"one or two short sentences"}
+{"overview":"concise meeting summary"}
 Rules:
+- Prefer one or a few sentences; write more only when needed to cover the meeting's main subjects
+- Cover the meeting's main areas, important outcomes, and unresolved conditions
+- Do not let one number or decision stand in for the whole meeting
 - Use only facts that appear in the notes
-- State the meeting's direction, outcomes, and unresolved conditions
-- Do not invent owners, dates, or decisions
+- Keep each number bound to the same limit, count, or comparison named in the notes
+- If one note names two numbers, keep both roles; do not drop one and treat the other as the whole constraint
+- Preserve tentative versus confirmed status and conditional wording
+- Do not turn should, may, consider, or going to into a completed decision or existing state
+- Do not invent owners, dates, relationships, or decisions
 - Do not list section headings
 - Do not copy two bullets verbatim as the overview
 - No markdown
 
 NOTES:
 `
+
+const OVERVIEW_CAPACITY =
+  /\b(?:limit|capped|cap|maximum|max(?:imum)?|allows?|allowing|up to)\b/iu
+const OVERVIEW_TENTATIVE =
+  /\b(?:should|may|might|could|consider(?:ing)?|uncertain|unclear|going to|leaning|appears?|maybe|possibly|i(?:'m| am)? going to)\b/iu
+const OVERVIEW_FIRM =
+  /\b(?:will|must|decided|approved|confirmed|confirms|is set|has been)\b/iu
+const OVERVIEW_INTENT =
+  /\b(?:i(?:'m| am)? going to|going to change|plan(?:ning)? to)\b/iu
+const OVERVIEW_FUTURE_OR_INTENT =
+  /\b(?:will|going to|plan(?:ned|s|ning)?|next steps?|should|may|might|could)\b/iu
+const OVERVIEW_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu
+const OVERVIEW_TOKEN_STOP = new Set([
+  'about',
+  'after',
+  'also',
+  'and',
+  'are',
+  'been',
+  'for',
+  'from',
+  'have',
+  'into',
+  'more',
+  'only',
+  'over',
+  'some',
+  'than',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'was',
+  'were',
+  'with',
+  'would'
+])
+
+function overviewClauses(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|(?<=;)\s+|,\s+/u)
+    .map((clause) => clause.replace(/\s+/gu, ' ').trim())
+    .filter((clause) => clause.length > 0)
+}
+
+function catalogBulletLines(markdown: string): string[] {
+  return markdown
+    .split('\n')
+    .map((line) => line.replace(/^#+\s+/, '').replace(/^[-*]\s+/, '').trim())
+    .filter((line) => line.length > 0)
+}
+
+function catalogEvidenceClauses(markdown: string): string[] {
+  return catalogBulletLines(markdown).flatMap((line) => overviewClauses(line))
+}
+
+function quantityHasCapacityBinding(text: string, mention: QuantityMention): boolean {
+  const others = extractQuantityMentions(text).filter((row) => row.start !== mention.start)
+  const previous = others.filter((row) => row.end <= mention.start).sort((left, right) => right.end - left.end)[0]
+  const next = others.filter((row) => row.start >= mention.end).sort((left, right) => left.start - right.start)[0]
+  const start = previous ? previous.end : Math.max(0, mention.start - 40)
+  const end = next ? next.start : Math.min(text.length, mention.end + 40)
+  return OVERVIEW_CAPACITY.test(text.slice(start, end))
+}
+
+function overviewTokens(text: string): string[] {
+  return (text.toLocaleLowerCase().match(OVERVIEW_TOKEN) ?? []).filter(
+    (token) => token.length >= 3 && !OVERVIEW_TOKEN_STOP.has(token)
+  )
+}
+
+function quantityAppearsInCatalog(mention: QuantityMention, catalog: string): boolean {
+  const haystack = catalog.toLocaleLowerCase()
+  const needles = [mention.raw.replace(/,$/u, ''), ...mention.aliases]
+  return needles.some((needle) => needle && haystack.includes(needle.toLocaleLowerCase()))
+}
+
+export type OverviewCatalogConflict =
+  | 'invented-quantity'
+  | 'quantity-constraint-mismatch'
+  | 'modality-promotion'
+  | 'intent-as-state'
+
+/** Rejects overview wording the finished notes cannot support. */
+export function overviewConflictsWithCatalog(
+  overview: string,
+  catalog: string
+): OverviewCatalogConflict | null {
+  try {
+    const grounding = checkQuantityGrounding(overview, catalog)
+    if (
+      grounding.unsupported.some(
+        (mention) =>
+          mention.kind !== 'version' && !quantityAppearsInCatalog(mention, catalog)
+      )
+    ) {
+      return 'invented-quantity'
+    }
+  } catch {
+    // Quantity parsing is best-effort; a parser miss must not fail notes.
+  }
+
+  try {
+  const evidence = catalogEvidenceClauses(catalog)
+  for (const clause of overviewClauses(overview)) {
+    if (OVERVIEW_CAPACITY.test(clause)) {
+      for (const mention of extractQuantityMentions(clause)) {
+        if (!quantityHasCapacityBinding(clause, mention)) continue
+        const support = evidence.filter((row) =>
+          extractQuantityMentions(row).some((candidate) =>
+            quantityMentionsEquivalent(mention, candidate)
+          )
+        )
+        if (
+          support.length > 0 &&
+          !support.some((row) =>
+            extractQuantityMentions(row).some(
+              (candidate) =>
+                quantityMentionsEquivalent(mention, candidate) &&
+                quantityHasCapacityBinding(row, candidate)
+            )
+          )
+        ) {
+          return 'quantity-constraint-mismatch'
+        }
+      }
+    }
+
+    if (OVERVIEW_FIRM.test(clause) && !OVERVIEW_TENTATIVE.test(clause)) {
+      for (const mention of extractQuantityMentions(clause)) {
+        const support = evidence.filter((row) =>
+          extractQuantityMentions(row).some((candidate) =>
+            quantityMentionsEquivalent(mention, candidate)
+          )
+        )
+        if (
+          support.length > 0 &&
+          support.every((row) => OVERVIEW_TENTATIVE.test(row)) &&
+          !support.some((row) => OVERVIEW_FIRM.test(row))
+        ) {
+          return 'modality-promotion'
+        }
+      }
+    }
+  }
+
+  const overviewText = overview.toLocaleLowerCase()
+  for (const row of catalogBulletLines(catalog)) {
+    if (!OVERVIEW_INTENT.test(row)) continue
+    const wanted = [...new Set(overviewTokens(row))].filter(
+      (token) => !/^(?:going|change|support|works?|that)$/u.test(token)
+    )
+    const hits = wanted.filter((token) =>
+      new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\b`, 'u').test(overviewText)
+    )
+    if (hits.length < 3) continue
+    const indexes = hits
+      .map((token) => overviewText.search(new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\b`, 'u')))
+      .filter((index) => index >= 0)
+    if (indexes.length === 0) continue
+    const start = Math.max(0, Math.min(...indexes) - 24)
+    const end = Math.min(overview.length, Math.max(...indexes) + 24)
+    const span = overview.slice(start, end)
+    if (!OVERVIEW_FUTURE_OR_INTENT.test(span)) return 'intent-as-state'
+  }
+
+  return null
+  } catch {
+    return null
+  }
+}
 
 const OVERVIEW_ONLY_FORMAT = {
   type: 'object',
@@ -77,7 +265,9 @@ export function notesCatalogMarkdown(content: MeetingNotesContent): string {
     if (isNeedsReviewTopic(section.title)) continue
     const bullets = noteItemLines([...section.keyPoints, ...section.supportingDetails])
     if (bullets.length === 0) continue
-    lines.push(`## ${section.title.trim()}`, ...bullets, '')
+    const heading = section.title.trim()
+    if (heading) lines.push(`## ${heading}`)
+    lines.push(...bullets, '')
   }
   const decisions = noteItemLines(content.decisions)
   if (decisions.length) lines.push('## Decisions', ...decisions, '')
@@ -203,12 +393,15 @@ export async function generateNotesOverview(
   const numCtx = options?.numCtx && options.numCtx > 0 ? options.numCtx : 4096
   const fallbackSources = sources.length > 0 ? sources : [{ startMs: 0, endMs: 0 }]
   const headings = notesHeadingsFromMarkdown(markdown)
+  const catalogConflict = (overview: string): OverviewCatalogConflict | null =>
+    overviewConflictsWithCatalog(overview, markdown)
   const usable = (parsed: { overview: string; keyTakeaways: string[] } | null): boolean => {
     const overview = parsed?.overview
     return (
       typeof overview === 'string' &&
       overview.length > 0 &&
-      !overviewLooksLikeHeadingList(overview, headings)
+      !overviewLooksLikeHeadingList(overview, headings) &&
+      catalogConflict(overview) === null
     )
   }
 
@@ -221,8 +414,11 @@ export async function generateNotesOverview(
       failureReasons.push(`${label}: ${attempt.failure}`)
     } else if (!attempt.parsed?.overview) {
       failureReasons.push(`${label}: response had no overview text`)
-    } else if (!usable(attempt.parsed)) {
+    } else if (overviewLooksLikeHeadingList(attempt.parsed.overview, headings)) {
       failureReasons.push(`${label}: overview restated section headings`)
+    } else {
+      const conflict = catalogConflict(attempt.parsed.overview)
+      if (conflict) failureReasons.push(`${label}: overview ${conflict.replace(/-/gu, ' ')}`)
     }
   }
 
@@ -231,13 +427,17 @@ export async function generateNotesOverview(
   if (!usable(parsed)) {
     noteRejection(first, 'attempt 1')
     const retry = await requestOverview(markdown, generate, 0.35, numCtx, overviewOnly)
-    if (usable(retry.parsed) || (!parsed?.overview && retry.parsed?.overview)) {
+    if (usable(retry.parsed)) {
       parsed = retry.parsed
     } else {
       noteRejection(retry, 'attempt 2')
+      if (!parsed) parsed = retry.parsed
     }
   }
-  const result: NotesOverviewResult = !parsed?.overview
+  // A nonempty response can still fail the quality check on both attempts.
+  // Do not resurrect that rejected overview as a successful model result.
+  const accepted = usable(parsed) ? parsed : null
+  const result: NotesOverviewResult = !accepted
     ? {
         overview: null,
         keyTakeaways: overviewOnly
@@ -247,10 +447,10 @@ export async function generateNotesOverview(
         failureReasons
       }
     : {
-        overview: block(parsed.overview, fallbackSources),
+        overview: block(accepted.overview, fallbackSources),
         keyTakeaways: overviewOnly
           ? []
-          : parsed.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
+          : accepted.keyTakeaways.map((text) => takeaway(text, fallbackSources)),
         usedModel: true,
         failureReasons
       }

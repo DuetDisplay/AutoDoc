@@ -293,10 +293,10 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
     )
   }
   for (const section of notes.sections) {
-    lines.push(`## ${escapeMarkdown(noteHeadingText(section.title))}`, '')
+    if (section.title.trim()) lines.push(`## ${escapeMarkdown(noteHeadingText(section.title))}`, '')
     if (section.summary) lines.push(markdownNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      if (isWindowsNotesQualityEnabled()) {
+      if (isWindowsNotesQualityEnabled() || !section.title.trim()) {
         lines.push(...section.keyPoints.map((item) => markdownItem(item, false)), '')
       } else {
         lines.push(
@@ -366,10 +366,10 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
     lines.push('Key Takeaways', '', ...notes.keyTakeaways.map((item) => plainItem(item, false)), '')
   }
   for (const section of notes.sections) {
-    lines.push(noteHeadingText(section.title), '')
+    if (section.title.trim()) lines.push(noteHeadingText(section.title), '')
     if (section.summary) lines.push(plainNoteMarkup(section.summary.text), '')
     if (section.keyPoints.length) {
-      if (isWindowsNotesQualityEnabled()) {
+      if (isWindowsNotesQualityEnabled() || !section.title.trim()) {
         lines.push(...section.keyPoints.map((item) => plainItem(item, false)), '')
       } else {
         lines.push('Key points', '', ...section.keyPoints.map((item) => plainItem(item, false)), '')
@@ -450,13 +450,14 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
   }
   notes.sections.forEach((section, index) => {
     const id = `note-section-${index + 1}`
-    content.push(
-      `<section aria-labelledby="${id}"><h2 id="${id}">${escapeHtml(xmlSafeText(noteHeadingText(section.title)))}</h2>`
-    )
+    const heading = section.title.trim()
+      ? `<h2 id="${id}">${escapeHtml(xmlSafeText(noteHeadingText(section.title)))}</h2>`
+      : ''
+    content.push(`<section${heading ? ` aria-labelledby="${id}"` : ''}>${heading}`)
     if (section.summary) content.push(`<p>${htmlNoteMarkup(section.summary.text)}</p>`)
     if (section.keyPoints.length) {
       content.push(
-        isWindowsNotesQualityEnabled()
+        isWindowsNotesQualityEnabled() || !section.title.trim()
           ? `<ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
           : `<h4>Key points</h4><ul>${section.keyPoints.map((item) => htmlItem(item, false)).join('')}</ul>`
       )
@@ -586,15 +587,17 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     paragraphs.push(...notes.keyTakeaways.map((item) => docxBullet(item, false)))
   }
   for (const section of notes.sections) {
-    paragraphs.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        children: [new TextRun(xmlSafeText(noteHeadingText(section.title)))]
-      })
-    )
+    if (section.title.trim()) {
+      paragraphs.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(xmlSafeText(noteHeadingText(section.title)))]
+        })
+      )
+    }
     if (section.summary) paragraphs.push(docxParagraph(section.summary.text))
     if (section.keyPoints.length) {
-      if (!isWindowsNotesQualityEnabled()) {
+      if (!isWindowsNotesQualityEnabled() && section.title.trim()) {
         paragraphs.push(
           new Paragraph({ heading: HeadingLevel.HEADING_3, children: [new TextRun('Key points')] })
         )
