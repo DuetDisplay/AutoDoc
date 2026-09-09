@@ -71,7 +71,7 @@ describe('runNotesScanPipeline', () => {
     if (platform) Object.defineProperty(process, 'platform', platform)
   })
 
-  it('applies context only to next-step headings after summary selection and ownership', async () => {
+  it('skips next-step context when the section is hidden', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const input = segments()
     input.actionItems = [segment({ id: 'action', category: 'action_item',
@@ -84,12 +84,11 @@ describe('runNotesScanPipeline', () => {
       title: 'Review the authentication API contract', sourceStartMs: 1000, sourceEndMs: 5000
     }
     const after = await runNotesScanPipeline(input, options)
-    expect(after.content).toEqual({ ...before.content, nextSteps: [{
-      ...before.content.nextSteps[0], title: 'Review the authentication API contract',
-      sources: [{ startMs: 1000, endMs: 5000 }]
-    }] })
-    expect(after.contextualizedNextStepCount).toBe(1)
-    expect(after.exactWriterCoverage).toBe(false)
+    expect(before.content.nextSteps).toEqual([])
+    expect(after.content.nextSteps).toEqual([])
+    expect(after.content).toEqual(before.content)
+    expect(after.contextualizedNextStepCount).toBe(0)
+    expect(after.exactWriterCoverage).toBe(true)
     expect(options.generate).toHaveBeenCalledTimes(2)
     expect(options.generate.mock.calls.every(([request]) =>
       request.prompt.includes('Summarize the finished meeting notes')
@@ -114,14 +113,15 @@ describe('runNotesScanPipeline', () => {
     for (const key of ['overview', 'keyTakeaways', 'sections', 'decisions'] as const) {
       expect(after.content[key]).toEqual(before.content[key])
     }
-    expect(after.content.nextSteps).toHaveLength(before.content.nextSteps.length)
+    expect(after.content.nextSteps).toEqual([])
+    expect(before.content.nextSteps).toEqual([])
     expect(withDrafts.nextStepCandidates).toEqual([candidate])
     expect(options.generate.mock.calls.every(([request]) =>
       request.prompt.includes('Summarize the finished meeting notes')
     )).toBe(true)
   })
 
-  it('restores a recovered task’s explanation without changing writer records or requesting inference', async () => {
+  it('does not restore recovered task explanations while Next Steps are hidden', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const input = segments()
     const original = structuredClone(input)
@@ -137,9 +137,9 @@ describe('runNotesScanPipeline', () => {
       attributionTranscript: rows, spanSources: [], generate
     })
     const recovered = result.content.nextSteps.find((item) => item.id.startsWith('recovered-action:'))
-    expect(recovered?.text).toBe('Get more information about the setup. Because the ticket reports the local mouse stops working when Duet runs.')
-    expect(recovered?.sources).toEqual([{ startMs: 60_000, endMs: 70_000 }])
-    expect(result.contextualizedNextStepCount).toBe(1)
+    expect(recovered).toBeUndefined()
+    expect(result.content.nextSteps).toEqual([])
+    expect(result.contextualizedNextStepCount).toBe(0)
     expect(input).toEqual(original)
     expect(generate).toHaveBeenCalledTimes(1)
     expect(generate.mock.calls[0]?.[0].prompt).toContain('Summarize the finished meeting notes')
@@ -232,26 +232,22 @@ describe('runNotesScanPipeline', () => {
     })
     expect(generate.mock.calls[0]?.[0].prompt).toContain('concise meeting summary')
     expect(generate.mock.calls[0]?.[0].prompt).not.toContain('keyTakeaways')
-    expect(presentedItems.map((item) => item.id).sort()).toEqual(['a1', 'a2', 'a3', 'd1', 'i1'])
+    expect(presentedItems.map((item) => item.id).sort()).toEqual(['d1', 'i1'])
     expect(result.content.decisions[0]).toMatchObject({
       id: 'd1',
       text: 'The team decided to collect login events from all users.'
     })
-    expect(result.content.nextSteps).toEqual([
-      expect.objectContaining({ id: 'a1', owner: 'Norbert' }),
-      expect.objectContaining({ id: 'a2', owner: 'Me' }),
-      expect.objectContaining({ id: 'a3', owner: null })
-    ])
+    expect(result.content.nextSteps).toEqual([])
     expect(progress).toEqual(['scan-start', 'overview', 'lossless-presentation'])
     expect(result.validation).toEqual(emptyValidationStats(false))
     expect(result).toMatchObject({
       presentationMode: 'lossless',
       exactWriterCoverage: true,
-      attributionOwnersAdded: 1,
-      attributionOwnersStripped: 1,
-      attributionOwnersPreserved: 1,
+      attributionOwnersAdded: 0,
+      attributionOwnersStripped: 0,
+      attributionOwnersPreserved: 0,
       recoveredActionCount: 0,
-      dedupedRecoveredActionCount: 3,
+      dedupedRecoveredActionCount: 0,
       recoveredDecisionCount: 0,
       overviewSkipped: false
     })
@@ -317,7 +313,7 @@ describe('runNotesScanPipeline', () => {
     })
   })
 
-  it('recovers an uncovered local commitment before lossless presentation without another model call', async () => {
+  it('skips recovering an uncovered local commitment when Next Steps are hidden', async () => {
     const generate = overviewGenerate()
     const result = await runNotesScanPipeline(
       {
@@ -348,24 +344,16 @@ describe('runNotesScanPipeline', () => {
       }
     )
 
-    expect(generate).toHaveBeenCalledTimes(1)
-    expect(result.content.nextSteps).toEqual([
-      expect.objectContaining({
-        title: 'Ping Sergio after the meeting',
-        text: "Ping Sergio after the meeting just to find out when they'll be done testing.",
-        owner: 'Me',
-        deadline: null,
-        sources: [{ startMs: 1_515_000, endMs: 1_521_000 }]
-      })
-    ])
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.nextSteps).toEqual([])
     expect(result).toMatchObject({
-      recoveredActionCount: 1,
+      recoveredActionCount: 0,
       promotedActionCount: 0,
       exactWriterCoverage: true
     })
   })
 
-  it('preserves exact-millisecond ownership and dedupes recovery for a cited local commitment', async () => {
+  it('skips ownership recovery for a cited local commitment when Next Steps are hidden', async () => {
     const generate = overviewGenerate()
     const result = await runNotesScanPipeline(
       {
@@ -405,35 +393,27 @@ describe('runNotesScanPipeline', () => {
       }
     )
 
-    expect(generate).toHaveBeenCalledTimes(1)
-    expect(result.content.nextSteps).toEqual([
-      expect.objectContaining({
-        id: 'writer-action',
-        owner: 'Me',
-        sources: [{ startMs: 1100, endMs: 1100 }]
-      })
-    ])
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.content.nextSteps).toEqual([])
     expect(result).toMatchObject({
-      attributionOwnersAdded: 1,
+      attributionOwnersAdded: 0,
       recoveredActionCount: 0,
-      dedupedRecoveredActionCount: 1,
+      dedupedRecoveredActionCount: 0,
       exactWriterCoverage: true
     })
   })
 
-  it('falls back to unrestyled topical text and still emits Next Steps without a Decisions footer', async () => {
+  it('falls back to unrestyled topical text without a Next Steps or Decisions footer', async () => {
     const result = await runNotesScanPipeline(segments(), {
       title: 'Standup',
       spanSources: [{ startMs: 0, endMs: 5000 }],
       generate: async () => 'not valid json'
     })
 
-    expect(result.markdown).toContain('## Next Steps')
+    expect(result.markdown).not.toContain('## Next Steps')
     expect(result.markdown).not.toMatch(/^## Decisions$/m)
     expect(result.content.decisions).toEqual([])
-    expect(result.content.nextSteps.some((item) => item.title?.includes('offline analytics'))).toBe(
-      true
-    )
+    expect(result.content.nextSteps).toEqual([])
     expect(result.groupingFallback).toBe(false)
     expect(result.markdown).toMatch(/## (Analytics|HP opt-in rate)/)
     expect(result.attachFailed).toBe(false)
@@ -532,15 +512,9 @@ describe('runNotesScanPipeline', () => {
     expect(result.content.sections.map((section) => section.title)).toEqual(['Analytics'])
     expect(result.content.sections[0]?.keyPoints.map((item) => item.id).sort()).toEqual(['d1', 'i1'])
     expect(result.content.keyTakeaways.map((item) => item.text)).toEqual([
-      "HP's opt-in analytics rate for gaming PCs is 80-95%.",
-      'Norbert will review the offline analytics PR.'
+      "HP's opt-in analytics rate for gaming PCs is 80-95%."
     ])
-    expect(result.content.nextSteps).toEqual([
-      expect.objectContaining({
-        id: 'a1',
-        text: 'Norbert will review the offline analytics PR.'
-      })
-    ])
+    expect(result.content.nextSteps).toEqual([])
     expect(result.content.sections.some((section) => section.title === 'Other Notes')).toBe(false)
     expect(
       result.content.sections.some((section) =>
@@ -568,8 +542,7 @@ describe('runNotesScanPipeline', () => {
       'The team decided to collect login events from all users.'
     )
     expect(result.content.keyTakeaways.map((item) => item.text)).toEqual([
-      "HP's opt-in analytics rate for gaming PCs is 80-95%.",
-      'Norbert will review the offline analytics PR.'
+      "HP's opt-in analytics rate for gaming PCs is 80-95%."
     ])
   })
 })

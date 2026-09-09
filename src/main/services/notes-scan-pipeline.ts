@@ -37,6 +37,7 @@ import {
   type TopicGroup
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
+import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
 import type { MeetingNotesContent, MeetingSegments, MeetingSegmentsWithCandidates, Transcript } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
@@ -304,7 +305,7 @@ export async function runNotesScanPipeline(
   segments: MeetingSegmentsWithCandidates,
   options: RunNotesScanOptions
 ): Promise<NotesScanResult> {
-  const nextStepCandidates = segments.nextStepCandidates ?? []
+  const nextStepCandidates = NOTES_NEXT_STEPS_VISIBLE ? segments.nextStepCandidates ?? [] : []
   segments = withoutNextStepCandidates(segments)
   const seed = options.seed ?? DEFAULT_SEED
   const temperature = options.temperature ?? 0.4
@@ -326,34 +327,38 @@ export async function runNotesScanPipeline(
     const decisionRecovery = isWindowsEvidenceWriterEnabled()
       ? { segments, recoveredDecisionCount: 0, promotedDecisionCount: 0, dedupedRecoveredDecisionCount: 0 }
       : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
-    const recovery = isWindowsEvidenceWriterEnabled()
-      ? { segments: decisionRecovery.segments, recoveredActionCount: 0, promotedActionCount: 0, dedupedRecoveredActionCount: 0 }
-      : recoverExplicitTranscriptActions(
-      decisionRecovery.segments,
-      attributionTranscript,
-      {
-        localOwnerLabel: options.localOwnerLabel?.trim() || undefined
-      }
-    )
+    const recovery =
+      !NOTES_NEXT_STEPS_VISIBLE || isWindowsEvidenceWriterEnabled()
+        ? {
+            segments: decisionRecovery.segments,
+            recoveredActionCount: 0,
+            promotedActionCount: 0,
+            dedupedRecoveredActionCount: 0
+          }
+        : recoverExplicitTranscriptActions(decisionRecovery.segments, attributionTranscript, {
+            localOwnerLabel: options.localOwnerLabel?.trim() || undefined
+          })
     let attributionOwnersAdded = 0
     let attributionOwnersStripped = 0
     let attributionOwnersPreserved = 0
     let attributionOwnersChanged = 0
-    const actionItems = recovery.segments.actionItems.map((segment) => {
-      const resolvedOwner = resolveSpeakerAwareOwner(
-        segment,
-        attributionTranscript,
-        options.localOwnerLabel
-      )
-      const originalOwner = segment.assignee?.trim() || null
-      if (!originalOwner && resolvedOwner) attributionOwnersAdded += 1
-      if (originalOwner && !resolvedOwner) attributionOwnersStripped += 1
-      if (originalOwner && resolvedOwner === originalOwner) attributionOwnersPreserved += 1
-      if (originalOwner && resolvedOwner && resolvedOwner !== originalOwner) {
-        attributionOwnersChanged += 1
-      }
-      return { ...segment, assignee: resolvedOwner }
-    })
+    const actionItems = NOTES_NEXT_STEPS_VISIBLE
+      ? recovery.segments.actionItems.map((segment) => {
+          const resolvedOwner = resolveSpeakerAwareOwner(
+            segment,
+            attributionTranscript,
+            options.localOwnerLabel
+          )
+          const originalOwner = segment.assignee?.trim() || null
+          if (!originalOwner && resolvedOwner) attributionOwnersAdded += 1
+          if (originalOwner && !resolvedOwner) attributionOwnersStripped += 1
+          if (originalOwner && resolvedOwner === originalOwner) attributionOwnersPreserved += 1
+          if (originalOwner && resolvedOwner && resolvedOwner !== originalOwner) {
+            attributionOwnersChanged += 1
+          }
+          return { ...segment, assignee: resolvedOwner }
+        })
+      : []
     let presentedSegments: MeetingSegments = {
       ...recovery.segments,
       actionItems
@@ -407,9 +412,20 @@ export async function runNotesScanPipeline(
       }
     }
     const presentationStats = losslessPresentationStats(presentedSegments, content)
-    const contextualized = presentActionContext(content, presentedSegments.actionItems)
-    const refined = refineNextSteps(contextualized.content, nextStepCandidates, attributionTranscript, options.localOwnerLabel)
-    const continued = restoreActionContinuations(refined.content, attributionTranscript)
+    const contextualized = NOTES_NEXT_STEPS_VISIBLE
+      ? presentActionContext(content, presentedSegments.actionItems)
+      : { content, count: 0 }
+    const refined = NOTES_NEXT_STEPS_VISIBLE
+      ? refineNextSteps(
+          contextualized.content,
+          nextStepCandidates,
+          attributionTranscript,
+          options.localOwnerLabel
+        )
+      : { content: contextualized.content, count: 0 }
+    const continued = NOTES_NEXT_STEPS_VISIBLE
+      ? restoreActionContinuations(refined.content, attributionTranscript)
+      : { content: refined.content, count: 0 }
     reportProgress('lossless-presentation', 1)
 
     return {
@@ -535,7 +551,7 @@ export async function runNotesScanPipeline(
       title: options.title,
       sections: sectionBodies,
       decisions: [],
-      nextSteps: unionNextSteps(split.actions, [])
+      nextSteps: NOTES_NEXT_STEPS_VISIBLE ? unionNextSteps(split.actions, []) : []
     })
   )
 

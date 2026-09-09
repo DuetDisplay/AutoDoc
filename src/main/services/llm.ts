@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
+import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import type {
   MeetingSegments,
   MeetingSegmentsWithCandidates,
@@ -3081,6 +3082,7 @@ export class OllamaProvider implements LLMProvider {
           // shortened actions can be checked against complete transcript turns
           // for Next Steps later, without another model request.
           if (
+            NOTES_NEXT_STEPS_VISIBLE &&
             process.platform === 'darwin' &&
             rawKey === 'action_items' &&
             !sanitizedRecords.some(

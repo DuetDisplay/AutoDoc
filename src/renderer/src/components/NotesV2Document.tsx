@@ -11,8 +11,10 @@ import { displayNoteSectionHierarchy } from '../../../shared/notes-section-displ
 import { isMeetingSpanOnly } from '../../../shared/notes-timestamps'
 import { notesUseLosslessPresentation } from '../../../shared/notes-lossless-ids'
 import {
+  areNotesNextStepsVisible,
   displayTopicLabel,
   isNeedsReviewTopic,
+  NOTES_NEXT_STEPS_VISIBLE,
   toCustomerFacingNotes
 } from '../../../shared/notes-presentation'
 import { isWindowsRenderer } from '../services/microphone-access'
@@ -20,13 +22,10 @@ import { renderNoteMarkup } from './NoteMarkup'
 
 type NotesOption = 'option-1' | 'option-2'
 
-function optionHeadingClass(option: NotesOption, kind: 'section' | 'kicker'): string {
-  if (option === 'option-1') {
-    return kind === 'kicker'
-      ? 'mb-1 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted'
-      : 'mb-1 text-[13px] font-semibold text-ink'
-  }
-  return 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
+function optionHeadingClass(option: NotesOption): string {
+  return option === 'option-1'
+    ? 'mb-1 text-[13px] font-semibold text-ink'
+    : 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
 }
 
 function formatClock(ms: number): string {
@@ -54,7 +53,9 @@ function meetingSummary(
       ...notes.sections,
       {
         title: '',
-        keyPoints: [...notes.decisions, ...notes.nextSteps]
+        keyPoints: NOTES_NEXT_STEPS_VISIBLE
+          ? [...notes.decisions, ...notes.nextSteps]
+          : [...notes.decisions]
       }
     ],
     title
@@ -890,9 +891,12 @@ export function NotesV2Document({
   const itemEdit = onWrite
     ? { onSave: saveItem, onSaveOwner: saveOwner, onDelete: deleteItem }
     : { onSave: undefined, onSaveOwner: undefined, onDelete: undefined }
-  const visibleNextSteps = windowsQuality
-    ? documentNotes.nextSteps.filter((item) => !isNeedsReviewTopic(item.topic))
-    : documentNotes.nextSteps
+  const showNextSteps = areNotesNextStepsVisible()
+  const visibleNextSteps = showNextSteps
+    ? windowsQuality
+      ? documentNotes.nextSteps.filter((item) => !isNeedsReviewTopic(item.topic))
+      : documentNotes.nextSteps
+    : []
   const visibleSections = windowsQuality
     ? documentNotes.sections.filter((section) => !isNeedsReviewTopic(section.title))
     : documentNotes.sections
@@ -921,7 +925,6 @@ export function NotesV2Document({
 
       {meetingTitle ? (
         <header className={optionColumn}>
-          <p className={optionHeadingClass(option, 'kicker')}>Recorded meeting</p>
           <h2
             className={
               option === 'option-1'
@@ -943,7 +946,7 @@ export function NotesV2Document({
               : 'rounded-xl border border-border bg-bg-card px-4 py-3'
           }
         >
-          <h3 id="notes-summary" className={optionHeadingClass(option, 'section')}>
+          <h3 id="notes-summary" className={optionHeadingClass(option)}>
             Summary
           </h3>
           <InlineEdit
@@ -978,7 +981,7 @@ export function NotesV2Document({
         />
       ) : null}
 
-      {option === 'option-2' && (visibleNextSteps.length > 0 || onWrite) ? (
+      {showNextSteps && option === 'option-2' && (visibleNextSteps.length > 0 || onWrite) ? (
         <div
           id="notes-next-steps"
           className="rounded-xl border border-sage/20 bg-sage-light/40 px-4 py-3"
@@ -1097,7 +1100,7 @@ export function NotesV2Document({
         />
       ) : null}
 
-      {option === 'option-1' && (visibleNextSteps.length > 0 || onWrite) ? (
+      {showNextSteps && option === 'option-1' && (visibleNextSteps.length > 0 || onWrite) ? (
         <div
           id="notes-next-steps"
           className="mx-auto w-full max-w-[560px] border-t border-border pt-4"

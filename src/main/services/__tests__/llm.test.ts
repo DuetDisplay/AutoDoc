@@ -1042,7 +1042,7 @@ describe('OllamaProvider grounding', () => {
     })
   })
 
-  it('retains rejected action drafts separately on Mac without changing canonical notes or Windows', () => {
+  it('does not retain rejected action drafts while Next Steps are hidden', () => {
     const provider = new OllamaProvider('http://localhost:11434', 'test-model')
     const transcript = [
       '[00:01] [them] Mac testing is still in progress.',
@@ -1060,10 +1060,7 @@ describe('OllamaProvider grounding', () => {
     setPlatform('darwin')
     const mac = parse()
     expect(mac.segments.actionItems).toEqual([])
-    expect(mac.segments.nextStepCandidates).toEqual([expect.objectContaining({
-      category: 'action_item', content: 'I will ping Jordan to see where Mac testing is at.',
-      sourceStartMs: 5000, sourceEndMs: 5000
-    })])
+    expect(mac.segments.nextStepCandidates).toBeUndefined()
     expect(mac.acceptedItemCount).toBe(0)
     setPlatform('win32')
     const windows = parse()

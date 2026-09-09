@@ -1,6 +1,13 @@
 export const OTHER_NOTES_TOPIC = 'Other Notes'
 export const NEEDS_REVIEW_TOPIC = 'Needs Review'
 
+/** Hide Next Steps and skip generation until the list is reliable. Flip to restore. */
+export const NOTES_NEXT_STEPS_VISIBLE = false
+
+export function areNotesNextStepsVisible(): boolean {
+  return NOTES_NEXT_STEPS_VISIBLE
+}
+
 export const GENERIC_SECTION_TITLES = new Set(['Information', 'Discussion', 'Status Updates'])
 
 /** Writer leftover titles that must never become chapter names. */

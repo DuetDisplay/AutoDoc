@@ -13,7 +13,7 @@ import {
   TextRun
 } from 'docx'
 import type { MeetingExportFormat, NormalizedNoteItem, NormalizedNotes } from '../../shared/types'
-import { toCustomerFacingNotes } from '../../shared/notes-presentation'
+import { NOTES_NEXT_STEPS_VISIBLE, toCustomerFacingNotes } from '../../shared/notes-presentation'
 import { isWindowsNotesQualityEnabled } from './windows-notes-experiment'
 
 export interface MeetingExportSnapshot {
@@ -41,7 +41,7 @@ export function hasMeetingExportNotes(snapshot: MeetingExportSnapshot): boolean 
   if (hasReadableText(notes.overview?.text)) return true
   if (notes.keyTakeaways.some(hasReadableItem)) return true
   if (notes.decisions.some(hasReadableItem)) return true
-  if (notes.nextSteps.some(hasReadableItem)) return true
+  if (NOTES_NEXT_STEPS_VISIBLE && notes.nextSteps.some(hasReadableItem)) return true
   return notes.sections.some(
     (section) =>
       hasReadableText(section.summary?.text) ||
@@ -319,7 +319,7 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
   if (notes.decisions.length) {
     lines.push('## Decisions', '', ...notes.decisions.map((item) => markdownItem(item, false)), '')
   }
-  if (notes.nextSteps.length) {
+  if (NOTES_NEXT_STEPS_VISIBLE && notes.nextSteps.length) {
     lines.push('## Next Steps', '', ...notes.nextSteps.map((item) => markdownItem(item, true)), '')
   }
   if (lines.length === 0) lines.push('_No note content is available for this meeting._', '')
@@ -328,8 +328,6 @@ function renderMarkdownNotes(snapshot: MeetingExportSnapshot): string[] {
 
 export function renderMeetingExportMarkdown(snapshot: MeetingExportSnapshot): string {
   const lines = [
-    'Recorded meeting',
-    '',
     `# ${escapeMarkdown(snapshot.detail.title || 'Untitled Meeting')}`,
     '',
     `**Date:** ${escapeMarkdown(formatDate(snapshot.detail.date))}`,
@@ -387,7 +385,7 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
   if (notes.decisions.length) {
     lines.push('Decisions', '', ...notes.decisions.map((item) => plainItem(item, false)), '')
   }
-  if (notes.nextSteps.length) {
+  if (NOTES_NEXT_STEPS_VISIBLE && notes.nextSteps.length) {
     lines.push('Next Steps', '', ...notes.nextSteps.map((item) => plainItem(item, true)), '')
   }
   if (lines.length === 0) lines.push('No note content is available for this meeting.', '')
@@ -396,8 +394,6 @@ function renderPlainTextNotes(snapshot: MeetingExportSnapshot): string[] {
 
 export function renderMeetingExportPlainText(snapshot: MeetingExportSnapshot): string {
   const lines = [
-    'Recorded meeting',
-    '',
     noteHeadingText(snapshot.detail.title || 'Untitled Meeting'),
     '',
     `Date: ${formatDate(snapshot.detail.date)}`,
@@ -474,7 +470,7 @@ function renderHtmlNotes(snapshot: MeetingExportSnapshot): string {
       `<section aria-labelledby="decisions"><h2 id="decisions">Decisions</h2><ul>${notes.decisions.map((item) => htmlItem(item, false)).join('')}</ul></section>`
     )
   }
-  if (notes.nextSteps.length) {
+  if (NOTES_NEXT_STEPS_VISIBLE && notes.nextSteps.length) {
     content.push(
       `<section aria-labelledby="next-steps"><h2 id="next-steps">Next Steps</h2><ul class="checklist">${notes.nextSteps.map((item) => htmlItem(item, true)).join('')}</ul></section>`
     )
@@ -500,7 +496,6 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
     body { margin: 0; background: var(--paper); }
     main { width: min(7.5in, 100%); margin: 0 auto; padding: .8in .7in; background: var(--surface); }
     .masthead { border-bottom: 1px solid var(--sage); padding-bottom: 18pt; margin-bottom: 18pt; }
-    .kicker { margin: 0 0 5pt; color: var(--sage-dark); font-size: 8.5pt; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
     h1 { margin: 0 0 12pt; color: var(--ink); font-family: "Instrument Serif", Georgia, serif; font-size: 25pt; font-weight: 500; line-height: 1.08; }
     h2 { margin: 18pt 0 10pt; color: var(--sage-dark); font-size: 16pt; line-height: 1.2; break-after: avoid; }
     h3 { margin: 14pt 0 7pt; color: var(--sage-dark); font-size: 13pt; line-height: 1.25; break-after: avoid; }
@@ -523,7 +518,6 @@ export function renderMeetingExportHtml(snapshot: MeetingExportSnapshot): string
 <body>
   <main>
     <header class="masthead">
-      <p class="kicker">Recorded meeting</p>
       <h1>${htmlText(snapshot.detail.title || 'Untitled Meeting')}</h1>
       <dl>
         <dt>Date</dt><dd>${htmlText(formatDate(snapshot.detail.date))}</dd>
@@ -620,7 +614,7 @@ function docxNotes(snapshot: MeetingExportSnapshot): Paragraph[] {
     )
     paragraphs.push(...notes.decisions.map((item) => docxBullet(item, false)))
   }
-  if (notes.nextSteps.length) {
+  if (NOTES_NEXT_STEPS_VISIBLE && notes.nextSteps.length) {
     paragraphs.push(
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun('Next Steps')] })
     )

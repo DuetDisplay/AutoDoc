@@ -128,7 +128,7 @@ describe('NotesV2Document', () => {
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Key Takeaways' })).toBeInTheDocument()
     expect(screen.getByText('Collect login events')).toBeInTheDocument()
-    expect(screen.getByText('Review the offline analytics PR')).toBeInTheDocument()
+    expect(screen.queryByText('Review the offline analytics PR')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
 
@@ -150,7 +150,7 @@ describe('NotesV2Document', () => {
       />
     )
 
-    expect(screen.getByText('Recorded meeting')).toBeInTheDocument()
+    expect(screen.queryByText('Recorded meeting')).not.toBeInTheDocument()
     expect(screen.getAllByRole('heading', { name: 'duet-display - Slack' })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
     const title = container.querySelector('h2')
@@ -160,42 +160,12 @@ describe('NotesV2Document', () => {
     expect(title?.compareDocumentPosition(summary!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.getByText('Recorded meeting')).toBeInTheDocument()
+    expect(screen.queryByText('Recorded meeting')).not.toBeInTheDocument()
     expect(screen.getAllByRole('heading', { name: 'duet-display - Slack' })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
   })
 
-  it('shows a distinct next-step title, complete body, and deadline without duplication', async () => {
-    const sample = notes()
-    sample.nextSteps = [
-      {
-        ...sample.nextSteps[0],
-        title: 'Follow up on QA',
-        text: 'Ask Sergio for a smoke-test estimate as soon as the build arrives.',
-        deadline: 'When the build arrives'
-      },
-      { ...sample.nextSteps[0], id: 'n2' }
-    ]
-
-    render(
-      <NotesV2Document
-        notes={sample}
-        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
-        onSeek={vi.fn()}
-      />
-    )
-
-    expect(
-      screen.getByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
-    ).toBeInTheDocument()
-    expect(screen.getByText('Follow up on QA')).toBeInTheDocument()
-    expect(screen.getByText('Due: When the build arrives')).toBeInTheDocument()
-
-    expect(screen.getAllByText('Review the offline analytics PR')).toHaveLength(1)
-  })
-
-  it('edits a distinct Mac next-step body without retaining its stale generated title', async () => {
-    const onWrite = vi.fn()
+  it('hides next steps on Mac and Windows even when items exist', async () => {
     const sample = notes()
     sample.nextSteps = [
       {
@@ -206,40 +176,36 @@ describe('NotesV2Document', () => {
       }
     ]
 
-    render(
+    const view = render(
       <NotesV2Document
         notes={sample}
         meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
         onSeek={vi.fn()}
-        onWrite={onWrite}
+        onWrite={vi.fn()}
       />
     )
 
-    await userEvent.click(
-      screen.getByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
-    )
-    const editor = screen.getByRole('textbox')
-    await userEvent.clear(editor)
-    await userEvent.type(editor, 'Ask Sergio for the QA estimate when the build arrives')
-    await userEvent.tab()
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Follow up on QA')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
+    ).not.toBeInTheDocument()
 
-    const edited = onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>
-    expect(edited.nextSteps[0]).toMatchObject({
-      title: null,
-      text: 'Ask Sergio for the QA estimate when the build arrives',
-      deadline: 'When the build arrives',
-      owner: 'Norbert',
-      provenance: 'user-edited'
-    })
-  })
-
-  it('shows a next step only once when its title differs only by punctuation', async () => {
-    const sample = notes()
-    sample.nextSteps = [{ ...sample.nextSteps[0], title: 'Review API contract', text: 'Review API contract.' }]
-    render(<NotesV2Document notes={sample} meetingSpan={[{ startMs: 0, endMs: 10_000 }]} onSeek={vi.fn()} />)
-    expect(screen.getAllByText(/^Review API contract\.?$/)).toHaveLength(1)
     await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.getAllByText(/^Review API contract\.?$/)).toHaveLength(1)
+    expect(screen.queryByText('Next Steps')).not.toBeInTheDocument()
+    expect(screen.queryByText('Follow up on QA')).not.toBeInTheDocument()
+
+    isWindowsRenderer.mockReturnValue(true)
+    view.rerender(
+      <NotesV2Document
+        notes={sample}
+        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
+        onSeek={vi.fn()}
+        onWrite={vi.fn()}
+      />
+    )
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Follow up on QA')).not.toBeInTheDocument()
   })
 
   it('edits, deletes, and adds through writeV2 without regenerating', async () => {
@@ -402,8 +368,8 @@ describe('NotesV2Document', () => {
     )
 
     expect(
-      screen.getByText('The release will wait until the smoke test passes.')
-    ).toBeInTheDocument()
+      screen.getAllByText('The release will wait until the smoke test passes.').length
+    ).toBeGreaterThan(0)
     expect(
       screen.getByText((_text, element) => {
         return (
@@ -539,49 +505,12 @@ describe('NotesV2Document', () => {
     expect(
       screen.queryByText('Release at 50/50 after smoke testing passes.')
     ).not.toBeInTheDocument()
-    expect(screen.getByText('Follow up on QA')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Follow up on QA')).not.toBeInTheDocument()
     expect(
       screen.queryByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
     ).not.toBeInTheDocument()
     expect(screen.queryByText('Due: When the build arrives')).not.toBeInTheDocument()
-  })
-
-  it('edits the displayed Windows next-step title without replacing its detailed body', async () => {
-    isWindowsRenderer.mockReturnValue(true)
-    const onWrite = vi.fn()
-    const sample = legacyNotes()
-    sample.nextSteps = [
-      {
-        ...sample.nextSteps[0],
-        title: 'Follow up on QA',
-        text: 'Ask Sergio for a smoke-test estimate as soon as the build arrives.',
-        deadline: 'When the build arrives'
-      }
-    ]
-
-    render(
-      <NotesV2Document
-        notes={sample}
-        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
-        onSeek={vi.fn()}
-        onWrite={onWrite}
-      />
-    )
-
-    await userEvent.click(screen.getByText('Follow up on QA'))
-    const editor = screen.getByRole('textbox')
-    await userEvent.clear(editor)
-    await userEvent.type(editor, 'Check the QA estimate')
-    await userEvent.tab()
-
-    const edited = onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>
-    expect(edited.nextSteps[0]).toMatchObject({
-      title: 'Check the QA estimate',
-      text: 'Ask Sergio for a smoke-test estimate as soon as the build arrives.',
-      deadline: 'When the build arrives',
-      owner: 'Norbert',
-      provenance: 'user-edited'
-    })
   })
 
   it('renders the full lossless hierarchy on Windows when the notes carry lossless IDs', async () => {
@@ -621,11 +550,11 @@ describe('NotesV2Document', () => {
     expect(screen.getByRole('heading', { name: 'Key Takeaways' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Decisions' })).toBeInTheDocument()
     expect(screen.getByText('Release at 50/50 after smoke testing passes.')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Next Steps' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
     expect(
-      screen.getByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
-    ).toBeInTheDocument()
-    expect(screen.getByText('Due: When the build arrives')).toBeInTheDocument()
+      screen.queryByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Due: When the build arrives')).not.toBeInTheDocument()
   })
 
   it('keeps extra Windows key points as peers when the notes carry lossless IDs', () => {
@@ -673,53 +602,6 @@ describe('NotesV2Document', () => {
 
     expect(screen.queryByTestId('sub-p2')).not.toBeInTheDocument()
     expect(screen.getByText('Users have not encountered instability')).toBeInTheDocument()
-  })
-
-  it('lets the user add, change, and clear a next-step owner', async () => {
-    const onWrite = vi.fn()
-    const sample = notes()
-    sample.nextSteps[0].owner = null
-    const view = render(
-      <NotesV2Document
-        notes={sample}
-        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
-        onSeek={vi.fn()}
-        onWrite={onWrite}
-      />
-    )
-
-    await userEvent.click(screen.getByRole('button', { name: 'Add owner' }))
-    await userEvent.type(screen.getByRole('textbox', { name: 'Owner' }), 'Raul')
-    await userEvent.tab()
-
-    const added = onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>
-    expect(added.nextSteps[0].owner).toBe('Raul')
-    expect(added.nextSteps[0].provenance).toBe('user-edited')
-
-    onWrite.mockClear()
-    view.rerender(
-      <NotesV2Document
-        notes={{ ...sample, nextSteps: [{ ...sample.nextSteps[0], owner: 'Raul' }] }}
-        meetingSpan={[{ startMs: 0, endMs: 10_000 }]}
-        onSeek={vi.fn()}
-        onWrite={onWrite}
-      />
-    )
-
-    await userEvent.click(screen.getByRole('button', { name: 'Owner: Raul' }))
-    const editor = screen.getByRole('textbox', { name: 'Owner' })
-    await userEvent.clear(editor)
-    await userEvent.type(editor, 'Chris')
-    await userEvent.tab()
-    expect((onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>).nextSteps[0].owner).toBe(
-      'Chris'
-    )
-
-    onWrite.mockClear()
-    await userEvent.click(screen.getByRole('button', { name: 'Remove owner' }))
-    expect(
-      (onWrite.mock.calls.at(-1)?.[0] as ReturnType<typeof notes>).nextSteps[0].owner
-    ).toBeNull()
   })
 
   it('does not repeat the section topic on bullets or takeaways', () => {
@@ -783,9 +665,8 @@ describe('NotesV2Document', () => {
     expect(screen.getByText('The cable connection element was redesigned.')).toBeInTheDocument()
     const analytics = screen.getByRole('heading', { name: 'Analytics' })
     const otherNotes = screen.getByRole('heading', { name: 'Other Notes' })
-    const nextSteps = screen.getByRole('heading', { name: 'Next Steps' })
     expect(analytics.compareDocumentPosition(otherNotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(otherNotes.compareDocumentPosition(nextSteps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
   })
 
   it('hides Needs Review leftovers from the customer document', () => {
@@ -844,7 +725,7 @@ describe('NotesV2Document', () => {
     expect(screen.queryByRole('heading', { name: 'Decisions' })).not.toBeInTheDocument()
     expect(screen.queryByText('Share Politic.')).not.toBeInTheDocument()
     expect(screen.queryByText('But logs show it was running')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Next Steps' })).toBeInTheDocument()
-    expect(screen.getByText('Review the offline analytics PR')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Next Steps' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Review the offline analytics PR')).not.toBeInTheDocument()
   })
 })

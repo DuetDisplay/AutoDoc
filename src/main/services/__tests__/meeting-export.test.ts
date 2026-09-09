@@ -133,9 +133,7 @@ const visibleNoteContent = [
   'SUPPORTING_OWNER_VISIBLE',
   'SUPPORTING_DEADLINE_VISIBLE',
   'DECISION_TITLE_VISIBLE',
-  'DECISION_TEXT_VISIBLE',
-  'NEXT_STEP_TITLE_VISIBLE',
-  'NEXT_STEP_TEXT_VISIBLE'
+  'DECISION_TEXT_VISIBLE'
 ]
 
 const internalContent = [
@@ -148,6 +146,8 @@ const internalContent = [
   'LEGACY_MEETING_ID_INTERNAL',
   'LEGACY_TOPIC_INTERNAL',
   'SECTION_ID_INTERNAL',
+  'NEXT_STEP_TITLE_VISIBLE',
+  'NEXT_STEP_TEXT_VISIBLE',
   'TRANSCRIPT_TEXT_PRIVATE',
   'SPEAKER_LABEL_PRIVATE',
   'SPEAKER_SUGGESTION_PRIVATE',
@@ -217,7 +217,7 @@ describe('meeting export renderers', () => {
     const markdown = renderMeetingExportMarkdown(withIgnoredPrivateData(snapshot))
     const readable = markdown.replace(/\\/g, '')
 
-    expect(readable).toContain('Recorded meeting')
+    expect(readable).not.toContain('Recorded meeting')
     expect(readable).toContain('# MEETING_TITLE_VISIBLE')
     expect(readable).toContain('## Summary')
     expect(readable).not.toContain('AUTODOC MEETING MEMO')
@@ -226,7 +226,7 @@ describe('meeting export renderers', () => {
     expect(readable).toContain('May 6, 2026 at 2:07 PM UTC')
     expect(readable).toContain('SOURCE_NAME_VISIBLE')
     expect(readable).toContain('1h 1m 1s')
-    expect(readable).toContain('[x]')
+    expect(readable).not.toContain('## Next Steps')
     for (const visible of visibleNoteContent) expect(readable).toContain(visible)
     for (const internal of internalContent) expect(markdown).not.toContain(internal)
     expect(markdown).not.toContain('Transcript')
@@ -240,7 +240,7 @@ describe('meeting export renderers', () => {
     expect(html.startsWith('<!doctype html>')).toBe(true)
     expect(html).toContain('<main>')
     expect(html).toContain('<header class="masthead">')
-    expect(html).toContain('<p class="kicker">Recorded meeting</p>')
+    expect(html).not.toContain('Recorded meeting')
     expect(html).toContain('<section aria-labelledby="summary">')
     expect(html).toContain('<h2 id="summary">Summary</h2>')
     expect(html).not.toContain('AutoDoc Meeting Memo')
@@ -490,7 +490,7 @@ describe('meeting export renderers', () => {
     }
 
     const plainText = renderMeetingExportPlainText(messy)
-    expect(plainText).toContain('Recorded meeting')
+    expect(plainText).not.toContain('Recorded meeting')
     expect(plainText).toContain('Summary')
     expect(plainText).not.toContain('AUTODOC MEETING MEMO')
     expect(plainText).toContain('Cancellations — The data indicates 14 starts and 6 cancellations.')
