@@ -222,6 +222,9 @@ export function createRuntimeInfo(overrides: Partial<AppRuntimeInfo> = {}): AppR
     storagePath: '/tmp/autodoc-tests',
     whisperModel: 'ggml-base.en.bin',
     ollamaModel: 'llama3.2:3b',
+    ramBucket: '16gb',
+    cpuClass: 'recommended',
+    hasGpu: true,
     ...overrides
   }
 }

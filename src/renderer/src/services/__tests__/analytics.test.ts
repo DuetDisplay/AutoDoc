@@ -372,6 +372,43 @@ describe('analytics consent', () => {
     ).toEqual({})
   })
 
+  it('keeps only coarse meeting_processed hardware and duration fields', async () => {
+    const { sanitizeAnalyticsProperties } = await loadAnalytics()
+
+    expect(
+      sanitizeAnalyticsProperties({
+        ram_bucket: '16gb',
+        cpu_class: 'recommended',
+        has_gpu: true,
+        recording_duration_min: 45,
+        transcription_duration_min: 8,
+        notes_outcome: 'generated',
+        notes_duration_min: 3,
+        meetingId: 'meeting-1',
+        ram_bytes: 17179869184,
+        cpu_model: 'M3 Max'
+      })
+    ).toEqual({
+      ram_bucket: '16gb',
+      cpu_class: 'recommended',
+      has_gpu: true,
+      recording_duration_min: 45,
+      transcription_duration_min: 8,
+      notes_outcome: 'generated',
+      notes_duration_min: 3
+    })
+
+    expect(
+      sanitizeAnalyticsProperties({
+        ram_bucket: '64gb',
+        cpu_class: 'ultra',
+        has_gpu: 'yes',
+        recording_duration_min: 12.5,
+        notes_outcome: 'skipped'
+      })
+    ).toEqual({})
+  })
+
   it('emits consented support analytics with their bounded context', async () => {
     const { initAnalytics, restoreAnalyticsConsent, trackEvent } = await loadAnalytics()
 

@@ -623,7 +623,9 @@ export class TranscriptionService {
       await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
 
       this.activeStatus = 'complete'
-      this.broadcastStatus(meetingId, 'complete')
+      this.broadcastStatus(meetingId, 'complete', undefined, undefined, {
+        recordingDurationSec: metadata?.durationSeconds ?? this.jobAudioDurationSec ?? null
+      })
       this.onCompleteCallback?.(meetingId)
     } finally {
       this.transcriptionJobStartedAt = null
@@ -2606,7 +2608,8 @@ export class TranscriptionService {
     meetingId: string,
     status: TranscriptionStatus,
     progress?: number,
-    errorCode?: string
+    errorCode?: string,
+    extras?: Pick<TranscriptionStatusPayload, 'recordingDurationSec'>
   ): void {
     const nextProgress = this.getNextProgress(status, progress)
     this.activeStatus = status
@@ -2625,7 +2628,8 @@ export class TranscriptionService {
       etaSeconds:
         status === 'transcribing' && nextProgress != null
           ? this.computeEtaSeconds(nextProgress)
-          : undefined
+          : undefined,
+      recordingDurationSec: extras?.recordingDurationSec
     }
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', payload)

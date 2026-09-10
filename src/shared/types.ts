@@ -409,6 +409,7 @@ export interface TranscriptionStatusPayload {
   backendLabel?: string
   qualityMode?: 'fast' | 'balanced'
   etaSeconds?: number | null
+  recordingDurationSec?: number | null
 }
 
 export type TranscriptionStatus =
@@ -554,6 +555,9 @@ export interface AppRuntimeInfo {
   whisperModel: string
   transcriptionBackend?: string
   ollamaModel: string
+  ramBucket?: '8gb' | '16gb' | '32gb+'
+  cpuClass?: 'low' | 'recommended'
+  hasGpu?: boolean
 }
 
 export type AnalyticsLocalSignal =

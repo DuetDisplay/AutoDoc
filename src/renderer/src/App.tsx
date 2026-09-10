@@ -36,6 +36,11 @@ import {
   trackFirstEventOnce,
   trackPendingAppUpdate
 } from './services/analytics'
+import {
+  rememberTranscriptionComplete,
+  trackMeetingProcessed,
+  type MeetingProcessTimes
+} from './services/meeting-processed-analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { onManualUpdateCheckStarted } from './services/update-check-events'
@@ -286,6 +291,8 @@ export default function App() {
   const segmentationCompletions = useRef<Set<string>>(new Set())
   const segmentationNoNotes = useRef<Set<string>>(new Set())
   const notesGenerationStarted = useRef<Record<string, number>>({})
+  const meetingProcessTimes = useRef(new Map<string, MeetingProcessTimes>())
+  const meetingProcessedEmissions = useRef(new Set<string>())
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
@@ -443,14 +450,24 @@ export default function App() {
           transcriptionCompletions.current.add(payload.meetingId)
           const startedAt = transcriptionStarted.current[payload.meetingId]
           delete transcriptionStarted.current[payload.meetingId]
+          const transcriptionDurationSec =
+            startedAt === undefined ? undefined : (performance.now() - startedAt) / 1000
           trackEvent('transcription_completed', {
             backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
             model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
             processing_time_bucket:
-              startedAt === undefined
+              transcriptionDurationSec === undefined
                 ? undefined
-                : toDurationBucket((performance.now() - startedAt) / 1000)
+                : toDurationBucket(transcriptionDurationSec)
           })
+          if (transcriptionDurationSec !== undefined) {
+            rememberTranscriptionComplete(
+              meetingProcessTimes.current,
+              payload.meetingId,
+              payload.recordingDurationSec,
+              transcriptionDurationSec
+            )
+          }
         }
         return
       }
@@ -486,10 +503,10 @@ export default function App() {
           segmentationCompletions.current.add(payload.meetingId)
           const startedAt = notesGenerationStarted.current[payload.meetingId]
           delete notesGenerationStarted.current[payload.meetingId]
+          const notesDurationSec =
+            startedAt === undefined ? undefined : (performance.now() - startedAt) / 1000
           const processing_time_bucket =
-            startedAt === undefined
-              ? undefined
-              : toDurationBucket((performance.now() - startedAt) / 1000)
+            notesDurationSec === undefined ? undefined : toDurationBucket(notesDurationSec)
           if (payload.errorCode === 'scan_or_persist') {
             trackEvent('notes_layout_degraded', {
               failure_code: 'scan_or_persist',
@@ -507,6 +524,14 @@ export default function App() {
               activation_reason: 'first_notes_generated'
             })
           }
+          trackMeetingProcessed({
+            store: meetingProcessTimes.current,
+            emitted: meetingProcessedEmissions.current,
+            meetingId: payload.meetingId,
+            runtimeInfo: runtimeInfoRef.current,
+            notesOutcome: 'generated',
+            notesDurationSec
+          })
           if (payload.groupingFallback) {
             trackEvent('notes_step_degraded', {
               step: 'grouping',
@@ -522,6 +547,13 @@ export default function App() {
           segmentationNoNotes.current.add(payload.meetingId)
           delete notesGenerationStarted.current[payload.meetingId]
           trackEvent('notes_not_generated', { reason_code: 'no_notes_detected' })
+          trackMeetingProcessed({
+            store: meetingProcessTimes.current,
+            emitted: meetingProcessedEmissions.current,
+            meetingId: payload.meetingId,
+            runtimeInfo: runtimeInfoRef.current,
+            notesOutcome: 'did_not_run'
+          })
         }
         return
       }
@@ -533,6 +565,13 @@ export default function App() {
       segmentationFailures.current[payload.meetingId] = errorCode
       delete notesGenerationStarted.current[payload.meetingId]
       trackEvent('notes_generation_failed', { failure_code: errorCode })
+      trackMeetingProcessed({
+        store: meetingProcessTimes.current,
+        emitted: meetingProcessedEmissions.current,
+        meetingId: payload.meetingId,
+        runtimeInfo: runtimeInfoRef.current,
+        notesOutcome: 'did_not_run'
+      })
     })
 
     const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {

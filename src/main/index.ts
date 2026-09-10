@@ -30,6 +30,7 @@ import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
+import { getRuntimeAnalyticsHardware } from './services/analytics-hardware'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
@@ -1265,7 +1266,8 @@ app.whenReady().then(async () => {
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),
-      ollamaModel: managedOllamaManager.getModel()
+      ollamaModel: managedOllamaManager.getModel(),
+      ...getRuntimeAnalyticsHardware(whisperManager)
     })
   )
   ipcMain.handle('app:get-storage-info', async (): Promise<AppStorageInfo> => {

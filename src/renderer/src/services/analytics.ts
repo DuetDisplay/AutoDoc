@@ -1,4 +1,10 @@
 import posthog from 'posthog-js'
+import {
+  isBoundedDurationMin,
+  isCpuClass,
+  isNotesOutcome,
+  isRamBucket
+} from '../../../shared/analytics-metrics'
 import type {
   AnalyticsLocalSignal,
   AnalyticsState,
@@ -68,6 +74,7 @@ const ALLOWED_PROPERTIES = new Set([
   'clarification_options_count',
   'component',
   'consented',
+  'cpu_class',
   'current_version',
   'days_since_first_launch',
   'duration_bucket',
@@ -79,11 +86,14 @@ const ALLOWED_PROPERTIES = new Set([
   'first_notes_generated',
   'first_recording_completed',
   'has_calendar_event',
+  'has_gpu',
   'has_suggestion',
   'is_first_use',
   'meeting_window_count',
   'model',
+  'notes_duration_min',
   'notes_generated_bucket',
+  'notes_outcome',
   'official_build',
   'ollama_model',
   'onboarding_completed',
@@ -96,8 +106,10 @@ const ALLOWED_PROPERTIES = new Set([
   'provider',
   'provider_detected',
   'provider_hint',
+  'ram_bucket',
   'reason',
   'reason_code',
+  'recording_duration_min',
   'recordings_completed_bucket',
   'result_count_bucket',
   'selected_recording',
@@ -113,6 +125,7 @@ const ALLOWED_PROPERTIES = new Set([
   'surface',
   'step',
   'transcription_backend',
+  'transcription_duration_min',
   'transition_source',
   'trigger',
   'user_activated',
@@ -215,6 +228,25 @@ function normalizePropertyValue(key: string, value: unknown): unknown {
   }
   if (key === 'result_count_bucket' && typeof value === 'number') {
     return bucketCount(value)
+  }
+  if (key === 'ram_bucket') {
+    return isRamBucket(value) ? value : undefined
+  }
+  if (key === 'cpu_class') {
+    return isCpuClass(value) ? value : undefined
+  }
+  if (key === 'notes_outcome') {
+    return isNotesOutcome(value) ? value : undefined
+  }
+  if (
+    key === 'recording_duration_min' ||
+    key === 'transcription_duration_min' ||
+    key === 'notes_duration_min'
+  ) {
+    return isBoundedDurationMin(value) ? value : undefined
+  }
+  if (key === 'has_gpu') {
+    return typeof value === 'boolean' ? value : undefined
   }
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return value
