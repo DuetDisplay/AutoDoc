@@ -1,4 +1,5 @@
-import { BrowserWindow, screen, ipcMain } from 'electron'
+import { app, BrowserWindow, screen, ipcMain } from 'electron'
+import { getMainWindow } from './services/main-window'
 
 let notificationWindow: BrowserWindow | null = null
 let notificationKind: NotificationKind | null = null
@@ -85,6 +86,50 @@ function clearAutoDismissTimer(): void {
   }
 }
 
+// A non-focusable notification can still cause macOS to raise another app window
+// before the dismiss IPC arrives. Preserve the same background state for every kind.
+function prepareNotificationDismissal(): () => void {
+  const mainWindow = getMainWindow()
+  const wasMainWindowVisible = mainWindow?.isVisible() ?? false
+  const wasMainWindowMinimized = mainWindow?.isMinimized() ?? false
+  const wasMainWindowFocused = mainWindow?.isFocused() ?? false
+  if (
+    process.platform === 'darwin' &&
+    mainWindow &&
+    wasMainWindowVisible &&
+    !wasMainWindowFocused &&
+    !wasMainWindowMinimized
+  ) {
+    mainWindow.hide()
+  }
+
+  return () => {
+    const window = getMainWindow()
+    if (!window) {
+      if (!wasMainWindowFocused && process.platform === 'darwin') {
+        app.hide()
+      }
+      return
+    }
+    if (process.platform === 'darwin') {
+      if (!wasMainWindowFocused) {
+        if (wasMainWindowMinimized) {
+          window.minimize()
+        } else {
+          window.hide()
+        }
+      } else if (wasMainWindowMinimized) {
+        window.minimize()
+      } else if (!wasMainWindowVisible) {
+        window.hide()
+      }
+    }
+    if (!wasMainWindowFocused && process.platform === 'darwin') {
+      app.hide()
+    }
+  }
+}
+
 export function showNotificationWindow(options: NotificationOptions): void {
   if (notificationWindow) {
     clearAutoDismissTimer()
@@ -92,6 +137,8 @@ export function showNotificationWindow(options: NotificationOptions): void {
     cleanupListeners = null
     notificationWindow.close()
   }
+
+  const preserveMainWindowState = prepareNotificationDismissal()
 
   const primaryDisplay = screen.getPrimaryDisplay()
   const workArea = primaryDisplay.workArea
@@ -123,7 +170,11 @@ export function showNotificationWindow(options: NotificationOptions): void {
   notificationKind = options.kind ?? null
   setNotificationActivationSuppression(options.suppressAppActivationWhileVisible === true)
 
+  let actionHandled = false
   const handlePrimaryAction = (): void => {
+    if (actionHandled) return
+    actionHandled = true
+    clearAutoDismissTimer()
     try {
       options.onPrimaryAction()
     } finally {
@@ -131,8 +182,12 @@ export function showNotificationWindow(options: NotificationOptions): void {
     }
   }
   const handleDismiss = (): void => {
+    if (actionHandled) return
+    actionHandled = true
+    clearAutoDismissTimer()
     try {
       suppressAppActivationUntil = Date.now() + 1_000
+      preserveMainWindowState()
       options.onDismiss()
     } finally {
       animateOut()

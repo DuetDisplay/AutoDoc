@@ -1,28 +1,12 @@
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const originalPlatform = process.platform
-
-function setPlatform(platform: NodeJS.Platform) {
-  Object.defineProperty(process, 'platform', {
-    configurable: true,
-    value: platform
-  })
-}
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  appHide: vi.fn(),
   readMetadata: vi.fn(),
   encryptJSON: vi.fn(),
   showNotificationWindow: vi.fn(),
   focusMainWindow: vi.fn(),
   getMainWindow: vi.fn()
-}))
-
-vi.mock('electron', () => ({
-  app: {
-    hide: mocks.appHide
-  }
 }))
 
 vi.mock('../calendar-matcher', () => ({
@@ -60,10 +44,6 @@ function createMainWindowMock(
 describe('notes ready notifier', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-  })
-
-  afterEach(() => {
-    setPlatform(originalPlatform)
   })
 
   it('builds a fallback body when there is no meeting title', () => {
@@ -125,8 +105,7 @@ describe('notes ready notifier', () => {
     })
   })
 
-  it('keeps a hidden main window hidden when the notification is dismissed', async () => {
-    setPlatform('darwin')
+  it('leaves dismissal window handling to the shared notification', async () => {
     const mainWindow = createMainWindowMock({ visible: false, focused: false })
     mocks.getMainWindow.mockReturnValue(mainWindow)
     mocks.readMetadata.mockResolvedValue({
@@ -135,68 +114,10 @@ describe('notes ready notifier', () => {
       stoppedAt: 2,
       durationSeconds: 60
     })
-
     await notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')
-
-    const options = mocks.showNotificationWindow.mock.calls[0]?.[0]
-    options.onDismiss()
-
-    expect(mainWindow.hide).toHaveBeenCalledTimes(1)
-    expect(mainWindow.minimize).not.toHaveBeenCalled()
-    expect(mocks.appHide).toHaveBeenCalledTimes(1)
-    expect(mocks.showNotificationWindow.mock.calls[0]?.[0]).not.toHaveProperty(
-      'suppressAppActivationWhileVisible'
-    )
-  })
-
-  it('hides an unfocused visible main window before showing the notification', async () => {
-    setPlatform('darwin')
-    const mainWindow = createMainWindowMock({ visible: true, focused: false })
-    mocks.getMainWindow.mockReturnValue(mainWindow)
-    mocks.readMetadata.mockResolvedValue({
-      sourceName: 'Weekly Sync',
-      startedAt: 1,
-      stoppedAt: 2,
-      durationSeconds: 60
-    })
-
-    await notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')
-
-    expect(mainWindow.hide).toHaveBeenCalledTimes(1)
-    expect(mainWindow.hide.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.showNotificationWindow.mock.invocationCallOrder[0]
-    )
-    expect(mainWindow.minimize).not.toHaveBeenCalled()
-
-    const options = mocks.showNotificationWindow.mock.calls[0]?.[0]
-    options.onDismiss()
-
-    expect(mainWindow.hide).toHaveBeenCalledTimes(2)
-    expect(mainWindow.minimize).not.toHaveBeenCalled()
-    expect(mocks.appHide).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not hide an unfocused visible main window on Windows', async () => {
-    setPlatform('win32')
-    const mainWindow = createMainWindowMock({ visible: true, focused: false })
-    mocks.getMainWindow.mockReturnValue(mainWindow)
-    mocks.readMetadata.mockResolvedValue({
-      sourceName: 'Weekly Sync',
-      startedAt: 1,
-      stoppedAt: 2,
-      durationSeconds: 60
-    })
-
-    await notifyNotesReady('/tmp/autodoc-tests', 'meeting-123')
-
-    expect(mainWindow.hide).not.toHaveBeenCalled()
-    expect(mainWindow.minimize).not.toHaveBeenCalled()
-
-    const options = mocks.showNotificationWindow.mock.calls[0]?.[0]
-    options.onDismiss()
-
-    expect(mainWindow.hide).not.toHaveBeenCalled()
-    expect(mainWindow.minimize).not.toHaveBeenCalled()
+    mocks.showNotificationWindow.mock.calls[0][0].onDismiss()
+    expect(mocks.focusMainWindow).not.toHaveBeenCalled()
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled()
   })
 
   it('does not show a duplicate notification when the marker is already set', async () => {

@@ -159,7 +159,7 @@ test('dismisses a meeting prompt without raising an unfocused visible main windo
     await session.electronApp.evaluate(({ app }) => app.emit('activate'))
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
-      visible: true,
+      visible: process.platform !== 'darwin',
       focused: false
     })
 
@@ -169,7 +169,7 @@ test('dismisses a meeting prompt without raising an unfocused visible main windo
     await session.electronApp.evaluate(({ app }) => app.emit('activate'))
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
-      visible: true,
+      visible: process.platform !== 'darwin',
       focused: false
     })
   } finally {

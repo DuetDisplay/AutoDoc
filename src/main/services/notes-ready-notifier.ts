@@ -1,5 +1,4 @@
 import { join } from 'path'
-import { app } from 'electron'
 import { encryptJSON } from './crypto'
 import { readMetadata } from './calendar-matcher'
 import { showNotificationWindow } from '../notification-window'
@@ -42,20 +41,6 @@ export async function notifyNotesReady(
     return false
   }
   const displayTitle = getMeetingDisplayTitle(metadata)
-  const mainWindow = getMainWindow()
-  const wasMainWindowVisible = mainWindow?.isVisible() ?? false
-  const wasMainWindowMinimized = mainWindow?.isMinimized() ?? false
-  const wasMainWindowFocused = mainWindow?.isFocused() ?? false
-  if (
-    process.platform === 'darwin' &&
-    mainWindow &&
-    wasMainWindowVisible &&
-    !wasMainWindowFocused &&
-    !wasMainWindowMinimized
-  ) {
-    mainWindow.hide()
-  }
-
   showNotificationWindow({
     title: 'Notes Ready',
     body: buildNotesReadyBody(displayTitle),
@@ -68,31 +53,7 @@ export async function notifyNotesReady(
       focusMainWindow()
       getMainWindow()?.webContents.send('notes:open-meeting', { meetingId })
     },
-    onDismiss: () => {
-      const window = getMainWindow()
-      if (!window) {
-        if (!wasMainWindowFocused && process.platform === 'darwin') {
-          app.hide()
-        }
-        return
-      }
-      if (process.platform === 'darwin') {
-        if (!wasMainWindowFocused) {
-          if (wasMainWindowMinimized) {
-            window.minimize()
-          } else {
-            window.hide()
-          }
-        } else if (wasMainWindowMinimized) {
-          window.minimize()
-        } else if (!wasMainWindowVisible) {
-          window.hide()
-        }
-      }
-      if (!wasMainWindowFocused && process.platform === 'darwin') {
-        app.hide()
-      }
-    }
+    onDismiss: () => {}
   })
 
   const updatedMetadata: MeetingMetadata = {
