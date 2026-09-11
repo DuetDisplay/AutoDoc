@@ -58,7 +58,7 @@ export interface RegisterMeetingExportIpcOptions {
   showSaveDialog?: ShowSaveDialog
   renderPdf?: (html: string) => Promise<Buffer>
   writeExportFile?: (filePath: string, data: Buffer) => Promise<void>
-  writeClipboard?: (content: { text: string; html: string }) => void
+  writeClipboard?: (content: { text: string }) => void
   getDocumentsPath?: () => string
   getParentWindow?: (sender: WebContents) => BrowserWindow | null
 }
@@ -292,7 +292,7 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
   const writeExportFile = options.writeExportFile ?? writeExportFileAtomically
   const writeClipboard =
     options.writeClipboard ??
-    ((content: { text: string; html: string }) => clipboard.write(content))
+    ((content: { text: string }) => clipboard.write(content))
   const getDocumentsPath = options.getDocumentsPath ?? (() => app.getPath('documents'))
   const getParentWindow =
     options.getParentWindow ?? ((sender: WebContents) => BrowserWindow.fromWebContents(sender))
@@ -362,9 +362,10 @@ export function registerMeetingExportIpc(options: RegisterMeetingExportIpcOption
       }
 
       try {
+        // Plain text only. Writing HTML+text makes Notion paste both and
+        // duplicate the notes.
         writeClipboard({
-          text: renderMeetingExportPlainText(snapshot),
-          html: renderMeetingExportHtml(snapshot)
+          text: renderMeetingExportPlainText(snapshot)
         })
         return { status: 'copied' }
       } catch {

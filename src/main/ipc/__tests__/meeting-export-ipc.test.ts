@@ -512,7 +512,7 @@ describe('meeting export IPC', () => {
 })
 
 describe('meeting copy notes IPC', () => {
-  it('copies rich notes with a marker-free plain-text fallback', async () => {
+  it('copies notes as plain text only', async () => {
     register()
 
     await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
@@ -522,11 +522,10 @@ describe('meeting copy notes IPC', () => {
     expect(mocks.loadSnapshot).toHaveBeenCalledWith('/recordings', 'meeting-123')
     expect(mocks.hasExportNotes).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
-    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderHtml).not.toHaveBeenCalled()
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
     expect(mocks.clipboardWrite).toHaveBeenCalledWith({
-      text: 'plain text output',
-      html: '<html><body>PDF output</body></html>'
+      text: 'plain text output'
     })
   })
 
@@ -631,7 +630,7 @@ describe('meeting copy notes IPC', () => {
     expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
-  it('bounds rich clipboard rendering failures as copy-failed', async () => {
+  it('bounds clipboard rendering failures as copy-failed', async () => {
     mocks.renderPlainText.mockImplementationOnce(() => {
       throw new Error('render failed')
     })
@@ -657,10 +656,9 @@ describe('meeting copy notes IPC', () => {
     })
 
     expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
-    expect(mocks.renderHtml).toHaveBeenCalledWith(snapshot)
+    expect(mocks.renderHtml).not.toHaveBeenCalled()
     expect(mocks.clipboardWrite).toHaveBeenCalledWith({
-      text: 'plain text output',
-      html: '<html><body>PDF output</body></html>'
+      text: 'plain text output'
     })
   })
 })
