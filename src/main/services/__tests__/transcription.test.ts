@@ -972,25 +972,7 @@ describe('TranscriptionService', () => {
     expect((service as any).getWhisperThreadCount(2)).toBe(5)
   })
 
-  it('uses 4 whisper threads on a 4-core machine in fast mode', () => {
-    setPlatform('win32')
-    osMock.availableParallelism.mockReturnValue(4)
-    service = new TranscriptionService(
-      mockWhisper,
-      mockConverter,
-      '/mock/home/AutoDoc/recordings',
-      mockCalendar,
-      () => false,
-      null,
-      () => false,
-      null,
-      () => 'fast'
-    )
-
-    expect((service as any).getWhisperThreadCount()).toBe(4)
-  })
-
-  it('passes --no-eco to the transcription worker in fast mode', async () => {
+  it('keeps EcoQoS enabled for the CPU worker', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -1015,54 +997,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'fast',
-      () => 'balanced',
-      async () => null,
-      async () => undefined,
-      () => ({ freeGiB: 16, totalGiB: 32 })
-    )
-
-    await expect(
-      (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-123', 60)
-    ).resolves.toBeUndefined()
-
-    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
-    expect(workerClientMock.load).toHaveBeenCalled()
-    expect(workerClientMock.transcribe).toHaveBeenCalled()
-    expect(fsMock.writeFile).toHaveBeenCalledWith(
-      '/mock/tmp/audio.wav.json',
-      JSON.stringify({ transcription: [] }),
-      'utf-8'
-    )
-  })
-
-  it('does not pass --no-eco to the transcription worker in balanced mode', async () => {
-    setPlatform('win32')
-    mockWhisper = {
-      ...mockWhisper,
-      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
-      isFasterWhisperSelected: vi.fn().mockReturnValue(true),
-      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
-      getWorkerModelPath: vi.fn().mockReturnValue('/mock/faster-whisper-model'),
-      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
-      getWorkerDevice: vi.fn().mockReturnValue('cpu'),
-      getWorkerComputeType: vi.fn().mockReturnValue('int8'),
-      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
-      getWorkerEngine: vi.fn().mockReturnValue('faster-whisper'),
-      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
-      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(1.5)
-    } as unknown as WhisperManager
-    service = new TranscriptionService(
-      mockWhisper,
-      mockConverter,
-      '/mock/home/AutoDoc/recordings',
-      mockCalendar,
-      () => false,
-      null,
-      () => false,
-      null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
@@ -1075,7 +1009,7 @@ describe('TranscriptionService', () => {
     expect(workerClientMock.lastOptions?.extraArgs).toEqual([])
   })
 
-  it('disables EcoQoS and uses below-normal priority for the DML worker even in balanced mode', async () => {
+  it('disables EcoQoS and uses below-normal priority for the DML worker', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -1100,8 +1034,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
@@ -1116,7 +1048,7 @@ describe('TranscriptionService', () => {
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
   })
 
-  it('uses idle priority in balanced mode and below-normal in fast mode', async () => {
+  it('uses idle priority for CPU transcription', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -1132,33 +1064,14 @@ describe('TranscriptionService', () => {
     const child = new MockChildProcess()
     childProcessMock.spawn.mockReturnValue(child as any)
 
-    const balancedPromise = (service as any).runWhisperPass(
+    const transcriptionPromise = (service as any).runWhisperPass(
       '/mock/tmp/audio.wav',
-      'meeting-balanced',
+      'meeting-cpu',
       60
     )
     child.emit('close', 0)
-    await balancedPromise
+    await transcriptionPromise
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 19)
-
-    osMock.setPriority.mockClear()
-    service = new TranscriptionService(
-      mockWhisper,
-      mockConverter,
-      '/mock/home/AutoDoc/recordings',
-      mockCalendar,
-      () => false,
-      null,
-      () => false,
-      null,
-      () => 'fast'
-    )
-    childProcessMock.spawn.mockReturnValue(child as any)
-
-    const fastPromise = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting-fast', 60)
-    child.emit('close', 0)
-    await fastPromise
-    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
   })
 
   it('waits for free memory before whisper pass then proceeds when memory frees', async () => {
@@ -1178,8 +1091,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async (ms) => {
         freeGiB = 16
@@ -1228,8 +1139,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async (ms) => {
         await vi.advanceTimersByTimeAsync(ms)
@@ -1280,8 +1189,6 @@ describe('TranscriptionService', () => {
         null,
         () => false,
         null,
-        () => 'balanced',
-        () => 'balanced',
         async () => ({
           id: 'win-low-spec',
           label: 'Low-spec Windows processing',
@@ -1366,8 +1273,6 @@ describe('TranscriptionService', () => {
         null,
         () => false,
         null,
-        () => 'balanced',
-        () => 'balanced',
         async () => ({
           id: 'win-gpu',
           label: 'GPU Windows processing',
@@ -1461,8 +1366,6 @@ describe('TranscriptionService', () => {
         null,
         () => false,
         null,
-        () => 'balanced',
-        () => 'balanced',
         async () => ({
           id: 'win-gpu',
           label: 'GPU Windows processing',
@@ -1528,8 +1431,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => ({
         id: 'win-low-spec',
         label: 'Low-spec Windows processing',
@@ -1593,8 +1494,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async () => {
         throw new Error('memory gate delay should not run on macOS')
@@ -1712,8 +1611,6 @@ describe('TranscriptionService', () => {
         null,
         () => false,
         null,
-        () => 'balanced',
-        () => 'balanced',
         async () => null,
         async () => undefined,
         () => ({ freeGiB: 16, totalGiB: 32 })
@@ -1776,8 +1673,6 @@ describe('TranscriptionService', () => {
       null,
       () => false,
       null,
-      () => 'balanced',
-      () => 'balanced',
       async () => null,
       async () => undefined,
       () => ({ freeGiB: 16, totalGiB: 32 })
@@ -2016,8 +1911,7 @@ describe('TranscriptionService', () => {
         () => false,
         null,
         () => false,
-        null,
-        () => 'balanced'
+        null
       )
 
       const broadcastSpy = vi.spyOn(service as any, 'broadcastStatus')

@@ -407,7 +407,6 @@ export interface TranscriptionStatusPayload {
   progress?: number
   errorCode?: string
   backendLabel?: string
-  qualityMode?: 'fast' | 'balanced'
   etaSeconds?: number | null
   recordingDurationSec?: number | null
 }

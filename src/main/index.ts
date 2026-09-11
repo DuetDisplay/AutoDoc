@@ -35,7 +35,11 @@ import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
-import { isTightWriterEnabled, OllamaProvider, shouldSanitizeWindowsWriterRecords } from './services/llm'
+import {
+  isTightWriterEnabled,
+  OllamaProvider,
+  shouldSanitizeWindowsWriterRecords
+} from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
 import { SegmentationService, shouldUseLosslessPresentation } from './services/segmentation'
@@ -887,7 +891,6 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
-  whisperManager.setTranscriptionQualityModeGetter(() => prefsStore.getTranscriptionQualityMode())
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -923,8 +926,6 @@ app.whenReady().then(async () => {
     diarizationService,
     isExperimentalSpeakerDiarizationEnabled,
     localProcessingCoordinator,
-    () => prefsStore.getTranscriptionPerformanceMode(),
-    () => prefsStore.getTranscriptionQualityMode(),
     () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
   shutdownTranscriptionWorker = () => transcriptionService.shutdown()

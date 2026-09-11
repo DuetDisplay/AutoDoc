@@ -90,8 +90,6 @@ const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
 const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
 type EnqueueSource = 'direct' | 'recovery-scan'
-type TranscriptionPerformanceMode = 'balanced' | 'fast'
-type TranscriptionQualityMode = 'balanced' | 'fast'
 
 interface SystemMemorySnapshot {
   freeGiB: number | null
@@ -131,8 +129,6 @@ export class TranscriptionService {
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private enqueueSource = new Map<string, EnqueueSource>()
-  private getPerformanceMode: () => TranscriptionPerformanceMode
-  private getQualityMode: () => TranscriptionQualityMode
   private getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>
   private memoryGateDelay: (ms: number) => Promise<void>
   private readSystemMemoryInfo: () => SystemMemorySnapshot
@@ -156,15 +152,11 @@ export class TranscriptionService {
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
     private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false,
     private localProcessingCoordinator: LocalProcessingCoordinator | null = null,
-    getPerformanceMode: () => TranscriptionPerformanceMode = () => 'balanced',
-    getQualityMode: () => TranscriptionQualityMode = () => 'balanced',
     getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>,
     memoryGateDelay: (ms: number) => Promise<void> = (ms) =>
       new Promise((resolve) => setTimeout(resolve, ms)),
     readSystemMemoryInfo?: () => SystemMemorySnapshot
   ) {
-    this.getPerformanceMode = getPerformanceMode
-    this.getQualityMode = getQualityMode
     this.getEffectiveWindowsProcessingProfile = getEffectiveWindowsProcessingProfile
     this.memoryGateDelay = memoryGateDelay
     this.readSystemMemoryInfo = readSystemMemoryInfo ?? (() => this.getSystemMemoryInfo())
@@ -396,8 +388,6 @@ export class TranscriptionService {
           hasSystem,
           hasLegacy,
           dualSource: hasMic && hasSystem,
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           backend: this.whisperManager.getTranscriptionBackend(),
           backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
           modelName: this.whisperManager.getModelName(),
@@ -581,8 +571,6 @@ export class TranscriptionService {
           transcriptionWallSec,
           processingProfile: completedProcessingProfile,
           processingProfileId,
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           workerReuseCount: this.workerJobsServed,
           realtimeFactor,
           downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? []
@@ -604,8 +592,6 @@ export class TranscriptionService {
           modelName: this.whisperManager.getModelName(),
           device: workerDevice ?? 'unknown',
           computeType: workerComputeType ?? 'unknown',
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           dualSource: this.jobDualSource,
           recordingDurationSec: metadata.durationSeconds,
           audioDurationSec: this.jobAudioDurationSec,
@@ -655,9 +641,7 @@ export class TranscriptionService {
       logicalProcessors: this.getLogicalProcessorCount(),
       freeMemoryGiB: memory.freeGiB,
       totalMemoryGiB: memory.totalGiB,
-      backend: this.whisperManager.getTranscriptionBackend(),
-      performanceMode: this.getPerformanceMode(),
-      qualityMode: this.getQualityMode()
+      backend: this.whisperManager.getTranscriptionBackend()
     })
   }
 
@@ -1963,7 +1947,7 @@ export class TranscriptionService {
    * GPU, but the parakeet TDT decode loop that feeds it is CPU-side Python.
    * EcoQoS pins that loop to efficiency cores (~5x slowdown measured in
    * Phase 1/3), which defeats the GPU tier's purpose while buying little
-   * responsiveness. CPU tiers keep EcoQoS + Low priority in balanced mode.
+   * responsiveness. CPU tiers keep EcoQoS + Low priority.
    */
   private isDmlWorkerSelected(): boolean {
     return (
@@ -1993,10 +1977,7 @@ export class TranscriptionService {
       this.whisperManager.getWorkerModelPath(),
       this.whisperManager.getWorkerDevice(),
       this.whisperManager.getWorkerComputeType(),
-      this.whisperManager.getWorkerEngine(),
-      // EcoQoS is decided at spawn time (--no-eco), so a performance-mode
-      // change must recreate the worker process.
-      this.getPerformanceMode()
+      this.whisperManager.getWorkerEngine()
     ].join('|')
   }
 
@@ -2015,8 +1996,7 @@ export class TranscriptionService {
       scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
       processEnv: this.whisperManager.getWorkerProcessEnv(),
       applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
-      extraArgs:
-        this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected() ? ['--no-eco'] : []
+      extraArgs: this.isDmlWorkerSelected() ? ['--no-eco'] : []
     })
     this.transcriptionWorkerClientFingerprint = fingerprint
     this.workerLoadedFingerprint = null
@@ -2160,10 +2140,9 @@ export class TranscriptionService {
     const reservedProcessors = Math.min(RESERVED_LOGICAL_CPUS, Math.max(2, logicalProcessors - 2))
     const availableProcessors = Math.max(1, logicalProcessors - reservedProcessors)
     const perSourceProcessors = Math.max(1, Math.floor(availableProcessors / concurrentSources))
-    const floorCap = this.getPerformanceMode() === 'fast' ? logicalProcessors : availableProcessors
     let threadCount = Math.min(
       MAX_WHISPER_THREADS,
-      Math.max(Math.min(MIN_WHISPER_THREADS, floorCap), perSourceProcessors)
+      Math.max(Math.min(MIN_WHISPER_THREADS, availableProcessors), perSourceProcessors)
     )
 
     if (this.getCachedWindowsThreadPolicy() === 'min') {
@@ -2306,7 +2285,7 @@ export class TranscriptionService {
       return
     }
 
-    const useBelowNormal = this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected()
+    const useBelowNormal = this.isDmlWorkerSelected()
     const priority = useBelowNormal
       ? osConstants.priority.PRIORITY_BELOW_NORMAL
       : osConstants.priority.PRIORITY_LOW
@@ -2318,7 +2297,6 @@ export class TranscriptionService {
       logQaGateWorkerPriority(meetingId, {
         pid,
         priorityLabel: label,
-        performanceMode: this.getPerformanceMode(),
         device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
         backend: this.whisperManager.getTranscriptionBackend()
       })
@@ -2547,6 +2525,10 @@ export class TranscriptionService {
       meetingId,
       context: {
         ...context,
+        retries,
+        errorCode,
+        backend: this.whisperManager.getTranscriptionBackend(),
+        modelName: this.whisperManager.getModelName(),
         processingProfile: await this.getProcessingProfileLogContext()
       }
     })
@@ -2624,7 +2606,6 @@ export class TranscriptionService {
         status === 'transcribing'
           ? this.whisperManager.getTranscriptionBackendLabel?.()
           : undefined,
-      qualityMode: status === 'transcribing' ? this.getQualityMode() : undefined,
       etaSeconds:
         status === 'transcribing' && nextProgress != null
           ? this.computeEtaSeconds(nextProgress)

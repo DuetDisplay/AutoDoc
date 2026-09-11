@@ -38,7 +38,6 @@ interface TranscriptionBadgeProps {
   status: TranscriptionStatus
   progress?: number
   backendLabel?: string
-  qualityMode?: 'fast' | 'balanced'
   onRetry?: () => void
 }
 

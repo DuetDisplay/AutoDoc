@@ -122,8 +122,6 @@ interface MacWhisperRuntimeAsset {
   expectedFiles: string[]
 }
 
-type TranscriptionQualityMode = 'balanced' | 'fast'
-
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
@@ -137,7 +135,6 @@ export class WhisperManager extends EventEmitter {
   private inFirstRunSetup = false
   private firstRunSetupStartedAt: number | null = null
   private firstRunDownloadedBytes = 0
-  private getTranscriptionQualityMode: () => TranscriptionQualityMode = () => 'balanced'
   private windowsTranscriptionProfiles: Record<
     WindowsTranscriptionBackendId,
     WindowsTranscriptionProfile
@@ -145,10 +142,6 @@ export class WhisperManager extends EventEmitter {
 
   constructor() {
     super()
-  }
-
-  setTranscriptionQualityModeGetter(getter: () => TranscriptionQualityMode): void {
-    this.getTranscriptionQualityMode = getter
   }
 
   getDowngradesTaken(): string[] {
@@ -306,11 +299,11 @@ export class WhisperManager extends EventEmitter {
   }
 
   getWorkerDevice(): 'cuda' | 'cpu' | 'dml' {
-    return this.getWorkerProfile().device
+    return this.getSelectedWindowsProfile().device
   }
 
   getWorkerComputeType(): WindowsTranscriptionProfile['computeType'] {
-    return this.getWorkerProfile().computeType
+    return this.getSelectedWindowsProfile().computeType
   }
 
   getWorkerProcessEnv(): NodeJS.ProcessEnv {
@@ -375,10 +368,6 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
-    if (profile.id === 'parakeet-gpu' && workerProfile.computeType === 'int8') {
-      return this.windowsTranscriptionProfiles['parakeet-cpu'].estimatedMemoryGiB
-    }
 
     return profile.estimatedMemoryGiB
   }
@@ -427,7 +416,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   getParakeetModelPath(): string {
-    const profile = this.getWorkerProfile()
+    const profile = this.getSelectedWindowsProfile()
     return join(
       this.getModelsDir(),
       'parakeet-models',
@@ -469,24 +458,8 @@ export class WhisperManager extends EventEmitter {
     await this.installMacWhisperRuntimeFromDir(bundledRuntimeDir)
   }
 
-  private getWorkerProfile(): WindowsTranscriptionProfile {
-    const base = this.getSelectedWindowsProfile()
-    if (this.getTranscriptionQualityMode() !== 'fast') {
-      return base
-    }
-
-    if (base.engine === 'parakeet' && base.computeType !== 'int8') {
-      return {
-        ...base,
-        computeType: 'int8'
-      }
-    }
-
-    return base
-  }
-
   private getWorkerProfileFingerprint(): string {
-    const profile = this.getWorkerProfile()
+    const profile = this.getSelectedWindowsProfile()
     return `${profile.id}:${profile.computeType}:${this.getWorkerModelPath()}`
   }
 
@@ -518,20 +491,11 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     for (const asset of profile.assets) {
-      const resolvedAsset =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? (this.windowsTranscriptionProfiles['parakeet-cpu'].assets.find(
-              (candidate) => candidate.id === 'model'
-            ) ?? asset)
-          : asset
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(workerProfile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
-        resolvedAsset.expectedFiles
+        asset.expectedFiles
       )
       if (missingExpectedFiles.length > 0) {
         return false
@@ -862,7 +826,6 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     const hardware = await detectWindowsHardwareProfile()
     const setupElapsedMs = Date.now() - this.firstRunSetupStartedAt
     const totalDownloadedBytes = this.firstRunDownloadedBytes
@@ -876,7 +839,7 @@ export class WhisperManager extends EventEmitter {
       backendLabel: profile.label,
       modelName: profile.modelName,
       device: profile.device,
-      computeType: workerProfile.computeType,
+      computeType: profile.computeType,
       setupElapsedMs,
       totalDownloadedBytes,
       hardware: {
@@ -1149,7 +1112,6 @@ export class WhisperManager extends EventEmitter {
 
   private async ensureParakeetReady(): Promise<void> {
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     await this.ensureFfmpegForSelectedRuntime()
 
     if (profile.assets.some((asset) => !asset.url)) {
@@ -1159,22 +1121,10 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetProfile =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? this.windowsTranscriptionProfiles['parakeet-cpu']
-          : profile
-      const resolvedAsset =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? (assetProfile.assets.find((candidate) => candidate.id === 'model') ?? asset)
-          : asset
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(workerProfile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
-        resolvedAsset.expectedFiles
+        asset.expectedFiles
       )
       if (missingExpectedFiles.length === 0) {
         logAutodocEvent({
@@ -1183,7 +1133,7 @@ export class WhisperManager extends EventEmitter {
           context: {
             backend: profile.id,
             assetId: asset.id,
-            filename: resolvedAsset.filename,
+            filename: asset.filename,
             targetDir: assetRoot
           }
         })
@@ -1196,7 +1146,7 @@ export class WhisperManager extends EventEmitter {
         context: {
           backend: profile.id,
           assetId: asset.id,
-          filename: resolvedAsset.filename,
+          filename: asset.filename,
           targetDir: assetRoot,
           missingExpectedFiles
         }
@@ -1207,7 +1157,7 @@ export class WhisperManager extends EventEmitter {
       })
       this.emit('setup-status', this.getSetupStatus())
       await this.downloadWithRetry(
-        () => this.downloadAndExtractWindowsTranscriptionAsset(workerProfile, resolvedAsset),
+        () => this.downloadAndExtractWindowsTranscriptionAsset(profile, asset),
         asset.id
       )
     }
@@ -2331,10 +2281,8 @@ export class WhisperManager extends EventEmitter {
       return false
     }
 
-    // Probe with the quality-adjusted worker profile: in fast mode the GPU
-    // tier runs int8, and getParakeetModelPath() already points at that model
-    // dir, so probing with the base fp32 computeType would always fail.
-    const profile = this.getWorkerProfile()
+    // Probe the model and device selected by the automatic hardware profile.
+    const profile = this.getSelectedWindowsProfile()
     const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-parakeet-probe-'))
     const probeWavPath = join(probeDir, 'probe.wav')
 

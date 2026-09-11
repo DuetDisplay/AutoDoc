@@ -875,8 +875,8 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('does not treat empty int8 model dir as ready after switching parakeet-gpu to fast quality', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-revalidate-'))
+  it('downloads missing int8 assets when the selected profile changes from GPU to CPU', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-revalidate-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
     await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
@@ -888,8 +888,6 @@ describe('Whisper onboarding dependency installation', () => {
       })
 
       const manager = new WhisperManager()
-      let qualityMode: 'balanced' | 'fast' = 'balanced'
-      manager.setTranscriptionQualityModeGetter(() => qualityMode)
 
       const assetDownloads: string[] = []
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
@@ -912,7 +910,9 @@ describe('Whisper onboarding dependency installation', () => {
       ])
       await expect(manager.isReady()).resolves.toBe(true)
 
-      qualityMode = 'fast'
+      manager.downgradeParakeetGpuToCpuForSession()
+      // Keep the fixture's selection on CPU when ensureReady detects hardware again.
+      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'parakeet-cpu'
       const int8ModelDir = manager.getParakeetModelPath()
       expect(int8ModelDir).toContain('parakeet-tdt-0.6b-v3-int8')
       await mkdir(int8ModelDir, { recursive: true })
@@ -936,9 +936,9 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('ready-check requires int8 expected files for fast parakeet-gpu, not bare model directory', async () => {
+  it('ready-check requires int8 expected files after GPU-to-CPU fallback, not bare model directory', async () => {
     const rootDir = await mkdtemp(
-      join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-')
+      join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-expected-files-')
     )
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
     await writeFile(bundledFfmpeg, 'bundled ffmpeg')
@@ -966,7 +966,7 @@ describe('Whisper onboarding dependency installation', () => {
       await manager.ensureReady()
       ;(manager as any).runtimeValidated = true
 
-      manager.setTranscriptionQualityModeGetter(() => 'fast')
+      manager.downgradeParakeetGpuToCpuForSession()
       const int8ModelDir = manager.getParakeetModelPath()
       await mkdir(int8ModelDir, { recursive: true })
       // Place a non-expected file so the directory is non-empty but still incomplete

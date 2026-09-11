@@ -32,7 +32,6 @@ interface TranscriptViewProps {
   speakers?: SpeakerMap
   transcriptionProgress?: number
   transcriptionBackendLabel?: string
-  transcriptionQualityMode?: 'fast' | 'balanced'
 }
 
 export function TranscriptView({

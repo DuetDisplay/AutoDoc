@@ -107,7 +107,6 @@ export function Recordings({
       string,
       {
         backendLabel?: string
-        qualityMode?: 'fast' | 'balanced'
       }
     >
   >({})
@@ -235,8 +234,7 @@ export function Recordings({
       setTranscriptionStatusDetails((prev) => ({
         ...prev,
         [payload.meetingId]: {
-          backendLabel: payload.backendLabel,
-          qualityMode: payload.qualityMode
+          backendLabel: payload.backendLabel
         }
       }))
       refreshIfUnknownMeeting(payload.meetingId)
@@ -453,7 +451,6 @@ export function Recordings({
                           status={rec.transcriptionStatus}
                           progress={transcriptionProgress[rec.meetingId]}
                           backendLabel={transcriptionStatusDetails[rec.meetingId]?.backendLabel}
-                          qualityMode={transcriptionStatusDetails[rec.meetingId]?.qualityMode}
                           onRetry={() => handleRetryTranscription(rec.meetingId)}
                         />
                         {segmentationStatuses[rec.meetingId] && (
