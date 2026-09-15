@@ -20,13 +20,8 @@ import {
 import { isWindowsRenderer } from '../services/microphone-access'
 import { renderNoteMarkup } from './NoteMarkup'
 
-type NotesOption = 'option-1' | 'option-2'
-
-function optionHeadingClass(option: NotesOption): string {
-  return option === 'option-1'
-    ? 'mb-1 text-[13px] font-semibold text-ink'
-    : 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
-}
+const NOTES_COLUMN = 'mx-auto w-full max-w-[560px]'
+const NOTES_HEADING_CLASS = 'mb-1 text-[13px] font-semibold text-ink'
 
 function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
@@ -450,7 +445,6 @@ function TopicLabel({ topic }: { topic: string | null | undefined }): ReactEleme
 function Bullet({
   item,
   useLosslessPresentation,
-  option,
   meetingSpan,
   onSeek,
   onSave,
@@ -461,7 +455,6 @@ function Bullet({
 }: {
   item: NoteItem
   useLosslessPresentation: boolean
-  option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -484,64 +477,28 @@ function Bullet({
     ? (text: string) => onSave(item.id, parsed.agreed ? `Agreed: ${text}` : text)
     : undefined
 
-  if (option === 'option-1') {
-    return (
-      <div
-        className={`group grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-3 py-1.5 ${parsed.agreed ? 'border-l-2 border-sage pl-3' : ''}`}
-      >
-        <div className="pt-0.5 text-right">
-          {showTime ? (
-            <button
-              type="button"
-              onClick={() => onSeek(start)}
-              className="text-[11px] tabular-nums text-ink-faint hover:text-ink"
-              title={`Jump to ${formatClock(start)}`}
-            >
-              ▶ {formatClock(start)}
-            </button>
-          ) : null}
-        </div>
-        <div className="text-[13.5px] leading-relaxed text-ink">
-          <TopicLabel topic={topic} />
-          {hasDistinctTitle || (indexOnly && title) ? (
-            <div className="font-medium text-ink">{renderNoteMarkup(title)}</div>
-          ) : null}
-          {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
-          {showBody ? (
-            <InlineEdit
-              value={parsed.text}
-              onSave={saveText}
-              className={
-                hasDistinctTitle
-                  ? 'text-[12.5px] leading-relaxed text-ink-secondary'
-                  : 'text-[13.5px] leading-relaxed text-ink'
-              }
-            />
-          ) : null}
-        </div>
-        {onDelete ? (
-          <RemoveButton
-            label={deleteLabel}
-            testId={`delete-${item.id}`}
-            onClick={() => onDelete(item.id)}
-          />
+  return (
+    <div
+      className={`group grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-3 py-1.5 ${parsed.agreed ? 'border-l-2 border-sage pl-3' : ''}`}
+    >
+      <div className="pt-0.5 text-right">
+        {showTime ? (
+          <button
+            type="button"
+            onClick={() => onSeek(start)}
+            className="text-[11px] tabular-nums text-ink-faint hover:text-ink"
+            title={`Jump to ${formatClock(start)}`}
+          >
+            ▶ {formatClock(start)}
+          </button>
         ) : null}
       </div>
-    )
-  }
-
-  return (
-    <div className="group flex items-start justify-between gap-3 py-1">
-      <div className="min-w-0 text-[13.5px] leading-relaxed text-ink">
+      <div className="text-[13.5px] leading-relaxed text-ink">
         <TopicLabel topic={topic} />
         {hasDistinctTitle || (indexOnly && title) ? (
           <div className="font-medium text-ink">{renderNoteMarkup(title)}</div>
         ) : null}
-        {parsed.agreed ? (
-          <span className="mr-1.5 inline-flex items-center rounded-full bg-sage-light px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sage-dark">
-            Agreed
-          </span>
-        ) : null}
+        {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
         {showBody ? (
           <InlineEdit
             value={parsed.text}
@@ -554,16 +511,13 @@ function Bullet({
           />
         ) : null}
       </div>
-      <div className="flex items-center gap-2">
-        <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
-        {onDelete ? (
-          <RemoveButton
-            label={deleteLabel}
-            testId={`delete-${item.id}`}
-            onClick={() => onDelete(item.id)}
-          />
-        ) : null}
-      </div>
+      {onDelete ? (
+        <RemoveButton
+          label={deleteLabel}
+          testId={`delete-${item.id}`}
+          onClick={() => onDelete(item.id)}
+        />
+      ) : null}
     </div>
   )
 }
@@ -571,7 +525,6 @@ function Bullet({
 function DecisionsSection({
   items,
   useLosslessPresentation,
-  option,
   meetingSpan,
   onSeek,
   onSave,
@@ -579,7 +532,6 @@ function DecisionsSection({
 }: {
   items: readonly NoteItem[]
   useLosslessPresentation: boolean
-  option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -591,56 +543,37 @@ function DecisionsSection({
     ? items.filter((item) => !isNeedsReviewTopic(item.topic))
     : items
   if (ready.length === 0) return null
-  const renderItems = (visible: readonly NoteItem[]): ReactElement[] =>
-    visible.map((item) => (
-      <Bullet
-        key={item.id}
-        item={item}
-        useLosslessPresentation={useLosslessPresentation}
-        option={option}
-        meetingSpan={meetingSpan}
-        onSeek={onSeek}
-        onSave={onSave}
-        onDelete={onDelete}
-        deleteLabel="Delete decision"
-      />
-    ))
-
-  if (option === 'option-2') {
-    return (
-      <section
-        id="notes-decisions"
-        className="rounded-xl border border-border bg-bg-card px-4 py-3"
-      >
-        <h3 className="mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted">
-          Decisions
-        </h3>
-        {renderItems(ready)}
-      </section>
-    )
-  }
 
   return (
     <section
       id="notes-decisions"
-      className="mx-auto w-full max-w-[560px] border-t border-border pt-4"
+      className={`${NOTES_COLUMN} border-t border-border pt-4`}
     >
       <h3 className="mb-2 text-[17px] font-semibold text-ink">Decisions</h3>
-      {renderItems(ready)}
+      {ready.map((item) => (
+        <Bullet
+          key={item.id}
+          item={item}
+          useLosslessPresentation={useLosslessPresentation}
+          meetingSpan={meetingSpan}
+          onSeek={onSeek}
+          onSave={onSave}
+          onDelete={onDelete}
+          deleteLabel="Delete decision"
+        />
+      ))}
     </section>
   )
 }
 
 function KeyTakeawaysSection({
   items,
-  option,
   meetingSpan,
   onSeek,
   onSave,
   onDelete
 }: {
   items: readonly NoteItem[]
-  option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -651,27 +584,14 @@ function KeyTakeawaysSection({
   return (
     <section
       id="notes-key-takeaways"
-      className={
-        option === 'option-1'
-          ? 'mx-auto w-full max-w-[560px] border-y border-border py-3'
-          : 'rounded-xl border border-border bg-bg-card px-4 py-3'
-      }
+      className={`${NOTES_COLUMN} border-y border-border py-3`}
     >
-      <h3
-        className={
-          option === 'option-1'
-            ? 'mb-1 text-[13px] font-semibold text-ink'
-            : 'mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-ink-muted'
-        }
-      >
-        Key Takeaways
-      </h3>
+      <h3 className={NOTES_HEADING_CLASS}>Key Takeaways</h3>
       {items.map((item) => (
         <Bullet
           key={item.id}
           item={item}
           useLosslessPresentation
-          option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
           onSave={onSave}
@@ -686,7 +606,6 @@ function KeyTakeawaysSection({
 function SubBullet({
   item,
   useLosslessPresentation,
-  option,
   meetingSpan,
   onSeek,
   onSave,
@@ -694,7 +613,6 @@ function SubBullet({
 }: {
   item: NoteItem
   useLosslessPresentation: boolean
-  option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -710,24 +628,14 @@ function SubBullet({
   return (
     <div
       data-testid={`sub-${item.id}`}
-      className={`group flex items-start gap-2 py-0.5 ${
-        option === 'option-1' ? 'pl-[76px]' : 'pl-5'
-      }`}
+      className="group flex items-start gap-2 py-0.5 pl-[76px]"
     >
       <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
       <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-secondary">
         {hasDistinctTitle ? (
           <div className="font-medium text-ink-secondary">{renderNoteMarkup(title)}</div>
         ) : null}
-        {parsed.agreed ? (
-          option === 'option-2' ? (
-            <span className="mr-1.5 inline-flex items-center rounded-full bg-sage-light px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sage-dark">
-              Agreed
-            </span>
-          ) : (
-            <span className="sr-only">Agreed: </span>
-          )
-        ) : null}
+        {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
         <InlineEdit
           value={parsed.text}
           onSave={saveText}
@@ -752,7 +660,6 @@ function BulletGroup({
   item,
   children,
   useLosslessPresentation,
-  option,
   meetingSpan,
   onSeek,
   onSave,
@@ -762,7 +669,6 @@ function BulletGroup({
   item: NoteItem
   children: readonly NoteItem[]
   useLosslessPresentation: boolean
-  option: NotesOption
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
   onSave?: (itemId: string, text: string) => void
@@ -774,7 +680,6 @@ function BulletGroup({
       <Bullet
         item={item}
         useLosslessPresentation={useLosslessPresentation}
-        option={option}
         meetingSpan={meetingSpan}
         onSeek={onSeek}
         onSave={onSave}
@@ -782,13 +687,12 @@ function BulletGroup({
         sectionTitle={sectionTitle}
       />
       {children.length > 0 ? (
-        <div className={option === 'option-1' ? '' : 'ml-0 border-l border-border'}>
+        <div>
           {children.map((child) => (
             <SubBullet
               key={child.id}
               item={child}
               useLosslessPresentation={useLosslessPresentation}
-              option={option}
               meetingSpan={meetingSpan}
               onSeek={onSeek}
               onSave={onSave}
@@ -814,11 +718,6 @@ export function NotesV2Document({
   onSeek: (startMs: number) => void
   onWrite?: (content: MeetingNotesContent) => void
 }): ReactElement {
-  const [option, setOption] = useState<NotesOption>(() => {
-    return window.localStorage.getItem('autodoc.notesV2Option') === 'option-2'
-      ? 'option-2'
-      : 'option-1'
-  })
   const useLosslessPresentation = notesUseLosslessPresentation(notes)
   const windowsQuality = isWindowsRenderer()
   const documentNotes =
@@ -901,52 +800,18 @@ export function NotesV2Document({
     ? documentNotes.sections.filter((section) => !isNeedsReviewTopic(section.title))
     : documentNotes.sections
   const meetingTitle = title?.trim() ?? ''
-  const optionColumn = option === 'option-1' ? 'mx-auto w-full max-w-[560px]' : ''
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex rounded-lg border border-border bg-bg-card p-0.5 self-start">
-        {(['option-1', 'option-2'] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => {
-              setOption(value)
-              window.localStorage.setItem('autodoc.notesV2Option', value)
-            }}
-            className={`rounded-md px-2.5 py-1 text-[11.5px] font-semibold ${
-              option === value ? 'bg-ink text-white' : 'text-ink-muted hover:text-ink'
-            }`}
-          >
-            {value === 'option-1' ? 'Option 1' : 'Option 2'}
-          </button>
-        ))}
-      </div>
-
       {meetingTitle ? (
-        <header className={optionColumn}>
-          <h2
-            className={
-              option === 'option-1'
-                ? 'text-[22px] font-semibold tracking-tight text-ink'
-                : 'text-[18px] font-semibold tracking-tight text-ink'
-            }
-          >
-            {meetingTitle}
-          </h2>
+        <header className={NOTES_COLUMN}>
+          <h2 className="text-[22px] font-semibold tracking-tight text-ink">{meetingTitle}</h2>
         </header>
       ) : null}
 
       {summary ? (
-        <section
-          aria-labelledby="notes-summary"
-          className={
-            option === 'option-1'
-              ? `${optionColumn} pb-2`
-              : 'rounded-xl border border-border bg-bg-card px-4 py-3'
-          }
-        >
-          <h3 id="notes-summary" className={optionHeadingClass(option)}>
+        <section aria-labelledby="notes-summary" className={`${NOTES_COLUMN} pb-2`}>
+          <h3 id="notes-summary" className={NOTES_HEADING_CLASS}>
             Summary
           </h3>
           <InlineEdit
@@ -961,7 +826,6 @@ export function NotesV2Document({
       {useLosslessPresentation ? (
         <KeyTakeawaysSection
           items={documentNotes.keyTakeaways}
-          option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
           onSave={itemEdit.onSave}
@@ -969,54 +833,7 @@ export function NotesV2Document({
         />
       ) : null}
 
-      {useLosslessPresentation && option === 'option-2' ? (
-        <DecisionsSection
-          items={documentNotes.decisions}
-          useLosslessPresentation={useLosslessPresentation}
-          option={option}
-          meetingSpan={meetingSpan}
-          onSeek={onSeek}
-          onSave={itemEdit.onSave}
-          onDelete={itemEdit.onDelete}
-        />
-      ) : null}
-
-      {showNextSteps && option === 'option-2' && (visibleNextSteps.length > 0 || onWrite) ? (
-        <div
-          id="notes-next-steps"
-          className="rounded-xl border border-sage/20 bg-sage-light/40 px-4 py-3"
-        >
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.04em] text-sage-dark">
-            Next Steps
-          </div>
-          {visibleNextSteps.map((item) => (
-              <NextStepRow
-                key={item.id}
-                item={item}
-                useLosslessPresentation={useLosslessPresentation}
-                meetingSpan={meetingSpan}
-                onSeek={onSeek}
-                onSaveTitle={onWrite ? saveItemTitle : undefined}
-                {...itemEdit}
-              />
-            ))}
-          {onWrite ? (
-            <button
-              type="button"
-              className="mt-1 text-[11px] font-semibold text-ink-faint hover:text-sage"
-              onClick={addNextStep}
-            >
-              + Add
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div
-        className={
-          option === 'option-1' ? 'mx-auto w-full max-w-[560px] py-2' : 'flex flex-col gap-5'
-        }
-      >
+      <div className={`${NOTES_COLUMN} py-2`}>
         {visibleSections.map((section) => {
           const hierarchy = displayNoteSectionHierarchy(
             section,
@@ -1030,11 +847,7 @@ export function NotesV2Document({
                 <InlineEdit
                   value={section.title}
                   onSave={onWrite ? (next) => saveSectionTitle(section.id, next) : undefined}
-                  className={
-                    option === 'option-1'
-                      ? 'mb-2 text-[17px] font-semibold text-ink'
-                      : 'mb-2 text-[18px] font-semibold tracking-tight text-ink'
-                  }
+                  className="mb-2 text-[17px] font-semibold text-ink"
                   as="h3"
                 />
               ) : null}
@@ -1044,7 +857,6 @@ export function NotesV2Document({
                   item={item}
                   children={index === lastParentIndex ? extra : []}
                   useLosslessPresentation={useLosslessPresentation}
-                  option={option}
                   meetingSpan={meetingSpan}
                   onSeek={onSeek}
                   sectionTitle={section.title}
@@ -1057,7 +869,6 @@ export function NotesV2Document({
                       key={item.id}
                       item={item}
                       useLosslessPresentation={useLosslessPresentation}
-                      option={option}
                       meetingSpan={meetingSpan}
                       onSeek={onSeek}
                       sectionTitle={section.title}
@@ -1068,7 +879,7 @@ export function NotesV2Document({
               {onWrite ? (
                 <button
                   type="button"
-                  className={`mt-1 text-[11px] font-semibold text-ink-faint hover:text-sage ${option === 'option-1' ? 'pl-[76px]' : ''}`}
+                  className="mt-1 pl-[76px] text-[11px] font-semibold text-ink-faint hover:text-sage"
                   onClick={() => addKeyPoint(section)}
                 >
                   + Add
@@ -1088,11 +899,10 @@ export function NotesV2Document({
         ) : null}
       </div>
 
-      {useLosslessPresentation && option === 'option-1' ? (
+      {useLosslessPresentation ? (
         <DecisionsSection
           items={documentNotes.decisions}
           useLosslessPresentation={useLosslessPresentation}
-          option={option}
           meetingSpan={meetingSpan}
           onSeek={onSeek}
           onSave={itemEdit.onSave}
@@ -1100,23 +910,20 @@ export function NotesV2Document({
         />
       ) : null}
 
-      {showNextSteps && option === 'option-1' && (visibleNextSteps.length > 0 || onWrite) ? (
-        <div
-          id="notes-next-steps"
-          className="mx-auto w-full max-w-[560px] border-t border-border pt-4"
-        >
+      {showNextSteps && (visibleNextSteps.length > 0 || onWrite) ? (
+        <div id="notes-next-steps" className={`${NOTES_COLUMN} border-t border-border pt-4`}>
           <h3 className="mb-2 text-[17px] font-semibold text-ink">Next Steps</h3>
           {visibleNextSteps.map((item) => (
-              <NextStepRow
-                key={item.id}
-                item={item}
-                useLosslessPresentation={useLosslessPresentation}
-                meetingSpan={meetingSpan}
-                onSeek={onSeek}
-                onSaveTitle={onWrite ? saveItemTitle : undefined}
-                {...itemEdit}
-              />
-            ))}
+            <NextStepRow
+              key={item.id}
+              item={item}
+              useLosslessPresentation={useLosslessPresentation}
+              meetingSpan={meetingSpan}
+              onSeek={onSeek}
+              onSaveTitle={onWrite ? saveItemTitle : undefined}
+              {...itemEdit}
+            />
+          ))}
           {onWrite ? (
             <button
               type="button"

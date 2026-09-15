@@ -80,7 +80,7 @@ describe('Onboarding', () => {
 
     render(<Onboarding onComplete={vi.fn()} />)
 
-    expect(await screen.findByRole('heading', { name: 'Connect Calendar' )).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /back/i }))
 
@@ -104,7 +104,7 @@ describe('Onboarding', () => {
 
     expect(await screen.findByRole('heading', { name: 'Screen Recording' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /^continue/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Connect Calendar' )).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Connect Calendar' })).not.toBeInTheDocument()
   })
 
   it('renders step dots', async () => {
@@ -127,7 +127,7 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     expect(await screen.findByRole('heading', { name: 'Connect Calendar' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /skip for now/i )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
   })
 
   it('surfaces onboarding calendar connection failures so users can recover', async () => {
@@ -146,7 +146,7 @@ describe('Onboarding', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       /we couldn't connect google calendar/i
     )
-    expect(screen.getByRole('button', { name: /skip for now/i )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
   })
 
   it('persists the analytics opt-in choice and advances to the all-set step', async () => {

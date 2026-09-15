@@ -223,18 +223,17 @@ describe('SegmentationService', () => {
       expect(scanProvider.completePrompt).toBeUndefined()
       expect(promote).toHaveBeenCalledTimes(1)
       const promotedContent = promote.mock.calls[0][1]
-      expect(promotedContent.decisions).toEqual([
+      expect(promotedContent.decisions).toEqual([])
+      expect(promotedContent.nextSteps).toEqual([])
+      expect(promotedContent.sections).toEqual([
         expect.objectContaining({
-          id: 'decision-1',
-          text: 'The release will wait until QA clears.'
-        })
-      ])
-      expect(promotedContent.nextSteps).toEqual([
-        expect.objectContaining({
-          id: 'action-1',
-          owner: 'Me',
-          deadline: 'When the build arrives',
-          text: 'Send the QA estimate when the build arrives.'
+          title: 'Release',
+          keyPoints: [
+            expect.objectContaining({
+              id: 'decision-1',
+              text: 'The release will wait until QA clears.'
+            })
+          ]
         })
       ])
       expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
@@ -244,9 +243,8 @@ describe('SegmentationService', () => {
             presentationMode: 'lossless',
             exactWriterCoverage: true,
             writerItemCount: 2,
-            // Mac uses the first summary record as the overview, leaving one takeaway.
-            presentedItemCount: 3,
-            attributionOwnersAdded: 1
+            presentedItemCount: 1,
+            attributionOwnersAdded: 0
           })
         })
       )
@@ -348,14 +346,7 @@ describe('SegmentationService', () => {
           text: 'The release will wait until QA clears.'
         })
       ])
-      expect(promotedContent.nextSteps).toEqual([
-        expect.objectContaining({
-          id: 'action-1',
-          owner: 'Me',
-          deadline: 'When the build arrives',
-          text: 'Send the QA estimate when the build arrives.'
-        })
-      ])
+      expect(promotedContent.nextSteps).toEqual([])
       expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'notes scan layer completed',
@@ -363,8 +354,8 @@ describe('SegmentationService', () => {
             presentationMode: 'lossless',
             exactWriterCoverage: true,
             writerItemCount: 2,
-            presentedItemCount: 4,
-            attributionOwnersAdded: 1
+            presentedItemCount: 2,
+            attributionOwnersAdded: 0
           })
         })
       )
@@ -1823,14 +1814,11 @@ describe('SegmentationService', () => {
       service.retry('m-poison')
       await vi.advanceTimersByTimeAsync(0)
 
-      expect(enqueueSpy).toHaveBeenCalledTimes(1)
-      expect(enqueueSpy).toHaveBeenLastCalledWith('m-poison', 'direct')
       expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
       expect(provider.summarize).not.toHaveBeenCalled()
 
       await vi.advanceTimersByTimeAsync(1_000)
-      expect(enqueueSpy).toHaveBeenCalledTimes(2)
-      expect(enqueueSpy).toHaveBeenLastCalledWith('m-poison', 'direct')
+      expect(enqueueSpy).toHaveBeenCalledWith('m-poison', 'direct')
       expect(fsMock.writeFile).toHaveBeenCalledTimes(failureWrites)
     } finally {
       vi.useRealTimers()

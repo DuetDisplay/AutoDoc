@@ -110,11 +110,10 @@ function legacyNotes(): MeetingNotesV2 {
 
 describe('NotesV2Document', () => {
   beforeEach(() => {
-    window.localStorage.removeItem('autodoc.notesV2Option')
     isWindowsRenderer.mockReturnValue(false)
   })
 
-  it('lets the user switch Option 1 / Option 2 without next-step checkboxes', async () => {
+  it('renders the timestamp-column notes layout without a layout toggle or next-step checkboxes', () => {
     render(
       <NotesV2Document
         notes={notes()}
@@ -123,7 +122,8 @@ describe('NotesV2Document', () => {
       />
     )
 
-    expect(screen.getByRole('button', { name: 'Option 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Option 1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Option 2' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
     expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Key Takeaways' })).toBeInTheDocument()
@@ -131,16 +131,9 @@ describe('NotesV2Document', () => {
     expect(screen.queryByText('Review the offline analytics PR')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
-    expect(screen.getByText('The team aligned on analytics coverage.')).toBeInTheDocument()
-    expect(screen.getByText('Collect login events')).toBeInTheDocument()
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
-    expect(screen.queryByText(/open/i)).not.toBeInTheDocument()
   })
 
-  it('puts the meeting title at the top and labels the overview Summary in both options', async () => {
+  it('puts the meeting title at the top and labels the overview Summary', () => {
     const { container } = render(
       <NotesV2Document
         notes={notes()}
@@ -158,14 +151,9 @@ describe('NotesV2Document', () => {
     expect(title?.textContent).toBe('duet-display - Slack')
     expect(summary).not.toBeNull()
     expect(title?.compareDocumentPosition(summary!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.queryByText('Recorded meeting')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('heading', { name: 'duet-display - Slack' })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
   })
 
-  it('hides next steps on Mac and Windows even when items exist', async () => {
+  it('hides next steps on Mac and Windows even when items exist', () => {
     const sample = notes()
     sample.nextSteps = [
       {
@@ -190,10 +178,6 @@ describe('NotesV2Document', () => {
     expect(
       screen.queryByText('Ask Sergio for a smoke-test estimate as soon as the build arrives.')
     ).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.queryByText('Next Steps')).not.toBeInTheDocument()
-    expect(screen.queryByText('Follow up on QA')).not.toBeInTheDocument()
 
     isWindowsRenderer.mockReturnValue(true)
     view.rerender(
@@ -243,7 +227,7 @@ describe('NotesV2Document', () => {
     expect(afterAdd.sections[1].keyPoints[0].provenance).toBe('user-created')
   })
 
-  it('renders bold markdown, nested supporting lines, and Option 1 timestamp jumps', async () => {
+  it('renders bold markdown, nested supporting lines, and timestamp jumps', async () => {
     const onSeek = vi.fn()
     const sample = notes()
     sample.sections[0].keyPoints[0].text =
@@ -263,12 +247,11 @@ describe('NotesV2Document', () => {
     expect(screen.getByText('HP opt-in for gaming PCs is 80-95%.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Option 1' }))
     await userEvent.click(screen.getByRole('button', { name: '▶ 0:01' }))
     expect(onSeek).toHaveBeenCalledWith(1200)
   })
 
-  it('renders decisions in both layouts and jumps to their source', async () => {
+  it('renders decisions and jumps to their source', async () => {
     const onSeek = vi.fn()
     const sample = notes()
     sample.decisions = [
@@ -298,11 +281,6 @@ describe('NotesV2Document', () => {
       screen.getByText('Release the free tier at a 50/50 split after smoke testing passes.')
     ).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '▶ 0:05' }))
-    expect(onSeek).toHaveBeenLastCalledWith(5200)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Option 2' }))
-    expect(screen.getByRole('heading', { name: 'Decisions' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '▶ 0:05' }))
     expect(onSeek).toHaveBeenLastCalledWith(5200)
   })
