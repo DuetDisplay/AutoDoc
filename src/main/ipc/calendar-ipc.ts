@@ -17,13 +17,26 @@ export function registerCalendarIpc(
   calendarManager: CalendarManager,
   onEventsUpdated?: (events: CalendarEvent[]) => void,
   onConnectionChanged?: (connected: boolean) => void
-): void {
+): (events: CalendarEvent[]) => CalendarEvent[] {
+  let latestEvents: CalendarEvent[] = []
+
+  const rememberEvents = (events: CalendarEvent[]): CalendarEvent[] => {
+    latestEvents = events
+    return applyAutoRecordState(events)
+  }
+
+  // Use the same saved preferences for startup sync, connection sync, and edits.
+  const publishEvents = (events: CalendarEvent[]): CalendarEvent[] => {
+    const enriched = rememberEvents(events)
+    pushEventsToRenderer(enriched)
+    onEventsUpdated?.(enriched)
+    return enriched
+  }
+
   ipcMain.handle('calendar:connect', async (_event, providerType: 'google' | 'microsoft') => {
     if (isE2E) {
       const account = connectE2ECalendar(providerType)
-      const enriched = applyAutoRecordState(getE2ECalendarEvents())
-      pushEventsToRenderer(enriched)
-      onEventsUpdated?.(enriched)
+      publishEvents(getE2ECalendarEvents())
       pushConnectionStatus(true)
       onConnectionChanged?.(true)
       return account
@@ -44,17 +57,11 @@ export function registerCalendarIpc(
       void (async () => {
         try {
           const events = await calendarManager.fetchAllUpcomingEvents()
-          const enriched = applyAutoRecordState(events)
-          pushEventsToRenderer(enriched)
-          onEventsUpdated?.(enriched)
+          publishEvents(events)
 
           // Start sync if this is the first account
           if (calendarManager.getAccounts().length === 1) {
-            calendarManager.startSync((updatedEvents) => {
-              const enrichedUpdated = applyAutoRecordState(updatedEvents)
-              pushEventsToRenderer(enrichedUpdated)
-              onEventsUpdated?.(enrichedUpdated)
-            })
+            calendarManager.startSync(publishEvents)
           }
         } catch (err) {
           logAutodocFailure({
@@ -90,9 +97,7 @@ export function registerCalendarIpc(
   ipcMain.handle('calendar:disconnect', async (_event, accountId: string) => {
     if (isE2E) {
       disconnectE2ECalendar(accountId)
-      const enriched = applyAutoRecordState(getE2ECalendarEvents())
-      pushEventsToRenderer(enriched)
-      onEventsUpdated?.(enriched)
+      publishEvents(getE2ECalendarEvents())
       const connected = getE2ECalendarAccounts().length > 0
       pushConnectionStatus(connected)
       onConnectionChanged?.(connected)
@@ -107,9 +112,7 @@ export function registerCalendarIpc(
 
     // Push updated events to renderer
     const events = await calendarManager.fetchAllUpcomingEvents()
-    const enriched = applyAutoRecordState(events)
-    pushEventsToRenderer(enriched)
-    onEventsUpdated?.(enriched)
+    publishEvents(events)
     const connected = calendarManager.getAccounts().length > 0
     pushConnectionStatus(connected)
     onConnectionChanged?.(connected)
@@ -125,25 +128,21 @@ export function registerCalendarIpc(
 
   ipcMain.handle('calendar:get-events', async () => {
     if (isE2E) {
-      return applyAutoRecordState(getE2ECalendarEvents())
+      return rememberEvents(getE2ECalendarEvents())
     }
 
     const events = await calendarManager.fetchAllUpcomingEvents()
-    return applyAutoRecordState(events)
+    return rememberEvents(events)
   })
 
   ipcMain.handle('calendar:sync', async () => {
     if (isE2E) {
-      const enriched = applyAutoRecordState(getE2ECalendarEvents())
-      pushEventsToRenderer(enriched)
-      onEventsUpdated?.(enriched)
+      const enriched = publishEvents(getE2ECalendarEvents())
       return enriched
     }
 
     const events = await calendarManager.fetchAllUpcomingEvents()
-    const enriched = applyAutoRecordState(events)
-    pushEventsToRenderer(enriched)
-    onEventsUpdated?.(enriched)
+    const enriched = publishEvents(events)
     return enriched
   })
 
@@ -151,8 +150,12 @@ export function registerCalendarIpc(
     'calendar:set-auto-record',
     (_event, eventId: string, recurringEventId: string | null, mode: AutoRecordMode) => {
       setAutoRecord(eventId, recurringEventId, mode)
+      // Recompute all occurrences locally, including independent once preferences.
+      publishEvents(latestEvents)
     }
   )
+
+  return publishEvents
 }
 
 function applyAutoRecordState(events: CalendarEvent[]): CalendarEvent[] {

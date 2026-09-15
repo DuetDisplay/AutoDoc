@@ -813,7 +813,7 @@ app.whenReady().then(async () => {
   })
 
   const calendarManager = new CalendarManager()
-  registerCalendarIpc(
+  const publishCalendarEvents = registerCalendarIpc(
     calendarManager,
     (events) => {
       cachedEvents = events
@@ -1975,14 +1975,7 @@ app.whenReady().then(async () => {
     accountCount: restoredAccounts.length
   })
   if (restoredAccounts.length > 0) {
-    calendarManager.startSync((events) => {
-      cachedEvents = events
-      updateTrayMenu()
-      const windows = BrowserWindow.getAllWindows()
-      for (const win of windows) {
-        win.webContents.send('calendar:events-updated', events)
-      }
-    })
+    calendarManager.startSync(publishCalendarEvents)
   }
 
   cleanupTempFiles().catch(() => {})

@@ -473,10 +473,6 @@ export function Settings() {
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
-            <p className="text-[12px] text-ink-muted">Default: off</p>
-          </div>
-          <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
             <p className="text-[12px] text-ink-muted">
               {runtimeInfo?.whisperModel ?? 'Loading...'}
