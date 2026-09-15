@@ -2527,8 +2527,8 @@ export class TranscriptionService {
         ...context,
         retries,
         errorCode,
-        backend: this.whisperManager.getTranscriptionBackend(),
-        modelName: this.whisperManager.getModelName(),
+        backend: this.whisperManager.getTranscriptionBackend?.() ?? null,
+        modelName: this.whisperManager.getModelName?.() ?? null,
         processingProfile: await this.getProcessingProfileLogContext()
       }
     })

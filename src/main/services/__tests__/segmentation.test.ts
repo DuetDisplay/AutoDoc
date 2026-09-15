@@ -692,10 +692,14 @@ describe('SegmentationService', () => {
     expect(boundProvider.activeControllers.has('scan')).toBe(true)
     expect(pipeline).toHaveBeenCalled()
     expect(promote).toHaveBeenCalled()
-    expect(boundProvider.releaseResources).toHaveBeenCalled()
-    expect(boundProvider.releaseResources.mock.invocationCallOrder[0]).toBeGreaterThan(
-      pipeline.mock.invocationCallOrder[0]
-    )
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      expect(boundProvider.releaseResources).toHaveBeenCalled()
+      expect(boundProvider.releaseResources.mock.invocationCallOrder[0]).toBeGreaterThan(
+        pipeline.mock.invocationCallOrder[0]
+      )
+    } else {
+      expect(boundProvider.releaseResources).not.toHaveBeenCalled()
+    }
     expect(mocks.logAutodocFailure).not.toHaveBeenCalled()
 
     pipeline.mockRestore()
@@ -1548,7 +1552,11 @@ describe('SegmentationService', () => {
     await (service as any).processJob('m-reap')
 
     expect(reapLeftoverRunners).toHaveBeenCalledWith('before-notes-profile', 'm-reap')
-    expect(reapLeftoverRunners).toHaveBeenCalledWith('after-notes', 'm-reap')
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      expect(reapLeftoverRunners).toHaveBeenCalledWith('after-notes', 'm-reap')
+    } else {
+      expect(reapLeftoverRunners).not.toHaveBeenCalledWith('after-notes', 'm-reap')
+    }
     expect(reapLeftoverRunners).not.toHaveBeenCalledWith('before-scan', 'm-reap')
     expect(getEffectiveMacProcessingProfile).toHaveBeenCalled()
     expect(order).toEqual(['reap', 'snapshot'])
@@ -1671,8 +1679,9 @@ describe('SegmentationService', () => {
       'writer',
       process.platform === 'win32' ? 'recycle:before-scan' : 'reap:before-scan',
       'scan',
-      'unload',
-      'reap:after-notes'
+      ...(process.platform === 'darwin' || process.platform === 'win32'
+        ? ['unload', 'reap:after-notes']
+        : [])
     ])
     expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
       expect.objectContaining({
