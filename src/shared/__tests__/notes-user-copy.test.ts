@@ -16,7 +16,7 @@ describe('notes user copy', () => {
       'notes engine wasn’t ready'
     )
     expect(notesUserCopy(notesFailureKindFromCode('scan_or_persist')).title).toBe(
-      'We couldn’t finish the new notes layout'
+      'Your notes are ready in a basic format'
     )
     expect(notesUserCopy(notesFailureKindFromCode('unknown')).body).toContain(
       'problem writing notes'

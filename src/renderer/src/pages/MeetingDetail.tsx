@@ -1544,7 +1544,7 @@ export function MeetingDetail() {
                         onClick={handleReprocessNotes}
                         className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
                       >
-                        Try again
+                        {segmentationErrorCode === 'scan_or_persist' ? 'Regenerate notes' : 'Try again'}
                       </button>
                       <button
                         onClick={() => setActiveTab('transcript')}

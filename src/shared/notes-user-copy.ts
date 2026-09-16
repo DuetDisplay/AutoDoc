@@ -23,8 +23,8 @@ const COPY: Record<NotesUserFailureKind, NotesUserCopy> = {
     body: 'AutoDoc hit a problem writing notes this time. Your transcript is still available.'
   },
   layout: {
-    title: 'We couldn’t finish the new notes layout',
-    body: 'You’re seeing a simpler version. Your transcript is still available.'
+    title: 'Your notes are ready in a basic format',
+    body: 'AutoDoc hit an error while preparing the topic layout, so your generated notes are shown in categories below. Your transcript is still available.'
   }
 }
 
