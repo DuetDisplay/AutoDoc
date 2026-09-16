@@ -11,8 +11,8 @@ const COPY: Record<NotesUserFailureKind, NotesUserCopy> = {
     body: 'There wasn’t enough conversation to turn into notes. Your transcript is still available.'
   },
   memory: {
-    title: 'Notes couldn’t finish',
-    body: 'This Mac was short on memory. Try again after closing other apps.'
+    title: 'Not enough available memory',
+    body: 'Your computer doesn’t have enough free RAM to generate notes. Close other apps, then retry.'
   },
   engine: {
     title: 'Notes couldn’t finish',

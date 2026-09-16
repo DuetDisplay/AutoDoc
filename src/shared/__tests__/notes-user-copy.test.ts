@@ -7,7 +7,7 @@ describe('notes user copy', () => {
       'No notes were generated'
     )
     expect(notesUserCopy(notesFailureKindFromCode('ollama-insufficient-memory')).title).toBe(
-      'Notes couldn’t finish'
+      'Not enough available memory'
     )
     expect(notesUserCopy(notesFailureKindFromCode('ollama-unavailable')).body).toContain(
       'notes engine wasn’t ready'

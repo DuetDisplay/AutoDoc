@@ -1,3 +1,5 @@
+import type { MemoryFailure } from './memory-failure'
+
 export type MeetingStatus = 'recording' | 'processing' | 'complete' | 'failed'
 
 export type SegmentCategory =
@@ -406,6 +408,7 @@ export interface TranscriptionStatusPayload {
   status: TranscriptionStatus
   progress?: number
   errorCode?: string
+  memoryFailure?: MemoryFailure
   backendLabel?: string
   etaSeconds?: number | null
   recordingDurationSec?: number | null
@@ -432,6 +435,7 @@ export interface SegmentationStatusPayload {
   status: SegmentationStatus
   progress?: number
   errorCode?: string
+  memoryFailure?: MemoryFailure
   userReason?: string
   notesLayout?: 'v1' | 'v2'
   groupingFallback?: boolean

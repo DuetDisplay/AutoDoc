@@ -85,6 +85,99 @@ async function renderMeetingDetail() {
   return result!
 }
 
+describe('memory failure guidance', () => {
+  it('shows a persisted transcription shortage in Notes and Transcript and clears it on retry', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'failed')
+    api.setHandler('transcription:retry', () =>
+      api.setHandler('transcription:get-status', 'queued')
+    )
+    api.setHandler('transcription:get-memory-failure', {
+      available: { value: 1.9, unit: 'GiB' },
+      minimum: { value: 2.5, unit: 'GiB' }
+    })
+    api.setHandler('segmentation:get-status', 'pending')
+    await renderMeetingDetail()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Your computer doesn’t have enough free RAM to finish transcription. Close other apps, then retry.'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Available when checked: 1.9 GiB · Minimum to start: 2.5 GiB'
+    )
+    expect(
+      screen.queryByText('Notes will appear here once the transcript is ready.')
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('Not enough memory')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript', exact: true }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Minimum to start: 2.5 GiB')
+    await userEvent.click(screen.getByRole('button', { name: 'Retry transcription', exact: true }))
+    expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows notes engine amounts and keeps the finished transcript accessible', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'complete')
+    api.setHandler('segmentation:get-status', 'failed')
+    api.setHandler('segmentation:retry', () => api.setHandler('segmentation:get-status', 'queued'))
+    api.setHandler('segmentation:get-error-code', 'ollama-insufficient-memory')
+    api.setHandler('segmentation:get-memory-failure', {
+      available: { value: 1.2, unit: 'GiB' },
+      minimum: { value: 3.4, unit: 'GiB' }
+    })
+    await renderMeetingDetail()
+    expect(screen.getByRole('alert')).toHaveTextContent('free RAM to generate notes')
+    expect(screen.getByRole('alert')).toHaveTextContent('Minimum to start: 3.4 GiB')
+    await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
+    expect(screen.getByText('Intro')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Notes', exact: true }))
+    await userEvent.click(screen.getByRole('button', { name: 'Retry notes', exact: true }))
+    expect(api.invoke).toHaveBeenCalledWith('segmentation:retry', 'test-123')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('handles a live macOS memory failure without inventing amounts, then removes it on success', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('segmentation:get-status', 'pending')
+    await renderMeetingDetail()
+    act(() =>
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'failed',
+        memoryFailure: {}
+      })
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('finish transcription')
+    expect(screen.queryByText(/Available when checked/)).not.toBeInTheDocument()
+    act(() =>
+      api.emit('transcription:status-changed', { meetingId: 'test-123', status: 'complete' })
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('Not enough memory')).not.toBeInTheDocument()
+  })
+
+  it('preserves the generic failure UI for failures without memory evidence', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'failed')
+    api.setHandler('segmentation:get-status', 'pending')
+    await renderMeetingDetail()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('Failed — Retry')).toBeInTheDocument()
+  })
+
+  it('does not blame RAM for an ambiguous Ollama runner crash classified by the legacy fallback heuristic', async () => {
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'complete')
+    api.setHandler('segmentation:get-status', 'failed')
+    api.setHandler('segmentation:get-error-code', 'ollama-insufficient-memory')
+    api.setHandler('segmentation:get-memory-failure', undefined)
+    await renderMeetingDetail()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('Notes couldn’t finish')).toBeInTheDocument()
+    expect(screen.getByText('Notes failed — Retry')).toBeInTheDocument()
+  })
+})
+
 function installNoNotesElectronApi() {
   let segmentationStatus: 'no-notes' | 'queued' = 'no-notes'
   return installMockElectronApi({

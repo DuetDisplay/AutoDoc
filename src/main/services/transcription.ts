@@ -22,6 +22,7 @@ import {
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
+import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
 import { alignSpeakers } from './speaker-alignment'
 import type { DiarizationResult, DiarizationService } from './diarization'
@@ -2532,7 +2533,16 @@ export class TranscriptionService {
         processingProfile: await this.getProcessingProfileLogContext()
       }
     })
-    this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
+    this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
+      memoryFailure: memoryFailureFromError(errorMsg)
+    })
+  }
+
+  async getMemoryFailure(meetingId: string): Promise<MemoryFailure | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'transcript.error')
+    )
+    return typeof error?.error === 'string' ? memoryFailureFromError(error.error) : undefined
   }
 
   private async readErrorFile(
@@ -2591,7 +2601,7 @@ export class TranscriptionService {
     status: TranscriptionStatus,
     progress?: number,
     errorCode?: string,
-    extras?: Pick<TranscriptionStatusPayload, 'recordingDurationSec'>
+    extras?: Pick<TranscriptionStatusPayload, 'recordingDurationSec' | 'memoryFailure'>
   ): void {
     const nextProgress = this.getNextProgress(status, progress)
     this.activeStatus = status
@@ -2602,6 +2612,7 @@ export class TranscriptionService {
       status,
       progress: nextProgress,
       errorCode,
+      memoryFailure: status === 'failed' ? extras?.memoryFailure : undefined,
       backendLabel:
         status === 'transcribing'
           ? this.whisperManager.getTranscriptionBackendLabel?.()

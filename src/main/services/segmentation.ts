@@ -24,6 +24,7 @@ import { readMetadata } from './calendar-matcher'
 import { logQaGateStopToNotes } from './qa-gate-log'
 import { captureMessage } from './sentry-reporter'
 import { classifyError } from './error-classification'
+import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
 import { notesFailureKindFromCode, notesUserCopy } from '../../shared/notes-user-copy'
 import {
   hasUsableTranscriptContent,
@@ -267,6 +268,13 @@ export class SegmentationService {
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const errorData = await this.readErrorFile(errorPath)
     return errorData?.errorCode
+  }
+
+  async getMemoryFailure(meetingId: string): Promise<MemoryFailure | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'segments.error')
+    )
+    return error ? memoryFailureFromError(error.error) : undefined
   }
 
   async getUserReason(meetingId: string): Promise<string | undefined> {
@@ -1122,7 +1130,9 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
-    this.broadcastStatus(meetingId, 'failed', undefined, errorCode)
+    this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
+      memoryFailure: memoryFailureFromError(errorMsg)
+    })
   }
 
   private async markNoNotes(
@@ -1276,6 +1286,7 @@ export class SegmentationService {
     errorCode?: string,
     extras?: {
       userReason?: string
+      memoryFailure?: MemoryFailure
       notesLayout?: 'v1' | 'v2'
       groupingFallback?: boolean
     }
@@ -1298,6 +1309,7 @@ export class SegmentationService {
       progress,
       errorCode,
       userReason: extras?.userReason,
+      memoryFailure: status === 'failed' ? extras?.memoryFailure : undefined,
       notesLayout: extras?.notesLayout,
       groupingFallback: extras?.groupingFallback
     }

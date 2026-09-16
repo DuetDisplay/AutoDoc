@@ -96,6 +96,10 @@ export function registerLlmIpc(
     return segmentationService.getProgress(meetingId)
   })
 
+  ipcMain.handle('segmentation:get-memory-failure', (_event, meetingId: string) => {
+    return segmentationService.getMemoryFailure(meetingId)
+  })
+
   ipcMain.handle(
     'segmentation:get-activity',
     (_event, meetingId: string): SegmentationActivity | null => {

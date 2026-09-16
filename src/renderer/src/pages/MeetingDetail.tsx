@@ -18,6 +18,8 @@ import type {
   SpeakerMap
 } from '../../../shared/types'
 import { notesFailureKindFromCode, notesUserCopy } from '../../../shared/notes-user-copy'
+import type { MemoryFailure } from '../../../shared/memory-failure'
+import { MemoryFailureCallout } from '../components/MemoryFailureCallout'
 import { TranscriptView } from '../components/TranscriptView'
 import { NotesV2Document, useMeetingSpan } from '../components/NotesV2Document'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
@@ -280,6 +282,9 @@ export function MeetingDetail() {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
+  const [transcriptionMemoryFailure, setTranscriptionMemoryFailure] = useState<MemoryFailure>()
+  const [segmentationMemoryFailure, setSegmentationMemoryFailure] = useState<MemoryFailure>()
+  const transcriptionEventRevisionRef = useRef(0)
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [transcriptionBackendLabel, setTranscriptionBackendLabel] = useState<string | undefined>()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
@@ -800,6 +805,10 @@ export function MeetingDetail() {
     let cancelled = false
     segmentationEventRevisionRef.current += 1
     const initialSegmentationRevision = segmentationEventRevisionRef.current
+    transcriptionEventRevisionRef.current += 1
+    const initialTranscriptionRevision = transcriptionEventRevisionRef.current
+    setTranscriptionMemoryFailure(undefined)
+    setSegmentationMemoryFailure(undefined)
 
     const refreshDetail = () =>
       window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
@@ -824,7 +833,9 @@ export function MeetingDetail() {
       window.electronAPI.invoke('segmentation:get-status', id),
       window.electronAPI.invoke('segmentation:get-progress', id),
       window.electronAPI.invoke('segmentation:get-error-code', id),
-      window.electronAPI.invoke('segmentation:get-activity', id)
+      window.electronAPI.invoke('segmentation:get-activity', id),
+      window.electronAPI.invoke('transcription:get-memory-failure', id),
+      window.electronAPI.invoke('segmentation:get-memory-failure', id)
     ]).then(
       ([
         status,
@@ -832,13 +843,23 @@ export function MeetingDetail() {
         nextSegmentationStatus,
         nextSegmentationProgress,
         nextSegmentationErrorCode,
-        nextSegmentationActivity
+        nextSegmentationActivity,
+        nextTranscriptionMemoryFailure,
+        nextSegmentationMemoryFailure
       ]) => {
         if (cancelled) return
 
-        setTranscriptionStatus(status)
-        setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+        if (transcriptionEventRevisionRef.current === initialTranscriptionRevision) {
+          setTranscriptionStatus(status)
+          setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+          setTranscriptionMemoryFailure(
+            status === 'failed' ? nextTranscriptionMemoryFailure : undefined
+          )
+        }
         if (segmentationEventRevisionRef.current === initialSegmentationRevision) {
+          setSegmentationMemoryFailure(
+            nextSegmentationStatus === 'failed' ? nextSegmentationMemoryFailure : undefined
+          )
           setSegmentationStatus(nextSegmentationStatus)
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
@@ -880,6 +901,10 @@ export function MeetingDetail() {
 
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
       if (payload.meetingId === id) {
+        transcriptionEventRevisionRef.current += 1
+        setTranscriptionMemoryFailure(
+          payload.status === 'failed' ? payload.memoryFailure : undefined
+        )
         setTranscriptionStatus(payload.status)
         setTranscriptionProgress((current) =>
           mergeProgress(payload.status, current, payload.progress)
@@ -894,6 +919,9 @@ export function MeetingDetail() {
 
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
       if (payload.meetingId === id) {
+        setSegmentationMemoryFailure(
+          payload.status === 'failed' ? payload.memoryFailure : undefined
+        )
         segmentationEventRevisionRef.current += 1
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
@@ -998,6 +1026,7 @@ export function MeetingDetail() {
 
   const handleReprocessTranscript = () => {
     if (!id) return
+    transcriptionEventRevisionRef.current += 1
     segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
     setTranscriptionProgress(undefined)
@@ -1027,9 +1056,33 @@ export function MeetingDetail() {
   const layoutDegraded =
     segmentationStatus === 'complete' && segmentationErrorCode === 'scan_or_persist'
   const showHardFailCallout = segmentationStatus === 'no-notes' || segmentationStatus === 'failed'
+  const showTranscriptionMemoryFailure =
+    transcriptionStatus === 'failed' && transcriptionMemoryFailure != null
+  const showNotesMemoryFailure =
+    segmentationStatus === 'failed' && segmentationMemoryFailure != null
+  const showMemoryCallout = showTranscriptionMemoryFailure || showNotesMemoryFailure
+  const memoryCallout = showMemoryCallout ? (
+    <MemoryFailureCallout
+      stage={showTranscriptionMemoryFailure ? 'transcription' : 'notes'}
+      failure={
+        (showTranscriptionMemoryFailure ? transcriptionMemoryFailure : segmentationMemoryFailure) ??
+        {}
+      }
+      onRetry={showTranscriptionMemoryFailure ? handleReprocessTranscript : handleReprocessNotes}
+      onViewTranscript={
+        !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
+          ? () => setActiveTab('transcript')
+          : undefined
+      }
+    />
+  ) : null
   const failCopy = notesUserCopy(
     notesFailureKindFromCode(
-      segmentationStatus === 'no-notes' ? 'no_notes_detected' : segmentationErrorCode
+      segmentationStatus === 'no-notes'
+        ? 'no_notes_detected'
+        : segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
+          ? 'unknown'
+          : segmentationErrorCode
     )
   )
 
@@ -1179,31 +1232,44 @@ export function MeetingDetail() {
     const refreshProcessingState = async () => {
       try {
         const segmentationSnapshotRevision = segmentationEventRevisionRef.current
+        const transcriptionSnapshotRevision = transcriptionEventRevisionRef.current
         const [
           latestTranscriptionStatus,
           latestTranscriptionProgress,
           latestSegmentationStatus,
           latestSegmentationProgress,
           latestSegmentationErrorCode,
-          latestSegmentationActivity
+          latestSegmentationActivity,
+          latestTranscriptionMemoryFailure,
+          latestSegmentationMemoryFailure
         ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
           window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
           window.electronAPI.invoke('segmentation:get-error-code', id),
-          window.electronAPI.invoke('segmentation:get-activity', id)
+          window.electronAPI.invoke('segmentation:get-activity', id),
+          window.electronAPI.invoke('transcription:get-memory-failure', id),
+          window.electronAPI.invoke('segmentation:get-memory-failure', id)
         ])
 
         if (cancelled) return
 
-        setTranscriptionStatus(latestTranscriptionStatus)
-        setTranscriptionProgress((current) =>
-          mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
-        )
+        if (transcriptionEventRevisionRef.current === transcriptionSnapshotRevision) {
+          setTranscriptionStatus(latestTranscriptionStatus)
+          setTranscriptionProgress((current) =>
+            mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
+          )
+          setTranscriptionMemoryFailure(
+            latestTranscriptionStatus === 'failed' ? latestTranscriptionMemoryFailure : undefined
+          )
+        }
         const segmentationSnapshotIsCurrent =
           segmentationEventRevisionRef.current === segmentationSnapshotRevision
         if (segmentationSnapshotIsCurrent) {
+          setSegmentationMemoryFailure(
+            latestSegmentationStatus === 'failed' ? latestSegmentationMemoryFailure : undefined
+          )
           setSegmentationStatus(latestSegmentationStatus)
           setSegmentationProgress(latestSegmentationProgress)
           setSegmentationErrorCode(
@@ -1374,12 +1440,14 @@ export function MeetingDetail() {
         <div className="flex items-center gap-2">
           <TranscriptionBadge
             status={transcriptionStatus}
+            hasMemoryFailure={transcriptionMemoryFailure != null}
             progress={transcriptionProgress}
             backendLabel={transcriptionBackendLabel}
             onRetry={handleRetryTranscription}
           />
           <SegmentationBadge
             status={segmentationStatus}
+            hasMemoryFailure={segmentationMemoryFailure != null}
             progress={segmentationProgress}
             errorCode={segmentationErrorCode}
             onRetry={handleRetrySegmentation}
@@ -1447,7 +1515,8 @@ export function MeetingDetail() {
                   </p>
                 </div>
               )}
-            {(showHardFailCallout || layoutDegraded) && (
+            {memoryCallout}
+            {!showMemoryCallout && (showHardFailCallout || layoutDegraded) && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
@@ -1504,7 +1573,7 @@ export function MeetingDetail() {
                   status={segmentationStatus}
                   progress={segmentationProgress}
                 />
-              ) : !showHardFailCallout ? (
+              ) : !showHardFailCallout && !showMemoryCallout ? (
                 <div className="bg-bg-card border border-border rounded-xl px-5 py-8 text-center">
                   <p className="text-[12.5px] font-medium text-ink-muted">
                     {segmentationStatus === 'pending'
@@ -1708,14 +1777,18 @@ export function MeetingDetail() {
                 onRename={handleRenameSpeaker}
               />
             )}
-            <TranscriptView
-              segments={transcript}
-              status={transcriptionStatus}
-              speakers={speakers}
-              transcriptionProgress={transcriptionProgress}
-              transcriptionBackendLabel={transcriptionBackendLabel}
-              onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
-            />
+            {showTranscriptionMemoryFailure ? (
+              memoryCallout
+            ) : (
+              <TranscriptView
+                segments={transcript}
+                status={transcriptionStatus}
+                speakers={speakers}
+                transcriptionProgress={transcriptionProgress}
+                transcriptionBackendLabel={transcriptionBackendLabel}
+                onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
+              />
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-5 max-w-lg">

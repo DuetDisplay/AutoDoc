@@ -38,6 +38,7 @@ interface SegmentationBadgeProps {
   status: SegmentationStatus
   progress?: number
   errorCode?: string
+  hasMemoryFailure?: boolean
   onRetry?: () => void
 }
 
@@ -45,6 +46,7 @@ export function SegmentationBadge({
   status,
   progress,
   errorCode,
+  hasMemoryFailure,
   onRetry
 }: SegmentationBadgeProps) {
   const config = STATUS_CONFIG[status]
@@ -60,7 +62,8 @@ export function SegmentationBadge({
   }, [status])
 
   const activeOllamaProgress = status === 'downloading-model' ? ollamaProgress : null
-  const isInsufficientMemory = status === 'failed' && errorCode === 'ollama-insufficient-memory'
+  const isInsufficientMemory =
+    status === 'failed' && (hasMemoryFailure ?? errorCode === 'ollama-insufficient-memory')
   let label = isInsufficientMemory ? 'Not enough memory' : config.label
   if (status === 'segmenting' && progress == null) {
     label = 'Preparing notes...'

@@ -217,6 +217,40 @@ describe('TranscriptionService', () => {
     expect(status).toBe('failed')
   })
 
+  it.each(['win32', 'darwin'] as const)(
+    'reads saved memory evidence and broadcasts new failures on %s',
+    async (platform) => {
+      setPlatform(platform)
+      const message =
+        platform === 'win32'
+          ? 'Insufficient free memory for GPU transcription pass (1.9 GiB free, floor 2.5 GiB) after extended wait'
+          : 'mlx whisper failed: Metal out of memory'
+      const expected =
+        platform === 'win32'
+          ? { available: { value: 1.9, unit: 'GiB' }, minimum: { value: 2.5, unit: 'GiB' } }
+          : {}
+      const { BrowserWindow } = await import('electron')
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+      fsMock.readFile.mockResolvedValue(JSON.stringify({ error: message, retries: 3 }))
+      try {
+        expect(await service.getMemoryFailure('meeting-memory')).toEqual(expected)
+        await (service as any).markFailed('meeting-memory', message)
+        expect(send).toHaveBeenCalledWith(
+          'transcription:status-changed',
+          expect.objectContaining({ status: 'failed', memoryFailure: expected })
+        )
+        fsMock.readFile.mockResolvedValue(message)
+        expect(await service.getMemoryFailure('meeting-memory')).toEqual(expected)
+        fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+        expect(await service.getMemoryFailure('missing-meeting')).toBeUndefined()
+      } finally {
+        vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+        setPlatform(originalPlatform)
+      }
+    }
+  )
+
   it('returns queued status after enqueue', async () => {
     vi.spyOn(service as any, 'processNext').mockResolvedValue(undefined)
     service.enqueue('meeting-123')

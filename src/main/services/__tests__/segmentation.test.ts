@@ -110,6 +110,36 @@ describe('SegmentationService', () => {
     )
   })
 
+  it.each(['win32', 'darwin'] as const)(
+    'keeps notes memory evidence across a restart on %s',
+    async (platform) => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+      const message =
+        'Ollama returned 500: model requires more system memory (3.4 GiB) than is available (1.2 GiB)'
+      const expected = {
+        available: { value: 1.2, unit: 'GiB' },
+        minimum: { value: 3.4, unit: 'GiB' }
+      }
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+      fsMock.readFile.mockResolvedValue(JSON.stringify({ error: message, retries: 3 }))
+      try {
+        expect(await service.getMemoryFailure('meeting-memory')).toEqual(expected)
+        await (service as any).markFailed('meeting-memory', message)
+        expect(send).toHaveBeenCalledWith(
+          'segmentation:status-changed',
+          expect.objectContaining({ status: 'failed', memoryFailure: expected })
+        )
+        fsMock.readFile.mockResolvedValue('Ollama returned 404: model not found')
+        expect(await service.getMemoryFailure('meeting-other')).toBeUndefined()
+      } finally {
+        vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    }
+  )
+
   describe('Windows model readiness', () => {
     const originalPlatform = process.platform
     beforeEach(() =>

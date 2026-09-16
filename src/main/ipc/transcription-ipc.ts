@@ -17,6 +17,10 @@ export function registerTranscriptionIpc(
     return transcriptionService.getProgress(meetingId)
   })
 
+  ipcMain.handle('transcription:get-memory-failure', (_event, meetingId: string) => {
+    return transcriptionService.getMemoryFailure(meetingId)
+  })
+
   ipcMain.handle(
     'transcription:get-transcript',
     async (_event, meetingId: string): Promise<Transcript[]> => {

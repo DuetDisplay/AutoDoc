@@ -1,3 +1,4 @@
+import type { MemoryFailure } from '../shared/memory-failure'
 import type {
   AnalyticsConsentSnapshot,
   AnalyticsDailyActiveResult,
@@ -163,12 +164,14 @@ export interface IpcInvokeEvents {
   'recording:delete': [meetingId: string]
   'recording:retry-video': [meetingId: string]
   'transcription:get-status': [meetingId: string]
+  'transcription:get-memory-failure': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
   'transcription:retry': [meetingId: string]
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
+  'segmentation:get-memory-failure': [meetingId: string]
   'segmentation:get-error-code': [meetingId: string]
   'segmentation:get-progress': [meetingId: string]
   'segmentation:get-activity': [meetingId: string]
@@ -300,12 +303,14 @@ export interface IpcInvokeReturns {
   'recording:delete': void
   'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
+  'transcription:get-memory-failure': MemoryFailure | undefined
   'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus
+  'segmentation:get-memory-failure': MemoryFailure | undefined
   'segmentation:get-error-code': string | undefined
   'segmentation:get-progress': number | undefined
   'segmentation:get-activity': SegmentationActivity | null
