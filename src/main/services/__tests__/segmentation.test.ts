@@ -110,6 +110,141 @@ describe('SegmentationService', () => {
     )
   })
 
+  describe('Windows model readiness', () => {
+    const originalPlatform = process.platform
+    beforeEach(() =>
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    )
+    afterEach(() =>
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    )
+
+    it.each([false, true])(
+      'reprepares a missing job model once, then succeeds or reports setup failure (persistent=%s)',
+      async (persistent) => {
+        const missing = new Error(
+          'Ollama returned 404: {"error":"model \'qwen3:4b-instruct\' not found"}'
+        )
+        const readiness = {
+          waitUntilReady: vi.fn().mockResolvedValue(undefined),
+          prepareModelForGeneration: vi.fn().mockResolvedValue(DEFAULT_OLLAMA_MODEL),
+          isReadyForGeneration: vi.fn().mockResolvedValue(true),
+          beginNotesGeneration: vi.fn(),
+          endNotesGeneration: vi.fn().mockResolvedValue(undefined)
+        }
+        let boundModel = ''
+        provider.setModel = vi.fn((model) => {
+          boundModel = model
+        })
+        provider.getModel = () => boundModel
+        service = new SegmentationService(provider, readiness, '/mock/home/AutoDoc/recordings')
+        fsMock.access.mockResolvedValue(undefined)
+        fsMock.readFile.mockResolvedValue(
+          JSON.stringify([
+            {
+              id: 'row',
+              meetingId: 'missing-model',
+              speaker: 'me',
+              text: 'We agreed to launch the customer portal on Friday.',
+              startMs: 0,
+              endMs: 5000,
+              confidence: 1
+            }
+          ])
+        )
+        vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+        if (persistent) vi.mocked(provider.summarize).mockRejectedValue(missing)
+        else vi.mocked(provider.summarize).mockRejectedValueOnce(missing)
+        const job = (service as any).processJob('missing-model')
+        if (persistent) await expect(job).rejects.toThrow(/Ollama notes model setup failed/)
+        else await job
+        expect(readiness.prepareModelForGeneration).toHaveBeenCalledTimes(2)
+        expect(provider.summarize).toHaveBeenCalledTimes(2)
+        expect(readiness.isReadyForGeneration).toHaveBeenCalledWith(DEFAULT_OLLAMA_MODEL)
+        expect(readiness.beginNotesGeneration).toHaveBeenCalledOnce()
+        expect(readiness.endNotesGeneration).toHaveBeenCalledOnce()
+        expect(readiness.endNotesGeneration.mock.invocationCallOrder[0]).toBeGreaterThan(
+          vi.mocked(provider.releaseResources!).mock.invocationCallOrder.at(-1)!
+        )
+      }
+    )
+
+    it('binds an installed fallback returned by preparation instead of the preferred model', async () => {
+      const readiness = {
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        prepareModelForGeneration: vi.fn().mockResolvedValue('llama3.1'),
+        isReadyForGeneration: vi.fn().mockResolvedValue(true)
+      }
+      let boundModel = ''
+      provider.setModel = vi.fn((model) => {
+        boundModel = model
+      })
+      provider.getModel = () => boundModel
+      service = new SegmentationService(provider, readiness, '/mock/home/AutoDoc/recordings')
+      await (service as any).ensureOllamaReadyForGeneration('fallback', DEFAULT_OLLAMA_MODEL)
+      expect(readiness.prepareModelForGeneration).toHaveBeenCalledWith(DEFAULT_OLLAMA_MODEL)
+      expect(boundModel).toBe('llama3.1')
+      expect(readiness.isReadyForGeneration).toHaveBeenCalledWith('llama3.1')
+    })
+
+    it('returns a missing scan model to preparation even when an optional pass swallows the error', async () => {
+      const missing = new Error("Ollama returned 404: model 'qwen3:4b-instruct' not found")
+      provider.completePrompt = vi.fn().mockRejectedValue(missing)
+      fsMock.readFile.mockResolvedValue('{}')
+      const pipeline = vi
+        .spyOn(notesScanPipeline, 'runNotesScanPipeline')
+        .mockImplementation(async (_segments, options) => {
+          const request = {
+            prompt: 'overview',
+            num_ctx: 2048,
+            num_predict: 128,
+            temperature: 0,
+            seed: 0,
+            stop: []
+          }
+          await options.generate(request).catch(() => undefined)
+          await options.generate(request).catch(() => undefined)
+          return {} as Awaited<ReturnType<typeof notesScanPipeline.runNotesScanPipeline>>
+        })
+      try {
+        const segments = {
+          decisions: [],
+          actionItems: [],
+          information: [],
+          discussion: [],
+          statusUpdates: []
+        }
+        await expect(
+          (service as any).persistScanLayerNotes('missing-scan', segments, [])
+        ).rejects.toBe(missing)
+        expect(provider.completePrompt).toHaveBeenCalledOnce()
+      } finally {
+        pipeline.mockRestore()
+      }
+    })
+
+    it('does not automatically requeue a model setup failure, but permits an explicit retry', async () => {
+      fsMock.readdir.mockResolvedValue(['model-setup'] as any)
+      fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('segments.json')) throw new Error('ENOENT')
+      })
+      fsMock.readFile.mockResolvedValue(
+        JSON.stringify({
+          error: 'Ollama notes model setup failed: offline',
+          errorCode: 'ollama-model-setup',
+          retries: 1,
+          status: 'failed'
+        })
+      )
+      const enqueue = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+      await service.scanAndEnqueuePending()
+      expect(enqueue).not.toHaveBeenCalled()
+      service.retry('model-setup')
+      expect(enqueue).toHaveBeenCalledWith('model-setup', 'direct')
+    })
+  })
+
   it('does not announce old notes as a completed Windows experimental regeneration after presentation fails', async () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })

@@ -115,6 +115,12 @@ describe('Ollama onboarding dependency installation', () => {
         await writeFile(join(dataDir, 'model-ready.txt'), manager.getModel())
         manager.emit('pull-complete', manager.getModel())
       })
+      vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => {
+        const model = await readFile(join(rootDir, 'ollama-data', 'model-ready.txt'), 'utf8').catch(
+          () => ''
+        )
+        return model ? [model] : []
+      })
 
       await manager.startAndPull()
 
@@ -277,6 +283,12 @@ describe('Ollama onboarding dependency installation', () => {
 
       const manager = new OllamaManager({ resolveModel: () => LOW_SPEC_MAC_OLLAMA_MODEL })
       const selectedModels: string[] = []
+      vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => {
+        const model = await readFile(join(rootDir, 'ollama-data', 'model-ready.txt'), 'utf8').catch(
+          () => ''
+        )
+        return model ? [model] : []
+      })
       manager.on('model-selected', (model: string) => selectedModels.push(model))
 
       vi.spyOn(manager, 'start').mockImplementation(async () => {
@@ -318,10 +330,13 @@ describe('Ollama onboarding dependency installation', () => {
         vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
           const href = String(url)
           if (href.endsWith('/api/tags')) {
-            return new Response(JSON.stringify({ models: [] }), {
-              status: 200,
-              headers: { 'content-type': 'application/json' }
-            })
+            return new Response(
+              JSON.stringify({ models: pulledModels.map((name) => ({ name })) }),
+              {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              }
+            )
           }
 
           if (href.endsWith('/api/pull')) {
@@ -480,6 +495,10 @@ describe('Ollama onboarding dependency installation', () => {
       })
 
       manager.resetReady()
+      vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => {
+        const model = await readFile(join(dataDir, 'model-ready.txt'), 'utf8').catch(() => '')
+        return model ? [model] : []
+      })
       await manager.waitUntilReady()
 
       expect(downloadBinarySpy).toHaveBeenCalledTimes(1)
@@ -543,6 +562,10 @@ describe('Ollama onboarding dependency installation', () => {
       })
 
       manager.resetReady()
+      vi.spyOn(manager, 'listInstalledModels').mockImplementation(async () => {
+        const model = await readFile(join(dataDir, 'model-ready.txt'), 'utf8').catch(() => '')
+        return model ? [model] : []
+      })
       await manager.waitUntilReady()
 
       expect(downloadBinarySpy).toHaveBeenCalledTimes(1)

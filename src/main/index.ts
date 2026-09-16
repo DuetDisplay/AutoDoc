@@ -30,6 +30,7 @@ import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
+import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
 import { getRuntimeAnalyticsHardware } from './services/analytics-hardware'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
@@ -140,7 +141,7 @@ import {
   onNotificationActivationSuppressionChange,
   shouldSuppressNotificationActivation
 } from './notification-window'
-import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
 
 const APP_NAME = __AUTODOC_QA_BUILD__ ? 'AutoDoc QA' : 'AutoDoc'
@@ -930,6 +931,15 @@ app.whenReady().then(async () => {
   )
   shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({
+    retainLowSpecModel: async () => {
+      if (process.platform !== 'win32') return false
+      const profile = await whisperManager.getEffectiveWindowsProcessingProfile()
+      return (
+        profile != null &&
+        selectWindowsProcessingProfile(profile.hardware, 'cpu').notesModel ===
+          LOW_SPEC_MAC_OLLAMA_MODEL
+      )
+    },
     resolveModel: async () => {
       if (process.platform === 'win32') {
         return (
@@ -1106,18 +1116,19 @@ app.whenReady().then(async () => {
     }
   }
 
-  const ollamaProvider = new OllamaProvider(
-    managedOllamaManager.getBaseUrl(),
-    managedOllamaManager.getModel(),
-    {
+  const createOllamaProvider = (): OllamaProvider =>
+    new OllamaProvider(managedOllamaManager.getBaseUrl(), managedOllamaManager.getModel(), {
       onTelemetry: broadcastSegmentationDiagnostic,
       maybeRecycleRunner: async (meetingId?: string) => {
         await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
       },
       recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
       snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
-    }
-  )
+    })
+  const ollamaProvider = createOllamaProvider()
+  // Windows jobs bind their model through scan, retries and unload. Keep the
+  // existing shared-provider behavior on macOS and Linux.
+  const notesOllamaProvider = process.platform === 'win32' ? createOllamaProvider() : ollamaProvider
   managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
     if (plan.usingLegacyFallback && prefsStore.isOnboardingComplete()) {
       prefsStore.setNotesEngineUpgradeEligible(true)
@@ -1224,9 +1235,19 @@ app.whenReady().then(async () => {
   }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
-    isReadyForGeneration: async () =>
+    ...(process.platform === 'win32'
+      ? {
+          beginNotesGeneration: () => managedOllamaManager.beginNotesGeneration(),
+          endNotesGeneration: () => managedOllamaManager.endNotesGeneration(),
+          prepareModelForGeneration: async (preferredModel?: string) =>
+            (await managedOllamaManager.ensureNotesModelReady(preferredModel)).activeModel
+        }
+      : {}),
+    isReadyForGeneration: async (model?: string) =>
       (await managedOllamaManager.isServerRunning()) &&
-      (await managedOllamaManager.hasUsableNotesModel()),
+      (await (process.platform === 'win32'
+        ? managedOllamaManager.hasUsableNotesModel(model)
+        : managedOllamaManager.hasUsableNotesModel())),
     recoverUnhealthyRuntime: recoverUnhealthyOllamaRuntime,
     reapLeftoverRunners: (reason?: string, meetingId?: string) =>
       managedOllamaManager.reapLeftoverRunners(reason, meetingId),
@@ -1240,7 +1261,7 @@ app.whenReady().then(async () => {
     getBaseUrl: () => managedOllamaManager.getBaseUrl()
   }
   const segmentationService = new SegmentationService(
-    ollamaProvider,
+    notesOllamaProvider,
     segmentationOllamaReadiness,
     recordingService.getRecordingsBaseDir(),
     localProcessingCoordinator,

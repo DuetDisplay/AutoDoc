@@ -12,6 +12,9 @@ describe('notes user copy', () => {
     expect(notesUserCopy(notesFailureKindFromCode('ollama-unavailable')).body).toContain(
       'notes engine wasn’t ready'
     )
+    expect(notesUserCopy(notesFailureKindFromCode('ollama-model-setup')).body).toContain(
+      'notes engine wasn’t ready'
+    )
     expect(notesUserCopy(notesFailureKindFromCode('scan_or_persist')).title).toBe(
       'We couldn’t finish the new notes layout'
     )

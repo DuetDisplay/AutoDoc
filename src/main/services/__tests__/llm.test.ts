@@ -43,6 +43,37 @@ import {
 
 const originalPlatform = process.platform
 
+it.each([
+  ['win32', 1],
+  ['darwin', 3]
+] as const)(
+  'handles a missing-model 404 on %s with %i chunk attempts',
+  async (platform, attempts) => {
+    setPlatform(platform)
+    const recover = vi.fn()
+    const fetchMock = vi.fn(async () =>
+      Response.json({ error: "model 'qwen3:4b-instruct' not found" }, { status: 404 })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const provider = new OllamaProvider('http://localhost:11435', 'qwen3:4b-instruct', {
+        recoverRuntimeOnce: recover
+      })
+      await expect(
+        provider.summarize(
+          'missing-model',
+          '[00:00] [Chris] We agreed to launch the customer portal on Friday.'
+        )
+      ).rejects.toThrow(/model.*not found/)
+      expect(fetchMock).toHaveBeenCalledTimes(attempts)
+      expect(recover).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+      setPlatform(originalPlatform)
+    }
+  }
+)
+
 function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', {
     configurable: true,

@@ -9,6 +9,7 @@ import { totalmem } from 'os'
 import {
   DEFAULT_OLLAMA_EMBEDDING_MODEL,
   DEFAULT_OLLAMA_MODEL,
+  LOW_SPEC_MAC_OLLAMA_MODEL,
   MODELS_SUBDIR
 } from '../../shared/constants'
 import {
@@ -51,6 +52,13 @@ type PreferredModelResolver = () => string | null | undefined | Promise<string |
 export interface OllamaManagerOptions {
   model?: string
   resolveModel?: PreferredModelResolver
+  retainLowSpecModel?: () => boolean | Promise<boolean>
+}
+
+export interface ReadyNotesModel {
+  preferredModel: string
+  activeModel: string
+  usingFallback: boolean
 }
 
 export const OLLAMA_START_CANCELLED_ERROR_CODE = 'OLLAMA_START_CANCELLED'
@@ -293,7 +301,15 @@ export function parseWindowsNetstatListeningPids(output: string): number[] {
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
   private model: string
+  private preferredModel: string
   private resolveModel: PreferredModelResolver | null
+  private retainLowSpecModel: () => boolean | Promise<boolean>
+  private notesPreparations = new Map<string, Promise<ReadyNotesModel>>()
+  private notesPulls = new Map<string, Promise<void>>()
+  // SegmentationService runs one job at a time, including preparation and unload.
+  private notesGenerationActive = false
+  private pendingNotesCleanup: { preferredModel: string; epoch: number } | null = null
+  private notesCleanupPromise: Promise<void> | null = null
   private readyPromise: Promise<void> | null = null
   private startPromise: Promise<void> | null = null
   private recoveryPromise: Promise<void> | null = null
@@ -310,7 +326,9 @@ export class OllamaManager extends EventEmitter {
     const options =
       typeof modelOrOptions === 'string' ? { model: modelOrOptions } : (modelOrOptions ?? {})
     this.model = options.model ?? DEFAULT_OLLAMA_MODEL
+    this.preferredModel = this.model
     this.resolveModel = options.resolveModel ?? null
+    this.retainLowSpecModel = options.retainLowSpecModel ?? (() => false)
   }
 
   /** Call once at startup. Subsequent calls return the same promise. */
@@ -572,6 +590,7 @@ export class OllamaManager extends EventEmitter {
     this.assertStartEpoch(epoch)
     if (!preferredModel) return
 
+    this.preferredModel = preferredModel
     this.setModel(preferredModel)
   }
 
@@ -627,15 +646,20 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  async listInstalledModels(): Promise<string[]> {
+  async listInstalledModels(options: { requireAvailable?: boolean } = {}): Promise<string[]> {
+    const requireAvailable = IS_WIN && options.requireAvailable
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000)
       })
-      if (!res.ok) return []
+      if (!res.ok) throw new Error(`Ollama model inventory returned ${res.status}`)
       const data = (await res.json()) as { models?: { name: string }[] }
+      if (requireAvailable && !Array.isArray(data.models)) {
+        throw new Error('Ollama model inventory did not include a model list')
+      }
       return (data.models ?? []).map((row) => row.name).filter((name) => name.length > 0)
-    } catch {
+    } catch (error) {
+      if (requireAvailable) throw error
       return []
     }
   }
@@ -644,8 +668,8 @@ export class OllamaManager extends EventEmitter {
     return isModelInstalled(await this.listInstalledModels(), model)
   }
 
-  async hasUsableNotesModel(): Promise<boolean> {
-    return this.hasModel(this.model)
+  async hasUsableNotesModel(model = this.model): Promise<boolean> {
+    return this.hasModel(IS_WIN ? model : this.model)
   }
 
   async deleteModel(model: string): Promise<void> {
@@ -675,13 +699,16 @@ export class OllamaManager extends EventEmitter {
   }
 
   private async prepareNotesModels(epoch: number): Promise<void> {
+    if (IS_WIN) {
+      await this.ensureNotesModelReady(this.preferredModel, epoch)
+      return
+    }
+
+    // Preserve the established macOS/Linux startup and migration path.
     const preferred = this.model
     const installedModels = await this.listInstalledModels()
     this.assertStartEpoch(epoch)
-    const plan = resolveNotesModelMigration({
-      preferredModel: preferred,
-      installedModels
-    })
+    const plan = resolveNotesModelMigration({ preferredModel: preferred, installedModels })
     this.setModel(plan.activeModel)
     this.emit('notes-model-plan', plan)
 
@@ -705,6 +732,145 @@ export class OllamaManager extends EventEmitter {
     this.assertStartEpoch(epoch)
   }
 
+  /** Windows only: verify model readiness anew for each job after shared startup. */
+  ensureNotesModelReady(
+    preferredModel = this.preferredModel,
+    epoch = this.startEpoch
+  ): Promise<ReadyNotesModel> {
+    this.assertStartEpoch(epoch)
+    this.preferredModel = preferredModel
+    const key = `${epoch}:${preferredModel}`
+    const pending = this.notesPreparations.get(key)
+    if (pending) return pending
+    const promise = this.prepareNotesModel(preferredModel, epoch).finally(() => {
+      if (this.notesPreparations.get(key) === promise) this.notesPreparations.delete(key)
+    })
+    this.notesPreparations.set(key, promise)
+    return promise
+  }
+
+  private async prepareNotesModel(preferred: string, epoch: number): Promise<ReadyNotesModel> {
+    // An idle cleanup may already have submitted a delete. Finish it before
+    // approving any model for a newly started job.
+    await this.notesCleanupPromise
+    this.assertStartEpoch(epoch)
+    const installedModels = await this.listInstalledModels({ requireAvailable: true })
+    this.assertStartEpoch(epoch)
+    const plan = resolveNotesModelMigration({
+      preferredModel: preferred,
+      installedModels
+    })
+    if (this.preferredModel === preferred) this.setModel(plan.activeModel)
+    this.emit('notes-model-plan', plan)
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'notes model preparation plan',
+      context: { preferredModel: preferred, installedModels, ...plan }
+    })
+
+    if (plan.pullBeforeReady) {
+      await this.pullNotesModel(plan.pullModel, epoch)
+      this.assertStartEpoch(epoch)
+      if (this.preferredModel === preferred) this.setModel(plan.pullModel)
+    }
+    // Verify the *active* model even when a pull stream ended successfully.
+    if (!(await this.hasModel(plan.activeModel))) {
+      this.assertStartEpoch(epoch)
+      throw new Error(`Ollama notes model setup failed: '${plan.activeModel}' is not installed`)
+    }
+    this.assertStartEpoch(epoch)
+    if (plan.usingLegacyFallback) {
+      void this.pullWindowsPreferredInBackground(plan, epoch)
+    } else {
+      await this.scheduleNotesCleanup(preferred, epoch)
+    }
+    this.assertStartEpoch(epoch)
+    const ready = {
+      preferredModel: preferred,
+      activeModel: plan.activeModel,
+      usingFallback: plan.usingLegacyFallback
+    }
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'notes model approved for generation',
+      context: ready
+    })
+    return ready
+  }
+
+  private pullNotesModel(model: string, epoch: number): Promise<void> {
+    const key = `${epoch}:${model}`
+    const pending = this.notesPulls.get(key)
+    if (pending) return pending
+    const promise = this.pullModel(model, epoch).finally(() => {
+      if (this.notesPulls.get(key) === promise) this.notesPulls.delete(key)
+    })
+    this.notesPulls.set(key, promise)
+    return promise
+  }
+
+  beginNotesGeneration(): void {
+    if (IS_WIN) this.notesGenerationActive = true
+  }
+
+  async endNotesGeneration(): Promise<void> {
+    if (!IS_WIN) return
+    this.notesGenerationActive = false
+    await this.flushNotesCleanup()
+  }
+
+  private async scheduleNotesCleanup(preferredModel: string, epoch: number): Promise<void> {
+    this.assertStartEpoch(epoch)
+    if (this.preferredModel !== preferredModel) return
+    this.pendingNotesCleanup = { preferredModel, epoch }
+    await this.flushNotesCleanup()
+  }
+
+  private async flushNotesCleanup(): Promise<void> {
+    if (this.notesCleanupPromise) return this.notesCleanupPromise
+    if (this.notesGenerationActive || !this.pendingNotesCleanup) return
+    const run = async (): Promise<void> => {
+      while (!this.notesGenerationActive && this.pendingNotesCleanup) {
+        const cleanup = this.pendingNotesCleanup
+        this.pendingNotesCleanup = null
+        if (
+          !this.isStartEpochCurrent(cleanup.epoch) ||
+          cleanup.preferredModel !== this.preferredModel
+        )
+          continue
+        const installedModels = await this.listInstalledModels({ requireAvailable: true })
+        if (!this.isStartEpochCurrent(cleanup.epoch)) return
+        if (cleanup.preferredModel !== this.preferredModel) continue
+        const plan = resolveNotesModelMigration({
+          preferredModel: cleanup.preferredModel,
+          installedModels
+        })
+        if (plan.pullBeforeReady || plan.usingLegacyFallback) continue
+        if (await this.retainLowSpecModel()) {
+          plan.leftoverModels = plan.leftoverModels.filter(
+            (model) => model !== LOW_SPEC_MAC_OLLAMA_MODEL
+          )
+        }
+        if (cleanup.preferredModel !== this.preferredModel) continue
+        if (this.notesGenerationActive) {
+          this.pendingNotesCleanup ??= cleanup
+          return
+        }
+        await this.deleteLeftoverModels(plan, cleanup.epoch, cleanup.preferredModel)
+      }
+    }
+    const promise = run()
+      .catch((error) => {
+        if (!isOllamaStartCancelledError(error))
+          logAutodocFailure({ area: 'ollama', message: 'notes model cleanup failed', error })
+      })
+      .finally(() => {
+        if (this.notesCleanupPromise === promise) this.notesCleanupPromise = null
+      })
+    this.notesCleanupPromise = promise
+    return promise
+  }
+
   private async pullPreferredInBackground(
     plan: NotesModelMigrationPlan,
     epoch: number
@@ -716,10 +882,7 @@ export class OllamaManager extends EventEmitter {
       this.setModel(plan.pullModel)
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
-      const next = resolveNotesModelMigration({
-        preferredModel: plan.pullModel,
-        installedModels
-      })
+      const next = resolveNotesModelMigration({ preferredModel: plan.pullModel, installedModels })
       await this.deleteLeftoverModels(next, epoch)
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
@@ -732,10 +895,43 @@ export class OllamaManager extends EventEmitter {
     }
   }
 
-  private async deleteLeftoverModels(plan: NotesModelMigrationPlan, epoch: number): Promise<void> {
+  private async pullWindowsPreferredInBackground(
+    plan: NotesModelMigrationPlan,
+    epoch: number
+  ): Promise<void> {
+    try {
+      this.assertStartEpoch(epoch)
+      await this.pullNotesModel(plan.pullModel, epoch)
+      this.assertStartEpoch(epoch)
+      if (!(await this.hasModel(plan.pullModel)))
+        throw new Error(`Ollama notes model setup failed: '${plan.pullModel}' is not installed`)
+      this.assertStartEpoch(epoch)
+      if (this.preferredModel === plan.pullModel) this.setModel(plan.pullModel)
+      await this.scheduleNotesCleanup(plan.pullModel, epoch)
+    } catch (error) {
+      if (isOllamaStartCancelledError(error)) return
+      logAutodocFailure({
+        area: 'ollama',
+        message: 'background preferred notes model pull failed',
+        error,
+        context: { pullModel: plan.pullModel, activeModel: this.model }
+      })
+    }
+  }
+
+  private async deleteLeftoverModels(
+    plan: NotesModelMigrationPlan,
+    epoch: number,
+    preferredModel?: string
+  ): Promise<void> {
     for (const model of plan.leftoverModels) {
       const installedModels = await this.listInstalledModels()
       this.assertStartEpoch(epoch)
+      if (IS_WIN && preferredModel !== this.preferredModel) return
+      if (IS_WIN && this.notesGenerationActive && preferredModel) {
+        this.pendingNotesCleanup ??= { preferredModel, epoch }
+        return
+      }
       if (isModelInstalled(installedModels, model)) {
         await this.deleteModel(model)
         this.assertStartEpoch(epoch)
@@ -1425,6 +1621,30 @@ export class OllamaManager extends EventEmitter {
   }
 
   async pullModel(model = this.model, expectedEpoch?: number): Promise<void> {
+    if (!IS_WIN) {
+      await this.pullModelStream(model, expectedEpoch)
+      return
+    }
+    const startedAt = Date.now()
+    try {
+      const alreadyInstalled = await this.pullModelStream(model, expectedEpoch)
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama model pull completed',
+        context: { model, alreadyInstalled, elapsedMs: Date.now() - startedAt }
+      })
+    } catch (error) {
+      logAutodocFailure({
+        area: 'ollama',
+        message: 'ollama model pull failed',
+        error,
+        context: { model, elapsedMs: Date.now() - startedAt }
+      })
+      throw error
+    }
+  }
+
+  private async pullModelStream(model: string, expectedEpoch?: number): Promise<boolean> {
     const assertCurrentSetup = (): void => {
       if (expectedEpoch != null) this.assertStartEpoch(expectedEpoch)
     }
@@ -1433,10 +1653,17 @@ export class OllamaManager extends EventEmitter {
     assertCurrentSetup()
     if (alreadyInstalled) {
       this.emit('pull-complete', model)
-      return
+      return true
     }
 
     this.emit('pull-start', model)
+    if (IS_WIN) {
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama model pull started',
+        context: { model, alreadyInstalled: false }
+      })
+    }
 
     const res = await fetch(`${OLLAMA_BASE_URL}/api/pull`, {
       method: 'POST',
@@ -1482,6 +1709,7 @@ export class OllamaManager extends EventEmitter {
     }
 
     this.emit('pull-complete', model)
+    return false
   }
 
   private async pullOptionalEmbeddingModel(epoch: number): Promise<void> {

@@ -1,9 +1,4 @@
-export type NotesUserFailureKind =
-  | 'empty'
-  | 'memory'
-  | 'engine'
-  | 'generic'
-  | 'layout'
+export type NotesUserFailureKind = 'empty' | 'memory' | 'engine' | 'generic' | 'layout'
 
 export interface NotesUserCopy {
   title: string
@@ -39,7 +34,7 @@ export function notesUserCopy(kind: NotesUserFailureKind): NotesUserCopy {
 
 export function notesFailureKindFromCode(errorCode: string | undefined): NotesUserFailureKind {
   if (errorCode === 'ollama-insufficient-memory') return 'memory'
-  if (errorCode === 'ollama-unavailable') return 'engine'
+  if (errorCode === 'ollama-unavailable' || errorCode === 'ollama-model-setup') return 'engine'
   if (errorCode === 'scan_or_persist') return 'layout'
   if (errorCode === 'llm-empty-output' || errorCode === 'no_notes_detected') return 'empty'
   return 'generic'

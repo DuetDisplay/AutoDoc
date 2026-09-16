@@ -11,6 +11,7 @@ import type {
   SegmentationActivity
 } from '../../shared/types'
 import { logAutodocEvent } from './autodoc-log'
+import { isMissingOllamaModelError } from './notes-model-errors'
 import { captureMessage } from './sentry-reporter'
 import {
   explicitActionSpeechActClauses,
@@ -1968,6 +1969,7 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
+          if (process.platform === 'win32' && isMissingOllamaModelError(lastError)) throw lastError
           if (
             isWriterParseError(lastError) &&
             isWindowsTopicWriterEnabled() &&

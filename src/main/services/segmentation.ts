@@ -52,12 +52,16 @@ import { getSystemMemorySnapshot } from './windows-transcription-runtime'
 import { meetingSegmentsFromDisk, withoutNextStepCandidates } from './writer-catalog'
 import type { WindowsProcessingProfile } from './windows-processing-profile'
 import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
+import { isMissingOllamaModelError, notesModelSetupError } from './notes-model-errors'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
-  isReadyForGeneration?(): Promise<boolean>
+  isReadyForGeneration?(model?: string): Promise<boolean>
+  prepareModelForGeneration?(preferredModel?: string): Promise<string>
+  beginNotesGeneration?(): void
+  endNotesGeneration?(): Promise<void>
   recoverUnhealthyRuntime?(): Promise<void>
   reapLeftoverRunners?(reason?: string, meetingId?: string): void
   recycleBloatedRunners?(reason?: string, meetingId?: string): void | Promise<boolean>
@@ -313,7 +317,9 @@ export class SegmentationService {
           this.enqueue(meetingId, 'recovery-scan')
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
-          const isPermanentFailure = errorData?.errorCode === 'ollama-insufficient-memory'
+          const isPermanentFailure =
+            errorData?.errorCode === 'ollama-insufficient-memory' ||
+            (process.platform === 'win32' && errorData?.errorCode === 'ollama-model-setup')
           if (
             errorData &&
             this.getPersistedStatus(errorData) !== 'no-notes' &&
@@ -370,6 +376,34 @@ export class SegmentationService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    if (process.platform !== 'win32') return this.processPreparedJob(meetingId)
+    this.ollamaManager.beginNotesGeneration?.()
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await this.processPreparedJob(meetingId)
+        } catch (error) {
+          if (!isMissingOllamaModelError(error)) throw error
+          if (attempt > 0 || !this.ollamaManager.prepareModelForGeneration) {
+            throw notesModelSetupError(error)
+          }
+          // Restart the whole job after a fresh preparation. Never mix models
+          // across chunks, or use chunk retries to repair a missing download.
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes generation retrying model preparation',
+            meetingId,
+            context: { model: this.llmProvider.getModel?.() }
+          })
+        }
+      }
+    } finally {
+      // processJobExclusive has finished all requests and unloads by this point.
+      await this.ollamaManager.endNotesGeneration?.()
+    }
+  }
+
+  private async processPreparedJob(meetingId: string): Promise<void> {
     const localProcessingCoordinator = this.localProcessingCoordinator
     if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
       return await localProcessingCoordinator.runExclusive('segmentation', meetingId, () =>
@@ -419,12 +453,20 @@ export class SegmentationService {
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
     const windowsProcessingProfile =
       (await this.getEffectiveWindowsProcessingProfile?.()) ?? this.getWindowsProcessingProfile?.()
+    const preferredModel =
+      getDevNotesModelOverride() ??
+      macProcessingProfile?.notesModel ??
+      windowsProcessingProfile?.notesModel
+    const preparesJobModel =
+      process.platform === 'win32' && this.ollamaManager.prepareModelForGeneration != null
     if (macProcessingProfile) {
       const currentModel = this.llmProvider.getModel?.()
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(getDevNotesModelOverride() ?? macProcessingProfile.notesModel)
+      if (!preparesJobModel) {
+        this.llmProvider.setModel?.(preferredModel!)
+      }
       this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
       this.lastAppliedMacModel = macProcessingProfile.notesModel
       logAutodocEvent({
@@ -438,7 +480,9 @@ export class SegmentationService {
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(getDevNotesModelOverride() ?? windowsProcessingProfile.notesModel)
+      if (!preparesJobModel) {
+        this.llmProvider.setModel?.(preferredModel!)
+      }
       this.llmProvider.setLowMemoryMode?.(
         windowsProcessingProfile.id === 'win-low-spec' ||
           windowsProcessingProfile.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
@@ -478,7 +522,7 @@ export class SegmentationService {
             : null)
       }
     })
-    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId)
+    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId, preferredModel)
     if (!readyForGeneration) {
       return
     }
@@ -694,6 +738,7 @@ export class SegmentationService {
           : constrained
             ? CPU_CONSTRAINED_REWRITE_POLICY
             : undefined
+      let missingModelError: unknown
       const result = await runNotesScanPipeline(segments, {
         embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
         title,
@@ -710,6 +755,7 @@ export class SegmentationService {
           endMs: row.endMs
         })),
         generate: (request) => {
+          if (missingModelError) return Promise.reject(missingModelError)
           if (!loggedScanRequest) {
             loggedScanRequest = true
             logAutodocEvent({
@@ -722,7 +768,7 @@ export class SegmentationService {
               }
             })
           }
-          return this.llmProvider.completePrompt!(request.prompt, {
+          const result = this.llmProvider.completePrompt!(request.prompt, {
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,
@@ -730,9 +776,17 @@ export class SegmentationService {
             stop: request.stop,
             format: request.format
           })
+          if (process.platform !== 'win32') return result
+          return result.catch((error) => {
+            if (isMissingOllamaModelError(error)) missingModelError = error
+            throw error
+          })
         },
         onProgress: (update) => onProgress?.(update.fraction, update.stage)
       })
+      // Optional scan passes may catch generation errors. A missing model must
+      // still return to the job's bounded preparation/retry path.
+      if (missingModelError) throw missingModelError
       const meetingNotesPath = join(meetingDir, 'notes.json')
       await enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
         try {
@@ -850,6 +904,7 @@ export class SegmentationService {
       }
       return { notesLayout: 'v2', groupingFallback: result.groupingFallback }
     } catch (error) {
+      if (process.platform === 'win32' && isMissingOllamaModelError(error)) throw error
       const copy = notesUserCopy('layout')
       logAutodocFailure({
         area: 'segmentation',
@@ -906,14 +961,44 @@ export class SegmentationService {
     })
   }
 
-  private async ensureOllamaReadyForGeneration(meetingId: string): Promise<boolean> {
-    await this.ollamaManager.waitUntilReady()
+  private async ensureOllamaReadyForGeneration(
+    meetingId: string,
+    preferredModel?: string
+  ): Promise<boolean> {
+    // macOS/Linux keep shared startup readiness and the original error behavior.
+    if (process.platform !== 'win32') {
+      await this.ollamaManager.waitUntilReady()
+    } else {
+      try {
+        await this.ollamaManager.waitUntilReady()
+        if (this.ollamaManager.prepareModelForGeneration) {
+          const activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
+          this.llmProvider.setModel?.(activeModel)
+          if (activeModel === LOW_SPEC_MAC_OLLAMA_MODEL) this.llmProvider.setLowMemoryMode?.(true)
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes job model selected',
+            meetingId,
+            context: { preferredModel, activeModel }
+          })
+        }
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'OLLAMA_START_CANCELLED') {
+          throw error
+        }
+        throw notesModelSetupError(error)
+      }
+    }
 
     if (!this.ollamaManager.isReadyForGeneration) {
       return true
     }
 
-    if (await this.ollamaManager.isReadyForGeneration()) {
+    const isReady = (): Promise<boolean> =>
+      process.platform === 'win32'
+        ? this.ollamaManager.isReadyForGeneration!(this.llmProvider.getModel?.())
+        : this.ollamaManager.isReadyForGeneration!()
+    if (await isReady()) {
       this.ollamaGenerationDeferCounts.delete(meetingId)
       return true
     }
@@ -926,7 +1011,7 @@ export class SegmentationService {
         meetingId
       })
       await this.ollamaManager.recoverUnhealthyRuntime()
-      if (await this.ollamaManager.isReadyForGeneration()) {
+      if (await isReady()) {
         this.ollamaGenerationDeferCounts.delete(meetingId)
         return true
       }

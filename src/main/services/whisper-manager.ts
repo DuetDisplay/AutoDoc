@@ -19,7 +19,7 @@ import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
 import { pipeline } from 'stream/promises'
-import { tmpdir } from 'os'
+import { availableParallelism, tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
@@ -129,6 +129,9 @@ export class WhisperManager extends EventEmitter {
   private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
   private selectedWindowsProcessingProfile: WindowsProcessingProfile | null = null
+  private windowsProfileResolutionPromise: Promise<void> | null = null
+  private windowsProfileRefreshPromise: Promise<void> | null = null
+  private windowsBackendRevision = 0
   private selectedMacProfile: MacProcessingProfile | null = null
   private mlxWhisperDisabledForSession = false
   private downgradeChain: string[] = []
@@ -159,9 +162,12 @@ export class WhisperManager extends EventEmitter {
       return null
     }
 
-    if (!this.selectedWindowsProcessingProfile) {
-      await this.refreshWindowsProcessingProfile()
+    if (!this.selectedWindowsProcessingProfile || this.windowsProfileResolutionPromise) {
+      await this.resolveWindowsTranscriptionBackend()
     }
+    // A session downgrade refreshes asynchronously. Join it before returning
+    // a model decision, including a newer refresh started while we waited.
+    while (this.windowsProfileRefreshPromise) await this.windowsProfileRefreshPromise
     if (!this.selectedWindowsProcessingProfile) {
       return null
     }
@@ -384,6 +390,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     this.recordDowngrade('parakeet-gpu', 'parakeet-cpu')
+    this.windowsBackendRevision++
     this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
     this.runtimeValidated = false
     this.validatedWorkerFingerprint = null
@@ -512,13 +519,29 @@ export class WhisperManager extends EventEmitter {
     this.downgradeChain.push(`${fromBackend}→${toBackend}`)
   }
 
-  private async refreshWindowsProcessingProfile(): Promise<void> {
+  private refreshWindowsProcessingProfile(): Promise<void> {
+    const run = this.updateWindowsProcessingProfile()
+    const promise = run.finally(() => {
+      if (this.windowsProfileRefreshPromise === promise) this.windowsProfileRefreshPromise = null
+    })
+    this.windowsProfileRefreshPromise = promise
+    return promise
+  }
+
+  private async updateWindowsProcessingProfile(): Promise<void> {
     if (!IS_WIN) {
       this.selectedWindowsProcessingProfile = null
       return
     }
 
-    const hardware = await detectWindowsHardwareProfile()
+    const hardware = await detectWindowsHardwareProfile().catch((error) => {
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Windows profile hardware detection failed; using system memory and CPU count',
+        error
+      })
+      return { logicalProcessors: availableParallelism(), ...getSystemMemorySnapshot() }
+    })
     const device = this.getSelectedWindowsProfile().device
     this.selectedWindowsProcessingProfile = selectWindowsProcessingProfile(
       {
@@ -642,7 +665,19 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  private async selectWindowsProfile(): Promise<void> {
+  private selectWindowsProfile(): Promise<void> {
+    if (this.windowsProfileResolutionPromise) return this.windowsProfileResolutionPromise
+    const revision = this.windowsBackendRevision
+    const run = this.resolveSelectedWindowsProfile(revision)
+    const promise = run.finally(() => {
+      if (this.windowsProfileResolutionPromise === promise)
+        this.windowsProfileResolutionPromise = null
+    })
+    this.windowsProfileResolutionPromise = promise
+    return promise
+  }
+
+  private async resolveSelectedWindowsProfile(revision: number): Promise<void> {
     if (!IS_WIN) {
       this.selectedWindowsProfile = null
       return
@@ -651,6 +686,7 @@ export class WhisperManager extends EventEmitter {
     const hardware = await detectWindowsHardwareProfile()
     const manifestPath = this.getWindowsTranscriptionManifestPath()
     this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(manifestPath)
+    if (revision !== this.windowsBackendRevision) return
     this.selectedWindowsProfile = selectWindowsTranscriptionProfile(
       hardware,
       this.windowsTranscriptionProfiles
@@ -688,7 +724,9 @@ export class WhisperManager extends EventEmitter {
     }
 
     try {
-      await this.selectWindowsProfile()
+      if (this.windowsProfileResolutionPromise) await this.windowsProfileResolutionPromise
+      else if (!this.selectedWindowsProcessingProfile) await this.selectWindowsProfile()
+      while (this.windowsProfileRefreshPromise) await this.windowsProfileRefreshPromise
       this.setupStatus = this.withBackendStatus(this.setupStatus)
       this.emit('setup-status', this.getSetupStatus())
     } catch (err) {
@@ -697,6 +735,9 @@ export class WhisperManager extends EventEmitter {
         message: 'Failed to resolve Windows transcription backend at startup',
         error: err
       })
+      // Failure chooses an explicit conservative profile for both preparation
+      // and generation; a later successful backend selection can replace it.
+      await this.refreshWindowsProcessingProfile()
     }
   }
 

@@ -592,11 +592,15 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
   let gpus: WindowsGpuInfo[] = []
 
   try {
-    const { stdout } = await execFileAsync('powershell', [
-      '-NoProfile',
-      '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress'
-    ])
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress'
+      ],
+      { timeout: 5000, windowsHide: true }
+    )
     const parsed = JSON.parse(stdout.trim()) as unknown
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
     gpus = rows
@@ -607,11 +611,15 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
   }
 
   try {
-    const { stdout } = await execFileAsync('powershell', [
-      '-NoProfile',
-      '-Command',
-      `$base='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'; Get-ChildItem "$base\\0*" | ForEach-Object { Get-ItemProperty $_.PSPath | Select-Object Description,DriverDesc,@{Name='AdapterString';Expression={$_.'HardwareInformation.AdapterString'}},@{Name='qwMemorySize';Expression={$_.'HardwareInformation.qwMemorySize'}} } | ConvertTo-Json -Compress`
-    ])
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `$base='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'; Get-ChildItem "$base\\0*" | ForEach-Object { Get-ItemProperty $_.PSPath | Select-Object Description,DriverDesc,@{Name='AdapterString';Expression={$_.'HardwareInformation.AdapterString'}},@{Name='qwMemorySize';Expression={$_.'HardwareInformation.qwMemorySize'}} } | ConvertTo-Json -Compress`
+      ],
+      { timeout: 5000, windowsHide: true }
+    )
     const parsed = JSON.parse(stdout.trim() || '[]') as unknown
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
     gpus = applyRegistryGpuMemory(gpus, parseWindowsRegistryGpuRows(rows))
@@ -630,10 +638,11 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
 }
 
 async function queryNvidiaSmiGpus(): Promise<NvidiaSmiGpuInfo[]> {
-  const { stdout } = await execFileAsync('nvidia-smi', [
-    '--query-gpu=name,memory.total,driver_version',
-    '--format=csv,noheader,nounits'
-  ])
+  const { stdout } = await execFileAsync(
+    'nvidia-smi',
+    ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
+    { timeout: 5000, windowsHide: true }
+  )
 
   return parseNvidiaSmiGpuRows(stdout)
 }
