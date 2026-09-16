@@ -111,6 +111,40 @@ describe('SegmentationService', () => {
   })
 
   it.each(['win32', 'darwin'] as const)(
+    'removes only exact copies after generation and before persistence on %s', async (platform) => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+      const item = {
+        id: 'meeting-information:duplicate', meetingId: 'meeting', category: 'information' as const,
+        topic: null, title: 'Release date', content: 'No release date has been announced.',
+        assignee: null, deadline: null, sourceStartMs: 1000, sourceEndMs: 1000
+      }
+      const generated = { decisions: [], actionItems: [], information: [item, { ...item }], discussion: [], statusUpdates: [] }
+      const expected = { ...generated, information: [item] }
+      vi.mocked(provider.summarize).mockResolvedValue(generated)
+      fsMock.access.mockResolvedValue(undefined)
+      fsMock.readFile.mockResolvedValue(JSON.stringify([
+        { id: 'row', meetingId: 'meeting', speaker: 'me', text: item.content, startMs: 1000, endMs: 5000, confidence: 1 }
+      ]))
+      const persist = vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+      const scan = vi.spyOn(service as any, 'persistScanLayerNotes').mockResolvedValue({ notesLayout: 'v2' })
+      try {
+        await (service as any).processJob('meeting')
+        expect(provider.summarize).toHaveBeenCalledOnce()
+        expect(persist).toHaveBeenCalledWith('meeting', expected, { overwriteWhenV2Exists: true })
+        expect(scan).toHaveBeenCalledWith('meeting', expected, expect.any(Array), expect.any(Function))
+        expect(generated.information).toHaveLength(2)
+        expect(vi.mocked(provider.summarize).mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0])
+        expect(persist.mock.invocationCallOrder[0]).toBeLessThan(scan.mock.invocationCallOrder[0])
+      } finally {
+        persist.mockRestore()
+        scan.mockRestore()
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    }
+  )
+
+  it.each(['win32', 'darwin'] as const)(
     'keeps notes memory evidence across a restart on %s',
     async (platform) => {
       const original = process.platform

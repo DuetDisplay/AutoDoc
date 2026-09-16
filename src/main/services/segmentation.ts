@@ -38,6 +38,7 @@ import {
 } from './mac-processing-profile'
 import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
 import { NotesRepository } from './notes-repository'
+import { removeExactDuplicateSegments } from './notes-exact-duplicates'
 import {
   computeLegacyNotesRevision,
   computeNotesAttributionRevision,
@@ -581,6 +582,8 @@ export class SegmentationService {
           this.updateActivity(meetingId, activity)
         }
       )
+
+      segments = removeExactDuplicateSegments(segments)
 
       // Verify the LLM actually produced content — empty results mean it failed silently
       const totalItems =
