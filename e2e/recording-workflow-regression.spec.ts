@@ -68,7 +68,9 @@ test('single-segment manual stop finalizes, opens video detail, and survives rel
       fullPage: true
     })
 
-    await page.waitForTimeout(1_500)
+    // Allow the real video encoder to produce frames even on a busy QA host.
+    // The separate rapid-abort case covers recordings stopped immediately.
+    await page.waitForTimeout(3_000)
     await page.getByRole('button', { name: /^Stop Recording$/ }).click()
     await page.getByRole('link', { name: 'AI Notes' }).click()
 

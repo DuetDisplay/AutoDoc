@@ -1679,8 +1679,10 @@ describe('TranscriptionService', () => {
     let device: 'dml' | 'cpu' = 'dml'
     let backend: 'parakeet-gpu' | 'parakeet-cpu' = 'parakeet-gpu'
     const downgradeParakeetGpuToCpuForSession = vi.fn(() => {
+      if (device === 'cpu') return false
       device = 'cpu'
       backend = 'parakeet-cpu'
+      return true
     })
     mockWhisper = {
       ...mockWhisper,
@@ -1739,6 +1741,29 @@ describe('TranscriptionService', () => {
       })
     )
     expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
+  })
+
+  it('caches CPU thread limits after readiness changes the backend', async () => {
+    setPlatform('win32')
+    let threadPolicy = 'default'
+    ;(service as any).getEffectiveWindowsProcessingProfile = async () => ({ threadPolicy })
+    vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+    vi.mocked(mockWhisper.ensureReady).mockImplementation(async () => {
+      threadPolicy = 'min'
+    })
+    fsMock.access.mockImplementation(async (file) => {
+      if (String(file).endsWith('system.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    const execute = vi
+      .spyOn(service as any, 'transcribeWithFallback')
+      .mockImplementation(async () => {
+        expect((service as any).getWhisperThreadCount()).toBe(4)
+        return { transcription: [] }
+      })
+    await (service as any).processJob('thread-policy')
+    expect(execute).toHaveBeenCalled()
   })
 
   it('classifies Metal aborts as whisper-metal-crash', () => {

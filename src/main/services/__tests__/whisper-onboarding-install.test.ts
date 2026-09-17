@@ -161,6 +161,8 @@ describe('Whisper onboarding dependency installation', () => {
 
       await manager.ensureReady()
 
+      expect(manager.downgradeParakeetGpuToCpuForSession()).toBe(false)
+      expect((manager as any).parakeetGpuDisabledForSession).toBe(false)
       await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
@@ -911,8 +913,7 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(manager.isReady()).resolves.toBe(true)
 
       manager.downgradeParakeetGpuToCpuForSession()
-      // Keep the fixture's selection on CPU when ensureReady detects hardware again.
-      process.env.AUTODOC_WINDOWS_TRANSCRIPTION_BACKEND = 'parakeet-cpu'
+      // Re-run real selection without forcing CPU: the session downgrade must survive readiness.
       const int8ModelDir = manager.getParakeetModelPath()
       expect(int8ModelDir).toContain('parakeet-tdt-0.6b-v3-int8')
       await mkdir(int8ModelDir, { recursive: true })
@@ -921,16 +922,28 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(manager.isReady()).resolves.toBe(false)
 
       assetDownloads.length = 0
+      const statusUpdates: any[] = []
+      manager.on('setup-status', (status) => statusUpdates.push(status))
       // Match transcription.ts: only call ensureReady when isReady is false
       if (!(await manager.isReady())) {
         await manager.ensureReady()
       }
 
       expect(assetDownloads).toContain('parakeet-tdt-0.6b-v3-int8.zip')
+      expect(statusUpdates).toContainEqual(
+        expect.objectContaining({ phase: 'downloading-model', backend: 'parakeet-cpu' })
+      )
       await expect(
         access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
       ).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+      assetDownloads.length = 0
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await manager.ensureReady()
+        expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+        await expect(manager.isReady()).resolves.toBe(true)
+      }
+      expect(assetDownloads).toEqual([])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
@@ -987,46 +1000,55 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('prefers installed faster-whisper-cpu over missing parakeet at runtime', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-'))
-    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
-    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+  it.each(['parakeet-cpu', 'parakeet-gpu'] as const)(
+    'prefers installed faster-whisper-cpu over missing %s at runtime, including after downgrade',
+    async (initialBackend) => {
+      const rootDir = await mkdtemp(
+        join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-')
+      )
+      const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+      await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
-    try {
-      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
-        isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
-        windowsBackend: 'parakeet-cpu'
-      })
+      try {
+        const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+          isPackaged: true,
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: initialBackend
+        })
 
-      const manager = new WhisperManager()
-      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
-      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
-      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
-      for (const asset of fasterWhisperProfile.assets) {
-        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
-          fasterWhisperProfile,
-          asset.id
-        )
-        for (const expectedFile of asset.expectedFiles) {
-          const target = join(assetRoot, ...expectedFile.split('/'))
-          await mkdir(dirname(target), { recursive: true })
-          await writeFile(target, `${asset.id} file`)
+        const manager = new WhisperManager()
+        if (initialBackend === 'parakeet-gpu') {
+          await (manager as any).selectWindowsProfile()
+          expect(manager.downgradeParakeetGpuToCpuForSession()).toBe(true)
         }
+        const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+        ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+        const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+        for (const asset of fasterWhisperProfile.assets) {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+            fasterWhisperProfile,
+            asset.id
+          )
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+
+        const downloadSpy = vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
+        vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+
+        await manager.ensureReady()
+
+        expect(downloadSpy).not.toHaveBeenCalled()
+        expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
+        await expect(manager.isReady()).resolves.toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
       }
-
-      const downloadSpy = vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
-      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
-
-      await manager.ensureReady()
-
-      expect(downloadSpy).not.toHaveBeenCalled()
-      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
-      await expect(manager.isReady()).resolves.toBe(true)
-    } finally {
-      await rm(rootDir, { recursive: true, force: true })
     }
-  })
+  )
 
   it('attempts parakeet install during setup when faster-whisper is already present', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-setup-install-'))
@@ -1110,12 +1132,15 @@ describe('Whisper onboarding dependency installation', () => {
       const usabilitySpy = vi
         .spyOn(manager as any, 'isParakeetUsableWithRetry')
         .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true)
+        .mockResolvedValue(true)
 
       await manager.ensureReady()
 
       expect(usabilitySpy).toHaveBeenCalledTimes(2)
       expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      await manager.ensureReady()
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      expect(manager.getDowngradesTaken()).toEqual(['parakeet-gpu→parakeet-cpu'])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

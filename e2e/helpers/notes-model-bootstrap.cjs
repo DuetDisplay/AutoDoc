@@ -8,6 +8,7 @@ const path = require('node:path')
 const cp = require('node:child_process')
 const os = require('node:os')
 const { app } = require('electron')
+if (process.env.AUTODOC_DML_FAILURE_VERIFY === '1') require('./dml-failure-bootstrap.cjs')
 
 const scenario = process.env.AUTODOC_NOTES_VERIFY_SCENARIO
 const root = process.env.AUTODOC_TEST_USER_DATA_DIR
@@ -16,6 +17,18 @@ const record = (entry) =>
   fs.appendFileSync(trace, JSON.stringify({ time: new Date().toISOString(), ...entry }) + '\n')
 // These isolated runs must never change login registration or contact telemetry.
 app.setLoginItemSettings = () => {}
+
+// Jamal's reported capacity selects win-low-spec after CPU recovery. Keep actual
+// GPU discovery, model assets and all generation requests real for this fixture.
+if (process.env.AUTODOC_VERIFY_JAMAL_HARDWARE === '1') {
+  process.getSystemMemoryInfo = () => ({
+    total: Math.round(15.77 * 1024 ** 2),
+    free: Math.round(6.7 * 1024 ** 2),
+    swapTotal: 0,
+    swapFree: 0
+  })
+  os.availableParallelism = () => 8
+}
 
 if (scenario !== 'normal') {
   process.getSystemMemoryInfo = () => ({

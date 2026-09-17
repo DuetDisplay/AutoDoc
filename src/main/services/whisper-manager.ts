@@ -134,6 +134,7 @@ export class WhisperManager extends EventEmitter {
   private windowsBackendRevision = 0
   private selectedMacProfile: MacProcessingProfile | null = null
   private mlxWhisperDisabledForSession = false
+  private parakeetGpuDisabledForSession = false
   private downgradeChain: string[] = []
   private inFirstRunSetup = false
   private firstRunSetupStartedAt: number | null = null
@@ -379,22 +380,24 @@ export class WhisperManager extends EventEmitter {
   }
 
   /** Session-only fallback after repeated DirectML device-loss failures. */
-  downgradeParakeetGpuToCpuForSession(): void {
+  downgradeParakeetGpuToCpuForSession(): boolean {
     if (!IS_WIN) {
-      return
+      return false
     }
 
     const current = this.getSelectedWindowsProfile()
     if (current.id !== 'parakeet-gpu') {
-      return
+      return false
     }
 
+    this.parakeetGpuDisabledForSession = true
     this.recordDowngrade('parakeet-gpu', 'parakeet-cpu')
     this.windowsBackendRevision++
     this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
     this.runtimeValidated = false
     this.validatedWorkerFingerprint = null
     void this.refreshWindowsProcessingProfile()
+    return true
   }
 
   getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
@@ -687,15 +690,26 @@ export class WhisperManager extends EventEmitter {
     const manifestPath = this.getWindowsTranscriptionManifestPath()
     this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(manifestPath)
     if (revision !== this.windowsBackendRevision) return
-    this.selectedWindowsProfile = selectWindowsTranscriptionProfile(
+    const hardwareSelectedProfile = selectWindowsTranscriptionProfile(
       hardware,
       this.windowsTranscriptionProfiles
     )
+    const gpuDisabled =
+      this.parakeetGpuDisabledForSession && hardwareSelectedProfile.id === 'parakeet-gpu'
+    this.selectedWindowsProfile = gpuDisabled
+      ? this.windowsTranscriptionProfiles['parakeet-cpu']
+      : hardwareSelectedProfile
     await this.refreshWindowsProcessingProfile()
     logAutodocEvent({
       area: 'whisper',
       message: 'Selected Windows transcription backend',
       context: {
+        ...(gpuDisabled
+          ? {
+              sessionRestriction: 'parakeet-gpu-disabled',
+              hardwareSelectedBackend: hardwareSelectedProfile.id
+            }
+          : {}),
         backend: this.selectedWindowsProfile.id,
         backendLabel: this.selectedWindowsProfile.label,
         modelName: this.selectedWindowsProfile.modelName,
@@ -1086,8 +1100,11 @@ export class WhisperManager extends EventEmitter {
           }
         })
         this.recordDowngrade(initialProfile.id, 'parakeet-cpu')
+        this.parakeetGpuDisabledForSession = true
+        this.windowsBackendRevision++
         this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
         this.runtimeValidated = false
+        this.validatedWorkerFingerprint = null
         await this.refreshWindowsProcessingProfile()
       }
     }

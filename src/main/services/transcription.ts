@@ -377,7 +377,6 @@ export class TranscriptionService {
 
     try {
       const source = this.enqueueSource.get(meetingId) ?? 'direct'
-      await this.refreshWindowsThreadPolicy()
       const processingProfile = await this.getProcessingProfileLogContext()
       logAutodocEvent({
         area: 'transcription',
@@ -403,6 +402,8 @@ export class TranscriptionService {
         this.broadcastStatus(meetingId, 'downloading')
         await this.whisperManager.ensureReady()
       }
+      // Readiness may switch backends; cache the policy for the one we will execute.
+      await this.refreshWindowsThreadPolicy()
 
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
@@ -2112,8 +2113,10 @@ export class TranscriptionService {
       if (this.isDmlDeviceLossError(message)) {
         this.disposeTranscriptionWorkerClient()
         this.consecutiveDmlDeviceLossFailures += 1
-        if (this.consecutiveDmlDeviceLossFailures === DML_DEVICE_LOSS_FAILURE_THRESHOLD) {
+        if (
+          this.consecutiveDmlDeviceLossFailures >= DML_DEVICE_LOSS_FAILURE_THRESHOLD &&
           this.whisperManager.downgradeParakeetGpuToCpuForSession?.()
+        ) {
           logAutodocEvent({
             area: 'transcription',
             message: 'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures',

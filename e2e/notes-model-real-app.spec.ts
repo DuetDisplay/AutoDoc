@@ -97,6 +97,12 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
       path.join(installed, 'models', 'parakeet-models'),
       path.join(models, 'parakeet-models')
     )
+    if (process.env.AUTODOC_VERIFY_CPU_MODELS) {
+      linkModelTree(
+        process.env.AUTODOC_VERIFY_CPU_MODELS,
+        path.join(models, 'parakeet-models', 'parakeet-tdt-0.6b-v3-int8')
+      )
+    }
     for (const runtime of ['ollama-runtime', 'transcription-runtimes']) {
       if (!existsSync(path.join(models, runtime)))
         cpSync(path.join(installed, 'models', runtime), path.join(models, runtime), {
@@ -129,6 +135,9 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
     if (scenario === 'normal') {
       prepareSpeechFixture()
       copyFileSync(path.join(artifactRoot, 'speech.webm'), path.join(meetingDir, 'mic.webm'))
+      if (process.env.AUTODOC_VERIFY_DUAL === '1') {
+        copyFileSync(path.join(artifactRoot, 'speech.webm'), path.join(meetingDir, 'system.webm'))
+      }
     } else {
       // Victor first generated notes after startup finished. Keep this meeting
       // out of automatic recovery until both startup profiles have settled.
@@ -209,6 +218,76 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         unlinkSync(path.join(meetingDir, 'segments.error'))
         await page.evaluate((id) => window.electronAPI.invoke('segmentation:retry', id), meetingId)
       }
+      const dmlFailure = process.env.AUTODOC_DML_FAILURE_VERIFY === '1'
+      if (dmlFailure) {
+        // Exercise the existing user retry IPC rather than waiting two minutes
+        // per recovery scan. Probe requests execute normally in this fixture.
+        let retriedFailures = 0
+        while (true) {
+          let observedFailures = 0
+          await expect
+            .poll(
+              async () => {
+                const file = path.join(userData, 'worker-requests.jsonl')
+                const failures = existsSync(file)
+                  ? readFileSync(file, 'utf8')
+                      .trim()
+                      .split('\n')
+                      .map((line) => JSON.parse(line))
+                      .filter((r) => r.injected).length
+                  : 0
+                observedFailures = failures
+                const status = await page.evaluate(
+                  (id) => window.electronAPI.invoke('transcription:get-status', id),
+                  meetingId
+                )
+                return failures > retriedFailures && status === 'failed'
+              },
+              { timeout: 180_000 }
+            )
+            .toBe(true)
+          const downgraded = readFileSync(
+            path.join(userData, 'logs', 'autodocLog.log'),
+            'utf8'
+          ).includes('Downgrading Parakeet GPU to CPU after repeated DML device-loss failures')
+          expect(observedFailures).toBeLessThanOrEqual(6)
+          await page.evaluate(
+            (id) => window.electronAPI.invoke('transcription:retry', id),
+            meetingId
+          )
+          retriedFailures = observedFailures
+          if (downgraded) break
+        }
+        if (process.env.AUTODOC_JAMAL_BASELINE === '1') {
+          await expect
+            .poll(
+              () => {
+                const file = path.join(userData, 'worker-requests.jsonl')
+                return existsSync(file)
+                  ? readFileSync(file, 'utf8')
+                      .trim()
+                      .split('\n')
+                      .map((line) => JSON.parse(line))
+                      .filter((r) => r.injected).length
+                  : 0
+              },
+              { timeout: 240_000 }
+            )
+            .toBeGreaterThanOrEqual(3)
+          const requests = readFileSync(path.join(userData, 'worker-requests.jsonl'), 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+          expect(
+            requests
+              .filter((r) => r.op === 'transcribe' && !r.probe)
+              .slice(0, 3)
+              .every((r) => r.device === 'dml')
+          ).toBe(true)
+          await page.screenshot({ path: path.join(artifactRoot, `${phase}-gpu-retry-failure.png`) })
+          return
+        }
+      }
       const expected = phase === 'before' && scenario === 'victor' ? 'Notes failed' : 'Notes ready'
       await expect(page.getByText(expected, { exact: false }).first()).toBeVisible({
         timeout: 9 * 60_000
@@ -233,6 +312,20 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         }),
         meetingId
       )
+      if (dmlFailure) {
+        const workerRequests = readFileSync(path.join(userData, 'worker-requests.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+        expect(workerRequests.filter((r) => r.injected).length).toBeGreaterThanOrEqual(2)
+        if (process.env.AUTODOC_VERIFY_DUAL !== '1')
+          expect(workerRequests.filter((r) => r.injected)).toHaveLength(2)
+        expect(
+          workerRequests.some(
+            (r) => r.op === 'transcribe' && r.device === 'cpu' && !r.injected && !r.probe
+          )
+        ).toBe(true)
+      }
       writeFileSync(
         path.join(artifactRoot, `${phase}-${scenario}-result.json`),
         JSON.stringify(result, null, 2)
@@ -246,6 +339,31 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         expect(requests.some((r) => r.missing)).toBe(false)
         expect(result.transcript.length).toBeGreaterThan(0)
         expect(result.segments).toBeTruthy()
+      }
+      if (dmlFailure && process.env.AUTODOC_VERIFY_JAMAL_HARDWARE === '1') {
+        const status = await page.evaluate(() =>
+          window.electronAPI.invoke('whisper:get-setup-status')
+        )
+        expect(status.windowsProcessingProfileId).toBe('win-low-spec')
+        expect(requests.some((r) => r.model === 'llama3.2:3b' && !r.unload)).toBe(true)
+        const workerRequests = readFileSync(path.join(userData, 'worker-requests.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+        // Eight logical CPUs minus the existing six-CPU reserve leaves two.
+        expect(
+          workerRequests.some((r) => r.op === 'load' && r.device === 'cpu' && r.threads === 2)
+        ).toBe(true)
+        const completed = readFileSync(path.join(userData, 'logs', 'autodocLog.log'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+          .find((entry) => entry.message === 'transcription completed')
+        expect(completed.context.processingProfile.settings).toMatchObject({
+          dualSourceMode: 'sequential',
+          threadPolicy: 'min',
+          notesAfterTranscriptionOnly: true
+        })
       }
       if (phase === 'after' && scenario === 'normal') {
         const baseline = JSON.parse(
@@ -307,6 +425,43 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         path: path.join(artifactRoot, `${phase}-${scenario}-transcript.png`),
         fullPage: true
       })
+      if (dmlFailure && process.env.AUTODOC_VERIFY_SECOND_MEETING === '1') {
+        const secondId = 'model-verification-second-cpu'
+        const secondDir = path.join(userData, 'recordings', secondId)
+        mkdirSync(secondDir, { recursive: true })
+        writeFileSync(
+          path.join(secondDir, 'metadata.json'),
+          JSON.stringify({
+            sourceName: 'Model verification',
+            customTitle: 'Subsequent CPU meeting',
+            startedAt: Date.now() - 60000,
+            stoppedAt: Date.now(),
+            durationSeconds: 45
+          })
+        )
+        copyFileSync(path.join(artifactRoot, 'speech.webm'), path.join(secondDir, 'mic.webm'))
+        const traceFile = path.join(userData, 'worker-requests.jsonl')
+        const beforeLines = readFileSync(traceFile, 'utf8').trim().split('\n').length
+        await page.evaluate((id) => window.electronAPI.invoke('transcription:retry', id), secondId)
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                (id) => window.electronAPI.invoke('segmentation:get-status', id),
+                secondId
+              ),
+            { timeout: 240_000 }
+          )
+          .toBe('complete')
+        const later = readFileSync(traceFile, 'utf8')
+          .trim()
+          .split('\n')
+          .slice(beforeLines)
+          .map((line) => JSON.parse(line))
+          .filter((r) => r.op === 'transcribe' && !r.probe)
+        expect(later.length).toBeGreaterThan(0)
+        expect(later.every((r) => r.device === 'cpu' && !r.injected)).toBe(true)
+      }
     } finally {
       writeFileSync(path.join(artifactRoot, `${phase}-${scenario}-console.log`), stdout.join(''))
       await app.close()
