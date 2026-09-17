@@ -1,5 +1,5 @@
 /**
- * Windows headed recording regression:
+ * Native macOS/Windows headed recording regression:
  * pnpm run build; pnpm run test:e2e:headed -- e2e/recording-workflow-regression.spec.ts
  */
 import { mkdirSync, mkdtempSync } from 'node:fs'
@@ -15,13 +15,18 @@ import {
 } from './helpers/electron-app'
 
 const ARTIFACT_DIR = path.join(process.cwd(), 'artifacts', 'recording-regression')
-const FFMPEG_PATH = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe')
+const FFMPEG_PATH = path.join(
+  process.cwd(),
+  'node_modules',
+  'ffmpeg-static',
+  process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+)
 const E2E_ENV = {
   AUTODOC_E2E_FFMPEG_PATH: FFMPEG_PATH,
   AUTODOC_E2E_SKIP_LOCAL_PROCESSING: '1'
 }
-const WINDOWS_SCENARIO = {
-  platform: 'win32' as const,
+const NATIVE_SCENARIO = {
+  platform: process.platform === 'win32' ? ('win32' as const) : ('darwin' as const),
   permissions: { microphone: true, screen: true }
 }
 
@@ -54,7 +59,7 @@ test.beforeAll(() => {
 test('single-segment manual stop finalizes, opens video detail, and survives relaunch', async () => {
   test.setTimeout(120_000)
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-recording-regression-'))
-  const firstApp = await relaunchIsolatedE2EApp(userDataDir, WINDOWS_SCENARIO, E2E_ENV)
+  const firstApp = await relaunchIsolatedE2EApp(userDataDir, NATIVE_SCENARIO, E2E_ENV)
   let relaunchedApp: Awaited<ReturnType<typeof relaunchIsolatedE2EApp>> | null = null
 
   try {
@@ -104,7 +109,7 @@ test('single-segment manual stop finalizes, opens video detail, and survives rel
     })
 
     await firstApp.electronApp.close()
-    relaunchedApp = await relaunchIsolatedE2EApp(userDataDir, WINDOWS_SCENARIO, E2E_ENV)
+    relaunchedApp = await relaunchIsolatedE2EApp(userDataDir, NATIVE_SCENARIO, E2E_ENV)
     const relaunchedPage = await relaunchedApp.electronApp.firstWindow()
     await installStableScreenshotBackground(relaunchedPage)
     await relaunchedPage.getByRole('link', { name: 'AI Notes' }).click()
@@ -126,7 +131,7 @@ test('single-segment manual stop finalizes, opens video detail, and survives rel
 test('rapid manual abort does not leave a wrapping-up meeting wedged', async () => {
   test.setTimeout(90_000)
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-rapid-abort-'))
-  const app = await relaunchIsolatedE2EApp(userDataDir, WINDOWS_SCENARIO, E2E_ENV)
+  const app = await relaunchIsolatedE2EApp(userDataDir, NATIVE_SCENARIO, E2E_ENV)
 
   try {
     const page = await app.electronApp.firstWindow()
@@ -156,7 +161,7 @@ test('rapid manual abort does not leave a wrapping-up meeting wedged', async () 
 test('device-change multi-segment recording succeeds and clears finalizing', async () => {
   test.setTimeout(120_000)
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-multi-segment-'))
-  const app = await relaunchIsolatedE2EApp(userDataDir, WINDOWS_SCENARIO, E2E_ENV)
+  const app = await relaunchIsolatedE2EApp(userDataDir, NATIVE_SCENARIO, E2E_ENV)
 
   try {
     const page = await app.electronApp.firstWindow()
