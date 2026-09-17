@@ -412,6 +412,7 @@ export interface TranscriptionStatusPayload {
   backendLabel?: string
   etaSeconds?: number | null
   recordingDurationSec?: number | null
+  reprocessFailed?: boolean
 }
 
 export type TranscriptionStatus =

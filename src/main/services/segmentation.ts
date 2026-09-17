@@ -414,6 +414,9 @@ export class SegmentationService {
 
   private async processPreparedJob(meetingId: string): Promise<void> {
     const localProcessingCoordinator = this.localProcessingCoordinator
+    if (process.platform === 'win32' && localProcessingCoordinator) {
+      return await localProcessingCoordinator.runWindows(() => this.processJobExclusive(meetingId))
+    }
     if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
       return await localProcessingCoordinator.runExclusive('segmentation', meetingId, () =>
         this.processJobExclusive(meetingId)

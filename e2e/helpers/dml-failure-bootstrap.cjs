@@ -15,7 +15,16 @@ cp.spawn = function (file, args, options) {
     const request = JSON.parse(String(data))
     if (request.op === 'load') device = request.device
     const probe = request.op === 'transcribe' && path.basename(request.audio) === 'probe.wav'
-    const injected = request.op === 'transcribe' && device === 'dml' && !probe
+    const cpuFailure =
+      request.op === 'transcribe' &&
+      device === 'cpu' &&
+      !probe &&
+      fs.existsSync(path.join(process.env.AUTODOC_TEST_USER_DATA_DIR, 'inject-cpu-failure'))
+    const injected =
+      request.op === 'transcribe' &&
+      device === 'dml' &&
+      !probe &&
+      !fs.existsSync(path.join(process.env.AUTODOC_TEST_USER_DATA_DIR, 'allow-gpu-transcription'))
     if (request.op === 'load' || request.op === 'transcribe') {
       fs.appendFileSync(
         path.join(process.env.AUTODOC_TEST_USER_DATA_DIR, 'worker-requests.jsonl'),
@@ -29,7 +38,7 @@ cp.spawn = function (file, args, options) {
         }) + '\n'
       )
     }
-    if (injected) {
+    if (injected || cpuFailure) {
       setImmediate(() =>
         child.stdout.emit(
           'data',
@@ -37,8 +46,9 @@ cp.spawn = function (file, args, options) {
             JSON.stringify({
               id: request.id,
               ok: false,
-              error:
-                '[ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while running MemcpyToHost node. DmlExecutionProvider 887A0006 The GPU will not respond to more commands, most likely because of an invalid command passed by the calling application.'
+              error: cpuFailure
+                ? 'Injected CPU reprocessing failure'
+                : '[ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while running MemcpyToHost node. DmlExecutionProvider 887A0006 The GPU will not respond to more commands, most likely because of an invalid command passed by the calling application.'
             }) + '\n'
           )
         )

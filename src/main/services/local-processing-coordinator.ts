@@ -12,6 +12,9 @@ type ShouldSerializeLocalProcessing = () => boolean | Promise<boolean>
 export class LocalProcessingCoordinator {
   private activeKind: LocalProcessingKind | null = null
   private waiters: Waiter[] = []
+  private windowsAdmission: Promise<void> = Promise.resolve()
+  private windowsActive = new Set<Promise<void>>()
+  private windowsExclusive = false
 
   constructor(private shouldSerialize: ShouldSerializeLocalProcessing) {}
 
@@ -21,6 +24,30 @@ export class LocalProcessingCoordinator {
 
   getActiveKind(): LocalProcessingKind | null {
     return this.activeKind
+  }
+
+  /** Track even concurrent Windows work so a later CPU downgrade can drain it. */
+  async runWindows<T>(fn: () => Promise<T>): Promise<T> {
+    let release!: () => void
+    const completed = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const admission = this.windowsAdmission.then(async () => {
+      const serialize = await this.shouldSerialize()
+      if (this.windowsExclusive || serialize) {
+        await Promise.all(this.windowsActive)
+      }
+      this.windowsExclusive = serialize
+      this.windowsActive.add(completed)
+    })
+    this.windowsAdmission = admission.catch(() => {})
+    await admission
+    try {
+      return await fn()
+    } finally {
+      this.windowsActive.delete(completed)
+      release()
+    }
   }
 
   async runExclusive<T>(

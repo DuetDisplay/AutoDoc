@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
+import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { NOTES_WRITER_PROGRESS_END, SEGMENT_LABELS } from '../../../shared/constants'
 import type {
@@ -282,6 +283,7 @@ export function MeetingDetail() {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
+  const [reprocessFailed, setReprocessFailed] = useState(false)
   const [transcriptionMemoryFailure, setTranscriptionMemoryFailure] = useState<MemoryFailure>()
   const [segmentationMemoryFailure, setSegmentationMemoryFailure] = useState<MemoryFailure>()
   const transcriptionEventRevisionRef = useRef(0)
@@ -897,6 +899,13 @@ export function MeetingDetail() {
       }
     )
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+    setReprocessFailed(false)
+    if (isWindowsRenderer()) {
+      const revision = transcriptionEventRevisionRef.current
+      void window.electronAPI.invoke('transcription:get-reprocess-failure', id).then((failed) => {
+        if (transcriptionEventRevisionRef.current === revision) setReprocessFailed(failed)
+      })
+    }
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
@@ -906,6 +915,7 @@ export function MeetingDetail() {
           payload.status === 'failed' ? payload.memoryFailure : undefined
         )
         setTranscriptionStatus(payload.status)
+        if (isWindowsRenderer()) setReprocessFailed(payload.reprocessFailed === true)
         setTranscriptionProgress((current) =>
           mergeProgress(payload.status, current, payload.progress)
         )
@@ -1030,12 +1040,19 @@ export function MeetingDetail() {
     segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
     setTranscriptionProgress(undefined)
-    setTranscript([])
-    setSegments(null)
-    setSegmentationStatus('pending')
+    if (!isWindowsRenderer()) {
+      setTranscript([])
+      setSegments(null)
+      setSegmentationStatus('pending')
+    }
+    setReprocessFailed(false)
     setSegmentationErrorCode(undefined)
     setSegmentationActivity(null)
-    window.electronAPI.invoke('transcription:retry', id)
+    if (isWindowsRenderer()) {
+      window.electronAPI.invoke('transcription:retry', id, { reprocess: true })
+    } else {
+      window.electronAPI.invoke('transcription:retry', id)
+    }
   }
 
   const handleReprocessNotes = () => {
@@ -1456,6 +1473,14 @@ export function MeetingDetail() {
       </div>
 
       {/* Tabs */}
+      {isWindowsRenderer() && reprocessFailed && (
+        <p
+          role="status"
+          className="mb-3 rounded-lg border border-border-subtle px-3 py-2 text-sm text-ink-muted"
+        >
+          Reprocessing failed. Your previous transcript and notes are still available.
+        </p>
+      )}
       <div className="flex items-end justify-between gap-4 border-b border-border px-6">
         <div className="flex">
           {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (

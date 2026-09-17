@@ -167,7 +167,8 @@ export interface IpcInvokeEvents {
   'transcription:get-memory-failure': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
-  'transcription:retry': [meetingId: string]
+  'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
+  'transcription:get-reprocess-failure': [meetingId: string]
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
@@ -307,6 +308,7 @@ export interface IpcInvokeReturns {
   'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
+  'transcription:get-reprocess-failure': boolean
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus

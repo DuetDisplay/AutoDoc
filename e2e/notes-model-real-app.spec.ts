@@ -160,7 +160,7 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         ])
       )
     }
-    const app = await electron.launch({
+    const launchOptions = {
       args: [path.join(process.cwd(), 'e2e/helpers/notes-model-bootstrap.cjs')],
       env: {
         ...process.env,
@@ -174,12 +174,13 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         AUTODOC_ASK_AI_EMBEDDINGS: '0',
         ELECTRON_RENDERER_URL: ''
       }
-    })
+    }
+    let app = await electron.launch(launchOptions)
     const stdout: string[] = []
     app.process().stdout?.on('data', (chunk) => stdout.push(chunk.toString()))
     app.process().stderr?.on('data', (chunk) => stdout.push(chunk.toString()))
     try {
-      const page = await app.firstWindow()
+      let page = await app.firstWindow()
       await page.getByRole('link', { name: 'AI Notes', exact: true }).click()
       await expect(page.getByText(`${scenario} model verification`, { exact: true })).toBeVisible({
         timeout: 30_000
@@ -219,7 +220,19 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         await page.evaluate((id) => window.electronAPI.invoke('segmentation:retry', id), meetingId)
       }
       const dmlFailure = process.env.AUTODOC_DML_FAILURE_VERIFY === '1'
-      if (dmlFailure) {
+      if (dmlFailure && process.env.AUTODOC_VERIFY_RESTART_DURING_RECOVERY === '1') {
+        await expect
+          .poll(() => existsSync(path.join(meetingDir, 'transcription-recovery.json')), {
+            timeout: 180_000
+          })
+          .toBe(true)
+        expect(existsSync(path.join(meetingDir, 'transcript.json'))).toBe(false)
+        await app.close()
+        app = await electron.launch(launchOptions)
+        page = await app.firstWindow()
+        await page.getByRole('link', { name: 'AI Notes', exact: true }).click()
+      }
+      if (dmlFailure && process.env.AUTODOC_JAMAL_BASELINE === '1') {
         // Exercise the existing user retry IPC rather than waiting two minutes
         // per recovery scan. Probe requests execute normally in this fixture.
         let retriedFailures = 0
@@ -317,14 +330,32 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
           .trim()
           .split('\n')
           .map((line) => JSON.parse(line))
-        expect(workerRequests.filter((r) => r.injected).length).toBeGreaterThanOrEqual(2)
+        expect(workerRequests.filter((r) => r.injected).length).toBeGreaterThanOrEqual(1)
         if (process.env.AUTODOC_VERIFY_DUAL !== '1')
-          expect(workerRequests.filter((r) => r.injected)).toHaveLength(2)
+          expect(workerRequests.filter((r) => r.injected)).toHaveLength(1)
         expect(
           workerRequests.some(
             (r) => r.op === 'transcribe' && r.device === 'cpu' && !r.injected && !r.probe
           )
         ).toBe(true)
+        if (process.env.AUTODOC_VERIFY_AUTOMATIC_RECOVERY === '1') {
+          const events = readFileSync(path.join(userData, 'logs', 'autodocLog.log'), 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+          const recoveries = events.filter(
+            (event) => event.message === 'Automatically recovering transcription attempt'
+          )
+          expect(recoveries.map((event) => event.context.recoveryScope)).toEqual(['recording'])
+          expect(recoveries.map((event) => event.context.recoveryBackend)).toEqual(['parakeet-cpu'])
+          expect(events.filter((event) => event.message === 'Transcription failed')).toHaveLength(0)
+          expect(existsSync(path.join(meetingDir, 'transcription-recovery.json'))).toBe(true)
+          const starts = events.filter((event) => event.message === 'transcription started')
+          // Initial startup scan is allowed. Recovery must not wait for another scan.
+          expect(
+            new Date(starts[1].timestamp).getTime() - new Date(starts[0].timestamp).getTime()
+          ).toBeLessThan(60_000)
+        }
       }
       writeFileSync(
         path.join(artifactRoot, `${phase}-${scenario}-result.json`),
@@ -425,15 +456,153 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
         path: path.join(artifactRoot, `${phase}-${scenario}-transcript.png`),
         fullPage: true
       })
+      if (dmlFailure && process.env.AUTODOC_VERIFY_AUTOMATIC_RECOVERY === '1') {
+        const traceFile = path.join(userData, 'worker-requests.jsonl')
+        const readTrace = () =>
+          readFileSync(traceFile, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line))
+        const beforeRestart = readTrace().length
+        await app.close()
+        const restartId = 'new-gpu-attempt-after-restart'
+        const restartDir = path.join(userData, 'recordings', restartId)
+        mkdirSync(restartDir, { recursive: true })
+        writeFileSync(
+          path.join(restartDir, 'metadata.json'),
+          JSON.stringify({
+            sourceName: 'Restart recovery verification',
+            customTitle: 'New GPU attempt after restart',
+            startedAt: Date.now() - 45_000,
+            stoppedAt: Date.now(),
+            durationSeconds: 45
+          })
+        )
+        copyFileSync(path.join(artifactRoot, 'speech.webm'), path.join(restartDir, 'mic.webm'))
+        app = await electron.launch(launchOptions)
+        page = await app.firstWindow()
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                (id) => window.electronAPI.invoke('segmentation:get-status', id),
+                restartId
+              ),
+            { timeout: 240_000 }
+          )
+          .toBe('complete')
+        const afterRestart = readTrace()
+          .slice(beforeRestart)
+          .filter((r) => r.op === 'transcribe' && !r.probe)
+        expect(afterRestart.length).toBeGreaterThan(0)
+        expect(afterRestart.map((r) => r.device)).toEqual(['dml', 'cpu'])
+        expect(existsSync(path.join(restartDir, 'transcription-recovery.json'))).toBe(true)
+        // A third recording immediately gets real GPU inference once the injected fault is removed.
+        writeFileSync(path.join(userData, 'allow-gpu-transcription'), '1')
+        const healthyId = 'healthy-gpu-next-recording'
+        const healthyDir = path.join(userData, 'recordings', healthyId)
+        mkdirSync(healthyDir, { recursive: true })
+        writeFileSync(
+          path.join(healthyDir, 'metadata.json'),
+          JSON.stringify({
+            sourceName: 'GPU recovery verification',
+            customTitle: 'GPU available again',
+            startedAt: Date.now() - 45_000,
+            stoppedAt: Date.now(),
+            durationSeconds: 45
+          })
+        )
+        copyFileSync(path.join(artifactRoot, 'speech.webm'), path.join(healthyDir, 'mic.webm'))
+        const beforeHealthy = readTrace().length
+        await page.evaluate((id) => window.electronAPI.invoke('transcription:retry', id), healthyId)
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                (id) => window.electronAPI.invoke('segmentation:get-status', id),
+                healthyId
+              ),
+            { timeout: 240_000 }
+          )
+          .toBe('complete')
+        const healthyRequests = readTrace()
+          .slice(beforeHealthy)
+          .filter((r) => r.op === 'transcribe' && !r.probe)
+        expect(healthyRequests.map((r) => r.device)).toEqual(['dml'])
+        expect(healthyRequests.every((r) => !r.injected)).toBe(true)
+        expect(existsSync(path.join(healthyDir, 'transcription-recovery.json'))).toBe(false)
+        const healthyResult = await page.evaluate(
+          async (id) => ({
+            transcript: await window.electronAPI.invoke('transcription:get-transcript', id),
+            notes: await window.electronAPI.invoke('notes:get-v2', id)
+          }),
+          healthyId
+        )
+        expect(healthyResult.transcript.length).toBeGreaterThan(0)
+        expect(healthyResult.notes).toBeTruthy()
+        writeFileSync(
+          path.join(artifactRoot, phase + '-gpu-recovered-result.json'),
+          JSON.stringify(healthyResult, null, 2)
+        )
+        // Ordinary recovery is a no-op for a completed meeting.
+        const beforeRetry = readTrace().length
+        await page.evaluate((id) => window.electronAPI.invoke('transcription:retry', id), meetingId)
+        await expect
+          .poll(() =>
+            page.evaluate(
+              (id) => window.electronAPI.invoke('transcription:get-status', id),
+              meetingId
+            )
+          )
+          .toBe('complete')
+        expect(readTrace()).toHaveLength(beforeRetry)
+        // Intentional Reprocess still executes, but failure retains usable results.
+        writeFileSync(path.join(userData, 'inject-cpu-failure'), '1')
+        await page.evaluate(
+          (id) => window.electronAPI.invoke('transcription:retry', id, { reprocess: true }),
+          meetingId
+        )
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                (id) => window.electronAPI.invoke('transcription:get-reprocess-failure', id),
+                meetingId
+              ),
+            { timeout: 120_000 }
+          )
+          .toBe(true)
+        const retained = await page.evaluate(
+          async (id) => ({
+            transcript: await window.electronAPI.invoke('transcription:get-transcript', id),
+            notes: await window.electronAPI.invoke('notes:get-v2', id),
+            status: await window.electronAPI.invoke('transcription:get-status', id)
+          }),
+          meetingId
+        )
+        expect(retained.transcript).toEqual(result.transcript)
+        expect(retained.notes).toEqual(result.notes)
+        expect(retained.status).toBe('complete')
+        await page.getByRole('link', { name: 'AI Notes', exact: true }).click()
+        await page.getByText('normal model verification', { exact: true }).click()
+        await expect(
+          page.getByText(
+            'Reprocessing failed. Your previous transcript and notes are still available.'
+          )
+        ).toBeVisible()
+        await page.getByRole('button', { name: 'Transcript', exact: true }).click()
+        await expect(page.getByText(/customer portal/i).first()).toBeVisible()
+        await page.screenshot({ path: path.join(artifactRoot, phase + '-retained-results.png') })
+      }
       if (dmlFailure && process.env.AUTODOC_VERIFY_SECOND_MEETING === '1') {
-        const secondId = 'model-verification-second-cpu'
+        const secondId = 'model-verification-next-gpu'
         const secondDir = path.join(userData, 'recordings', secondId)
         mkdirSync(secondDir, { recursive: true })
         writeFileSync(
           path.join(secondDir, 'metadata.json'),
           JSON.stringify({
             sourceName: 'Model verification',
-            customTitle: 'Subsequent CPU meeting',
+            customTitle: 'Next recording tries GPU',
             startedAt: Date.now() - 60000,
             stoppedAt: Date.now(),
             durationSeconds: 45
@@ -460,7 +629,12 @@ for (const scenario of ['normal', 'victor', 'legacy'] as const) {
           .map((line) => JSON.parse(line))
           .filter((r) => r.op === 'transcribe' && !r.probe)
         expect(later.length).toBeGreaterThan(0)
-        expect(later.every((r) => r.device === 'cpu' && !r.injected)).toBe(true)
+        expect(later[0].device).toBe('dml')
+        if (existsSync(path.join(userData, 'allow-gpu-transcription'))) {
+          expect(later.every((r) => r.device === 'dml' && !r.injected)).toBe(true)
+        } else {
+          expect(later.map((r) => r.device)).toEqual(['dml', 'cpu'])
+        }
       }
     } finally {
       writeFileSync(path.join(artifactRoot, `${phase}-${scenario}-console.log`), stdout.join(''))

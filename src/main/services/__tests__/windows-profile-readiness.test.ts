@@ -120,6 +120,32 @@ it('keeps the GPU disabled across fresh selections, but allows it in a fresh man
   expect(restarted.getTranscriptionBackend()).toBe('parakeet-gpu')
 })
 
+it('tries GPU for a new recording and CPU for a pinned recording, including after restart', async () => {
+  const manager = new WhisperManager()
+  await manager.prepareWindowsRecording(false)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+  manager.downgradeParakeetGpuToCpuForSession()
+  await manager.prepareWindowsRecording(true)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+  await manager.prepareWindowsRecording(false)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+  // Going back to the old recording must still respect its pin.
+  await manager.prepareWindowsRecording(true)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+  const restarted = new WhisperManager()
+  await restarted.prepareWindowsRecording(true)
+  expect(restarted.getTranscriptionBackend()).toBe('parakeet-cpu')
+  await restarted.prepareWindowsRecording(false)
+  expect(restarted.getTranscriptionBackend()).toBe('parakeet-gpu')
+})
+
+it('keeps existing GPU eligibility rules for a fresh recording', async () => {
+  vi.mocked(detectWindowsHardwareProfile).mockResolvedValue({ ...hardware, gpus: [] })
+  const manager = new WhisperManager()
+  await manager.prepareWindowsRecording(false)
+  expect(manager.getTranscriptionBackend()).not.toBe('parakeet-gpu')
+})
+
 it('applies a session downgrade only once', async () => {
   const manager = new WhisperManager()
   await manager.resolveWindowsTranscriptionBackend()

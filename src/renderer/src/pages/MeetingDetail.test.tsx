@@ -86,6 +86,34 @@ async function renderMeetingDetail() {
 }
 
 describe('memory failure guidance', () => {
+  it('retains previous results on Windows and distinguishes explicit Reprocess', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Windows')
+    const api = window.electronAPI as unknown as MockElectronAPI
+    api.setHandler('transcription:get-status', 'complete')
+    api.setHandler('transcription:get-reprocess-failure', true)
+    await renderMeetingDetail()
+    expect(
+      await screen.findByText(
+        'Reprocessing failed. Your previous transcript and notes are still available.'
+      )
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript', exact: true }))
+    expect(screen.getByText('Intro')).toBeInTheDocument()
+    // The explicit transcript action is in the meeting Settings tab.
+    await userEvent.click(screen.getByRole('button', { name: 'Settings', exact: true }))
+    const buttons = screen.getAllByRole('button', { name: 'Reprocess', exact: true })
+    await userEvent.click(buttons[0])
+    expect(api.invoke).toHaveBeenCalledWith('transcription:retry', 'test-123', { reprocess: true })
+    await act(async () =>
+      api.emit('transcription:status-changed', {
+        meetingId: 'test-123',
+        status: 'complete',
+        reprocessFailed: true
+      })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Transcript', exact: true }))
+    expect(screen.getByText('Intro')).toBeInTheDocument()
+  })
   it('shows a persisted transcription shortage in Notes and Transcript and clears it on retry', async () => {
     const api = window.electronAPI as unknown as MockElectronAPI
     api.setHandler('transcription:get-status', 'failed')

@@ -26,6 +26,12 @@ vi.mock('os', () => ({
   }
 }))
 
+vi.mock('../windows-dml-restriction', () => ({
+  readDmlRestriction: vi.fn().mockResolvedValue(null),
+  writeDmlRestriction: vi.fn().mockResolvedValue(undefined)
+}))
+const recoveryMock = vi.mocked(await import('../windows-dml-restriction'))
+
 vi.mock('../autodoc-log', () => ({
   logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn()
@@ -52,6 +58,7 @@ const workerClientMock = vi.hoisted(() => ({
   unload: vi.fn(),
   ping: vi.fn(),
   dispose: vi.fn(),
+  disposeAndWait: vi.fn(),
   lastOptions: null as Record<string, unknown> | null
 }))
 
@@ -149,6 +156,9 @@ describe('TranscriptionService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    recoveryMock.readDmlRestriction.mockReset().mockResolvedValue(null)
+    recoveryMock.writeDmlRestriction.mockReset().mockResolvedValue(undefined)
+    fsMock.readFile.mockReset().mockResolvedValue(JSON.stringify({ transcription: [] }))
     workerClientMock.isLoaded = false
     workerClientMock.lastOptions = null
     workerClientMock.load.mockImplementation(async () => {
@@ -159,6 +169,9 @@ describe('TranscriptionService', () => {
     workerClientMock.ping.mockResolvedValue(undefined)
     workerClientMock.dispose.mockImplementation(() => {
       workerClientMock.isLoaded = false
+    })
+    workerClientMock.disposeAndWait.mockImplementation(async () => {
+      workerClientMock.dispose()
     })
     setPlatform(originalPlatform)
     fsMock.unlink.mockResolvedValue(undefined as any)
@@ -186,6 +199,7 @@ describe('TranscriptionService', () => {
       if (String(path).endsWith('transcript.json')) return undefined
       throw new Error('ENOENT')
     })
+    fsMock.readFile.mockResolvedValueOnce('[]')
     const status = await service.getStatus('completed-meeting')
     expect(status).toBe('complete')
   })
@@ -1674,170 +1688,274 @@ describe('TranscriptionService', () => {
     }
   )
 
-  it('falls back to the CPU backend after 2 consecutive DML device-loss failures', async () => {
-    setPlatform('win32')
-    let device: 'dml' | 'cpu' = 'dml'
-    let backend: 'parakeet-gpu' | 'parakeet-cpu' = 'parakeet-gpu'
-    const downgradeParakeetGpuToCpuForSession = vi.fn(() => {
-      if (device === 'cpu') return false
-      device = 'cpu'
-      backend = 'parakeet-cpu'
-      return true
-    })
-    mockWhisper = {
-      ...mockWhisper,
-      isWorkerEngineSelected: vi.fn().mockReturnValue(true),
-      isFasterWhisperSelected: vi.fn().mockReturnValue(false),
-      isParakeetSelected: vi.fn().mockReturnValue(true),
-      getTranscriptionWorkerScriptPath: vi.fn().mockReturnValue('/mock/transcription-worker.py'),
-      getWorkerModelPath: vi.fn().mockReturnValue('/mock/parakeet-model'),
-      getWorkerPythonPath: vi.fn().mockReturnValue('/mock/python.exe'),
-      getWorkerDevice: vi.fn(() => device),
-      getWorkerComputeType: vi.fn().mockReturnValue('fp32'),
-      getWorkerProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/path' }),
-      getWorkerEngine: vi.fn().mockReturnValue('parakeet'),
-      getTranscriptionBackend: vi.fn(() => backend),
-      getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn().mockReturnValue(2.5),
-      downgradeParakeetGpuToCpuForSession
-    } as unknown as WhisperManager
-    service = new TranscriptionService(
-      mockWhisper,
-      mockConverter,
-      '/mock/home/AutoDoc/recordings',
-      mockCalendar,
-      () => false,
-      null,
-      () => false,
-      null,
-      async () => null,
-      async () => undefined,
-      () => ({ freeGiB: 16, totalGiB: 32 })
-    )
-
-    const deviceLoss = new Error(
-      '[ONNXRuntimeError] : 1 : FAIL : DmlExecutionProvider ... 887A0005 The GPU device instance has been suspended.'
-    )
-    workerClientMock.transcribe
-      .mockRejectedValueOnce(deviceLoss)
-      .mockRejectedValueOnce(deviceLoss)
-      .mockResolvedValueOnce({ transcription: [] })
-
-    await expect(
-      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-1', 60)
-    ).rejects.toThrow(/parakeet worker failed/)
-    expect(downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
-
-    await expect(
-      (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-2', 60)
-    ).rejects.toThrow(/parakeet worker failed/)
-    expect(downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
-
-    workerClientMock.load.mockClear()
-    await (service as any).runWorkerEnginePass('/mock/tmp/audio.wav', 'meeting-dml-3', 60)
-    expect(workerClientMock.load).toHaveBeenCalledWith(
-      expect.objectContaining({
-        device: 'cpu',
-        engine: 'parakeet'
-      })
-    )
-    expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
-  })
-
-  describe('DML recovery classification', () => {
-    function configureWorker() {
+  describe('Windows automatic attempt recovery', () => {
+    function configure(dual = false) {
       setPlatform('win32')
+      let backend = 'parakeet-gpu'
       Object.assign(mockWhisper, {
         isWorkerEngineSelected: vi.fn(() => true),
         getWorkerEngine: vi.fn(() => 'parakeet'),
-        getWorkerDevice: vi.fn(() => 'dml'),
-        getTranscriptionBackend: vi.fn(() => 'parakeet-gpu'),
-        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn(() => 2.5),
-        downgradeParakeetGpuToCpuForSession: vi
-          .fn()
-          .mockReturnValueOnce(true)
-          .mockReturnValue(false)
+        getWorkerDevice: vi.fn(() => (backend === 'parakeet-gpu' ? 'dml' : 'cpu')),
+        getTranscriptionBackend: vi.fn(() => backend),
+        prepareWindowsRecording: vi.fn(async (forceCpu: boolean) => {
+          backend = forceCpu ? 'parakeet-cpu' : 'parakeet-gpu'
+        }),
+        downgradeParakeetGpuToCpuForSession: vi.fn(() => {
+          backend = 'parakeet-cpu'
+          return true
+        })
       })
+      fsMock.readFile.mockRejectedValue(new Error('ENOENT'))
+      fsMock.access.mockImplementation(async (file) => {
+        if (String(file).endsWith('mic.webm') || (dual && String(file).endsWith('system.webm')))
+          return
+        throw new Error('ENOENT')
+      })
+      ;(service as any).getEffectiveWindowsProcessingProfile = async () => ({
+        id: backend === 'parakeet-gpu' ? 'win-gpu' : 'win-low-spec',
+        dualSourceMode: backend === 'parakeet-gpu' ? 'concurrent' : 'sequential',
+        threadPolicy: 'min'
+      })
+      vi.spyOn(service as any, 'transcribeAudioSource').mockImplementation(
+        async (...args: any[]) => {
+          await (service as any).runWorkerEnginePass('/tmp/' + args[2] + '.wav', args[0], 60)
+          return []
+        }
+      )
     }
-    const codes = ['887A0005', '887A0006', '887A0007', '887A0020']
-    const cases = codes.flatMap((code) => [
-      code,
-      code.toLowerCase(),
-      `0x${code}`,
-      `0x${code.toLowerCase()}`
-    ])
-    it.each(cases)('recycles and counts HRESULT-only failure %s', async (code) => {
-      configureWorker()
-      workerClientMock.transcribe.mockRejectedValueOnce(new Error(`GPU request failed: ${code}`))
-      await expect(
-        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
-      ).rejects.toThrow(code)
-      expect(workerClientMock.dispose).toHaveBeenCalled()
-      expect((service as any).transcriptionWorkerClientFingerprint).toBeNull()
-      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(1)
-      workerClientMock.transcribe.mockRejectedValueOnce(new Error(`GPU request failed: ${code}`))
-      await expect(
-        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
-      ).rejects.toThrow(code)
-      expect(workerClientMock.dispose).toHaveBeenCalledTimes(2)
-      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(2)
+
+    it.each(['887A0005', '887a0006', '0x887A0007', '0x887a0020'])(
+      'automatically recovers recognized %s on CPU after one GPU attempt',
+      async (code) => {
+        configure()
+        const completed = vi.fn()
+        service.onComplete(completed)
+        workerClientMock.transcribe
+          .mockRejectedValueOnce(new Error(code))
+          .mockResolvedValue({ transcription: [] })
+        await (service as any).processJob('automatic')
+        expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+        expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+        expect(recoveryMock.writeDmlRestriction).toHaveBeenCalledTimes(1)
+        expect(workerClientMock.load).toHaveBeenLastCalledWith(
+          expect.objectContaining({ device: 'cpu' })
+        )
+        expect(completed).toHaveBeenCalledTimes(1)
+        expect(cryptoMock.encryptJSON).toHaveBeenCalledTimes(1)
+        expect((service as any).consecutiveDmlDeviceLossFailures).toBe(0)
+      }
+    )
+
+    it.each(['Transcription worker client disposed', '887A0006'])(
+      'counts dual-source HRESULT plus %s once per attempt',
+      async (sibling) => {
+        configure(true)
+        workerClientMock.transcribe
+          .mockRejectedValueOnce(new Error('887A0006'))
+          .mockRejectedValueOnce(new Error(sibling))
+          .mockResolvedValue({ transcription: [] })
+        await (service as any).processJob('dual-automatic')
+        expect(workerClientMock.transcribe).toHaveBeenCalledTimes(4)
+        expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+        expect(
+          workerClientMock.load.mock.calls.filter(([params]) => params.device === 'cpu').length
+        ).toBeGreaterThan(0)
+        const recoveries = autodocLogMock.logAutodocEvent.mock.calls.filter(
+          ([event]) => event.message === 'Automatically recovering transcription attempt'
+        )
+        expect(recoveries.map(([event]) => event.context?.recoveryScope)).toEqual(['recording'])
+        expect(
+          recoveries.every(([event]) => String(event.context?.deviceError).includes('887A0006'))
+        ).toBe(true)
+      }
+    )
+
+    it('does not let a successful sibling erase the failed attempt', async () => {
+      configure(true)
+      workerClientMock.transcribe
+        .mockRejectedValueOnce(new Error('887A0006'))
+        .mockResolvedValueOnce({ transcription: [] })
+        .mockResolvedValue({ transcription: [] })
+      await (service as any).processJob('partial')
       expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
     })
-    it.each([
-      ['DmlExecutionProvider allocation failed: out of memory', true],
-      ['DmlExecutionProvider unsupported operator 887A0001', true],
-      ['unrelated ORT error', false]
-    ])('does not count non-device failure %s (dispose=%s)', async (message, disposed) => {
-      configureWorker()
-      workerClientMock.transcribe.mockRejectedValueOnce(new Error(String(message)))
-      await expect(
-        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
-      ).rejects.toThrow(String(message))
-      expect(workerClientMock.dispose.mock.calls.length > 0).toBe(disposed)
-      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(0)
+
+    it('pins the failed recording before CPU starts and gives the next recording a fresh GPU attempt', async () => {
+      configure()
+      const pins = new Set<string>()
+      recoveryMock.writeDmlRestriction.mockImplementation(async (file) => {
+        pins.add(file)
+      })
+      recoveryMock.readDmlRestriction.mockImplementation(async (file) =>
+        pins.has(file) ? { version: 1, backend: 'parakeet-cpu', reason: 'gpu-failure' } : null
+      )
+      workerClientMock.transcribe
+        .mockRejectedValueOnce(new Error('887A0006'))
+        .mockImplementation(async () => {
+          if (mockWhisper.getTranscriptionBackend() === 'parakeet-cpu') expect(pins.size).toBe(1)
+          return { transcription: [] }
+        })
+      await (service as any).processJob('first')
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+      expect(mockWhisper.prepareWindowsRecording).toHaveBeenCalledExactlyOnceWith(false)
+      await (service as any).processJob('second')
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-gpu')
+      await (service as any).processJob('first')
+      expect(mockWhisper.prepareWindowsRecording).toHaveBeenLastCalledWith(true)
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
+    })
+
+    it('pins a setup-time GPU fallback before running CPU transcription', async () => {
+      configure()
+      vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+      vi.mocked(mockWhisper.ensureReady).mockImplementation(async () => {
+        mockWhisper.downgradeParakeetGpuToCpuForSession()
+      })
+      workerClientMock.transcribe.mockImplementation(async () => {
+        expect(recoveryMock.writeDmlRestriction).toHaveBeenCalledTimes(1)
+        return { transcription: [] }
+      })
+      await (service as any).processJob('setup-fallback')
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not pin a successful GPU recording', async () => {
+      configure(true)
+      workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+      await (service as any).processJob('successful')
+      expect(mockWhisper.prepareWindowsRecording).toHaveBeenCalledExactlyOnceWith(false)
+      expect(recoveryMock.writeDmlRestriction).not.toHaveBeenCalled()
+    })
+
+    it('stops if the recovery pin cannot be saved instead of losing restart protection', async () => {
+      configure()
+      recoveryMock.writeDmlRestriction.mockRejectedValue(new Error('disk full'))
+      workerClientMock.transcribe.mockRejectedValueOnce(new Error('887A0006'))
+      await expect((service as any).processJob('no-pin')).rejects.toThrow('disk full')
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
       expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
     })
-    it('device loss, OOM, device loss, and further loss produce one transition log', async () => {
-      configureWorker()
-      for (const message of [
-        '887A0006',
-        'DmlExecutionProvider out of memory',
-        '887A0007',
-        '887A0020'
-      ]) {
-        workerClientMock.transcribe.mockRejectedValueOnce(new Error(message))
-        await expect(
-          (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
-        ).rejects.toThrow(message)
-      }
-      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(3)
-      expect(workerClientMock.dispose).toHaveBeenCalledTimes(4)
-      expect(
-        autodocLogMock.logAutodocEvent.mock.calls.filter(
-          ([event]) =>
-            event.message ===
-            'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures'
-        )
-      ).toHaveLength(1)
-      workerClientMock.transcribe.mockResolvedValueOnce({ transcription: [] })
-      await (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
-      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(0)
+
+    it('waits for the previous CPU worker to exit before loading GPU for a new recording', async () => {
+      configure()
+      recoveryMock.readDmlRestriction.mockResolvedValueOnce({
+        version: 1,
+        backend: 'parakeet-cpu',
+        reason: 'gpu-failure'
+      })
+      workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+      await (service as any).processJob('pinned')
+      let release!: () => void
+      workerClientMock.disposeAndWait.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      )
+      const next = (service as any).processJob('new-gpu')
+      await vi.waitFor(() => expect(workerClientMock.disposeAndWait).toHaveBeenCalledTimes(1))
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+      release()
+      await next
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+      expect(workerClientMock.load).toHaveBeenLastCalledWith(
+        expect.objectContaining({ device: 'dml' })
+      )
     })
-    it('handles two source failures without duplicate downgrade logs', async () => {
-      configureWorker()
-      workerClientMock.transcribe.mockRejectedValue(new Error('DmlExecutionProvider 887A0006'))
-      const results = await Promise.allSettled([
-        (service as any).runWorkerEnginePass('/tmp/mic.wav', 'dual', 60),
-        (service as any).runWorkerEnginePass('/tmp/system.wav', 'dual', 60)
-      ])
-      expect(results.every((result) => result.status === 'rejected')).toBe(true)
-      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
-      expect(
-        autodocLogMock.logAutodocEvent.mock.calls.filter(
-          ([event]) =>
-            event.message ===
-            'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures'
+
+    it('confines a corrupt recovery pin to that recording', async () => {
+      configure()
+      recoveryMock.readDmlRestriction.mockRejectedValueOnce(new Error('corrupt pin'))
+      workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
+      await (service as any).processJob('corrupt')
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
+      await (service as any).processJob('fresh')
+      expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-gpu')
+    })
+
+    it.each([
+      'DmlExecutionProvider out of memory',
+      'unrelated ORT error',
+      'Transcription worker client disposed'
+    ])('does not automatically retry %s', async (message) => {
+      configure()
+      workerClientMock.transcribe.mockRejectedValue(new Error(message))
+      await expect((service as any).processJob('other')).rejects.toThrow(message)
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+    })
+
+    it('stops on a CPU error and logs the CPU pass, not the failed GPU pass', async () => {
+      configure()
+      workerClientMock.transcribe
+        .mockRejectedValueOnce(new Error('887A0006'))
+        .mockRejectedValue(new Error('CPU failed'))
+      service.enqueue('cpu-error')
+      await vi.waitFor(() =>
+        expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Transcription failed',
+            context: expect.objectContaining({ backend: 'parakeet-cpu' })
+          })
         )
-      ).toHaveLength(1)
+      )
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+      expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
+    })
+
+    it('waits for worker exit before loading another worker and stops on shutdown timeout', async () => {
+      configure()
+      let release!: () => void
+      workerClientMock.disposeAndWait.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      )
+      workerClientMock.transcribe
+        .mockRejectedValueOnce(new Error('887A0006'))
+        .mockResolvedValue({ transcription: [] })
+      const running = (service as any).processJob('wait-exit')
+      await vi.waitFor(() => expect(workerClientMock.disposeAndWait).toHaveBeenCalledTimes(1))
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+      release()
+      await running
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(2)
+      workerClientMock.disposeAndWait.mockRejectedValue(new Error('shutdown timeout'))
+      workerClientMock.transcribe.mockRejectedValue(new Error('887A0006'))
+      await expect((service as any).processJob('timeout')).rejects.toThrow('shutdown timeout')
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not automatically retry this error on macOS', async () => {
+      configure()
+      setPlatform('darwin')
+      workerClientMock.transcribe.mockRejectedValue(new Error('887A0006'))
+      await expect((service as any).processJob('mac')).rejects.toThrow('887A0006')
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+      expect(recoveryMock.writeDmlRestriction).not.toHaveBeenCalled()
+      expect(mockWhisper.prepareWindowsRecording).not.toHaveBeenCalled()
+    })
+
+    it('skips ordinary recovery of usable results, but permits explicit reprocessing', async () => {
+      configure()
+      fsMock.readFile.mockResolvedValue('[]')
+      await (service as any).processJob('complete')
+      expect(workerClientMock.transcribe).not.toHaveBeenCalled()
+      ;(service as any).enqueueSource.set('complete', 'reprocess')
+      await (service as any).processJob('complete')
+      expect(workerClientMock.transcribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps usable results complete when reprocessing fails, including after reload', async () => {
+      configure()
+      fsMock.readFile.mockResolvedValue('[]')
+      fsMock.access.mockResolvedValue(undefined)
+      await (service as any).markFailed('complete', new Error('CPU failed'))
+      expect(await service.getStatus('complete')).toBe('complete')
+      expect(await service.getReprocessFailure('complete')).toBe(true)
+      expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
+      expect(fsMock.unlink).not.toHaveBeenCalled()
     })
   })
 

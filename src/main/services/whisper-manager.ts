@@ -379,7 +379,7 @@ export class WhisperManager extends EventEmitter {
     return profile.estimatedMemoryGiB
   }
 
-  /** Session-only fallback after repeated DirectML device-loss failures. */
+  /** Keep CPU selected for this recording; the next recording selects afresh. */
   downgradeParakeetGpuToCpuForSession(): boolean {
     if (!IS_WIN) {
       return false
@@ -398,6 +398,18 @@ export class WhisperManager extends EventEmitter {
     this.validatedWorkerFingerprint = null
     void this.refreshWindowsProcessingProfile()
     return true
+  }
+
+  /** Choose once per recording; retries keep the recording's CPU recovery pin. */
+  async prepareWindowsRecording(forceCpu: boolean): Promise<void> {
+    if (!IS_WIN) return
+    await this.resolveWindowsTranscriptionBackend()
+    if (this.parakeetGpuDisabledForSession === forceCpu) return
+    this.parakeetGpuDisabledForSession = forceCpu
+    this.windowsBackendRevision++
+    this.runtimeValidated = false
+    this.validatedWorkerFingerprint = null
+    await this.selectWindowsProfile()
   }
 
   getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {

@@ -4,6 +4,11 @@ import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { WhisperManager } from '../whisper-manager'
 import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
+vi.mock('../windows-dml-restriction', () => ({
+  readDmlRestriction: vi.fn().mockResolvedValue(null),
+  writeDmlRestriction: vi.fn().mockResolvedValue(undefined),
+  clearDmlRestriction: vi.fn().mockResolvedValue(undefined)
+}))
 
 let isPackaged = false
 

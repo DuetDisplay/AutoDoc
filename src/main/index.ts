@@ -1426,7 +1426,11 @@ app.whenReady().then(async () => {
             captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null
           }
         })
-        transcriptionService.retry(meetingId)
+        if (process.platform === 'win32') {
+          transcriptionService.retry(meetingId, 'reprocess')
+        } else {
+          transcriptionService.retry(meetingId)
+        }
       } catch (error) {
         logAutodocFailure({
           area: 'transcription',
