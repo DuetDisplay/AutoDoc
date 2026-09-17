@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { spawn } from 'child_process'
+import { BrowserWindow } from 'electron'
 import {
   getRecordingSourceCaptureOptions,
   registerRecordingIpc,
@@ -291,7 +292,10 @@ describe('recording IPC source handling', () => {
       )?.[1] as ((_event: unknown, meetingId: string) => Promise<void>) | undefined
 
       expect(deleteHandler).toBeTypeOf('function')
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValueOnce([{ webContents: { send } }] as any)
       await deleteHandler?.(null, 'meeting-1')
+      expect(send).toHaveBeenCalledWith('recording:entry-updated', { meetingId: 'meeting-1' })
 
       await expect(fsp.access(meetingDir)).rejects.toThrow()
       await expect(fsp.access(modelPath)).resolves.toBeUndefined()

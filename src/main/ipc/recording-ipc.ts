@@ -2100,6 +2100,7 @@ export function registerRecordingIpc(
       context: await getDeletionDiagnostics(meetingId)
     })
     await rm(meetingDir, { recursive: true, force: true })
+    broadcastEntryUpdated(meetingId)
     logAutodocEvent({
       area: 'recording',
       message: 'recording:delete completed',

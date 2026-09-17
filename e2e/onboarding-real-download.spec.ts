@@ -72,13 +72,16 @@ async function clickContinueIfVisible(page: Page): Promise<void> {
   }
 }
 
-function expectWhisperArtifacts(storagePath: string): void {
+function expectWhisperArtifacts(storagePath: string, backend?: string): void {
   const modelsDir = path.join(storagePath, 'models')
   const ffmpegBinary = path.join(modelsDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
 
   expect(existsSync(ffmpegBinary)).toBeTruthy()
 
-  if (process.platform === 'darwin' && process.arch === 'arm64') {
+  if (
+    backend === 'mlx-whisper' ||
+    (!backend && process.platform === 'darwin' && process.arch === 'arm64')
+  ) {
     expect(hasFilesRecursively(path.join(modelsDir, 'mlx-whisper-cache'))).toBeTruthy()
     return
   }
@@ -296,7 +299,9 @@ test.describe('real managed setup downloads', () => {
         'whisper:get-setup-status',
         REAL_DOWNLOAD_TIMEOUT_MS
       )
-      if (process.arch === 'arm64') {
+      if (process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND === 'whisper-cpp') {
+        expect(whisperStatus.backend).toBe('whisper-cpp')
+      } else if (process.arch === 'arm64') {
         expect(whisperStatus).toMatchObject({
           backend: 'mlx-whisper',
           backendLabel: 'Apple Silicon optimized transcription'
@@ -326,7 +331,7 @@ test.describe('real managed setup downloads', () => {
         return await window.electronAPI.invoke('app:get-runtime-info')
       })
 
-      expectWhisperArtifacts(runtimeInfo.storagePath)
+      expectWhisperArtifacts(runtimeInfo.storagePath, whisperStatus.backend)
       expectOllamaArtifacts(runtimeInfo.storagePath)
     } finally {
       await app.cleanup()

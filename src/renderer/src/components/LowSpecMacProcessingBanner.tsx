@@ -1,49 +1,76 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
+import type { WhisperSetupStatus } from '../../../shared/types'
 
 export function LowSpecMacProcessingBanner({
   onVisibilityChange
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }): ReactElement | null {
-  const [visible, setVisible] = useState(false)
-
-  const refreshVisibility = useCallback(async () => {
-    try {
-      const [setupStatus, dismissed, recordings] = await Promise.all([
-        window.electronAPI.invoke('whisper:get-setup-status'),
-        window.electronAPI.invoke('prefs:get-low-spec-mac-processing-banner-dismissed'),
-        window.electronAPI.invoke('recording:list')
-      ])
-
-      const hasRecordings = Array.isArray(recordings) && recordings.length > 0
-      const isLowSpecHost =
-        setupStatus?.macProcessingProfileId === 'mac-low-spec' ||
-        setupStatus?.windowsProcessingProfileId === 'win-low-spec'
-      setVisible(isLowSpecHost && dismissed !== true && hasRecordings)
-    } catch {
-      setVisible(false)
-    }
-  }, [])
+  const [hasRecordings, setHasRecordings] = useState(false)
+  const [isLowSpecHost, setIsLowSpecHost] = useState(false)
+  const [dismissed, setDismissed] = useState(true)
+  const visible = isLowSpecHost && hasRecordings && !dismissed
 
   useEffect(() => {
-    void Promise.resolve().then(refreshVisibility)
+    let disposed = false
+    let receivedSetupEvent = false
+    let refreshing = false
+    let refreshRequested = false
+    const applyStatus = (status: WhisperSetupStatus): void => {
+      if (!disposed)
+        setIsLowSpecHost(
+          status?.macProcessingProfileId === 'mac-low-spec' ||
+            status?.windowsProcessingProfileId === 'win-low-spec'
+        )
+    }
+    // Coalesce bursts and discard responses invalidated by an event while reading.
+    const refreshRecordings = async (): Promise<void> => {
+      refreshRequested = true
+      if (refreshing) return
+      refreshing = true
+      try {
+        while (refreshRequested && !disposed) {
+          refreshRequested = false
+          const recordings = await window.electronAPI.invoke('recording:list').catch(() => [])
+          if (!disposed && !refreshRequested)
+            setHasRecordings(Array.isArray(recordings) && recordings.length > 0)
+        }
+      } finally {
+        refreshing = false
+      }
+    }
 
-    const unsubSetup = window.electronAPI.on('whisper:setup-progress', () => {
-      void refreshVisibility()
+    const unsubSetup = window.electronAPI.on('whisper:setup-progress', (status) => {
+      receivedSetupEvent = true
+      applyStatus(status)
     })
     const unsubRecording = window.electronAPI.on('recording:status-changed', () => {
-      void refreshVisibility()
+      void refreshRecordings()
     })
     const unsubEntry = window.electronAPI.on('recording:entry-updated', () => {
-      void refreshVisibility()
+      void refreshRecordings()
     })
+    void refreshRecordings()
+    void window.electronAPI
+      .invoke('whisper:get-setup-status')
+      .then((status) => {
+        if (!receivedSetupEvent) applyStatus(status)
+      })
+      .catch(() => {})
+    void window.electronAPI
+      .invoke('prefs:get-low-spec-mac-processing-banner-dismissed')
+      .then((value) => {
+        if (!disposed) setDismissed(value === true)
+      })
+      .catch(() => {})
 
     return () => {
+      disposed = true
       unsubSetup()
       unsubRecording()
       unsubEntry()
     }
-  }, [refreshVisibility])
+  }, [])
 
   useEffect(() => {
     onVisibilityChange?.(visible)
@@ -52,12 +79,12 @@ export function LowSpecMacProcessingBanner({
   useEffect(() => () => onVisibilityChange?.(false), [onVisibilityChange])
 
   const dismiss = async (): Promise<void> => {
-    setVisible(false)
+    setDismissed(true)
     try {
       await window.electronAPI.invoke('prefs:set-low-spec-mac-processing-banner-dismissed', true)
     } catch (err) {
       console.warn('Failed to dismiss low-spec Mac processing banner:', err)
-      setVisible(true)
+      setDismissed(false)
     }
   }
 

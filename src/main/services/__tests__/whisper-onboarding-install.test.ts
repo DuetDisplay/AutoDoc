@@ -132,6 +132,71 @@ afterEach(async () => {
 })
 
 describe('Whisper onboarding dependency installation', () => {
+  for (const platform of ['darwin', 'win32'] as const) {
+    for (const failAfterBytes of [false, true]) {
+      it(`${platform}: model download ${failAfterBytes ? 'fails after 100% without becoming ready' : 'with unknown size reaches ready after file completion'}`, async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-download-phase-'))
+        try {
+          const { WhisperManager } = await loadWhisperManager(platform, rootDir, {
+            macBackend: 'whisper-cpp',
+            windowsBackend: 'whisper-cpp'
+          })
+          const manager = new WhisperManager()
+          await mkdir(dirname(manager.getWhisperPath()), { recursive: true })
+          await writeFile(manager.getWhisperPath(), 'installed runtime')
+          await writeFile(manager.getFfmpegPath(), 'installed ffmpeg')
+          const probe = vi
+            .spyOn(manager as any, 'isWhisperUsableWithRetry')
+            .mockResolvedValue('ready')
+          const statuses: Array<{ phase: string; percent: number }> = []
+          manager.on('setup-status', (status) => statuses.push(status))
+          const fetchMock = vi.fn().mockImplementation(async () => {
+            let sent = false
+            return {
+              ok: true,
+              headers: new Headers(failAfterBytes ? { 'content-length': '4' } : {}),
+              body: {
+                getReader: () => ({
+                  read: async () => {
+                    if (!sent) {
+                      sent = true
+                      return { done: false, value: new Uint8Array([1, 2, 3, 4]) }
+                    }
+                    if (failAfterBytes) throw new Error('stream failed after last byte')
+                    return { done: true }
+                  }
+                })
+              }
+            }
+          })
+          vi.stubGlobal('fetch', fetchMock)
+          if (failAfterBytes) {
+            await expect(manager.ensureReady()).rejects.toThrow('stream failed after last byte')
+            expect(fetchMock).toHaveBeenCalledTimes(3)
+            expect(
+              statuses.filter((s) => s.phase === 'downloading-model' && s.percent === 100)
+            ).toHaveLength(3)
+            expect(statuses.at(-1)).toMatchObject({ phase: 'error' })
+            expect(statuses.some((s) => s.phase === 'ready')).toBe(false)
+            expect(probe).not.toHaveBeenCalled()
+            await expect(access(manager.getModelPath())).rejects.toThrow()
+          } else {
+            await manager.ensureReady()
+            expect(fetchMock).toHaveBeenCalledTimes(1)
+            expect(
+              statuses.filter((s) => s.phase === 'downloading-model').every((s) => s.percent === 0)
+            ).toBe(true)
+            expect(statuses.at(-1)).toMatchObject({ phase: 'ready', percent: 100 })
+            expect(await readFile(manager.getModelPath())).toEqual(Buffer.from([1, 2, 3, 4]))
+            expect(probe).toHaveBeenCalledTimes(1)
+          }
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+    }
+  }
+
   it('completes the packaged macOS dependency setup flow with managed runtime assets', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')

@@ -2702,6 +2702,12 @@ export class WhisperManager extends EventEmitter {
 
     const totalBytes = Number(response.headers.get('content-length') ?? 0)
     let downloadedBytes = 0
+    let lastReportedPercent: number | undefined
+    const reportProgress = (percent: number): void => {
+      if (percent === lastReportedPercent) return
+      lastReportedPercent = percent
+      onProgress?.(percent)
+    }
     const tempPath = `${destPath}.tmp`
 
     await rm(tempPath, { force: true })
@@ -2710,6 +2716,8 @@ export class WhisperManager extends EventEmitter {
     if (!reader) throw new Error(`No response body for ${label}`)
 
     try {
+      // Unknown-size downloads stay indeterminate; callers signal completion by phase.
+      if (totalBytes <= 0) reportProgress(0)
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -2718,7 +2726,7 @@ export class WhisperManager extends EventEmitter {
         }
         downloadedBytes += value.length
         const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
-        onProgress?.(percent)
+        reportProgress(percent)
         this.emit('download-progress', {
           file: label,
           percent,
@@ -2727,6 +2735,7 @@ export class WhisperManager extends EventEmitter {
         } as DownloadProgress)
       }
 
+      if (totalBytes > 0) reportProgress(100)
       fileStream.end()
       await new Promise<void>((resolve, reject) => {
         fileStream.on('finish', resolve)
