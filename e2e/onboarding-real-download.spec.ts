@@ -300,7 +300,9 @@ test.describe('real managed setup downloads', () => {
         REAL_DOWNLOAD_TIMEOUT_MS
       )
       if (process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND === 'whisper-cpp') {
-        expect(whisperStatus.backend).toBe('whisper-cpp')
+        // macOS whisper.cpp uses the generic setup status, whose backend is optional.
+        // The artifact checks below still require the native binary and GGML model.
+        expect(whisperStatus.backend ?? 'whisper-cpp').toBe('whisper-cpp')
       } else if (process.arch === 'arm64') {
         expect(whisperStatus).toMatchObject({
           backend: 'mlx-whisper',
@@ -331,7 +333,10 @@ test.describe('real managed setup downloads', () => {
         return await window.electronAPI.invoke('app:get-runtime-info')
       })
 
-      expectWhisperArtifacts(runtimeInfo.storagePath, whisperStatus.backend)
+      expectWhisperArtifacts(
+        runtimeInfo.storagePath,
+        whisperStatus.backend ?? process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND
+      )
       expectOllamaArtifacts(runtimeInfo.storagePath)
     } finally {
       await app.cleanup()
