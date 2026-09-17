@@ -1743,6 +1743,104 @@ describe('TranscriptionService', () => {
     expect(mockWhisper.getTranscriptionBackend()).toBe('parakeet-cpu')
   })
 
+  describe('DML recovery classification', () => {
+    function configureWorker() {
+      setPlatform('win32')
+      Object.assign(mockWhisper, {
+        isWorkerEngineSelected: vi.fn(() => true),
+        getWorkerEngine: vi.fn(() => 'parakeet'),
+        getWorkerDevice: vi.fn(() => 'dml'),
+        getTranscriptionBackend: vi.fn(() => 'parakeet-gpu'),
+        getSelectedWindowsProfileEstimatedMemoryGiB: vi.fn(() => 2.5),
+        downgradeParakeetGpuToCpuForSession: vi
+          .fn()
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false)
+      })
+    }
+    const codes = ['887A0005', '887A0006', '887A0007', '887A0020']
+    const cases = codes.flatMap((code) => [
+      code,
+      code.toLowerCase(),
+      `0x${code}`,
+      `0x${code.toLowerCase()}`
+    ])
+    it.each(cases)('recycles and counts HRESULT-only failure %s', async (code) => {
+      configureWorker()
+      workerClientMock.transcribe.mockRejectedValueOnce(new Error(`GPU request failed: ${code}`))
+      await expect(
+        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
+      ).rejects.toThrow(code)
+      expect(workerClientMock.dispose).toHaveBeenCalled()
+      expect((service as any).transcriptionWorkerClientFingerprint).toBeNull()
+      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(1)
+      workerClientMock.transcribe.mockRejectedValueOnce(new Error(`GPU request failed: ${code}`))
+      await expect(
+        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
+      ).rejects.toThrow(code)
+      expect(workerClientMock.dispose).toHaveBeenCalledTimes(2)
+      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(2)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+    })
+    it.each([
+      ['DmlExecutionProvider allocation failed: out of memory', true],
+      ['DmlExecutionProvider unsupported operator 887A0001', true],
+      ['unrelated ORT error', false]
+    ])('does not count non-device failure %s (dispose=%s)', async (message, disposed) => {
+      configureWorker()
+      workerClientMock.transcribe.mockRejectedValueOnce(new Error(String(message)))
+      await expect(
+        (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
+      ).rejects.toThrow(String(message))
+      expect(workerClientMock.dispose.mock.calls.length > 0).toBe(disposed)
+      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(0)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).not.toHaveBeenCalled()
+    })
+    it('device loss, OOM, device loss, and further loss produce one transition log', async () => {
+      configureWorker()
+      for (const message of [
+        '887A0006',
+        'DmlExecutionProvider out of memory',
+        '887A0007',
+        '887A0020'
+      ]) {
+        workerClientMock.transcribe.mockRejectedValueOnce(new Error(message))
+        await expect(
+          (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
+        ).rejects.toThrow(message)
+      }
+      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(3)
+      expect(workerClientMock.dispose).toHaveBeenCalledTimes(4)
+      expect(
+        autodocLogMock.logAutodocEvent.mock.calls.filter(
+          ([event]) =>
+            event.message ===
+            'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures'
+        )
+      ).toHaveLength(1)
+      workerClientMock.transcribe.mockResolvedValueOnce({ transcription: [] })
+      await (service as any).runWorkerEnginePass('/tmp/audio.wav', 'dml', 60)
+      expect((service as any).consecutiveDmlDeviceLossFailures).toBe(0)
+    })
+    it('handles two source failures without duplicate downgrade logs', async () => {
+      configureWorker()
+      workerClientMock.transcribe.mockRejectedValue(new Error('DmlExecutionProvider 887A0006'))
+      const results = await Promise.allSettled([
+        (service as any).runWorkerEnginePass('/tmp/mic.wav', 'dual', 60),
+        (service as any).runWorkerEnginePass('/tmp/system.wav', 'dual', 60)
+      ])
+      expect(results.every((result) => result.status === 'rejected')).toBe(true)
+      expect(mockWhisper.downgradeParakeetGpuToCpuForSession).toHaveBeenCalledTimes(1)
+      expect(
+        autodocLogMock.logAutodocEvent.mock.calls.filter(
+          ([event]) =>
+            event.message ===
+            'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures'
+        )
+      ).toHaveLength(1)
+    })
+  })
+
   it('caches CPU thread limits after readiness changes the backend', async () => {
     setPlatform('win32')
     let threadPolicy = 'default'

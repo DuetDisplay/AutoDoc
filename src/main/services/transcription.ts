@@ -62,6 +62,9 @@ const WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS = 4 * 60 * 1000
 const WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB = 1
 const WINDOWS_MEMORY_GATE_GPU_MIN_FREE_GIB = 2.5
 const DML_DEVICE_LOSS_FAILURE_THRESHOLD = 2
+// DXGI_ERROR_DEVICE_REMOVED, DEVICE_HUNG, DEVICE_RESET, DRIVER_INTERNAL_ERROR.
+// https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-error
+const DML_DEVICE_FAILURE_HRESULTS = ['887A0005', '887A0006', '887A0007', '887A0020']
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
@@ -1959,11 +1962,8 @@ export class TranscriptionService {
   }
 
   private isDmlDeviceLossError(message: string): boolean {
-    return (
-      message.includes('887A0005') ||
-      message.includes('887A0006') ||
-      message.includes('DmlExecutionProvider')
-    )
+    const normalized = message.toUpperCase()
+    return DML_DEVICE_FAILURE_HRESULTS.some((code) => normalized.includes(code))
   }
 
   private disposeTranscriptionWorkerClient(): void {
@@ -2110,8 +2110,11 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (this.isDmlDeviceLossError(message)) {
+      const deviceFailure = this.isDmlDeviceLossError(message)
+      if (deviceFailure || message.includes('DmlExecutionProvider')) {
         this.disposeTranscriptionWorkerClient()
+      }
+      if (deviceFailure) {
         this.consecutiveDmlDeviceLossFailures += 1
         if (
           this.consecutiveDmlDeviceLossFailures >= DML_DEVICE_LOSS_FAILURE_THRESHOLD &&
