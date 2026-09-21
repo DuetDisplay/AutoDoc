@@ -1425,13 +1425,18 @@ describe('SegmentationService', () => {
     expect(onComplete).not.toHaveBeenCalled()
   })
 
-  it('marks substantive empty segmentation output as transcript-only instead of retry-failed', async () => {
-    fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('transcript.json')) return undefined
-      throw new Error('ENOENT')
-    })
-    fsMock.readFile.mockResolvedValue(
-      JSON.stringify([
+  it.each([true, false])(
+    'persists and restores substantial-empty failure (writer skipped: %s)',
+    async (writerSkipped) => {
+      let savedError: string | undefined
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('transcript.json')) return undefined
+        if (String(path).endsWith('segments.error') && savedError) return undefined
+        throw new Error('ENOENT')
+      })
+      const transcriptJson = JSON.stringify([
         {
           id: 'm2-0',
           meetingId: 'm2',
@@ -1468,28 +1473,109 @@ describe('SegmentationService', () => {
           endMs: 170_000,
           confidence: 0.8
         }
-      ]) as any
-    )
+      ])
+      fsMock.readFile.mockImplementation(async (path) => {
+        if (String(path).endsWith('transcript.json')) return transcriptJson
+        if (String(path).endsWith('segments.error') && savedError) return savedError
+        throw new Error('ENOENT')
+      })
+      fsMock.writeFile.mockImplementation(async (path, data) => {
+        if (String(path).endsWith('segments.error')) savedError = String(data)
+      })
+      vi.mocked(provider.getLastWriterSkips!).mockReturnValue(
+        writerSkipped ? [{ chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }] : []
+      )
 
-    vi.mocked(provider.getLastWriterSkips!).mockReturnValue([
-      { chunkIndex: 1, attempts: 2, rawHead: '{"decisions"', rawTail: 'na ' }
-    ])
+      await expect((service as any).processJob('m2')).resolves.toBeUndefined()
 
-    await expect((service as any).processJob('m2')).resolves.toBeUndefined()
-
-    expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
-    expect(fsMock.writeFile).toHaveBeenCalledWith(
-      join('/mock/home/AutoDoc/recordings', 'm2', 'segments.error'),
-      JSON.stringify({
-        error:
-          'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue',
-        retries: 0,
-        status: 'no-notes',
-        errorCode: 'no_notes_detected',
+      expect(cryptoMock.encryptJSON).not.toHaveBeenCalled()
+      expect(JSON.parse(savedError!)).toEqual({
+        error: 'Notes generation produced no accepted items for a non-trivial transcript',
+        retries: 1,
+        status: 'failed',
+        errorCode: 'llm-empty-output',
         userReason:
-          'No notes were generated. There wasn’t enough conversation to turn into notes. Your transcript is still available.'
+          'Notes couldn’t finish. AutoDoc hit a problem writing notes this time. Your transcript is still available.',
+        notesLayout: 'v1'
+      })
+      expect(send).toHaveBeenCalledWith(
+        'segmentation:status-changed',
+        expect.objectContaining({
+          meetingId: 'm2',
+          status: 'failed',
+          errorCode: 'llm-empty-output'
+        })
+      )
+      const reopened = new SegmentationService(
+        provider,
+        createMockOllamaManager(),
+        '/mock/home/AutoDoc/recordings'
+      )
+      expect(await reopened.getStatus('m2')).toBe('failed')
+      expect(await reopened.getErrorCode('m2')).toBe('llm-empty-output')
+      expect(await reopened.getUserReason('m2')).toContain('Notes couldn’t finish')
+
+      fsMock.readdir.mockResolvedValue(['m2'] as any)
+      fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+      const enqueue = vi.spyOn(reopened, 'enqueue').mockImplementation(() => {})
+      await reopened.scanAndEnqueuePending()
+      await reopened.scanAndEnqueuePending()
+      expect(enqueue).not.toHaveBeenCalled()
+      reopened.retry('m2')
+      expect(enqueue).toHaveBeenCalledWith('m2', 'direct')
+      await (reopened as any).processJob('m2')
+      expect(JSON.parse(savedError!).retries).toBe(2)
+    }
+  )
+
+  it.each([
+    ['failed', 'llm-empty-output', 'failed'],
+    ['complete', 'scan_or_persist', 'complete'],
+    ['no-notes', 'no_notes_detected', 'no-notes'],
+    [undefined, undefined, 'no-notes']
+  ] as const)(
+    'restores explicit status %s ahead of the legacy empty error text',
+    async (status, errorCode, expected) => {
+      const saved = JSON.stringify({
+        status,
+        errorCode,
+        retries: 0,
+        error:
+          'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
+      })
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('segments.json')) throw new Error('ENOENT')
+      })
+      fsMock.readFile.mockResolvedValue(saved)
+      expect(await service.getStatus('legacy')).toBe(expected)
+      expect(fsMock.writeFile).not.toHaveBeenCalled()
+      if (expected !== 'complete') {
+        fsMock.readdir.mockResolvedValue(['legacy'] as any)
+        fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+        const enqueue = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+        await service.scanAndEnqueuePending()
+        expect(enqueue).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it('keeps recovery retries for unrelated transient failures', async () => {
+    fsMock.access.mockImplementation(async (path) => {
+      if (String(path).endsWith('segments.json')) throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify({
+        status: 'failed',
+        errorCode: 'ollama-unavailable',
+        error: 'Ollama unavailable',
+        retries: 1
       })
     )
+    fsMock.readdir.mockResolvedValue(['transient'] as any)
+    fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
+    const enqueue = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+    await service.scanAndEnqueuePending()
+    expect(enqueue).toHaveBeenCalledWith('transient', 'recovery-scan')
   })
 
   it('waits for shared Ollama setup instead of failing notes while setup is still running', async () => {

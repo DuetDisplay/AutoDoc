@@ -865,7 +865,9 @@ export function MeetingDetail() {
           setSegmentationStatus(nextSegmentationStatus)
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
-            nextSegmentationStatus === 'failed' || nextSegmentationStatus === 'complete'
+            nextSegmentationStatus === 'failed' ||
+            nextSegmentationStatus === 'complete' ||
+            nextSegmentationStatus === 'no-notes'
               ? nextSegmentationErrorCode
               : undefined
           )
@@ -936,7 +938,7 @@ export function MeetingDetail() {
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
         setSegmentationErrorCode(
-          payload.status === 'failed' || payload.status === 'complete'
+          payload.status === 'failed' || payload.status === 'complete' || payload.status === 'no-notes'
             ? payload.errorCode
             : undefined
         )
@@ -1095,11 +1097,9 @@ export function MeetingDetail() {
   ) : null
   const failCopy = notesUserCopy(
     notesFailureKindFromCode(
-      segmentationStatus === 'no-notes'
-        ? 'no_notes_detected'
-        : segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
-          ? 'unknown'
-          : segmentationErrorCode
+      segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
+        ? 'unknown'
+        : segmentationErrorCode ?? (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined)
     )
   )
 

@@ -1013,8 +1013,46 @@ export function shouldStopWindowsTightWriterStream(
   )
 }
 
+/** Normalize complete illegal integer tokens without changing strings or valid JSON. */
+export function repairJsonLeadingZeroIntegers(raw: string): { json: string; replacedCount: number } {
+  let inString = false
+  let escape = false
+  let copiedThrough = 0
+  let json = ''
+  let replacedCount = 0
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      if (escape) escape = false
+      else if (ch === '\\') escape = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (!/[0-9-]/.test(ch) || (i > 0 && !/[\s[:,]/.test(raw[i - 1]))) continue
+
+    // Consume the whole number-like token, including unsupported decimals/exponents.
+    let end = i + 1
+    while (end < raw.length && /[0-9.eE+-]/.test(raw[end])) end++
+    const token = raw.slice(i, end)
+    if (/^-?0[0-9]+$/.test(token) && (end === raw.length || /[\s\]},]/.test(raw[end]))) {
+      json += raw.slice(copiedThrough, i) + token.replace(/^(-?)0+(?=\d)/, '$1')
+      copiedThrough = end
+      replacedCount++
+    }
+    i = end - 1
+  }
+  return { json: replacedCount === 0 ? raw : json + raw.slice(copiedThrough), replacedCount }
+}
+
 /** Merge duplicate category keys and tolerate a missing colon after d/a/i/x/u. */
-export function extractWriterCategoryObject(raw: string): Record<string, unknown> | null {
+export function extractWriterCategoryObject(
+  raw: string,
+  recoverTightChildren = isTightWriterEnabled() && !isWindowsTopicWriterEnabled()
+): Record<string, unknown> | null {
   const merged: Record<string, unknown[]> = {}
   let found = false
   for (const key of WRITER_CATEGORY_JSON_KEYS) {
@@ -1042,24 +1080,61 @@ export function extractWriterCategoryObject(raw: string): Record<string, unknown
         continue
       }
       const end = matchJsonBracket(raw, i)
-      if (end < 0) break
-      try {
-        const parsed = JSON.parse(raw.slice(i, end + 1))
-        if (Array.isArray(parsed)) {
-          found = true
-          merged[key] = [...(merged[key] ?? []), ...parsed]
+      if (end >= 0) {
+        try {
+          const parsed = JSON.parse(raw.slice(i, end + 1))
+          if (Array.isArray(parsed)) {
+            found = true
+            merged[key] = [...(merged[key] ?? []), ...parsed]
+            searchFrom = end + 1
+            continue
+          }
+        } catch {
+          // A broken container can still contain complete direct-child tuples.
         }
-      } catch {
-        // Skip this occurrence; later keys may still parse.
       }
-      searchFrom = end + 1
+      if (!recoverTightChildren) {
+        if (end < 0) break
+        searchFrom = end + 1
+        continue
+      }
+
+      // Stay inside this category occurrence. Never walk through an invalid
+      // child or a closing brace to borrow a tuple from the next category.
+      let cursor = i + 1
+      while (cursor < raw.length) {
+        while (/\s/.test(raw[cursor] ?? '') && cursor < raw.length) cursor++
+        if (raw[cursor] !== '[') break
+        const childEnd = matchJsonBracket(raw, cursor)
+        if (childEnd < 0) break
+        try {
+          const child = JSON.parse(
+            repairJsonLeadingZeroIntegers(raw.slice(cursor, childEnd + 1)).json
+          )
+          if (!Array.isArray(child) || typeof child[0] !== 'string' || typeof child[1] !== 'string')
+            break
+          found = true
+          ;(merged[key] ??= []).push(child)
+        } catch {
+          break
+        }
+        cursor = childEnd + 1
+        while (/\s/.test(raw[cursor] ?? '') && cursor < raw.length) cursor++
+        if (raw[cursor] !== ',') break
+        cursor++
+      }
+      // Even an unclosed occurrence must not hide later occurrences of its key.
+      searchFrom = cursor
     }
   }
   return found ? merged : null
 }
 
-export function parseWriterJsonRecord(raw: string): Record<string, unknown> | null {
-  const extracted = extractWriterCategoryObject(raw)
+export function parseWriterJsonRecord(
+  raw: string,
+  recoverTightChildren?: boolean
+): Record<string, unknown> | null {
+  const extracted = extractWriterCategoryObject(raw, recoverTightChildren)
   const extractedHasItems =
     extracted != null &&
     Object.values(extracted).some((value) => Array.isArray(value) && value.length > 0)
@@ -1902,6 +1977,22 @@ export class OllamaProvider implements LLMProvider {
             macLineReferences?.startMsByLineId,
             macLineReferences?.promptTranscript
           )
+          if (
+            parsedChunk.acceptedItemCount === 0 &&
+            isTightWriterEnabled() &&
+            !isWindowsTopicWriterEnabled()
+          ) {
+            // Recovering only rejected candidates must not suppress a parse-error
+            // retry this malformed response already had before tuple recovery.
+            // Valid/previously parseable empty output does not gain a retry.
+            const normalizedRaw = repairJsonLeadingZeroIntegers(raw).json
+            if (
+              !parseWriterJsonRecord(normalizedRaw, false) &&
+              !this.repairTruncatedJSON(normalizedRaw)
+            ) {
+              throw new WriterParseError(raw)
+            }
+          }
           chunkResult = parsedChunk.segments
           this.lastWriterParseDrops.push(...parsedChunk.drops)
           if (this.lastOllamaCallMetrics) {
@@ -2964,6 +3055,16 @@ export class OllamaProvider implements LLMProvider {
     drops: WriterDrop[]
   } {
     let inspected: WriterExpandResult
+    const normalized = repairJsonLeadingZeroIntegers(raw)
+    if (normalized.replacedCount > 0) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes llm json leading-zero repair',
+        meetingId,
+        context: { replacedCount: normalized.replacedCount, ...sliceWriterRawEnds(raw) }
+      })
+      raw = normalized.json
+    }
     if (isWindowsEvidenceWriterEnabled()) {
       try {
         if (!promptTranscript || !macLineStartMsById) throw new Error('Missing literal source map')

@@ -6,6 +6,11 @@ describe('notes user copy', () => {
     expect(notesUserCopy(notesFailureKindFromCode('no_notes_detected')).title).toBe(
       'No notes were generated'
     )
+    expect(notesFailureKindFromCode('llm-empty-output')).toBe('generic')
+    expect(notesUserCopy(notesFailureKindFromCode('llm-empty-output'))).toEqual({
+      title: 'Notes couldn’t finish',
+      body: 'AutoDoc hit a problem writing notes this time. Your transcript is still available.'
+    })
     expect(notesUserCopy(notesFailureKindFromCode('ollama-insufficient-memory')).title).toBe(
       'Not enough available memory'
     )

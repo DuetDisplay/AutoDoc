@@ -36,6 +36,6 @@ export function notesFailureKindFromCode(errorCode: string | undefined): NotesUs
   if (errorCode === 'ollama-insufficient-memory') return 'memory'
   if (errorCode === 'ollama-unavailable' || errorCode === 'ollama-model-setup') return 'engine'
   if (errorCode === 'scan_or_persist') return 'layout'
-  if (errorCode === 'llm-empty-output' || errorCode === 'no_notes_detected') return 'empty'
+  if (errorCode === 'no_notes_detected') return 'empty'
   return 'generic'
 }

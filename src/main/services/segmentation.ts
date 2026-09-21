@@ -126,7 +126,7 @@ function parseDevNotesScanPolicy(raw: string | undefined): 'cpu-constrained' | '
   return null
 }
 
-const EMPTY_SEGMENTATION_ERROR =
+const LEGACY_EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
 const OLLAMA_UNAVAILABLE_ERROR =
   'Ollama unavailable for notes generation — model runtime never became ready'
@@ -327,6 +327,7 @@ export class SegmentationService {
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
           const isPermanentFailure =
+            errorData?.errorCode === 'llm-empty-output' ||
             errorData?.errorCode === 'ollama-insufficient-memory' ||
             (process.platform === 'win32' && errorData?.errorCode === 'ollama-model-setup')
           if (
@@ -600,7 +601,13 @@ export class SegmentationService {
         totalItems === 0 &&
         shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
       ) {
-        await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
+        this.activeStatus = 'failed'
+        await this.markFailed(
+          meetingId,
+          'Notes generation produced no accepted items for a non-trivial transcript',
+          undefined,
+          'llm-empty-output'
+        )
         return
       }
 
@@ -1097,10 +1104,11 @@ export class SegmentationService {
   private async markFailed(
     meetingId: string,
     error: Error | string,
-    context?: SegmentationDirSnapshot
+    context?: SegmentationDirSnapshot,
+    errorCodeOverride?: string
   ): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : error
-    const errorCode = classifyError(errorMsg)
+    const errorCode = errorCodeOverride ?? classifyError(errorMsg)
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
@@ -1141,47 +1149,6 @@ export class SegmentationService {
     })
   }
 
-  private async markNoNotes(
-    meetingId: string,
-    errorMessage: string,
-    context?: SegmentationDirSnapshot
-  ): Promise<void> {
-    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
-    try {
-      await writeFile(
-        errorPath,
-        JSON.stringify({
-          error: errorMessage,
-          retries: 0,
-          status: 'no-notes',
-          errorCode: 'no_notes_detected',
-          userReason: `${notesUserCopy('empty').title}. ${notesUserCopy('empty').body}`
-        })
-      )
-    } catch (err) {
-      const code =
-        typeof err === 'object' && err !== null && 'code' in err
-          ? String((err as { code?: string }).code)
-          : null
-      if (code !== 'ENOENT') throw err
-    }
-    const copy = notesUserCopy('empty')
-    logAutodocEvent({
-      area: 'segmentation',
-      level: 'warn',
-      message: 'Meeting notes generation returned no structured output',
-      meetingId,
-      context: {
-        ...context,
-        errorCode: 'no_notes_detected',
-        userReason: `${copy.title}. ${copy.body}`,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
-    })
-    this.activeStatus = 'no-notes'
-    this.broadcastStatus(meetingId, 'no-notes')
-  }
-
   private async readErrorFile(errorPath: string): Promise<PersistedSegmentationError | null> {
     try {
       const raw = await readFile(errorPath, 'utf-8')
@@ -1214,10 +1181,14 @@ export class SegmentationService {
   private getPersistedStatus(
     errorData: PersistedSegmentationError | null
   ): PersistedSegmentationStatus {
-    if (errorData?.status === 'complete') {
-      return 'complete'
+    if (
+      errorData?.status === 'complete' ||
+      errorData?.status === 'failed' ||
+      errorData?.status === 'no-notes'
+    ) {
+      return errorData.status
     }
-    if (errorData?.status === 'no-notes' || errorData?.error === EMPTY_SEGMENTATION_ERROR) {
+    if (errorData?.error === LEGACY_EMPTY_SEGMENTATION_ERROR) {
       return 'no-notes'
     }
 

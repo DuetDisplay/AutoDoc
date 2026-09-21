@@ -206,8 +206,8 @@ describe('memory failure guidance', () => {
   })
 })
 
-function installNoNotesElectronApi() {
-  let segmentationStatus: 'no-notes' | 'queued' = 'no-notes'
+function installNoNotesElectronApi(initialStatus: 'no-notes' | 'failed' = 'no-notes', errorCode?: string) {
+  let segmentationStatus: 'no-notes' | 'failed' | 'queued' = initialStatus
   return installMockElectronApi({
     'transcription:get-status': 'complete',
     'transcription:get-progress': undefined,
@@ -219,6 +219,7 @@ function installNoNotesElectronApi() {
       })
     ],
     'segmentation:get-status': () => segmentationStatus,
+    'segmentation:get-error-code': errorCode,
     'segmentation:get-progress': undefined,
     'segmentation:get-segments': null,
     'segmentation:retry': () => {
@@ -1194,28 +1195,75 @@ describe('MeetingDetail', () => {
     expect(screen.queryByText('Status Updates')).not.toBeInTheDocument()
   })
 
-  it('retries no-notes generation through the existing manual reprocess path', async () => {
-    const api = installNoNotesElectronApi()
-    await renderMeetingDetail()
+  it.each(['failed', 'no-notes'] as const)(
+    'restores generation-failure copy from a persisted code with %s status',
+    async (status) => {
+      installNoNotesElectronApi(status, 'llm-empty-output')
+      await renderMeetingDetail()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(screen.getByText('Notes couldn’t finish')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'AutoDoc hit a problem writing notes this time. Your transcript is still available.'
+        )
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/There wasn’t enough conversation/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Copy notes' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'View transcript' })).toBeEnabled()
+    }
+  )
 
-    expect(api.invoke).toHaveBeenCalledWith('segmentation:retry', 'test-123')
-    expect(screen.getByText('Queued for notes')).toBeInTheDocument()
-  })
-
-  it('opens the transcript from the no-notes callout', async () => {
-    installNoNotesElectronApi()
-    await renderMeetingDetail()
-
-    await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
-
-    expect(
-      screen.getByText(
-        'This transcript is still available even though structured notes were not generated.'
+  it.each(['failed', 'no-notes'] as const)(
+    'uses the error code from a live %s event and clears it when queued',
+    async (status) => {
+      const api = installNoNotesElectronApi()
+      await renderMeetingDetail()
+      act(() =>
+        api.emit('segmentation:status-changed', {
+          meetingId: 'test-123',
+          status,
+          errorCode: 'llm-empty-output'
+        })
       )
-    ).toBeInTheDocument()
-  })
+      expect(screen.getByText('Notes couldn’t finish')).toBeInTheDocument()
+      expect(screen.queryByText(/There wasn’t enough conversation/)).not.toBeInTheDocument()
+      act(() => api.emit('segmentation:status-changed', { meetingId: 'test-123', status: 'queued' }))
+      expect(screen.queryByText('Notes couldn’t finish')).not.toBeInTheDocument()
+      expect(screen.getByText('Queued for notes')).toBeInTheDocument()
+    }
+  )
+
+  it.each(['no-notes', 'failed'] as const)(
+    'retries %s generation through the existing manual reprocess path',
+    async (status) => {
+      const api = installNoNotesElectronApi(
+        status,
+        status === 'failed' ? 'llm-empty-output' : undefined
+      )
+      await renderMeetingDetail()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+      expect(api.invoke).toHaveBeenCalledWith('segmentation:retry', 'test-123')
+      expect(screen.getByText('Queued for notes')).toBeInTheDocument()
+    }
+  )
+
+  it.each(['no-notes', 'failed'] as const)(
+    'opens the transcript from the %s callout',
+    async (status) => {
+      installNoNotesElectronApi(status, status === 'failed' ? 'llm-empty-output' : undefined)
+      await renderMeetingDetail()
+
+      await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
+
+      expect(
+        screen.getByText(
+          'This transcript is still available even though structured notes were not generated.'
+        )
+      ).toBeInTheDocument()
+    }
+  )
 
   it('renames a speaker and keeps the new label visible in transcript view', async () => {
     installMockElectronApi({
