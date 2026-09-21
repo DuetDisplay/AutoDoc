@@ -30,14 +30,20 @@ import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
+import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
+import { getRuntimeAnalyticsHardware } from './services/analytics-hardware'
 import { AudioConverter } from './services/audio-converter'
 import { TranscriptionService } from './services/transcription'
 import { DiarizationService } from './services/diarization'
 import { registerTranscriptionIpc } from './ipc/transcription-ipc'
-import { OllamaProvider } from './services/llm'
-import { OllamaManager } from './services/ollama-manager'
+import {
+  isTightWriterEnabled,
+  OllamaProvider,
+  shouldSanitizeWindowsWriterRecords
+} from './services/llm'
+import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
-import { SegmentationService } from './services/segmentation'
+import { SegmentationService, shouldUseLosslessPresentation } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
 import { DetectionService } from './services/detection'
@@ -54,6 +60,8 @@ import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
+import { registerNotesFeedbackIpc } from './ipc/notes-feedback-ipc'
+import { registerMeetingExportIpc } from './ipc/meeting-export-ipc'
 import { registerFeedbackPromptIpc } from './ipc/feedback-prompt-ipc'
 import {
   FEEDBACK_REMINDER_DELAY_MS,
@@ -134,7 +142,7 @@ import {
   onNotificationActivationSuppressionChange,
   shouldSuppressNotificationActivation
 } from './notification-window'
-import { DEFAULT_OLLAMA_MODEL } from '../shared/constants'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../shared/constants'
 import { isOfficialAutoDocBuild } from './services/distribution-config'
 
 const APP_NAME = __AUTODOC_QA_BUILD__ ? 'AutoDoc QA' : 'AutoDoc'
@@ -807,7 +815,7 @@ app.whenReady().then(async () => {
   })
 
   const calendarManager = new CalendarManager()
-  registerCalendarIpc(
+  const publishCalendarEvents = registerCalendarIpc(
     calendarManager,
     (events) => {
       cachedEvents = events
@@ -885,7 +893,6 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
-  whisperManager.setTranscriptionQualityModeGetter(() => prefsStore.getTranscriptionQualityMode())
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -921,16 +928,36 @@ app.whenReady().then(async () => {
     diarizationService,
     isExperimentalSpeakerDiarizationEnabled,
     localProcessingCoordinator,
-    () => prefsStore.getTranscriptionPerformanceMode(),
-    () => prefsStore.getTranscriptionQualityMode(),
     () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
   shutdownTranscriptionWorker = () => transcriptionService.shutdown()
   ollamaManager = new OllamaManager({
-    resolveModel: async () =>
-      (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ?? DEFAULT_OLLAMA_MODEL
+    retainLowSpecModel: async () => {
+      if (process.platform !== 'win32') return false
+      const profile = await whisperManager.getEffectiveWindowsProcessingProfile()
+      return (
+        profile != null &&
+        selectWindowsProcessingProfile(profile.hardware, 'cpu').notesModel ===
+          LOW_SPEC_MAC_OLLAMA_MODEL
+      )
+    },
+    resolveModel: async () => {
+      if (process.platform === 'win32') {
+        return (
+          (await whisperManager.getEffectiveWindowsProcessingProfile())?.notesModel ??
+          DEFAULT_OLLAMA_MODEL
+        )
+      }
+      return (
+        (await whisperManager.getEffectiveMacProcessingProfile())?.notesModel ??
+        DEFAULT_OLLAMA_MODEL
+      )
+    }
   })
   const managedOllamaManager = ollamaManager
+  if (process.env.AUTODOC_TEST_NOTES_CPU === '1') {
+    managedOllamaManager.latchCpuAccelerator('dev-only CPU notes validation')
+  }
 
   // Mutable state tracking Ollama setup progress
   const ollamaSetupState: OllamaSetupStatus = isE2E
@@ -1045,7 +1072,8 @@ app.whenReady().then(async () => {
       ? new OllamaSetupCoordinator(managedOllamaManager, {
           retryDelaysMs: WINDOWS_OLLAMA_SETUP_RETRY_DELAYS_MS,
           onAttemptStart: markOllamaSetupStarting,
-          onFinalError: markOllamaSetupFailed
+          onFinalError: markOllamaSetupFailed,
+          isCancellationError: isOllamaStartCancelledError
         })
       : null
 
@@ -1089,11 +1117,24 @@ app.whenReady().then(async () => {
     }
   }
 
-  const ollamaProvider = new OllamaProvider(
-    managedOllamaManager.getBaseUrl(),
-    managedOllamaManager.getModel(),
-    { onTelemetry: broadcastSegmentationDiagnostic }
-  )
+  const createOllamaProvider = (): OllamaProvider =>
+    new OllamaProvider(managedOllamaManager.getBaseUrl(), managedOllamaManager.getModel(), {
+      onTelemetry: broadcastSegmentationDiagnostic,
+      maybeRecycleRunner: async (meetingId?: string) => {
+        await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
+      },
+      recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
+      snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
+    })
+  const ollamaProvider = createOllamaProvider()
+  // Windows jobs bind their model through scan, retries and unload. Keep the
+  // existing shared-provider behavior on macOS and Linux.
+  const notesOllamaProvider = process.platform === 'win32' ? createOllamaProvider() : ollamaProvider
+  managedOllamaManager.on('notes-model-plan', (plan: { usingLegacyFallback: boolean }) => {
+    if (plan.usingLegacyFallback && prefsStore.isOnboardingComplete()) {
+      prefsStore.setNotesEngineUpgradeEligible(true)
+    }
+  })
   managedOllamaManager.on('model-selected', (model: string) => {
     ollamaProvider.setModel(model)
     updateOllamaSentryContext({
@@ -1105,15 +1146,115 @@ app.whenReady().then(async () => {
   })
   const ollamaReadiness = windowsOllamaSetupCoordinator ?? managedOllamaManager
   const waitUntilOllamaReady = async (): Promise<void> => {
+    const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
+    managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
     await ollamaReadiness.waitUntilReady()
-    if (windowsOllamaSetupCoordinator) {
+    managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+    if (
+      windowsOllamaSetupCoordinator &&
+      (await managedOllamaManager.isServerRunning()) &&
+      (await managedOllamaManager.hasUsableNotesModel())
+    ) {
+      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
       markOllamaSetupReady()
     }
   }
+  const recoverUnhealthyOllamaRuntime = async (): Promise<void> => {
+    const retryDelaysMs = [0, 5_000, 15_000]
+    const recoveryEpoch = managedOllamaManager.captureLifecycleEpoch()
+    managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+    markOllamaSetupStarting()
+    let lastError: Error | null = null
+    for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex++) {
+      const delayMs = retryDelaysMs[attemptIndex]
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+      }
+      try {
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        await managedOllamaManager.recoverUnhealthyRuntime()
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+
+        let serverRunning = await managedOllamaManager.isServerRunning()
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        let hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
+        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+
+        if (serverRunning && !hasNotesModel) {
+          await managedOllamaManager.startAndPull()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          serverRunning = await managedOllamaManager.isServerRunning()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        }
+        if (serverRunning && hasNotesModel) {
+          markOllamaSetupReady()
+          return
+        }
+        lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
+      } catch (error) {
+        if (isOllamaStartCancelledError(error)) {
+          throw error
+        }
+        lastError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+    markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
+    throw lastError ?? new Error('Ollama recovery failed')
+  }
+  const ensureOllamaRunningIfNeeded = (): void => {
+    const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
+    try {
+      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+    } catch {
+      return
+    }
+    void managedOllamaManager
+      .isServerRunning()
+      .then((running) => {
+        managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+        if (running) {
+          if (windowsOllamaSetupCoordinator) {
+            ensureOllamaRunning()
+          } else {
+            markOllamaSetupReady()
+          }
+          return
+        }
+        ensureOllamaRunning({ force: true })
+      })
+      .catch((error) => {
+        if (isOllamaStartCancelledError(error)) return
+        logAutodocFailure({
+          area: 'ollama',
+          message: 'Failed to check Ollama after system resume',
+          error
+        })
+      })
+  }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
-    isReadyForGeneration: async () =>
-      ollamaSetupState.phase === 'ready' && (await managedOllamaManager.isServerRunning())
+    ...(process.platform === 'win32'
+      ? {
+          beginNotesGeneration: () => managedOllamaManager.beginNotesGeneration(),
+          endNotesGeneration: () => managedOllamaManager.endNotesGeneration(),
+          prepareModelForGeneration: async (preferredModel?: string) =>
+            (await managedOllamaManager.ensureNotesModelReady(preferredModel)).activeModel
+        }
+      : {}),
+    isReadyForGeneration: async (model?: string) =>
+      (await managedOllamaManager.isServerRunning()) &&
+      (await (process.platform === 'win32'
+        ? managedOllamaManager.hasUsableNotesModel(model)
+        : managedOllamaManager.hasUsableNotesModel())),
+    recoverUnhealthyRuntime: recoverUnhealthyOllamaRuntime,
+    reapLeftoverRunners: (reason?: string, meetingId?: string) =>
+      managedOllamaManager.reapLeftoverRunners(reason, meetingId),
+    recycleBloatedRunners: (_reason?: string, meetingId?: string) =>
+      managedOllamaManager.maybeRecycleBloatedRunners(meetingId),
+    getNotesAccelerator: () => managedOllamaManager.getNotesAccelerator()
   }
   const ollamaRuntime = {
     waitUntilReady: waitUntilOllamaReady,
@@ -1121,12 +1262,14 @@ app.whenReady().then(async () => {
     getBaseUrl: () => managedOllamaManager.getBaseUrl()
   }
   const segmentationService = new SegmentationService(
-    ollamaProvider,
+    notesOllamaProvider,
     segmentationOllamaReadiness,
     recordingService.getRecordingsBaseDir(),
     localProcessingCoordinator,
     () => whisperManager.getMacProcessingProfile(),
-    () => whisperManager.getEffectiveMacProcessingProfile()
+    () => whisperManager.getEffectiveMacProcessingProfile(),
+    () => whisperManager.getWindowsProcessingProfile(),
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
   )
   ipcMain.handle(
     'app:get-runtime-info',
@@ -1146,7 +1289,8 @@ app.whenReady().then(async () => {
       storagePath: app.getPath('userData'),
       whisperModel: whisperManager.getModelName(),
       transcriptionBackend: whisperManager.getTranscriptionBackend(),
-      ollamaModel: managedOllamaManager.getModel()
+      ollamaModel: managedOllamaManager.getModel(),
+      ...getRuntimeAnalyticsHardware(whisperManager)
     })
   )
   ipcMain.handle('app:get-storage-info', async (): Promise<AppStorageInfo> => {
@@ -1260,6 +1404,91 @@ app.whenReady().then(async () => {
   const pendingReprocessNotificationMeetingIds = new Set<string>()
   const markReprocessNotificationPending = (meetingId: string): void => {
     pendingReprocessNotificationMeetingIds.add(meetingId)
+  }
+  const maybeStartDevTranscriptionRetry = (): void => {
+    const meetingId = process.env.AUTODOC_TEST_RETRY_TRANSCRIPTION_MEETING_ID?.trim()
+    if (!meetingId) return
+    void (async () => {
+      try {
+        await waitUntilOllamaReady()
+        if (pendingRecoveryPromise) {
+          await pendingRecoveryPromise
+        }
+        markReprocessNotificationPending(meetingId)
+        logAutodocEvent({
+          area: 'transcription',
+          message: 'dev-only transcription retry starting',
+          meetingId,
+          context: {
+            cpuLatch: process.env.AUTODOC_TEST_NOTES_CPU === '1',
+            tightWriter: isTightWriterEnabled(),
+            losslessPresentation: shouldUseLosslessPresentation(),
+            scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
+            captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null
+          }
+        })
+        if (process.platform === 'win32') {
+          transcriptionService.retry(meetingId, 'reprocess')
+        } else {
+          transcriptionService.retry(meetingId)
+        }
+      } catch (error) {
+        logAutodocFailure({
+          area: 'transcription',
+          message: 'dev-only transcription retry failed to start',
+          meetingId,
+          error
+        })
+      }
+    })()
+  }
+  const maybeStartDevNotesRetry = (): void => {
+    if (process.env.AUTODOC_TEST_RETRY_TRANSCRIPTION_MEETING_ID?.trim()) return
+    const meetingId = process.env.AUTODOC_TEST_RETRY_NOTES_MEETING_ID?.trim()
+    if (!meetingId) return
+    void (async () => {
+      try {
+        await waitUntilOllamaReady()
+        if (pendingRecoveryPromise) {
+          await pendingRecoveryPromise
+        }
+        const requestedModel = process.env.AUTODOC_TEST_NOTES_MODEL?.trim()
+        if (requestedModel) {
+          await ollamaManager?.pullModel(requestedModel)
+        }
+        markReprocessNotificationPending(meetingId)
+        logAutodocEvent({
+          area: 'segmentation',
+          message: 'dev-only notes retry starting',
+          meetingId,
+          context: {
+            cpuLatch: process.env.AUTODOC_TEST_NOTES_CPU === '1',
+            numCtxOverride: process.env.AUTODOC_TEST_NOTES_NUM_CTX ?? null,
+            chunkCharsOverride: process.env.AUTODOC_TEST_NOTES_CHUNK_CHARS ?? null,
+            compactWriter: process.env.AUTODOC_TEST_NOTES_COMPACT === '1',
+            tightWriter: isTightWriterEnabled(),
+            losslessPresentation: shouldUseLosslessPresentation(),
+            writerGrounding: shouldSanitizeWindowsWriterRecords(),
+            wholeMeetingBudget: process.env.AUTODOC_TEST_NOTES_WHOLE_MEETING_BUDGET === '1',
+            scanPolicy: process.env.AUTODOC_TEST_NOTES_SCAN_POLICY ?? null,
+            captureDir: process.env.AUTODOC_TEST_NOTES_CAPTURE_DIR ?? null,
+            notesModel: process.env.AUTODOC_TEST_NOTES_MODEL ?? null,
+            numBatch: process.env.AUTODOC_TEST_NOTES_NUM_BATCH ?? null,
+            numThread: process.env.AUTODOC_TEST_NOTES_NUM_THREAD ?? null,
+            shortPrompt: process.env.AUTODOC_TEST_NOTES_SHORT_PROMPT === '1',
+            skipScanRewrites: process.env.AUTODOC_TEST_NOTES_SKIP_SCAN_REWRITES === '1'
+          }
+        })
+        segmentationService.retry(meetingId)
+      } catch (error) {
+        logAutodocFailure({
+          area: 'segmentation',
+          message: 'dev-only notes retry failed to start',
+          meetingId,
+          error
+        })
+      }
+    })()
   }
   segmentationService.onComplete((meetingId) => {
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
@@ -1659,6 +1888,11 @@ app.whenReady().then(async () => {
   const isTrustedMainWindowSender = (sender: WebContents): boolean =>
     getMainWindow()?.webContents === sender
 
+  registerMeetingExportIpc({
+    recordingsBaseDir: recordingService.getRecordingsBaseDir(),
+    isTrustedSender: isTrustedMainWindowSender
+  })
+
   registerFeedbackPromptIpc(feedbackPromptService, {
     isTrustedSender: isTrustedMainWindowSender,
     observeForeground: () => feedbackSessionTracker.observeActive()
@@ -1680,6 +1914,11 @@ app.whenReady().then(async () => {
         mainWindow.webContents.send('feedback:contact-initiated', surface)
       }
     }
+  })
+  registerNotesFeedbackIpc({
+    recordingsBaseDir: recordingService.getRecordingsBaseDir(),
+    isTrustedSender: isTrustedMainWindowSender,
+    analyticsEnabled: () => analyticsConsentEnabled
   })
   onNotificationActivationSuppressionChange((suppressed) => {
     const mainWindow = getMainWindow()
@@ -1741,7 +1980,8 @@ app.whenReady().then(async () => {
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
-    markReprocessNotificationPending
+    markReprocessNotificationPending,
+    recordingService.getRecordingsBaseDir()
   )
   registerWhisperIpc(
     whisperManager,
@@ -1766,14 +2006,7 @@ app.whenReady().then(async () => {
     accountCount: restoredAccounts.length
   })
   if (restoredAccounts.length > 0) {
-    calendarManager.startSync((events) => {
-      cachedEvents = events
-      updateTrayMenu()
-      const windows = BrowserWindow.getAllWindows()
-      for (const win of windows) {
-        win.webContents.send('calendar:events-updated', events)
-      }
-    })
+    calendarManager.startSync(publishCalendarEvents)
   }
 
   cleanupTempFiles().catch(() => {})
@@ -1890,18 +2123,20 @@ app.whenReady().then(async () => {
       ensureOllamaRunning()
       void whisperManager.resolveWindowsTranscriptionBackend()
     }
+    maybeStartDevTranscriptionRetry()
+    maybeStartDevNotesRetry()
     if (!isRealSetupTest) {
       detectionService.start()
     }
 
     if (!isRealSetupTest) {
       powerMonitor.on('resume', () => {
-        ensureOllamaRunning()
+        ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
 
       powerMonitor.on('unlock-screen', () => {
-        ensureOllamaRunning()
+        ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
 

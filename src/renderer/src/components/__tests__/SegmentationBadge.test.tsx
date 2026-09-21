@@ -20,6 +20,11 @@ describe('SegmentationBadge', () => {
     expect(screen.getByText('Generating notes... 42%')).toBeInTheDocument()
   })
 
+  it('shows shaping copy after the writer band so scan work is not a frozen 99%', () => {
+    render(<SegmentationBadge status="segmenting" progress={70} />)
+    expect(screen.getByText('Shaping notes... 70%')).toBeInTheDocument()
+  })
+
   it('shows "Generating notes..." label for segmenting status at zero percent', () => {
     render(<SegmentationBadge status="segmenting" progress={0} />)
     expect(screen.getByText('Generating notes... 0%')).toBeInTheDocument()

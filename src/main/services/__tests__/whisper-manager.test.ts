@@ -4,6 +4,11 @@ import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { WhisperManager } from '../whisper-manager'
 import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
+vi.mock('../windows-dml-restriction', () => ({
+  readDmlRestriction: vi.fn().mockResolvedValue(null),
+  writeDmlRestriction: vi.fn().mockResolvedValue(undefined),
+  clearDmlRestriction: vi.fn().mockResolvedValue(undefined)
+}))
 
 let isPackaged = false
 
@@ -288,16 +293,15 @@ describe('WhisperManager', () => {
     expect(mockExecSync).not.toHaveBeenCalled()
   })
 
-  it('forces int8 worker compute type in fast quality mode without changing backend id', () => {
-    manager.setTranscriptionQualityModeGetter(() => 'fast')
+  it('uses fp32 and DirectML for the selected GPU profile', () => {
     ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']
 
-    expect(manager.getWorkerComputeType()).toBe('int8')
+    expect(manager.getWorkerComputeType()).toBe('fp32')
     expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
     expect(manager.getWorkerDevice()).toBe('dml')
   })
 
-  it('reports parakeet-cpu estimated memory for parakeet-gpu in fast quality mode', () => {
+  it('reports estimated memory for the selected hardware profile', () => {
     if (process.platform !== 'win32') {
       return
     }
@@ -306,8 +310,9 @@ describe('WhisperManager', () => {
     ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
 
     expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(4)
-
-    manager.setTranscriptionQualityModeGetter(() => 'fast')
+    ;(manager as any).selectedWindowsProfile = WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu']
+    expect(manager.getWorkerComputeType()).toBe('int8')
+    expect(manager.getWorkerDevice()).toBe('cpu')
     expect(manager.getSelectedWindowsProfileEstimatedMemoryGiB()).toBe(
       WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].estimatedMemoryGiB
     )

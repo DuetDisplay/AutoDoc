@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 import {
   isMemoryHealthyForConcurrentDualSource,
   selectEffectiveWindowsProcessingProfile,
@@ -20,6 +21,7 @@ describe('windows processing profile selection', () => {
     const profile = selectWindowsProcessingProfile(hardware(), 'dml')
 
     expect(profile.id).toBe('win-gpu')
+    expect(profile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
     expect(profile.dualSourceMode).toBe('concurrent')
     expect(profile.serializeLocalProcessing).toBe(false)
     expect(profile.threadPolicy).toBe('default')
@@ -61,10 +63,21 @@ describe('windows processing profile selection', () => {
     )
 
     expect(profile.id).toBe('win-low-spec')
+    expect(profile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
     expect(profile.dualSourceMode).toBe('sequential')
     expect(profile.serializeLocalProcessing).toBe(true)
     expect(profile.notesAfterTranscriptionOnly).toBe(true)
     expect(profile.threadPolicy).toBe('min')
+  })
+
+  it('keeps the 3B notes model on 8 GB GPU boxes so Qwen does not raise min spec', () => {
+    const profile = selectWindowsProcessingProfile(
+      hardware({ logicalProcessors: 8, totalMemoryGiB: 8, freeMemoryGiB: 3 }),
+      'dml'
+    )
+
+    expect(profile.id).toBe('win-gpu')
+    expect(profile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
   })
 
   it('temporarily applies low-spec behavior to CPU normal hardware under runtime memory pressure', () => {
@@ -80,6 +93,7 @@ describe('windows processing profile selection', () => {
     })
 
     expect(pressuredProfile.id).toBe('win-cpu-normal')
+    expect(pressuredProfile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
     expect(pressuredProfile.dualSourceMode).toBe('sequential')
     expect(pressuredProfile.serializeLocalProcessing).toBe(true)
     expect(pressuredProfile.notesAfterTranscriptionOnly).toBe(true)

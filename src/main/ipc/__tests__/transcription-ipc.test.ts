@@ -31,4 +31,19 @@ describe('registerTranscriptionIpc', () => {
     )
     expect(retry).toHaveBeenCalledWith('meeting-123')
   })
+
+  it.each(['win32', 'darwin'])('preserves explicit Reprocess semantics on %s', async (platform) => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+    try {
+      const retry = vi.fn()
+      registerTranscriptionIpc({ retry } as never)
+      await handlers.get('transcription:retry')?.({}, 'meeting', { reprocess: true })
+      expect(retry.mock.calls[0]).toEqual(
+        platform === 'win32' ? ['meeting', 'reprocess'] : ['meeting']
+      )
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: original })
+    }
+  })
 })

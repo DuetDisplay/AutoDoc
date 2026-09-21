@@ -450,10 +450,10 @@ test.describe('QA Linear repro pass', () => {
       await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
       await page.waitForTimeout(2000)
       await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
-      await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeHidden()
+      await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeHidden()
 
       await page.getByRole('button', { name: /^continue$/i }).click()
-      await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
 
       await attachReproNote(testInfo, {
         issue: 'AD-74',

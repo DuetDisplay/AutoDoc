@@ -1,3 +1,5 @@
+import type { MemoryFailure } from './memory-failure'
+
 export type MeetingStatus = 'recording' | 'processing' | 'complete' | 'failed'
 
 export type SegmentCategory =
@@ -40,6 +42,12 @@ export interface Segment {
   deadline: string | null
   sourceStartMs: number
   sourceEndMs: number
+  /** Grounded writer title for Next Steps; kept out of summary ranking and ownership. */
+  actionContext?: {
+    title: string
+    sourceStartMs: number
+    sourceEndMs: number
+  }
 }
 
 export type AutoRecordMode = 'off' | 'once' | 'series'
@@ -74,6 +82,199 @@ export interface MeetingSegments {
   information: Segment[]
   discussion: Segment[]
   statusUpdates: Segment[]
+}
+
+export interface MeetingSegmentsWithCandidates extends MeetingSegments {
+  /** Unaccepted Mac writer drafts; never include in canonical notes or summary ranking. */
+  nextStepCandidates?: Segment[]
+}
+
+/** A canonical hash of a complete Notes V2 document. */
+export type NotesRevision = `sha256:${string}`
+
+/** A canonical hash of legacy `segments.json` content. */
+export type LegacyNotesRevision = `legacy-sha256:${string}`
+
+/** A canonical hash of the transcript from which a V2 document was generated. */
+export type TranscriptRevision = `transcript-sha256:${string}`
+
+/** A canonical hash of confirmed speaker labels used to generate a V2 document. */
+export type NotesAttributionRevision = `notes-attribution-sha256:${string}`
+
+/** Deterministic IDs used only inside the Notes V2 generation pipeline. */
+export type NoteSourceId = `source:${string}`
+export type NoteEvidenceId = `evidence:${string}`
+export type NotesCacheSignature = `notes-cache-sha256:${string}`
+
+export interface NoteSourceRange {
+  startMs: number
+  endMs: number
+}
+
+/**
+ * `user-edited` means the retained ranges are original evidence, not proof of
+ * the current user-authored wording. `legacy` is only produced by the adapter.
+ */
+export type PersistedNoteBlockProvenance = 'generated' | 'user-created' | 'user-edited'
+export type NoteBlockProvenance = PersistedNoteBlockProvenance | 'legacy'
+
+export interface NoteTextBlock<
+  TProvenance extends NoteBlockProvenance = PersistedNoteBlockProvenance
+> {
+  text: string
+  sources: NoteSourceRange[]
+  provenance: TProvenance
+}
+
+export interface NoteItem<
+  TProvenance extends NoteBlockProvenance = PersistedNoteBlockProvenance
+> extends NoteTextBlock<TProvenance> {
+  id: string
+  title: string | null
+  topic: string | null
+  owner: string | null
+  deadline: string | null
+  /** Next-step checkbox. Optional on older documents; default false. */
+  completed?: boolean
+}
+
+export interface NoteSection<
+  TProvenance extends NoteBlockProvenance = PersistedNoteBlockProvenance,
+  TItem extends NoteItem<TProvenance> = NoteItem<TProvenance>
+> {
+  id: string
+  title: string
+  summary: NoteTextBlock<TProvenance> | null
+  keyPoints: TItem[]
+  supportingDetails: TItem[]
+}
+
+export interface MeetingNotesContent<
+  TProvenance extends NoteBlockProvenance = PersistedNoteBlockProvenance,
+  TItem extends NoteItem<TProvenance> = NoteItem<TProvenance>
+> {
+  overview: NoteTextBlock<TProvenance> | null
+  keyTakeaways: TItem[]
+  sections: NoteSection<TProvenance, TItem>[]
+  decisions: TItem[]
+  nextSteps: TItem[]
+}
+
+export interface MeetingNotesV2 extends MeetingNotesContent {
+  /** Generated once by the pipeline and preserved through manual edits. Local identity only. */
+  generation?: import('./notes-feedback').NotesGeneration
+  schemaVersion: 2
+  meetingId: string
+  /** Required for V2; a later transcript replacement makes its evidence stale. */
+  sourceTranscriptRevision: TranscriptRevision
+  /** Required for V2; a confirmed-speaker change makes attribution-bearing evidence stale. */
+  sourceAttributionRevision: NotesAttributionRevision
+  revision: NotesRevision
+}
+
+export interface LegacySegmentOrigin {
+  adapterVersion: 1
+  bucket: keyof MeetingSegments
+  itemIndex: number
+  segmentId: string | null
+  meetingId: string | null
+  category: SegmentCategory
+  topic: string | null
+  sourceStartMs: number
+  sourceEndMs: number
+}
+
+export interface NormalizedNoteItem extends NoteItem<NoteBlockProvenance> {
+  legacySource: LegacySegmentOrigin | null
+}
+
+interface NormalizedNotesBase extends MeetingNotesContent<NoteBlockProvenance, NormalizedNoteItem> {
+  normalizedSchemaVersion: 1
+  meetingId: string
+}
+
+/** Legacy notes cannot claim a V2 transcript binding, and V2 cannot carry a legacy revision. */
+export type NormalizedNotes = NormalizedNotesBase &
+  (
+    | {
+        source: { format: 'notes-v2'; schemaVersion: 2 }
+        sourceTranscriptRevision: TranscriptRevision
+        sourceAttributionRevision: NotesAttributionRevision
+        revision: NotesRevision
+      }
+    | {
+        source: { format: 'legacy-segments'; adapterVersion: 1 }
+        sourceTranscriptRevision: null
+        sourceAttributionRevision: null
+        revision: LegacyNotesRevision
+      }
+  )
+
+export type MeetingExportFormat = 'markdown' | 'pdf' | 'docx'
+
+export interface MeetingExportRequest {
+  meetingId: string
+  format: MeetingExportFormat
+}
+
+export type MeetingExportFailureCode =
+  | 'invalid-request'
+  | 'nothing-to-export'
+  | 'disk-full'
+  | 'permission-denied'
+  | 'render-failed'
+  | 'write-failed'
+
+export type MeetingExportResult =
+  | { status: 'saved' }
+  | { status: 'cancelled' }
+  | { status: 'failed'; code: MeetingExportFailureCode }
+
+export interface MeetingCopyNotesRequest {
+  meetingId: string
+}
+
+export type MeetingCopyNotesFailureCode = 'invalid-request' | 'nothing-to-copy' | 'copy-failed'
+
+export type MeetingCopyNotesResult =
+  | { status: 'copied' }
+  | { status: 'failed'; code: MeetingCopyNotesFailureCode }
+
+/** Stable, serializable address for any semantic block in a normalized note document. */
+export type NoteBlockRef =
+  | { kind: 'overview' }
+  | { kind: 'section-summary'; sectionId: string }
+  | { kind: 'item'; itemId: string }
+
+export type NoteBlockLocation =
+  | 'overview'
+  | 'key-takeaway'
+  | 'section-summary'
+  | 'key-point'
+  | 'supporting-detail'
+  | 'decision'
+  | 'next-step'
+
+export type NoteEvidenceStatus = 'current' | 'stale' | 'unknown'
+
+export interface NormalizedNoteBlock {
+  ref: NoteBlockRef
+  revision: NotesRevision | LegacyNotesRevision
+  sourceTranscriptRevision: TranscriptRevision | null
+  sourceAttributionRevision: NotesAttributionRevision | null
+  evidenceStatus: NoteEvidenceStatus
+  location: NoteBlockLocation
+  /** The section containing this block, where applicable. */
+  sectionId: string | null
+  sectionTitle: string | null
+  title: string | null
+  topic: string | null
+  text: string
+  owner: string | null
+  deadline: string | null
+  sources: NoteSourceRange[]
+  provenance: NoteBlockProvenance
+  legacySource: LegacySegmentOrigin | null
 }
 
 export interface OAuthTokens {
@@ -209,9 +410,11 @@ export interface TranscriptionStatusPayload {
   status: TranscriptionStatus
   progress?: number
   errorCode?: string
+  memoryFailure?: MemoryFailure
   backendLabel?: string
-  qualityMode?: 'fast' | 'balanced'
   etaSeconds?: number | null
+  recordingDurationSec?: number | null
+  reprocessFailed?: boolean
 }
 
 export type TranscriptionStatus =
@@ -235,6 +438,10 @@ export interface SegmentationStatusPayload {
   status: SegmentationStatus
   progress?: number
   errorCode?: string
+  memoryFailure?: MemoryFailure
+  userReason?: string
+  notesLayout?: 'v1' | 'v2'
+  groupingFallback?: boolean
 }
 
 export type SegmentationActivity = 'waiting-for-local-ai'
@@ -296,6 +503,7 @@ export interface WhisperSetupStatus {
   macProcessingProfileReason?: string
   windowsProcessingProfileId?: 'win-gpu' | 'win-cpu-normal' | 'win-low-spec'
   windowsProcessingProfileReason?: string
+  notesModel?: string
   failedStep?:
     | 'downloading-whisper'
     | 'downloading-ffmpeg'
@@ -353,6 +561,9 @@ export interface AppRuntimeInfo {
   whisperModel: string
   transcriptionBackend?: string
   ollamaModel: string
+  ramBucket?: '8gb' | '16gb' | '32gb+'
+  cpuClass?: 'low' | 'recommended'
+  hasGpu?: boolean
 }
 
 export type AnalyticsLocalSignal =

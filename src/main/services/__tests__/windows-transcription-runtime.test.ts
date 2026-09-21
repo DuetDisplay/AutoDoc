@@ -8,13 +8,16 @@ import {
   classifyWindowsGpuVendor,
   electronMemoryKbToGiB,
   getUsableLogicalProcessorCount,
+  isLikelyDiscreteGpuName,
   loadWindowsTranscriptionProfiles,
+  normalizeImplausibleDiscreteVram,
   parseNvidiaSmiGpuRows,
   parseWindowsRegistryGpuRows,
   selectWindowsTranscriptionProfile,
   shouldSerializeWindowsLocalProcessing,
   WINDOWS_TRANSCRIPTION_PROFILES,
-  type WindowsHardwareProfile
+  type WindowsHardwareProfile,
+  type WindowsGpuInfo
 } from '../windows-transcription-runtime'
 
 const baseHardware: WindowsHardwareProfile = {
@@ -222,6 +225,74 @@ describe('Windows transcription runtime selection', () => {
     )
 
     expect(gpus[0].adapterRamGiB).toBe(24)
+  })
+
+  it('keeps the larger of WMI and registry VRAM when both report a value', () => {
+    const registryLarger = applyRegistryGpuMemory(
+      [
+        {
+          name: 'Intel(R) Arc(TM) A370M Graphics',
+          vendor: 'intel',
+          adapterRamGiB: 1
+        }
+      ],
+      [{ name: 'Intel(R) Arc(TM) A370M Graphics', vramGiB: 4 }]
+    )
+    expect(registryLarger[0].adapterRamGiB).toBe(4)
+
+    const wmiLarger = applyRegistryGpuMemory(
+      [
+        {
+          name: 'Intel(R) Arc(TM) A370M Graphics',
+          vendor: 'intel',
+          adapterRamGiB: 8
+        }
+      ],
+      [{ name: 'Intel(R) Arc(TM) A370M Graphics', vramGiB: 1 }]
+    )
+    expect(wmiLarger[0].adapterRamGiB).toBe(8)
+  })
+
+  it('selects parakeet-gpu for Arc A370M when WMI underreports VRAM on a 32 GiB machine', () => {
+    const fixtureGpus: WindowsGpuInfo[] = [
+      { name: 'Intel(R) Arc(TM) A370M Graphics', vendor: 'intel', adapterRamGiB: 1 },
+      { name: 'Intel(R) Iris(R) Xe Graphics', vendor: 'intel', adapterRamGiB: 1 },
+      { name: 'Duet Display', vendor: 'unknown', adapterRamGiB: null },
+      { name: 'Duet Display', vendor: 'unknown', adapterRamGiB: null }
+    ]
+
+    const profile = selectWindowsTranscriptionProfile({
+      platform: 'win32',
+      arch: 'x64',
+      logicalProcessors: 20,
+      freeMemoryGiB: null,
+      totalMemoryGiB: 31.73,
+      gpus: normalizeImplausibleDiscreteVram(fixtureGpus)
+    })
+
+    expect(profile.id).toBe('parakeet-gpu')
+  })
+
+  it('classifies discrete GPU names without treating iGPUs as discrete', () => {
+    expect(isLikelyDiscreteGpuName('Intel(R) Arc(TM) A370M Graphics', 'intel')).toBe(true)
+    expect(isLikelyDiscreteGpuName('Intel(R) Arc(TM) B580 Graphics', 'intel')).toBe(true)
+    expect(isLikelyDiscreteGpuName('Intel(R) Iris(R) Xe Graphics', 'intel')).toBe(false)
+    expect(isLikelyDiscreteGpuName('Intel(R) UHD Graphics', 'intel')).toBe(false)
+    expect(isLikelyDiscreteGpuName('Intel(R) HD Graphics 620', 'intel')).toBe(false)
+    expect(isLikelyDiscreteGpuName('AMD Radeon RX 6600', 'amd')).toBe(true)
+    expect(isLikelyDiscreteGpuName('AMD Radeon(TM) Graphics', 'amd')).toBe(false)
+    expect(isLikelyDiscreteGpuName('NVIDIA GeForce RTX 4060 Laptop GPU', 'nvidia')).toBe(true)
+    expect(isLikelyDiscreteGpuName('Duet Display', 'unknown')).toBe(false)
+  })
+
+  it('nulls implausible discrete VRAM but leaves integrated Intel readings alone', () => {
+    const gpus = normalizeImplausibleDiscreteVram([
+      { name: 'Intel(R) Arc(TM) A370M Graphics', vendor: 'intel', adapterRamGiB: 1 },
+      { name: 'Intel(R) Iris(R) Xe Graphics', vendor: 'intel', adapterRamGiB: 1 }
+    ])
+
+    expect(gpus[0].adapterRamGiB).toBeNull()
+    expect(gpus[1].adapterRamGiB).toBe(1)
   })
 
   it('honors a forced faster-whisper-cpu override', () => {

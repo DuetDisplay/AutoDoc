@@ -95,6 +95,55 @@ describe('TranscriptionWorkerClient', () => {
     await expect(second).resolves.toBeUndefined()
   })
 
+  it('waits for close after kill and rejects sibling requests without inventing device failures', async () => {
+    const client = createClient()
+    const pending = client.ping().catch((error) => error.message)
+    await waitForRequestCount(1)
+    mockProcess.kill = () => {
+      mockProcess.killed = true
+      return true
+    }
+    let closed = false
+    const shutdown = client.disposeAndWait().then(() => {
+      closed = true
+    })
+    expect(await pending).toBe('Transcription worker client disposed')
+    expect(closed).toBe(false)
+    mockProcess.emit('close', null, 'SIGTERM')
+    await shutdown
+    expect(closed).toBe(true)
+  })
+
+  it('does not report shutdown success when the process never closes', async () => {
+    const client = createClient()
+    const pending = client.ping().catch(() => {})
+    await waitForRequestCount(1)
+    mockProcess.kill = () => true
+    await expect(client.disposeAndWait(5)).rejects.toThrow('recovery timeout')
+    await pending
+  })
+
+  it('still kills and waits for a process whose stdin failed before exit', async () => {
+    const client = createClient()
+    const pending = client.ping().catch((error) => error.message)
+    await waitForRequestCount(1)
+    mockProcess.stdin.emit('error', new Error('EPIPE'))
+    expect(await pending).toContain('EPIPE')
+    mockProcess.kill = () => {
+      mockProcess.killed = true
+      return true
+    }
+    let finished = false
+    const shutdown = client.disposeAndWait().then(() => {
+      finished = true
+    })
+    expect(mockProcess.killed).toBe(true)
+    await Promise.resolve()
+    expect(finished).toBe(false)
+    mockProcess.emit('close', 1, null)
+    await shutdown
+  })
+
   it('routes segment events to the matching transcribe callback', async () => {
     const client = createClient()
     const segments: Array<{ startMs: number; endMs: number; text: string }> = []

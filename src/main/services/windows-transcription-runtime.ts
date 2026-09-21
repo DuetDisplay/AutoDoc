@@ -348,6 +348,47 @@ export function classifyWindowsGpuVendor(name: string): WindowsGpuVendor {
   return 'unknown'
 }
 
+export function isLikelyDiscreteGpuName(name: string, vendor: WindowsGpuVendor): boolean {
+  if (vendor === 'nvidia') {
+    return true
+  }
+
+  const normalized = name.toLowerCase()
+
+  if (vendor === 'intel') {
+    if (
+      normalized.includes('iris') ||
+      normalized.includes('uhd') ||
+      normalized.includes('hd graphics')
+    ) {
+      return false
+    }
+    return normalized.includes('arc') || /\b[ab]\d{3}m?\b/i.test(name)
+  }
+
+  if (vendor === 'amd') {
+    return /radeon\s*(\(tm\)\s*)?rx/i.test(name) || /\brx\s*\d{3,4}\b/i.test(name)
+  }
+
+  return false
+}
+
+export function normalizeImplausibleDiscreteVram(gpus: WindowsGpuInfo[]): WindowsGpuInfo[] {
+  return gpus.map((gpu) => {
+    // No discrete Intel/AMD card ships with under 2 GiB; WMI AdapterRAM is
+    // often 1 GiB on those parts, so treat the reading as unknown.
+    if (
+      (gpu.vendor === 'intel' || gpu.vendor === 'amd') &&
+      isLikelyDiscreteGpuName(gpu.name, gpu.vendor) &&
+      gpu.adapterRamGiB != null &&
+      gpu.adapterRamGiB < 2
+    ) {
+      return { ...gpu, adapterRamGiB: null }
+    }
+    return gpu
+  })
+}
+
 export function parseWindowsRegistryGpuRows(rows: unknown[]): WindowsRegistryGpuEntry[] {
   return rows
     .map((row) => parseWindowsRegistryGpuRow(row))
@@ -422,7 +463,7 @@ export function applyRegistryGpuMemory(
       usedIndexes.add(matchIndex)
       next[matchIndex] = {
         ...next[matchIndex],
-        adapterRamGiB: registryGpu.vramGiB ?? next[matchIndex].adapterRamGiB
+        adapterRamGiB: pickLargerAdapterRamGiB(next[matchIndex].adapterRamGiB, registryGpu.vramGiB)
       }
       continue
     }
@@ -551,11 +592,15 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
   let gpus: WindowsGpuInfo[] = []
 
   try {
-    const { stdout } = await execFileAsync('powershell', [
-      '-NoProfile',
-      '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress'
-    ])
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress'
+      ],
+      { timeout: 5000, windowsHide: true }
+    )
     const parsed = JSON.parse(stdout.trim()) as unknown
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
     gpus = rows
@@ -566,11 +611,15 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
   }
 
   try {
-    const { stdout } = await execFileAsync('powershell', [
-      '-NoProfile',
-      '-Command',
-      `$base='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'; Get-ChildItem "$base\\0*" | ForEach-Object { Get-ItemProperty $_.PSPath | Select-Object Description,DriverDesc,@{Name='AdapterString';Expression={$_.'HardwareInformation.AdapterString'}},@{Name='qwMemorySize';Expression={$_.'HardwareInformation.qwMemorySize'}} } | ConvertTo-Json -Compress`
-    ])
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `$base='HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'; Get-ChildItem "$base\\0*" | ForEach-Object { Get-ItemProperty $_.PSPath | Select-Object Description,DriverDesc,@{Name='AdapterString';Expression={$_.'HardwareInformation.AdapterString'}},@{Name='qwMemorySize';Expression={$_.'HardwareInformation.qwMemorySize'}} } | ConvertTo-Json -Compress`
+      ],
+      { timeout: 5000, windowsHide: true }
+    )
     const parsed = JSON.parse(stdout.trim() || '[]') as unknown
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
     gpus = applyRegistryGpuMemory(gpus, parseWindowsRegistryGpuRows(rows))
@@ -580,17 +629,20 @@ async function queryWindowsGpus(): Promise<WindowsGpuInfo[]> {
 
   try {
     const nvidiaGpus = await queryNvidiaSmiGpus()
-    return applyNvidiaSmiMemory(gpus, nvidiaGpus)
+    gpus = applyNvidiaSmiMemory(gpus, nvidiaGpus)
   } catch {
-    return gpus
+    // nvidia-smi is best-effort; keep WMI/registry results.
   }
+
+  return normalizeImplausibleDiscreteVram(gpus)
 }
 
 async function queryNvidiaSmiGpus(): Promise<NvidiaSmiGpuInfo[]> {
-  const { stdout } = await execFileAsync('nvidia-smi', [
-    '--query-gpu=name,memory.total,driver_version',
-    '--format=csv,noheader,nounits'
-  ])
+  const { stdout } = await execFileAsync(
+    'nvidia-smi',
+    ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
+    { timeout: 5000, windowsHide: true }
+  )
 
   return parseNvidiaSmiGpuRows(stdout)
 }
@@ -680,6 +732,16 @@ function normalizeGpuName(name: string): string {
 
 function namesLikelyReferToSameGpu(left: string, right: string): boolean {
   return left.length > 0 && right.length > 0 && (left.includes(right) || right.includes(left))
+}
+
+function pickLargerAdapterRamGiB(current: number | null, incoming: number | null): number | null {
+  if (current == null) {
+    return incoming
+  }
+  if (incoming == null) {
+    return current
+  }
+  return Math.max(current, incoming)
 }
 
 function parseNvidiaSmiMemoryMiB(value: string | undefined): number | null {

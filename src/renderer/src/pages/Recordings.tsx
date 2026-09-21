@@ -90,6 +90,12 @@ export function Recordings({
   feedbackPromptSuppressed?: boolean
 }) {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
+  const [transcriptionMemoryFailures, setTranscriptionMemoryFailures] = useState<
+    Record<string, boolean>
+  >({})
+  const [segmentationMemoryFailures, setSegmentationMemoryFailures] = useState<
+    Record<string, boolean>
+  >({})
   const [segmentationStatuses, setSegmentationStatuses] = useState<
     Record<string, SegmentationStatus>
   >({})
@@ -107,7 +113,6 @@ export function Recordings({
       string,
       {
         backendLabel?: string
-        qualityMode?: 'fast' | 'balanced'
       }
     >
   >({})
@@ -135,6 +140,13 @@ export function Recordings({
     const updates = await Promise.all(
       entries.map(async (entry) => ({
         meetingId: entry.meetingId,
+        transcriptionMemoryFailure:
+          entry.transcriptionStatus === 'failed' &&
+          (await window.electronAPI.invoke('transcription:get-memory-failure', entry.meetingId)) !=
+            null,
+        segmentationMemoryFailure:
+          (await window.electronAPI.invoke('segmentation:get-memory-failure', entry.meetingId)) !=
+          null,
         transcriptionProgress: await window.electronAPI.invoke(
           'transcription:get-progress',
           entry.meetingId
@@ -186,6 +198,22 @@ export function Recordings({
     setSegmentationErrorCodes((prev) =>
       mergeRecordIfChanged(prev, segmentationErrorCodesByMeetingId)
     )
+    setTranscriptionMemoryFailures((prev) =>
+      mergeRecordIfChanged(
+        prev,
+        Object.fromEntries(
+          updates.map((update) => [update.meetingId, update.transcriptionMemoryFailure])
+        )
+      )
+    )
+    setSegmentationMemoryFailures((prev) =>
+      mergeRecordIfChanged(
+        prev,
+        Object.fromEntries(
+          updates.map((update) => [update.meetingId, update.segmentationMemoryFailure])
+        )
+      )
+    )
   }, [])
 
   useEffect(() => {
@@ -220,6 +248,10 @@ export function Recordings({
     })
 
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
+      setTranscriptionMemoryFailures((prev) => ({
+        ...prev,
+        [payload.meetingId]: payload.status === 'failed' && payload.memoryFailure != null
+      }))
       setRecordings((prev) =>
         prev.map((rec) =>
           rec.meetingId === payload.meetingId
@@ -235,13 +267,16 @@ export function Recordings({
       setTranscriptionStatusDetails((prev) => ({
         ...prev,
         [payload.meetingId]: {
-          backendLabel: payload.backendLabel,
-          qualityMode: payload.qualityMode
+          backendLabel: payload.backendLabel
         }
       }))
       refreshIfUnknownMeeting(payload.meetingId)
     })
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
+      setSegmentationMemoryFailures((prev) => ({
+        ...prev,
+        [payload.meetingId]: payload.status === 'failed' && payload.memoryFailure != null
+      }))
       setSegmentationStatuses((prev) => ({
         ...prev,
         [payload.meetingId]: payload.status
@@ -451,14 +486,15 @@ export function Recordings({
                       <>
                         <TranscriptionBadge
                           status={rec.transcriptionStatus}
+                          hasMemoryFailure={transcriptionMemoryFailures[rec.meetingId]}
                           progress={transcriptionProgress[rec.meetingId]}
                           backendLabel={transcriptionStatusDetails[rec.meetingId]?.backendLabel}
-                          qualityMode={transcriptionStatusDetails[rec.meetingId]?.qualityMode}
                           onRetry={() => handleRetryTranscription(rec.meetingId)}
                         />
                         {segmentationStatuses[rec.meetingId] && (
                           <SegmentationBadge
                             status={segmentationStatuses[rec.meetingId]}
+                            hasMemoryFailure={segmentationMemoryFailures[rec.meetingId]}
                             progress={segmentationProgress[rec.meetingId]}
                             errorCode={segmentationErrorCodes[rec.meetingId]}
                             onRetry={() => handleRetrySegmentation(rec.meetingId)}

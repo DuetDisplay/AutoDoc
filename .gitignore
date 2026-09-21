@@ -48,3 +48,9 @@ test-results/
 !.benchmarks/windows-transcription-results/
 .benchmarks/windows-transcription-results/*
 !.benchmarks/windows-transcription-results/*.json
+
+# Local Notes V2 evaluation outputs may contain private model artifacts.
+scripts/notes-eval/output/
+
+# Local real-app verification profiles, copied runtimes, model weights and evidence.
+artifacts/notes-model-verification/

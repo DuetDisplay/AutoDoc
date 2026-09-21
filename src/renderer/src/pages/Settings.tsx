@@ -3,13 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
-import type {
-  AppRuntimeInfo,
-  AppStorageInfo,
-  CalendarAccount,
-  WhisperSetupStatus
-} from '../../../shared/types'
-import { supportsWindowsTranscriptionQualityFastMode } from '../../../shared/windows-transcription-settings'
+import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -76,13 +70,7 @@ export function Settings() {
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
   const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
-  const [transcriptionQualityMode, setTranscriptionQualityModeState] = useState<
-    'balanced' | 'fast'
-  >('balanced')
-  const [transcriptionPerformanceMode, setTranscriptionPerformanceModeState] = useState<
-    'balanced' | 'fast'
-  >('balanced')
-  const [transcriptionBackend, setTranscriptionBackend] = useState<string | undefined>()
+  const [videoWatermarkVisible, setVideoWatermarkVisibleState] = useState(true)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -104,6 +92,14 @@ export function Settings() {
     window.electronAPI
       .invoke('prefs:get-diagnostic-log-upload-consent')
       .then(setDiagnosticLogUploadConsentState)
+    void window.electronAPI.invoke('prefs:get-video-watermark-visible').then(
+      (visible) => {
+        if (typeof visible === 'boolean') {
+          setVideoWatermarkVisibleState(visible)
+        }
+      },
+      () => undefined
+    )
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on(
       'prefs:analytics-consent-changed',
@@ -113,39 +109,17 @@ export function Settings() {
       'prefs:diagnostic-log-upload-consent-changed',
       setDiagnosticLogUploadConsentState
     )
+    const unsubVideoWatermarkVisible = window.electronAPI.on(
+      'prefs:video-watermark-visible-changed',
+      setVideoWatermarkVisibleState
+    )
     return () => {
       unsub()
       unsubConsent()
       unsubDiagnosticLogConsent()
+      unsubVideoWatermarkVisible()
     }
   }, [refreshStorageInfo])
-
-  useEffect(() => {
-    if (runtimeInfo?.platform !== 'win32') return
-
-    void window.electronAPI
-      .invoke('prefs:get-transcription-quality-mode')
-      .then(setTranscriptionQualityModeState)
-    void window.electronAPI
-      .invoke('prefs:get-transcription-performance-mode')
-      .then(setTranscriptionPerformanceModeState)
-    void window.electronAPI
-      .invoke('whisper:get-setup-status')
-      .then((status: WhisperSetupStatus) => {
-        setTranscriptionBackend(status.backend ?? runtimeInfo?.transcriptionBackend)
-      })
-    const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
-      if (status.backend) {
-        setTranscriptionBackend(status.backend)
-      }
-    })
-
-    return unsubWhisper
-  }, [runtimeInfo?.platform, runtimeInfo?.transcriptionBackend])
-
-  const showTranscriptionQualityControls = supportsWindowsTranscriptionQualityFastMode(
-    transcriptionBackend ?? runtimeInfo?.transcriptionBackend
-  )
 
   useEffect(() => {
     const previousState = previousUpdateState.current
@@ -275,48 +249,16 @@ export function Settings() {
     setDiagnosticLogUploadConsentState(nextValue)
   }
 
-  const handleSetTranscriptionQualityMode = async (mode: 'balanced' | 'fast') => {
+  const handleToggleVideoWatermark = async (): Promise<void> => {
+    const nextValue = !videoWatermarkVisible
     recordDiagnosticAction({
       category: 'settings',
-      action: 'transcription_quality_mode_changed',
-      details: { mode }
+      action: 'video_watermark_visibility_toggled',
+      details: { visible: nextValue }
     })
-    await window.electronAPI.invoke('prefs:set-transcription-quality-mode', mode)
-    setTranscriptionQualityModeState(mode)
+    await window.electronAPI.invoke('prefs:set-video-watermark-visible', nextValue)
+    setVideoWatermarkVisibleState(nextValue)
   }
-
-  const handleSetTranscriptionPerformanceMode = async (mode: 'balanced' | 'fast') => {
-    recordDiagnosticAction({
-      category: 'settings',
-      action: 'transcription_performance_mode_changed',
-      details: { mode }
-    })
-    await window.electronAPI.invoke('prefs:set-transcription-performance-mode', mode)
-    setTranscriptionPerformanceModeState(mode)
-  }
-
-  const renderModeChoice = (
-    group: string,
-    label: string,
-    description: string,
-    value: 'balanced' | 'fast',
-    selected: 'balanced' | 'fast',
-    onSelect: (mode: 'balanced' | 'fast') => void
-  ) => (
-    <label className="flex items-start gap-3 rounded-lg border border-border-subtle px-3 py-2.5 cursor-pointer hover:border-ink-muted transition-colors">
-      <input
-        type="radio"
-        name={group}
-        checked={selected === value}
-        onChange={() => void onSelect(value)}
-        className="mt-0.5 h-4 w-4 border-border-subtle text-sage focus:ring-sage"
-      />
-      <span className="text-[12px] text-ink-muted leading-relaxed">
-        <strong className="text-ink font-semibold">{label}</strong>
-        <span className="block mt-0.5">{description}</span>
-      </span>
-    </label>
-  )
 
   const handleRemoveDownloadedComponents = async () => {
     const confirmed = window.confirm(
@@ -467,6 +409,29 @@ export function Settings() {
             </div>
           </div>
           <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Video playback</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] font-semibold text-ink">AutoDoc watermark</p>
+                <p className="mt-0.5 text-[12px] text-ink-muted">
+                  Show “Meeting notes by AutoDoc” while watching recorded video. Original recordings
+                  stay unchanged.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleToggleVideoWatermark()}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                aria-pressed={videoWatermarkVisible}
+                aria-label="Show AutoDoc watermark on recorded video"
+              >
+                <span
+                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${videoWatermarkVisible ? 'translate-x-5' : 'translate-x-0'}`}
+                />
+              </button>
+            </div>
+          </div>
+          <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">Analytics & Crash Reports</h3>
             <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
               <div>
@@ -506,77 +471,6 @@ export function Settings() {
                 </span>
               </label>
             </div>
-          </div>
-          {runtimeInfo?.platform === 'win32' && (
-            <div>
-              <h3 className="text-[13px] font-semibold text-ink mb-2">Transcription</h3>
-              <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4 space-y-4">
-                {showTranscriptionQualityControls && (
-                  <div>
-                    <p className="text-[12px] font-semibold text-ink mb-1">Transcription quality</p>
-                    <p className="text-[12px] text-ink-muted mb-3">
-                      Balanced gives the most accurate transcripts. Fast uses a smaller, more
-                      efficient model that may be slightly less accurate.
-                    </p>
-                    <div className="flex flex-col gap-2">
-                      {renderModeChoice(
-                        'transcription-quality',
-                        'Balanced',
-                        'Most accurate. Recommended for most meetings.',
-                        'balanced',
-                        transcriptionQualityMode,
-                        handleSetTranscriptionQualityMode
-                      )}
-                      {renderModeChoice(
-                        'transcription-quality',
-                        'Fast',
-                        'Smaller model, lighter on memory. May be slightly less accurate; speed varies by hardware.',
-                        'fast',
-                        transcriptionQualityMode,
-                        handleSetTranscriptionQualityMode
-                      )}
-                    </div>
-                  </div>
-                )}
-                <div
-                  className={
-                    showTranscriptionQualityControls
-                      ? 'border-t border-border-subtle pt-4'
-                      : undefined
-                  }
-                >
-                  <p className="text-[12px] font-semibold text-ink mb-1">System impact</p>
-                  <p className="text-[12px] text-ink-muted mb-3">
-                    Balanced keeps transcription gentler on CPU and battery. Fast gives
-                    transcription more room to run. Neither affects transcript accuracy — only how
-                    much of your computer transcription can use. On GPU-accelerated transcription
-                    this setting has little effect.
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {renderModeChoice(
-                      'system-impact',
-                      'Balanced',
-                      'Lower priority and efficiency-core scheduling on CPU tiers.',
-                      'balanced',
-                      transcriptionPerformanceMode,
-                      handleSetTranscriptionPerformanceMode
-                    )}
-                    {renderModeChoice(
-                      'system-impact',
-                      'Fast',
-                      'Higher scheduling priority for quicker local processing.',
-                      'fast',
-                      transcriptionPerformanceMode,
-                      handleSetTranscriptionPerformanceMode
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Auto-record</h3>
-            <p className="text-[12px] text-ink-muted">Default: off</p>
           </div>
           <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>

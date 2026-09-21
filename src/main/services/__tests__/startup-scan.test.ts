@@ -11,6 +11,17 @@ vi.mock('electron', () => ({
   }
 }))
 
+function createMockWhisperManager() {
+  return {
+    ensureReady: vi.fn(),
+    getWhisperPath: vi.fn(),
+    getFfmpegPath: vi.fn(),
+    getModelPath: vi.fn(),
+    getTranscriptionBackend: vi.fn().mockReturnValue('whisper-cpp'),
+    getModelName: vi.fn().mockReturnValue('distil-large-v3')
+  } as const
+}
+
 describe('startup scan', () => {
   let baseDir: string
 
@@ -105,12 +116,7 @@ describe('startup scan', () => {
     )
 
     const service = new TranscriptionService(
-      {
-        ensureReady: vi.fn(),
-        getWhisperPath: vi.fn(),
-        getFfmpegPath: vi.fn(),
-        getModelPath: vi.fn()
-      } as any,
+      createMockWhisperManager() as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
@@ -135,12 +141,7 @@ describe('startup scan', () => {
     )
 
     const service = new TranscriptionService(
-      {
-        ensureReady: vi.fn(),
-        getWhisperPath: vi.fn(),
-        getFfmpegPath: vi.fn(),
-        getModelPath: vi.fn()
-      } as any,
+      createMockWhisperManager() as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
@@ -169,12 +170,7 @@ describe('startup scan', () => {
     )
 
     const service = new TranscriptionService(
-      {
-        ensureReady: vi.fn(),
-        getWhisperPath: vi.fn(),
-        getFfmpegPath: vi.fn(),
-        getModelPath: vi.fn()
-      } as any,
+      createMockWhisperManager() as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,
@@ -196,12 +192,7 @@ describe('startup scan', () => {
     await writeFile(join(meetingDir, 'audio.webm'), 'audio')
 
     const service = new TranscriptionService(
-      {
-        ensureReady: vi.fn(),
-        getWhisperPath: vi.fn(),
-        getFfmpegPath: vi.fn(),
-        getModelPath: vi.fn()
-      } as any,
+      createMockWhisperManager() as any,
       { convert: vi.fn(), mergeAudio: vi.fn(), getDuration: vi.fn() } as any,
       baseDir,
       { fetchAllRecentEvents: vi.fn(), isConnected: vi.fn() } as any,

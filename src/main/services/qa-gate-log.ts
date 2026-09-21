@@ -120,8 +120,6 @@ export function logQaGateStopToTranscript(
     modelName: string
     device: string
     computeType: string
-    qualityMode: string
-    performanceMode: string
     dualSource: boolean
     recordingDurationSec: number
     audioDurationSec: number
@@ -181,7 +179,6 @@ export function logQaGateWorkerPriority(
   context: {
     pid: number
     priorityLabel: string
-    performanceMode: string
     device: string
     backend: string
   }
@@ -219,17 +216,6 @@ export function logQaGateWorkerLifecycle(context: {
   logAutodocEvent({
     area: 'transcription',
     message: `${QA_GATE_PREFIX}: worker lifecycle`,
-    context
-  })
-}
-
-export function logQaGateSettingsChanged(context: {
-  setting: 'transcription-quality-mode' | 'transcription-performance-mode'
-  mode: string
-}): void {
-  logAutodocEvent({
-    area: 'app',
-    message: `${QA_GATE_PREFIX}: settings changed`,
     context
   })
 }

@@ -8,6 +8,7 @@ import { Search } from './pages/Search'
 import { AskAI } from './pages/AskAI'
 import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
+import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
 import { useRecording } from './hooks/useRecording'
 import {
   buildRecordingSelectionContext,
@@ -20,6 +21,7 @@ import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
+import { NotesEngineUpgradeBanner } from './components/NotesEngineUpgradeBanner'
 import { Onboarding } from './pages/Onboarding'
 import type { UpdateStatus } from '../../preload/ipc.d'
 import {
@@ -35,6 +37,11 @@ import {
   trackFirstEventOnce,
   trackPendingAppUpdate
 } from './services/analytics'
+import {
+  rememberTranscriptionComplete,
+  trackMeetingProcessed,
+  type MeetingProcessTimes
+} from './services/meeting-processed-analytics'
 import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { onManualUpdateCheckStarted } from './services/update-check-events'
@@ -260,6 +267,7 @@ function UpdateReadyPrompt({
 export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
+  const [notesEngineBannerVisible, setNotesEngineBannerVisible] = useState(false)
   const [updatePromptVisible, setUpdatePromptVisible] = useState(false)
   const [notificationPromptVisible, setNotificationPromptVisible] = useState(false)
   const [calendarStateReady, setCalendarStateReady] = useState(false)
@@ -284,6 +292,8 @@ export default function App() {
   const segmentationCompletions = useRef<Set<string>>(new Set())
   const segmentationNoNotes = useRef<Set<string>>(new Set())
   const notesGenerationStarted = useRef<Record<string, number>>({})
+  const meetingProcessTimes = useRef(new Map<string, MeetingProcessTimes>())
+  const meetingProcessedEmissions = useRef(new Set<string>())
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
@@ -441,14 +451,24 @@ export default function App() {
           transcriptionCompletions.current.add(payload.meetingId)
           const startedAt = transcriptionStarted.current[payload.meetingId]
           delete transcriptionStarted.current[payload.meetingId]
+          const transcriptionDurationSec =
+            startedAt === undefined ? undefined : (performance.now() - startedAt) / 1000
           trackEvent('transcription_completed', {
             backend: runtimeInfoRef.current?.transcriptionBackend ?? 'unknown',
             model: runtimeInfoRef.current?.whisperModel ?? 'unknown',
             processing_time_bucket:
-              startedAt === undefined
+              transcriptionDurationSec === undefined
                 ? undefined
-                : toDurationBucket((performance.now() - startedAt) / 1000)
+                : toDurationBucket(transcriptionDurationSec)
           })
+          if (transcriptionDurationSec !== undefined) {
+            rememberTranscriptionComplete(
+              meetingProcessTimes.current,
+              payload.meetingId,
+              payload.recordingDurationSec,
+              transcriptionDurationSec
+            )
+          }
         }
         return
       }
@@ -476,7 +496,9 @@ export default function App() {
         notesGenerationStarted.current[payload.meetingId] === undefined
       ) {
         notesGenerationStarted.current[payload.meetingId] = performance.now()
-        trackEvent('notes_generation_started')
+        segmentationCompletions.current.delete(payload.meetingId)
+        segmentationNoNotes.current.delete(payload.meetingId)
+        trackEvent('notes_generation_started', { notes_engine_version: NOTES_ENGINE_VERSION })
       }
 
       if (payload.status === 'complete') {
@@ -484,16 +506,43 @@ export default function App() {
           segmentationCompletions.current.add(payload.meetingId)
           const startedAt = notesGenerationStarted.current[payload.meetingId]
           delete notesGenerationStarted.current[payload.meetingId]
-          trackEvent('notes_generated', {
-            processing_time_bucket:
-              startedAt === undefined
-                ? undefined
-                : toDurationBucket((performance.now() - startedAt) / 1000)
+          const notesDurationSec =
+            startedAt === undefined ? undefined : (performance.now() - startedAt) / 1000
+          const processing_time_bucket =
+            notesDurationSec === undefined ? undefined : toDurationBucket(notesDurationSec)
+          if (payload.errorCode === 'scan_or_persist') {
+            trackEvent('notes_layout_degraded', {
+              notes_engine_version: startedAt === undefined ? 'unknown' : NOTES_ENGINE_VERSION,
+              failure_code: 'scan_or_persist',
+              notes_layout: 'v1',
+              processing_time_bucket
+            })
+          } else {
+            trackEvent('notes_generated', {
+              notes_engine_version: startedAt === undefined ? 'unknown' : NOTES_ENGINE_VERSION,
+              processing_time_bucket,
+              notes_layout: payload.notesLayout ?? 'unknown',
+              grouping_fallback: payload.groupingFallback === true
+            })
+            void trackFirstEventOnce('notes_generated', 'first_notes_generated')
+            void trackFirstEventOnce('user_activated', 'user_activated', {
+              activation_reason: 'first_notes_generated'
+            })
+          }
+          trackMeetingProcessed({
+            store: meetingProcessTimes.current,
+            emitted: meetingProcessedEmissions.current,
+            meetingId: payload.meetingId,
+            runtimeInfo: runtimeInfoRef.current,
+            notesOutcome: 'generated',
+            notesDurationSec
           })
-          void trackFirstEventOnce('notes_generated', 'first_notes_generated')
-          void trackFirstEventOnce('user_activated', 'user_activated', {
-            activation_reason: 'first_notes_generated'
-          })
+          if (payload.groupingFallback) {
+            trackEvent('notes_step_degraded', {
+              step: 'grouping',
+              grouping_fallback: true
+            })
+          }
         }
         return
       }
@@ -502,7 +551,17 @@ export default function App() {
         if (!segmentationNoNotes.current.has(payload.meetingId)) {
           segmentationNoNotes.current.add(payload.meetingId)
           delete notesGenerationStarted.current[payload.meetingId]
-          trackEvent('notes_not_generated', { reason_code: 'no_notes_detected' })
+          trackEvent('notes_not_generated', {
+            reason_code: 'no_notes_detected',
+            notes_engine_version: NOTES_ENGINE_VERSION
+          })
+          trackMeetingProcessed({
+            store: meetingProcessTimes.current,
+            emitted: meetingProcessedEmissions.current,
+            meetingId: payload.meetingId,
+            runtimeInfo: runtimeInfoRef.current,
+            notesOutcome: 'did_not_run'
+          })
         }
         return
       }
@@ -513,7 +572,17 @@ export default function App() {
       if (segmentationFailures.current[payload.meetingId] === errorCode) return
       segmentationFailures.current[payload.meetingId] = errorCode
       delete notesGenerationStarted.current[payload.meetingId]
-      trackEvent('notes_generation_failed', { failure_code: errorCode })
+      trackEvent('notes_generation_failed', {
+        failure_code: errorCode,
+        notes_engine_version: NOTES_ENGINE_VERSION
+      })
+      trackMeetingProcessed({
+        store: meetingProcessTimes.current,
+        emitted: meetingProcessedEmissions.current,
+        meetingId: payload.meetingId,
+        runtimeInfo: runtimeInfoRef.current,
+        notesOutcome: 'did_not_run'
+      })
     })
 
     const unsubWhisper = window.electronAPI.on('whisper:setup-progress', (status) => {
@@ -751,6 +820,7 @@ export default function App() {
     recordingPickerOpen ||
     permissionToastVisible ||
     lowSpecBannerVisible ||
+    notesEngineBannerVisible ||
     updatePromptVisible ||
     notificationPromptVisible ||
     !calendarStateReady ||
@@ -782,6 +852,7 @@ export default function App() {
           <MeetingDetectedBanner />
           <PermissionToast />
           <LowSpecMacProcessingBanner onVisibilityChange={setLowSpecBannerVisible} />
+          <NotesEngineUpgradeBanner onVisibilityChange={setNotesEngineBannerVisible} />
           <UpdateReadyPrompt onVisibilityChange={setUpdatePromptVisible} />
           <div className="flex-1 overflow-hidden">
             <Routes>

@@ -23,16 +23,8 @@ export function Upcoming({
   const [calendarChecked, setCalendarChecked] = useState(false)
   const [calendarEventsChecked, setCalendarEventsChecked] = useState(false)
   const [feedbackCalendarReady, setFeedbackCalendarReady] = useState(false)
-  const {
-    events,
-    isSyncing,
-    setAccounts,
-    addAccount,
-    setConnecting,
-    setEvents,
-    setSyncing,
-    setAutoRecord
-  } = useCalendarStore()
+  const { events, isSyncing, setAccounts, addAccount, setConnecting, setEvents, setSyncing } =
+    useCalendarStore()
   const isConnected = useCalendarStore(selectIsConnected)
 
   const {
@@ -157,8 +149,15 @@ export function Upcoming({
         hasRecurringEventId: recurringEventId !== null
       }
     })
-    setAutoRecord(eventId, mode)
-    window.electronAPI.invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
+    void window.electronAPI
+      .invoke('calendar:set-auto-record', eventId, recurringEventId, mode)
+      .catch((err) => {
+        console.error('Failed to save auto-record preference:', err)
+        useToastStore.getState().showToast({
+          type: 'warning',
+          message: 'Could not save auto-record preference. Please try again.'
+        })
+      })
   }
 
   const { isRecording, fetchSources, handleStart, handleStop } = useRecordingActions()

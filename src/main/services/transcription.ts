@@ -12,6 +12,7 @@ import type {
 import type { WhisperManager } from './whisper-manager'
 import type { AudioConverter } from './audio-converter'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
+import { readDmlRestriction, writeDmlRestriction } from './windows-dml-restriction'
 import {
   encryptJSON,
   decryptJSON,
@@ -22,6 +23,7 @@ import {
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import type { CalendarManager } from './calendar-manager'
 import { classifyError } from './error-classification'
+import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
 import { filterLowSignalHallucinations, summarizeSpeechSignal } from './transcript-guardrails'
 import { alignSpeakers } from './speaker-alignment'
 import type { DiarizationResult, DiarizationService } from './diarization'
@@ -61,6 +63,9 @@ const WINDOWS_MEMORY_GATE_EXTENDED_WAIT_MS = 4 * 60 * 1000
 const WINDOWS_MEMORY_GATE_EXTENDED_MIN_FREE_GIB = 1
 const WINDOWS_MEMORY_GATE_GPU_MIN_FREE_GIB = 2.5
 const DML_DEVICE_LOSS_FAILURE_THRESHOLD = 2
+// DXGI_ERROR_DEVICE_REMOVED, DEVICE_HUNG, DEVICE_RESET, DRIVER_INTERNAL_ERROR.
+// https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-error
+const DML_DEVICE_FAILURE_HRESULTS = ['887A0005', '887A0006', '887A0007', '887A0020']
 const CHUNKED_TRANSCRIPTION_THRESHOLD_SEC = 20 * 60
 const CHUNKED_TRANSCRIPTION_WINDOW_SEC = 90
 const CHUNKED_TRANSCRIPTION_OVERLAP_SEC = 5
@@ -89,9 +94,16 @@ const DIARIZATION_WINDOW_CONTEXT_SEC = 0.75
 const DIARIZATION_WINDOW_MERGE_GAP_SEC = 1.5
 const DIARIZATION_COMPACTION_THRESHOLD_SEC = 300
 const DIARIZATION_MIN_REDUCTION_RATIO = 0.08
-type EnqueueSource = 'direct' | 'recovery-scan'
-type TranscriptionPerformanceMode = 'balanced' | 'fast'
-type TranscriptionQualityMode = 'balanced' | 'fast'
+type EnqueueSource = 'direct' | 'recovery-scan' | 'reprocess'
+
+interface WindowsTranscriptionAttempt {
+  backend: string
+  modelName: string
+  processingProfile: unknown
+  deviceFailure: boolean
+  cpuRecoveryPinned: boolean
+  deviceError?: string
+}
 
 interface SystemMemorySnapshot {
   freeGiB: number | null
@@ -131,8 +143,6 @@ export class TranscriptionService {
   private processing = false
   private onCompleteCallback: ((meetingId: string) => void) | null = null
   private enqueueSource = new Map<string, EnqueueSource>()
-  private getPerformanceMode: () => TranscriptionPerformanceMode
-  private getQualityMode: () => TranscriptionQualityMode
   private getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>
   private memoryGateDelay: (ms: number) => Promise<void>
   private readSystemMemoryInfo: () => SystemMemorySnapshot
@@ -146,6 +156,9 @@ export class TranscriptionService {
   private lastEtaSeconds: number | null = null
   private jobAudioDurationSec = 0
   private jobDualSource = false
+  private windowsAttempt: WindowsTranscriptionAttempt | null = null
+  private windowsRecordingGpuEligible = false
+  private windowsWorkerShutdown: Promise<Error | null> | null = null
 
   constructor(
     private whisperManager: WhisperManager,
@@ -156,15 +169,11 @@ export class TranscriptionService {
     private diarizationService: Pick<DiarizationService, 'diarize'> | null = null,
     private isExperimentalSpeakerDiarizationEnabled: () => boolean = () => false,
     private localProcessingCoordinator: LocalProcessingCoordinator | null = null,
-    getPerformanceMode: () => TranscriptionPerformanceMode = () => 'balanced',
-    getQualityMode: () => TranscriptionQualityMode = () => 'balanced',
     getEffectiveWindowsProcessingProfile?: () => Promise<WindowsProcessingProfile | null>,
     memoryGateDelay: (ms: number) => Promise<void> = (ms) =>
       new Promise((resolve) => setTimeout(resolve, ms)),
     readSystemMemoryInfo?: () => SystemMemorySnapshot
   ) {
-    this.getPerformanceMode = getPerformanceMode
-    this.getQualityMode = getQualityMode
     this.getEffectiveWindowsProcessingProfile = getEffectiveWindowsProcessingProfile
     this.memoryGateDelay = memoryGateDelay
     this.readSystemMemoryInfo = readSystemMemoryInfo ?? (() => this.getSystemMemoryInfo())
@@ -198,6 +207,35 @@ export class TranscriptionService {
     this.enqueue(meetingId, source)
   }
 
+  private async hasUsableTranscript(meetingId: string): Promise<boolean> {
+    const path = join(this.recordingsBaseDir, meetingId, 'transcript.json')
+    try {
+      const value: unknown = (await isEncrypted(path))
+        ? await decryptJSON(path)
+        : JSON.parse(await readFile(path, 'utf8'))
+      return (
+        Array.isArray(value) &&
+        value.every(
+          (segment) =>
+            segment &&
+            typeof segment.text === 'string' &&
+            Number.isFinite(segment.startMs) &&
+            Number.isFinite(segment.endMs)
+        )
+      )
+    } catch {
+      return false
+    }
+  }
+
+  async getReprocessFailure(meetingId: string): Promise<boolean> {
+    return (
+      process.platform === 'win32' &&
+      (await this.fileExists(join(this.recordingsBaseDir, meetingId, 'transcript.error'))) &&
+      (await this.hasUsableTranscript(meetingId))
+    )
+  }
+
   getProgress(meetingId: string): number | undefined {
     if (this.activeJobId === meetingId) return this.activeProgress
     return undefined
@@ -228,6 +266,11 @@ export class TranscriptionService {
     const errorPath = join(meetingDir, 'transcript.error')
     const hasTranscript = await this.fileExists(transcriptPath)
     const hasError = await this.fileExists(errorPath)
+
+    if (process.platform === 'win32' && hasTranscript && hasError) {
+      if (await this.hasUsableTranscript(meetingId)) return 'complete'
+      return 'failed'
+    }
 
     if (hasTranscript && hasError) {
       const [transcriptStat, errorStat] = await Promise.all([
@@ -284,7 +327,10 @@ export class TranscriptionService {
           (await this.fileExists(audioPath)) ||
           (await this.fileExists(micPath)) ||
           (await this.fileExists(systemPath))
-        const hasTranscript = await this.fileExists(transcriptPath)
+        const hasTranscript =
+          process.platform === 'win32'
+            ? await this.hasUsableTranscript(meetingId)
+            : await this.fileExists(transcriptPath)
         const hasError = await this.fileExists(errorPath)
 
         if (hasAudio && !hasTranscript && !hasError) {
@@ -343,7 +389,89 @@ export class TranscriptionService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    if (process.platform === 'win32') {
+      return await this.processWindowsJob(meetingId)
+    }
+    return await this.processJobAttempt(meetingId)
+  }
+
+  private async processWindowsJob(meetingId: string): Promise<void> {
+    this.windowsAttempt = null
+    if (
+      this.enqueueSource.get(meetingId) !== 'reprocess' &&
+      (await this.hasUsableTranscript(meetingId))
+    ) {
+      this.broadcastStatus(meetingId, 'complete')
+      return
+    }
+    if (this.isMeetingActive(meetingId)) return
+    if (this.windowsWorkerShutdown) {
+      const shutdownError = await this.windowsWorkerShutdown
+      if (shutdownError) throw shutdownError
+      this.windowsWorkerShutdown = null
+    }
+    const recoveryPath = join(this.recordingsBaseDir, meetingId, 'transcription-recovery.json')
+    let forceCpu = false
+    try {
+      forceCpu = (await readDmlRestriction(recoveryPath)) !== null
+    } catch (error) {
+      // A damaged pin affects this recording only; fresh recordings still try GPU.
+      forceCpu = true
+      logAutodocFailure({
+        area: 'transcription',
+        message: 'Could not read recording CPU recovery pin',
+        meetingId,
+        error
+      })
+    }
+    await this.whisperManager.prepareWindowsRecording?.(forceCpu)
+    this.windowsRecordingGpuEligible =
+      this.whisperManager.getTranscriptionBackend() === 'parakeet-gpu'
+    let cpuRecoveryUsed = false
+    while (true) {
+      this.windowsAttempt = null
+      this.activeProgress = undefined
+      try {
+        await this.processJobAttempt(meetingId)
+        return
+      } catch (error) {
+        // Decide once all sources settle, never once per microphone/system source.
+        const attempt = this.windowsAttempt as WindowsTranscriptionAttempt | null
+        if (
+          !attempt?.deviceFailure ||
+          !attempt.cpuRecoveryPinned ||
+          attempt.backend !== 'parakeet-gpu' ||
+          cpuRecoveryUsed
+        ) {
+          throw error
+        }
+        this.windowsRecordingGpuEligible = false
+        const shutdownError = await this.windowsWorkerShutdown
+        if (shutdownError) throw shutdownError
+        this.windowsWorkerShutdown = null
+        if (!this.whisperManager.downgradeParakeetGpuToCpuForSession?.()) throw error
+        cpuRecoveryUsed = true
+        logAutodocEvent({
+          area: 'transcription',
+          message: 'Automatically recovering transcription attempt',
+          meetingId,
+          context: {
+            failedBackend: attempt.backend,
+            deviceError: attempt.deviceError,
+            failedProcessingProfile: attempt.processingProfile,
+            recoveryBackend: this.whisperManager.getTranscriptionBackend(),
+            recoveryScope: 'recording'
+          }
+        })
+      }
+    }
+  }
+
+  private async processJobAttempt(meetingId: string): Promise<void> {
     const localProcessingCoordinator = this.localProcessingCoordinator
+    if (process.platform === 'win32' && localProcessingCoordinator) {
+      return await localProcessingCoordinator.runWindows(() => this.processJobExclusive(meetingId))
+    }
     if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
       return await localProcessingCoordinator.runExclusive('transcription', meetingId, () =>
         this.processJobExclusive(meetingId)
@@ -384,7 +512,6 @@ export class TranscriptionService {
 
     try {
       const source = this.enqueueSource.get(meetingId) ?? 'direct'
-      await this.refreshWindowsThreadPolicy()
       const processingProfile = await this.getProcessingProfileLogContext()
       logAutodocEvent({
         area: 'transcription',
@@ -396,8 +523,6 @@ export class TranscriptionService {
           hasSystem,
           hasLegacy,
           dualSource: hasMic && hasSystem,
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           backend: this.whisperManager.getTranscriptionBackend(),
           backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
           modelName: this.whisperManager.getModelName(),
@@ -407,15 +532,39 @@ export class TranscriptionService {
       this.jobDualSource = hasMic && hasSystem
       await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
+      if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
+        await this.releaseMismatchedWindowsWorker()
+      }
       if (!(await this.whisperManager.isReady())) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
         await this.whisperManager.ensureReady()
       }
+      if (
+        process.platform === 'win32' &&
+        this.windowsRecordingGpuEligible &&
+        this.whisperManager.getTranscriptionBackend() === 'parakeet-cpu'
+      ) {
+        // Setup/probe fallback must also survive restart before CPU work begins.
+        await writeDmlRestriction(join(meetingDir, 'transcription-recovery.json'))
+        this.windowsRecordingGpuEligible = false
+      }
+      // Readiness may switch backends; cache the policy for the one we will execute.
+      await this.refreshWindowsThreadPolicy()
+      if (process.platform === 'win32') {
+        this.windowsAttempt = {
+          backend: this.whisperManager.getTranscriptionBackend(),
+          modelName: this.whisperManager.getModelName(),
+          processingProfile: await this.getProcessingProfileLogContext(),
+          deviceFailure: false,
+          cpuRecoveryPinned: false
+        }
+      }
 
       this.activeStatus = 'transcribing'
       this.broadcastStatus(meetingId, 'transcribing')
       if (this.whisperManager.isWorkerEngineSelected?.()) {
+        if (process.platform === 'win32') await this.releaseMismatchedWindowsWorker()
         this.trackWorkerReuse()
       }
 
@@ -437,7 +586,7 @@ export class TranscriptionService {
           }
         })
         if (dualSourceMode === 'concurrent') {
-          ;[micTranscripts, rawSystemTranscripts] = await Promise.all([
+          const sources = [
             this.transcribeAudioSource(
               meetingId,
               micWebm,
@@ -461,7 +610,17 @@ export class TranscriptionService {
               !shouldDiarizeSystem,
               2
             )
-          ])
+          ]
+          if (process.platform === 'win32') {
+            const settled = await Promise.allSettled(sources)
+            const failure = settled.find((result) => result.status === 'rejected')
+            if (failure?.status === 'rejected') throw failure.reason
+            ;[micTranscripts, rawSystemTranscripts] = settled.map(
+              (result) => (result as PromiseFulfilledResult<Transcript[]>).value
+            )
+          } else {
+            ;[micTranscripts, rawSystemTranscripts] = await Promise.all(sources)
+          }
         } else {
           console.log(`[transcription] Sequential dual-source transcription (${meetingId})`)
           micTranscripts = await this.transcribeAudioSource(
@@ -581,8 +740,6 @@ export class TranscriptionService {
           transcriptionWallSec,
           processingProfile: completedProcessingProfile,
           processingProfileId,
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           workerReuseCount: this.workerJobsServed,
           realtimeFactor,
           downgradesTaken: this.whisperManager.getDowngradesTaken?.() ?? []
@@ -604,8 +761,6 @@ export class TranscriptionService {
           modelName: this.whisperManager.getModelName(),
           device: workerDevice ?? 'unknown',
           computeType: workerComputeType ?? 'unknown',
-          qualityMode: this.getQualityMode(),
-          performanceMode: this.getPerformanceMode(),
           dualSource: this.jobDualSource,
           recordingDurationSec: metadata.durationSeconds,
           audioDurationSec: this.jobAudioDurationSec,
@@ -623,11 +778,25 @@ export class TranscriptionService {
       await this.logWindowsResourceSnapshot('transcription-complete', meetingId)
 
       this.activeStatus = 'complete'
-      this.broadcastStatus(meetingId, 'complete')
+      this.broadcastStatus(meetingId, 'complete', undefined, undefined, {
+        recordingDurationSec: metadata?.durationSeconds ?? this.jobAudioDurationSec ?? null
+      })
       this.onCompleteCallback?.(meetingId)
+    } catch (error) {
+      if (
+        process.platform === 'win32' &&
+        this.windowsAttempt?.backend === 'parakeet-gpu' &&
+        this.windowsAttempt.deviceFailure
+      ) {
+        // Pin before waiting for worker shutdown, including when shutdown times out.
+        await writeDmlRestriction(join(meetingDir, 'transcription-recovery.json'))
+        this.windowsAttempt.cpuRecoveryPinned = true
+      }
+      throw error
     } finally {
       this.transcriptionJobStartedAt = null
       this.lastEtaSeconds = null
+      if (process.platform === 'win32') await this.windowsWorkerShutdown
       for (const f of tempFiles) {
         await unlink(f).catch(() => {})
       }
@@ -653,9 +822,7 @@ export class TranscriptionService {
       logicalProcessors: this.getLogicalProcessorCount(),
       freeMemoryGiB: memory.freeGiB,
       totalMemoryGiB: memory.totalGiB,
-      backend: this.whisperManager.getTranscriptionBackend(),
-      performanceMode: this.getPerformanceMode(),
-      qualityMode: this.getQualityMode()
+      backend: this.whisperManager.getTranscriptionBackend()
     })
   }
 
@@ -1961,7 +2128,7 @@ export class TranscriptionService {
    * GPU, but the parakeet TDT decode loop that feeds it is CPU-side Python.
    * EcoQoS pins that loop to efficiency cores (~5x slowdown measured in
    * Phase 1/3), which defeats the GPU tier's purpose while buying little
-   * responsiveness. CPU tiers keep EcoQoS + Low priority in balanced mode.
+   * responsiveness. CPU tiers keep EcoQoS + Low priority.
    */
   private isDmlWorkerSelected(): boolean {
     return (
@@ -1971,15 +2138,19 @@ export class TranscriptionService {
   }
 
   private isDmlDeviceLossError(message: string): boolean {
-    return (
-      message.includes('887A0005') ||
-      message.includes('887A0006') ||
-      message.includes('DmlExecutionProvider')
-    )
+    const normalized = message.toUpperCase()
+    return DML_DEVICE_FAILURE_HRESULTS.some((code) => normalized.includes(code))
   }
 
   private disposeTranscriptionWorkerClient(): void {
-    this.transcriptionWorkerClient?.dispose()
+    if (process.platform === 'win32' && this.windowsAttempt && this.transcriptionWorkerClient) {
+      this.windowsWorkerShutdown = this.transcriptionWorkerClient.disposeAndWait().then(
+        () => null,
+        (error) => (error instanceof Error ? error : new Error(String(error)))
+      )
+    } else {
+      this.transcriptionWorkerClient?.dispose()
+    }
     this.transcriptionWorkerClient = null
     this.transcriptionWorkerClientFingerprint = null
     this.workerLoadedFingerprint = null
@@ -1991,14 +2162,14 @@ export class TranscriptionService {
       this.whisperManager.getWorkerModelPath(),
       this.whisperManager.getWorkerDevice(),
       this.whisperManager.getWorkerComputeType(),
-      this.whisperManager.getWorkerEngine(),
-      // EcoQoS is decided at spawn time (--no-eco), so a performance-mode
-      // change must recreate the worker process.
-      this.getPerformanceMode()
+      this.whisperManager.getWorkerEngine()
     ].join('|')
   }
 
   private getOrCreateTranscriptionWorkerClient(): TranscriptionWorkerClient {
+    if (process.platform === 'win32' && this.windowsWorkerShutdown) {
+      throw new Error('Transcription worker client disposed')
+    }
     const fingerprint = this.getTranscriptionWorkerClientFingerprint()
     if (
       this.transcriptionWorkerClient &&
@@ -2013,15 +2184,31 @@ export class TranscriptionService {
       scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
       processEnv: this.whisperManager.getWorkerProcessEnv(),
       applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
-      extraArgs:
-        this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected() ? ['--no-eco'] : []
+      extraArgs: this.isDmlWorkerSelected() ? ['--no-eco'] : []
     })
     this.transcriptionWorkerClientFingerprint = fingerprint
     this.workerLoadedFingerprint = null
     return this.transcriptionWorkerClient
   }
 
+  private async releaseMismatchedWindowsWorker(): Promise<void> {
+    if (
+      process.platform === 'win32' &&
+      this.transcriptionWorkerClient &&
+      this.transcriptionWorkerClientFingerprint !== this.getTranscriptionWorkerClientFingerprint()
+    ) {
+      const previous = this.transcriptionWorkerClient
+      await previous.disposeAndWait()
+      if (this.transcriptionWorkerClient === previous) {
+        this.transcriptionWorkerClient = null
+        this.transcriptionWorkerClientFingerprint = null
+        this.workerLoadedFingerprint = null
+      }
+    }
+  }
+
   private async ensureWorkerLoaded(concurrentSources: number): Promise<void> {
+    if (process.platform === 'win32') await this.releaseMismatchedWindowsWorker()
     const client = this.getOrCreateTranscriptionWorkerClient()
     const threadCount = this.getWhisperThreadCount(concurrentSources)
     // cpu_threads is fixed when the model loads, so a thread-count change
@@ -2122,15 +2309,23 @@ export class TranscriptionService {
         }
       )
       await writeFile(jsonPath, JSON.stringify(result), 'utf-8')
-      this.consecutiveDmlDeviceLossFailures = 0
+      if (!this.windowsAttempt) this.consecutiveDmlDeviceLossFailures = 0
       this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (this.isDmlDeviceLossError(message)) {
+      const deviceFailure = this.isDmlDeviceLossError(message)
+      if (deviceFailure || message.includes('DmlExecutionProvider')) {
         this.disposeTranscriptionWorkerClient()
+      }
+      if (deviceFailure && process.platform === 'win32' && this.windowsAttempt) {
+        this.windowsAttempt.deviceFailure = true
+        this.windowsAttempt.deviceError = message.slice(-500)
+      } else if (deviceFailure && process.platform !== 'win32') {
         this.consecutiveDmlDeviceLossFailures += 1
-        if (this.consecutiveDmlDeviceLossFailures === DML_DEVICE_LOSS_FAILURE_THRESHOLD) {
+        if (
+          this.consecutiveDmlDeviceLossFailures >= DML_DEVICE_LOSS_FAILURE_THRESHOLD &&
           this.whisperManager.downgradeParakeetGpuToCpuForSession?.()
+        ) {
           logAutodocEvent({
             area: 'transcription',
             message: 'Downgrading Parakeet GPU to CPU after repeated DML device-loss failures',
@@ -2158,10 +2353,9 @@ export class TranscriptionService {
     const reservedProcessors = Math.min(RESERVED_LOGICAL_CPUS, Math.max(2, logicalProcessors - 2))
     const availableProcessors = Math.max(1, logicalProcessors - reservedProcessors)
     const perSourceProcessors = Math.max(1, Math.floor(availableProcessors / concurrentSources))
-    const floorCap = this.getPerformanceMode() === 'fast' ? logicalProcessors : availableProcessors
     let threadCount = Math.min(
       MAX_WHISPER_THREADS,
-      Math.max(Math.min(MIN_WHISPER_THREADS, floorCap), perSourceProcessors)
+      Math.max(Math.min(MIN_WHISPER_THREADS, availableProcessors), perSourceProcessors)
     )
 
     if (this.getCachedWindowsThreadPolicy() === 'min') {
@@ -2304,7 +2498,7 @@ export class TranscriptionService {
       return
     }
 
-    const useBelowNormal = this.getPerformanceMode() === 'fast' || this.isDmlWorkerSelected()
+    const useBelowNormal = this.isDmlWorkerSelected()
     const priority = useBelowNormal
       ? osConstants.priority.PRIORITY_BELOW_NORMAL
       : osConstants.priority.PRIORITY_LOW
@@ -2316,7 +2510,6 @@ export class TranscriptionService {
       logQaGateWorkerPriority(meetingId, {
         pid,
         priorityLabel: label,
-        performanceMode: this.getPerformanceMode(),
         device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
         backend: this.whisperManager.getTranscriptionBackend()
       })
@@ -2545,10 +2738,30 @@ export class TranscriptionService {
       meetingId,
       context: {
         ...context,
-        processingProfile: await this.getProcessingProfileLogContext()
+        retries,
+        errorCode,
+        filesCapturedAt: 'job-start',
+        backend:
+          this.windowsAttempt?.backend ?? this.whisperManager.getTranscriptionBackend?.() ?? null,
+        modelName: this.windowsAttempt?.modelName ?? this.whisperManager.getModelName?.() ?? null,
+        processingProfile:
+          this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
       }
     })
-    this.broadcastStatus(meetingId, 'failed', undefined, classifyError(errorMsg))
+    if (process.platform === 'win32' && (await this.hasUsableTranscript(meetingId))) {
+      this.broadcastStatus(meetingId, 'complete', undefined, errorCode, { reprocessFailed: true })
+      return
+    }
+    this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
+      memoryFailure: memoryFailureFromError(errorMsg)
+    })
+  }
+
+  async getMemoryFailure(meetingId: string): Promise<MemoryFailure | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'transcript.error')
+    )
+    return typeof error?.error === 'string' ? memoryFailureFromError(error.error) : undefined
   }
 
   private async readErrorFile(
@@ -2606,7 +2819,11 @@ export class TranscriptionService {
     meetingId: string,
     status: TranscriptionStatus,
     progress?: number,
-    errorCode?: string
+    errorCode?: string,
+    extras?: Pick<
+      TranscriptionStatusPayload,
+      'recordingDurationSec' | 'memoryFailure' | 'reprocessFailed'
+    >
   ): void {
     const nextProgress = this.getNextProgress(status, progress)
     this.activeStatus = status
@@ -2617,15 +2834,17 @@ export class TranscriptionService {
       status,
       progress: nextProgress,
       errorCode,
+      memoryFailure: status === 'failed' ? extras?.memoryFailure : undefined,
+      reprocessFailed: extras?.reprocessFailed,
       backendLabel:
         status === 'transcribing'
           ? this.whisperManager.getTranscriptionBackendLabel?.()
           : undefined,
-      qualityMode: status === 'transcribing' ? this.getQualityMode() : undefined,
       etaSeconds:
         status === 'transcribing' && nextProgress != null
           ? this.computeEtaSeconds(nextProgress)
-          : undefined
+          : undefined,
+      recordingDurationSec: extras?.recordingDurationSec
     }
     for (const win of windows) {
       win.webContents.send('transcription:status-changed', payload)

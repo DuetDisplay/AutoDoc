@@ -161,7 +161,9 @@ describe('Onboarding', () => {
 
     render(<Onboarding onComplete={vi.fn()} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: /share anonymous data/i }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: /share anonymous product health/i })
+    )
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
@@ -190,11 +192,11 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     expect(checkbox).not.toBeChecked()
 
-    await userEvent.click(screen.getByRole('button', { name: /share anonymous data/i }))
+    await userEvent.click(screen.getByRole('button', { name: /share anonymous product health/i }))
 
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-analytics-consent', true)
@@ -218,7 +220,7 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
 
     const checkbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     await userEvent.click(checkbox)
     expect(checkbox).toBeChecked()
@@ -229,7 +231,7 @@ describe('Onboarding', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
 
     const restoredCheckbox = await screen.findByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     expect(restoredCheckbox).toBeChecked()
   })

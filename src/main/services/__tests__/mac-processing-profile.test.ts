@@ -87,7 +87,7 @@ describe('mac processing profile selection', () => {
     expect(effectiveProfile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
   })
 
-  it('treats memory pressure and swap as unsafe for concurrency', () => {
+  it('treats yellow or red pressure as unsafe for concurrency', () => {
     expect(
       isMemoryHealthyForConcurrentProcessing(
         hardware({ totalMemoryGiB: 24, freeMemoryGiB: 12, memoryPressure: 'yellow' })
@@ -95,9 +95,38 @@ describe('mac processing profile selection', () => {
     ).toBe(false)
     expect(
       isMemoryHealthyForConcurrentProcessing(
-        hardware({ totalMemoryGiB: 24, freeMemoryGiB: 12, swapUsedGiB: 3 })
+        hardware({ totalMemoryGiB: 24, freeMemoryGiB: 12, memoryPressure: 'red' })
       )
     ).toBe(false)
+  })
+
+  it('does not treat leftover swap as a small Mac when RAM is free and pressure is green', () => {
+    expect(
+      isMemoryHealthyForConcurrentProcessing(
+        hardware({
+          totalMemoryGiB: 24,
+          freeMemoryGiB: 7,
+          memoryPressure: 'green',
+          swapUsedGiB: 4.1
+        })
+      )
+    ).toBe(true)
+
+    const stableProfile = selectMacProcessingProfile(
+      hardware({ totalMemoryGiB: 24, freeMemoryGiB: 12, memoryPressure: 'green' })
+    )
+    const leftoverSwapProfile = selectEffectiveMacProcessingProfile(
+      stableProfile,
+      hardware({
+        totalMemoryGiB: 24,
+        freeMemoryGiB: 7,
+        memoryPressure: 'green',
+        swapUsedGiB: 4.1
+      })
+    )
+
+    expect(leftoverSwapProfile.id).toBe('mac-normal')
+    expect(leftoverSwapProfile.serializeLocalProcessing).toBe(false)
   })
 
   it('does not parse wired memory as red pressure', () => {

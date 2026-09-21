@@ -1,5 +1,6 @@
 export function classifyError(rawError: string): string {
   const error = rawError.toLowerCase()
+  if (error.includes('ollama notes model setup failed')) return 'ollama-model-setup'
 
   if (
     error.includes('whisper') &&

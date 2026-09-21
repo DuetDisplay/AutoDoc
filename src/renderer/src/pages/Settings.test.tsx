@@ -132,6 +132,49 @@ describe('Settings', () => {
     ).toBeChecked()
   })
 
+  it('shows the video watermark by default and persists the playback preference', async () => {
+    const state = {
+      videoWatermarkVisible: true
+    }
+
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-video-watermark-visible': () => state.videoWatermarkVisible,
+      'prefs:set-video-watermark-visible': (visible: boolean) => {
+        state.videoWatermarkVisible = visible
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    const view = render(<Settings />)
+    const toggle = await screen.findByRole('button', {
+      name: /show autodoc watermark on recorded video/i
+    })
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await user.click(toggle)
+
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    view.unmount()
+    render(<Settings />)
+
+    expect(
+      await screen.findByRole('button', {
+        name: /show autodoc watermark on recorded video/i
+      })
+    ).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('keeps connecting while in the browser, clears it on return, and still surfaces a late success', async () => {
     const existing = createCalendarAccount({
       id: 'acct-existing',
@@ -388,73 +431,26 @@ describe('Settings', () => {
     })
   })
 
-  it('shows transcription quality controls only for Parakeet GPU on Windows', async () => {
-    installMockElectronApi({
-      'app:get-version': '1.1.0-internal.4',
-      'updater:get-status': createUpdateStatus(),
-      'app:get-runtime-info': createRuntimeInfo({
-        platform: 'win32',
-        transcriptionBackend: 'parakeet-gpu'
-      }),
-      'app:get-storage-info': createStorageInfo(),
-      'prefs:get-analytics-consent': false,
-      'prefs:get-diagnostic-log-upload-consent': false,
-      'prefs:get-transcription-quality-mode': 'balanced',
-      'prefs:get-transcription-performance-mode': 'balanced',
-      'whisper:get-setup-status': {
-        phase: 'ready',
-        percent: 100,
-        backend: 'parakeet-gpu'
-      },
-      'calendar:get-accounts': [],
-      'calendar:get-events': []
-    })
-
-    render(<Settings />)
-
-    expect(await screen.findByText('Transcription quality')).toBeInTheDocument()
-    expect(screen.getByText('System impact')).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'Balanced gives the most accurate transcripts. Fast uses a smaller, more efficient model that may be slightly less accurate.'
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'Smaller model, lighter on memory. May be slightly less accurate; speed varies by hardware.'
-      )
-    ).toBeInTheDocument()
-    expect(screen.queryByText(/Noticeably faster/i)).not.toBeInTheDocument()
-    expect(
-      screen.getByText(/On GPU-accelerated transcription this setting has little effect\./)
-    ).toBeInTheDocument()
-  })
-
-  it('hides transcription quality controls on Windows CPU Parakeet tiers', async () => {
-    installMockElectronApi({
-      'app:get-version': '1.1.0-internal.4',
-      'updater:get-status': createUpdateStatus(),
-      'app:get-runtime-info': createRuntimeInfo({
-        platform: 'win32',
-        transcriptionBackend: 'parakeet-cpu'
-      }),
-      'app:get-storage-info': createStorageInfo(),
-      'prefs:get-analytics-consent': false,
-      'prefs:get-diagnostic-log-upload-consent': false,
-      'prefs:get-transcription-quality-mode': 'balanced',
-      'prefs:get-transcription-performance-mode': 'balanced',
-      'whisper:get-setup-status': {
-        phase: 'ready',
-        percent: 100,
-        backend: 'parakeet-cpu'
-      },
-      'calendar:get-accounts': [],
-      'calendar:get-events': []
-    })
-
-    render(<Settings />)
-
-    await screen.findByText('System impact')
-    expect(screen.queryByText('Transcription quality')).not.toBeInTheDocument()
-  })
+  it.each(['parakeet-gpu', 'parakeet-cpu'] as const)(
+    'uses automatic transcription without manual controls on Windows %s',
+    async (transcriptionBackend) => {
+      const api = installMockElectronApi({
+        'app:get-version': '1.1.0-internal.4',
+        'updater:get-status': createUpdateStatus(),
+        'app:get-runtime-info': createRuntimeInfo({ platform: 'win32', transcriptionBackend }),
+        'app:get-storage-info': createStorageInfo(),
+        'prefs:get-analytics-consent': false,
+        'prefs:get-diagnostic-log-upload-consent': false,
+        'calendar:get-accounts': [],
+        'calendar:get-events': []
+      })
+      render(<Settings />)
+      expect(await screen.findByText('ggml-base.en.bin')).toBeInTheDocument()
+      expect(screen.queryByText('Transcription quality')).not.toBeInTheDocument()
+      expect(screen.queryByText('System impact')).not.toBeInTheDocument()
+      expect(
+        api.invoke.mock.calls.some(([channel]) => channel.startsWith('prefs:get-transcription-'))
+      ).toBe(false)
+    }
+  )
 })

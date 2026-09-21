@@ -72,13 +72,16 @@ async function clickContinueIfVisible(page: Page): Promise<void> {
   }
 }
 
-function expectWhisperArtifacts(storagePath: string): void {
+function expectWhisperArtifacts(storagePath: string, backend?: string): void {
   const modelsDir = path.join(storagePath, 'models')
   const ffmpegBinary = path.join(modelsDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
 
   expect(existsSync(ffmpegBinary)).toBeTruthy()
 
-  if (process.platform === 'darwin' && process.arch === 'arm64') {
+  if (
+    backend === 'mlx-whisper' ||
+    (!backend && process.platform === 'darwin' && process.arch === 'arm64')
+  ) {
     expect(hasFilesRecursively(path.join(modelsDir, 'mlx-whisper-cache'))).toBeTruthy()
     return
   }
@@ -233,7 +236,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -285,7 +288,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -296,7 +299,11 @@ test.describe('real managed setup downloads', () => {
         'whisper:get-setup-status',
         REAL_DOWNLOAD_TIMEOUT_MS
       )
-      if (process.arch === 'arm64') {
+      if (process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND === 'whisper-cpp') {
+        // macOS whisper.cpp uses the generic setup status, whose backend is optional.
+        // The artifact checks below still require the native binary and GGML model.
+        expect(whisperStatus.backend ?? 'whisper-cpp').toBe('whisper-cpp')
+      } else if (process.arch === 'arm64') {
         expect(whisperStatus).toMatchObject({
           backend: 'mlx-whisper',
           backendLabel: 'Apple Silicon optimized transcription'
@@ -308,7 +315,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -318,7 +325,7 @@ test.describe('real managed setup downloads', () => {
       await waitForSetupReady(page, 'ollama:get-setup-status', REAL_DOWNLOAD_TIMEOUT_MS)
       await expectAnyHeading(
         page,
-        ['Setting Up AI', 'AI Model Ready', 'Help Improve AutoDoc', "You're All Set"],
+        ['Setting Up AI', 'AI Model Ready', 'Help us make AutoDoc better', "You're All Set"],
         10_000
       )
 
@@ -326,7 +333,10 @@ test.describe('real managed setup downloads', () => {
         return await window.electronAPI.invoke('app:get-runtime-info')
       })
 
-      expectWhisperArtifacts(runtimeInfo.storagePath)
+      expectWhisperArtifacts(
+        runtimeInfo.storagePath,
+        whisperStatus.backend ?? process.env.AUTODOC_MAC_TRANSCRIPTION_BACKEND
+      )
       expectOllamaArtifacts(runtimeInfo.storagePath)
     } finally {
       await app.cleanup()
@@ -359,7 +369,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -372,7 +382,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000
@@ -382,7 +392,7 @@ test.describe('real managed setup downloads', () => {
       await waitForSetupReady(page, 'ollama:get-setup-status', REAL_DOWNLOAD_TIMEOUT_MS)
       await expectAnyHeading(
         page,
-        ['Setting Up AI', 'AI Model Ready', 'Help Improve AutoDoc', "You're All Set"],
+        ['Setting Up AI', 'AI Model Ready', 'Help us make AutoDoc better', "You're All Set"],
         10_000
       )
 
@@ -431,7 +441,7 @@ test.describe('real managed setup downloads', () => {
           'Transcription Ready',
           'Setting Up AI',
           'AI Model Ready',
-          'Help Improve AutoDoc',
+          'Help us make AutoDoc better',
           "You're All Set"
         ],
         10_000

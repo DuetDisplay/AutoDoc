@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron'
-import { access, readFile, writeFile, unlink, stat } from 'fs/promises'
+import { access, lstat, readFile, writeFile, unlink, stat } from 'fs/promises'
 import { join } from 'path'
+import { freemem, totalmem } from 'os'
+import { LOW_SPEC_MAC_OLLAMA_MODEL } from '../../shared/constants'
 import type {
   MeetingSegments,
   Transcript,
@@ -10,11 +12,20 @@ import type {
   SegmentationStatusPayload
 } from '../../shared/types'
 import type { LLMProvider } from './llm'
+import {
+  formatNotesWriterTranscript,
+  getDevNotesModelOverride,
+  isDevNotesSkipScanRewritesEnabled,
+  shouldSkipWindowsTightScanRewrites
+} from './llm'
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { readMetadata } from './calendar-matcher'
 import { logQaGateStopToNotes } from './qa-gate-log'
+import { captureMessage } from './sentry-reporter'
 import { classifyError } from './error-classification'
+import { memoryFailureFromError, type MemoryFailure } from '../../shared/memory-failure'
+import { notesFailureKindFromCode, notesUserCopy } from '../../shared/notes-user-copy'
 import {
   hasUsableTranscriptContent,
   shouldTreatEmptySegmentationAsFailure
@@ -25,20 +36,111 @@ import {
   isMemoryHealthyForConcurrentProcessing,
   type MacProcessingProfile
 } from './mac-processing-profile'
+import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
+import { NotesRepository } from './notes-repository'
+import { removeExactDuplicateSegments } from './notes-exact-duplicates'
+import {
+  computeLegacyNotesRevision,
+  computeNotesAttributionRevision,
+  computeTranscriptRevision
+} from './notes-revision'
+import {
+  runNotesScanPipeline,
+  scanLayerProgress,
+  type NotesRewritePolicy
+} from './notes-scan-pipeline'
+import type { OllamaAccelerator } from './ollama-accelerator'
+import { getSystemMemorySnapshot } from './windows-transcription-runtime'
+import { meetingSegmentsFromDisk, withoutNextStepCandidates } from './writer-catalog'
+import type { WindowsProcessingProfile } from './windows-processing-profile'
+import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
+import { isMissingOllamaModelError, notesModelSetupError } from './notes-model-errors'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
-type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes'>
+type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
-  isReadyForGeneration?(): Promise<boolean>
+  isReadyForGeneration?(model?: string): Promise<boolean>
+  prepareModelForGeneration?(preferredModel?: string): Promise<string>
+  beginNotesGeneration?(): void
+  endNotesGeneration?(): Promise<void>
+  recoverUnhealthyRuntime?(): Promise<void>
+  reapLeftoverRunners?(reason?: string, meetingId?: string): void
+  recycleBloatedRunners?(reason?: string, meetingId?: string): void | Promise<boolean>
+  getNotesAccelerator?(): OllamaAccelerator
 }
 
-const EMPTY_SEGMENTATION_ERROR =
+/**
+ * At ~5 tok/s a rejected restyle/compress costs minutes of compute that gets
+ * thrown away, and the retry doubles it. On slow inference we allow one
+ * attempt and stop rewriting entirely after two consecutive rejections.
+ */
+const CPU_CONSTRAINED_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 2
+}
+
+const SKIP_SCAN_REWRITE_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 0,
+  skipRewrites: true
+}
+
+const WINDOWS_TIGHT_SCAN_POLICY: NotesRewritePolicy = {
+  maxAttemptsPerSection: 1,
+  bailAfterConsecutiveRejects: 0,
+  skipRewrites: true,
+  skipStructureLlm: true
+}
+
+/**
+ * The model-free, exact-coverage presenter is on by default on both desktop
+ * platforms; each keeps its own kill switch so QA can roll one platform back
+ * without touching the other.
+ */
+export function shouldUseLosslessPresentation(
+  platform: NodeJS.Platform = process.platform,
+  flags: {
+    disableMac?: string
+    disableWindows?: string
+  } = {
+    disableMac: process.env.AUTODOC_DISABLE_MAC_LOSSLESS_NOTES,
+    disableWindows: process.env.AUTODOC_DISABLE_WINDOWS_LOSSLESS_NOTES
+  }
+): boolean {
+  if (platform === 'darwin') return flags.disableMac !== '1'
+  if (platform === 'win32') return flags.disableWindows !== '1'
+  return false
+}
+
+/**
+ * Below this decode speed the scan's optional rewrite passes cost more time
+ * than they are worth. Measured writer speed is the ground truth (a configured
+ * GPU can still end up CPU-bound when the model does not fit its VRAM).
+ */
+const CONSTRAINED_REWRITE_MAX_TOK_PER_SEC = 12
+
+function parseDevNotesScanPolicy(raw: string | undefined): 'cpu-constrained' | 'default' | null {
+  const value = raw?.trim()
+  if (value === 'cpu-constrained' || value === 'default') return value
+  return null
+}
+
+const LEGACY_EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
 const OLLAMA_UNAVAILABLE_ERROR =
   'Ollama unavailable for notes generation — model runtime never became ready'
 const OLLAMA_GENERATION_DEFER_MAX = 5
 const OLLAMA_GENERATION_DEFER_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  )
+}
 
 interface SegmentationDirSnapshot extends Record<string, unknown> {
   source: EnqueueSource | 'unknown'
@@ -56,6 +158,9 @@ interface PersistedSegmentationError {
   retries: number
   status?: PersistedSegmentationStatus
   errorCode?: string
+  userReason?: string
+  notesLayout?: 'v1' | 'v2'
+  groupingFallback?: boolean
 }
 
 export class SegmentationService {
@@ -80,6 +185,10 @@ export class SegmentationService {
     private getMacProcessingProfile: (() => MacProcessingProfile | null) | null = null,
     private getEffectiveMacProcessingProfile:
       | (() => Promise<MacProcessingProfile | null>)
+      | null = null,
+    private getWindowsProcessingProfile: (() => WindowsProcessingProfile | null) | null = null,
+    private getEffectiveWindowsProcessingProfile:
+      | (() => Promise<WindowsProcessingProfile | null>)
       | null = null
   ) {}
 
@@ -162,22 +271,34 @@ export class SegmentationService {
     return errorData?.errorCode
   }
 
+  async getMemoryFailure(meetingId: string): Promise<MemoryFailure | undefined> {
+    const error = await this.readErrorFile(
+      join(this.recordingsBaseDir, meetingId, 'segments.error')
+    )
+    return error ? memoryFailureFromError(error.error) : undefined
+  }
+
+  async getUserReason(meetingId: string): Promise<string | undefined> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    const errorData = await this.readErrorFile(errorPath)
+    return errorData?.userReason
+  }
+
   async getSegments(meetingId: string): Promise<MeetingSegments | null> {
     const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
     try {
       if (await isEncrypted(segmentsPath)) {
-        return await decryptJSON<MeetingSegments>(segmentsPath)
+        return meetingSegmentsFromDisk(await decryptJSON<unknown>(segmentsPath))
       }
       const data = await readFile(segmentsPath, 'utf-8')
-      return JSON.parse(data)
+      return meetingSegmentsFromDisk(JSON.parse(data))
     } catch {
       return null
     }
   }
 
   async saveSegments(meetingId: string, segments: MeetingSegments): Promise<void> {
-    const segmentsPath = join(this.recordingsBaseDir, meetingId, 'segments.json')
-    await encryptJSON(segments, segmentsPath)
+    await this.persistSegments(meetingId, segments)
   }
 
   async scanAndEnqueuePending(): Promise<void> {
@@ -205,7 +326,10 @@ export class SegmentationService {
           this.enqueue(meetingId, 'recovery-scan')
         } else if (hasTranscript && !hasSegments && hasError) {
           const errorData = await this.readErrorFile(join(meetingDir, 'segments.error'))
-          const isPermanentFailure = errorData?.errorCode === 'ollama-insufficient-memory'
+          const isPermanentFailure =
+            errorData?.errorCode === 'llm-empty-output' ||
+            errorData?.errorCode === 'ollama-insufficient-memory' ||
+            (process.platform === 'win32' && errorData?.errorCode === 'ollama-model-setup')
           if (
             errorData &&
             this.getPersistedStatus(errorData) !== 'no-notes' &&
@@ -262,7 +386,38 @@ export class SegmentationService {
   }
 
   private async processJob(meetingId: string): Promise<void> {
+    if (process.platform !== 'win32') return this.processPreparedJob(meetingId)
+    this.ollamaManager.beginNotesGeneration?.()
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await this.processPreparedJob(meetingId)
+        } catch (error) {
+          if (!isMissingOllamaModelError(error)) throw error
+          if (attempt > 0 || !this.ollamaManager.prepareModelForGeneration) {
+            throw notesModelSetupError(error)
+          }
+          // Restart the whole job after a fresh preparation. Never mix models
+          // across chunks, or use chunk retries to repair a missing download.
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes generation retrying model preparation',
+            meetingId,
+            context: { model: this.llmProvider.getModel?.() }
+          })
+        }
+      }
+    } finally {
+      // processJobExclusive has finished all requests and unloads by this point.
+      await this.ollamaManager.endNotesGeneration?.()
+    }
+  }
+
+  private async processPreparedJob(meetingId: string): Promise<void> {
     const localProcessingCoordinator = this.localProcessingCoordinator
+    if (process.platform === 'win32' && localProcessingCoordinator) {
+      return await localProcessingCoordinator.runWindows(() => this.processJobExclusive(meetingId))
+    }
     if (localProcessingCoordinator && (await localProcessingCoordinator.isSerializing())) {
       return await localProcessingCoordinator.runExclusive('segmentation', meetingId, () =>
         this.processJobExclusive(meetingId)
@@ -276,7 +431,6 @@ export class SegmentationService {
     const jobStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
-    const segmentsPath = join(meetingDir, 'segments.json')
 
     if (!(await this.fileExists(transcriptPath))) {
       return
@@ -287,7 +441,8 @@ export class SegmentationService {
       : JSON.parse(await readFile(transcriptPath, 'utf-8'))
 
     if (!hasUsableTranscriptContent(transcripts)) {
-      await encryptJSON(
+      await this.persistSegments(
+        meetingId,
         {
           decisions: [],
           actionItems: [],
@@ -295,7 +450,7 @@ export class SegmentationService {
           discussion: [],
           statusUpdates: []
         },
-        segmentsPath
+        { overwriteWhenV2Exists: true }
       )
       await unlink(join(meetingDir, 'segments.error')).catch(() => {})
       this.activeStatus = 'complete'
@@ -306,14 +461,25 @@ export class SegmentationService {
 
     this.activeStatus = 'downloading-model'
     this.broadcastStatus(meetingId, 'downloading-model')
+    this.reapNotesRunners('before-notes-profile', meetingId)
     const macProcessingProfile =
       (await this.getEffectiveMacProcessingProfile?.()) ?? this.getMacProcessingProfile?.()
+    const windowsProcessingProfile =
+      (await this.getEffectiveWindowsProcessingProfile?.()) ?? this.getWindowsProcessingProfile?.()
+    const preferredModel =
+      getDevNotesModelOverride() ??
+      macProcessingProfile?.notesModel ??
+      windowsProcessingProfile?.notesModel
+    const preparesJobModel =
+      process.platform === 'win32' && this.ollamaManager.prepareModelForGeneration != null
     if (macProcessingProfile) {
       const currentModel = this.llmProvider.getModel?.()
       if (currentModel && currentModel !== this.lastAppliedMacModel) {
         this.baselineLlmModel = currentModel
       }
-      this.llmProvider.setModel?.(macProcessingProfile.notesModel)
+      if (!preparesJobModel) {
+        this.llmProvider.setModel?.(preferredModel!)
+      }
       this.llmProvider.setLowMemoryMode?.(macProcessingProfile.id === 'mac-low-spec')
       this.lastAppliedMacModel = macProcessingProfile.notesModel
       logAutodocEvent({
@@ -322,6 +488,25 @@ export class SegmentationService {
         meetingId,
         context: this.getProcessingProfileLogContext(macProcessingProfile) ?? undefined
       })
+    } else if (windowsProcessingProfile) {
+      const currentModel = this.llmProvider.getModel?.()
+      if (currentModel && currentModel !== this.lastAppliedMacModel) {
+        this.baselineLlmModel = currentModel
+      }
+      if (!preparesJobModel) {
+        this.llmProvider.setModel?.(preferredModel!)
+      }
+      this.llmProvider.setLowMemoryMode?.(
+        windowsProcessingProfile.id === 'win-low-spec' ||
+          windowsProcessingProfile.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
+      )
+      this.lastAppliedMacModel = windowsProcessingProfile.notesModel
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes effective processing profile selected',
+        meetingId,
+        context: this.getWindowsProcessingProfileLogContext(windowsProcessingProfile) ?? undefined
+      })
     } else {
       if (this.baselineLlmModel) {
         this.llmProvider.setModel?.(this.baselineLlmModel)
@@ -329,16 +514,28 @@ export class SegmentationService {
       this.llmProvider.setLowMemoryMode?.(false)
       this.lastAppliedMacModel = null
     }
+    const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
+    if (notesAccelerator === 'vulkan') {
+      this.llmProvider.setVramConstrainedContext?.(true, 'windows-vulkan')
+    } else if (notesAccelerator === 'cpu') {
+      this.llmProvider.setVramConstrainedContext?.(true, 'windows-cpu')
+    } else {
+      this.llmProvider.setVramConstrainedContext?.(false)
+    }
     logAutodocEvent({
       area: 'segmentation',
       message: 'notes generation waiting for model',
       meetingId,
       context: {
         transcriptCount: transcripts.length,
-        processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
+        processingProfile:
+          this.getProcessingProfileLogContext(macProcessingProfile ?? undefined) ??
+          (windowsProcessingProfile
+            ? this.getWindowsProcessingProfileLogContext(windowsProcessingProfile)
+            : null)
       }
     })
-    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId)
+    const readyForGeneration = await this.ensureOllamaReadyForGeneration(meetingId, preferredModel)
     if (!readyForGeneration) {
       return
     }
@@ -362,19 +559,7 @@ export class SegmentationService {
       }
     })
 
-    const fullText = transcripts
-      .map((t) => {
-        const totalSec = Math.floor(t.startMs / 1000)
-        const h = Math.floor(totalSec / 3600)
-        const m = Math.floor((totalSec % 3600) / 60)
-        const s = totalSec % 60
-        const ts =
-          h > 0
-            ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-            : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-        return `[${ts}] [${t.speaker}] ${t.text}`
-      })
-      .join('\n')
+    const fullText = formatNotesWriterTranscript(transcripts)
 
     console.log(`[perf] Segmentation input: ${fullText.length} chars (${meetingId})`)
 
@@ -385,22 +570,117 @@ export class SegmentationService {
       : undefined
 
     let lastBroadcastedPercent = -1
+    const reportPercent = (percent: number): void => {
+      if (percent === lastBroadcastedPercent) return
+      lastBroadcastedPercent = percent
+      this.broadcastStatus(meetingId, 'segmenting', percent)
+    }
     let segments: MeetingSegments
     try {
       segments = await this.llmProvider.summarize(
         meetingId,
         fullText,
-        (percent) => {
-          if (percent !== lastBroadcastedPercent) {
-            lastBroadcastedPercent = percent
-            this.broadcastStatus(meetingId, 'segmenting', percent)
-          }
-        },
+        reportPercent,
         durationMinutes,
         (activity) => {
           this.updateActivity(meetingId, activity)
         }
       )
+
+      segments = removeExactDuplicateSegments(segments)
+
+      // Verify the LLM actually produced content — empty results mean it failed silently
+      const totalItems =
+        segments.decisions.length +
+        segments.actionItems.length +
+        segments.information.length +
+        segments.discussion.length +
+        segments.statusUpdates.length
+
+      if (
+        totalItems === 0 &&
+        shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
+      ) {
+        this.activeStatus = 'failed'
+        await this.markFailed(
+          meetingId,
+          'Notes generation produced no accepted items for a non-trivial transcript',
+          undefined,
+          'llm-empty-output'
+        )
+        return
+      }
+
+      await this.persistSegments(meetingId, segments, { overwriteWhenV2Exists: true })
+      if (this.llmProvider.completePrompt) {
+        if (process.platform === 'win32') {
+          await this.ollamaManager.recycleBloatedRunners?.('before-scan', meetingId)
+        } else {
+          this.reapNotesRunners('before-scan', meetingId)
+        }
+        await this.logNotesResourceSnapshot('notes runners reaped before scan', meetingId)
+      }
+      const scanOutcome = await this.persistScanLayerNotes(
+        meetingId,
+        segments,
+        transcripts,
+        (fraction, stage) => {
+          const percent = scanLayerProgress(fraction)
+          if (percent !== lastBroadcastedPercent) {
+            console.log(`[perf] Notes scan ${stage}: ${percent}% (${meetingId})`)
+          }
+          reportPercent(percent)
+        }
+      )
+      if (scanOutcome.notesLayout === 'v2') {
+        await unlink(join(meetingDir, 'segments.error')).catch(() => {})
+      }
+      if (isWindowsTopicWriterEnabled() && scanOutcome.errorCode) {
+        // A failed regeneration may leave an older V2 revision available.
+        // Keep it, but never announce that revision as a successful new run.
+        this.activeStatus = 'failed'
+        this.broadcastStatus(meetingId, 'failed', undefined, scanOutcome.errorCode, {
+          userReason: scanOutcome.userReason,
+          notesLayout: scanOutcome.notesLayout
+        })
+        return
+      }
+
+      console.log(
+        `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
+      )
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes generation completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - t0,
+          totalProcessingElapsedMs: Date.now() - jobStartedAt,
+          itemCount: totalItems,
+          processingProfile: this.getProcessingProfileLogContext(),
+          writerSkippedChunks: this.llmProvider.getLastWriterSkips?.() ?? []
+        }
+      })
+
+      if (process.platform === 'win32') {
+        const metadata = await readMetadata(meetingDir)
+        if (metadata?.stoppedAt != null) {
+          logQaGateStopToNotes(meetingId, {
+            recordingDurationSec: metadata.durationSeconds,
+            stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
+            transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
+            notesItemCount: totalItems
+          })
+        }
+      }
+
+      this.activeStatus = 'complete'
+      this.broadcastStatus(meetingId, 'complete', undefined, scanOutcome.errorCode, {
+        userReason: scanOutcome.userReason,
+        notesLayout: scanOutcome.notesLayout,
+        groupingFallback: scanOutcome.groupingFallback
+      })
+      this.safeInvokeOnComplete(meetingId)
     } finally {
       if (process.platform === 'darwin' || process.platform === 'win32') {
         await this.llmProvider.releaseResources?.(meetingId).catch((error) => {
@@ -415,61 +695,10 @@ export class SegmentationService {
             }
           })
         })
-        if (process.platform === 'darwin') {
-          await this.logMacResourceSnapshot('notes resources released', meetingId)
-        }
+        this.reapNotesRunners('after-notes', meetingId)
+        await this.logNotesResourceSnapshot('notes resources released', meetingId)
       }
     }
-
-    // Verify the LLM actually produced content — empty results mean it failed silently
-    const totalItems =
-      segments.decisions.length +
-      segments.actionItems.length +
-      segments.information.length +
-      segments.discussion.length +
-      segments.statusUpdates.length
-
-    if (
-      totalItems === 0 &&
-      shouldTreatEmptySegmentationAsFailure(transcripts, durationMinutes, fullText.length)
-    ) {
-      await this.markNoNotes(meetingId, EMPTY_SEGMENTATION_ERROR)
-      return
-    }
-
-    await encryptJSON(segments, segmentsPath)
-    await unlink(join(meetingDir, 'segments.error')).catch(() => {})
-
-    console.log(
-      `[perf] Segmentation total: ${((Date.now() - t0) / 1000).toFixed(1)}s (${meetingId})`
-    )
-    logAutodocEvent({
-      area: 'segmentation',
-      message: 'notes generation completed',
-      meetingId,
-      context: {
-        elapsedMs: Date.now() - t0,
-        totalProcessingElapsedMs: Date.now() - jobStartedAt,
-        itemCount: totalItems,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
-    })
-
-    if (process.platform === 'win32') {
-      const metadata = await readMetadata(meetingDir)
-      if (metadata?.stoppedAt != null) {
-        logQaGateStopToNotes(meetingId, {
-          recordingDurationSec: metadata.durationSeconds,
-          stopToNotesWallSec: (Date.now() - metadata.stoppedAt) / 1000,
-          transcriptionToNotesWallSec: (Date.now() - jobStartedAt) / 1000,
-          notesItemCount: totalItems
-        })
-      }
-    }
-
-    this.activeStatus = 'complete'
-    this.broadcastStatus(meetingId, 'complete')
-    this.safeInvokeOnComplete(meetingId)
   }
 
   private safeInvokeOnComplete(meetingId: string): void {
@@ -487,20 +716,327 @@ export class SegmentationService {
     }
   }
 
-  private async ensureOllamaReadyForGeneration(meetingId: string): Promise<boolean> {
-    await this.ollamaManager.waitUntilReady()
+  private async persistScanLayerNotes(
+    meetingId: string,
+    segments: MeetingSegments,
+    transcripts: Transcript[],
+    onProgress?: (fraction: number, stage: string) => void
+  ): Promise<{
+    notesLayout: 'v1' | 'v2'
+    errorCode?: string
+    userReason?: string
+    groupingFallback?: boolean
+  }> {
+    const presentationMode = shouldUseLosslessPresentation() ? 'lossless' : undefined
+    if (!this.llmProvider.completePrompt && !presentationMode) {
+      return { notesLayout: 'v1' }
+    }
+
+    const startedAt = Date.now()
+    try {
+      const meetingDir = join(this.recordingsBaseDir, meetingId)
+      const metadata = await readMetadata(meetingDir)
+      const title =
+        metadata?.customTitle || metadata?.calendarTitle || metadata?.sourceName || 'Notes'
+      let loggedScanRequest = false
+      const notesAccelerator = this.ollamaManager.getNotesAccelerator?.() ?? null
+      const lastEvalTokPerSec = this.llmProvider.getLastEvalTokPerSec?.() ?? null
+      const measuredTokPerSec =
+        this.llmProvider.getWriterWeightedEvalTokPerSec?.() ?? lastEvalTokPerSec
+      const forcedScanPolicy = parseDevNotesScanPolicy(process.env.AUTODOC_TEST_NOTES_SCAN_POLICY)
+      const constrained =
+        forcedScanPolicy === 'cpu-constrained'
+          ? true
+          : forcedScanPolicy === 'default'
+            ? false
+            : measuredTokPerSec != null
+              ? measuredTokPerSec < CONSTRAINED_REWRITE_MAX_TOK_PER_SEC
+              : notesAccelerator === 'cpu'
+      const rewritePolicy = shouldSkipWindowsTightScanRewrites()
+        ? WINDOWS_TIGHT_SCAN_POLICY
+        : isDevNotesSkipScanRewritesEnabled()
+          ? SKIP_SCAN_REWRITE_POLICY
+          : constrained
+            ? CPU_CONSTRAINED_REWRITE_POLICY
+            : undefined
+      let missingModelError: unknown
+      const result = await runNotesScanPipeline(segments, {
+        embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
+        title,
+        meetingId,
+        presentationMode,
+        attributionTranscript: presentationMode ? transcripts : undefined,
+        localOwnerLabel: presentationMode ? 'Me' : undefined,
+        rewritePolicy,
+        spanSources: transcripts.map((row) => ({ startMs: row.startMs, endMs: row.endMs })),
+        transcript: transcripts.map((row) => ({
+          speaker: row.speaker,
+          text: row.text,
+          startMs: row.startMs,
+          endMs: row.endMs
+        })),
+        generate: (request) => {
+          if (missingModelError) return Promise.reject(missingModelError)
+          if (!loggedScanRequest) {
+            loggedScanRequest = true
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes scan first ollama request',
+              meetingId,
+              context: {
+                num_ctx: request.num_ctx,
+                num_predict: request.num_predict
+              }
+            })
+          }
+          const result = this.llmProvider.completePrompt!(request.prompt, {
+            num_ctx: request.num_ctx,
+            num_predict: request.num_predict,
+            temperature: request.temperature,
+            seed: request.seed,
+            stop: request.stop,
+            format: request.format
+          })
+          if (process.platform !== 'win32') return result
+          return result.catch((error) => {
+            if (isMissingOllamaModelError(error)) missingModelError = error
+            throw error
+          })
+        },
+        onProgress: (update) => onProgress?.(update.fraction, update.stage)
+      })
+      // Optional scan passes may catch generation errors. A missing model must
+      // still return to the job's bounded preparation/retry path.
+      if (missingModelError) throw missingModelError
+      const meetingNotesPath = join(meetingDir, 'notes.json')
+      await enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
+        try {
+          await unlink(meetingNotesPath)
+        } catch (error) {
+          if (!isNodeErrorWithCode(error, 'ENOENT')) throw error
+        }
+      })
+      const repository = new NotesRepository(this.recordingsBaseDir)
+      await repository.promoteLegacyToV2(meetingId, result.content, {
+        expectedLegacyRevision: computeLegacyNotesRevision(meetingId, withoutNextStepCandidates(segments)),
+        sourceTranscriptRevision: computeTranscriptRevision(meetingId, transcripts),
+        sourceAttributionRevision: computeNotesAttributionRevision(meetingId, transcripts)
+      })
+      const writerItemCount = [segments.decisions, segments.actionItems, segments.information,
+        segments.discussion, segments.statusUpdates].reduce(
+        (total, bucket) => total + bucket.length,
+        0
+      )
+      const presentedItemCount =
+        result.content.keyTakeaways.length +
+        result.content.decisions.length +
+        result.content.nextSteps.length +
+        result.content.sections.reduce(
+          (total, section) => total + section.keyPoints.length + section.supportingDetails.length,
+          0
+        )
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes scan layer completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          groupingFallback: result.groupingFallback,
+          restyleFallbacks: result.restyleFallbacks,
+          compressFallbacks: result.compressFallbacks,
+          restyleSkips: result.restyleSkips,
+          compressSkips: result.compressSkips,
+          rewritePolicy: rewritePolicy?.skipStructureLlm
+            ? 'skip-structure'
+            : rewritePolicy?.skipRewrites
+              ? 'skip-rewrites'
+              : rewritePolicy
+                ? 'cpu-constrained'
+                : 'default',
+          notesAccelerator,
+          measuredTokPerSec,
+          lastEvalTokPerSec,
+          forcedScanPolicy,
+          presentationMode: result.presentationMode ?? presentationMode ?? 'scan',
+          exactWriterCoverage: result.exactWriterCoverage ?? false,
+          organizationAttempted: result.organizationAttempted,
+          organizationAccepted: result.organizationAccepted,
+          organizationOverviewAccepted: result.organizationOverviewAccepted,
+          attributionOwnersAdded: result.attributionOwnersAdded ?? 0,
+          attributionOwnersStripped: result.attributionOwnersStripped ?? 0,
+          attributionOwnersPreserved: result.attributionOwnersPreserved ?? 0,
+          attributionOwnersChanged: result.attributionOwnersChanged ?? 0,
+          recoveredActionCount: result.recoveredActionCount ?? 0,
+          contextualizedNextStepCount: result.contextualizedNextStepCount ?? 0,
+          promotedActionCount: result.promotedActionCount ?? 0,
+          dedupedRecoveredActionCount: result.dedupedRecoveredActionCount ?? 0,
+          recoveredDecisionCount: result.recoveredDecisionCount ?? 0,
+          promotedDecisionCount: result.promotedDecisionCount ?? 0,
+          dedupedRecoveredDecisionCount: result.dedupedRecoveredDecisionCount ?? 0,
+          restyleRejectReasons: result.restyleRejectReasons,
+          compressRejectReasons: result.compressRejectReasons,
+          attachFailed: result.attachFailed,
+          overviewFailed: result.overviewFailed,
+          overviewSkipped: result.overviewSkipped ?? false,
+          validationRan: result.validation.ran,
+          validationError: result.validation.error,
+          ledgerChunksFailed: result.validation.ledgerChunksFailed,
+          claimsChecked: result.validation.claimsChecked,
+          claimsDropped: result.validation.claimsDropped,
+          ownersStripped: result.validation.ownersStripped,
+          ledgerAppends: result.validation.ledgerAppends,
+          unvalidatedClaims: result.validation.unvalidatedClaims,
+          writerItemCount,
+          presentedItemCount,
+          topicCoveragePercent: result.topicCoveragePercent,
+          genericHeadingPercent: result.genericHeadingPercent,
+          needsReviewCount: result.needsReviewCount,
+          contextDependentRejected: result.contextDependentRejected,
+          sectionCount: result.content.sections.length,
+          decisionCount: result.content.decisions.length,
+          nextStepCount: result.content.nextSteps.length,
+          notesLayout: 'v2'
+        }
+      })
+      if (result.groupingFallback) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes grouping fallback',
+          meetingId
+        })
+      }
+      if (result.attachFailed) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes attach timestamps failed',
+          meetingId
+        })
+      }
+      if (result.overviewFailed) {
+        logAutodocEvent({
+          area: 'segmentation',
+          level: 'warn',
+          message: 'notes overview pass failed',
+          meetingId,
+          context: { reasons: result.overviewFailureReasons }
+        })
+      }
+      return { notesLayout: 'v2', groupingFallback: result.groupingFallback }
+    } catch (error) {
+      if (process.platform === 'win32' && isMissingOllamaModelError(error)) throw error
+      const copy = notesUserCopy('layout')
+      logAutodocFailure({
+        area: 'segmentation',
+        message: 'notes scan layer failed; keeping legacy segments',
+        error,
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          notesLayout: 'v1',
+          errorCode: 'scan_or_persist'
+        }
+      })
+      captureMessage('notes_layout_degraded', {
+        area: 'segmentation',
+        meetingId,
+        level: 'warning',
+        tags: { errorCode: 'scan_or_persist', notes_layout: 'v1' },
+        extra: { elapsedMs: Date.now() - startedAt }
+      })
+      await this.writeOutcomeFile(meetingId, {
+        error: error instanceof Error ? error.message : String(error),
+        retries: 0,
+        status: isWindowsTopicWriterEnabled() ? 'failed' : 'complete',
+        errorCode: 'scan_or_persist',
+        userReason: `${copy.title}. ${copy.body}`,
+        notesLayout: 'v1'
+      })
+      return {
+        notesLayout: 'v1',
+        errorCode: 'scan_or_persist',
+        userReason: `${copy.title}. ${copy.body}`
+      }
+    }
+  }
+
+  private persistSegments(
+    meetingId: string,
+    segments: MeetingSegments,
+    options?: { overwriteWhenV2Exists?: boolean }
+  ): Promise<void> {
+    return enqueueMeetingNotesWrite(this.recordingsBaseDir, meetingId, async () => {
+      const meetingDir = join(this.recordingsBaseDir, meetingId)
+      if (!options?.overwriteWhenV2Exists) {
+        try {
+          await lstat(join(meetingDir, 'notes.json'))
+          return
+        } catch (error) {
+          if (!isNodeErrorWithCode(error, 'ENOENT')) {
+            throw new Error('Could not inspect authoritative meeting notes')
+          }
+        }
+      }
+      await encryptJSON(withoutNextStepCandidates(segments), join(meetingDir, 'segments.json'))
+    })
+  }
+
+  private async ensureOllamaReadyForGeneration(
+    meetingId: string,
+    preferredModel?: string
+  ): Promise<boolean> {
+    // macOS/Linux keep shared startup readiness and the original error behavior.
+    if (process.platform !== 'win32') {
+      await this.ollamaManager.waitUntilReady()
+    } else {
+      try {
+        await this.ollamaManager.waitUntilReady()
+        if (this.ollamaManager.prepareModelForGeneration) {
+          const activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
+          this.llmProvider.setModel?.(activeModel)
+          if (activeModel === LOW_SPEC_MAC_OLLAMA_MODEL) this.llmProvider.setLowMemoryMode?.(true)
+          logAutodocEvent({
+            area: 'segmentation',
+            message: 'notes job model selected',
+            meetingId,
+            context: { preferredModel, activeModel }
+          })
+        }
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'OLLAMA_START_CANCELLED') {
+          throw error
+        }
+        throw notesModelSetupError(error)
+      }
+    }
 
     if (!this.ollamaManager.isReadyForGeneration) {
       return true
     }
 
-    const ready = await this.ollamaManager.isReadyForGeneration()
-    if (ready) {
+    const isReady = (): Promise<boolean> =>
+      process.platform === 'win32'
+        ? this.ollamaManager.isReadyForGeneration!(this.llmProvider.getModel?.())
+        : this.ollamaManager.isReadyForGeneration!()
+    if (await isReady()) {
       this.ollamaGenerationDeferCounts.delete(meetingId)
       return true
     }
 
     const deferCount = this.ollamaGenerationDeferCounts.get(meetingId) ?? 0
+    if (deferCount === 0 && this.ollamaManager.recoverUnhealthyRuntime) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes generation recovering unhealthy Ollama runtime',
+        meetingId
+      })
+      await this.ollamaManager.recoverUnhealthyRuntime()
+      if (await isReady()) {
+        this.ollamaGenerationDeferCounts.delete(meetingId)
+        return true
+      }
+    }
     if (deferCount >= OLLAMA_GENERATION_DEFER_MAX) {
       this.ollamaGenerationDeferCounts.delete(meetingId)
       throw new Error(OLLAMA_UNAVAILABLE_ERROR)
@@ -528,16 +1064,38 @@ export class SegmentationService {
     return false
   }
 
-  private async logMacResourceSnapshot(message: string, meetingId: string): Promise<void> {
+  private reapNotesRunners(reason: string, meetingId: string): void {
+    this.ollamaManager.reapLeftoverRunners?.(reason, meetingId)
+  }
+
+  private async logNotesResourceSnapshot(message: string, meetingId: string): Promise<void> {
     if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
-    const hardware = await detectMacHardwareSnapshot()
+    if (process.platform === 'darwin') {
+      const hardware = await detectMacHardwareSnapshot()
+      logAutodocEvent({
+        area: 'segmentation',
+        message,
+        meetingId,
+        context: {
+          hardware,
+          memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware),
+          processingProfile: this.getProcessingProfileLogContext()
+        }
+      })
+      return
+    }
+
+    if (process.platform !== 'win32') return
+
+    const memory = getSystemMemorySnapshot()
+    const gib = (bytes: number): number => Math.round((bytes / 1024 ** 3) * 100) / 100
     logAutodocEvent({
       area: 'segmentation',
       message,
       meetingId,
       context: {
-        hardware,
-        memoryHealthyForConcurrentProcessing: isMemoryHealthyForConcurrentProcessing(hardware),
+        freeMemoryGiB: memory.freeMemoryGiB ?? gib(freemem()),
+        totalMemoryGiB: memory.totalMemoryGiB ?? gib(totalmem()),
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
@@ -546,17 +1104,26 @@ export class SegmentationService {
   private async markFailed(
     meetingId: string,
     error: Error | string,
-    context?: SegmentationDirSnapshot
+    context?: SegmentationDirSnapshot,
+    errorCodeOverride?: string
   ): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : error
-    const errorCode = classifyError(errorMsg)
+    const errorCode = errorCodeOverride ?? classifyError(errorMsg)
     const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
     const existing = await this.readErrorFile(errorPath)
     const retries = (existing?.retries ?? 0) + 1
     try {
+      const copy = notesUserCopy(notesFailureKindFromCode(errorCode))
       await writeFile(
         errorPath,
-        JSON.stringify({ error: errorMsg, errorCode, retries, status: 'failed' })
+        JSON.stringify({
+          error: errorMsg,
+          errorCode,
+          retries,
+          status: 'failed',
+          userReason: `${copy.title}. ${copy.body}`,
+          notesLayout: 'v1'
+        })
       )
     } catch (err) {
       const code =
@@ -577,39 +1144,9 @@ export class SegmentationService {
         processingProfile: this.getProcessingProfileLogContext()
       }
     })
-    this.broadcastStatus(meetingId, 'failed', undefined, errorCode)
-  }
-
-  private async markNoNotes(
-    meetingId: string,
-    errorMessage: string,
-    context?: SegmentationDirSnapshot
-  ): Promise<void> {
-    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
-    try {
-      await writeFile(
-        errorPath,
-        JSON.stringify({ error: errorMessage, retries: 0, status: 'no-notes' })
-      )
-    } catch (err) {
-      const code =
-        typeof err === 'object' && err !== null && 'code' in err
-          ? String((err as { code?: string }).code)
-          : null
-      if (code !== 'ENOENT') throw err
-    }
-    logAutodocFailure({
-      area: 'segmentation',
-      message: 'Meeting notes generation returned no structured output',
-      error: errorMessage,
-      meetingId,
-      context: {
-        ...context,
-        processingProfile: this.getProcessingProfileLogContext()
-      }
+    this.broadcastStatus(meetingId, 'failed', undefined, errorCode, {
+      memoryFailure: memoryFailureFromError(errorMsg)
     })
-    this.activeStatus = 'no-notes'
-    this.broadcastStatus(meetingId, 'no-notes')
   }
 
   private async readErrorFile(errorPath: string): Promise<PersistedSegmentationError | null> {
@@ -624,7 +1161,14 @@ export class SegmentationService {
           errorCode:
             typeof parsed.errorCode === 'string'
               ? parsed.errorCode
-              : classifyError(typeof parsed.error === 'string' ? parsed.error : raw)
+              : classifyError(typeof parsed.error === 'string' ? parsed.error : raw),
+          userReason: typeof parsed.userReason === 'string' ? parsed.userReason : undefined,
+          notesLayout:
+            parsed.notesLayout === 'v2' || parsed.notesLayout === 'v1'
+              ? parsed.notesLayout
+              : undefined,
+          groupingFallback:
+            typeof parsed.groupingFallback === 'boolean' ? parsed.groupingFallback : undefined
         }
       } catch {
         return { error: raw, retries: 0, errorCode: classifyError(raw) }
@@ -637,11 +1181,34 @@ export class SegmentationService {
   private getPersistedStatus(
     errorData: PersistedSegmentationError | null
   ): PersistedSegmentationStatus {
-    if (errorData?.status === 'no-notes' || errorData?.error === EMPTY_SEGMENTATION_ERROR) {
+    if (
+      errorData?.status === 'complete' ||
+      errorData?.status === 'failed' ||
+      errorData?.status === 'no-notes'
+    ) {
+      return errorData.status
+    }
+    if (errorData?.error === LEGACY_EMPTY_SEGMENTATION_ERROR) {
       return 'no-notes'
     }
 
     return 'failed'
+  }
+
+  private async writeOutcomeFile(
+    meetingId: string,
+    outcome: PersistedSegmentationError
+  ): Promise<void> {
+    const errorPath = join(this.recordingsBaseDir, meetingId, 'segments.error')
+    try {
+      await writeFile(errorPath, JSON.stringify(outcome))
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : null
+      if (code !== 'ENOENT') throw err
+    }
   }
 
   private getProcessingProfileLogContext(
@@ -649,7 +1216,7 @@ export class SegmentationService {
   ): Record<string, unknown> | null {
     const profile = selectedProfile ?? this.getMacProcessingProfile?.()
     if (!profile) {
-      return null
+      return this.getWindowsProcessingProfileLogContext()
     }
 
     return {
@@ -667,11 +1234,39 @@ export class SegmentationService {
     }
   }
 
+  private getWindowsProcessingProfileLogContext(
+    selectedProfile?: WindowsProcessingProfile
+  ): Record<string, unknown> | null {
+    const profile = selectedProfile ?? this.getWindowsProcessingProfile?.()
+    if (!profile) {
+      return null
+    }
+
+    return {
+      profileId: profile.id,
+      reason: profile.reason,
+      hardware: profile.hardware,
+      settings: {
+        notesModel: profile.notesModel,
+        dualSourceMode: profile.dualSourceMode,
+        notesAfterTranscriptionOnly: profile.notesAfterTranscriptionOnly,
+        serializeLocalProcessing: profile.serializeLocalProcessing,
+        threadPolicy: profile.threadPolicy
+      }
+    }
+  }
+
   private broadcastStatus(
     meetingId: string,
     status: SegmentationStatus,
     progress?: number,
-    errorCode?: string
+    errorCode?: string,
+    extras?: {
+      userReason?: string
+      memoryFailure?: MemoryFailure
+      notesLayout?: 'v1' | 'v2'
+      groupingFallback?: boolean
+    }
   ): void {
     if (status !== 'segmenting' && this.activeJobId === meetingId) {
       this.updateActivity(meetingId, null)
@@ -685,7 +1280,16 @@ export class SegmentationService {
     }
     this.activeProgress = progress
     const windows = BrowserWindow.getAllWindows()
-    const payload: SegmentationStatusPayload = { meetingId, status, progress, errorCode }
+    const payload: SegmentationStatusPayload = {
+      meetingId,
+      status,
+      progress,
+      errorCode,
+      userReason: extras?.userReason,
+      memoryFailure: status === 'failed' ? extras?.memoryFailure : undefined,
+      notesLayout: extras?.notesLayout,
+      groupingFallback: extras?.groupingFallback
+    }
     for (const win of windows) {
       win.webContents.send('segmentation:status-changed', payload)
     }

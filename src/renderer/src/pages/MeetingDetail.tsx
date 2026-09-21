@@ -1,26 +1,80 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
+import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { SEGMENT_LABELS } from '../../../shared/constants'
+import { NOTES_WRITER_PROGRESS_END, SEGMENT_LABELS } from '../../../shared/constants'
 import type {
   SegmentCategory,
   Segment,
   MeetingSegments,
+  MeetingNotesContent,
+  MeetingNotesV2,
+  MeetingCopyNotesResult,
+  MeetingExportFormat,
+  MeetingExportResult,
   Transcript,
   TranscriptionStatus,
   SegmentationStatus,
   SegmentationActivity,
   SpeakerMap
 } from '../../../shared/types'
+import { notesFailureKindFromCode, notesUserCopy } from '../../../shared/notes-user-copy'
+import type { MemoryFailure } from '../../../shared/memory-failure'
+import { MemoryFailureCallout } from '../components/MemoryFailureCallout'
 import { TranscriptView } from '../components/TranscriptView'
+import { NotesV2Document, useMeetingSpan } from '../components/NotesV2Document'
+import { NotesFeedback } from '../components/NotesFeedback'
+import { feedbackGenerationId } from '../../../shared/notes-feedback'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
+import { MeetingExportMenu } from '../components/MeetingExportMenu'
+import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
 
 type Tab = 'notes' | 'transcript' | 'settings'
+
+interface NotesWriteQueue {
+  notes: MeetingNotesV2 | null
+  pending: MeetingNotesContent | null
+  promise: Promise<boolean> | null
+}
+
+interface SegmentsWriteQueue {
+  failed: boolean
+  pending: MeetingSegments | null
+  promise: Promise<boolean> | null
+  timeout: ReturnType<typeof setTimeout> | undefined
+}
+
+function notesWriteQueueFor(
+  queues: Map<string, NotesWriteQueue>,
+  meetingId: string
+): NotesWriteQueue {
+  const existing = queues.get(meetingId)
+  if (existing) return existing
+  const created: NotesWriteQueue = { notes: null, pending: null, promise: null }
+  queues.set(meetingId, created)
+  return created
+}
+
+function segmentsWriteQueueFor(
+  queues: Map<string, SegmentsWriteQueue>,
+  meetingId: string
+): SegmentsWriteQueue {
+  const existing = queues.get(meetingId)
+  if (existing) return existing
+  const created: SegmentsWriteQueue = {
+    failed: false,
+    pending: null,
+    promise: null,
+    timeout: undefined
+  }
+  queues.set(meetingId, created)
+  return created
+}
 
 function formatDuration(seconds: number): string {
   const mins = Math.ceil(seconds / 60)
@@ -60,6 +114,89 @@ const CATEGORY_TO_KEY: Record<SegmentCategory, keyof MeetingSegments> = {
 }
 
 const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2]
+
+/**
+ * Ghost of the notes document shown while generation is in flight. Mirrors the
+ * V2 layout (overview, then topic sections) instead of the retired five-category
+ * cards.
+ */
+function NotesGeneratingPlaceholder({
+  status,
+  progress
+}: {
+  status: SegmentationStatus
+  progress?: number
+}) {
+  const label =
+    status === 'downloading-model'
+      ? 'Setting up the local AI model...'
+      : status === 'queued'
+        ? 'Queued for notes...'
+        : progress == null
+          ? 'Preparing notes...'
+          : progress >= NOTES_WRITER_PROGRESS_END
+            ? 'Shaping notes...'
+            : 'Generating notes...'
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="bg-bg-card border border-border rounded-xl p-5"
+    >
+      <div className="flex items-center gap-2.5">
+        <span className="relative flex h-2 w-2 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage/50" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-sage" />
+        </span>
+        <span className="text-[12.5px] font-semibold text-ink">{label}</span>
+        {status === 'segmenting' && progress != null && (
+          <span className="text-[11px] tabular-nums text-ink-faint">{progress}%</span>
+        )}
+      </div>
+      <p className="mt-1 pl-[18px] text-[11.5px] leading-relaxed text-ink-faint">
+        AutoDoc is writing structured notes from the transcript, right on this device. This can take
+        a few minutes for longer meetings.
+      </p>
+      {status === 'segmenting' && progress != null && (
+        <div className="mt-3 ml-[18px] h-1 overflow-hidden rounded-full bg-bg-accent">
+          <div
+            className="h-full rounded-full bg-sage/60 transition-[width] duration-500 ease-linear"
+            style={{ width: `${Math.max(2, progress)}%` }}
+          />
+        </div>
+      )}
+
+      <div className="mt-6 animate-pulse select-none" aria-hidden="true">
+        <div className="space-y-2.5">
+          <div className="h-3 w-40 rounded bg-border-subtle" />
+          <div className="h-2.5 w-full rounded bg-border-subtle/70" />
+          <div className="h-2.5 w-[86%] rounded bg-border-subtle/70" />
+          <div className="h-2.5 w-[58%] rounded bg-border-subtle/70" />
+        </div>
+        {[28, 36].map((headingWidth, section) => (
+          <div key={section} className="mt-7">
+            <div className="flex items-center gap-2">
+              <div className={`h-3 rounded bg-sage/25 ${headingWidth === 28 ? 'w-28' : 'w-36'}`} />
+              <div className="h-px flex-1 bg-border-subtle" />
+            </div>
+            <div className="mt-3.5 flex flex-col gap-3 border-l-2 border-border-subtle pl-4">
+              {[92, 74, 84].map((lineWidth) => (
+                <div key={lineWidth} className="flex items-center gap-2.5">
+                  <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-border-subtle" />
+                  <div
+                    className="h-2.5 rounded bg-border-subtle/70"
+                    style={{ width: `${lineWidth}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function EditableText({
   value,
@@ -148,12 +285,14 @@ export function MeetingDetail() {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [transcript, setTranscript] = useState<Transcript[]>([])
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('pending')
+  const [reprocessFailed, setReprocessFailed] = useState(false)
+  const [transcriptionMemoryFailure, setTranscriptionMemoryFailure] = useState<MemoryFailure>()
+  const [segmentationMemoryFailure, setSegmentationMemoryFailure] = useState<MemoryFailure>()
+  const transcriptionEventRevisionRef = useRef(0)
   const [transcriptionProgress, setTranscriptionProgress] = useState<number | undefined>()
   const [transcriptionBackendLabel, setTranscriptionBackendLabel] = useState<string | undefined>()
-  const [transcriptionQualityMode, setTranscriptionQualityMode] = useState<
-    'fast' | 'balanced' | undefined
-  >()
   const [segments, setSegments] = useState<MeetingSegments | null>(null)
+  const [notesV2, setNotesV2] = useState<MeetingNotesV2 | null>(null)
   const [segmentationStatus, setSegmentationStatus] = useState<SegmentationStatus>('pending')
   const [segmentationProgress, setSegmentationProgress] = useState<number | undefined>()
   const [segmentationErrorCode, setSegmentationErrorCode] = useState<string | undefined>()
@@ -183,14 +322,19 @@ export function MeetingDetail() {
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const transcriptTopRef = useRef<HTMLDivElement | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const videoWatermarkRef = useRef<HTMLDivElement | null>(null)
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
   const activeTabRef = useRef<Tab>('notes')
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const activeMeetingIdRef = useRef(id)
+  const segmentsWriteQueuesRef = useRef<Map<string, SegmentsWriteQueue>>(new Map())
+  const auxiliaryWritePromisesRef = useRef<Map<string, Set<Promise<boolean>>>>(new Map())
+  activeMeetingIdRef.current = id
   const lastProgressLogAtRef = useRef(0)
   const lastTimeUpdateLogAtRef = useRef(0)
   const segmentationEventRevisionRef = useRef(0)
   const [playbackRate, setPlaybackRate] = useState(1)
+  const [videoWatermarkVisible, setVideoWatermarkVisible] = useState(true)
 
   useEffect(() => {
     activeTabRef.current = activeTab
@@ -199,6 +343,70 @@ export function MeetingDetail() {
   useEffect(() => {
     mediaPlayerErrorLastAtRef.current.clear()
   }, [id])
+
+  useEffect(() => {
+    const closeFullscreenWatermark = (): void => {
+      const watermark = videoWatermarkRef.current
+      if (!watermark) return
+      if (watermark.hasAttribute('data-fullscreen-watermark-open')) {
+        try {
+          watermark.hidePopover()
+        } catch {
+          // The browser may already have closed the top-layer popover with fullscreen.
+        }
+      }
+      watermark.removeAttribute('data-fullscreen-watermark-open')
+      watermark.removeAttribute('popover')
+    }
+
+    const syncFullscreenWatermark = (): void => {
+      const watermark = videoWatermarkRef.current
+      const video = mediaRef.current
+      if (!watermark || typeof watermark.showPopover !== 'function') return
+
+      if (video instanceof HTMLVideoElement && document.fullscreenElement === video) {
+        if (watermark.hasAttribute('data-fullscreen-watermark-open')) return
+        watermark.setAttribute('popover', 'manual')
+        try {
+          watermark.showPopover()
+          watermark.setAttribute('data-fullscreen-watermark-open', '')
+        } catch {
+          watermark.removeAttribute('popover')
+        }
+        return
+      }
+
+      closeFullscreenWatermark()
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenWatermark)
+    syncFullscreenWatermark()
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenWatermark)
+      closeFullscreenWatermark()
+    }
+  }, [videoWatermarkVisible])
+
+  useEffect(() => {
+    let active = true
+    void window.electronAPI.invoke('prefs:get-video-watermark-visible').then(
+      (visible) => {
+        if (active && typeof visible === 'boolean') {
+          setVideoWatermarkVisible(visible)
+        }
+      },
+      () => undefined
+    )
+    const unsubscribe = window.electronAPI.on(
+      'prefs:video-watermark-visible-changed',
+      setVideoWatermarkVisible
+    )
+
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
 
   const reportRendererMediaError = useCallback(
     (kind: 'video' | 'audio') => (e: SyntheticEvent<HTMLVideoElement | HTMLAudioElement>) => {
@@ -431,30 +639,117 @@ export function MeetingDetail() {
     }
   }, [activeTab, id, media])
 
+  const trackAuxiliaryWrite = useCallback(
+    (meetingId: string, operation: Promise<unknown>, description: string): Promise<boolean> => {
+      let writes = auxiliaryWritePromisesRef.current.get(meetingId)
+      if (!writes) {
+        writes = new Set()
+        auxiliaryWritePromisesRef.current.set(meetingId, writes)
+      }
+
+      const tracked: Promise<boolean> = operation
+        .then(() => true)
+        .catch((error) => {
+          console.warn(`Failed to save ${description}:`, error)
+          return false
+        })
+        .finally(() => {
+          writes?.delete(tracked)
+          if (writes?.size === 0) auxiliaryWritePromisesRef.current.delete(meetingId)
+        })
+      writes.add(tracked)
+      return tracked
+    },
+    []
+  )
+
+  const flushAuxiliaryWrites = useCallback(async (meetingId: string): Promise<boolean> => {
+    let succeeded = true
+    while (auxiliaryWritePromisesRef.current.get(meetingId)?.size) {
+      const writes = Array.from(auxiliaryWritePromisesRef.current.get(meetingId) ?? [])
+      const results = await Promise.all(writes)
+      succeeded = results.every(Boolean) && succeeded
+    }
+    return succeeded
+  }, [])
+
+  const flushSegmentsWritesFor = useCallback(async (meetingId: string): Promise<boolean> => {
+    const queue = segmentsWriteQueueFor(segmentsWriteQueuesRef.current, meetingId)
+    if (queue.timeout !== undefined) {
+      clearTimeout(queue.timeout)
+      queue.timeout = undefined
+    }
+
+    if (queue.promise) {
+      const activeWriteSucceeded = await queue.promise
+      if (queue.pending) {
+        return (await flushSegmentsWritesFor(meetingId)) && activeWriteSucceeded
+      }
+      return activeWriteSucceeded
+    }
+    if (!queue.pending) return !queue.failed
+
+    const pending = queue.pending
+    queue.pending = null
+    const writePromise = window.electronAPI
+      .invoke('segmentation:save-segments', meetingId, pending)
+      .then(
+        () => {
+          queue.failed = false
+          return true
+        },
+        (error) => {
+          queue.failed = true
+          console.warn('Failed to save legacy notes:', error)
+          return false
+        }
+      )
+    queue.promise = writePromise
+    let succeeded: boolean
+    try {
+      succeeded = await writePromise
+    } finally {
+      if (queue.promise === writePromise) queue.promise = null
+    }
+
+    if (queue.pending) return (await flushSegmentsWritesFor(meetingId)) && succeeded
+    if (activeMeetingIdRef.current !== meetingId) segmentsWriteQueuesRef.current.delete(meetingId)
+    return succeeded
+  }, [])
+
   const handleRenameSpeaker = useCallback(
     async (speakerId: string, newLabel: string) => {
       if (!id) return
-      await window.electronAPI.invoke('speakers:rename', id, speakerId, newLabel)
+      const meetingId = id
+      const saved = await trackAuxiliaryWrite(
+        meetingId,
+        window.electronAPI.invoke('speakers:rename', meetingId, speakerId, newLabel),
+        'speaker name'
+      )
+      if (!saved || activeMeetingIdRef.current !== meetingId) return
       setSpeakers((prev) => ({
         ...prev,
         [speakerId]: { ...prev[speakerId], label: newLabel }
       }))
     },
-    [id]
+    [id, trackAuxiliaryWrite]
   )
 
   const saveSegments = useCallback(
     (updated: MeetingSegments) => {
+      if (!id) return
       setSegments(updated)
-      // Debounce save to disk
-      clearTimeout(saveTimeoutRef.current)
-      saveTimeoutRef.current = setTimeout(() => {
-        if (id) {
-          window.electronAPI.invoke('segmentation:save-segments', id, updated)
-        }
+      const meetingId = id
+      const queue = segmentsWriteQueueFor(segmentsWriteQueuesRef.current, meetingId)
+      queue.failed = false
+      queue.pending = updated
+      clearTimeout(queue.timeout)
+      queue.timeout = setTimeout(() => {
+        queue.timeout = undefined
+        void flushSegmentsWritesFor(meetingId)
       }, 500)
     },
-    [id]
+    [flushSegmentsWritesFor, id]
   )
 
   const updateSegmentField = useCallback(
@@ -514,6 +809,10 @@ export function MeetingDetail() {
     let cancelled = false
     segmentationEventRevisionRef.current += 1
     const initialSegmentationRevision = segmentationEventRevisionRef.current
+    transcriptionEventRevisionRef.current += 1
+    const initialTranscriptionRevision = transcriptionEventRevisionRef.current
+    setTranscriptionMemoryFailure(undefined)
+    setSegmentationMemoryFailure(undefined)
 
     const refreshDetail = () =>
       window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
@@ -538,7 +837,9 @@ export function MeetingDetail() {
       window.electronAPI.invoke('segmentation:get-status', id),
       window.electronAPI.invoke('segmentation:get-progress', id),
       window.electronAPI.invoke('segmentation:get-error-code', id),
-      window.electronAPI.invoke('segmentation:get-activity', id)
+      window.electronAPI.invoke('segmentation:get-activity', id),
+      window.electronAPI.invoke('transcription:get-memory-failure', id),
+      window.electronAPI.invoke('segmentation:get-memory-failure', id)
     ]).then(
       ([
         status,
@@ -546,17 +847,31 @@ export function MeetingDetail() {
         nextSegmentationStatus,
         nextSegmentationProgress,
         nextSegmentationErrorCode,
-        nextSegmentationActivity
+        nextSegmentationActivity,
+        nextTranscriptionMemoryFailure,
+        nextSegmentationMemoryFailure
       ]) => {
         if (cancelled) return
 
-        setTranscriptionStatus(status)
-        setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+        if (transcriptionEventRevisionRef.current === initialTranscriptionRevision) {
+          setTranscriptionStatus(status)
+          setTranscriptionProgress((current) => mergeProgress(status, current, progress))
+          setTranscriptionMemoryFailure(
+            status === 'failed' ? nextTranscriptionMemoryFailure : undefined
+          )
+        }
         if (segmentationEventRevisionRef.current === initialSegmentationRevision) {
+          setSegmentationMemoryFailure(
+            nextSegmentationStatus === 'failed' ? nextSegmentationMemoryFailure : undefined
+          )
           setSegmentationStatus(nextSegmentationStatus)
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
-            nextSegmentationStatus === 'failed' ? nextSegmentationErrorCode : undefined
+            nextSegmentationStatus === 'failed' ||
+            nextSegmentationStatus === 'complete' ||
+            nextSegmentationStatus === 'no-notes'
+              ? nextSegmentationErrorCode
+              : undefined
           )
           setSegmentationActivity(
             nextSegmentationStatus === 'segmenting' && nextSegmentationActivity
@@ -572,23 +887,43 @@ export function MeetingDetail() {
                 setSegments(nextSegments)
               }
             })
+            window.electronAPI.invoke('notes:get-v2', id).then((nextNotes) => {
+              if (
+                !cancelled &&
+                segmentationEventRevisionRef.current === initialSegmentationRevision
+              ) {
+                setNotesV2(nextNotes)
+              }
+            })
           } else {
             setSegments(null)
+            setNotesV2(null)
           }
         }
       }
     )
     window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
+    setReprocessFailed(false)
+    if (isWindowsRenderer()) {
+      const revision = transcriptionEventRevisionRef.current
+      void window.electronAPI.invoke('transcription:get-reprocess-failure', id).then((failed) => {
+        if (transcriptionEventRevisionRef.current === revision) setReprocessFailed(failed)
+      })
+    }
     window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
 
     const unsubTranscription = window.electronAPI.on('transcription:status-changed', (payload) => {
       if (payload.meetingId === id) {
+        transcriptionEventRevisionRef.current += 1
+        setTranscriptionMemoryFailure(
+          payload.status === 'failed' ? payload.memoryFailure : undefined
+        )
         setTranscriptionStatus(payload.status)
+        if (isWindowsRenderer()) setReprocessFailed(payload.reprocessFailed === true)
         setTranscriptionProgress((current) =>
           mergeProgress(payload.status, current, payload.progress)
         )
         setTranscriptionBackendLabel(payload.backendLabel)
-        setTranscriptionQualityMode(payload.qualityMode)
         if (payload.status === 'complete') {
           window.electronAPI.invoke('transcription:get-transcript', id).then(setTranscript)
           window.electronAPI.invoke('speakers:get', id).then((s) => s && setSpeakers(s))
@@ -598,17 +933,26 @@ export function MeetingDetail() {
 
     const unsubSegmentation = window.electronAPI.on('segmentation:status-changed', (payload) => {
       if (payload.meetingId === id) {
+        setSegmentationMemoryFailure(
+          payload.status === 'failed' ? payload.memoryFailure : undefined
+        )
         segmentationEventRevisionRef.current += 1
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
-        setSegmentationErrorCode(payload.status === 'failed' ? payload.errorCode : undefined)
+        setSegmentationErrorCode(
+          payload.status === 'failed' || payload.status === 'complete' || payload.status === 'no-notes'
+            ? payload.errorCode
+            : undefined
+        )
         if (payload.status !== 'segmenting') {
           setSegmentationActivity(null)
         }
         if (payload.status === 'complete') {
           window.electronAPI.invoke('segmentation:get-segments', id).then(setSegments)
+          window.electronAPI.invoke('notes:get-v2', id).then(setNotesV2)
         } else {
           setSegments(null)
+          setNotesV2(null)
         }
       }
     })
@@ -641,9 +985,9 @@ export function MeetingDetail() {
       unsubTranscription()
       unsubSegmentation()
       unsubSegmentationActivity()
-      clearTimeout(saveTimeoutRef.current)
+      void flushSegmentsWritesFor(id)
     }
-  }, [id])
+  }, [flushSegmentsWritesFor, id])
 
   // Scroll to highlighted search result after content loads
   useEffect(() => {
@@ -696,15 +1040,23 @@ export function MeetingDetail() {
 
   const handleReprocessTranscript = () => {
     if (!id) return
+    transcriptionEventRevisionRef.current += 1
     segmentationEventRevisionRef.current += 1
     setTranscriptionStatus('queued')
     setTranscriptionProgress(undefined)
-    setTranscript([])
-    setSegments(null)
-    setSegmentationStatus('pending')
+    if (!isWindowsRenderer()) {
+      setTranscript([])
+      setSegments(null)
+      setSegmentationStatus('pending')
+    }
+    setReprocessFailed(false)
     setSegmentationErrorCode(undefined)
     setSegmentationActivity(null)
-    window.electronAPI.invoke('transcription:retry', id)
+    if (isWindowsRenderer()) {
+      window.electronAPI.invoke('transcription:retry', id, { reprocess: true })
+    } else {
+      window.electronAPI.invoke('transcription:retry', id)
+    }
   }
 
   const handleReprocessNotes = () => {
@@ -714,8 +1066,168 @@ export function MeetingDetail() {
     setSegmentationErrorCode(undefined)
     setSegmentationActivity(null)
     setSegments(null)
+    setNotesV2(null)
+    trackEvent('notes_generation_retried', {
+      failure_code: segmentationErrorCode ?? 'unknown'
+    })
     window.electronAPI.invoke('segmentation:retry', id)
   }
+
+  const meetingSpan = useMeetingSpan(detail?.durationSeconds)
+  const layoutDegraded =
+    segmentationStatus === 'complete' && segmentationErrorCode === 'scan_or_persist'
+  const showHardFailCallout = segmentationStatus === 'no-notes' || segmentationStatus === 'failed'
+  const showTranscriptionMemoryFailure =
+    transcriptionStatus === 'failed' && transcriptionMemoryFailure != null
+  const showNotesMemoryFailure =
+    segmentationStatus === 'failed' && segmentationMemoryFailure != null
+  const showMemoryCallout = showTranscriptionMemoryFailure || showNotesMemoryFailure
+  const memoryCallout = showMemoryCallout ? (
+    <MemoryFailureCallout
+      stage={showTranscriptionMemoryFailure ? 'transcription' : 'notes'}
+      failure={
+        (showTranscriptionMemoryFailure ? transcriptionMemoryFailure : segmentationMemoryFailure) ??
+        {}
+      }
+      onRetry={showTranscriptionMemoryFailure ? handleReprocessTranscript : handleReprocessNotes}
+      onViewTranscript={
+        !showTranscriptionMemoryFailure && transcriptionStatus === 'complete'
+          ? () => setActiveTab('transcript')
+          : undefined
+      }
+    />
+  ) : null
+  const failCopy = notesUserCopy(
+    notesFailureKindFromCode(
+      segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
+        ? 'unknown'
+        : segmentationErrorCode ?? (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined)
+    )
+  )
+
+  const notesWriteQueuesRef = useRef<Map<string, NotesWriteQueue>>(new Map())
+  if (id && notesV2?.meetingId === id) {
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    if (!queue.promise && !queue.pending) queue.notes = notesV2
+  }
+
+  useEffect(() => {
+    const notesQueues = notesWriteQueuesRef.current
+    const segmentsQueues = segmentsWriteQueuesRef.current
+    return () => {
+      if (!id) return
+      const notesQueue = notesQueues.get(id)
+      if (notesQueue && !notesQueue.pending && !notesQueue.promise) {
+        notesQueues.delete(id)
+      }
+      const segmentsQueue = segmentsQueues.get(id)
+      if (
+        segmentsQueue &&
+        !segmentsQueue.pending &&
+        !segmentsQueue.promise &&
+        segmentsQueue.timeout === undefined
+      ) {
+        segmentsQueues.delete(id)
+      }
+    }
+  }, [id])
+
+  const flushNotesWrites = useCallback(async (): Promise<boolean> => {
+    if (!id) return false
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    const activeWrite = queue.promise
+    if (activeWrite) {
+      const activeWriteSucceeded = await activeWrite
+      if (queue.pending) {
+        return (await flushNotesWrites()) && activeWriteSucceeded
+      }
+      return activeWriteSucceeded
+    }
+
+    const writePromise = (async (): Promise<boolean> => {
+      let succeeded = true
+      while (queue.pending) {
+        const draft = queue.pending
+        queue.pending = null
+        const expected = queue.notes?.revision
+        if (!expected) {
+          succeeded = false
+          break
+        }
+        try {
+          const persisted = await window.electronAPI.invoke('notes:write-v2', id, draft, expected)
+          // A later edit can be queued while the IPC promise is in flight.
+          const queued = queue.pending as MeetingNotesContent | null
+          const merged = queued
+            ? { ...persisted, ...queued, revision: persisted.revision }
+            : persisted
+          queue.notes = merged
+          if (activeMeetingIdRef.current === id) setNotesV2(merged)
+        } catch (error) {
+          succeeded = false
+          console.warn('Failed to save notes:', error)
+          try {
+            const fresh = await window.electronAPI.invoke('notes:get-v2', id)
+            queue.notes = fresh
+            if (activeMeetingIdRef.current === id) setNotesV2(fresh)
+          } catch (refreshError) {
+            console.warn('Failed to refresh notes after save failure:', refreshError)
+          }
+          queue.pending = null
+          break
+        }
+      }
+      return succeeded
+    })()
+    queue.promise = writePromise
+    let succeeded: boolean
+    try {
+      succeeded = await writePromise
+    } finally {
+      if (queue.promise === writePromise) queue.promise = null
+    }
+    if (queue.pending) return (await flushNotesWrites()) && succeeded
+    if (activeMeetingIdRef.current !== id) notesWriteQueuesRef.current.delete(id)
+    return succeeded
+  }, [id])
+
+  const handleWriteNotesV2 = (content: MeetingNotesContent): void => {
+    if (!id || notesV2?.meetingId !== id) return
+    const queue = notesWriteQueueFor(notesWriteQueuesRef.current, id)
+    const current = queue.notes ?? notesV2
+    const optimistic = { ...current, ...content }
+    queue.notes = optimistic
+    queue.pending = content
+    setNotesV2(optimistic)
+    void flushNotesWrites()
+  }
+
+  const flushMeetingWrites = useCallback(async (): Promise<boolean> => {
+    if (!id) return false
+    const [notesSaved, legacyNotesSaved] = await Promise.all([
+      flushNotesWrites(),
+      flushSegmentsWritesFor(id),
+      flushAuxiliaryWrites(id)
+    ])
+    return notesSaved && legacyNotesSaved
+  }, [flushAuxiliaryWrites, flushNotesWrites, flushSegmentsWritesFor, id])
+
+  const handleCopyNotes = useCallback(async (): Promise<MeetingCopyNotesResult> => {
+    if (!id) return { status: 'failed', code: 'invalid-request' }
+    if (!(await flushMeetingWrites())) return { status: 'failed', code: 'copy-failed' }
+    return window.electronAPI.invoke('meeting:copy-notes', { meetingId: id })
+  }, [flushMeetingWrites, id])
+
+  const handleMeetingExport = useCallback(
+    async (format: MeetingExportFormat): Promise<MeetingExportResult> => {
+      if (!id) return { status: 'failed', code: 'invalid-request' }
+      if (!(await flushMeetingWrites())) {
+        return { status: 'failed', code: 'write-failed' }
+      }
+      return window.electronAPI.invoke('meeting:export', { meetingId: id, format })
+    },
+    [flushMeetingWrites, id]
+  )
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -739,31 +1251,44 @@ export function MeetingDetail() {
     const refreshProcessingState = async () => {
       try {
         const segmentationSnapshotRevision = segmentationEventRevisionRef.current
+        const transcriptionSnapshotRevision = transcriptionEventRevisionRef.current
         const [
           latestTranscriptionStatus,
           latestTranscriptionProgress,
           latestSegmentationStatus,
           latestSegmentationProgress,
           latestSegmentationErrorCode,
-          latestSegmentationActivity
+          latestSegmentationActivity,
+          latestTranscriptionMemoryFailure,
+          latestSegmentationMemoryFailure
         ] = await Promise.all([
           window.electronAPI.invoke('transcription:get-status', id),
           window.electronAPI.invoke('transcription:get-progress', id),
           window.electronAPI.invoke('segmentation:get-status', id),
           window.electronAPI.invoke('segmentation:get-progress', id),
           window.electronAPI.invoke('segmentation:get-error-code', id),
-          window.electronAPI.invoke('segmentation:get-activity', id)
+          window.electronAPI.invoke('segmentation:get-activity', id),
+          window.electronAPI.invoke('transcription:get-memory-failure', id),
+          window.electronAPI.invoke('segmentation:get-memory-failure', id)
         ])
 
         if (cancelled) return
 
-        setTranscriptionStatus(latestTranscriptionStatus)
-        setTranscriptionProgress((current) =>
-          mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
-        )
+        if (transcriptionEventRevisionRef.current === transcriptionSnapshotRevision) {
+          setTranscriptionStatus(latestTranscriptionStatus)
+          setTranscriptionProgress((current) =>
+            mergeProgress(latestTranscriptionStatus, current, latestTranscriptionProgress)
+          )
+          setTranscriptionMemoryFailure(
+            latestTranscriptionStatus === 'failed' ? latestTranscriptionMemoryFailure : undefined
+          )
+        }
         const segmentationSnapshotIsCurrent =
           segmentationEventRevisionRef.current === segmentationSnapshotRevision
         if (segmentationSnapshotIsCurrent) {
+          setSegmentationMemoryFailure(
+            latestSegmentationStatus === 'failed' ? latestSegmentationMemoryFailure : undefined
+          )
           setSegmentationStatus(latestSegmentationStatus)
           setSegmentationProgress(latestSegmentationProgress)
           setSegmentationErrorCode(
@@ -825,6 +1350,22 @@ export function MeetingDetail() {
     return segments[CATEGORY_TO_KEY[category]] ?? []
   }
 
+  const hasLegacyItems = CATEGORY_ORDER.some(
+    (category) => getSegmentsForCategory(category).length > 0
+  )
+  const notesGenerationInFlight =
+    segmentationStatus === 'queued' ||
+    segmentationStatus === 'downloading-model' ||
+    segmentationStatus === 'segmenting'
+  const hasNotesContent = notesV2 !== null || hasLegacyItems
+  const notesActionsDisabled =
+    detail?.isFinalizing === true || notesGenerationInFlight || !hasNotesContent
+  const notesActionsDisabledReason = detail?.isFinalizing
+    ? 'Notes are available after this recording finishes.'
+    : notesGenerationInFlight
+      ? 'Notes are available when generation finishes.'
+      : 'There aren’t any notes to copy or export.'
+
   const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
     const groups: { topic: string | null; items: Segment[] }[] = []
     const topicMap = new Map<string, Segment[]>()
@@ -879,9 +1420,18 @@ export function MeetingDetail() {
               value={detail?.title ?? 'Meeting'}
               onSave={(newTitle) => {
                 if (!id) return
-                window.electronAPI.invoke('recording:update-title', id, newTitle).then(() => {
-                  setDetail((prev) => (prev ? { ...prev, title: newTitle } : prev))
-                })
+                const meetingId = id
+                void trackAuxiliaryWrite(
+                  meetingId,
+                  window.electronAPI
+                    .invoke('recording:update-title', meetingId, newTitle)
+                    .then(() => {
+                      if (activeMeetingIdRef.current === meetingId) {
+                        setDetail((prev) => (prev ? { ...prev, title: newTitle } : prev))
+                      }
+                    }),
+                  'meeting title'
+                )
               }}
               className="text-ink font-semibold flex-1 min-w-0"
             />
@@ -909,13 +1459,14 @@ export function MeetingDetail() {
         <div className="flex items-center gap-2">
           <TranscriptionBadge
             status={transcriptionStatus}
+            hasMemoryFailure={transcriptionMemoryFailure != null}
             progress={transcriptionProgress}
             backendLabel={transcriptionBackendLabel}
-            qualityMode={transcriptionQualityMode}
             onRetry={handleRetryTranscription}
           />
           <SegmentationBadge
             status={segmentationStatus}
+            hasMemoryFailure={segmentationMemoryFailure != null}
             progress={segmentationProgress}
             errorCode={segmentationErrorCode}
             onRetry={handleRetrySegmentation}
@@ -924,20 +1475,38 @@ export function MeetingDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-border px-6">
-        {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
-              activeTab === tab
-                ? 'text-ink border-b-2 border-ink -mb-px'
-                : 'text-ink-faint hover:text-ink-muted'
-            }`}
-          >
-            {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
-          </button>
-        ))}
+      {isWindowsRenderer() && reprocessFailed && (
+        <p
+          role="status"
+          className="mb-3 rounded-lg border border-border-subtle px-3 py-2 text-sm text-ink-muted"
+        >
+          Reprocessing failed. Your previous transcript and notes are still available.
+        </p>
+      )}
+      <div className="flex items-end justify-between gap-4 border-b border-border px-6">
+        <div className="flex">
+          {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
+                activeTab === tab
+                  ? 'text-ink border-b-2 border-ink -mb-px'
+                  : 'text-ink-faint hover:text-ink-muted'
+              }`}
+            >
+              {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
+            </button>
+          ))}
+        </div>
+        <div className="pb-1.5">
+          <MeetingExportMenu
+            disabled={notesActionsDisabled}
+            disabledReason={notesActionsDisabledReason}
+            onCopyNotes={handleCopyNotes}
+            onExport={handleMeetingExport}
+          />
+        </div>
       </div>
 
       {/* Content */}
@@ -973,7 +1542,8 @@ export function MeetingDetail() {
                   </p>
                 </div>
               )}
-            {segmentationStatus === 'no-notes' && (
+            {memoryCallout}
+            {!showMemoryCallout && (showHardFailCallout || layoutDegraded) && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
@@ -990,18 +1560,18 @@ export function MeetingDetail() {
                     </svg>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-[13px] font-semibold text-ink">No notes were generated</h3>
+                    <h3 className="text-[13px] font-semibold text-ink">
+                      {layoutDegraded ? notesUserCopy('layout').title : failCopy.title}
+                    </h3>
                     <p className="mt-1 text-[12px] text-ink-muted leading-relaxed">
-                      This transcript appears to contain enough meeting content, but AutoDoc
-                      couldn’t produce structured notes this time. Your transcript is still
-                      available.
+                      {layoutDegraded ? notesUserCopy('layout').body : failCopy.body}
                     </p>
                     <div className="flex items-center gap-2 mt-3">
                       <button
                         onClick={handleReprocessNotes}
                         className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
                       >
-                        Try again
+                        {segmentationErrorCode === 'scan_or_persist' ? 'Regenerate notes' : 'Try again'}
                       </button>
                       <button
                         onClick={() => setActiveTab('transcript')}
@@ -1014,123 +1584,162 @@ export function MeetingDetail() {
                 </div>
               </div>
             )}
-            {(segmentationStatus === 'no-notes' ? [] : CATEGORY_ORDER).map((category) => {
-              const items = getSegmentsForCategory(category)
-              return (
-                <div key={category} className="bg-bg-card border border-border rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-ink" />
-                      <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
-                        {SEGMENT_LABELS[category]}
-                      </span>
-                      {items.length > 0 && (
-                        <span className="text-[10px] text-ink-faint ml-1">({items.length})</span>
-                      )}
-                    </div>
-                    {segmentationStatus === 'complete' && (
-                      <button
-                        onClick={() => addSegment(category)}
-                        className="text-[11px] text-ink-faint hover:text-sage transition-colors"
-                      >
-                        + Add
-                      </button>
-                    )}
-                  </div>
-                  {items.length === 0 ? (
-                    <p className="text-[12px] text-ink-muted leading-relaxed">
-                      {segmentationStatus === 'segmenting'
-                        ? 'Analyzing transcript...'
-                        : segmentationStatus === 'no-notes'
-                          ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
-                          : segmentationStatus === 'failed'
-                            ? segmentationErrorCode === 'ollama-insufficient-memory'
-                              ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
-                              : 'Segmentation failed. Try retrying above.'
-                            : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
+            {notesV2 && segmentationStatus === 'complete' && !layoutDegraded ? (
+              <>
+                <NotesV2Document
+                  notes={notesV2}
+                  title={detail?.title}
+                  meetingSpan={meetingSpan}
+                  onSeek={seekToSegment}
+                  onWrite={handleWriteNotesV2}
+                />
+                <NotesFeedback
+                  key={`${notesV2.meetingId}:${feedbackGenerationId(notesV2)}`}
+                  meetingId={notesV2.meetingId}
+                  generationId={feedbackGenerationId(notesV2)}
+                />
+              </>
+            ) : null}
+            {(!notesV2 || layoutDegraded) &&
+              !hasLegacyItems &&
+              (notesGenerationInFlight ? (
+                <NotesGeneratingPlaceholder
+                  status={segmentationStatus}
+                  progress={segmentationProgress}
+                />
+              ) : !showHardFailCallout && !showMemoryCallout ? (
+                <div className="bg-bg-card border border-border rounded-xl px-5 py-8 text-center">
+                  <p className="text-[12.5px] font-medium text-ink-muted">
+                    {segmentationStatus === 'pending'
+                      ? 'Notes will appear here once the transcript is ready.'
+                      : 'No notes for this meeting yet.'}
+                  </p>
+                  {segmentationStatus !== 'pending' && (
+                    <p className="mt-1 text-[11.5px] text-ink-faint">
+                      You can generate them from Settings → Notes → Reprocess.
                     </p>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {groupByTopic(items).map((group, groupIdx) => (
-                        <div key={group.topic ?? `ungrouped-${groupIdx}`}>
-                          {group.topic && (
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <h4 className="text-[11.5px] font-semibold text-sage tracking-wide">
-                                {group.topic}
-                              </h4>
-                              <div className="flex-1 h-px bg-border-subtle" />
-                            </div>
-                          )}
-                          <div className="flex flex-col gap-2 pl-2 border-l-2 border-border-subtle">
-                            {group.items.map((item) => {
-                              const globalIndex = items.indexOf(item)
-                              return (
-                                <div
-                                  key={item.id}
-                                  className="group flex flex-col gap-0.5 pl-2"
-                                  data-searchable
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <EditableText
-                                      value={item.title}
-                                      onSave={(v) =>
-                                        updateSegmentField(category, globalIndex, 'title', v)
-                                      }
-                                      className="text-[12.5px] font-semibold text-ink flex-1"
-                                    />
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      {(media?.hasVideo || media?.hasAudio) &&
-                                        item.sourceStartMs > 0 && (
-                                          <button
-                                            onClick={() => seekToSegment(item.sourceStartMs)}
-                                            className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
-                                            title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
-                                          >
-                                            ▶ {formatTimestamp(item.sourceStartMs)}
-                                          </button>
-                                        )}
-                                      <button
-                                        onClick={() => deleteSegment(category, globalIndex)}
-                                        className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                                        title="Delete"
-                                      >
-                                        &times;
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <EditableText
-                                    value={item.content}
-                                    onSave={(v) =>
-                                      updateSegmentField(category, globalIndex, 'content', v)
-                                    }
-                                    className="text-[12px] text-ink-muted leading-relaxed"
-                                    as="div"
-                                  />
-                                  {(item.assignee || item.deadline) && (
-                                    <div className="flex gap-3 mt-0.5">
-                                      {item.assignee && (
-                                        <span className="text-[11px] text-ink-faint">
-                                          Owner: {item.assignee}
-                                        </span>
-                                      )}
-                                      {item.deadline && (
-                                        <span className="text-[11px] text-ink-faint">
-                                          Due: {item.deadline}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   )}
                 </div>
-              )
-            })}
+              ) : null)}
+            {(!notesV2 || layoutDegraded) &&
+              hasLegacyItems &&
+              CATEGORY_ORDER.map((category) => {
+                const items = getSegmentsForCategory(category)
+                return (
+                  <div key={category} className="bg-bg-card border border-border rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-ink" />
+                        <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
+                          {SEGMENT_LABELS[category]}
+                        </span>
+                        {items.length > 0 && (
+                          <span className="text-[10px] text-ink-faint ml-1">({items.length})</span>
+                        )}
+                      </div>
+                      {segmentationStatus === 'complete' && (
+                        <button
+                          onClick={() => addSegment(category)}
+                          className="text-[11px] text-ink-faint hover:text-sage transition-colors"
+                        >
+                          + Add
+                        </button>
+                      )}
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-[12px] text-ink-muted leading-relaxed">
+                        {segmentationStatus === 'segmenting'
+                          ? 'Analyzing transcript...'
+                          : segmentationStatus === 'no-notes'
+                            ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
+                            : segmentationStatus === 'failed'
+                              ? segmentationErrorCode === 'ollama-insufficient-memory'
+                                ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
+                                : 'Segmentation failed. Try retrying above.'
+                              : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {groupByTopic(items).map((group, groupIdx) => (
+                          <div key={group.topic ?? `ungrouped-${groupIdx}`}>
+                            {group.topic && (
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <h4 className="text-[11.5px] font-semibold text-sage tracking-wide">
+                                  {group.topic}
+                                </h4>
+                                <div className="flex-1 h-px bg-border-subtle" />
+                              </div>
+                            )}
+                            <div className="flex flex-col gap-2 pl-2 border-l-2 border-border-subtle">
+                              {group.items.map((item) => {
+                                const globalIndex = items.indexOf(item)
+                                return (
+                                  <div
+                                    key={item.id}
+                                    className="group flex flex-col gap-0.5 pl-2"
+                                    data-searchable
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <EditableText
+                                        value={item.title}
+                                        onSave={(v) =>
+                                          updateSegmentField(category, globalIndex, 'title', v)
+                                        }
+                                        className="text-[12.5px] font-semibold text-ink flex-1"
+                                      />
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {(media?.hasVideo || media?.hasAudio) &&
+                                          item.sourceStartMs > 0 && (
+                                            <button
+                                              onClick={() => seekToSegment(item.sourceStartMs)}
+                                              className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                              title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                            >
+                                              ▶ {formatTimestamp(item.sourceStartMs)}
+                                            </button>
+                                          )}
+                                        <button
+                                          onClick={() => deleteSegment(category, globalIndex)}
+                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                          title="Delete"
+                                        >
+                                          &times;
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <EditableText
+                                      value={item.content}
+                                      onSave={(v) =>
+                                        updateSegmentField(category, globalIndex, 'content', v)
+                                      }
+                                      className="text-[12px] text-ink-muted leading-relaxed"
+                                      as="div"
+                                    />
+                                    {(item.assignee || item.deadline) && (
+                                      <div className="flex gap-3 mt-0.5">
+                                        {item.assignee && (
+                                          <span className="text-[11px] text-ink-faint">
+                                            Owner: {item.assignee}
+                                          </span>
+                                        )}
+                                        {item.deadline && (
+                                          <span className="text-[11px] text-ink-faint">
+                                            Due: {item.deadline}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
           </div>
         ) : activeTab === 'transcript' ? (
           <div className="flex flex-col gap-4">
@@ -1155,13 +1764,16 @@ export function MeetingDetail() {
             )}
             {media?.hasVideo && media.mediaBaseUrl && (
               <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
-                <video
-                  ref={mediaRef as React.RefObject<HTMLVideoElement>}
-                  controls
-                  className="w-full"
-                  src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
-                  onError={reportRendererMediaError('video')}
-                />
+                <div className="relative">
+                  <video
+                    ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                    controls
+                    className="block w-full"
+                    src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
+                    onError={reportRendererMediaError('video')}
+                  />
+                  {videoWatermarkVisible && <VideoWatermarkOverlay ref={videoWatermarkRef} />}
+                </div>
                 <div className="flex justify-end px-3 py-1.5 border-t border-border">
                   <button
                     onClick={cyclePlaybackRate}
@@ -1199,15 +1811,18 @@ export function MeetingDetail() {
                 onRename={handleRenameSpeaker}
               />
             )}
-            <TranscriptView
-              segments={transcript}
-              status={transcriptionStatus}
-              speakers={speakers}
-              transcriptionProgress={transcriptionProgress}
-              transcriptionBackendLabel={transcriptionBackendLabel}
-              transcriptionQualityMode={transcriptionQualityMode}
-              onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
-            />
+            {showTranscriptionMemoryFailure ? (
+              memoryCallout
+            ) : (
+              <TranscriptView
+                segments={transcript}
+                status={transcriptionStatus}
+                speakers={speakers}
+                transcriptionProgress={transcriptionProgress}
+                transcriptionBackendLabel={transcriptionBackendLabel}
+                onSeek={media?.hasVideo || media?.hasAudio ? handleSeek : undefined}
+              />
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-5 max-w-lg">

@@ -1,3 +1,4 @@
+import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../shared/constants'
 import { shouldSerializeWindowsLocalProcessing } from './windows-transcription-runtime'
 
 export type WindowsProcessingProfileId = 'win-gpu' | 'win-cpu-normal' | 'win-low-spec'
@@ -19,6 +20,7 @@ export interface WindowsProcessingProfile {
   label: string
   reason: string
   hardware: WindowsHardwareSnapshot
+  notesModel: string
   dualSourceMode: WindowsDualSourceMode
   serializeLocalProcessing: boolean
   notesAfterTranscriptionOnly: boolean
@@ -28,6 +30,18 @@ export interface WindowsProcessingProfile {
 const CPU_NORMAL_MIN_LOGICAL_PROCESSORS = 8
 const CPU_NORMAL_MIN_TOTAL_MEMORY_GIB = 16
 const RUNTIME_DUAL_SOURCE_MIN_FREE_MEMORY_GIB = 4
+const LOW_SPEC_NOTES_TOTAL_MEMORY_GIB = 8.5
+
+export function notesModelForWindowsProfile(
+  profileId: WindowsProcessingProfileId,
+  hardware: WindowsHardwareSnapshot
+): string {
+  if (profileId === 'win-low-spec') return LOW_SPEC_MAC_OLLAMA_MODEL
+  if (hardware.totalMemoryGiB != null && hardware.totalMemoryGiB <= LOW_SPEC_NOTES_TOTAL_MEMORY_GIB) {
+    return LOW_SPEC_MAC_OLLAMA_MODEL
+  }
+  return DEFAULT_OLLAMA_MODEL
+}
 
 export function selectWindowsProcessingProfile(
   hardware: WindowsHardwareSnapshot,
@@ -97,6 +111,7 @@ function createGpuProfile(
     label: 'GPU Windows processing',
     reason,
     hardware,
+    notesModel: notesModelForWindowsProfile('win-gpu', hardware),
     dualSourceMode: 'concurrent',
     serializeLocalProcessing: false,
     notesAfterTranscriptionOnly: false,
@@ -113,6 +128,7 @@ function createCpuNormalProfile(
     label: 'CPU Windows processing',
     reason,
     hardware,
+    notesModel: notesModelForWindowsProfile('win-cpu-normal', hardware),
     dualSourceMode: 'concurrent',
     serializeLocalProcessing: shouldSerializeWindowsLocalProcessing(
       hardware.logicalProcessors,
@@ -132,6 +148,7 @@ function createLowSpecProfile(
     label: 'Low-spec Windows processing',
     reason,
     hardware,
+    notesModel: notesModelForWindowsProfile('win-low-spec', hardware),
     dualSourceMode: 'sequential',
     serializeLocalProcessing: true,
     notesAfterTranscriptionOnly: true,

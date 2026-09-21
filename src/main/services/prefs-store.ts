@@ -12,10 +12,11 @@ interface PrefsSchema {
   launchAtLogin: boolean
   analyticsConsent: boolean | null // null = not yet asked
   diagnosticLogUploadConsent: boolean
+  videoWatermarkVisible: boolean
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
-  transcriptionPerformanceMode: 'balanced' | 'fast'
-  transcriptionQualityMode: 'fast' | 'balanced'
+  notesEngineUpgradeEligible: boolean
+  notesEngineReadyDismissed: boolean
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
@@ -29,15 +30,14 @@ function createPrefsStore(): Store<PrefsSchema> {
       launchAtLogin: true,
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
+      videoWatermarkVisible: true,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
-      transcriptionPerformanceMode: 'balanced',
-      transcriptionQualityMode: 'balanced'
+      notesEngineUpgradeEligible: false,
+      notesEngineReadyDismissed: false
     }
   })
 }
-
-let rejectedAccurateQualityModeLogged = false
 
 export function readInitialAnalyticsConsent(): boolean | null {
   return createPrefsStore().get('analyticsConsent')
@@ -120,6 +120,14 @@ export class PrefsStore {
     this.store.set('diagnosticLogUploadConsent', enabled)
   }
 
+  getVideoWatermarkVisible(): boolean {
+    return this.store.get('videoWatermarkVisible')
+  }
+
+  setVideoWatermarkVisible(visible: boolean): void {
+    this.store.set('videoWatermarkVisible', visible)
+  }
+
   getExperimentalSpeakerDiarization(): boolean {
     return false
   }
@@ -136,33 +144,23 @@ export class PrefsStore {
     this.store.set('lowSpecMacProcessingBannerDismissed', dismissed)
   }
 
-  getTranscriptionPerformanceMode(): 'balanced' | 'fast' {
-    const mode = this.store.get('transcriptionPerformanceMode')
-    return mode === 'fast' ? 'fast' : 'balanced'
+  getNotesEngineUpgradeEligible(): boolean {
+    return this.store.get('notesEngineUpgradeEligible')
   }
 
-  setTranscriptionPerformanceMode(mode: 'balanced' | 'fast'): void {
-    this.store.set('transcriptionPerformanceMode', mode === 'fast' ? 'fast' : 'balanced')
+  setNotesEngineUpgradeEligible(eligible: boolean): void {
+    this.store.set('notesEngineUpgradeEligible', eligible)
   }
 
-  getTranscriptionQualityMode(): 'balanced' | 'fast' {
-    const mode = this.store.get('transcriptionQualityMode')
-    return mode === 'fast' ? 'fast' : 'balanced'
+  getNotesEngineReadyDismissed(): boolean {
+    return this.store.get('notesEngineReadyDismissed')
   }
 
-  setTranscriptionQualityMode(mode: 'balanced' | 'fast' | 'accurate'): void {
-    if (mode === 'accurate') {
-      if (!rejectedAccurateQualityModeLogged) {
-        rejectedAccurateQualityModeLogged = true
-        console.warn(
-          '[prefs] transcriptionQualityMode "accurate" is not available yet; using balanced'
-        )
-      }
-      this.store.set('transcriptionQualityMode', 'balanced')
-      return
+  setNotesEngineReadyDismissed(dismissed: boolean): void {
+    this.store.set('notesEngineReadyDismissed', dismissed)
+    if (dismissed) {
+      this.store.set('notesEngineUpgradeEligible', false)
     }
-
-    this.store.set('transcriptionQualityMode', mode === 'fast' ? 'fast' : 'balanced')
   }
 
   private applyLaunchAtLogin(): void {

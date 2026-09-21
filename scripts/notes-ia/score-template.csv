@@ -1,0 +1,1 @@
+row_type,scorer,is_prompt_author,arm_blind_label,gate,pairwise_winner,pairwise_confidence,hierarchy_1to5,brevity_1to5,nondup_1to5,coverage_pass,trust_pass,notes_freetext

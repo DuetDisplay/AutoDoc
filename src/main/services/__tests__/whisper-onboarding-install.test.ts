@@ -132,6 +132,71 @@ afterEach(async () => {
 })
 
 describe('Whisper onboarding dependency installation', () => {
+  for (const platform of ['darwin', 'win32'] as const) {
+    for (const failAfterBytes of [false, true]) {
+      it(`${platform}: model download ${failAfterBytes ? 'fails after 100% without becoming ready' : 'with unknown size reaches ready after file completion'}`, async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-download-phase-'))
+        try {
+          const { WhisperManager } = await loadWhisperManager(platform, rootDir, {
+            macBackend: 'whisper-cpp',
+            windowsBackend: 'whisper-cpp'
+          })
+          const manager = new WhisperManager()
+          await mkdir(dirname(manager.getWhisperPath()), { recursive: true })
+          await writeFile(manager.getWhisperPath(), 'installed runtime')
+          await writeFile(manager.getFfmpegPath(), 'installed ffmpeg')
+          const probe = vi
+            .spyOn(manager as any, 'isWhisperUsableWithRetry')
+            .mockResolvedValue('ready')
+          const statuses: Array<{ phase: string; percent: number }> = []
+          manager.on('setup-status', (status) => statuses.push(status))
+          const fetchMock = vi.fn().mockImplementation(async () => {
+            let sent = false
+            return {
+              ok: true,
+              headers: new Headers(failAfterBytes ? { 'content-length': '4' } : {}),
+              body: {
+                getReader: () => ({
+                  read: async () => {
+                    if (!sent) {
+                      sent = true
+                      return { done: false, value: new Uint8Array([1, 2, 3, 4]) }
+                    }
+                    if (failAfterBytes) throw new Error('stream failed after last byte')
+                    return { done: true }
+                  }
+                })
+              }
+            }
+          })
+          vi.stubGlobal('fetch', fetchMock)
+          if (failAfterBytes) {
+            await expect(manager.ensureReady()).rejects.toThrow('stream failed after last byte')
+            expect(fetchMock).toHaveBeenCalledTimes(3)
+            expect(
+              statuses.filter((s) => s.phase === 'downloading-model' && s.percent === 100)
+            ).toHaveLength(3)
+            expect(statuses.at(-1)).toMatchObject({ phase: 'error' })
+            expect(statuses.some((s) => s.phase === 'ready')).toBe(false)
+            expect(probe).not.toHaveBeenCalled()
+            await expect(access(manager.getModelPath())).rejects.toThrow()
+          } else {
+            await manager.ensureReady()
+            expect(fetchMock).toHaveBeenCalledTimes(1)
+            expect(
+              statuses.filter((s) => s.phase === 'downloading-model').every((s) => s.percent === 0)
+            ).toBe(true)
+            expect(statuses.at(-1)).toMatchObject({ phase: 'ready', percent: 100 })
+            expect(await readFile(manager.getModelPath())).toEqual(Buffer.from([1, 2, 3, 4]))
+            expect(probe).toHaveBeenCalledTimes(1)
+          }
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+    }
+  }
+
   it('completes the packaged macOS dependency setup flow with managed runtime assets', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-mac-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg')
@@ -161,6 +226,8 @@ describe('Whisper onboarding dependency installation', () => {
 
       await manager.ensureReady()
 
+      expect(manager.downgradeParakeetGpuToCpuForSession()).toBe(false)
+      expect((manager as any).parakeetGpuDisabledForSession).toBe(false)
       await expect(access(manager.getWhisperPath())).resolves.toBeUndefined()
       await expect(access(manager.getFfmpegPath())).resolves.toBeUndefined()
       await expect(access(manager.getModelPath())).resolves.toBeUndefined()
@@ -875,8 +942,8 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('does not treat empty int8 model dir as ready after switching parakeet-gpu to fast quality', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-revalidate-'))
+  it('downloads missing int8 assets when the selected profile changes from GPU to CPU', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-revalidate-'))
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
     await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
@@ -888,8 +955,6 @@ describe('Whisper onboarding dependency installation', () => {
       })
 
       const manager = new WhisperManager()
-      let qualityMode: 'balanced' | 'fast' = 'balanced'
-      manager.setTranscriptionQualityModeGetter(() => qualityMode)
 
       const assetDownloads: string[] = []
       vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset').mockImplementation(
@@ -912,7 +977,8 @@ describe('Whisper onboarding dependency installation', () => {
       ])
       await expect(manager.isReady()).resolves.toBe(true)
 
-      qualityMode = 'fast'
+      manager.downgradeParakeetGpuToCpuForSession()
+      // Re-run real selection without forcing CPU: the session downgrade must survive readiness.
       const int8ModelDir = manager.getParakeetModelPath()
       expect(int8ModelDir).toContain('parakeet-tdt-0.6b-v3-int8')
       await mkdir(int8ModelDir, { recursive: true })
@@ -921,24 +987,36 @@ describe('Whisper onboarding dependency installation', () => {
       await expect(manager.isReady()).resolves.toBe(false)
 
       assetDownloads.length = 0
+      const statusUpdates: any[] = []
+      manager.on('setup-status', (status) => statusUpdates.push(status))
       // Match transcription.ts: only call ensureReady when isReady is false
       if (!(await manager.isReady())) {
         await manager.ensureReady()
       }
 
       expect(assetDownloads).toContain('parakeet-tdt-0.6b-v3-int8.zip')
+      expect(statusUpdates).toContainEqual(
+        expect.objectContaining({ phase: 'downloading-model', backend: 'parakeet-cpu' })
+      )
       await expect(
         access(join(manager.getParakeetModelPath(), 'encoder-model.int8.onnx'))
       ).resolves.toBeUndefined()
       await expect(manager.isReady()).resolves.toBe(true)
+      assetDownloads.length = 0
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await manager.ensureReady()
+        expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+        await expect(manager.isReady()).resolves.toBe(true)
+      }
+      expect(assetDownloads).toEqual([])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
 
-  it('ready-check requires int8 expected files for fast parakeet-gpu, not bare model directory', async () => {
+  it('ready-check requires int8 expected files after GPU-to-CPU fallback, not bare model directory', async () => {
     const rootDir = await mkdtemp(
-      join(tmpdir(), 'autodoc-whisper-win-parakeet-fast-expected-files-')
+      join(tmpdir(), 'autodoc-whisper-win-parakeet-cpu-expected-files-')
     )
     const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
     await writeFile(bundledFfmpeg, 'bundled ffmpeg')
@@ -966,7 +1044,7 @@ describe('Whisper onboarding dependency installation', () => {
       await manager.ensureReady()
       ;(manager as any).runtimeValidated = true
 
-      manager.setTranscriptionQualityModeGetter(() => 'fast')
+      manager.downgradeParakeetGpuToCpuForSession()
       const int8ModelDir = manager.getParakeetModelPath()
       await mkdir(int8ModelDir, { recursive: true })
       // Place a non-expected file so the directory is non-empty but still incomplete
@@ -987,46 +1065,55 @@ describe('Whisper onboarding dependency installation', () => {
     }
   })
 
-  it('prefers installed faster-whisper-cpu over missing parakeet at runtime', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-'))
-    const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
-    await writeFile(bundledFfmpeg, 'bundled ffmpeg')
+  it.each(['parakeet-cpu', 'parakeet-gpu'] as const)(
+    'prefers installed faster-whisper-cpu over missing %s at runtime, including after downgrade',
+    async (initialBackend) => {
+      const rootDir = await mkdtemp(
+        join(tmpdir(), 'autodoc-whisper-win-parakeet-runtime-fallback-')
+      )
+      const bundledFfmpeg = join(rootDir, 'bundled-ffmpeg.exe')
+      await writeFile(bundledFfmpeg, 'bundled ffmpeg')
 
-    try {
-      const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
-        isPackaged: true,
-        ffmpegStaticPath: bundledFfmpeg,
-        windowsBackend: 'parakeet-cpu'
-      })
+      try {
+        const { WhisperManager } = await loadWhisperManager('win32', rootDir, {
+          isPackaged: true,
+          ffmpegStaticPath: bundledFfmpeg,
+          windowsBackend: initialBackend
+        })
 
-      const manager = new WhisperManager()
-      const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
-      ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
-      const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
-      for (const asset of fasterWhisperProfile.assets) {
-        const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
-          fasterWhisperProfile,
-          asset.id
-        )
-        for (const expectedFile of asset.expectedFiles) {
-          const target = join(assetRoot, ...expectedFile.split('/'))
-          await mkdir(dirname(target), { recursive: true })
-          await writeFile(target, `${asset.id} file`)
+        const manager = new WhisperManager()
+        if (initialBackend === 'parakeet-gpu') {
+          await (manager as any).selectWindowsProfile()
+          expect(manager.downgradeParakeetGpuToCpuForSession()).toBe(true)
         }
+        const { WINDOWS_TRANSCRIPTION_PROFILES } = await import('../windows-transcription-runtime')
+        ;(manager as any).windowsTranscriptionProfiles = WINDOWS_TRANSCRIPTION_PROFILES
+        const fasterWhisperProfile = WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']
+        for (const asset of fasterWhisperProfile.assets) {
+          const assetRoot = (manager as any).getWindowsTranscriptionAssetRoot(
+            fasterWhisperProfile,
+            asset.id
+          )
+          for (const expectedFile of asset.expectedFiles) {
+            const target = join(assetRoot, ...expectedFile.split('/'))
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `${asset.id} file`)
+          }
+        }
+
+        const downloadSpy = vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
+        vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
+
+        await manager.ensureReady()
+
+        expect(downloadSpy).not.toHaveBeenCalled()
+        expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
+        await expect(manager.isReady()).resolves.toBe(true)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
       }
-
-      const downloadSpy = vi.spyOn(manager as any, 'downloadAndExtractWindowsTranscriptionAsset')
-      vi.spyOn(manager as any, 'isFasterWhisperUsableWithRetry').mockResolvedValue(true)
-
-      await manager.ensureReady()
-
-      expect(downloadSpy).not.toHaveBeenCalled()
-      expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
-      await expect(manager.isReady()).resolves.toBe(true)
-    } finally {
-      await rm(rootDir, { recursive: true, force: true })
     }
-  })
+  )
 
   it('attempts parakeet install during setup when faster-whisper is already present', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-whisper-win-parakeet-setup-install-'))
@@ -1110,12 +1197,15 @@ describe('Whisper onboarding dependency installation', () => {
       const usabilitySpy = vi
         .spyOn(manager as any, 'isParakeetUsableWithRetry')
         .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true)
+        .mockResolvedValue(true)
 
       await manager.ensureReady()
 
       expect(usabilitySpy).toHaveBeenCalledTimes(2)
       expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      await manager.ensureReady()
+      expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+      expect(manager.getDowngradesTaken()).toEqual(['parakeet-gpu→parakeet-cpu'])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

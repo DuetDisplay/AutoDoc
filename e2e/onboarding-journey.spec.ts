@@ -82,10 +82,10 @@ async function finishOnboardingIntoApp(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
   await page.getByRole('button', { name: /^continue$/i }).click()
 
-  await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
   await page.getByRole('button', { name: /what exactly do we track/i }).click()
   await expect(page.getByText(/feature usage/i)).toBeVisible()
-  await page.getByRole('button', { name: /no thanks/i }).click()
+  await page.getByRole('button', { name: /not now/i }).click()
 
   await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
   await page.getByRole('button', { name: /open autodoc/i }).click()
@@ -96,8 +96,8 @@ async function finishOnboardingIntoApp(page: Page): Promise<void> {
 }
 
 async function finishAnalyticsAndOpenApp(page: Page): Promise<void> {
-  await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
-  await page.getByRole('button', { name: /no thanks/i }).click()
+  await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
+  await page.getByRole('button', { name: /not now/i }).click()
   await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
   await page.getByRole('button', { name: /open autodoc/i }).click()
   await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
@@ -110,7 +110,7 @@ async function completeDependencySetup(page: Page): Promise<void> {
 
   await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
   await page.getByRole('button', { name: /^continue$/i }).click()
-  await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -141,7 +141,7 @@ test('preserves the diagnostic log upload draft when navigating back and forward
     await completeDependencySetup(page)
 
     const logUploadCheckbox = page.getByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     await expect(logUploadCheckbox).not.toBeChecked()
     await logUploadCheckbox.check()
@@ -150,7 +150,7 @@ test('preserves the diagnostic log upload draft when navigating back and forward
     await page.getByRole('button', { name: /back/i }).click()
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
     await page.getByRole('button', { name: /^continue$/i }).click()
-    await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
     await expect(logUploadCheckbox).toBeChecked()
   } finally {
     await session.cleanup()
@@ -168,12 +168,12 @@ test('persists analytics opt-in with diagnostic log upload disabled across relau
     await completeDependencySetup(page)
 
     const logUploadCheckbox = page.getByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     await logUploadCheckbox.uncheck()
     await expect(logUploadCheckbox).not.toBeChecked()
 
-    await page.getByRole('button', { name: /share anonymous data/i }).click()
+    await page.getByRole('button', { name: /share anonymous product health/i }).click()
     await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
     await page.getByRole('button', { name: /open autodoc/i }).click()
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
@@ -182,7 +182,9 @@ test('persists analytics opt-in with diagnostic log upload disabled across relau
     await expect(
       page.getByRole('button', { name: /toggle analytics and crash reports/i })
     ).toHaveAttribute('aria-pressed', 'true')
-    await expect(logUploadCheckbox).not.toBeChecked()
+    await expect(
+      page.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
+    ).not.toBeChecked()
 
     await electronApp.close()
     const relaunched = await relaunchIsolatedE2EApp(userDataDir)
@@ -212,13 +214,13 @@ test('persists analytics opt-in with diagnostic log upload enabled after onboard
     await completeDependencySetup(page)
 
     const logUploadCheckbox = page.getByRole('checkbox', {
-      name: /attach technical app logs to error reports/i
+      name: /also share anonymous logs if something breaks/i
     })
     await expect(logUploadCheckbox).not.toBeChecked()
     await logUploadCheckbox.check()
     await expect(logUploadCheckbox).toBeChecked()
 
-    await page.getByRole('button', { name: /share anonymous data/i }).click()
+    await page.getByRole('button', { name: /share anonymous product health/i }).click()
     await expect(page.getByRole('heading', { name: "You're All Set" })).toBeVisible()
     await page.getByRole('button', { name: /open autodoc/i }).click()
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
@@ -227,7 +229,9 @@ test('persists analytics opt-in with diagnostic log upload enabled after onboard
     await expect(
       page.getByRole('button', { name: /toggle analytics and crash reports/i })
     ).toHaveAttribute('aria-pressed', 'true')
-    await expect(logUploadCheckbox).toBeChecked()
+    await expect(
+      page.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
+    ).toBeChecked()
   } finally {
     await session.cleanup()
   }
@@ -415,7 +419,7 @@ test('shows Ollama download progress and allows skipping while setup continues',
     await page
       .getByRole('button', { name: /continue - this will finish in the background/i })
       .click()
-    await expect(page.getByRole('heading', { name: 'Help Improve AutoDoc' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Help us make AutoDoc better' })).toBeVisible()
   } finally {
     await cleanup()
   }

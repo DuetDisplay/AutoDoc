@@ -36,7 +36,6 @@ export interface MacProcessingProfile {
 
 const LOW_SPEC_TOTAL_MEMORY_GIB = 8.5
 const LOW_SPEC_FREE_MEMORY_GIB = 3
-const HIGH_SWAP_USED_GIB = 2
 
 export async function detectMacHardwareSnapshot(): Promise<MacHardwareSnapshot> {
   const [chip, memoryPressure, swapUsedGiB, freeMemoryGiB] = await Promise.all([
@@ -79,7 +78,7 @@ export function selectEffectiveMacProcessingProfile(
   if (!isMemoryHealthyForConcurrentProcessing(runtimeHardware)) {
     return createLowSpecProfile(
       runtimeHardware,
-      'runtime memory pressure, free memory, or swap usage is not healthy for concurrent processing',
+      'runtime memory pressure or free memory is not healthy for concurrent processing',
       stableProfile.notesModel
     )
   }
@@ -99,9 +98,9 @@ export function isMemoryHealthyForConcurrentProcessing(
   if (hardware.freeMemoryGiB != null && hardware.freeMemoryGiB < LOW_SPEC_FREE_MEMORY_GIB) {
     return false
   }
-  if (hardware.swapUsedGiB != null && hardware.swapUsedGiB >= HIGH_SWAP_USED_GIB) {
-    return false
-  }
+  // Leftover swap is not a small-Mac signal. macOS does not eagerly drain
+  // swap after Chrome/Cursor/Ollama, so a dirty workday on 16/24 GB hardware
+  // used to look like an 8 GB machine.
   return true
 }
 

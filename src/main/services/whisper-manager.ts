@@ -19,7 +19,7 @@ import { createReadStream, createWriteStream, existsSync } from 'fs'
 import { execFile, execSync } from 'child_process'
 import { EventEmitter, once } from 'events'
 import { pipeline } from 'stream/promises'
-import { tmpdir } from 'os'
+import { availableParallelism, tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import { MODELS_SUBDIR } from '../../shared/constants'
 import type { WhisperSetupStatus } from '../../shared/types'
@@ -122,8 +122,6 @@ interface MacWhisperRuntimeAsset {
   expectedFiles: string[]
 }
 
-type TranscriptionQualityMode = 'balanced' | 'fast'
-
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
@@ -131,13 +129,16 @@ export class WhisperManager extends EventEmitter {
   private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
   private selectedWindowsProcessingProfile: WindowsProcessingProfile | null = null
+  private windowsProfileResolutionPromise: Promise<void> | null = null
+  private windowsProfileRefreshPromise: Promise<void> | null = null
+  private windowsBackendRevision = 0
   private selectedMacProfile: MacProcessingProfile | null = null
   private mlxWhisperDisabledForSession = false
+  private parakeetGpuDisabledForSession = false
   private downgradeChain: string[] = []
   private inFirstRunSetup = false
   private firstRunSetupStartedAt: number | null = null
   private firstRunDownloadedBytes = 0
-  private getTranscriptionQualityMode: () => TranscriptionQualityMode = () => 'balanced'
   private windowsTranscriptionProfiles: Record<
     WindowsTranscriptionBackendId,
     WindowsTranscriptionProfile
@@ -145,10 +146,6 @@ export class WhisperManager extends EventEmitter {
 
   constructor() {
     super()
-  }
-
-  setTranscriptionQualityModeGetter(getter: () => TranscriptionQualityMode): void {
-    this.getTranscriptionQualityMode = getter
   }
 
   getDowngradesTaken(): string[] {
@@ -166,9 +163,12 @@ export class WhisperManager extends EventEmitter {
       return null
     }
 
-    if (!this.selectedWindowsProcessingProfile) {
-      await this.refreshWindowsProcessingProfile()
+    if (!this.selectedWindowsProcessingProfile || this.windowsProfileResolutionPromise) {
+      await this.resolveWindowsTranscriptionBackend()
     }
+    // A session downgrade refreshes asynchronously. Join it before returning
+    // a model decision, including a newer refresh started while we waited.
+    while (this.windowsProfileRefreshPromise) await this.windowsProfileRefreshPromise
     if (!this.selectedWindowsProcessingProfile) {
       return null
     }
@@ -306,11 +306,11 @@ export class WhisperManager extends EventEmitter {
   }
 
   getWorkerDevice(): 'cuda' | 'cpu' | 'dml' {
-    return this.getWorkerProfile().device
+    return this.getSelectedWindowsProfile().device
   }
 
   getWorkerComputeType(): WindowsTranscriptionProfile['computeType'] {
-    return this.getWorkerProfile().computeType
+    return this.getSelectedWindowsProfile().computeType
   }
 
   getWorkerProcessEnv(): NodeJS.ProcessEnv {
@@ -375,30 +375,41 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
-    if (profile.id === 'parakeet-gpu' && workerProfile.computeType === 'int8') {
-      return this.windowsTranscriptionProfiles['parakeet-cpu'].estimatedMemoryGiB
-    }
 
     return profile.estimatedMemoryGiB
   }
 
-  /** Session-only fallback after repeated DirectML device-loss failures. */
-  downgradeParakeetGpuToCpuForSession(): void {
+  /** Keep CPU selected for this recording; the next recording selects afresh. */
+  downgradeParakeetGpuToCpuForSession(): boolean {
     if (!IS_WIN) {
-      return
+      return false
     }
 
     const current = this.getSelectedWindowsProfile()
     if (current.id !== 'parakeet-gpu') {
-      return
+      return false
     }
 
+    this.parakeetGpuDisabledForSession = true
     this.recordDowngrade('parakeet-gpu', 'parakeet-cpu')
+    this.windowsBackendRevision++
     this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
     this.runtimeValidated = false
     this.validatedWorkerFingerprint = null
     void this.refreshWindowsProcessingProfile()
+    return true
+  }
+
+  /** Choose once per recording; retries keep the recording's CPU recovery pin. */
+  async prepareWindowsRecording(forceCpu: boolean): Promise<void> {
+    if (!IS_WIN) return
+    await this.resolveWindowsTranscriptionBackend()
+    if (this.parakeetGpuDisabledForSession === forceCpu) return
+    this.parakeetGpuDisabledForSession = forceCpu
+    this.windowsBackendRevision++
+    this.runtimeValidated = false
+    this.validatedWorkerFingerprint = null
+    await this.selectWindowsProfile()
   }
 
   getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
@@ -427,7 +438,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   getParakeetModelPath(): string {
-    const profile = this.getWorkerProfile()
+    const profile = this.getSelectedWindowsProfile()
     return join(
       this.getModelsDir(),
       'parakeet-models',
@@ -469,24 +480,8 @@ export class WhisperManager extends EventEmitter {
     await this.installMacWhisperRuntimeFromDir(bundledRuntimeDir)
   }
 
-  private getWorkerProfile(): WindowsTranscriptionProfile {
-    const base = this.getSelectedWindowsProfile()
-    if (this.getTranscriptionQualityMode() !== 'fast') {
-      return base
-    }
-
-    if (base.engine === 'parakeet' && base.computeType !== 'int8') {
-      return {
-        ...base,
-        computeType: 'int8'
-      }
-    }
-
-    return base
-  }
-
   private getWorkerProfileFingerprint(): string {
-    const profile = this.getWorkerProfile()
+    const profile = this.getSelectedWindowsProfile()
     return `${profile.id}:${profile.computeType}:${this.getWorkerModelPath()}`
   }
 
@@ -518,20 +513,11 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     for (const asset of profile.assets) {
-      const resolvedAsset =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? (this.windowsTranscriptionProfiles['parakeet-cpu'].assets.find(
-              (candidate) => candidate.id === 'model'
-            ) ?? asset)
-          : asset
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(workerProfile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
-        resolvedAsset.expectedFiles
+        asset.expectedFiles
       )
       if (missingExpectedFiles.length > 0) {
         return false
@@ -548,13 +534,29 @@ export class WhisperManager extends EventEmitter {
     this.downgradeChain.push(`${fromBackend}→${toBackend}`)
   }
 
-  private async refreshWindowsProcessingProfile(): Promise<void> {
+  private refreshWindowsProcessingProfile(): Promise<void> {
+    const run = this.updateWindowsProcessingProfile()
+    const promise = run.finally(() => {
+      if (this.windowsProfileRefreshPromise === promise) this.windowsProfileRefreshPromise = null
+    })
+    this.windowsProfileRefreshPromise = promise
+    return promise
+  }
+
+  private async updateWindowsProcessingProfile(): Promise<void> {
     if (!IS_WIN) {
       this.selectedWindowsProcessingProfile = null
       return
     }
 
-    const hardware = await detectWindowsHardwareProfile()
+    const hardware = await detectWindowsHardwareProfile().catch((error) => {
+      logAutodocFailure({
+        area: 'whisper',
+        message: 'Windows profile hardware detection failed; using system memory and CPU count',
+        error
+      })
+      return { logicalProcessors: availableParallelism(), ...getSystemMemorySnapshot() }
+    })
     const device = this.getSelectedWindowsProfile().device
     this.selectedWindowsProcessingProfile = selectWindowsProcessingProfile(
       {
@@ -572,6 +574,7 @@ export class WhisperManager extends EventEmitter {
         reason: this.selectedWindowsProcessingProfile.reason,
         hardware: this.selectedWindowsProcessingProfile.hardware,
         settings: {
+          notesModel: this.selectedWindowsProcessingProfile.notesModel,
           dualSourceMode: this.selectedWindowsProcessingProfile.dualSourceMode,
           notesAfterTranscriptionOnly:
             this.selectedWindowsProcessingProfile.notesAfterTranscriptionOnly,
@@ -657,7 +660,8 @@ export class WhisperManager extends EventEmitter {
         backend: 'mlx-whisper',
         backendLabel: MLX_WHISPER_LABEL,
         macProcessingProfileId: this.selectedMacProfile?.id,
-        macProcessingProfileReason: this.selectedMacProfile?.reason
+        macProcessingProfileReason: this.selectedMacProfile?.reason,
+        notesModel: this.selectedMacProfile?.notesModel
       }
     }
 
@@ -671,11 +675,24 @@ export class WhisperManager extends EventEmitter {
       backend: profile.id,
       backendLabel: profile.label,
       windowsProcessingProfileId: this.selectedWindowsProcessingProfile?.id,
-      windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason
+      windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason,
+      notesModel: this.selectedWindowsProcessingProfile?.notesModel
     }
   }
 
-  private async selectWindowsProfile(): Promise<void> {
+  private selectWindowsProfile(): Promise<void> {
+    if (this.windowsProfileResolutionPromise) return this.windowsProfileResolutionPromise
+    const revision = this.windowsBackendRevision
+    const run = this.resolveSelectedWindowsProfile(revision)
+    const promise = run.finally(() => {
+      if (this.windowsProfileResolutionPromise === promise)
+        this.windowsProfileResolutionPromise = null
+    })
+    this.windowsProfileResolutionPromise = promise
+    return promise
+  }
+
+  private async resolveSelectedWindowsProfile(revision: number): Promise<void> {
     if (!IS_WIN) {
       this.selectedWindowsProfile = null
       return
@@ -684,15 +701,27 @@ export class WhisperManager extends EventEmitter {
     const hardware = await detectWindowsHardwareProfile()
     const manifestPath = this.getWindowsTranscriptionManifestPath()
     this.windowsTranscriptionProfiles = await loadWindowsTranscriptionProfiles(manifestPath)
-    this.selectedWindowsProfile = selectWindowsTranscriptionProfile(
+    if (revision !== this.windowsBackendRevision) return
+    const hardwareSelectedProfile = selectWindowsTranscriptionProfile(
       hardware,
       this.windowsTranscriptionProfiles
     )
+    const gpuDisabled =
+      this.parakeetGpuDisabledForSession && hardwareSelectedProfile.id === 'parakeet-gpu'
+    this.selectedWindowsProfile = gpuDisabled
+      ? this.windowsTranscriptionProfiles['parakeet-cpu']
+      : hardwareSelectedProfile
     await this.refreshWindowsProcessingProfile()
     logAutodocEvent({
       area: 'whisper',
       message: 'Selected Windows transcription backend',
       context: {
+        ...(gpuDisabled
+          ? {
+              sessionRestriction: 'parakeet-gpu-disabled',
+              hardwareSelectedBackend: hardwareSelectedProfile.id
+            }
+          : {}),
         backend: this.selectedWindowsProfile.id,
         backendLabel: this.selectedWindowsProfile.label,
         modelName: this.selectedWindowsProfile.modelName,
@@ -721,7 +750,9 @@ export class WhisperManager extends EventEmitter {
     }
 
     try {
-      await this.selectWindowsProfile()
+      if (this.windowsProfileResolutionPromise) await this.windowsProfileResolutionPromise
+      else if (!this.selectedWindowsProcessingProfile) await this.selectWindowsProfile()
+      while (this.windowsProfileRefreshPromise) await this.windowsProfileRefreshPromise
       this.setupStatus = this.withBackendStatus(this.setupStatus)
       this.emit('setup-status', this.getSetupStatus())
     } catch (err) {
@@ -730,6 +761,9 @@ export class WhisperManager extends EventEmitter {
         message: 'Failed to resolve Windows transcription backend at startup',
         error: err
       })
+      // Failure chooses an explicit conservative profile for both preparation
+      // and generation; a later successful backend selection can replace it.
+      await this.refreshWindowsProcessingProfile()
     }
   }
 
@@ -859,7 +893,6 @@ export class WhisperManager extends EventEmitter {
     }
 
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     const hardware = await detectWindowsHardwareProfile()
     const setupElapsedMs = Date.now() - this.firstRunSetupStartedAt
     const totalDownloadedBytes = this.firstRunDownloadedBytes
@@ -873,7 +906,7 @@ export class WhisperManager extends EventEmitter {
       backendLabel: profile.label,
       modelName: profile.modelName,
       device: profile.device,
-      computeType: workerProfile.computeType,
+      computeType: profile.computeType,
       setupElapsedMs,
       totalDownloadedBytes,
       hardware: {
@@ -1079,8 +1112,11 @@ export class WhisperManager extends EventEmitter {
           }
         })
         this.recordDowngrade(initialProfile.id, 'parakeet-cpu')
+        this.parakeetGpuDisabledForSession = true
+        this.windowsBackendRevision++
         this.selectedWindowsProfile = this.windowsTranscriptionProfiles['parakeet-cpu']
         this.runtimeValidated = false
+        this.validatedWorkerFingerprint = null
         await this.refreshWindowsProcessingProfile()
       }
     }
@@ -1146,7 +1182,6 @@ export class WhisperManager extends EventEmitter {
 
   private async ensureParakeetReady(): Promise<void> {
     const profile = this.getSelectedWindowsProfile()
-    const workerProfile = this.getWorkerProfile()
     await this.ensureFfmpegForSelectedRuntime()
 
     if (profile.assets.some((asset) => !asset.url)) {
@@ -1156,22 +1191,10 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetProfile =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? this.windowsTranscriptionProfiles['parakeet-cpu']
-          : profile
-      const resolvedAsset =
-        asset.id === 'model' &&
-        workerProfile.computeType === 'int8' &&
-        profile.id === 'parakeet-gpu'
-          ? (assetProfile.assets.find((candidate) => candidate.id === 'model') ?? asset)
-          : asset
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(workerProfile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
-        resolvedAsset.expectedFiles
+        asset.expectedFiles
       )
       if (missingExpectedFiles.length === 0) {
         logAutodocEvent({
@@ -1180,7 +1203,7 @@ export class WhisperManager extends EventEmitter {
           context: {
             backend: profile.id,
             assetId: asset.id,
-            filename: resolvedAsset.filename,
+            filename: asset.filename,
             targetDir: assetRoot
           }
         })
@@ -1193,7 +1216,7 @@ export class WhisperManager extends EventEmitter {
         context: {
           backend: profile.id,
           assetId: asset.id,
-          filename: resolvedAsset.filename,
+          filename: asset.filename,
           targetDir: assetRoot,
           missingExpectedFiles
         }
@@ -1204,7 +1227,7 @@ export class WhisperManager extends EventEmitter {
       })
       this.emit('setup-status', this.getSetupStatus())
       await this.downloadWithRetry(
-        () => this.downloadAndExtractWindowsTranscriptionAsset(workerProfile, resolvedAsset),
+        () => this.downloadAndExtractWindowsTranscriptionAsset(profile, asset),
         asset.id
       )
     }
@@ -2328,10 +2351,8 @@ export class WhisperManager extends EventEmitter {
       return false
     }
 
-    // Probe with the quality-adjusted worker profile: in fast mode the GPU
-    // tier runs int8, and getParakeetModelPath() already points at that model
-    // dir, so probing with the base fp32 computeType would always fail.
-    const profile = this.getWorkerProfile()
+    // Probe the model and device selected by the automatic hardware profile.
+    const profile = this.getSelectedWindowsProfile()
     const probeDir = await mkdtemp(join(tmpdir(), 'autodoc-parakeet-probe-'))
     const probeWavPath = join(probeDir, 'probe.wav')
 
@@ -2693,6 +2714,12 @@ export class WhisperManager extends EventEmitter {
 
     const totalBytes = Number(response.headers.get('content-length') ?? 0)
     let downloadedBytes = 0
+    let lastReportedPercent: number | undefined
+    const reportProgress = (percent: number): void => {
+      if (percent === lastReportedPercent) return
+      lastReportedPercent = percent
+      onProgress?.(percent)
+    }
     const tempPath = `${destPath}.tmp`
 
     await rm(tempPath, { force: true })
@@ -2701,6 +2728,8 @@ export class WhisperManager extends EventEmitter {
     if (!reader) throw new Error(`No response body for ${label}`)
 
     try {
+      // Unknown-size downloads stay indeterminate; callers signal completion by phase.
+      if (totalBytes <= 0) reportProgress(0)
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -2709,7 +2738,7 @@ export class WhisperManager extends EventEmitter {
         }
         downloadedBytes += value.length
         const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
-        onProgress?.(percent)
+        reportProgress(percent)
         this.emit('download-progress', {
           file: label,
           percent,
@@ -2718,6 +2747,7 @@ export class WhisperManager extends EventEmitter {
         } as DownloadProgress)
       }
 
+      if (totalBytes > 0) reportProgress(100)
       fileStream.end()
       await new Promise<void>((resolve, reject) => {
         fileStream.on('finish', resolve)

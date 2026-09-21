@@ -25,7 +25,7 @@ Everything that touches your meeting content happens locally:
 | Screen / microphone / system-audio capture | Your computer |
 | Transcription (Parakeet on Windows / MLX Whisper on macOS) | Your computer |
 | Speaker labeling (mic vs system audio) | Your computer |
-| AI note generation (Ollama / llama3.1) | Your computer |
+| AI note generation (Ollama / on-device notes model) | Your computer |
 | Search | Your computer |
 
 No meeting audio, video, transcript, or generated note is ever transmitted to

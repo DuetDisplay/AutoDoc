@@ -38,12 +38,18 @@ interface TranscriptionBadgeProps {
   status: TranscriptionStatus
   progress?: number
   backendLabel?: string
-  qualityMode?: 'fast' | 'balanced'
+  hasMemoryFailure?: boolean
   onRetry?: () => void
 }
 
-export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionBadgeProps) {
+export function TranscriptionBadge({
+  status,
+  progress,
+  onRetry,
+  hasMemoryFailure
+}: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
+  const isMemoryFailure = status === 'failed' && hasMemoryFailure
   const [setupStatus, setSetupStatus] = useState<
     import('../../../shared/types').WhisperSetupStatus | null
   >(null)
@@ -71,8 +77,8 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
 
   return (
     <span
-      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className}`}
-      onClick={status === 'failed' ? onRetry : undefined}
+      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${isMemoryFailure ? 'cursor-default hover:bg-red-50' : ''}`}
+      onClick={status === 'failed' && !isMemoryFailure ? onRetry : undefined}
     >
       {showProgress && (
         <span
@@ -81,8 +87,10 @@ export function TranscriptionBadge({ status, progress, onRetry }: TranscriptionB
         />
       )}
       <span className="relative">
-        {transcribingLabel ??
-          (showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label))}
+        {isMemoryFailure
+          ? 'Not enough memory'
+          : (transcribingLabel ??
+            (showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label)))}
       </span>
     </span>
   )

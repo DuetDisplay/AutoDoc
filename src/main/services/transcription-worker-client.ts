@@ -95,6 +95,7 @@ const WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES = new Set([3221226505, -1073740791
 
 export class TranscriptionWorkerClient {
   private process: ChildProcess | null = null
+  private recoveryProcess: ChildProcess | null = null
   private nextRequestId = 1
   private pendingRequests = new Map<number, PendingRequest>()
   private stdoutBuffer = ''
@@ -158,6 +159,36 @@ export class TranscriptionWorkerClient {
     }
     this.process = null
     this.loaded = false
+  }
+
+  /** Recovery must observe process exit before loading a replacement model. */
+  disposeAndWait(timeoutMs = 10_000): Promise<void> {
+    const proc = this.process ?? this.recoveryProcess
+    if (!proc || proc.exitCode != null || proc.signalCode != null) {
+      this.dispose()
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve, reject) => {
+      const finish = (): void => {
+        clearTimeout(timer)
+        proc.removeListener('close', finish)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        proc.removeListener('close', finish)
+        reject(new Error('Transcription worker did not exit before the recovery timeout'))
+      }, timeoutMs)
+      proc.once('close', finish)
+      try {
+        // A stdin/process error can clear the request transport before the OS exits.
+        if (proc !== this.process && !proc.killed) proc.kill()
+        this.dispose()
+      } catch (error) {
+        clearTimeout(timer)
+        proc.removeListener('close', finish)
+        reject(error)
+      }
+    })
   }
 
   private async request(
@@ -232,6 +263,7 @@ export class TranscriptionWorkerClient {
 
     this.hasSpawnedProcess = true
     this.process = proc
+    this.recoveryProcess = proc
     this.stdoutBuffer = ''
     this.attachProcessHandlers(proc)
     this.options.applyPriority?.(proc.pid)
@@ -263,6 +295,7 @@ export class TranscriptionWorkerClient {
     })
 
     proc.on('close', (code, signal) => {
+      if (this.recoveryProcess === proc) this.recoveryProcess = null
       this.handleProcessExit(code, signal)
     })
   }

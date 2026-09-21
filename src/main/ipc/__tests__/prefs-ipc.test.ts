@@ -23,6 +23,8 @@ vi.mock('electron-store', () => {
 })
 
 import { PrefsStore } from '../../services/prefs-store'
+import { registerPrefsIpc } from '../prefs-ipc'
+import { BrowserWindow, ipcMain } from 'electron'
 
 describe('PrefsStore', () => {
   let store: PrefsStore
@@ -81,6 +83,37 @@ describe('PrefsStore', () => {
     expect(store.getDiagnosticLogUploadConsent()).toBe(true)
   })
 
+  it('shows the video watermark by default and persists changes', () => {
+    expect(store.getVideoWatermarkVisible()).toBe(true)
+
+    store.setVideoWatermarkVisible(false)
+
+    expect(store.getVideoWatermarkVisible()).toBe(false)
+  })
+
+  it('broadcasts video watermark preference changes to renderer windows', () => {
+    vi.mocked(ipcMain.handle).mockClear()
+    registerPrefsIpc(store)
+
+    const registration = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'prefs:set-video-watermark-visible')
+    if (!registration) {
+      throw new Error('Expected the video watermark preference handler to be registered')
+    }
+
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+      { webContents: { send } }
+    ] as unknown as ReturnType<typeof BrowserWindow.getAllWindows>)
+    const handler = registration[1] as unknown as (event: unknown, visible: boolean) => void
+
+    handler({}, false)
+
+    expect(store.getVideoWatermarkVisible()).toBe(false)
+    expect(send).toHaveBeenCalledWith('prefs:video-watermark-visible-changed', false)
+  })
+
   it('persists the low-memory Mac processing banner dismissal flag', () => {
     expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(false)
 
@@ -89,31 +122,13 @@ describe('PrefsStore', () => {
     expect(store.getLowSpecMacProcessingBannerDismissed()).toBe(true)
   })
 
-  it('defaults transcription performance mode to balanced', () => {
-    expect(store.getTranscriptionPerformanceMode()).toBe('balanced')
-  })
+  it('persists the notes engine upgrade ready dismissal and clears eligibility', () => {
+    store.setNotesEngineUpgradeEligible(true)
+    expect(store.getNotesEngineReadyDismissed()).toBe(false)
 
-  it('persists transcription performance mode', () => {
-    store.setTranscriptionPerformanceMode('fast')
-    expect(store.getTranscriptionPerformanceMode()).toBe('fast')
-  })
+    store.setNotesEngineReadyDismissed(true)
 
-  it('defaults transcription quality mode to balanced', () => {
-    expect(store.getTranscriptionQualityMode()).toBe('balanced')
-  })
-
-  it('persists transcription quality mode', () => {
-    store.setTranscriptionQualityMode('fast')
-    expect(store.getTranscriptionQualityMode()).toBe('fast')
-  })
-
-  it('rejects accurate transcription quality mode for now', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    store.setTranscriptionQualityMode('accurate')
-
-    expect(store.getTranscriptionQualityMode()).toBe('balanced')
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    warnSpy.mockRestore()
+    expect(store.getNotesEngineReadyDismissed()).toBe(true)
+    expect(store.getNotesEngineUpgradeEligible()).toBe(false)
   })
 })

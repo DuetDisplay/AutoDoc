@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { spawn } from 'child_process'
+import { BrowserWindow } from 'electron'
 import {
   getRecordingSourceCaptureOptions,
   registerRecordingIpc,
@@ -291,7 +292,10 @@ describe('recording IPC source handling', () => {
       )?.[1] as ((_event: unknown, meetingId: string) => Promise<void>) | undefined
 
       expect(deleteHandler).toBeTypeOf('function')
+      const send = vi.fn()
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValueOnce([{ webContents: { send } }] as any)
       await deleteHandler?.(null, 'meeting-1')
+      expect(send).toHaveBeenCalledWith('recording:entry-updated', { meetingId: 'meeting-1' })
 
       await expect(fsp.access(meetingDir)).rejects.toThrow()
       await expect(fsp.access(modelPath)).resolves.toBeUndefined()
@@ -658,6 +662,69 @@ describe('recording IPC source handling', () => {
           { type: 'mic', segmentIndex: 1, offsetMs: 14250 }
         ])
       )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('lists imported meetings that have a transcript but no audio or video', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const importedId = 'imported-transcript-only'
+    const emptyId = 'empty-aborted'
+    const startedAt = new Date(2026, 7, 17, 15, 29).getTime()
+
+    try {
+      await fsp.mkdir(path.join(recordingsDir, importedId), { recursive: true })
+      await fsp.mkdir(path.join(recordingsDir, emptyId), { recursive: true })
+      await fsp.writeFile(path.join(recordingsDir, importedId, 'transcript.json'), '[]')
+      vi.mocked(readMetadata).mockImplementation(async (dir) => {
+        if (path.basename(dir) === importedId) {
+          return {
+            sourceName: 'Imported transcript',
+            customTitle: 'Stand Up',
+            startedAt,
+            stoppedAt: startedAt + 33 * 60 * 1000,
+            durationSeconds: 33 * 60
+          }
+        }
+        return null
+      })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: false })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        {
+          getStatus: vi.fn().mockResolvedValue('complete'),
+          enqueue: vi.fn()
+        } as any,
+        {
+          ensureReady: vi.fn(),
+          getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
+        } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      const listHandler = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:list'
+      )?.[1] as (() => Promise<Array<{ meetingId: string; title: string }>>) | undefined
+
+      expect(listHandler).toBeTypeOf('function')
+      const entries = await listHandler?.()
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          meetingId: importedId,
+          title: 'Stand Up'
+        })
+      ])
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }

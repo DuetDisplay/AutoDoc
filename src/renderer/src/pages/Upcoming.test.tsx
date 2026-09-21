@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { useToastStore } from '../stores/toast'
 import { Upcoming } from './Upcoming'
 import { hasCurrentOrImminentMeeting } from '../services/feedback-prompt-safety'
 import {
@@ -132,5 +133,43 @@ describe('Upcoming', () => {
         now
       )
     ).toBe(false)
+  })
+
+  it('uses saved series updates and keeps the previous state when saving fails', async () => {
+    const events = [0, 1].map((i) =>
+      createCalendarEvent({ id: `event-${i}`, recurringEventId: 'series' })
+    )
+    let resolveSave!: () => void
+    const api = installMockElectronApi({
+      'calendar:get-accounts': () => [createCalendarAccount()],
+      'calendar:get-events': () => events,
+      'calendar:set-auto-record': () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve
+        })
+    })
+    render(
+      <MemoryRouter>
+        <Upcoming />
+      </MemoryRouter>
+    )
+    const user = userEvent.setup()
+    await user.click((await screen.findAllByRole('button', { name: 'Enable auto-record' }))[0])
+    await user.click(screen.getByRole('button', { name: /All in series/ }))
+    expect(screen.getAllByText('Auto-record: Off')).toHaveLength(2)
+    await act(async () => {
+      api.emit(
+        'calendar:events-updated',
+        events.map((event) => ({ ...event, autoRecord: 'series' }))
+      )
+      resolveSave()
+    })
+    expect(screen.getAllByText('Auto-record: Series')).toHaveLength(2)
+    api.setHandler('calendar:set-auto-record', () => Promise.reject(new Error('write failed')))
+    await user.click(screen.getAllByRole('button', { name: 'Disable auto-record' })[0])
+    await waitFor(() =>
+      expect(useToastStore.getState().activeToast?.message).toContain('Could not save')
+    )
+    expect(screen.getAllByText('Auto-record: Series')).toHaveLength(2)
   })
 })

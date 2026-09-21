@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => {
 
   return {
     FakeNotificationWindow,
+    getMainWindow: vi.fn(),
+    appHide: vi.fn(),
     ipcHandlers,
     windows,
     ipcOnce: vi.fn((channel: string, handler: () => void) => {
@@ -55,7 +57,10 @@ const mocks = vi.hoisted(() => {
   }
 })
 
+vi.mock('../services/main-window', () => ({ getMainWindow: mocks.getMainWindow }))
+
 vi.mock('electron', () => ({
+  app: { hide: mocks.appHide },
   BrowserWindow: mocks.FakeNotificationWindow,
   screen: {
     getPrimaryDisplay: () => ({
@@ -76,6 +81,21 @@ const {
   showNotificationWindow
 } = await import('../notification-window')
 const suppressionUnsubscribers: Array<() => void> = []
+const originalPlatform = process.platform
+function setPlatform(platform: string): void {
+  Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+}
+function createMainWindow(
+  state: { visible?: boolean; minimized?: boolean; focused?: boolean } = {}
+) {
+  return {
+    isVisible: () => state.visible ?? true,
+    isMinimized: () => state.minimized ?? false,
+    isFocused: () => state.focused ?? false,
+    hide: vi.fn(),
+    minimize: vi.fn()
+  }
+}
 
 function subscribeToSuppressionChanges(listener: (isSuppressed: boolean) => void): () => void {
   const unsubscribe = onNotificationActivationSuppressionChange(listener)
@@ -101,6 +121,7 @@ describe('notification window activation suppression', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    mocks.getMainWindow.mockReturnValue(null)
     mocks.ipcHandlers.clear()
     mocks.windows.length = 0
     resetNotificationActivationSuppressionForTests()
@@ -115,6 +136,91 @@ describe('notification window activation suppression', () => {
     }
     vi.clearAllTimers()
     vi.useRealTimers()
+    setPlatform(originalPlatform)
+  })
+
+  it.each(['meeting-detection', 'notes-ready', undefined] as const)(
+    'protects an unfocused visible macOS window for %s notifications',
+    async (kind) => {
+      setPlatform('darwin')
+      const main = createMainWindow()
+      mocks.getMainWindow.mockReturnValue(main)
+      const onDismiss = vi.fn()
+      showTestNotification({ kind, onDismiss })
+      expect(main.hide).toHaveBeenCalledTimes(1)
+      expect(main.hide.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.windows[0].loadURL.mock.invocationCallOrder[0]
+      )
+      mocks.ipcHandlers.get('notification:dismiss')?.()
+      await Promise.resolve()
+      expect(main.hide).toHaveBeenCalledTimes(2)
+      expect(main.minimize).not.toHaveBeenCalled()
+      expect(mocks.appHide).toHaveBeenCalledTimes(1)
+      expect(onDismiss).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([
+    { visible: false, minimized: false },
+    { visible: true, minimized: true }
+  ])('preserves hidden/minimized macOS state on close: %j', (state) => {
+    setPlatform('darwin')
+    const main = createMainWindow(state)
+    mocks.getMainWindow.mockReturnValue(main)
+    showTestNotification({ kind: 'meeting-detection' })
+    expect(main.hide).not.toHaveBeenCalled()
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    expect(main.minimize).toHaveBeenCalledTimes(state.minimized ? 1 : 0)
+    expect(main.hide).toHaveBeenCalledTimes(state.minimized ? 0 : 1)
+    expect(mocks.appHide).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a foreground main window alone on dismiss', () => {
+    setPlatform('darwin')
+    const main = createMainWindow({ focused: true })
+    mocks.getMainWindow.mockReturnValue(main)
+    showTestNotification()
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(main.minimize).not.toHaveBeenCalled()
+    expect(mocks.appHide).not.toHaveBeenCalled()
+  })
+
+  it('keeps existing Windows visibility behavior on dismiss', () => {
+    setPlatform('win32')
+    const main = createMainWindow()
+    mocks.getMainWindow.mockReturnValue(main)
+    showTestNotification()
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(main.minimize).not.toHaveBeenCalled()
+    expect(mocks.appHide).not.toHaveBeenCalled()
+  })
+
+  it('does not let a timeout or second click dismiss after the primary action', () => {
+    setPlatform('darwin')
+    const main = createMainWindow({ visible: false })
+    mocks.getMainWindow.mockReturnValue(main)
+    const onPrimaryAction = vi.fn(),
+      onDismiss = vi.fn()
+    showTestNotification({ onPrimaryAction, onDismiss, autoDismissMs: 100 })
+    mocks.ipcHandlers.get('notification:primary-action')?.()
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    vi.advanceTimersByTime(100)
+    expect(onPrimaryAction).toHaveBeenCalledTimes(1)
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(main.hide).not.toHaveBeenCalled()
+    expect(mocks.appHide).not.toHaveBeenCalled()
+  })
+
+  it('keeps the background app hidden on auto-dismiss', () => {
+    setPlatform('darwin')
+    const main = createMainWindow({ visible: false })
+    mocks.getMainWindow.mockReturnValue(main)
+    showTestNotification({ autoDismissMs: 100 })
+    vi.advanceTimersByTime(100)
+    expect(main.hide).toHaveBeenCalledTimes(1)
+    expect(mocks.appHide).toHaveBeenCalledTimes(1)
   })
 
   it('does not suppress app activation merely because a notification is visible', () => {

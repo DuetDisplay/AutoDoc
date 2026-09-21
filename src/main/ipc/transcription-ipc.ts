@@ -17,6 +17,10 @@ export function registerTranscriptionIpc(
     return transcriptionService.getProgress(meetingId)
   })
 
+  ipcMain.handle('transcription:get-memory-failure', (_event, meetingId: string) => {
+    return transcriptionService.getMemoryFailure(meetingId)
+  })
+
   ipcMain.handle(
     'transcription:get-transcript',
     async (_event, meetingId: string): Promise<Transcript[]> => {
@@ -24,8 +28,19 @@ export function registerTranscriptionIpc(
     }
   )
 
-  ipcMain.handle('transcription:retry', async (_event, meetingId: string): Promise<void> => {
-    onManualRetry?.(meetingId)
-    transcriptionService.retry(meetingId)
+  ipcMain.handle('transcription:get-reprocess-failure', async (_event, meetingId: string) => {
+    return transcriptionService.getReprocessFailure(meetingId)
   })
+
+  ipcMain.handle(
+    'transcription:retry',
+    async (_event, meetingId: string, options?: { reprocess?: boolean }): Promise<void> => {
+      onManualRetry?.(meetingId)
+      if (process.platform === 'win32' && options?.reprocess === true) {
+        transcriptionService.retry(meetingId, 'reprocess')
+      } else {
+        transcriptionService.retry(meetingId)
+      }
+    }
+  )
 }

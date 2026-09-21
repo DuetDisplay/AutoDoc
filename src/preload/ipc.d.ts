@@ -1,3 +1,9 @@
+import type { MemoryFailure } from '../shared/memory-failure'
+import type {
+  NotesFeedbackRequest,
+  NotesFeedbackResult,
+  NotesFeedbackState
+} from '../shared/notes-feedback'
 import type {
   AnalyticsConsentSnapshot,
   AnalyticsDailyActiveResult,
@@ -26,7 +32,14 @@ import type {
   SupportEmailSurface,
   Transcript,
   TranscriptionStatus,
+  MeetingNotesContent,
+  MeetingNotesV2,
+  MeetingCopyNotesRequest,
+  MeetingCopyNotesResult,
+  MeetingExportRequest,
+  MeetingExportResult,
   MeetingSegments,
+  NotesRevision,
   SegmentationStatus,
   SpeakerMap,
   OllamaSetupStatus,
@@ -156,18 +169,32 @@ export interface IpcInvokeEvents {
   'recording:delete': [meetingId: string]
   'recording:retry-video': [meetingId: string]
   'transcription:get-status': [meetingId: string]
+  'transcription:get-memory-failure': [meetingId: string]
   'transcription:get-progress': [meetingId: string]
   'transcription:get-transcript': [meetingId: string]
-  'transcription:retry': [meetingId: string]
+  'transcription:retry': [meetingId: string, options?: { reprocess: boolean }]
+  'transcription:get-reprocess-failure': [meetingId: string]
   'ollama:check-status': []
   'ollama:get-model': []
   'segmentation:get-status': [meetingId: string]
+  'segmentation:get-memory-failure': [meetingId: string]
   'segmentation:get-error-code': [meetingId: string]
   'segmentation:get-progress': [meetingId: string]
   'segmentation:get-activity': [meetingId: string]
   'segmentation:get-segments': [meetingId: string]
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
+  'notes:get-v2': [meetingId: string]
+  'notes-feedback:state': [meetingId: string, generationId: string]
+  'notes-feedback:send': [request: NotesFeedbackRequest]
+  'notes:set-next-step-completed': [meetingId: string, itemId: string, completed: boolean]
+  'notes:write-v2': [
+    meetingId: string,
+    content: MeetingNotesContent,
+    expectedRevision: NotesRevision
+  ]
+  'meeting:export': [request: MeetingExportRequest]
+  'meeting:copy-notes': [request: MeetingCopyNotesRequest]
   'recording:get-media': [meetingId: string]
   'recording:report-media-player-error': [payload: RecordingMediaPlayerErrorReport]
   'recording:get-detail': [meetingId: string]
@@ -200,14 +227,15 @@ export interface IpcInvokeEvents {
   'prefs:set-analytics-consent': [enabled: boolean]
   'prefs:get-diagnostic-log-upload-consent': []
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
+  'prefs:get-video-watermark-visible': []
+  'prefs:set-video-watermark-visible': [visible: boolean]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
   'prefs:set-low-spec-mac-processing-banner-dismissed': [dismissed: boolean]
-  'prefs:get-transcription-performance-mode': []
-  'prefs:set-transcription-performance-mode': [mode: 'balanced' | 'fast']
-  'prefs:get-transcription-quality-mode': []
-  'prefs:set-transcription-quality-mode': [mode: 'balanced' | 'fast' | 'accurate']
+  'prefs:get-notes-engine-upgrade-eligible': []
+  'prefs:get-notes-engine-ready-dismissed': []
+  'prefs:set-notes-engine-ready-dismissed': [dismissed: boolean]
   'ollama:get-setup-status': []
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
@@ -283,16 +311,26 @@ export interface IpcInvokeReturns {
   'recording:delete': void
   'recording:retry-video': void
   'transcription:get-status': TranscriptionStatus
+  'transcription:get-memory-failure': MemoryFailure | undefined
   'transcription:get-progress': number | undefined
   'transcription:get-transcript': Transcript[]
   'transcription:retry': void
+  'transcription:get-reprocess-failure': boolean
   'ollama:check-status': boolean
   'ollama:get-model': string
   'segmentation:get-status': SegmentationStatus
+  'segmentation:get-memory-failure': MemoryFailure | undefined
   'segmentation:get-error-code': string | undefined
   'segmentation:get-progress': number | undefined
   'segmentation:get-activity': SegmentationActivity | null
   'segmentation:get-segments': MeetingSegments | null
+  'notes:get-v2': MeetingNotesV2 | null
+  'notes-feedback:state': NotesFeedbackState
+  'notes-feedback:send': NotesFeedbackResult
+  'notes:set-next-step-completed': MeetingNotesV2 | null
+  'notes:write-v2': MeetingNotesV2
+  'meeting:export': MeetingExportResult
+  'meeting:copy-notes': MeetingCopyNotesResult
   'segmentation:retry': void
   'segmentation:save-segments': void
   'recording:get-media': {
@@ -334,14 +372,15 @@ export interface IpcInvokeReturns {
   'prefs:set-analytics-consent': void
   'prefs:get-diagnostic-log-upload-consent': boolean
   'prefs:set-diagnostic-log-upload-consent': void
+  'prefs:get-video-watermark-visible': boolean
+  'prefs:set-video-watermark-visible': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
   'prefs:set-low-spec-mac-processing-banner-dismissed': void
-  'prefs:get-transcription-performance-mode': 'balanced' | 'fast'
-  'prefs:set-transcription-performance-mode': void
-  'prefs:get-transcription-quality-mode': 'balanced' | 'fast'
-  'prefs:set-transcription-quality-mode': void
+  'prefs:get-notes-engine-upgrade-eligible': boolean
+  'prefs:get-notes-engine-ready-dismissed': boolean
+  'prefs:set-notes-engine-ready-dismissed': void
   'ollama:get-setup-status': OllamaSetupStatus
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
@@ -392,6 +431,7 @@ export interface IpcOnEvents {
   'updater:open-settings': []
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
+  'prefs:video-watermark-visible-changed': [visible: boolean]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
   'feedback:contact-initiated': [surface: SupportEmailSurface]
   'feedback:critical-ui-changed': [suppressed: boolean]

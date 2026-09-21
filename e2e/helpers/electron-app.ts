@@ -17,7 +17,7 @@ async function launchApp(options: {
   userDataDir?: string
   realSetup?: boolean
 }) {
-  const appRoot = options.appRoot ?? process.cwd()
+  const appRoot = options.appRoot ?? process.env.AUTODOC_E2E_APP_ROOT ?? process.cwd()
   const mainEntry = resolveMainEntry(appRoot)
   expect(existsSync(mainEntry)).toBeTruthy()
   const profileMarker = options.userDataDir ? `--autodoc-e2e-profile=${options.userDataDir}` : null
@@ -352,7 +352,23 @@ export async function installFakeCaptureDevices(
       context!.fillRect(0, 0, canvas.width, canvas.height)
       context!.fillStyle = '#ffffff'
       context!.fillRect(16, 16, 48, 24)
-      return canvas.captureStream(5)
+      const stream = canvas.captureStream(5)
+      if (useRealMediaRecorder) {
+        // A static canvas painted only before captureStream can produce no
+        // video frames. Model a live capture source for the real recorder.
+        const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
+        let frame = 0
+        const timer = setInterval(() => {
+          if (track.readyState === 'ended') {
+            clearInterval(timer)
+            return
+          }
+          context!.fillStyle = frame++ % 2 ? '#ffffff' : '#4A6B4E'
+          context!.fillRect(0, 0, 8, 8)
+          track.requestFrame()
+        }, 200)
+      }
+      return stream
     }
 
     const makeAudioStream = () => {

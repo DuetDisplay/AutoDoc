@@ -38,6 +38,15 @@ export class EncryptionKeyUnavailableError extends Error {
   }
 }
 
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  )
+}
+
 // ─── Key Management ───
 
 let cachedKey: Buffer | null = null
@@ -265,7 +274,11 @@ export async function initializeEncryption(recordingsBaseDir: string): Promise<v
 
 // ─── JSON Encrypt/Decrypt ───
 
-export async function encryptJSON(data: unknown, filePath: string): Promise<void> {
+export async function encryptJSON(
+  data: unknown,
+  filePath: string,
+  beforeReplace?: () => Promise<void> | void
+): Promise<void> {
   const key = getKey()
   const iv = crypto.randomBytes(12)
   const aad = Buffer.from(path.basename(filePath), 'utf-8')
@@ -281,8 +294,18 @@ export async function encryptJSON(data: unknown, filePath: string): Promise<void
   // Unique temp name so concurrent writers to the same file cannot steal or
   // rename each other's temp file out from under them.
   const tempPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.enc`
-  await fsp.writeFile(tempPath, output)
   try {
+    // Do not follow or overwrite a pre-existing temp entry. The random suffix
+    // makes collisions vanishingly unlikely, while `wx` makes them harmless.
+    await fsp.writeFile(tempPath, output, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if (!isNodeErrorWithCode(error, 'EEXIST')) {
+      await fsp.unlink(tempPath).catch(() => {})
+    }
+    throw error
+  }
+  try {
+    await beforeReplace?.()
     await renameWithRetry(tempPath, filePath)
   } catch (err) {
     await fsp.unlink(tempPath).catch(() => {})
@@ -290,9 +313,16 @@ export async function encryptJSON(data: unknown, filePath: string): Promise<void
   }
 }
 
-export async function decryptJSON<T>(filePath: string): Promise<T> {
+/**
+ * Decrypt an already-safely-read JSON payload. Callers that read untrusted
+ * recording files should validate the file entry before passing its bytes here.
+ */
+export function decryptJSONBuffer<T>(buf: Buffer, filePath: string): T {
+  if (buf.length < 32 || !buf.subarray(0, 4).equals(MAGIC)) {
+    throw new Error('Invalid encrypted JSON payload')
+  }
+
   const key = getKey()
-  const buf = await fsp.readFile(filePath)
   const aad = Buffer.from(path.basename(filePath), 'utf-8')
 
   const iv = buf.subarray(4, 16)
@@ -305,6 +335,10 @@ export async function decryptJSON<T>(filePath: string): Promise<T> {
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()])
 
   return JSON.parse(decrypted.toString('utf-8')) as T
+}
+
+export async function decryptJSON<T>(filePath: string): Promise<T> {
+  return decryptJSONBuffer<T>(await fsp.readFile(filePath), filePath)
 }
 
 // ─── Chunked Media Encrypt/Decrypt ───
@@ -607,6 +641,7 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
     'screen.webm',
     'transcript.json',
     'segments.json',
+    'notes.json',
     'speakers.json',
     'metadata.json'
   ]
@@ -617,6 +652,7 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
   } catch {
     return
   }
+  let notesMigrationFailed = false
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
@@ -633,6 +669,22 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
 
     for (const filename of targetFiles) {
       const filePath = path.join(meetingDir, filename)
+
+      if (filename === 'notes.json') {
+        try {
+          // Delayed to avoid a crypto <-> repository import cycle at module load.
+          // The repository owns the per-meeting queue and validates plaintext
+          // V2 both before and immediately before replacing it.
+          const { NotesRepository } = await import('./notes-repository')
+          await new NotesRepository(recordingsBaseDir).migratePlaintextV2(entry.name)
+        } catch {
+          // Finish the scan so one recoverable plaintext notes file cannot
+          // prevent later meetings from being encrypted. Keep only a bit of
+          // failure state so diagnostics cannot retain paths or content.
+          notesMigrationFailed = true
+        }
+        continue
+      }
 
       try {
         await fsp.access(filePath)
@@ -656,6 +708,10 @@ export async function migrateRecordings(recordingsBaseDir: string): Promise<void
         await encryptFileInPlace(filePath)
       }
     }
+  }
+
+  if (notesMigrationFailed) {
+    throw new Error('Could not migrate one or more encrypted meeting notes')
   }
 }
 

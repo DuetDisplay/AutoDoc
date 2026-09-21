@@ -1,0 +1,47 @@
+{
+  "projectId": 218998,
+  "dashboardId": 2120516,
+  "surveyId": "01a0c5be-0a26-0000-e57e-def4047e2196",
+  "insights": [
+    {
+      "name": "Usefulness — response counts (30 days)",
+      "description": "One count per submission, including explicit analytics-off feedback. These are responses, not unique people. Test responses excluded.",
+      "display": "ActionsBar",
+      "x": "rating",
+      "ys": ["responses"],
+      "sql": "SELECT properties.rating AS rating, count(DISTINCT distinct_id) AS responses FROM events WHERE event = 'survey sent' AND properties.$survey_id = '01a0c5be-0a26-0000-e57e-def4047e2196' AND properties.feedback_kind = 'notes_v2' AND (properties.is_test IS NULL OR properties.is_test != true) AND timestamp >= now() - INTERVAL 30 DAY GROUP BY rating ORDER BY rating"
+    },
+    {
+      "name": "Usefulness by notes engine (30 days)",
+      "description": "Useful share = Useful / all three ratings. Compare sample counts alongside percentages. Unknown means historical notes lack generation provenance.",
+      "display": "ActionsTable",
+      "sql": "SELECT properties.notes_engine_version AS engine, count(DISTINCT distinct_id) AS responses, count(DISTINCT if(properties.rating = 'useful', distinct_id, NULL)) AS useful, count(DISTINCT if(properties.rating = 'somewhat_useful', distinct_id, NULL)) AS somewhat_useful, count(DISTINCT if(properties.rating = 'not_useful', distinct_id, NULL)) AS not_useful, round(100.0 * count(DISTINCT if(properties.rating = 'useful', distinct_id, NULL)) / count(DISTINCT distinct_id), 1) AS useful_percent FROM events WHERE event = 'survey sent' AND properties.$survey_id = '01a0c5be-0a26-0000-e57e-def4047e2196' AND properties.feedback_kind = 'notes_v2' AND (properties.is_test IS NULL OR properties.is_test != true) AND timestamp >= now() - INTERVAL 30 DAY GROUP BY engine ORDER BY responses DESC"
+    },
+    {
+      "name": "Optional feedback — recent comments (30 days)",
+      "description": "Only user-submitted text, stored as survey responses. Review recurring themes manually; no meeting content is attached. One row per submission, tests excluded.",
+      "display": "ActionsTable",
+      "sql": "SELECT max(timestamp) AS received_at, any(properties.rating) AS rating, any(properties.notes_engine_version) AS engine, any(properties['$survey_response_6902d2f3-2f6d-48b7-b27f-85292fd28fd5']) AS comment FROM events WHERE event = 'survey sent' AND properties.$survey_id = '01a0c5be-0a26-0000-e57e-def4047e2196' AND properties.feedback_kind = 'notes_v2' AND (properties.is_test IS NULL OR properties.is_test != true) AND timestamp >= now() - INTERVAL 30 DAY AND properties.has_comment = true GROUP BY distinct_id ORDER BY received_at DESC LIMIT 50"
+    },
+    {
+      "name": "Notes outcomes — consented events (30 days)",
+      "description": "Raw terminal status events, not a conversion funnel. Historical engine versions are unknown. Failed and no-notes events describe attempted generation, not successful V2 output.",
+      "display": "ActionsTable",
+      "sql": "SELECT event AS outcome, coalesce(properties.notes_engine_version, 'unknown') AS engine, count(DISTINCT uuid) AS events FROM events WHERE event IN ('notes_generated','notes_layout_degraded','notes_generation_failed','notes_not_generated') AND timestamp >= now() - INTERVAL 30 DAY GROUP BY outcome, engine ORDER BY events DESC"
+    },
+    {
+      "name": "Notes speed — successful V2 generation (30 days)",
+      "description": "Processing-time buckets for notes_generated with notes_layout=v2, analytics-enabled only. Excludes failures. Missing duration is shown as unknown.",
+      "display": "ActionsBar",
+      "x": "duration",
+      "ys": ["generations"],
+      "sql": "SELECT coalesce(properties.processing_time_bucket, 'unknown') AS duration, count(DISTINCT uuid) AS generations FROM events WHERE event = 'notes_generated' AND properties.notes_layout = 'v2' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY duration ORDER BY duration"
+    },
+    {
+      "name": "Repeat V2 generation — opted-in installs (30 days)",
+      "description": "Repeat use means successful V2 generation on at least two different UTC days in the last 30 days. Includes opted-in installations only; not an all-user retention rate.",
+      "display": "ActionsTable",
+      "sql": "SELECT count() AS installs_with_v2_generation, countIf(active_days >= 2) AS installs_on_multiple_days, round(100.0 * countIf(active_days >= 2) / nullIf(count(), 0), 1) AS repeat_percent FROM (SELECT distinct_id, count(DISTINCT toDate(timestamp)) AS active_days FROM events WHERE event = 'notes_generated' AND properties.notes_layout = 'v2' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY distinct_id)"
+    }
+  ]
+}

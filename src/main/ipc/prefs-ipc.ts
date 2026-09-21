@@ -1,6 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
-import { logQaGateSettingsChanged } from '../services/qa-gate-log'
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -13,6 +12,13 @@ function broadcastDiagnosticLogUploadConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
     win.webContents.send('prefs:diagnostic-log-upload-consent-changed', enabled)
+  }
+}
+
+function broadcastVideoWatermarkVisible(visible: boolean): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('prefs:video-watermark-visible-changed', visible)
   }
 }
 
@@ -87,6 +93,15 @@ export function registerPrefsIpc(
     broadcastDiagnosticLogUploadConsent(enabled)
   })
 
+  ipcMain.handle('prefs:get-video-watermark-visible', (): boolean => {
+    return prefsStore.getVideoWatermarkVisible()
+  })
+
+  ipcMain.handle('prefs:set-video-watermark-visible', (_event, visible: boolean): void => {
+    prefsStore.setVideoWatermarkVisible(visible)
+    broadcastVideoWatermarkVisible(visible)
+  })
+
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {
     return false
   })
@@ -108,33 +123,15 @@ export function registerPrefsIpc(
     }
   )
 
-  ipcMain.handle('prefs:get-transcription-performance-mode', (): 'balanced' | 'fast' => {
-    return prefsStore.getTranscriptionPerformanceMode()
+  ipcMain.handle('prefs:get-notes-engine-upgrade-eligible', (): boolean => {
+    return prefsStore.getNotesEngineUpgradeEligible()
   })
 
-  ipcMain.handle(
-    'prefs:set-transcription-performance-mode',
-    (_event, mode: 'balanced' | 'fast'): void => {
-      prefsStore.setTranscriptionPerformanceMode(mode)
-      logQaGateSettingsChanged({
-        setting: 'transcription-performance-mode',
-        mode
-      })
-    }
-  )
-
-  ipcMain.handle('prefs:get-transcription-quality-mode', (): 'balanced' | 'fast' => {
-    return prefsStore.getTranscriptionQualityMode()
+  ipcMain.handle('prefs:get-notes-engine-ready-dismissed', (): boolean => {
+    return prefsStore.getNotesEngineReadyDismissed()
   })
 
-  ipcMain.handle(
-    'prefs:set-transcription-quality-mode',
-    (_event, mode: 'balanced' | 'fast' | 'accurate'): void => {
-      prefsStore.setTranscriptionQualityMode(mode)
-      logQaGateSettingsChanged({
-        setting: 'transcription-quality-mode',
-        mode
-      })
-    }
-  )
+  ipcMain.handle('prefs:set-notes-engine-ready-dismissed', (_event, dismissed: boolean): void => {
+    prefsStore.setNotesEngineReadyDismissed(dismissed)
+  })
 }
