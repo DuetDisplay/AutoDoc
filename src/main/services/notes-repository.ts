@@ -1,6 +1,8 @@
 import { constants } from 'fs'
 import { lstat, open } from 'fs/promises'
 import { isAbsolute, join, relative, resolve } from 'path'
+import { randomUUID } from 'node:crypto'
+import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
 import type {
   LegacyNotesRevision,
   MeetingNotesContent,
@@ -383,6 +385,11 @@ export class NotesRepository {
       sourceTranscriptRevision,
       sourceAttributionRevision,
       revision,
+      ...(current
+        ? current.generation
+          ? { generation: current.generation }
+          : {}
+        : { generation: { id: randomUUID(), engineVersion: NOTES_ENGINE_VERSION } }),
       ...content
     }
     if (Buffer.byteLength(JSON.stringify(notes), 'utf8') > NOTES_JSON_MAX_BYTES) {

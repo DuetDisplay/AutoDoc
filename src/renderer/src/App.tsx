@@ -8,6 +8,7 @@ import { Search } from './pages/Search'
 import { AskAI } from './pages/AskAI'
 import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
+import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
 import { useRecording } from './hooks/useRecording'
 import {
   buildRecordingSelectionContext,
@@ -495,7 +496,9 @@ export default function App() {
         notesGenerationStarted.current[payload.meetingId] === undefined
       ) {
         notesGenerationStarted.current[payload.meetingId] = performance.now()
-        trackEvent('notes_generation_started')
+        segmentationCompletions.current.delete(payload.meetingId)
+        segmentationNoNotes.current.delete(payload.meetingId)
+        trackEvent('notes_generation_started', { notes_engine_version: NOTES_ENGINE_VERSION })
       }
 
       if (payload.status === 'complete') {
@@ -509,14 +512,16 @@ export default function App() {
             notesDurationSec === undefined ? undefined : toDurationBucket(notesDurationSec)
           if (payload.errorCode === 'scan_or_persist') {
             trackEvent('notes_layout_degraded', {
+              notes_engine_version: startedAt === undefined ? 'unknown' : NOTES_ENGINE_VERSION,
               failure_code: 'scan_or_persist',
               notes_layout: 'v1',
               processing_time_bucket
             })
           } else {
             trackEvent('notes_generated', {
+              notes_engine_version: startedAt === undefined ? 'unknown' : NOTES_ENGINE_VERSION,
               processing_time_bucket,
-              notes_layout: payload.notesLayout ?? 'v2',
+              notes_layout: payload.notesLayout ?? 'unknown',
               grouping_fallback: payload.groupingFallback === true
             })
             void trackFirstEventOnce('notes_generated', 'first_notes_generated')
@@ -546,7 +551,10 @@ export default function App() {
         if (!segmentationNoNotes.current.has(payload.meetingId)) {
           segmentationNoNotes.current.add(payload.meetingId)
           delete notesGenerationStarted.current[payload.meetingId]
-          trackEvent('notes_not_generated', { reason_code: 'no_notes_detected' })
+          trackEvent('notes_not_generated', {
+            reason_code: 'no_notes_detected',
+            notes_engine_version: NOTES_ENGINE_VERSION
+          })
           trackMeetingProcessed({
             store: meetingProcessTimes.current,
             emitted: meetingProcessedEmissions.current,
@@ -564,7 +572,10 @@ export default function App() {
       if (segmentationFailures.current[payload.meetingId] === errorCode) return
       segmentationFailures.current[payload.meetingId] = errorCode
       delete notesGenerationStarted.current[payload.meetingId]
-      trackEvent('notes_generation_failed', { failure_code: errorCode })
+      trackEvent('notes_generation_failed', {
+        failure_code: errorCode,
+        notes_engine_version: NOTES_ENGINE_VERSION
+      })
       trackMeetingProcessed({
         store: meetingProcessTimes.current,
         emitted: meetingProcessedEmissions.current,

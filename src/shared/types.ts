@@ -161,6 +161,8 @@ export interface MeetingNotesContent<
 }
 
 export interface MeetingNotesV2 extends MeetingNotesContent {
+  /** Generated once by the pipeline and preserved through manual edits. Local identity only. */
+  generation?: import('./notes-feedback').NotesGeneration
   schemaVersion: 2
   meetingId: string
   /** Required for V2; a later transcript replacement makes its evidence stale. */

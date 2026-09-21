@@ -23,6 +23,8 @@ import type { MemoryFailure } from '../../../shared/memory-failure'
 import { MemoryFailureCallout } from '../components/MemoryFailureCallout'
 import { TranscriptView } from '../components/TranscriptView'
 import { NotesV2Document, useMeetingSpan } from '../components/NotesV2Document'
+import { NotesFeedback } from '../components/NotesFeedback'
+import { feedbackGenerationId } from '../../../shared/notes-feedback'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
@@ -1583,13 +1585,20 @@ export function MeetingDetail() {
               </div>
             )}
             {notesV2 && segmentationStatus === 'complete' && !layoutDegraded ? (
-              <NotesV2Document
-                notes={notesV2}
-                title={detail?.title}
-                meetingSpan={meetingSpan}
-                onSeek={seekToSegment}
-                onWrite={handleWriteNotesV2}
-              />
+              <>
+                <NotesV2Document
+                  notes={notesV2}
+                  title={detail?.title}
+                  meetingSpan={meetingSpan}
+                  onSeek={seekToSegment}
+                  onWrite={handleWriteNotesV2}
+                />
+                <NotesFeedback
+                  key={`${notesV2.meetingId}:${feedbackGenerationId(notesV2)}`}
+                  meetingId={notesV2.meetingId}
+                  generationId={feedbackGenerationId(notesV2)}
+                />
+              </>
             ) : null}
             {(!notesV2 || layoutDegraded) &&
               !hasLegacyItems &&

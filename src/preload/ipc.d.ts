@@ -1,5 +1,10 @@
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
+  NotesFeedbackRequest,
+  NotesFeedbackResult,
+  NotesFeedbackState
+} from '../shared/notes-feedback'
+import type {
   AnalyticsConsentSnapshot,
   AnalyticsDailyActiveResult,
   AnalyticsLocalSignal,
@@ -180,6 +185,8 @@ export interface IpcInvokeEvents {
   'segmentation:retry': [meetingId: string]
   'segmentation:save-segments': [meetingId: string, segments: MeetingSegments]
   'notes:get-v2': [meetingId: string]
+  'notes-feedback:state': [meetingId: string, generationId: string]
+  'notes-feedback:send': [request: NotesFeedbackRequest]
   'notes:set-next-step-completed': [meetingId: string, itemId: string, completed: boolean]
   'notes:write-v2': [
     meetingId: string,
@@ -318,6 +325,8 @@ export interface IpcInvokeReturns {
   'segmentation:get-activity': SegmentationActivity | null
   'segmentation:get-segments': MeetingSegments | null
   'notes:get-v2': MeetingNotesV2 | null
+  'notes-feedback:state': NotesFeedbackState
+  'notes-feedback:send': NotesFeedbackResult
   'notes:set-next-step-completed': MeetingNotesV2 | null
   'notes:write-v2': MeetingNotesV2
   'meeting:export': MeetingExportResult

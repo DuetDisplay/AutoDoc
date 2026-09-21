@@ -82,6 +82,7 @@ const ALLOWED_PROPERTIES = new Set([
   'failure_code',
   'grouping_fallback',
   'notes_layout',
+  'notes_engine_version',
   'feature_name',
   'first_notes_generated',
   'first_recording_completed',
@@ -187,6 +188,9 @@ export function toCountBucket(count: number): string {
 
 function normalizePropertyValue(key: string, value: unknown): unknown {
   if (value === undefined || value === null) return undefined
+  if (key === 'notes_engine_version') {
+    return typeof value === 'string' && /^(unknown|v\d+\.\d+)$/.test(value) ? value : undefined
+  }
   if (key === 'app_version' || key === 'current_version' || key === 'previous_version') {
     return isBoundedAppVersion(value) ? value : undefined
   }

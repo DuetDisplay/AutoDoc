@@ -224,6 +224,22 @@ describe('NotesRepository', () => {
     }
   })
 
+  it('preserves generation identity on edits and renews it when notes are regenerated', async () => {
+    const meetingId = 'generation-feedback'
+    const meetingDir = await meeting(meetingId)
+    const { NotesRepository } = await freshModules()
+    const repository = new NotesRepository(recordingsDir)
+    const original = await repository.writeV2(meetingId, content(), { expectedRevision: null, ...sourceBindings(meetingId) })
+    expect(original.generation).toMatchObject({ id: expect.any(String), engineVersion: 'v2.1' })
+    const edited = await repository.writeV2(meetingId, content('Edited'), { expectedRevision: original.revision, ...sourceBindings(meetingId) })
+    expect(edited.generation).toEqual(original.generation)
+    // The pipeline replaces notes.json before promoting the fresh generation.
+    await fsp.unlink(path.join(meetingDir, 'notes.json'))
+    const regenerated = await repository.writeV2(meetingId, content('Edited'), { expectedRevision: null, ...sourceBindings(meetingId) })
+    expect(regenerated.revision).toBe(edited.revision)
+    expect(regenerated.generation?.id).not.toBe(edited.generation?.id)
+  })
+
   it('rejects authenticated V2 ciphertext copied from a different meeting', async () => {
     const firstId = 'meeting-swap-first'
     const secondId = 'meeting-swap-second'

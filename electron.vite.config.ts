@@ -17,6 +17,8 @@ export default defineConfig(({ mode }) => {
         'process.env.AUTODOC_SENTRY_DSN': JSON.stringify(env.AUTODOC_SENTRY_DSN ?? ''),
         'process.env.AUTODOC_SENTRY_DEV': JSON.stringify(env.AUTODOC_SENTRY_DEV ?? ''),
         'process.env.AUTODOC_AUTH_WORKER_URL': JSON.stringify(env.AUTODOC_AUTH_WORKER_URL ?? ''),
+        'process.env.VITE_POSTHOG_KEY': JSON.stringify(env.VITE_POSTHOG_KEY ?? ''),
+        'process.env.VITE_POSTHOG_HOST': JSON.stringify(env.VITE_POSTHOG_HOST ?? ''),
         'process.env.AUTODOC_SUPPORT_EMAIL': JSON.stringify(
           env.AUTODOC_SUPPORT_EMAIL ?? (qaBuild ? 'team@getautodoc.com' : '')
         ),

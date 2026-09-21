@@ -11,6 +11,7 @@ import type {
   TranscriptRevision
 } from '../../shared/types'
 import { hasValidNotesRevision, normalizeNoteSources } from './notes-revision'
+import { isFeedbackUuid } from '../../shared/notes-feedback'
 
 export const NOTES_JSON_MAX_BYTES = 64 * 1024 * 1024
 export const NOTES_ENCRYPTED_MAX_BYTES = NOTES_JSON_MAX_BYTES + 32
@@ -267,7 +268,8 @@ export function parseMeetingNotesV2(value: unknown, expectedMeetingId?: string):
     'keyTakeaways',
     'sections',
     'decisions',
-    'nextSteps'
+    'nextSteps',
+    ...(record.generation === undefined ? [] : ['generation'])
   ])
 
   if (record.schemaVersion !== 2) throw new NotesSchemaError('unsupported-schema')
@@ -302,6 +304,18 @@ export function parseMeetingNotesV2(value: unknown, expectedMeetingId?: string):
     sourceAttributionRevision: record.sourceAttributionRevision,
     revision: record.revision,
     ...content
+  }
+
+  if (record.generation !== undefined) {
+    const generation = expectRecord(record.generation)
+    expectExactKeys(generation, ['id', 'engineVersion'])
+    if (
+      !isFeedbackUuid(generation.id) ||
+      typeof generation.engineVersion !== 'string' ||
+      !/^v\d+\.\d+$/.test(generation.engineVersion)
+    )
+      invalid()
+    notes.generation = { id: generation.id, engineVersion: generation.engineVersion }
   }
 
   if (!hasValidNotesRevision(notes)) throw new NotesSchemaError('revision-mismatch')

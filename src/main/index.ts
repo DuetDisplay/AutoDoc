@@ -60,6 +60,7 @@ import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
+import { registerNotesFeedbackIpc } from './ipc/notes-feedback-ipc'
 import { registerMeetingExportIpc } from './ipc/meeting-export-ipc'
 import { registerFeedbackPromptIpc } from './ipc/feedback-prompt-ipc'
 import {
@@ -1913,6 +1914,11 @@ app.whenReady().then(async () => {
         mainWindow.webContents.send('feedback:contact-initiated', surface)
       }
     }
+  })
+  registerNotesFeedbackIpc({
+    recordingsBaseDir: recordingService.getRecordingsBaseDir(),
+    isTrustedSender: isTrustedMainWindowSender,
+    analyticsEnabled: () => analyticsConsentEnabled
   })
   onNotificationActivationSuppressionChange((suppressed) => {
     const mainWindow = getMainWindow()
