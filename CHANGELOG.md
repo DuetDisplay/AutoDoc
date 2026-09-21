@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-21
+
+### Added
+
+- A new notes format: the meeting title and a Summary, topics from the conversation, nested supporting details, and playable timestamps.
+- Copy notes as plain text, and export the same notes as PDF, Word, or Markdown.
+- Optional feedback on whether a finished note was useful. The meeting itself stays on the computer.
+- Qwen 3 for notes and Ask AI on machines with enough memory. 8 GB Macs and Windows PCs use a smaller notes model and a lighter processing path.
+
+### Changed
+
+- Windows transcription profiles are chosen automatically. If the GPU fails on one recording, that recording finishes on CPU and the next recording tries the GPU again.
+- Notes recover when the local model stalls or returns a bad response.
+- On Windows, notes can use a capable discrete GPU.
+- Low-memory transcription and notes failures explain what happened and how to retry.
+- Older meetings keep their current notes until they are reprocessed.
+
+### Fixed
+
+- Dismissing a meeting-detected prompt no longer brings the AutoDoc window forward.
+- Auto-record for a recurring series stays set after the calendar syncs.
+- Pasting copied notes into Notion no longer drops in a second copy.
+- A failed reprocess keeps the transcript and notes that were already saved.
+
 ## [1.1.3] — 2026-08-17
 
 ### Changed
@@ -98,7 +122,8 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.2...v1.1.3
 [1.1.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.0.0...v1.1.0
