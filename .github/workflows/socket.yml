@@ -68,6 +68,13 @@ jobs:
             PR_NUMBER=${{ github.event.pull_request.number }}
           fi
 
+          # socketcli only full-scans push and workflow_dispatch. schedule logs
+          # "Unknown event type schedule" and exits 0 before any inventory scan.
+          # A push with no PR number is that full-scan path.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            export GITHUB_EVENT_NAME=push
+          fi
+
           socketcli \
             --target-path "$GITHUB_WORKSPACE" \
             --scm github \
