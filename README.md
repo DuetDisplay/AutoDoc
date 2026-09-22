@@ -4,15 +4,17 @@
 
 # AutoDoc
 
-### AI meeting notes that never leave your computer.
+### Open-source meeting notes, processed on your computer.
 
-AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meeting starts, and hands you a clean transcript and structured notes when it ends. Everything — recording, transcription, speaker labels, and AI summaries — happens on your own machine. No AutoDoc account. No AI API keys necessary.
+AutoDoc is an open-source, local-first meeting notes app for macOS and Windows. Record your screen and meeting audio, get editable notes, and click a note's timestamp to replay the moment. Transcription, notes, and Ask AI run on your computer. No AutoDoc account or AI API key required.
 
 [**⬇️ Jump to downloads**](#download)
 
+Ready-to-use installers are available for Mac and Windows. You do not need to build from source.
+
 [![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest) [![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![100% local](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#download) [![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![On-device meeting processing](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#download) [![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
 </div>
 
@@ -20,7 +22,11 @@ AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meet
 
 <div align="center">
 
-![AutoDoc demo](docs/assets/demo.gif)
+[![AutoDoc Notes and timestamp playback](docs/assets/demo.gif)](docs/assets/demo-v1.2/autodoc-demo.mp4)
+
+Notes and timestamp playback (short excerpt). [Watch the full 34-second product demo](docs/assets/demo-v1.2/autodoc-demo.mp4).
+
+**New in v1.2.0:** topic-based notes, timestamped playback, PDF/Word/Markdown export, and reliability fixes. [Read the release notes](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.2.0).
 
 </div>
 
@@ -45,26 +51,30 @@ AutoDoc lives in your macOS menu bar or Windows system tray, notices when a meet
 
 ## Why AutoDoc
 
-Meeting AI tools are everywhere — but most of them ship your conversations to someone else's servers. AutoDoc takes the opposite stance: **every recording, transcript, and summary stays on your computer.**
+AutoDoc is for people who want AI meeting notes without sending meeting content to a cloud AI service. Transcription, notes, and Ask AI run locally, and the screen recording stays available when you need to revisit what was shown.
+
+Looking for a Granola alternative with local processing and replayable recordings? See [how AutoDoc compares](https://getautodoc.com/granola-alternative).
 
 - **Truly local.** Transcription runs on-device with [NVIDIA NeMo Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) on Windows and Apple [MLX](https://github.com/ml-explore/mlx) Whisper on Apple Silicon. Summaries run through a local [Ollama](https://ollama.com) instance AutoDoc manages on both platforms. No API keys, inference bills, or network round-trips for your audio.
-- **Everything included.** Speaker labels from separate mic and system-audio tracks, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
+- **Everything included.** Video playback with timestamp links, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
 - **Encrypted at rest.** Recordings and transcripts use AES-256-GCM. When Electron `safeStorage` is available, the encryption key is protected by macOS Keychain or Windows DPAPI; otherwise, it is stored locally without operating-system protection.
 - **Desktop-native.** Lives in your macOS menu bar or Windows system tray, detects meetings as they start, and gets out of your way.
 
 ## What you get
 
-- End-to-end local workflow: detect → record → transcribe → label speakers → notes → Ask AI
+- End-to-end local workflow: detect → record → transcribe → notes → replay key moments → Ask AI
 - Platform-specific transcription: MLX Whisper on Apple Silicon, Parakeet on Windows
 - Optional Google and Microsoft calendars
 - Encrypted local storage, AGPL-3.0 source, no AutoDoc account or AI API keys
 
 ## Features
 
-- **🎙️ Multi-track capture** — records screen, your microphone, and system audio as separate streams for clean speaker labeling.
+- **🎙️ Multi-track capture** — records screen, your microphone, and system audio as separate streams.
 - **📝 On-device transcription** — Parakeet TDT 0.6B v3 on Windows; MLX Whisper with `distil-large-v3` on Apple Silicon.
-- **🗣️ Speaker labels** — separates your mic from remote system audio, with calendar name suggestions and manual rename. It does not automatically recognize every remote participant by voice.
-- **🧠 AI meeting notes** — structured Decisions, Action Items, Information, Discussion, and Status Updates extracted locally with Ollama.
+- **▶️ Replay key moments** — view the recording in the Transcript tab, or click an available note timestamp to jump to that moment in the video.
+- **Audio source labels** — microphone audio is labeled Me and combined system audio is labeled Them. AutoDoc does not identify individual remote participants.
+- **Editable meeting notes** — get a summary and conversation topics with supporting details. Edit notes and click available timestamps to replay the corresponding moment in the recording.
+- **Copy and export** — copy notes as plain text or export them as PDF, Word, or Markdown.
 - **💬 Ask AI** — ask questions across your meetings and get grounded answers, entirely on-device.
 - **📅 Calendar integration** — Google and Microsoft calendars, with Off / Once / Series auto-record per event.
 - **🔔 Automatic meeting detection** — notices when a meeting starts (Zoom, Meet, Teams, Webex, Slack) and offers to record.
@@ -75,13 +85,27 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ## Features in action
 
-| Automatic meeting detection | Speaker-colored transcript |
+| Calendar auto-recording | Video and timestamped transcript |
 |---|---|
-| ![Detection](docs/assets/screenshots/detection.png) | ![Transcript](docs/assets/screenshots/transcript.png) |
+| ![Calendar auto-recording](docs/assets/screenshots/calendar.png) | ![Transcript with Me and Them audio source labels](docs/assets/screenshots/transcript.png) |
 
-| AI notes by category | Ask AI across meetings |
+| Notes with a summary, topics, and details | Ask AI across meetings |
 |---|---|
-| ![Notes](docs/assets/screenshots/notes.png) | ![Ask AI](docs/assets/screenshots/ask-ai.png) |
+| ![Notes with a summary and conversation topics](docs/assets/screenshots/notes.png) | ![Ask AI across meetings](docs/assets/screenshots/ask-ai.png) |
+
+<details>
+<summary>AutoDoc Notes on Windows</summary>
+
+[![AutoDoc Notes on Windows](docs/assets/screenshots/windows-notes-v1.2.png)](docs/assets/screenshots/windows-notes-v1.2.png)
+
+</details>
+
+<details>
+<summary>Copy and export</summary>
+
+[![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png)](docs/assets/screenshots/export-menu-v1.2.png)
+
+</details>
 
 ## Download
 
@@ -120,7 +144,7 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 | **Processor** | x64 Intel or AMD processor; **8+ logical processors** recommended for CPU-only processing |
 | **Memory** | **8 GB minimum** (supported) · **16 GB+ recommended** for the best experience |
 | **GPU** | Optional. A compatible DirectML GPU with **4 GB+ VRAM** enables accelerated Parakeet transcription; AutoDoc falls back to CPU automatically. |
-| **Storage** | **~10 GB free recommended** for first-run downloads and encrypted recordings |
+| **Storage** | **~10 GB free** for first-run model downloads, plus additional space for encrypted recordings |
 | **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen capture**, **Microphone**, and **System Audio** |
 
@@ -194,7 +218,7 @@ If you want calendar integration or your own hosted services in a fork build, se
 
 ## Architecture
 
-AutoDoc is a single Electron desktop app. The **main process** owns recording, the transcription / speaker-labeling / summarization pipeline, encryption, calendar sync, and the local Ollama lifecycle. The **renderer** is a React UI. All heavy processing happens locally.
+AutoDoc is a single Electron desktop app. The **main process** owns recording, the transcription / summarization pipeline, encryption, calendar sync, and the local Ollama lifecycle. The **renderer** is a React UI. All heavy processing happens locally.
 
 ```mermaid
 flowchart TB
@@ -207,7 +231,7 @@ flowchart TB
       Platform{"Current platform"}
       MacTrans["macOS transcription<br/>MLX Whisper"]
       WinTrans["Windows transcription<br/>Parakeet · GPU or CPU"]
-      Labels["Speaker labels<br/>mic vs system audio"]
+      Labels["Audio source labels<br/>Me vs Them"]
       Notes["AI notes<br/>Ollama"]
     end
 
@@ -239,8 +263,17 @@ AutoDoc processes meeting content on-device. Audio, transcripts, and notes are n
 
 ## FAQ
 
+**What do meeting notes look like?**
+AutoDoc creates a summary and conversation topics with editable details. Available timestamps let you check the corresponding moment in the recording. Review generated notes before relying on them.
+
+**Will my existing notes change after updating?**
+Updating does not automatically regenerate your existing meeting notes. You can reprocess a meeting when you want to generate new notes. Older notes remain supported.
+
+**Can I export my notes?**
+Yes. Copy notes as plain text or export them as PDF, Word, or Markdown. Exported files are separate from AutoDoc's encrypted storage.
+
 **What stays on my computer?**
-Your recordings, transcripts, notes, and Ask AI answers are processed on-device. They are not uploaded to AutoDoc or a cloud AI API.
+Your recordings, transcripts, notes, and Ask AI processing stay on your computer. AutoDoc does not upload meeting content to a cloud AI service for transcription or note generation. Files you choose to export or share are under your control.
 
 **When does AutoDoc use the network?**
 - Required once for the first-run download of local transcription and Ollama models
@@ -273,7 +306,9 @@ See [License](#license) below.
 
 ## Contributing
 
-Contributions are welcome! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and our [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before opening a pull request. Security issues should follow the process in [`SECURITY.md`](SECURITY.md).
+Contributions are welcome! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md), the [`ROADMAP.md`](ROADMAP.md), and our [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before opening a pull request. Security issues should follow the process in [`SECURITY.md`](SECURITY.md).
+
+Find AutoDoc useful? Star the repo to bookmark it, or watch releases for updates. Want to help? See the roadmap and contribution guide.
 
 ## License
 

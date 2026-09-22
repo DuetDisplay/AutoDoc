@@ -1,6 +1,6 @@
 # AutoDoc — Product Documentation
 
-AutoDoc is a local-first desktop application for macOS and Windows that records meetings, transcribes them on-device, identifies speakers, and generates structured AI-powered notes with Ollama. Windows uses NVIDIA NeMo Parakeet as its primary transcription engine; Apple Silicon Macs use MLX Whisper. Meeting content is not sent to a cloud AI service.
+AutoDoc is a local-first desktop application for macOS and Windows that records meetings, transcribes them on-device, and generates structured AI-powered notes with Ollama. Windows uses NVIDIA NeMo Parakeet as its primary transcription engine; Apple Silicon Macs use MLX Whisper. Meeting content is not sent to a cloud AI service.
 
 ---
 
@@ -9,7 +9,7 @@ AutoDoc is a local-first desktop application for macOS and Windows that records 
 1. [System Requirements](#system-requirements)
 2. [Recording](#recording)
 3. [Transcription](#transcription)
-4. [Speaker Identification](#speaker-identification)
+4. [Audio Source Labels](#audio-source-labels)
 5. [AI Note-Taking](#ai-note-taking)
 6. [Google Calendar Integration](#google-calendar-integration)
 7. [Meeting Detection & Auto-Record](#meeting-detection--auto-record)
@@ -66,7 +66,7 @@ Before recording, the user selects a capture source from the available windows a
 
 ### Media Playback
 
-Recordings are served to the UI via a custom `autodoc-media://` protocol. This protocol handler decrypts files on-the-fly — encrypted files are decrypted to a temp file before serving, and unencrypted files are served directly. The UI uses standard `<video>` and `<audio>` elements with seek support.
+Recordings are served to the UI by a local HTTP media server on `127.0.0.1`. The Transcript tab displays the recording in a standard video or audio player. Clicking a timestamp in Notes opens the Transcript tab, seeks to that time, and starts playback; transcript timestamps also seek within the player.
 
 ---
 
@@ -111,7 +111,7 @@ Transcription status is broadcast to the renderer in real-time:
 | `queued` | Waiting behind another transcription |
 | `downloading` | Downloading the selected transcription model/runtime |
 | `transcribing` | Active transcription (progress percentage shown) |
-| `diarizing` | Speaker identification in progress |
+| `diarizing` | Reserved for experimental diarization; disabled in current releases |
 | `complete` | Transcript saved and encrypted |
 | `failed` | Error occurred (retry available) |
 
@@ -127,82 +127,81 @@ A maximum of 3 automatic retries are attempted. After that, the transcription st
 
 ---
 
-## Speaker Identification
+## Audio Source Labels
 
-### Two-Stream Diarization
+**Speaker diarization is currently unsupported.** The application explicitly disables the experimental diarization pipeline. It does not separate individual remote participants into “Speaker 1,” “Speaker 2,” or identify their voices.
 
-AutoDoc uses a dual-track approach to identify who is speaking at any given moment:
+Microphone and system audio are transcribed separately. Microphone segments use the **Me** label; system-audio segments use **Them**, including all remote participants on that track. A legacy mixed recording may have no source labels.
 
-- **System audio activity** → Remote participant(s) speaking
-- **Silence on system track** → Local user speaking ("me")
-
-This works by running ffmpeg's `silencedetect` filter (-30dB threshold, 0.5s minimum duration) on the system audio track to find active speech regions. Each transcript segment is then checked for overlap with these regions.
-
-### Speaker Labels
-
-- **Two-person meetings**: Speakers are labeled "me" and "them" for clarity.
-- **Multi-person meetings**: Speakers are labeled "Speaker 1", "Speaker 2", etc.
-- **Calendar-based suggestions**: If the recording matches a Google Calendar event, attendee emails are offered as rename suggestions in a dropdown.
-- **Manual rename**: Users can rename any speaker label from the meeting detail page. Renames are persisted in `speakers.json`.
-
-### Color Coding
-
-Each speaker is assigned a distinct color from the palette (sage, amber, slate blue, dusty rose, teal, plum, ochre) for visual distinction in the transcript view.
+Calendar attendees can provide manual rename suggestions, and users can rename source labels from the meeting detail page. A manual name does not identify separate people within the system-audio track. Transcript colors distinguish the available source labels.
 
 ---
 
 ## AI Note-Taking
 
-### How It Works
+### What the Notes tab shows
 
-After transcription completes, the transcript is sent to a locally-running Ollama instance (`qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB or low-spec profiles on either platform) to extract structured meeting notes. This happens automatically — no user action required.
+After transcription, AutoDoc asks the local Ollama instance (`qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB or low-spec profiles) for meeting notes. The Notes tab shows a V2 document when one exists:
 
-### Chunked Processing
+- **Summary** (`overview`) when the model produced one
+- **Key takeaways** when present
+- **Topic sections**, each with a title, an optional summary, key points, and supporting details
+- **Decisions** and **next steps** when the meeting produced them
 
-Long transcripts are split into chunks of approximately 6,000 characters (~1,500 tokens) at line boundaries. Each chunk is processed independently with a "Part X of Y" indicator in the prompt. Results are merged with unique IDs across chunks. This strategy ensures thorough extraction even for hour-long meetings — a single-shot approach causes the model to over-summarize.
+A meeting does not always contain every section. Notes are generated from the transcript. The screen recording is replayable context; AutoDoc does not analyze video pixels or slides with a vision model. Review generated notes before relying on them. Available source timestamps refer to transcript time ranges and can seek the recording. Editing the text does not prove the new wording still matches those ranges.
 
-### Note Categories
+### Persisted V2 document
 
-The LLM extracts items in five categories:
-
-| Category | What It Captures |
-|----------|-----------------|
-| **Decisions** | What was decided, by whom, and the reasoning |
-| **Action Items** | Tasks assigned, with owner and deadline if mentioned |
-| **Information** | Facts, numbers, data points, URLs, dates shared |
-| **Discussion** | Debates, open questions, pros/cons explored |
-| **Status Updates** | Progress reports, blockers, what's next |
-
-### Accuracy Controls
-
-To maximize note accuracy:
-
-- **Temperature 0**: Ollama runs with `temperature: 0` for deterministic, consistent output.
-- **Strict prompt instructions**: The system prompt explicitly forbids paraphrasing numbers, dates, or proper nouns. The model is instructed to quote exact words from the transcript.
-- **32K context window**: Ollama is configured with `num_ctx: 32768` tokens so the full chunk plus system prompt fits comfortably.
-
-### Segment Structure
-
-Each extracted note contains:
+The authoritative file is encrypted `notes.json`. `NotesRepository` treats an existing V2 document as authoritative: a damaged `notes.json` is not replaced by older `segments.json` content. Current content fields are `overview`, `keyTakeaways`, `sections`, `decisions`, and `nextSteps`. The document also stores `schemaVersion: 2`, `meetingId`, transcript and attribution revisions, and a notes revision.
 
 ```typescript
-{
-  id: string              // Unique ID (offset for merged chunks)
-  category: string        // decisions | action_items | information | discussion | status_updates
-  title: string           // LLM-generated one-line summary
-  content: string         // Full context from the transcript
-  assignee: string | null // Person responsible (for action items)
-  deadline: string | null // Due date if mentioned
+interface NoteTextBlock {
+  text: string
+  sources: { startMs: number; endMs: number }[]
+  provenance: 'generated' | 'user-created' | 'user-edited'
+}
+
+interface NoteItem extends NoteTextBlock {
+  id: string
+  title: string | null
+  topic: string | null
+  owner: string | null
+  deadline: string | null
+  completed?: boolean
+}
+
+interface NoteSection {
+  id: string
+  title: string
+  summary: NoteTextBlock | null
+  keyPoints: NoteItem[]
+  supportingDetails: NoteItem[]
 }
 ```
 
-### Editable Notes
+`legacy` provenance appears only on notes adapted from the older format. Optional attribution fields on items are not a promise that every note names an owner.
 
-Users can edit the generated segments directly in the meeting detail page. Edits are saved back to `segments.json` via the `segmentation:save-segments` IPC channel.
+### How generation is organized
+
+The production path is `SegmentationService`, which writes through `NotesRepository`. `notes-scan-pipeline.ts` organizes extracted notes into the topic document the Notes tab shows. `notes-v2-pipeline.ts` is not the whole production path.
+
+Long transcripts are processed in pieces and merged. Context size depends on the hardware profile: some passes request a 32K Ollama context, and lower-memory or constrained profiles use a smaller window. Temperature 0 is used on some generation calls. That setting does not make output deterministic, repeatable, or correct. Prompts ask the model to preserve names, numbers, and dates; users should still check timestamps against the recording.
+
+### Legacy category notes
+
+`segments.json` is the older notes file. Its extraction buckets are decisions, action items, information, discussion, and status updates. Those buckets are internal or legacy data, not the primary Notes tab once `notes.json` exists. Search uses V2 notes when `notes.json` is present and falls back to segments otherwise.
+
+Updating the app does not regenerate existing meetings. Reprocessing can create a new document. If the topic pass fails after category segments were already written, AutoDoc can keep those segments. On the default path that outcome is stored as complete with a v1 layout marker. It is not a guarantee that every failed generation produces usable category notes: earlier failures are marked failed, and the optional Windows topic-writer experiment (`AUTODOC_TEST_WINDOWS_TOPIC_WRITER`) records this scan failure as failed rather than complete. Promoting legacy notes into V2 does not rewrite `segments.json`.
+
+### Edits, copy, and export
+
+Notes-tab edits, added or deleted blocks, and next-step checkboxes persist through `notes:write-v2` and `notes:set-next-step-completed` into `notes.json`. The older `segmentation:save-segments` channel still applies to legacy segment documents.
+
+Users can copy notes as plain text or export PDF, Word (`.docx`), or Markdown. Export reads the normalized notes, including a legacy document when no V2 file exists. Exported files are ordinary documents the user saves; they are not covered by AutoDoc's encrypted storage.
 
 ### Auto-Retry
 
-Same retry logic as transcription — up to 3 automatic retries on startup, tracked in `segments.error`.
+Failed note generation can retry on startup, up to 3 attempts, tracked in `segments.error`. A retry does not discard an authoritative `notes.json`.
 
 ---
 
@@ -289,8 +288,8 @@ Search scans all recordings' transcripts and AI-generated notes in real-time (no
 
 ### Result Sources
 
-- **Transcripts**: Matches against the raw transcribed text
-- **Segments**: Matches against note titles and content, tagged with their category
+- **Transcripts**: Matches against the transcribed text
+- **Notes**: When `notes.json` exists, matches summary, topic, and note text from that document. Otherwise matches legacy segment titles and content
 
 Results are capped at 5 matches per meeting and sorted by date (newest first).
 
@@ -459,7 +458,7 @@ Closing the main window hides it to the tray rather than quitting the app. This 
 
 The meeting detail page has three tabs:
 
-- **Notes**: AI-generated segments grouped by category, editable inline
+- **Notes**: Summary, topic sections, and any takeaways, decisions, or next steps, editable inline. Legacy meetings can still show category notes until reprocessed
 - **Transcript**: Timestamped, speaker-colored transcript with click-to-seek
 - **Settings**: Reprocess transcript/notes, delete recording (with confirmation)
 
@@ -491,7 +490,8 @@ AutoDoc/
 │       ├── system.webm       (encrypted)
 │       ├── metadata.json     (encrypted)
 │       ├── transcript.json   (encrypted)
-│       ├── segments.json     (encrypted)
+│       ├── notes.json        (encrypted V2 notes, when generated)
+│       ├── segments.json     (encrypted legacy or intermediate notes)
 │       ├── speakers.json     (encrypted)
 │       ├── transcript.error  (plaintext, retry tracking)
 │       └── segments.error    (plaintext, retry tracking)
@@ -504,7 +504,7 @@ AutoDoc/
 ├── ollama-data/
 │   └── {model cache}/
 └── python-env/
-    └── {local diarization environment}
+    └── {legacy experimental diarization environment, if present}
 ```
 
 ### Legacy Migration

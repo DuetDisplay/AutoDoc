@@ -16,6 +16,25 @@ participating, you agree to uphold it.
 - **Improve docs** — typos, clarifications, and examples are always welcome.
 - **Submit code** — see the workflow below.
 
+The current [roadmap](ROADMAP.md) lists shipped behavior separately from ideas
+that are not commitments.
+
+### Performance reports
+
+A useful local-processing report includes:
+
+- operating system and CPU architecture
+- AutoDoc version
+- CPU, GPU, and RAM
+- notes model and processing profile, if shown
+- input duration
+- transcription time and notes time, reported separately
+- whether the run was cold (first model use) or warm
+- the error text, with paths and meeting content removed
+
+Do not attach a real meeting recording to a public issue. Use a synthetic
+meeting, or describe the failure without the audio, transcript, or notes.
+
 ## Development setup
 
 **Prerequisites**

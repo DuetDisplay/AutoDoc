@@ -1,6 +1,6 @@
 # Self-Hosting AutoDoc
 
-AutoDoc is local-first: recording, transcription, speaker diarization, and AI
+AutoDoc is local-first: recording, transcription, and AI
 note generation all run on your machine with no Duet-hosted infrastructure
 involved. The only optional hosted component is a small **calendar OAuth
 worker** that brokers the Google/Microsoft sign-in flow, plus a couple of
@@ -34,8 +34,8 @@ All configuration is via environment variables, documented in
 | `AUTODOC_OFFICIAL_BUILD`                       | Internal flag for the official pipeline only — leave unset          | —                                      |
 
 Core features that need none of the above: recording, transcription (once the
-runtime is present), diarization, AI notes (local Ollama), search, and
-encryption.
+runtime is present), AI notes (local Ollama), search, and
+encryption. Speaker diarization is currently unsupported; microphone and system-audio source labels remain available.
 
 Unofficial and self-hosted builds must set `AUTODOC_SUPPORT_EMAIL` to one valid
 address to enable **Email Us** and the proactive feedback prompt. Leaving it
