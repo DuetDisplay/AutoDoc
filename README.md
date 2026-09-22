@@ -22,7 +22,7 @@ Ready-to-use installers are available for Mac and Windows. You do not need to bu
 
 <div align="center">
 
-[![AutoDoc Notes and timestamp playback](docs/assets/demo.gif)](docs/assets/demo-v1.2/autodoc-demo.mp4)
+![AutoDoc Notes and timestamp playback](docs/assets/demo.gif)
 
 Notes and timestamp playback (short excerpt). [Watch the full 34-second product demo](docs/assets/demo-v1.2/autodoc-demo.mp4).
 
