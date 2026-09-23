@@ -1,41 +1,43 @@
 ---
 name: Bug report
 about: Report something that isn't working as expected
-title: "[Bug] "
+title: ""
 labels: bug
-assignees: ''
+assignees: ""
 ---
 
-## Description
+## What happens
 
-A clear description of the bug.
+What the user sees.
 
-## Steps to reproduce
+## What still works
+
+The part of the app that is unaffected.
+
+## How to reproduce
 
 1.
 2.
 3.
 
-## Expected behavior
-
-What you expected to happen.
-
-## Actual behavior
-
-What actually happened.
-
 ## Environment
 
 - **AutoDoc version:**
-- **Operating system and version:** (for example, macOS 15.5 or Windows 11 24H2)
-- **Processor / architecture:** (for example, Apple M3 Pro or AMD Ryzen 7 x64)
-- **GPU:** (Windows only, if applicable)
+- **OS:**
+- **CPU / RAM / GPU:**
 
-## Logs / screenshots
+## Error
 
-If applicable, add screenshots or relevant log output. Please do **not** include
-meeting content or other sensitive data.
+The message on screen or in the log. Remove file paths and meeting content.
 
-## Additional context
+## Workaround
 
-Anything else that might help us reproduce or diagnose the issue.
+What to do until this is fixed. Say if there is no reliable workaround.
+
+## Done when
+
+The outcome that means this is fixed.
+
+## Not this issue
+
+The neighboring symptom that has a different fix, if there is one.
