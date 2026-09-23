@@ -37,7 +37,3 @@ What to do until this is fixed. Say if there is no reliable workaround.
 ## Done when
 
 The outcome that means this is fixed.
-
-## Not this issue
-
-The neighboring symptom that has a different fix, if there is one.
