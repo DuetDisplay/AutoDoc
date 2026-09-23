@@ -198,25 +198,25 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
             icon="📋"
             iconBg="bg-clay-light"
             heading="Notes That Think"
-            body="Inspired by Andy Grove's High Output Management, AutoDoc breaks every meeting into the patterns that matter — fully editable by you."
+            body="AutoDoc writes a summary, topics, and key takeaways you can edit. Decisions show up when the meeting made them."
             features={[
               {
                 icon: '✅',
                 iconBg: 'bg-[#FEF3C7]',
-                title: 'Decisions',
-                description: 'What was decided and why'
+                title: 'Summary',
+                description: 'A short overview of the meeting'
               },
               {
                 icon: '📌',
                 iconBg: 'bg-clay-light',
-                title: 'Action Items',
-                description: 'Who does what, by when'
+                title: 'Topics',
+                description: 'The conversation, grouped by topic'
               },
               {
                 icon: '💬',
                 iconBg: 'bg-sage-light',
-                title: 'Discussion & Status',
-                description: 'Key points, updates, and context'
+                title: 'Key takeaways',
+                description: 'The points worth keeping'
               }
             ]}
             onNext={next}

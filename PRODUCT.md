@@ -146,7 +146,7 @@ After transcription, AutoDoc asks the local Ollama instance (`qwen3:4b-instruct`
 - **Summary** (`overview`) when the model produced one
 - **Key takeaways** when present
 - **Topic sections**, each with a title, an optional summary, key points, and supporting details
-- **Decisions** and **next steps** when the meeting produced them
+- **Decisions** when the meeting produced them
 
 A meeting does not always contain every section. Notes are generated from the transcript. The screen recording is replayable context; AutoDoc does not analyze video pixels or slides with a vision model. Review generated notes before relying on them. Available source timestamps refer to transcript time ranges and can seek the recording. Editing the text does not prove the new wording still matches those ranges.
 
@@ -458,7 +458,7 @@ Closing the main window hides it to the tray rather than quitting the app. This 
 
 The meeting detail page has three tabs:
 
-- **Notes**: Summary, topic sections, and any takeaways, decisions, or next steps, editable inline. Legacy meetings can still show category notes until reprocessed
+- **Notes**: Summary, topic sections, and any takeaways or decisions, editable inline. Legacy meetings can still show category notes until reprocessed
 - **Transcript**: Timestamped, speaker-colored transcript with click-to-seek
 - **Settings**: Reprocess transcript/notes, delete recording (with confirmation)
 
