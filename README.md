@@ -150,7 +150,7 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 
 **What to expect on 8 GB:** AutoDoc still runs, but it uses the smaller notes model (`llama3.2:3b`) and a lower-impact path. Audio sources may be processed sequentially and notes wait until transcription finishes, so expect a longer post-meeting wait. **16 GB+ is recommended for the best experience.** A compatible DirectML GPU can accelerate transcription, but it does not replace the RAM headroom.
 
-On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. This reduces memory pressure but can take longer after a meeting ends.
+On lower-spec Windows PCs, AutoDoc uses a CPU-optimized Parakeet model and processes audio sources sequentially. CPU-only machines with fewer than 8 logical processors, or under 16 GB of RAM, also use `llama3.2:3b` even when they have more than 8 GB of memory. This reduces memory pressure but can take longer after a meeting ends.
 
 ### Download & install on macOS
 
@@ -287,13 +287,13 @@ After setup, recording, transcription, and notes work offline.
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
 
 **Which models does it use?**
-On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes and Ask AI use `qwen3:4b-instruct` via Ollama on both platforms, with a smaller `llama3.2:3b` model on 8 GB Macs and Windows PCs. After an app update, leftover `llama3.1` keeps working until the new notes engine is on disk.
+On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes run on a local Ollama instance. The default notes model is `qwen3:4b-instruct`. Macs with 8 GB of RAM use `llama3.2:3b`. Windows PCs with 8 GB of RAM use it too, including ones with a GPU. Windows CPU machines with fewer than 8 logical processors, or under 16 GB of RAM, also use `llama3.2:3b`. Ask AI answers use that same notes model. Ask AI search uses `qwen3-embedding:0.6b`. After an app update on a machine that uses `qwen3:4b-instruct`, leftover `llama3.1` keeps working until the new notes model is on disk.
 
 **What Mac do I need?**
 An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB+ recommended for the best experience) and ~10 GB free storage for first-run model downloads. On 8 GB, AutoDoc uses a smaller notes model and slower processing. **Intel Macs are not supported.**
 
 **Is Windows supported?**
-Yes. AutoDoc supports 64-bit Windows 10 and later. 8 GB RAM is supported; **16 GB+ is recommended for the best experience.** On 8 GB systems, AutoDoc uses a smaller notes model and lower-impact processing, so huddles take longer. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
+Yes. AutoDoc supports 64-bit Windows 10 and later. 8 GB RAM is supported; **16 GB+ is recommended for the best experience.** On 8 GB systems, and on CPU systems with fewer than 8 logical processors or under 16 GB of RAM, AutoDoc uses a smaller notes model and lower-impact processing, so huddles take longer. A compatible DirectML GPU is optional because AutoDoc can transcribe on the CPU.
 
 **How do I know AutoDoc is recording?**
 While recording, AutoDoc shows a Recording banner in the app (with a timer and stop control) and switches the menu bar / tray icon to a recording state. Meeting detection only offers to start recording; it will not start silently unless you previously enabled calendar auto-record for that event (Once or Series). In that case, recording can begin without another prompt.
