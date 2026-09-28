@@ -43,6 +43,7 @@ import { WINDOWS_OUTLINE_PROMPT, countCompleteOutlineBullets, outlineToWriterJso
 import { windowsNotesModelExperiment } from './windows-notes-model-experiment'
 import { isWindowsEvidenceWriterEnabled, WINDOWS_EVIDENCE_WRITER_PROMPT, WINDOWS_EVIDENCE_WRITER_FORMAT, evidenceToWriterJson } from './windows-notes-evidence'
 import {
+  activeMeetingAsrRoute,
   activeMeetingLanguage,
   appendMeetingLanguageDirective,
   isEnglishMeetingJob
@@ -98,6 +99,11 @@ export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
 export const WINDOWS_CHUNK_CHARS = 8000
+/**
+ * Chunk sizes above assume Latin text at ~4 characters per model token. Japanese,
+ * Chinese, and Korean run near 1-1.5, so their chunks shrink to stay near ~1K tokens.
+ */
+export const WHISPER_TURBO_CHUNK_CHARS_DIVISOR = 3
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token is received for 2 minutes
 const SLOW_STREAM_ACTIVITY_DELAY_MS = 60_000
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
@@ -2272,9 +2278,14 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    if (this.windowsWholeMeeting) return 60000
-    if (this.windowsWideChunks) return 12000
-    return getDevNotesChunkCharsOverride() ?? CHUNK_CHARS
+    const chars = this.windowsWholeMeeting
+      ? 60000
+      : this.windowsWideChunks
+        ? 12000
+        : (getDevNotesChunkCharsOverride() ?? CHUNK_CHARS)
+    return activeMeetingAsrRoute() === 'whisper-turbo'
+      ? Math.round(chars / WHISPER_TURBO_CHUNK_CHARS_DIVISOR)
+      : chars
   }
 
   private safeSnapshotRunners(): Array<{

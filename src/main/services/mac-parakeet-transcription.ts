@@ -2,9 +2,9 @@ import { app } from 'electron'
 import { existsSync } from 'fs'
 import { delimiter, dirname, join } from 'path'
 
-export const MAC_MULTILINGUAL_MODEL = 'mlx-community/parakeet-tdt-0.6b-v3'
+export const MAC_PARAKEET_MODEL = 'mlx-community/parakeet-tdt-0.6b-v3'
 
-export interface MacMultilingualTranscriber {
+export interface MacParakeetTranscriber {
   pythonPath: string
   scriptPath: string
   modelRef: string
@@ -12,7 +12,8 @@ export interface MacMultilingualTranscriber {
 }
 
 /**
- * Non-English macOS transcription: Parakeet TDT 0.6B v3 through parakeet-mlx,
+ * macOS transcription for the Parakeet route (the 24 non-English Parakeet v3
+ * languages): Parakeet TDT 0.6B v3 through parakeet-mlx,
  * in its own Python runtime. The English MLX runtime is never used or modified.
  *
  * Provisional until the Mac runtime bake-off (FluidAudio, parakeet.cpp,
@@ -20,9 +21,7 @@ export interface MacMultilingualTranscriber {
  * the runtime built by .benchmarks/prepare-parakeet-mlx-runtime.cjs or
  * AUTODOC_MAC_PARAKEET_PYTHON. Packaged builds return null.
  */
-export function resolveMacMultilingualTranscriber(
-  ffmpegPath: string
-): MacMultilingualTranscriber | null {
+export function resolveMacParakeetTranscriber(ffmpegPath: string): MacParakeetTranscriber | null {
   if (process.platform !== 'darwin' || process.arch !== 'arm64' || app.isPackaged) return null
 
   const roots = [app.getAppPath(), process.cwd()]
@@ -44,7 +43,7 @@ export function resolveMacMultilingualTranscriber(
   return {
     pythonPath,
     scriptPath,
-    modelRef: MAC_MULTILINGUAL_MODEL,
+    modelRef: MAC_PARAKEET_MODEL,
     env: {
       ...process.env,
       // parakeet-mlx decodes audio through ffmpeg.

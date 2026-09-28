@@ -55,6 +55,8 @@ mac:
         - '!**/._*'
     - from: resources/mlx-whisper-transcribe.py
       to: mlx-whisper-transcribe.py
+    - from: resources/mlx-whisper-turbo-transcribe.py
+      to: mlx-whisper-turbo-transcribe.py
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}

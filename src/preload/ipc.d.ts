@@ -349,7 +349,6 @@ export interface IpcInvokeReturns {
     sourceName: string | null
     date: number
     durationSeconds: number | null
-    meetingLanguage: MeetingLanguageCode
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus

@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Japanese / Simplified Chinese / Korean bridge: Whisper large-v3-turbo via mlx-whisper.
+
+Same CLI and JSON contract as mlx-whisper-transcribe.py, which stays the English
+(Distil) bridge. Decode contract: the language is pinned, audio is split at
+pauses into clips of at most 30 seconds (a forced cut overlaps the next clip),
+and each clip is decoded without conditioning on previous text. This avoids the
+repetition loops turbo showed on long windows.
+"""
+import argparse
+import json
+import sys
+
+SAMPLE_RATE = 16000
+FRAME_SEC = 0.03
+MAX_CLIP_SEC = 30.0
+MIN_CLIP_SEC = 10.0
+FORCED_CUT_OVERLAP_SEC = 1.5
+
+# Nudges Whisper's shared zh decoder toward Simplified characters.
+INITIAL_PROMPTS = {"zh": "以下是普通话的句子，使用简体中文。"}
+
+
+def pause_split(audio, np):
+    """Returns (start_sample, end_sample) clips cut at the quietest frame near a pause."""
+    frame = int(FRAME_SEC * SAMPLE_RATE)
+    frame_count = len(audio) // frame
+    if frame_count == 0:
+        return [], lambda start, end: False
+    energy = np.sqrt(np.mean(audio[: frame_count * frame].reshape(frame_count, frame) ** 2, axis=1))
+    silence = float(np.percentile(energy, 15)) * 1.5 + 1e-4
+
+    clips = []
+    start = 0
+    total = len(audio)
+    max_len = int(MAX_CLIP_SEC * SAMPLE_RATE)
+    min_len = int(MIN_CLIP_SEC * SAMPLE_RATE)
+    overlap = int(FORCED_CUT_OVERLAP_SEC * SAMPLE_RATE)
+    while start < total:
+        if total - start <= max_len:
+            clips.append((start, total))
+            break
+        first = (start + min_len) // frame
+        last = (start + max_len) // frame
+        quietest = first + int(np.argmin(energy[first:last]))
+        if energy[quietest] <= silence:
+            cut = quietest * frame + frame // 2
+            clips.append((start, cut))
+            start = cut
+        else:
+            cut = start + max_len
+            clips.append((start, cut))
+            start = cut - overlap
+
+    def has_speech(clip_start, clip_end):
+        frames = energy[clip_start // frame : max(clip_start // frame + 1, clip_end // frame)]
+        return frames.size > 0 and float(frames.max()) > 2 * silence
+
+    return clips, has_speech
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AutoDoc MLX Whisper turbo bridge")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--audio", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--language", required=True)
+    args = parser.parse_args()
+
+    try:
+        import numpy as np
+        import mlx_whisper
+        from mlx_whisper.audio import load_audio
+    except Exception as exc:
+        print(f"failed to import mlx_whisper: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        audio = np.array(load_audio(args.audio), dtype=np.float32)
+        clips, has_speech = pause_split(audio, np)
+        segments = []
+        emitted_until = 0.0
+        for start, end in clips:
+            # Whisper invents text on silence; skip clips with no speech energy.
+            if not has_speech(start, end):
+                continue
+            clip = audio[start:end]
+            offset = start / SAMPLE_RATE
+            clip_end = end / SAMPLE_RATE
+            result = mlx_whisper.transcribe(
+                clip,
+                path_or_hf_repo=args.model,
+                language=args.language,
+                condition_on_previous_text=False,
+                initial_prompt=INITIAL_PROMPTS.get(args.language),
+                verbose=None,
+                word_timestamps=False,
+            )
+            for segment in result.get("segments", []):
+                seg_start = offset + float(segment.get("start", 0))
+                seg_end = min(offset + float(segment.get("end", 0)), clip_end)
+                text = segment.get("text", "")
+                # Drop text re-decoded from the overlap after a forced cut.
+                if not text.strip() or (seg_start + seg_end) / 2 < emitted_until:
+                    continue
+                segments.append(
+                    {
+                        "offsets": {"from": int(seg_start * 1000), "to": int(seg_end * 1000)},
+                        "text": text,
+                    }
+                )
+                emitted_until = max(emitted_until, seg_end)
+
+        with open(args.output, "w", encoding="utf-8") as handle:
+            json.dump({"transcription": segments}, handle, ensure_ascii=False)
+        print(f"clips={len(clips)} segments={len(segments)}", file=sys.stderr)
+        return 0
+    except Exception as exc:
+        print(f"mlx-whisper turbo transcription failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

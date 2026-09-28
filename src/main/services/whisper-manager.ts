@@ -71,6 +71,8 @@ const FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS = 3 * 60_000
 const MLX_WHISPER_PROBE_TIMEOUT_MS = 10 * 60_000
 const MLX_WHISPER_MODEL = 'mlx-community/distil-whisper-large-v3'
 const MLX_WHISPER_LABEL = 'Apple Silicon optimized transcription'
+/** Japanese, Simplified Chinese, Korean only. English stays on Distil. */
+const MLX_WHISPER_TURBO_MODEL = 'mlx-community/whisper-large-v3-turbo'
 const MLX_WHISPER_RUNTIME_EXPECTED_FILES = ['python/bin/python3', 'AUTODOC_MLX_WHISPER_READY.txt']
 const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
   'whisper-cpp',
@@ -332,6 +334,30 @@ export class WhisperManager extends EventEmitter {
       return this.getPackagedResourcePath('mlx-whisper-transcribe.py')
     }
     return this.getDevelopmentResourcePath('mlx-whisper-transcribe.py')
+  }
+
+  getMlxWhisperTurboScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('mlx-whisper-turbo-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('mlx-whisper-turbo-transcribe.py')
+  }
+
+  getMlxWhisperTurboModelRef(): string {
+    return process.env.AUTODOC_MLX_WHISPER_TURBO_MODEL ?? MLX_WHISPER_TURBO_MODEL
+  }
+
+  /** Same runtime as Distil, separate weights cache, so a turbo download never touches Distil. */
+  getMlxWhisperTurboProcessEnv(): NodeJS.ProcessEnv {
+    const cacheDir =
+      process.env.AUTODOC_MLX_WHISPER_TURBO_CACHE_DIR?.trim() ||
+      join(app.getPath('userData'), 'models', 'mlx-whisper-turbo-cache')
+    return {
+      ...this.getMlxWhisperProcessEnv(),
+      HF_HOME: cacheDir,
+      HF_HUB_CACHE: join(cacheDir, 'hub'),
+      TRANSFORMERS_CACHE: join(cacheDir, 'transformers')
+    }
   }
 
   getMlxWhisperProcessEnv(): NodeJS.ProcessEnv {

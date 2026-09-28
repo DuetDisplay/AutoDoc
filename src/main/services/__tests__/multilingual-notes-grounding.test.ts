@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Transcript } from '../../../shared/types'
 import { OllamaProvider } from '../llm'
-import { noteRecordNeedsReview, noteTextLooksCorrupted } from '../notes-coherence'
+import {
+  noteRecordNeedsReview,
+  noteTextLooksCoherent,
+  noteTextLooksCorrupted
+} from '../notes-coherence'
 import { contentTokens } from '../notes-evidence-validate'
 import { runWithMeetingLanguage } from '../notes-language'
 import { overviewConflictsWithCatalog } from '../notes-overview'
@@ -41,6 +45,33 @@ const cases = [
     decision: 'Запуск платёжного портала переносится на пятницу.',
     action: 'Дана отправит обновление цен на 12 процентов.',
     invented: 'Дана отправит обновление цен на 15 процентов.'
+  },
+  {
+    language: 'ja',
+    lines: [
+      '請求ポータルの公開を金曜日に延期します。',
+      'ダナさんは月曜日までに12%の価格改定を送ります。'
+    ],
+    decision: '請求ポータルの公開は金曜日に延期されます。',
+    action: 'ダナさんは月曜日までに12%の価格改定を送ります。',
+    invented: 'ダナさんは月曜日までに15%の価格改定を送ります。'
+  },
+  {
+    language: 'zh-Hans',
+    lines: ['我们把计费门户的上线推迟到周五。', '达纳会在周一之前发送12%的价格更新。'],
+    decision: '计费门户的上线推迟到周五。',
+    action: '达纳会在周一之前发送12%的价格更新。',
+    invented: '达纳会在周一之前发送15%的价格更新。'
+  },
+  {
+    language: 'ko',
+    lines: [
+      '결제 포털 출시를 금요일로 연기합니다.',
+      '다나가 월요일까지 12% 가격 업데이트를 보냅니다.'
+    ],
+    decision: '결제 포털 출시가 금요일로 연기됩니다.',
+    action: '다나가 월요일까지 12% 가격 업데이트를 보냅니다.',
+    invented: '다나가 월요일까지 15% 가격 업데이트를 보냅니다.'
   }
 ] as const
 
@@ -174,5 +205,47 @@ describe('English-only text heuristics stay English-only', () => {
     runWithMeetingLanguage('ru', () => {
       expect(provider.normalizeTopicText('Платёжный портал')).toBe('платёжный портал')
     })
+  })
+})
+
+describe('Japanese, Chinese, and Korean notes', () => {
+  it.each([
+    ['ja', '請求ポータルの公開を金曜日に延期します。'],
+    ['zh-Hans', '我们把计费门户的上线推迟到周五。']
+  ])('counts words in an unspaced %s note', (language, note) => {
+    expect(runWithMeetingLanguage(language, () => noteTextLooksCoherent(note))).toBe(true)
+    // English counting sees one "word" and would reject every such note.
+    expect(noteTextLooksCoherent(note)).toBe(false)
+  })
+
+  it('keeps two-character topic words', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model') as unknown as {
+      normalizeTopicText(text: string): string
+    }
+    runWithMeetingLanguage('ja', () => {
+      expect(provider.normalizeTopicText('価格改定')).not.toBe('')
+      expect(provider.normalizeTopicText('価格改定')).not.toBe(
+        provider.normalizeTopicText('請求ポータル')
+      )
+    })
+  })
+
+  it('splits CJK transcripts into smaller writer chunks than the same length of English', () => {
+    const provider = new OllamaProvider('http://localhost:11434', 'test-model') as unknown as {
+      chunkTranscript(text: string): string[]
+    }
+    const lines = Array.from(
+      { length: 200 },
+      (_, index) =>
+        `[${String(index).padStart(2, '0')}:00] [me] 請求ポータルの公開を金曜日に延期します。`
+    ).join('\n')
+
+    const english = provider.chunkTranscript(lines)
+    const japanese = runWithMeetingLanguage('ja', () => provider.chunkTranscript(lines))
+    const german = runWithMeetingLanguage('de', () => provider.chunkTranscript(lines))
+
+    expect(german).toEqual(english)
+    expect(japanese.length).toBeGreaterThanOrEqual(english.length * 2)
+    for (const chunk of japanese) expect(chunk.length).toBeLessThanOrEqual(1_500)
   })
 })

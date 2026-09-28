@@ -18,11 +18,7 @@ import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
-import {
-  DEFAULT_MEETING_LANGUAGE,
-  normalizeMeetingLanguage,
-  type MeetingLanguageCode
-} from '../../shared/meeting-language'
+import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
 import type {
   CalendarEvent,
   RecordingEntry,
@@ -1953,7 +1949,6 @@ export function registerRecordingIpc(
       sourceName: calendarTitle ?? metadata?.sourceName ?? null,
       date: startedAt,
       durationSeconds,
-      meetingLanguage: normalizeMeetingLanguage(metadata?.meetingLanguage),
       isFinalizing,
       videoProcessingFailed: metadata?.videoProcessingFailed,
       videoStatus: metadata?.videoStatus,

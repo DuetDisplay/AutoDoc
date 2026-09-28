@@ -9,7 +9,7 @@ import { noteRecordNeedsReview } from './notes-coherence'
 import { isGenericGroupName, ticketsInText } from './notes-scan-preserve'
 import { windowsNoteNeedsReview } from './windows-notes-experiment'
 import { isEnglishMeetingJob } from './notes-language'
-import { tokenizeUnicodeWords } from './unicode-text'
+import { containsCjk, tokenizeUnicodeWords } from './unicode-text'
 
 const STOP = new Set([
   'this',
@@ -166,6 +166,11 @@ function termStem(raw: string): string {
   return isEnglishMeetingJob() ? lightStem(raw) : raw
 }
 
+/** Two-character Japanese, Chinese, and Korean words are full content words. */
+function minimumTermLength(raw: string, alphabeticMinimum: number): number {
+  return !isEnglishMeetingJob() && containsCjk(raw) ? 2 : alphabeticMinimum
+}
+
 function leftoverFragment(segment: Segment): boolean {
   const content = segment.content.replace(/\s+/gu, ' ').trim()
   if (/\d/.test(content) || content.length > 42) return false
@@ -183,12 +188,12 @@ function distinctiveTerms(segment: Segment): Set<string> {
   }
   for (const raw of termWords(segment.title)) {
     if (isEnglishNoiseWord(raw)) continue
-    if (raw.length < 4 && !SHORT_KEEP.has(raw)) continue
+    if (raw.length < minimumTermLength(raw, 4) && !SHORT_KEEP.has(raw)) continue
     terms.add(termStem(raw))
   }
   for (const raw of termWords(segment.content)) {
     if (isEnglishNoiseWord(raw)) continue
-    if (raw.length < 5 && !SHORT_KEEP.has(raw)) continue
+    if (raw.length < minimumTermLength(raw, 5) && !SHORT_KEEP.has(raw)) continue
     terms.add(termStem(raw))
   }
   return terms
@@ -246,7 +251,7 @@ function capitalizeWord(word: string): string {
 function namingNouns(segment: Segment): string[] {
   return termWords(`${segment.title} ${segment.content}`).filter(
     (raw) =>
-      (raw.length >= 5 || SHORT_KEEP.has(raw)) &&
+      (raw.length >= minimumTermLength(raw, 5) || SHORT_KEEP.has(raw)) &&
       !isEnglishNoiseWord(raw) &&
       !/^\d/.test(raw) &&
       !WEAK_NAME_WORD.has(raw) &&

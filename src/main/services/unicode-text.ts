@@ -54,6 +54,13 @@ export function isSubstantiveUnicodeToken(token: string, asciiMinLength = 4): bo
     : letterOrNumberCount >= asciiMinLength
 }
 
+const CJK_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
+
+/** Han, kana, or hangul: one character carries what several Latin letters do. */
+export function containsCjk(text: string): boolean {
+  return CJK_SCRIPT.test(text)
+}
+
 /** NFKC, lowercased, substantive words. No stemming: suffix rules are language-specific. */
 export function unicodeContentTokens(text: string, asciiMinLength = 4): string[] {
   return tokenizeUnicodeWords(text.normalize('NFKC').toLowerCase()).filter((token) =>

@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   DEFAULT_MEETING_LANGUAGE,
+  getMeetingAsrRoute,
   getMeetingLanguageDefinition,
   isEnglishMeetingLanguage,
   normalizeMeetingLanguage,
+  type MeetingAsrRoute,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
 
@@ -31,6 +33,10 @@ export function activeMeetingLanguage(): MeetingLanguageCode {
 
 export function isEnglishMeetingJob(): boolean {
   return isEnglishMeetingLanguage(activeMeetingLanguage())
+}
+
+export function activeMeetingAsrRoute(): MeetingAsrRoute {
+  return getMeetingAsrRoute(activeMeetingLanguage())
 }
 
 /**

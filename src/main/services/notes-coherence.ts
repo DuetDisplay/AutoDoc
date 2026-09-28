@@ -1,4 +1,5 @@
 import { isEnglishMeetingJob } from './notes-language'
+import { segmentUnicodeWords } from './unicode-text'
 
 // Terminal object pronouns ("resolved it") are grammatical and stay allowed.
 const INCOMPLETE_END =
@@ -51,10 +52,11 @@ const NUMBER_OR_PERCENT = /(?:\b\d+(?:[.,]\d+)?\b|%)/u
 export function noteTextLooksCoherent(text: string): boolean {
   const compact = text.replace(/\s+/gu, ' ').trim()
   if (!compact) return false
+  // `WORD` counts an unspaced Japanese or Chinese sentence as one word, and the
+  // fragment checks below are English grammar with ASCII-only `\b` patterns.
+  if (!isEnglishMeetingJob()) return segmentUnicodeWords(compact).length >= 2
   const words = compact.match(WORD) ?? []
   if (words.length < 2) return false
-  // The fragment checks below are English grammar and ASCII-only `\b` patterns.
-  if (!isEnglishMeetingJob()) return true
   if (INCOMPLETE_END.test(compact)) return false
   if (SUBJECT_GERUND_WITHOUT_AUXILIARY.test(compact)) return false
   if (PLACEHOLDER_SPEAKER_GRAMMAR.test(compact)) return false

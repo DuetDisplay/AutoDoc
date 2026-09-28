@@ -42,11 +42,11 @@ import {
 } from './qa-gate-log'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
 import {
+  activeMeetingAsrRoute,
   activeMeetingLanguage,
-  isEnglishMeetingJob,
   runWithMeetingLanguage
 } from './notes-language'
-import { resolveMacMultilingualTranscriber } from './mac-multilingual-transcription'
+import { resolveMacParakeetTranscriber } from './mac-parakeet-transcription'
 import { getMeetingLanguageDefinition } from '../../shared/meeting-language'
 
 interface WhisperSegment {
@@ -542,8 +542,12 @@ export class TranscriptionService {
           backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
           modelName: this.whisperManager.getModelName(),
           meetingLanguage: activeMeetingLanguage(),
-          ...(process.platform === 'darwin' && !isEnglishMeetingJob()
-            ? { multilingualBackend: 'parakeet-mlx' }
+          asrRoute: activeMeetingAsrRoute(),
+          ...(process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english'
+            ? {
+                multilingualBackend:
+                  activeMeetingAsrRoute() === 'parakeet' ? 'parakeet-mlx' : 'mlx-whisper-turbo'
+              }
             : {}),
           processingProfile
         }
@@ -554,18 +558,17 @@ export class TranscriptionService {
       if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
         await this.releaseMismatchedWindowsWorker()
       }
+      const parakeetRoute = activeMeetingAsrRoute() === 'parakeet'
       const englishOnlyWindowsBackend =
-        process.platform === 'win32' &&
-        !isEnglishMeetingJob() &&
-        !this.whisperManager.isParakeetSelected?.()
+        process.platform === 'win32' && parakeetRoute && !this.whisperManager.isParakeetSelected?.()
       if (!(await this.whisperManager.isReady()) || englishOnlyWindowsBackend) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        if (isEnglishMeetingJob()) {
-          await this.whisperManager.ensureReady()
-        } else {
+        if (parakeetRoute) {
           // Install Parakeet rather than prefer an installed English-only model.
           await this.whisperManager.ensureReady({ allowBackendInstall: true })
+        } else {
+          await this.whisperManager.ensureReady()
         }
       }
       this.assertMeetingLanguageRoute()
@@ -1716,7 +1719,10 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     concurrentSources = 1
   ): Promise<WhisperOutput> {
+    // The turbo bridge pause-splits into clips of at most 30s itself; 90s windows loop.
+    const bridgePauseSplits = activeMeetingAsrRoute() === 'whisper-turbo'
     const shouldPreChunk =
+      !bridgePauseSplits &&
       audioDurationSec &&
       audioDurationSec >= CHUNKED_TRANSCRIPTION_THRESHOLD_SEC &&
       !this.shouldTrySinglePassForLongRecording(audioDurationSec)
@@ -1746,7 +1752,7 @@ export class TranscriptionService {
       concurrentSources
     )
     const mapped = this.mapToTranscripts(meetingId, output)
-    if (audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
+    if (!bridgePauseSplits && audioDurationSec && this.hasSuspiciousRepetition(mapped)) {
       console.warn(`[transcription] Detected repetition loop, retrying in chunks (${meetingId})`)
       return await this.runWhisperChunked(
         audioWavPath,
@@ -1952,19 +1958,31 @@ export class TranscriptionService {
     return JSON.parse(whisperJson) as WhisperOutput
   }
 
-  /** Non-English never reaches an English-only model (Distil, small.en, base.en). */
+  /**
+   * Non-English never reaches an English-only model (Distil, small.en, base.en),
+   * and each language reaches only its own engine family.
+   */
   private assertMeetingLanguageRoute(): void {
-    if (isEnglishMeetingJob()) return
+    const route = activeMeetingAsrRoute()
+    if (route === 'english') return
     const { label } = getMeetingLanguageDefinition(activeMeetingLanguage())
-    if (process.platform === 'darwin') {
-      if (resolveMacMultilingualTranscriber(this.whisperManager.getFfmpegPath())) return
+    if (route === 'parakeet') {
+      if (process.platform === 'darwin') {
+        if (resolveMacParakeetTranscriber(this.whisperManager.getFfmpegPath())) return
+        throw new Error(
+          `${label} transcription on macOS needs the Parakeet runtime, which is not available in this build.`
+        )
+      }
+      if (process.platform === 'win32' && this.whisperManager.isParakeetSelected?.()) return
       throw new Error(
-        `${label} transcription on macOS needs the Parakeet runtime, which is not available in this build.`
+        `${label} transcription needs Parakeet, which is unavailable on this device. English-only transcription models cannot transcribe ${label}.`
       )
     }
-    if (process.platform === 'win32' && this.whisperManager.isParakeetSelected?.()) return
+    if (process.platform === 'darwin' && this.whisperManager.isMlxWhisperSelected?.()) return
     throw new Error(
-      `${label} transcription needs Parakeet, which is unavailable on this device. English-only transcription models cannot transcribe ${label}.`
+      process.platform === 'win32'
+        ? `${label} transcription needs Whisper large-v3-turbo, which is not available on Windows in this build yet.`
+        : `${label} transcription needs Whisper large-v3-turbo on the MLX runtime, which is unavailable on this device.`
     )
   }
 
@@ -1977,8 +1995,14 @@ export class TranscriptionService {
     concurrentSources = 1,
     window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
-    if (process.platform === 'darwin' && !isEnglishMeetingJob()) {
-      return this.runMacMultilingualPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+    if (process.platform === 'darwin') {
+      const route = activeMeetingAsrRoute()
+      if (route === 'parakeet') {
+        return this.runMacParakeetPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+      }
+      if (route === 'whisper-turbo') {
+        return this.runMacWhisperTurboPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+      }
     }
 
     if (
@@ -2125,13 +2149,13 @@ export class TranscriptionService {
     )
   }
 
-  private runMacMultilingualPass(
+  private runMacParakeetPass(
     audioWavPath: string,
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number }
   ): Promise<void> {
-    const transcriber = resolveMacMultilingualTranscriber(this.whisperManager.getFfmpegPath())
+    const transcriber = resolveMacParakeetTranscriber(this.whisperManager.getFfmpegPath())
     if (!transcriber) {
       return Promise.reject(new Error('parakeet-mlx runtime is not available'))
     }
@@ -2141,6 +2165,38 @@ export class TranscriptionService {
         ...transcriber,
         language: activeMeetingLanguage(),
         perfLabel: `Parakeet MLX backend: ${transcriber.modelRef}`
+      },
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange
+    )
+  }
+
+  /**
+   * Japanese, Simplified Chinese, Korean: Whisper large-v3-turbo on the bundled
+   * MLX runtime through its own script and weights cache. The script pause-splits
+   * into clips of at most 30 seconds, so the app never feeds it 90-second windows.
+   */
+  private runMacWhisperTurboPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number }
+  ): Promise<void> {
+    const definition = getMeetingLanguageDefinition(activeMeetingLanguage())
+    if (!('decoderLanguage' in definition)) {
+      return Promise.reject(new Error(`${definition.label} has no Whisper decoder language`))
+    }
+    return this.runPythonBridgePass(
+      {
+        name: 'mlx-whisper-turbo',
+        pythonPath: this.whisperManager.getMlxWhisperPythonPath(),
+        scriptPath: this.whisperManager.getMlxWhisperTurboScriptPath(),
+        modelRef: this.whisperManager.getMlxWhisperTurboModelRef(),
+        language: definition.decoderLanguage,
+        env: this.whisperManager.getMlxWhisperTurboProcessEnv(),
+        perfLabel: `MLX Whisper turbo backend: ${this.whisperManager.getMlxWhisperTurboModelRef()}`
       },
       audioWavPath,
       meetingId,

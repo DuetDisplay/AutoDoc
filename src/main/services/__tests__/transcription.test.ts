@@ -70,10 +70,10 @@ vi.mock('../transcription-worker-client', () => ({
   })
 }))
 
-vi.mock('../mac-multilingual-transcription', () => ({
-  resolveMacMultilingualTranscriber: vi.fn(() => null)
+vi.mock('../mac-parakeet-transcription', () => ({
+  resolveMacParakeetTranscriber: vi.fn(() => null)
 }))
-const macMultilingualMock = vi.mocked(await import('../mac-multilingual-transcription'))
+const macParakeetMock = vi.mocked(await import('../mac-parakeet-transcription'))
 
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
@@ -2382,7 +2382,7 @@ describe('TranscriptionService meeting-language routing', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    macMultilingualMock.resolveMacMultilingualTranscriber.mockReturnValue(null)
+    macParakeetMock.resolveMacParakeetTranscriber.mockReturnValue(null)
     fsMock.writeFile.mockResolvedValue(undefined as any)
     fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
@@ -2462,7 +2462,7 @@ describe('TranscriptionService meeting-language routing', () => {
     expect(transcribe).not.toHaveBeenCalled()
   })
 
-  it('sends macOS non-English passes to Parakeet and English passes to Distil', async () => {
+  it('sends macOS Parakeet-language passes to Parakeet and English passes to Distil', async () => {
     setPlatform('darwin')
     mockWhisper = {
       ...mockWhisper,
@@ -2472,7 +2472,7 @@ describe('TranscriptionService meeting-language routing', () => {
       getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
       getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' })
     } as unknown as WhisperManager
-    macMultilingualMock.resolveMacMultilingualTranscriber.mockReturnValue({
+    macParakeetMock.resolveMacParakeetTranscriber.mockReturnValue({
       pythonPath: '/mock/parakeet/python3',
       scriptPath: '/mock/parakeet-mlx-transcribe.py',
       modelRef: 'mlx-community/parakeet-tdt-0.6b-v3',
@@ -2522,5 +2522,95 @@ describe('TranscriptionService meeting-language routing', () => {
       ],
       { env: { PATH: '/mock/mlx' } }
     )
+  })
+
+  function createMacTurboWhisperManager(): WhisperManager {
+    return {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+      getMlxWhisperPythonPath: vi.fn().mockReturnValue('/mock/mlx/python3'),
+      getMlxWhisperScriptPath: vi.fn().mockReturnValue('/mock/mlx-whisper-transcribe.py'),
+      getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
+      getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' }),
+      getMlxWhisperTurboScriptPath: vi
+        .fn()
+        .mockReturnValue('/mock/mlx-whisper-turbo-transcribe.py'),
+      getMlxWhisperTurboModelRef: vi.fn().mockReturnValue('mlx-community/whisper-large-v3-turbo'),
+      getMlxWhisperTurboProcessEnv: vi
+        .fn()
+        .mockReturnValue({ PATH: '/mock/mlx', HF_HOME: '/mock/turbo-cache' })
+    } as unknown as WhisperManager
+  }
+
+  it.each([
+    ['ja', 'ja'],
+    ['zh-Hans', 'zh'],
+    ['ko', 'ko']
+  ])(
+    'sends macOS %s passes to Whisper turbo with the %s decoder pin, never Parakeet',
+    async (meetingLanguage, decoderLanguage) => {
+      setPlatform('darwin')
+      mockWhisper = createMacTurboWhisperManager()
+      const service = createService()
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValueOnce(child as any)
+
+      await runWithMeetingLanguage(meetingLanguage, async () => {
+        const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+        child.emit('close', 0)
+        await pass
+      })
+
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        '/mock/mlx/python3',
+        [
+          '/mock/mlx-whisper-turbo-transcribe.py',
+          '--model',
+          'mlx-community/whisper-large-v3-turbo',
+          '--audio',
+          '/mock/tmp/audio.wav',
+          '--output',
+          '/mock/tmp/audio.wav.json',
+          '--language',
+          decoderLanguage
+        ],
+        { env: { PATH: '/mock/mlx', HF_HOME: '/mock/turbo-cache' } }
+      )
+      expect(macParakeetMock.resolveMacParakeetTranscriber).not.toHaveBeenCalled()
+    }
+  )
+
+  it('never pre-chunks long turbo recordings into 90-second windows', async () => {
+    setPlatform('darwin')
+    mockWhisper = createMacTurboWhisperManager()
+    const service = createService()
+    const chunked = vi.fn()
+    ;(service as any).runWhisperChunked = chunked
+    ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
+
+    await runWithMeetingLanguage('ja', () =>
+      (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
+    )
+
+    expect(chunked).not.toHaveBeenCalled()
+    expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a Japanese Windows meeting instead of using Parakeet or an English-only model', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('ja')
+
+    await expect((service as any).processJob('japanese-windows')).rejects.toThrow(
+      'Japanese transcription needs Whisper large-v3-turbo, which is not available on Windows'
+    )
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalledWith({ allowBackendInstall: true })
+    expect(transcribe).not.toHaveBeenCalled()
   })
 })

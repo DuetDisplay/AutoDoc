@@ -23,6 +23,8 @@ import {
   noteTextLooksCoherent
 } from './notes-coherence'
 import { assignPresentationTopics } from './notes-topic-grouper'
+import { isEnglishMeetingJob } from './notes-language'
+import { segmentUnicodeWords } from './unicode-text'
 import {
   assignWindowsPresentationTopics,
   isWindowsNotesQualityEnabled,
@@ -107,7 +109,10 @@ export interface LosslessPresentationOptions {
 }
 
 function standaloneCompletenessScore(text: string): number {
-  const wordCount = text.match(SUMMARY_WORD)?.length ?? 0
+  // `SUMMARY_WORD` counts an unspaced Japanese or Chinese sentence as one word.
+  const wordCount = isEnglishMeetingJob()
+    ? (text.match(SUMMARY_WORD)?.length ?? 0)
+    : segmentUnicodeWords(text).length
   if (wordCount >= 12) return 8
   if (wordCount >= 8) return 4
   return 0
