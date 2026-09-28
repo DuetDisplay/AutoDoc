@@ -175,6 +175,43 @@ describe('Settings', () => {
     ).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('defaults the meeting language to English and persists a new default', async () => {
+    const state = { meetingLanguage: 'en' }
+
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-meeting-language': () => state.meetingLanguage,
+      'prefs:set-meeting-language': (language: string) => {
+        state.meetingLanguage = language
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    const view = render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(screen.getByRole('option', { name: 'German' }))
+
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+    expect(state.meetingLanguage).toBe('de')
+
+    view.unmount()
+    render(<Settings />)
+
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+  })
+
   it('keeps connecting while in the browser, clears it on return, and still surfaces a late success', async () => {
     const existing = createCalendarAccount({
       id: 'acct-existing',

@@ -11,6 +11,8 @@ import {
 import { noteTextLooksCoherent } from './notes-coherence'
 import type { Segment, Transcript } from '../../shared/types'
 import { actionEvidenceNeighborhood, actionEvidenceTurns } from './notes-action-evidence'
+import { isEnglishMeetingJob } from './notes-language'
+import { unicodeContentTokens } from './unicode-text'
 import {
   isWindowsCatalogWriterEnabled,
   isWindowsTopicWriterEnabled,
@@ -1813,9 +1815,116 @@ export function sanitizeWriterRecords(
   transcriptLines: readonly WriterGroundingLine[],
   mode: WriterGroundingMode = 'verbatim'
 ): GroundedWriterRecord[] {
+  if (!isEnglishMeetingJob()) {
+    return evaluateUnicodeWriterRecords(category, draft, citedRange, transcriptLines, mode)
+  }
   return withGroundingCache(() =>
     evaluateWriterRecords(category, draft, citedRange, transcriptLines, mode)
   )
+}
+
+/**
+ * Non-English meetings. The English boundary's speech-act, polarity, modality,
+ * completion, and relationship checks are English word lists (and JavaScript
+ * `\b` is ASCII-only), so they would silently reject or silently pass other
+ * languages. This keeps only language-neutral atoms: the citation, Unicode
+ * lexical overlap, quantities, and script sanity. The writer's category is kept
+ * because no language-neutral speech-act check exists.
+ */
+function evaluateUnicodeWriterRecords(
+  category: WriterGroundingCategory,
+  draft: WriterGroundingDraft,
+  citedRange: { startMs: number; endMs: number },
+  transcriptLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode
+): GroundedWriterRecord[] {
+  const title = draft.title?.replace(/\s+/gu, ' ').trim() ?? ''
+  const content = draft.content?.replace(/\s+/gu, ' ').trim() ?? ''
+  if (!title || !content || !noteTextLooksCoherent(content)) return []
+
+  const startMs = Math.min(citedRange.startMs, citedRange.endMs)
+  const endMs = Math.max(citedRange.startMs, citedRange.endMs)
+  const exactCitedLines = transcriptLines.filter(
+    (line) => line.startMs >= startMs && line.startMs <= endMs
+  )
+  if (exactCitedLines.length === 0) return []
+  const neighboringLines = linesForCitedRange(
+    transcriptLines,
+    startMs,
+    endMs,
+    mode === 'paraphrase' ? PARAPHRASE_NEIGHBOR_TOLERANCE_MS : CITATION_NEIGHBOR_TOLERANCE_MS,
+    mode === 'paraphrase' ? PARAPHRASE_NEIGHBOR_LINE_LIMIT : CITATION_NEIGHBOR_LINE_LIMIT
+  )
+
+  for (const citedLines of [exactCitedLines, neighboringLines]) {
+    const window = bestUnicodeGroundedWindow(content, citedLines, mode)
+    if (!window) continue
+    const evidence = window.map((line) => line.text).join(' ')
+    return [
+      {
+        category,
+        title: unicodeTextIsGrounded(title, window, mode) ? title : content,
+        content,
+        deadline: unicodeGroundedDeadline(draft.deadline, evidence),
+        sourceStartMs: window[0]!.startMs,
+        sourceEndMs: window[window.length - 1]!.startMs,
+        salvaged: false
+      }
+    ]
+  }
+  return []
+}
+
+function unicodeTextIsGrounded(
+  summary: string,
+  evidenceLines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode
+): boolean {
+  const trimmed = summary.replace(/\s+/gu, ' ').trim()
+  if (!trimmed || evidenceLines.length === 0 || hasMixedScriptToken(trimmed)) return false
+  const evidence = evidenceLines.map((line) => line.text).join(' ')
+  const quantityOptions = mode === 'paraphrase' ? { allowDerivedQuantities: true } : undefined
+  if (!areQuantitiesGrounded(trimmed, evidence, quantityOptions)) return false
+
+  const summaryTokens = new Set(unicodeContentTokens(trimmed))
+  if (summaryTokens.size === 0) return mode === 'paraphrase'
+  const shared = sharedTokenCount(summaryTokens, new Set(unicodeContentTokens(evidence)))
+  if (mode === 'paraphrase' || summaryTokens.size <= 3) return shared >= 1
+  if (extractQuantityMentions(trimmed).length > 0) return shared >= 1
+  return shared >= 2 && (shared / summaryTokens.size >= 0.2 || shared >= 4)
+}
+
+function bestUnicodeGroundedWindow(
+  text: string,
+  lines: readonly WriterGroundingLine[],
+  mode: WriterGroundingMode
+): WriterGroundingLine[] | null {
+  const summaryTokens = new Set(unicodeContentTokens(text))
+  const windows = mode === 'paraphrase' ? evidenceWindows(lines, 6, 60_000) : evidenceWindows(lines)
+  const candidates = windows
+    .filter((window) => unicodeTextIsGrounded(text, window, mode))
+    .map((window) => ({
+      window,
+      shared: sharedTokenCount(
+        summaryTokens,
+        new Set(unicodeContentTokens(window.map((line) => line.text).join(' ')))
+      ),
+      span: window[window.length - 1]!.startMs - window[0]!.startMs
+    }))
+  candidates.sort((left, right) => right.shared - left.shared || left.span - right.span)
+  return candidates[0]?.window ?? null
+}
+
+function unicodeGroundedDeadline(
+  deadline: string | null | undefined,
+  evidence: string
+): string | null {
+  const trimmed = deadline?.replace(/\s+/gu, ' ').trim()
+  if (!trimmed || !areQuantitiesGrounded(trimmed, evidence)) return null
+  const tokens = unicodeContentTokens(trimmed, 1)
+  if (tokens.length === 0) return null
+  const evidenceTokens = new Set(unicodeContentTokens(evidence, 1))
+  return tokens.every((token) => evidenceTokens.has(token)) ? trimmed : null
 }
 
 function evaluateWriterRecords(

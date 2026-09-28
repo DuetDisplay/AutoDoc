@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
+import type { MeetingLanguageCode } from '../../shared/meeting-language'
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -100,6 +101,14 @@ export function registerPrefsIpc(
   ipcMain.handle('prefs:set-video-watermark-visible', (_event, visible: boolean): void => {
     prefsStore.setVideoWatermarkVisible(visible)
     broadcastVideoWatermarkVisible(visible)
+  })
+
+  ipcMain.handle('prefs:get-meeting-language', (): MeetingLanguageCode => {
+    return prefsStore.getMeetingLanguage()
+  })
+
+  ipcMain.handle('prefs:set-meeting-language', (_event, language: unknown): void => {
+    prefsStore.setMeetingLanguage(language)
   })
 
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {

@@ -1,5 +1,10 @@
 import Store from 'electron-store'
 import { app } from 'electron'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
@@ -13,6 +18,7 @@ interface PrefsSchema {
   analyticsConsent: boolean | null // null = not yet asked
   diagnosticLogUploadConsent: boolean
   videoWatermarkVisible: boolean
+  meetingLanguage: MeetingLanguageCode
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -31,6 +37,7 @@ function createPrefsStore(): Store<PrefsSchema> {
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
       videoWatermarkVisible: true,
+      meetingLanguage: DEFAULT_MEETING_LANGUAGE,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
@@ -126,6 +133,14 @@ export class PrefsStore {
 
   setVideoWatermarkVisible(visible: boolean): void {
     this.store.set('videoWatermarkVisible', visible)
+  }
+
+  getMeetingLanguage(): MeetingLanguageCode {
+    return normalizeMeetingLanguage(this.store.get('meetingLanguage'))
+  }
+
+  setMeetingLanguage(language: unknown): void {
+    this.store.set('meetingLanguage', normalizeMeetingLanguage(language))
   }
 
   getExperimentalSpeakerDiarization(): boolean {

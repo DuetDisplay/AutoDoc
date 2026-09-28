@@ -21,6 +21,11 @@ import {
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { readMetadata } from './calendar-matcher'
+import {
+  activeMeetingLanguage,
+  appendMeetingLanguageDirective,
+  runWithMeetingLanguage
+} from './notes-language'
 import { logQaGateStopToNotes } from './qa-gate-log'
 import { captureMessage } from './sentry-reporter'
 import { classifyError } from './error-classification'
@@ -427,7 +432,15 @@ export class SegmentationService {
     return await this.processJobExclusive(meetingId)
   }
 
+  /** Scopes the whole notes job to the language stored on the recording (legacy: English). */
   private async processJobExclusive(meetingId: string): Promise<void> {
+    const metadata = await readMetadata(join(this.recordingsBaseDir, meetingId))
+    return runWithMeetingLanguage(metadata?.meetingLanguage, () =>
+      this.processJobInMeetingLanguage(meetingId)
+    )
+  }
+
+  private async processJobInMeetingLanguage(meetingId: string): Promise<void> {
     const jobStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
@@ -553,6 +566,7 @@ export class SegmentationService {
       message: 'notes generation started',
       meetingId,
       context: {
+        meetingLanguage: activeMeetingLanguage(),
         transcriptCount: transcripts.length,
         waitForModelMs: t0 - jobStartedAt,
         processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
@@ -789,7 +803,8 @@ export class SegmentationService {
               }
             })
           }
-          const result = this.llmProvider.completePrompt!(request.prompt, {
+          const prompt = appendMeetingLanguageDirective(request.prompt, activeMeetingLanguage())
+          const result = this.llmProvider.completePrompt!(prompt, {
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,

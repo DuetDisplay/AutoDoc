@@ -45,6 +45,7 @@ describe('RecordingService', () => {
     expect(state.meetingId).toBe('test-uuid-1234')
     expect(state.sourceId).toBe('source-123')
     expect(state.sourceName).toBe('Zoom Meeting')
+    expect(state.meetingLanguage).toBe('en')
     expect(state.recordingIntent).toBe('meeting')
     expect(state.trackedMeetingSourceId).toBe('window:zoom')
     expect(state.trackedMeetingSourceName).toBe('Zoom Meeting')
@@ -64,6 +65,19 @@ describe('RecordingService', () => {
     expect(service.getState().isRecording).toBe(false)
     expect(service.getState().meetingId).toBeNull()
     expect(service.getState().recordingIntent).toBeNull()
+  })
+
+  it('snapshots the selected language for exactly one recording', async () => {
+    await service.startRecording('source-123', 'Spanish Meeting', null, 'es')
+
+    expect(service.getState().meetingLanguage).toBe('es')
+    expect(service.stopRecording().meetingLanguage).toBe('es')
+    expect(service.getState().meetingLanguage).toBeNull()
+
+    await service.startRecording('source-456', 'English Meeting')
+
+    expect(service.getState().meetingLanguage).toBe('en')
+    expect(service.stopRecording().meetingLanguage).toBe('en')
   })
 
   it('throws if starting while already recording', async () => {

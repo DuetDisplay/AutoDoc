@@ -62,6 +62,7 @@ import {
 } from './windows-notes-experiment'
 import { organizeWindowsNotes } from './windows-notes-organization'
 import { isWindowsEvidenceWriterEnabled } from './windows-notes-evidence'
+import { isEnglishMeetingJob } from './notes-language'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
 import { generateNotesOverview, notesCatalogMarkdown } from './notes-overview'
 import { fallbackMeetingOverviewFromNotes } from '../../shared/notes-overview-text'
@@ -324,9 +325,16 @@ export async function runNotesScanPipeline(
     if (!attributionTranscript) {
       throw new Error('Lossless notes presentation requires attribution evidence')
     }
-    const decisionRecovery = isWindowsEvidenceWriterEnabled()
-      ? { segments, recoveredDecisionCount: 0, promotedDecisionCount: 0, dedupedRecoveredDecisionCount: 0 }
-      : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
+    // Transcript decision recovery matches English phrasing only.
+    const decisionRecovery =
+      isWindowsEvidenceWriterEnabled() || !isEnglishMeetingJob()
+        ? {
+            segments,
+            recoveredDecisionCount: 0,
+            promotedDecisionCount: 0,
+            dedupedRecoveredDecisionCount: 0
+          }
+        : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
     const recovery =
       !NOTES_NEXT_STEPS_VISIBLE || isWindowsEvidenceWriterEnabled()
         ? {

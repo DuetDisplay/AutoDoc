@@ -1,4 +1,6 @@
 import type { Transcript } from '../../shared/types'
+import { isEnglishMeetingJob } from './notes-language'
+import { segmentUnicodeWords } from './unicode-text'
 
 export interface SpeechSignalSummary {
   totalSpeechMs: number
@@ -28,6 +30,11 @@ const LOW_SIGNAL_SPEECH_MS = 1_500
 const LOW_SIGNAL_RATIO = 0.005
 
 function countAlphaWords(text: string): number {
+  if (!isEnglishMeetingJob()) {
+    return segmentUnicodeWords(text).filter(
+      ({ segment }) => (segment.match(/\p{L}/gu)?.length ?? 0) >= 2
+    ).length
+  }
   const matches = text.match(/[a-z]{2,}/gi)
   return matches?.length ?? 0
 }

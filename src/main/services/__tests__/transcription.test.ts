@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
@@ -7,6 +7,7 @@ import { TranscriptionWorkerClient } from '../transcription-worker-client'
 import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
+import { runWithMeetingLanguage } from '../notes-language'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -68,6 +69,11 @@ vi.mock('../transcription-worker-client', () => ({
     return workerClientMock
   })
 }))
+
+vi.mock('../mac-multilingual-transcription', () => ({
+  resolveMacMultilingualTranscriber: vi.fn(() => null)
+}))
+const macMultilingualMock = vi.mocked(await import('../mac-multilingual-transcription'))
 
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
@@ -2328,5 +2334,193 @@ describe('TranscriptionService', () => {
 
     expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
     expect(order).toEqual(['first-complete', 'second-complete'])
+  })
+})
+
+describe('TranscriptionService meeting-language routing', () => {
+  const originalPlatform = process.platform
+  const setPlatform = (platform: NodeJS.Platform) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  }
+
+  let mockWhisper: WhisperManager
+
+  function createService(): TranscriptionService {
+    return new TranscriptionService(
+      mockWhisper,
+      createMockAudioConverter(),
+      '/mock/home/AutoDoc/recordings',
+      createMockCalendarManager(),
+      () => false
+    )
+  }
+
+  function recordMeeting(meetingLanguage?: string): void {
+    fsMock.access.mockImplementation(async (file) => {
+      if (String(file).endsWith('mic.webm')) return undefined
+      throw new Error('ENOENT')
+    })
+    fsMock.readFile.mockImplementation(async (file) =>
+      String(file).endsWith('metadata.json')
+        ? JSON.stringify({
+            sourceName: 'Zoom',
+            startedAt: 0,
+            stoppedAt: 60_000,
+            durationSeconds: 60,
+            meetingLanguage
+          })
+        : JSON.stringify({ transcription: [] })
+    )
+  }
+
+  function stubTranscribe(service: TranscriptionService): ReturnType<typeof vi.fn> {
+    const transcribe = vi.fn().mockResolvedValue({ transcription: [] })
+    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+    ;(service as any).transcribeWithFallback = transcribe
+    return transcribe
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    macMultilingualMock.resolveMacMultilingualTranscriber.mockReturnValue(null)
+    fsMock.writeFile.mockResolvedValue(undefined as any)
+    fsMock.unlink.mockResolvedValue(undefined as any)
+    mockWhisper = createMockWhisperManager()
+  })
+
+  afterEach(() => setPlatform(originalPlatform))
+
+  it('installs Parakeet for a German Windows meeting instead of using an English-only model', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(false)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await expect((service as any).processJob('german')).rejects.toThrow(
+      'German transcription needs Parakeet'
+    )
+    expect(mockWhisper.ensureReady).toHaveBeenCalledWith({ allowBackendInstall: true })
+    expect(transcribe).not.toHaveBeenCalled()
+  })
+
+  it('transcribes a German Windows meeting once Parakeet is selected', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-cpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await (service as any).processJob('german-parakeet')
+
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
+  })
+
+  it.each([undefined, 'en', 'unsupported'])(
+    'keeps English Windows readiness unchanged for language %s',
+    async (meetingLanguage) => {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isReady: vi.fn().mockResolvedValue(false),
+        getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+        isParakeetSelected: vi.fn().mockReturnValue(false)
+      } as unknown as WhisperManager
+      const service = createService()
+      const transcribe = stubTranscribe(service)
+      recordMeeting(meetingLanguage)
+
+      await (service as any).processJob('english')
+
+      expect(mockWhisper.ensureReady).toHaveBeenCalledWith()
+      expect(transcribe).toHaveBeenCalled()
+    }
+  )
+
+  it('fails a German macOS meeting clearly when the Parakeet runtime is unavailable', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await expect((service as any).processJob('german-mac')).rejects.toThrow(
+      'German transcription on macOS needs the Parakeet runtime'
+    )
+    expect(transcribe).not.toHaveBeenCalled()
+  })
+
+  it('sends macOS non-English passes to Parakeet and English passes to Distil', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+      getMlxWhisperPythonPath: vi.fn().mockReturnValue('/mock/mlx/python3'),
+      getMlxWhisperScriptPath: vi.fn().mockReturnValue('/mock/mlx-whisper-transcribe.py'),
+      getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
+      getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' })
+    } as unknown as WhisperManager
+    macMultilingualMock.resolveMacMultilingualTranscriber.mockReturnValue({
+      pythonPath: '/mock/parakeet/python3',
+      scriptPath: '/mock/parakeet-mlx-transcribe.py',
+      modelRef: 'mlx-community/parakeet-tdt-0.6b-v3',
+      env: { PATH: '/mock/parakeet' }
+    })
+    const service = createService()
+    const runPass = async (): Promise<void> => {
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValueOnce(child as any)
+      const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+      child.emit('close', 0)
+      await pass
+    }
+
+    await runWithMeetingLanguage('el', runPass)
+    await runPass()
+
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      1,
+      '/mock/parakeet/python3',
+      [
+        '/mock/parakeet-mlx-transcribe.py',
+        '--model',
+        'mlx-community/parakeet-tdt-0.6b-v3',
+        '--audio',
+        '/mock/tmp/audio.wav',
+        '--output',
+        '/mock/tmp/audio.wav.json',
+        '--language',
+        'el'
+      ],
+      { env: { PATH: '/mock/parakeet' } }
+    )
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      2,
+      '/mock/mlx/python3',
+      [
+        '/mock/mlx-whisper-transcribe.py',
+        '--model',
+        'mlx-community/distil-whisper-large-v3',
+        '--audio',
+        '/mock/tmp/audio.wav',
+        '--output',
+        '/mock/tmp/audio.wav.json',
+        '--language',
+        'en'
+      ],
+      { env: { PATH: '/mock/mlx' } }
+    )
   })
 })

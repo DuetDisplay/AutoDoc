@@ -42,6 +42,12 @@ import { OllamaEmbeddingProvider } from './ollama-embedding'
 import { WINDOWS_OUTLINE_PROMPT, countCompleteOutlineBullets, outlineToWriterJson } from './windows-notes-outline'
 import { windowsNotesModelExperiment } from './windows-notes-model-experiment'
 import { isWindowsEvidenceWriterEnabled, WINDOWS_EVIDENCE_WRITER_PROMPT, WINDOWS_EVIDENCE_WRITER_FORMAT, evidenceToWriterJson } from './windows-notes-evidence'
+import {
+  activeMeetingLanguage,
+  appendMeetingLanguageDirective,
+  isEnglishMeetingJob
+} from './notes-language'
+import { unicodeContentTokens } from './unicode-text'
 
 export interface LLMProvider {
   embedNotes?(texts: string[]): Promise<number[][]>
@@ -1355,6 +1361,30 @@ Return compact JSON to leave room for complete notes:
 - Every array element must be an object with t,h,c,s,e, never a bare string. Omit o/l unless explicit. Use [] for empty categories.
 {"decisions":[],"action_items":[],"information":[{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}],"discussion":[],"status_updates":[]}`
 
+/**
+ * Non-English only. Small models copy English example values back verbatim, so
+ * the production writer examples keep their shape with blank strings.
+ */
+export const WRITER_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
+  readonly [english: string, blank: string]
+> = [
+  [
+    '{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}',
+    '{"t":"","h":"","c":"","s":7,"e":9}'
+  ],
+  [
+    '{"i":[["specific title","One sentence from this section.",s,e]],"a":[["specific task","One sentence saying who does what.",s,e,"Name"]]}',
+    '{"i":[["","",s,e]],"a":[["","",s,e,""]]}'
+  ]
+]
+
+function withoutEnglishWriterExampleValues(prompt: string): string {
+  return WRITER_EXAMPLE_VALUE_REPLACEMENTS.reduce(
+    (current, [english, blank]) => current.replace(english, blank),
+    prompt
+  )
+}
+
 const MAC_NOTES_PRIORITY_LABEL =
   'HARD LIMIT 6 NEW records; never emit a seventh. Keep cited requests/commitments before lower-value information; never infer them.'
 
@@ -2260,6 +2290,11 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getSystemPrompt(): string {
+    const prompt = this.getEnglishSystemPrompt()
+    return isEnglishMeetingJob() ? prompt : withoutEnglishWriterExampleValues(prompt)
+  }
+
+  private getEnglishSystemPrompt(): string {
     if (isWindowsEvidenceWriterEnabled()) return WINDOWS_EVIDENCE_WRITER_PROMPT
     if (isWindowsOutlineWriterEnabled() && isTightWriterEnabled()) return WINDOWS_OUTLINE_PROMPT
     if (this.windowsWholeMeeting && isWindowsWholeWriterEnabled()) return WINDOWS_WHOLE_WRITER_PROMPT
@@ -2503,7 +2538,10 @@ export class OllamaProvider implements LLMProvider {
     const requestStartedAt = Date.now()
     this.lastOllamaCallMetrics = null
     const systemPrompt = this.getSystemPrompt()
-    const userContent = `Here is the meeting transcript:\n\n${transcript}`
+    const userContent = appendMeetingLanguageDirective(
+      `Here is the meeting transcript:\n\n${transcript}`,
+      activeMeetingLanguage()
+    )
     const requestOptions = this.mergeOllamaRequestOptions({
       num_ctx: contextTokens,
       num_predict: this.getMaxOutputTokens(),
@@ -3645,6 +3683,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private tokenizeTopic(text: string): string[] {
+    if (!isEnglishMeetingJob()) return unicodeContentTokens(text, 3)
     return text
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
@@ -3887,6 +3926,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private extractEvidenceTokens(text: string): Set<string> {
+    if (!isEnglishMeetingJob()) return new Set(unicodeContentTokens(text))
     return new Set(
       text
         .toLowerCase()

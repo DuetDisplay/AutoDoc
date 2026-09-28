@@ -18,6 +18,11 @@ import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 import type {
   CalendarEvent,
   RecordingEntry,
@@ -832,7 +837,8 @@ export function registerRecordingIpc(
   recordingService: RecordingService,
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
-  calendarManager: CalendarManager
+  calendarManager: CalendarManager,
+  getMeetingLanguage: () => MeetingLanguageCode = () => DEFAULT_MEETING_LANGUAGE
 ): {
   stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
   recoverWindowsFinalizingMeetings: () => Promise<void>
@@ -1523,6 +1529,7 @@ export function registerRecordingIpc(
       startedAt: result.startedAt,
       stoppedAt,
       durationSeconds: Math.round((stoppedAt - result.startedAt) / 1000),
+      meetingLanguage: result.meetingLanguage,
       isFinalizing: isWindows,
       videoCaptureEndedEarly: videoCaptureEndedEarlyMeetings.delete(result.meetingId) || undefined
     }
@@ -1790,11 +1797,14 @@ export function registerRecordingIpc(
       sourceName: string,
       trackingContext?: RecordingTrackingContext | null
     ) => {
+      let meetingLanguage: MeetingLanguageCode = DEFAULT_MEETING_LANGUAGE
       try {
+        meetingLanguage = getMeetingLanguage()
         const paths = await recordingService.startRecording(
           sourceId,
           sourceName,
-          trackingContext ?? null
+          trackingContext ?? null,
+          meetingLanguage
         )
         broadcastState(recordingService.getState())
         refreshTray()
@@ -1804,7 +1814,12 @@ export function registerRecordingIpc(
           area: 'recording',
           message: 'Failed to start recording',
           error: err,
-          context: { sourceId, sourceName, trackingContext: trackingContext ?? null }
+          context: {
+            sourceId,
+            sourceName,
+            trackingContext: trackingContext ?? null,
+            meetingLanguage
+          }
         })
         throw err
       }
@@ -1938,6 +1953,7 @@ export function registerRecordingIpc(
       sourceName: calendarTitle ?? metadata?.sourceName ?? null,
       date: startedAt,
       durationSeconds,
+      meetingLanguage: normalizeMeetingLanguage(metadata?.meetingLanguage),
       isFinalizing,
       videoProcessingFailed: metadata?.videoProcessingFailed,
       videoStatus: metadata?.videoStatus,
@@ -2073,6 +2089,7 @@ export function registerRecordingIpc(
         startedAt: metadata?.startedAt ?? Date.now(),
         stoppedAt: metadata?.stoppedAt ?? Date.now(),
         durationSeconds: metadata?.durationSeconds ?? 0,
+        meetingLanguage: metadata?.meetingLanguage,
         isFinalizing: metadata?.isFinalizing,
         calendarTitle: metadata?.calendarTitle,
         customTitle: customTitle.trim() || undefined,

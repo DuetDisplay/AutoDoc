@@ -9,6 +9,7 @@ import {
   quantityMentionsEquivalent,
   type QuantityMention
 } from './notes-quantity-canonicalizer'
+import { isEnglishMeetingJob } from './notes-language'
 
 export interface NotesOverviewGenerateRequest {
   prompt: string
@@ -64,6 +65,26 @@ Rules:
 
 NOTES:
 `
+
+/** Non-English only: blank English example values so the model does not copy them back. */
+export const OVERVIEW_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
+  readonly [english: string, blank: string]
+> = [
+  [
+    '{"overview":"one or two short sentences","keyTakeaways":["short takeaway","short takeaway"]}',
+    '{"overview":"","keyTakeaways":["",""]}'
+  ],
+  ['{"overview":"concise meeting summary"}', '{"overview":""}']
+]
+
+function overviewPrompt(overviewOnly: boolean): string {
+  const prompt = overviewOnly ? OVERVIEW_ONLY_PROMPT : OVERVIEW_PROMPT
+  if (isEnglishMeetingJob()) return prompt
+  return OVERVIEW_EXAMPLE_VALUE_REPLACEMENTS.reduce(
+    (current, [english, blank]) => current.replace(english, blank),
+    prompt
+  )
+}
 
 const OVERVIEW_CAPACITY =
   /\b(?:limit|capped|cap|maximum|max(?:imum)?|allows?|allowing|up to)\b/iu
@@ -170,6 +191,9 @@ export function overviewConflictsWithCatalog(
   } catch {
     // Quantity parsing is best-effort; a parser miss must not fail notes.
   }
+
+  // The modality, capacity, and intent checks below are English word lists.
+  if (!isEnglishMeetingJob()) return null
 
   try {
   const evidence = catalogEvidenceClauses(catalog)
@@ -365,7 +389,7 @@ async function requestOverview(
   let raw: string
   try {
     raw = await generate({
-      prompt: `${overviewOnly ? OVERVIEW_ONLY_PROMPT : OVERVIEW_PROMPT}${markdown.trim()}`,
+      prompt: `${overviewPrompt(overviewOnly)}${markdown.trim()}`,
       num_ctx: numCtx,
       num_predict: overviewOnly ? 256 : 400,
       temperature,

@@ -1074,6 +1074,11 @@ export function MeetingDetail() {
   }
 
   const meetingSpan = useMeetingSpan(detail?.durationSeconds)
+  const transcriptionReprocessBusy =
+    transcriptionStatus === 'transcribing' ||
+    transcriptionStatus === 'queued' ||
+    transcriptionStatus === 'downloading' ||
+    transcriptionStatus === 'diarizing'
   const layoutDegraded =
     segmentationStatus === 'complete' && segmentationErrorCode === 'scan_or_persist'
   const showHardFailCallout = segmentationStatus === 'no-notes' || segmentationStatus === 'failed'
@@ -1844,12 +1849,7 @@ export function MeetingDetail() {
                   </div>
                   <button
                     onClick={handleReprocessTranscript}
-                    disabled={
-                      transcriptionStatus === 'transcribing' ||
-                      transcriptionStatus === 'queued' ||
-                      transcriptionStatus === 'downloading' ||
-                      transcriptionStatus === 'diarizing'
-                    }
+                    disabled={transcriptionReprocessBusy}
                     className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'

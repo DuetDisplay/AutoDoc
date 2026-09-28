@@ -91,6 +91,36 @@ describe('PrefsStore', () => {
     expect(store.getVideoWatermarkVisible()).toBe(false)
   })
 
+  it('defaults the meeting language to English and persists a supported selection', () => {
+    expect(store.getMeetingLanguage()).toBe('en')
+
+    store.setMeetingLanguage('es')
+
+    expect(store.getMeetingLanguage()).toBe('es')
+  })
+
+  it('normalizes an invalid meeting language back to English', () => {
+    store.setMeetingLanguage('auto')
+
+    expect(store.getMeetingLanguage()).toBe('en')
+  })
+
+  it('registers meeting-language preference handlers', () => {
+    registerPrefsIpc(store)
+
+    const handler = (channel: string) => {
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(([registered]) => registered === channel)
+      if (!registration) throw new Error(`Expected ${channel} to be registered`)
+      return registration[1] as unknown as (...args: unknown[]) => unknown
+    }
+
+    expect(handler('prefs:get-meeting-language')()).toBe('en')
+    handler('prefs:set-meeting-language')({}, 'fr')
+    expect(handler('prefs:get-meeting-language')()).toBe('fr')
+  })
+
   it('broadcasts video watermark preference changes to renderer windows', () => {
     vi.mocked(ipcMain.handle).mockClear()
     registerPrefsIpc(store)

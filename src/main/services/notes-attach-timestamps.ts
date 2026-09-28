@@ -1,6 +1,8 @@
 import type { MeetingNotesContent, NoteItem, NoteSourceRange } from '../../shared/types'
 import type { CatalogItem, TopicGroup } from '../../../scripts/notes-writer-probe/groups.ts'
 import { isMeetingSpanOnly } from '../../shared/notes-timestamps'
+import { isEnglishMeetingJob } from './notes-language'
+import { unicodeContentTokens } from './unicode-text'
 
 export { isMeetingSpanOnly }
 
@@ -17,6 +19,7 @@ const COVER_COLLAPSE_RATIO = 0.5
 const EXTENT_COLLAPSE_RATIO = 0.8
 
 function tokens(text: string): Set<string> {
+  if (!isEnglishMeetingJob()) return new Set(unicodeContentTokens(text))
   return new Set((text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).filter((token) => token.length > 0))
 }
 

@@ -8,6 +8,8 @@ import {
 import { noteRecordNeedsReview } from './notes-coherence'
 import { isGenericGroupName, ticketsInText } from './notes-scan-preserve'
 import { windowsNoteNeedsReview } from './windows-notes-experiment'
+import { isEnglishMeetingJob } from './notes-language'
+import { tokenizeUnicodeWords } from './unicode-text'
 
 const STOP = new Set([
   'this',
@@ -149,6 +151,21 @@ function isLeftoverToken(raw: string): boolean {
   return LEFTOVER_PRESENTATION_TITLE.test(raw) || LEFTOVER_STEMS.has(lightStem(raw))
 }
 
+/** English keeps ASCII words, stemming, and stopwords. Other languages use whole Unicode words. */
+function termWords(text: string): string[] {
+  return isEnglishMeetingJob()
+    ? (text.toLowerCase().match(WORD_RE) ?? [])
+    : tokenizeUnicodeWords(text.normalize('NFKC').toLowerCase())
+}
+
+function isEnglishNoiseWord(raw: string): boolean {
+  return isEnglishMeetingJob() && (STOP.has(raw) || isLeftoverToken(raw))
+}
+
+function termStem(raw: string): string {
+  return isEnglishMeetingJob() ? lightStem(raw) : raw
+}
+
 function leftoverFragment(segment: Segment): boolean {
   const content = segment.content.replace(/\s+/gu, ' ').trim()
   if (/\d/.test(content) || content.length > 42) return false
@@ -164,17 +181,15 @@ function distinctiveTerms(segment: Segment): Set<string> {
   for (const match of blob.matchAll(new RegExp(VERSION_RE.source, VERSION_RE.flags))) {
     terms.add(match[0])
   }
-  const titleWords = segment.title.toLowerCase().match(WORD_RE) ?? []
-  for (const raw of titleWords) {
-    if (STOP.has(raw) || isLeftoverToken(raw)) continue
+  for (const raw of termWords(segment.title)) {
+    if (isEnglishNoiseWord(raw)) continue
     if (raw.length < 4 && !SHORT_KEEP.has(raw)) continue
-    terms.add(lightStem(raw))
+    terms.add(termStem(raw))
   }
-  const contentWords = segment.content.toLowerCase().match(WORD_RE) ?? []
-  for (const raw of contentWords) {
-    if (STOP.has(raw) || isLeftoverToken(raw)) continue
+  for (const raw of termWords(segment.content)) {
+    if (isEnglishNoiseWord(raw)) continue
     if (raw.length < 5 && !SHORT_KEEP.has(raw)) continue
-    terms.add(lightStem(raw))
+    terms.add(termStem(raw))
   }
   return terms
 }
@@ -229,13 +244,11 @@ function capitalizeWord(word: string): string {
 }
 
 function namingNouns(segment: Segment): string[] {
-  const blob = `${segment.title} ${segment.content}`.toLowerCase()
-  return (blob.match(WORD_RE) ?? []).filter(
+  return termWords(`${segment.title} ${segment.content}`).filter(
     (raw) =>
       (raw.length >= 5 || SHORT_KEEP.has(raw)) &&
-      !STOP.has(raw) &&
+      !isEnglishNoiseWord(raw) &&
       !/^\d/.test(raw) &&
-      !isLeftoverToken(raw) &&
       !WEAK_NAME_WORD.has(raw) &&
       !SHORT_KEEP.has(raw)
   )

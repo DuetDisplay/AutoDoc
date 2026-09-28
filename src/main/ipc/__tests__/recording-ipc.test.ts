@@ -1458,3 +1458,110 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
     }
   })
 })
+
+describe('recording IPC meeting language', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    spawnBehavior.current = 'success'
+    vi.mocked(readMetadata).mockResolvedValue(null)
+    vi.mocked(matchCalendarEvent).mockReturnValue(null)
+  })
+
+  function register(options: {
+    recordingsDir: string
+    stopResult?: Record<string, unknown>
+    meetingLanguage?: () => 'en' | 'de'
+  }) {
+    const recordingService = {
+      stopRecording: vi.fn(() => options.stopResult),
+      getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
+      getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
+      startRecording: vi.fn().mockResolvedValue({ meetingId: 'meeting-new' })
+    }
+    const registered = registerRecordingIpc(
+      recordingService as any,
+      { getStatus: vi.fn(), enqueue: vi.fn() } as any,
+      {
+        ensureReady: vi.fn(),
+        getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
+        getWhisperPath: vi.fn(() => '/mock/whisper'),
+        getModelPath: vi.fn(() => '/mock/model')
+      } as any,
+      {
+        isConnected: vi.fn(() => false),
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+      } as any,
+      options.meetingLanguage
+    )
+    const handler = (channel: string) =>
+      handle.mock.calls.findLast(([registeredChannel]) => registeredChannel === channel)?.[1] as (
+        ...args: unknown[]
+      ) => Promise<unknown>
+    return { ...registered, recordingService, handler }
+  }
+
+  it('starts each recording in the current default meeting language', async () => {
+    const { recordingService, handler } = register({
+      recordingsDir: '/mock/recordings',
+      meetingLanguage: () => 'de'
+    })
+
+    await handler('recording:start')(null, 'screen:0:0', 'Zoom', null)
+
+    expect(recordingService.startRecording).toHaveBeenCalledWith('screen:0:0', 'Zoom', null, 'de')
+  })
+
+  it('writes the recording language into metadata when recording stops', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-language-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    try {
+      appGetPath.mockImplementation(() => userDataDir)
+      await fsp.mkdir(path.join(recordingsDir, 'meeting-german'), { recursive: true })
+      const { stopActiveRecording } = register({
+        recordingsDir,
+        stopResult: {
+          meetingId: 'meeting-german',
+          startedAt: Date.now() - 2_000,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          meetingLanguage: 'de',
+          recordingIntent: 'general'
+        }
+      })
+
+      stopActiveRecording()
+
+      await vi.waitFor(() => {
+        expect(encryptJSON).toHaveBeenCalledWith(
+          expect.objectContaining({ meetingLanguage: 'de' }),
+          path.join(recordingsDir, 'meeting-german', 'metadata.json')
+        )
+      })
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the recorded meeting language when the title is updated', async () => {
+    let persisted: MeetingMetadata | null = {
+      sourceName: 'Zoom',
+      startedAt: 1,
+      stoppedAt: 2,
+      durationSeconds: 1,
+      meetingLanguage: 'el',
+      videoStatus: 'ready'
+    }
+    vi.mocked(readMetadata).mockImplementation(async () => persisted)
+    vi.mocked(encryptJSON).mockImplementation(async (metadata) => {
+      persisted = metadata as MeetingMetadata
+    })
+    const { handler } = register({ recordingsDir: '/mock/recordings' })
+
+    await handler('recording:update-title')(null, 'meeting-1', 'Σύσκεψη')
+    expect(persisted).toEqual(
+      expect.objectContaining({ meetingLanguage: 'el', customTitle: 'Σύσκεψη' })
+    )
+
+    vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+  })
+})

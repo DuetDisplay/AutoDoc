@@ -41,6 +41,13 @@ import {
   logQaGateWorkerPriority
 } from './qa-gate-log'
 import { TranscriptionWorkerClient } from './transcription-worker-client'
+import {
+  activeMeetingLanguage,
+  isEnglishMeetingJob,
+  runWithMeetingLanguage
+} from './notes-language'
+import { resolveMacMultilingualTranscriber } from './mac-multilingual-transcription'
+import { getMeetingLanguageDefinition } from '../../shared/meeting-language'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -481,7 +488,15 @@ export class TranscriptionService {
     return await this.processJobExclusive(meetingId)
   }
 
+  /** Scopes the whole transcription job to the language stored on the recording (legacy: English). */
   private async processJobExclusive(meetingId: string): Promise<void> {
+    const metadata = await readMetadata(join(this.recordingsBaseDir, meetingId))
+    return runWithMeetingLanguage(metadata?.meetingLanguage, () =>
+      this.processJobInMeetingLanguage(meetingId)
+    )
+  }
+
+  private async processJobInMeetingLanguage(meetingId: string): Promise<void> {
     if (this.isMeetingActive(meetingId)) {
       console.log(`Skipping transcription for active recording: ${meetingId}`)
       return
@@ -526,6 +541,10 @@ export class TranscriptionService {
           backend: this.whisperManager.getTranscriptionBackend(),
           backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
           modelName: this.whisperManager.getModelName(),
+          meetingLanguage: activeMeetingLanguage(),
+          ...(process.platform === 'darwin' && !isEnglishMeetingJob()
+            ? { multilingualBackend: 'parakeet-mlx' }
+            : {}),
           processingProfile
         }
       })
@@ -535,11 +554,21 @@ export class TranscriptionService {
       if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
         await this.releaseMismatchedWindowsWorker()
       }
-      if (!(await this.whisperManager.isReady())) {
+      const englishOnlyWindowsBackend =
+        process.platform === 'win32' &&
+        !isEnglishMeetingJob() &&
+        !this.whisperManager.isParakeetSelected?.()
+      if (!(await this.whisperManager.isReady()) || englishOnlyWindowsBackend) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        await this.whisperManager.ensureReady()
+        if (isEnglishMeetingJob()) {
+          await this.whisperManager.ensureReady()
+        } else {
+          // Install Parakeet rather than prefer an installed English-only model.
+          await this.whisperManager.ensureReady({ allowBackendInstall: true })
+        }
       }
+      this.assertMeetingLanguageRoute()
       if (
         process.platform === 'win32' &&
         this.windowsRecordingGpuEligible &&
@@ -1923,6 +1952,22 @@ export class TranscriptionService {
     return JSON.parse(whisperJson) as WhisperOutput
   }
 
+  /** Non-English never reaches an English-only model (Distil, small.en, base.en). */
+  private assertMeetingLanguageRoute(): void {
+    if (isEnglishMeetingJob()) return
+    const { label } = getMeetingLanguageDefinition(activeMeetingLanguage())
+    if (process.platform === 'darwin') {
+      if (resolveMacMultilingualTranscriber(this.whisperManager.getFfmpegPath())) return
+      throw new Error(
+        `${label} transcription on macOS needs the Parakeet runtime, which is not available in this build.`
+      )
+    }
+    if (process.platform === 'win32' && this.whisperManager.isParakeetSelected?.()) return
+    throw new Error(
+      `${label} transcription needs Parakeet, which is unavailable on this device. English-only transcription models cannot transcribe ${label}.`
+    )
+  }
+
   private runWhisperPass(
     audioWavPath: string,
     meetingId: string,
@@ -1932,6 +1977,10 @@ export class TranscriptionService {
     concurrentSources = 1,
     window: { startSec: number; endSec: number } | null = null
   ): Promise<void> {
+    if (process.platform === 'darwin' && !isEnglishMeetingJob()) {
+      return this.runMacMultilingualPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+    }
+
     if (
       typeof this.whisperManager.isMlxWhisperSelected === 'function' &&
       this.whisperManager.isMlxWhisperSelected()
@@ -2059,27 +2108,82 @@ export class TranscriptionService {
     audioDurationSec?: number,
     progressRange?: { start: number; end: number }
   ): Promise<void> {
+    return this.runPythonBridgePass(
+      {
+        name: 'mlx-whisper',
+        pythonPath: this.whisperManager.getMlxWhisperPythonPath(),
+        scriptPath: this.whisperManager.getMlxWhisperScriptPath(),
+        modelRef: this.whisperManager.getMlxWhisperModelRef(),
+        language: TRANSCRIPTION_LANGUAGE,
+        env: this.whisperManager.getMlxWhisperProcessEnv(),
+        perfLabel: `MLX Whisper backend: ${this.whisperManager.getModelName()}`
+      },
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange
+    )
+  }
+
+  private runMacMultilingualPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number }
+  ): Promise<void> {
+    const transcriber = resolveMacMultilingualTranscriber(this.whisperManager.getFfmpegPath())
+    if (!transcriber) {
+      return Promise.reject(new Error('parakeet-mlx runtime is not available'))
+    }
+    return this.runPythonBridgePass(
+      {
+        name: 'parakeet-mlx',
+        ...transcriber,
+        language: activeMeetingLanguage(),
+        perfLabel: `Parakeet MLX backend: ${transcriber.modelRef}`
+      },
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange
+    )
+  }
+
+  /** Runs one Python transcription bridge that writes `${audioWavPath}.json`. */
+  private runPythonBridgePass(
+    bridge: {
+      name: string
+      pythonPath: string
+      scriptPath: string
+      modelRef: string
+      language: string
+      env: NodeJS.ProcessEnv
+      perfLabel: string
+    },
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number }
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       let stderr = ''
       const jsonPath = `${audioWavPath}.json`
       const args = [
-        this.whisperManager.getMlxWhisperScriptPath(),
+        bridge.scriptPath,
         '--model',
-        this.whisperManager.getMlxWhisperModelRef(),
+        bridge.modelRef,
         '--audio',
         audioWavPath,
         '--output',
         jsonPath,
         '--language',
-        TRANSCRIPTION_LANGUAGE
+        bridge.language
       ]
 
-      const proc = spawn(this.whisperManager.getMlxWhisperPythonPath(), args, {
-        env: this.whisperManager.getMlxWhisperProcessEnv()
+      const proc = spawn(bridge.pythonPath, args, {
+        env: bridge.env
       })
-      console.log(
-        `[perf] MLX Whisper backend: ${this.whisperManager.getModelName()} (${meetingId})`
-      )
+      console.log(`[perf] ${bridge.perfLabel} (${meetingId})`)
 
       const startedAt = Date.now()
       const progressTimer =
@@ -2100,7 +2204,7 @@ export class TranscriptionService {
 
       proc.on('error', (err) => {
         if (progressTimer) clearInterval(progressTimer)
-        reject(new Error(`mlx-whisper spawn failed: ${err.message}`))
+        reject(new Error(`${bridge.name} spawn failed: ${err.message}`))
       })
 
       proc.stderr.on('data', (data: Buffer) => {
@@ -2117,7 +2221,7 @@ export class TranscriptionService {
 
         const signalSuffix = signal ? ` (signal ${signal})` : ''
         reject(
-          new Error(`mlx-whisper exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
+          new Error(`${bridge.name} exited with code ${code}${signalSuffix}: ${stderr.slice(-500)}`)
         )
       })
     })

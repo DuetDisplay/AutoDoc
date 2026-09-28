@@ -1,9 +1,15 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
+import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../../shared/meeting-language'
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -71,6 +77,10 @@ export function Settings() {
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
   const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
   const [videoWatermarkVisible, setVideoWatermarkVisibleState] = useState(true)
+  const [meetingLanguage, setMeetingLanguageState] =
+    useState<MeetingLanguageCode>(DEFAULT_MEETING_LANGUAGE)
+  const [isSavingMeetingLanguage, setIsSavingMeetingLanguage] = useState(false)
+  const [meetingLanguageError, setMeetingLanguageError] = useState<string | null>(null)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -98,6 +108,10 @@ export function Settings() {
           setVideoWatermarkVisibleState(visible)
         }
       },
+      () => undefined
+    )
+    void window.electronAPI.invoke('prefs:get-meeting-language').then(
+      (language) => setMeetingLanguageState(normalizeMeetingLanguage(language)),
       () => undefined
     )
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
@@ -260,6 +274,26 @@ export function Settings() {
     setVideoWatermarkVisibleState(nextValue)
   }
 
+  const handleSetMeetingLanguage = async (language: MeetingLanguageCode): Promise<void> => {
+    setMeetingLanguageError(null)
+    setIsSavingMeetingLanguage(true)
+    try {
+      await window.electronAPI.invoke('prefs:set-meeting-language', language)
+      setMeetingLanguageState(language)
+      recordDiagnosticAction({
+        category: 'settings',
+        action: 'meeting_language_changed',
+        details: { language }
+      })
+    } catch (err) {
+      setMeetingLanguageError(
+        err instanceof Error ? err.message : 'Failed to save the meeting language.'
+      )
+    } finally {
+      setIsSavingMeetingLanguage(false)
+    }
+  }
+
   const handleRemoveDownloadedComponents = async () => {
     const confirmed = window.confirm(
       'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.'
@@ -406,6 +440,27 @@ export function Settings() {
                 </svg>
                 {connectingProvider === 'microsoft' ? 'Connecting...' : 'Add Microsoft Outlook'}
               </button>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Meeting language</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] text-ink-muted leading-relaxed">
+                  The language spoken in new recordings, including auto-record. Transcripts and
+                  notes are written in this language.
+                </p>
+                {meetingLanguageError && (
+                  <p role="alert" className="mt-1 text-[11px] text-clay-dark">
+                    {meetingLanguageError}
+                  </p>
+                )}
+              </div>
+              <MeetingLanguagePicker
+                value={meetingLanguage}
+                disabled={isSavingMeetingLanguage}
+                onChange={(language) => void handleSetMeetingLanguage(language)}
+              />
             </div>
           </div>
           <div>

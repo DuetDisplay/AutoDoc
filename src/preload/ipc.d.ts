@@ -56,6 +56,7 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
+import type { MeetingLanguageCode } from '../shared/meeting-language'
 import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
@@ -229,6 +230,8 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-video-watermark-visible': []
   'prefs:set-video-watermark-visible': [visible: boolean]
+  'prefs:get-meeting-language': []
+  'prefs:set-meeting-language': [language: MeetingLanguageCode]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
@@ -346,6 +349,7 @@ export interface IpcInvokeReturns {
     sourceName: string | null
     date: number
     durationSeconds: number | null
+    meetingLanguage: MeetingLanguageCode
     isFinalizing?: boolean
     videoProcessingFailed?: boolean
     videoStatus?: VideoStatus
@@ -374,6 +378,8 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-video-watermark-visible': boolean
   'prefs:set-video-watermark-visible': void
+  'prefs:get-meeting-language': MeetingLanguageCode
+  'prefs:set-meeting-language': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean

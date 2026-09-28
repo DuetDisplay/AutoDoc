@@ -1821,7 +1821,13 @@ app.whenReady().then(async () => {
     stopActiveRecording,
     recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
     hasPostProcessingWork
-  } = registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
+  } = registerRecordingIpc(
+    recordingService,
+    transcriptionService,
+    whisperManager,
+    calendarManager,
+    () => prefsStore.getMeetingLanguage()
+  )
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
 
   const feedbackPromptStore = new FeedbackPromptStore()
