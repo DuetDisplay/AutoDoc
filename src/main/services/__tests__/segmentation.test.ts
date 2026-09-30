@@ -174,6 +174,38 @@ describe('SegmentationService', () => {
     }
   )
 
+  it('reports a transcript with no usable speech as no notes, without a notes-ready callback', async () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+    const writes = new Map<string, string>()
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockImplementation(async (path) =>
+      String(path).endsWith('segments.error') ? (writes.get(String(path)) ?? '') : '[]'
+    )
+    fsMock.writeFile.mockImplementation(async (path, data) => {
+      writes.set(String(path), String(data))
+    })
+    fsMock.stat.mockResolvedValue({ mtimeMs: 1000 } as any)
+    vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+    try {
+      await (service as any).processJob('silent')
+
+      expect(provider.summarize).not.toHaveBeenCalled()
+      expect(onComplete).not.toHaveBeenCalled()
+      expect(send).toHaveBeenCalledWith(
+        'segmentation:status-changed',
+        expect.objectContaining({ status: 'no-notes', errorCode: 'no_notes_detected' })
+      )
+      // Empty segments and the outcome can share a timestamp; the outcome still wins.
+      expect(await service.getStatus('silent')).toBe('no-notes')
+      expect(await service.getErrorCode('silent')).toBe('no_notes_detected')
+    } finally {
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+    }
+  })
+
   describe('Windows model readiness', () => {
     const originalPlatform = process.platform
     beforeEach(() =>

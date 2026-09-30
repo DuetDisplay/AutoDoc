@@ -6,6 +6,10 @@ Same CLI and JSON contract as mlx-whisper-transcribe.py, which stays the English
 pauses into clips of at most 30 seconds (a forced cut overlaps the next clip),
 and each clip is decoded without conditioning on previous text. This avoids the
 repetition loops turbo showed on long windows.
+
+Whisper also invents text over silence. Two language-independent guards remove
+it: Whisper's own hallucination_silence_threshold, and dropping any word whose
+time span holds no speech energy in the audio.
 """
 import argparse
 import json
@@ -16,6 +20,10 @@ FRAME_SEC = 0.03
 MAX_CLIP_SEC = 30.0
 MIN_CLIP_SEC = 10.0
 FORCED_CUT_OVERLAP_SEC = 1.5
+# Speech needs energy above both the track's own noise floor and -50 dBFS, so a
+# mostly-quiet track cannot lower the gate onto its own background.
+ABSOLUTE_SPEECH_FLOOR_RMS = 10 ** (-50 / 20)
+HALLUCINATION_SILENCE_SEC = 2.0
 
 # Nudges Whisper's shared zh decoder toward Simplified characters.
 INITIAL_PROMPTS = {"zh": "以下是普通话的句子，使用简体中文。"}
@@ -52,9 +60,11 @@ def pause_split(audio, np):
             clips.append((start, cut))
             start = cut - overlap
 
-    def has_speech(clip_start, clip_end):
-        frames = energy[clip_start // frame : max(clip_start // frame + 1, clip_end // frame)]
-        return frames.size > 0 and float(frames.max()) > 2 * silence
+    speech_gate = max(2 * silence, ABSOLUTE_SPEECH_FLOOR_RMS)
+
+    def has_speech(span_start, span_end):
+        frames = energy[span_start // frame : max(span_start // frame + 1, span_end // frame)]
+        return frames.size > 0 and float(frames.max()) > speech_gate
 
     return clips, has_speech
 
@@ -94,12 +104,32 @@ def main() -> int:
                 condition_on_previous_text=False,
                 initial_prompt=INITIAL_PROMPTS.get(args.language),
                 verbose=None,
-                word_timestamps=False,
+                word_timestamps=True,
+                hallucination_silence_threshold=HALLUCINATION_SILENCE_SEC,
             )
             for segment in result.get("segments", []):
                 seg_start = offset + float(segment.get("start", 0))
                 seg_end = min(offset + float(segment.get("end", 0)), clip_end)
-                text = segment.get("text", "")
+                words = segment.get("words") or []
+                if words:
+                    # Keep only words spoken where the audio has speech energy.
+                    words = [
+                        word
+                        for word in words
+                        if has_speech(
+                            int((offset + float(word["start"])) * SAMPLE_RATE),
+                            int((offset + float(word["end"])) * SAMPLE_RATE),
+                        )
+                    ]
+                    if not words:
+                        continue
+                    text = "".join(word["word"] for word in words)
+                    seg_start = offset + float(words[0]["start"])
+                    seg_end = min(offset + float(words[-1]["end"]), clip_end)
+                elif has_speech(int(seg_start * SAMPLE_RATE), int(seg_end * SAMPLE_RATE)):
+                    text = segment.get("text", "")
+                else:
+                    continue
                 # Drop text re-decoded from the overlap after a forced cut.
                 if not text.strip() or (seg_start + seg_end) / 2 < emitted_until:
                     continue

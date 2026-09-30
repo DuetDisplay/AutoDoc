@@ -4,6 +4,7 @@ import {
   activeMeetingLanguage,
   appendMeetingLanguageDirective,
   isEnglishMeetingJob,
+  meetingOutputTokenCap,
   notesLanguageContextFromMeetingLanguage,
   runWithMeetingLanguage
 } from '../notes-language'
@@ -61,14 +62,24 @@ describe('runWithMeetingLanguage', () => {
         return seen
       })
 
-    const [german, english, greek] = await Promise.all([
+    const [german, english, bulgarian] = await Promise.all([
       observe('de'),
       observe('en'),
-      observe('el')
+      observe('bg')
     ])
     expect(german).toEqual(['de', 'de'])
     expect(english).toEqual(['en', 'en'])
-    expect(greek).toEqual(['el', 'el'])
+    expect(bulgarian).toEqual(['bg', 'bg'])
     expect(activeMeetingLanguage()).toBe('en')
+  })
+})
+
+describe('meetingOutputTokenCap', () => {
+  it('keeps English caps and scales every other language the same way', () => {
+    expect(meetingOutputTokenCap(256)).toBe(256)
+    expect(runWithMeetingLanguage('en', () => meetingOutputTokenCap(256))).toBe(256)
+    for (const language of ['de', 'bg', 'ja', 'ko']) {
+      expect(runWithMeetingLanguage(language, () => meetingOutputTokenCap(256))).toBe(768)
+    }
   })
 })

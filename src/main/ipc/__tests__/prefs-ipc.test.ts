@@ -94,9 +94,9 @@ describe('PrefsStore', () => {
   it('defaults the meeting language to English and persists a supported selection', () => {
     expect(store.getMeetingLanguage()).toBe('en')
 
-    store.setMeetingLanguage('es')
+    store.setMeetingLanguage('fr')
 
-    expect(store.getMeetingLanguage()).toBe('es')
+    expect(store.getMeetingLanguage()).toBe('fr')
   })
 
   it('normalizes an invalid meeting language back to English', () => {

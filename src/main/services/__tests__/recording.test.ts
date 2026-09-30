@@ -68,10 +68,10 @@ describe('RecordingService', () => {
   })
 
   it('snapshots the selected language for exactly one recording', async () => {
-    await service.startRecording('source-123', 'Spanish Meeting', null, 'es')
+    await service.startRecording('source-123', 'French Meeting', null, 'fr')
 
-    expect(service.getState().meetingLanguage).toBe('es')
-    expect(service.stopRecording().meetingLanguage).toBe('es')
+    expect(service.getState().meetingLanguage).toBe('fr')
+    expect(service.stopRecording().meetingLanguage).toBe('fr')
     expect(service.getState().meetingLanguage).toBeNull()
 
     await service.startRecording('source-456', 'English Meeting')

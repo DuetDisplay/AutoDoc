@@ -14,7 +14,7 @@ describe('MeetingLanguagePicker', () => {
     await user.click(trigger)
 
     expect(screen.getByRole('listbox', { name: 'Meeting language options' })).toBeInTheDocument()
-    expect(screen.getAllByRole('option')).toHaveLength(28)
+    expect(screen.getAllByRole('option')).toHaveLength(24)
     expect(screen.getByRole('option', { name: /English Default · optimized/i })).toHaveAttribute(
       'aria-selected',
       'true'

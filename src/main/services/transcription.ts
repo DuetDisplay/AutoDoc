@@ -44,9 +44,11 @@ import { TranscriptionWorkerClient } from './transcription-worker-client'
 import {
   activeMeetingAsrRoute,
   activeMeetingLanguage,
+  isEnglishMeetingJob,
   runWithMeetingLanguage
 } from './notes-language'
-import { resolveMacParakeetTranscriber } from './mac-parakeet-transcription'
+import { MAC_CANARY_MODEL, resolveMacCanaryTranscriber } from './mac-canary-transcription'
+import { tokenizeUnicodeWords } from './unicode-text'
 import { getMeetingLanguageDefinition } from '../../shared/meeting-language'
 
 interface WhisperSegment {
@@ -538,17 +540,9 @@ export class TranscriptionService {
           hasSystem,
           hasLegacy,
           dualSource: hasMic && hasSystem,
-          backend: this.whisperManager.getTranscriptionBackend(),
-          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
-          modelName: this.whisperManager.getModelName(),
+          ...this.jobTranscriptionEngine(),
           meetingLanguage: activeMeetingLanguage(),
           asrRoute: activeMeetingAsrRoute(),
-          ...(process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english'
-            ? {
-                multilingualBackend:
-                  activeMeetingAsrRoute() === 'parakeet' ? 'parakeet-mlx' : 'mlx-whisper-turbo'
-              }
-            : {}),
           processingProfile
         }
       })
@@ -558,13 +552,15 @@ export class TranscriptionService {
       if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
         await this.releaseMismatchedWindowsWorker()
       }
-      const parakeetRoute = activeMeetingAsrRoute() === 'parakeet'
+      // Windows runs the Canary route on Parakeet v3 until its Canary runtime lands.
+      const windowsParakeetRoute =
+        process.platform === 'win32' && activeMeetingAsrRoute() === 'canary'
       const englishOnlyWindowsBackend =
-        process.platform === 'win32' && parakeetRoute && !this.whisperManager.isParakeetSelected?.()
+        windowsParakeetRoute && !this.whisperManager.isParakeetSelected?.()
       if (!(await this.whisperManager.isReady()) || englishOnlyWindowsBackend) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        if (parakeetRoute) {
+        if (windowsParakeetRoute) {
           // Install Parakeet rather than prefer an installed English-only model.
           await this.whisperManager.ensureReady({ allowBackendInstall: true })
         } else {
@@ -643,16 +639,14 @@ export class TranscriptionService {
               2
             )
           ]
-          if (process.platform === 'win32') {
-            const settled = await Promise.allSettled(sources)
-            const failure = settled.find((result) => result.status === 'rejected')
-            if (failure?.status === 'rejected') throw failure.reason
-            ;[micTranscripts, rawSystemTranscripts] = settled.map(
-              (result) => (result as PromiseFulfilledResult<Transcript[]>).value
-            )
-          } else {
-            ;[micTranscripts, rawSystemTranscripts] = await Promise.all(sources)
-          }
+          // A failed source must not release the job's resources or queue lane
+          // while its sibling still owns a model process and temporary files.
+          const settled = await Promise.allSettled(sources)
+          const failure = settled.find((result) => result.status === 'rejected')
+          if (failure?.status === 'rejected') throw failure.reason
+          ;[micTranscripts, rawSystemTranscripts] = settled.map(
+            (result) => (result as PromiseFulfilledResult<Transcript[]>).value
+          )
         } else {
           console.log(`[transcription] Sequential dual-source transcription (${meetingId})`)
           micTranscripts = await this.transcribeAudioSource(
@@ -770,6 +764,7 @@ export class TranscriptionService {
           stopToTranscriptWallSec,
           postProcessingWallSec,
           transcriptionWallSec,
+          ...this.jobTranscriptionEngine(),
           processingProfile: completedProcessingProfile,
           processingProfileId,
           workerReuseCount: this.workerJobsServed,
@@ -940,6 +935,7 @@ export class TranscriptionService {
     }
 
     const whisperStart = Date.now()
+    const engine = this.jobTranscriptionEngine()
     const processingProfile = await this.getProcessingProfileLogContext()
     logAutodocEvent({
       area: 'transcription',
@@ -947,9 +943,9 @@ export class TranscriptionService {
       meetingId,
       context: {
         speaker,
-        backend: this.whisperManager.getTranscriptionBackend(),
-        backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
-        model: this.whisperManager.getModelName(),
+        backend: engine.backend,
+        backendLabel: engine.backendLabel,
+        model: engine.modelName,
         audioDurationSec: audioDuration ?? null,
         concurrentSources,
         processingProfile
@@ -973,8 +969,8 @@ export class TranscriptionService {
       meetingId,
       context: {
         speaker,
-        backend: this.whisperManager.getTranscriptionBackend(),
-        model: this.whisperManager.getModelName(),
+        backend: engine.backend,
+        model: engine.modelName,
         elapsedMs: Date.now() - whisperStart,
         rawSegmentCount: whisperOutput.transcription.length,
         processingProfile
@@ -1719,8 +1715,10 @@ export class TranscriptionService {
     progressRange?: { start: number; end: number },
     concurrentSources = 1
   ): Promise<WhisperOutput> {
-    // The turbo bridge pause-splits into clips of at most 30s itself; 90s windows loop.
-    const bridgePauseSplits = activeMeetingAsrRoute() === 'whisper-turbo'
+    // The macOS Canary and turbo bridges split speech themselves (Silero VAD spans,
+    // pause-split clips of at most 30 s). App 90 s windows would cut through words
+    // and made turbo loop.
+    const bridgePauseSplits = process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english'
     const shouldPreChunk =
       !bridgePauseSplits &&
       audioDurationSec &&
@@ -1959,6 +1957,35 @@ export class TranscriptionService {
   }
 
   /**
+   * The engine this job actually runs. The whisper-manager labels describe the
+   * English route only; the macOS Canary and turbo routes use their own bridges.
+   */
+  private jobTranscriptionEngine(): { backend: string; backendLabel: string; modelName: string } {
+    if (process.platform === 'darwin') {
+      const route = activeMeetingAsrRoute()
+      if (route === 'canary') {
+        return {
+          backend: 'canary-mlx',
+          backendLabel: 'Canary-1B-v2 (MLX)',
+          modelName: MAC_CANARY_MODEL
+        }
+      }
+      if (route === 'whisper-turbo') {
+        return {
+          backend: 'mlx-whisper-turbo',
+          backendLabel: 'Whisper large-v3-turbo (MLX)',
+          modelName: this.whisperManager.getMlxWhisperTurboModelRef()
+        }
+      }
+    }
+    return {
+      backend: this.whisperManager.getTranscriptionBackend(),
+      backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
+      modelName: this.whisperManager.getModelName()
+    }
+  }
+
+  /**
    * Non-English never reaches an English-only model (Distil, small.en, base.en),
    * and each language reaches only its own engine family.
    */
@@ -1966,11 +1993,11 @@ export class TranscriptionService {
     const route = activeMeetingAsrRoute()
     if (route === 'english') return
     const { label } = getMeetingLanguageDefinition(activeMeetingLanguage())
-    if (route === 'parakeet') {
+    if (route === 'canary') {
       if (process.platform === 'darwin') {
-        if (resolveMacParakeetTranscriber(this.whisperManager.getFfmpegPath())) return
+        if (resolveMacCanaryTranscriber()) return
         throw new Error(
-          `${label} transcription on macOS needs the Parakeet runtime, which is not available in this build.`
+          `${label} transcription on macOS needs the Canary runtime, which is not available in this build.`
         )
       }
       if (process.platform === 'win32' && this.whisperManager.isParakeetSelected?.()) return
@@ -1997,8 +2024,8 @@ export class TranscriptionService {
   ): Promise<void> {
     if (process.platform === 'darwin') {
       const route = activeMeetingAsrRoute()
-      if (route === 'parakeet') {
-        return this.runMacParakeetPass(audioWavPath, meetingId, audioDurationSec, progressRange)
+      if (route === 'canary') {
+        return this.runMacCanaryPass(audioWavPath, meetingId, audioDurationSec, progressRange)
       }
       if (route === 'whisper-turbo') {
         return this.runMacWhisperTurboPass(audioWavPath, meetingId, audioDurationSec, progressRange)
@@ -2149,22 +2176,23 @@ export class TranscriptionService {
     )
   }
 
-  private runMacParakeetPass(
+  /** EU languages: Canary-1B-v2 with the meeting language pinned as source and target. */
+  private runMacCanaryPass(
     audioWavPath: string,
     meetingId: string,
     audioDurationSec?: number,
     progressRange?: { start: number; end: number }
   ): Promise<void> {
-    const transcriber = resolveMacParakeetTranscriber(this.whisperManager.getFfmpegPath())
+    const transcriber = resolveMacCanaryTranscriber()
     if (!transcriber) {
-      return Promise.reject(new Error('parakeet-mlx runtime is not available'))
+      return Promise.reject(new Error('canary-mlx runtime is not available'))
     }
     return this.runPythonBridgePass(
       {
-        name: 'parakeet-mlx',
+        name: 'canary-mlx',
         ...transcriber,
         language: activeMeetingLanguage(),
-        perfLabel: `Parakeet MLX backend: ${transcriber.modelRef}`
+        perfLabel: `Canary MLX backend: ${transcriber.modelRef}`
       },
       audioWavPath,
       meetingId,
@@ -2863,6 +2891,11 @@ export class TranscriptionService {
   }
 
   private normalizeTranscriptText(text: string): string {
+    // `\w` is ASCII-only: it erases Greek, Cyrillic, and CJK text and mangles
+    // accented Latin. Off English, compare Unicode words instead.
+    if (!isEnglishMeetingJob()) {
+      return tokenizeUnicodeWords(text.normalize('NFKC').toLowerCase()).join(' ')
+    }
     return text
       .toLowerCase()
       .replace(/[^\w\s.]/g, '')

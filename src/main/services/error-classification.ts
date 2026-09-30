@@ -22,7 +22,10 @@ export function classifyError(rawError: string): string {
   ) {
     return 'whisper-not-found'
   }
-  if (error.includes('whisper') && error.includes('exited with code')) {
+  if (
+    (error.includes('whisper') || error.includes('parakeet')) &&
+    error.includes('exited with code')
+  ) {
     return 'whisper-crash'
   }
   if (

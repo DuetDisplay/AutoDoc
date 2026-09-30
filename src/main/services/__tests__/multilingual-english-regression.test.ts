@@ -139,8 +139,18 @@ describe('non-English notes requests', () => {
     }
   )
 
+  it('raises overview output caps off English so structured output is not cut off', async () => {
+    const english = (await captureOverviewRequests()).map((raw) => JSON.parse(raw).num_predict)
+    const japanese = (await runWithMeetingLanguage('ja', () => captureOverviewRequests())).map(
+      (raw) => JSON.parse(raw).num_predict
+    )
+
+    expect(english).toEqual([400, 256])
+    expect(japanese).toEqual([1200, 768])
+  })
+
   it('blanks overview example values only off English', async () => {
-    const german = await runWithMeetingLanguage('el', () => captureOverviewRequests())
+    const german = await runWithMeetingLanguage('bg', () => captureOverviewRequests())
     const prompts = german.map((raw) => JSON.parse(raw).prompt as string)
 
     expect(

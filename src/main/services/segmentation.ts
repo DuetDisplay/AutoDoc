@@ -131,6 +131,8 @@ function parseDevNotesScanPolicy(raw: string | undefined): 'cpu-constrained' | '
   return null
 }
 
+const NO_USABLE_TRANSCRIPT_ERROR = 'Transcript has no usable speech'
+const NO_NOTES_DETECTED_CODE = 'no_notes_detected'
 const LEGACY_EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
 const OLLAMA_UNAVAILABLE_ERROR =
@@ -260,7 +262,14 @@ export class SegmentationService {
         stat(segmentsPath).catch(() => null),
         stat(errorPath).catch(() => null)
       ])
-      if (segmentsStat && errorStat && errorStat.mtimeMs > segmentsStat.mtimeMs) {
+      // A no-notes outcome is written right after its empty segments, so the two
+      // can share a timestamp.
+      const outcomeIsCurrent =
+        segmentsStat &&
+        errorStat &&
+        (errorStat.mtimeMs > segmentsStat.mtimeMs ||
+          (errorData?.status === 'no-notes' && errorStat.mtimeMs === segmentsStat.mtimeMs))
+      if (outcomeIsCurrent) {
         return this.getPersistedStatus(errorData)
       }
     }
@@ -465,10 +474,21 @@ export class SegmentationService {
         },
         { overwriteWhenV2Exists: true }
       )
-      await unlink(join(meetingDir, 'segments.error')).catch(() => {})
-      this.activeStatus = 'complete'
-      this.broadcastStatus(meetingId, 'complete')
-      this.safeInvokeOnComplete(meetingId)
+      // Nothing was said, so nothing is ready: report "No notes generated", not
+      // "Notes ready", and send no notes-ready notification.
+      const copy = notesUserCopy('empty')
+      const userReason = `${copy.title}. ${copy.body}`
+      await this.writeOutcomeFile(meetingId, {
+        error: NO_USABLE_TRANSCRIPT_ERROR,
+        retries: 0,
+        status: 'no-notes',
+        errorCode: NO_NOTES_DETECTED_CODE,
+        userReason
+      })
+      this.activeStatus = 'no-notes'
+      this.broadcastStatus(meetingId, 'no-notes', undefined, NO_NOTES_DETECTED_CODE, {
+        userReason
+      })
       return
     }
 

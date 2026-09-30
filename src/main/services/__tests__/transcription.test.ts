@@ -70,10 +70,11 @@ vi.mock('../transcription-worker-client', () => ({
   })
 }))
 
-vi.mock('../mac-parakeet-transcription', () => ({
-  resolveMacParakeetTranscriber: vi.fn(() => null)
+vi.mock('../mac-canary-transcription', () => ({
+  MAC_CANARY_MODEL: 'Mediform/canary-1b-v2-mlx-q8',
+  resolveMacCanaryTranscriber: vi.fn(() => null)
 }))
-const macParakeetMock = vi.mocked(await import('../mac-parakeet-transcription'))
+const macCanaryMock = vi.mocked(await import('../mac-canary-transcription'))
 
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
@@ -346,6 +347,45 @@ describe('TranscriptionService', () => {
 
     const result = await service.getTranscript('meeting-1')
     expect(result).toEqual(transcriptData)
+  })
+
+  it('waits for both Mac sources before releasing resources after a source failure', async () => {
+    setPlatform('darwin')
+    fsMock.access.mockImplementation(async (file) => {
+      if (/\/(mic|system)\.webm$/.test(String(file))) return undefined
+      throw new Error('ENOENT')
+    })
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (value: []) => void
+    const first = new Promise<[]>((_, reject) => {
+      rejectFirst = reject
+    })
+    const second = new Promise<[]>((resolve) => {
+      resolveSecond = resolve
+    })
+    const transcribeSource = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second)
+    ;(service as any).transcribeAudioSource = transcribeSource
+    ;(service as any).getDualSourceMode = vi.fn().mockResolvedValue('concurrent')
+    const released = vi.fn().mockResolvedValue(undefined)
+    ;(service as any).logMacResourceSnapshot = released
+    let jobSettled = false
+    const running = (service as any).processJob('failed-mac-source').catch((error: Error) => {
+      jobSettled = true
+      return error
+    })
+    await vi.waitFor(() => expect(transcribeSource).toHaveBeenCalledTimes(2))
+    const failure = new Error('Metal out of memory')
+    rejectFirst(failure)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(jobSettled).toBe(false)
+    expect(released).not.toHaveBeenCalled()
+    resolveSecond([])
+    expect(await running).toBe(failure)
+    expect(released).toHaveBeenCalledWith(
+      'transcription resources released',
+      'failed-mac-source',
+      expect.anything()
+    )
   })
 
   it('getTranscript returns empty array when file missing', async () => {
@@ -2382,7 +2422,7 @@ describe('TranscriptionService meeting-language routing', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    macParakeetMock.resolveMacParakeetTranscriber.mockReturnValue(null)
+    macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue(null)
     fsMock.writeFile.mockResolvedValue(undefined as any)
     fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
@@ -2446,7 +2486,7 @@ describe('TranscriptionService meeting-language routing', () => {
     }
   )
 
-  it('fails a German macOS meeting clearly when the Parakeet runtime is unavailable', async () => {
+  it('fails a German macOS meeting clearly when the Canary runtime is unavailable', async () => {
     setPlatform('darwin')
     mockWhisper = {
       ...mockWhisper,
@@ -2457,12 +2497,12 @@ describe('TranscriptionService meeting-language routing', () => {
     recordMeeting('de')
 
     await expect((service as any).processJob('german-mac')).rejects.toThrow(
-      'German transcription on macOS needs the Parakeet runtime'
+      'German transcription on macOS needs the Canary runtime'
     )
     expect(transcribe).not.toHaveBeenCalled()
   })
 
-  it('sends macOS Parakeet-language passes to Parakeet and English passes to Distil', async () => {
+  it('sends macOS EU-language passes to Canary and English passes to Distil', async () => {
     setPlatform('darwin')
     mockWhisper = {
       ...mockWhisper,
@@ -2472,11 +2512,11 @@ describe('TranscriptionService meeting-language routing', () => {
       getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
       getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' })
     } as unknown as WhisperManager
-    macParakeetMock.resolveMacParakeetTranscriber.mockReturnValue({
-      pythonPath: '/mock/parakeet/python3',
-      scriptPath: '/mock/parakeet-mlx-transcribe.py',
-      modelRef: 'mlx-community/parakeet-tdt-0.6b-v3',
-      env: { PATH: '/mock/parakeet' }
+    macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+      pythonPath: '/mock/canary/python3',
+      scriptPath: '/mock/canary-mlx-transcribe.py',
+      modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+      env: { HF_HOME: '/mock/canary-cache' }
     })
     const service = createService()
     const runPass = async (): Promise<void> => {
@@ -2487,24 +2527,24 @@ describe('TranscriptionService meeting-language routing', () => {
       await pass
     }
 
-    await runWithMeetingLanguage('el', runPass)
+    await runWithMeetingLanguage('bg', runPass)
     await runPass()
 
     expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
       1,
-      '/mock/parakeet/python3',
+      '/mock/canary/python3',
       [
-        '/mock/parakeet-mlx-transcribe.py',
+        '/mock/canary-mlx-transcribe.py',
         '--model',
-        'mlx-community/parakeet-tdt-0.6b-v3',
+        'Mediform/canary-1b-v2-mlx-q8',
         '--audio',
         '/mock/tmp/audio.wav',
         '--output',
         '/mock/tmp/audio.wav.json',
         '--language',
-        'el'
+        'bg'
       ],
-      { env: { PATH: '/mock/parakeet' } }
+      { env: { HF_HOME: '/mock/canary-cache' } }
     )
     expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
       2,
@@ -2576,25 +2616,28 @@ describe('TranscriptionService meeting-language routing', () => {
         ],
         { env: { PATH: '/mock/mlx', HF_HOME: '/mock/turbo-cache' } }
       )
-      expect(macParakeetMock.resolveMacParakeetTranscriber).not.toHaveBeenCalled()
+      expect(macCanaryMock.resolveMacCanaryTranscriber).not.toHaveBeenCalled()
     }
   )
 
-  it('never pre-chunks long turbo recordings into 90-second windows', async () => {
-    setPlatform('darwin')
-    mockWhisper = createMacTurboWhisperManager()
-    const service = createService()
-    const chunked = vi.fn()
-    ;(service as any).runWhisperChunked = chunked
-    ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
+  it.each(['ja', 'de'])(
+    'never pre-cuts long %s macOS recordings into 90-second windows',
+    async (meetingLanguage) => {
+      setPlatform('darwin')
+      mockWhisper = createMacTurboWhisperManager()
+      const service = createService()
+      const chunked = vi.fn()
+      ;(service as any).runWhisperChunked = chunked
+      ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
 
-    await runWithMeetingLanguage('ja', () =>
-      (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
-    )
+      await runWithMeetingLanguage(meetingLanguage, () =>
+        (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
+      )
 
-    expect(chunked).not.toHaveBeenCalled()
-    expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
-  })
+      expect(chunked).not.toHaveBeenCalled()
+      expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('refuses a Japanese Windows meeting instead of using Parakeet or an English-only model', async () => {
     setPlatform('win32')
@@ -2613,4 +2656,90 @@ describe('TranscriptionService meeting-language routing', () => {
     expect(mockWhisper.ensureReady).not.toHaveBeenCalledWith({ allowBackendInstall: true })
     expect(transcribe).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [
+      'ja',
+      '令和8年度予算は強い経済を実現する予算であり、複数年度の取り組みを推進しております。',
+      '令和8年度予算は強い経済を実現する予算であり 複数年度の取り組みを推進しております',
+      '次に主要な経費について申し述べます。'
+    ],
+    [
+      'de',
+      'Wir verschieben den Start des Abrechnungsportals auf Freitag, sagte Frau Körner.',
+      'wir verschieben den Start des Abrechnungsportals auf Freitag sagte Frau Körner',
+      'Über die Datenbankmigration entscheiden wir nächste Woche.'
+    ],
+    [
+      'uk',
+      'Ми переносимо запуск платіжного порталу на пʼятницю.',
+      'ми переносимо запуск платіжного порталу на пʼятницю',
+      'Рішення про міграцію бази даних ухвалимо наступного тижня.'
+    ]
+  ])(
+    'suppresses the mic echo of %s system audio and keeps distinct mic speech',
+    (language, systemText, echoedText, distinctText) => {
+      const service = createService()
+      const row = (id: string, speaker: string, text: string, startMs: number, endMs: number) => ({
+        id,
+        meetingId: 'meeting-echo',
+        speaker,
+        text,
+        startMs,
+        endMs,
+        confidence: -1
+      })
+
+      const kept = runWithMeetingLanguage(language, () =>
+        (service as any).suppressAcousticEchoes(
+          [
+            row('me-1', 'me', echoedText, 300, 5_200),
+            row('me-2', 'me', distinctText, 20_000, 23_000)
+          ],
+          [row('them-1', 'them', systemText, 0, 5_000)]
+        )
+      )
+
+      expect(kept.map((segment: { id: string }) => segment.id)).toEqual(['me-2'])
+    }
+  )
+
+  it.each([
+    ['de', 'canary-mlx', 'Mediform/canary-1b-v2-mlx-q8'],
+    ['en', 'mlx-whisper', 'distil-large-v3']
+  ])(
+    'logs the engine a %s macOS job actually runs',
+    async (meetingLanguage, backend, modelName) => {
+      setPlatform('darwin')
+      mockWhisper = {
+        ...mockWhisper,
+        isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionBackend: vi.fn().mockReturnValue('mlx-whisper')
+      } as unknown as WhisperManager
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/mock/canary/python3',
+        scriptPath: '/mock/canary-mlx-transcribe.py',
+        modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        env: {}
+      })
+      const service = createService()
+      stubTranscribe(service)
+      recordMeeting(meetingLanguage)
+
+      await (service as any).processJob('engine-log')
+
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'transcription started',
+          context: expect.objectContaining({ backend, modelName })
+        })
+      )
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'transcription source started',
+          context: expect.objectContaining({ backend, model: modelName })
+        })
+      )
+    }
+  )
 })

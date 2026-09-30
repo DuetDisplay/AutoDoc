@@ -2,37 +2,40 @@ export const DEFAULT_MEETING_LANGUAGE = 'en' as const
 
 /**
  * Transcription engine family. `english` keeps today's route (Distil on macOS,
- * the current Parakeet route on Windows). `parakeet` is Parakeet TDT 0.6B v3.
- * `whisper-turbo` is Whisper large-v3-turbo, for languages Parakeet cannot do.
+ * the current Parakeet route on Windows). `canary` is Canary-1B-v2 with the
+ * meeting language pinned. `whisper-turbo` is Whisper large-v3-turbo, for
+ * languages Canary cannot do.
  */
-export type MeetingAsrRoute = 'english' | 'parakeet' | 'whisper-turbo'
+export type MeetingAsrRoute = 'english' | 'canary' | 'whisper-turbo'
 
+/**
+ * Held from the picker after the AD-100 run-4 eval (restore a row once fixed):
+ * - el Greek: Canary's tokenizer cannot emit final sigma (NVIDIA-NeMo/Speech#15936).
+ * - es Spanish, ru Russian: unknown-token rates and a party-name error.
+ * - mt Maltese: below the language-identification threshold, garbled names.
+ */
 export const MEETING_LANGUAGE_DEFINITIONS = [
   { code: 'en', label: 'English', asr: 'english' },
-  { code: 'bg', label: 'Bulgarian', asr: 'parakeet' },
-  { code: 'hr', label: 'Croatian', asr: 'parakeet' },
-  { code: 'cs', label: 'Czech', asr: 'parakeet' },
-  { code: 'da', label: 'Danish', asr: 'parakeet' },
-  { code: 'nl', label: 'Dutch', asr: 'parakeet' },
-  { code: 'et', label: 'Estonian', asr: 'parakeet' },
-  { code: 'fi', label: 'Finnish', asr: 'parakeet' },
-  { code: 'fr', label: 'French', asr: 'parakeet' },
-  { code: 'de', label: 'German', asr: 'parakeet' },
-  { code: 'el', label: 'Greek', asr: 'parakeet' },
-  { code: 'hu', label: 'Hungarian', asr: 'parakeet' },
-  { code: 'it', label: 'Italian', asr: 'parakeet' },
-  { code: 'lv', label: 'Latvian', asr: 'parakeet' },
-  { code: 'lt', label: 'Lithuanian', asr: 'parakeet' },
-  { code: 'mt', label: 'Maltese', asr: 'parakeet' },
-  { code: 'pl', label: 'Polish', asr: 'parakeet' },
-  { code: 'pt', label: 'Portuguese', asr: 'parakeet' },
-  { code: 'ro', label: 'Romanian', asr: 'parakeet' },
-  { code: 'ru', label: 'Russian', asr: 'parakeet' },
-  { code: 'sk', label: 'Slovak', asr: 'parakeet' },
-  { code: 'sl', label: 'Slovenian', asr: 'parakeet' },
-  { code: 'es', label: 'Spanish', asr: 'parakeet' },
-  { code: 'sv', label: 'Swedish', asr: 'parakeet' },
-  { code: 'uk', label: 'Ukrainian', asr: 'parakeet' },
+  { code: 'bg', label: 'Bulgarian', asr: 'canary' },
+  { code: 'hr', label: 'Croatian', asr: 'canary' },
+  { code: 'cs', label: 'Czech', asr: 'canary' },
+  { code: 'da', label: 'Danish', asr: 'canary' },
+  { code: 'nl', label: 'Dutch', asr: 'canary' },
+  { code: 'et', label: 'Estonian', asr: 'canary' },
+  { code: 'fi', label: 'Finnish', asr: 'canary' },
+  { code: 'fr', label: 'French', asr: 'canary' },
+  { code: 'de', label: 'German', asr: 'canary' },
+  { code: 'hu', label: 'Hungarian', asr: 'canary' },
+  { code: 'it', label: 'Italian', asr: 'canary' },
+  { code: 'lv', label: 'Latvian', asr: 'canary' },
+  { code: 'lt', label: 'Lithuanian', asr: 'canary' },
+  { code: 'pl', label: 'Polish', asr: 'canary' },
+  { code: 'pt', label: 'Portuguese', asr: 'canary' },
+  { code: 'ro', label: 'Romanian', asr: 'canary' },
+  { code: 'sk', label: 'Slovak', asr: 'canary' },
+  { code: 'sl', label: 'Slovenian', asr: 'canary' },
+  { code: 'sv', label: 'Swedish', asr: 'canary' },
+  { code: 'uk', label: 'Ukrainian', asr: 'canary' },
   { code: 'ja', label: 'Japanese', asr: 'whisper-turbo', decoderLanguage: 'ja' },
   { code: 'zh-Hans', label: 'Simplified Chinese', asr: 'whisper-turbo', decoderLanguage: 'zh' },
   { code: 'ko', label: 'Korean', asr: 'whisper-turbo', decoderLanguage: 'ko' }

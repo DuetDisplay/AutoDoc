@@ -9,7 +9,7 @@ import {
   normalizeMeetingLanguage
 } from '../meeting-language'
 
-const PARAKEET_CODES = [
+const CANARY_CODES = [
   'bg',
   'hr',
   'cs',
@@ -19,28 +19,24 @@ const PARAKEET_CODES = [
   'fi',
   'fr',
   'de',
-  'el',
   'hu',
   'it',
   'lv',
   'lt',
-  'mt',
   'pl',
   'pt',
   'ro',
-  'ru',
   'sk',
   'sl',
-  'es',
   'sv',
   'uk'
 ]
 
 describe('meeting languages', () => {
-  it('exposes English, the 24 other Parakeet v3 languages, and Japanese, Chinese, Korean', () => {
+  it('exposes English, 20 Canary EU languages, and Japanese, Chinese, Korean', () => {
     expect(MEETING_LANGUAGE_DEFINITIONS.map(({ code }) => code)).toEqual([
       'en',
-      ...PARAKEET_CODES,
+      ...CANARY_CODES,
       'ja',
       'zh-Hans',
       'ko'
@@ -49,7 +45,7 @@ describe('meeting languages', () => {
 
   it('routes each language to exactly one transcription family', () => {
     expect(getMeetingAsrRoute('en')).toBe('english')
-    for (const code of PARAKEET_CODES) expect(getMeetingAsrRoute(code)).toBe('parakeet')
+    for (const code of CANARY_CODES) expect(getMeetingAsrRoute(code)).toBe('canary')
     for (const code of ['ja', 'zh-Hans', 'ko']) {
       expect(getMeetingAsrRoute(code)).toBe('whisper-turbo')
       expect(isWhisperTurboMeetingLanguage(code)).toBe(true)
@@ -68,7 +64,7 @@ describe('meeting languages', () => {
     expect(DEFAULT_MEETING_LANGUAGE).toBe('en')
     expect(normalizeMeetingLanguage(undefined)).toBe('en')
     expect(normalizeMeetingLanguage('auto')).toBe('en')
-    expect(normalizeMeetingLanguage(' ES ')).toBe('es')
+    expect(normalizeMeetingLanguage(' FR ')).toBe('fr')
     expect(isEnglishMeetingLanguage(undefined)).toBe(true)
     expect(isEnglishMeetingLanguage('fr')).toBe(false)
     expect(isEnglishMeetingLanguage('ja')).toBe(false)
@@ -82,7 +78,10 @@ describe('meeting languages', () => {
     }
   )
 
-  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th'])('does not support %s', (code) => {
-    expect(normalizeMeetingLanguage(code)).toBe('en')
-  })
+  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th', 'el', 'es', 'mt', 'ru'])(
+    'does not support %s',
+    (code) => {
+      expect(normalizeMeetingLanguage(code)).toBe('en')
+    }
+  )
 })

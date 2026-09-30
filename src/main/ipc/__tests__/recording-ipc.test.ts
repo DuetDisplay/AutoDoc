@@ -1548,7 +1548,7 @@ describe('recording IPC meeting language', () => {
       startedAt: 1,
       stoppedAt: 2,
       durationSeconds: 1,
-      meetingLanguage: 'el',
+      meetingLanguage: 'bg',
       videoStatus: 'ready'
     }
     vi.mocked(readMetadata).mockImplementation(async () => persisted)
@@ -1557,9 +1557,9 @@ describe('recording IPC meeting language', () => {
     })
     const { handler } = register({ recordingsDir: '/mock/recordings' })
 
-    await handler('recording:update-title')(null, 'meeting-1', 'Σύσκεψη')
+    await handler('recording:update-title')(null, 'meeting-1', 'Среща')
     expect(persisted).toEqual(
-      expect.objectContaining({ meetingLanguage: 'el', customTitle: 'Σύσκεψη' })
+      expect.objectContaining({ meetingLanguage: 'bg', customTitle: 'Среща' })
     )
 
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)

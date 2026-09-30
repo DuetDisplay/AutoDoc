@@ -35,6 +35,18 @@ export function isEnglishMeetingJob(): boolean {
   return isEnglishMeetingLanguage(activeMeetingLanguage())
 }
 
+/**
+ * Free-text output caps were sized on English. The same content costs more model
+ * tokens in most other languages (Greek, Cyrillic, and CJK run 2-3x in Qwen's
+ * tokenizer). A cap only stops runaway output, so off English it scales instead
+ * of truncating a structured response mid-string.
+ */
+export const NON_ENGLISH_OUTPUT_TOKEN_FACTOR = 3
+
+export function meetingOutputTokenCap(englishCap: number): number {
+  return isEnglishMeetingJob() ? englishCap : englishCap * NON_ENGLISH_OUTPUT_TOKEN_FACTOR
+}
+
 export function activeMeetingAsrRoute(): MeetingAsrRoute {
   return getMeetingAsrRoute(activeMeetingLanguage())
 }

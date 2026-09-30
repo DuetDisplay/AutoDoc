@@ -9,7 +9,7 @@ import {
   quantityMentionsEquivalent,
   type QuantityMention
 } from './notes-quantity-canonicalizer'
-import { isEnglishMeetingJob } from './notes-language'
+import { isEnglishMeetingJob, meetingOutputTokenCap } from './notes-language'
 
 export interface NotesOverviewGenerateRequest {
   prompt: string
@@ -391,7 +391,7 @@ async function requestOverview(
     raw = await generate({
       prompt: `${overviewPrompt(overviewOnly)}${markdown.trim()}`,
       num_ctx: numCtx,
-      num_predict: overviewOnly ? 256 : 400,
+      num_predict: meetingOutputTokenCap(overviewOnly ? 256 : 400),
       temperature,
       format: overviewOnly ? OVERVIEW_ONLY_FORMAT : OVERVIEW_RESPONSE_FORMAT
     })

@@ -27,24 +27,24 @@ const cases = [
     invented: 'Dana schickt das Preis-Update mit 15 Prozent.'
   },
   {
-    language: 'el',
+    language: 'bg',
     lines: [
-      'Αποφασίσαμε να μεταφέρουμε την κυκλοφορία της πύλης χρεώσεων την Παρασκευή.',
-      'Η Ντάνα θα στείλει την ενημέρωση τιμών με 12 τοις εκατό.'
+      'Отлагаме пускането на портала за плащания за петък.',
+      'Дана ще изпрати актуализацията на цените с 12 процента до понеделник.'
     ],
-    decision: 'Η κυκλοφορία της πύλης χρεώσεων μεταφέρεται την Παρασκευή.',
-    action: 'Η Ντάνα θα στείλει την ενημέρωση τιμών με 12 τοις εκατό.',
-    invented: 'Η Ντάνα θα στείλει την ενημέρωση τιμών με 15 τοις εκατό.'
+    decision: 'Пускането на портала за плащания се отлага за петък.',
+    action: 'Дана ще изпрати актуализацията на цените с 12 процента.',
+    invented: 'Дана ще изпрати актуализацията на цените с 15 процента.'
   },
   {
-    language: 'ru',
+    language: 'uk',
     lines: [
-      'Мы переносим запуск платёжного портала на пятницу.',
-      'Дана отправит обновление цен на 12 процентов.'
+      'Ми переносимо запуск платіжного порталу на пʼятницю.',
+      'Дана надішле оновлення цін на 12 відсотків.'
     ],
-    decision: 'Запуск платёжного портала переносится на пятницу.',
-    action: 'Дана отправит обновление цен на 12 процентов.',
-    invented: 'Дана отправит обновление цен на 15 процентов.'
+    decision: 'Запуск платіжного порталу переноситься на пʼятницю.',
+    action: 'Дана надішле оновлення цін на 12 відсотків.',
+    invented: 'Дана надішле оновлення цін на 15 відсотків.'
   },
   {
     language: 'ja',
@@ -192,18 +192,18 @@ describe('English-only text heuristics stay English-only', () => {
     })
   })
 
-  it('keeps distinct Greek and Cyrillic writer topics distinct', () => {
+  it('keeps distinct Cyrillic writer topics distinct', () => {
     const provider = new OllamaProvider('http://localhost:11434', 'test-model') as unknown as {
       normalizeTopicText(text: string): string
     }
-    runWithMeetingLanguage('el', () => {
-      expect(provider.normalizeTopicText('Πύλη χρεώσεων')).not.toBe('')
-      expect(provider.normalizeTopicText('Πύλη χρεώσεων')).not.toBe(
-        provider.normalizeTopicText('Τιμολόγηση')
+    runWithMeetingLanguage('bg', () => {
+      expect(provider.normalizeTopicText('Портал за плащания')).not.toBe('')
+      expect(provider.normalizeTopicText('Портал за плащания')).not.toBe(
+        provider.normalizeTopicText('Ценообразуване')
       )
     })
-    runWithMeetingLanguage('ru', () => {
-      expect(provider.normalizeTopicText('Платёжный портал')).toBe('платёжный портал')
+    runWithMeetingLanguage('uk', () => {
+      expect(provider.normalizeTopicText('Платіжний портал')).toBe('платіжний портал')
     })
   })
 })

@@ -39,6 +39,14 @@ export function memoryFailureFromError(raw: string): MemoryFailure | undefined {
   )
     return {}
 
+  // Apple Silicon GPUs share system RAM, so Metal running out of memory is a RAM shortage.
+  if (
+    /kIOGPUCommandBufferCallbackErrorOutOfMemory|\[METAL\] Command buffer execution failed: Insufficient Memory/i.test(
+      raw
+    )
+  )
+    return {}
+
   // Dedicated GPU exhaustion and generic crashes do not establish a RAM shortage.
   if (/CUDA|DirectML|VRAM|device (?:lost|removed)|GPU out of memory/i.test(raw)) return undefined
   if (
