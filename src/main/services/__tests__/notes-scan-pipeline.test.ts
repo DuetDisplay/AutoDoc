@@ -523,6 +523,41 @@ describe('runNotesScanPipeline', () => {
     ).toBe(false)
   })
 
+  it('uses the verified Mac overview and keeps the lossless one when nothing survives', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const base = {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless' as const,
+      attributionTranscript: [],
+      spanSources: [{ startMs: 0, endMs: 5000 }]
+    }
+    const trimmed = vi.fn(async <T extends { text: string }>(_catalog: string, overview: T) => ({
+      ...overview,
+      text: 'The team locked login analytics coverage.'
+    }))
+    const verified = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: overviewGenerate(),
+      verifyOverview: trimmed
+    })
+    expect(trimmed).toHaveBeenCalledWith(
+      expect.stringContaining('login events'),
+      expect.objectContaining({ text: SYNTHESIZED_OVERVIEW })
+    )
+    expect(verified.content.overview?.text).toBe('The team locked login analytics coverage.')
+    expect(verified.overviewFailed).toBe(false)
+
+    const rejected = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: overviewGenerate(),
+      verifyOverview: async () => null
+    })
+    expect(rejected.content.overview?.text).toBe(
+      'The team decided to collect login events from all users.'
+    )
+  })
+
   it('keeps the first-fact Mac overview when generated text is rejected', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const result = await runNotesScanPipeline(segments(), {

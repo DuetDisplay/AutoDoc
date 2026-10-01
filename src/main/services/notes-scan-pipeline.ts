@@ -125,6 +125,11 @@ export interface RunNotesScanOptions {
   temperature?: AllowedTemperature
   onProgress?: (update: { stage: string; fraction: number }) => void
   rewritePolicy?: NotesRewritePolicy
+  /**
+   * Lossless mode: returns the generated overview without sentences the notes
+   * catalog does not state, or null when none remain. Must not throw.
+   */
+  verifyOverview?: <T extends { text: string }>(catalog: string, overview: T) => Promise<T | null>
 }
 
 export function scanLayerProgress(fraction: number): number {
@@ -409,7 +414,11 @@ export async function runNotesScanPipeline(
           overviewFailed = !overview.usedModel
           overviewFailureReasons = overview.failureReasons
           if (overview.usedModel && overview.overview?.text.trim()) {
-            content = { ...content, overview: overview.overview }
+            // With no supported sentence left, the lossless overview stays.
+            const verified = options.verifyOverview
+              ? await options.verifyOverview(catalog, overview.overview)
+              : overview.overview
+            if (verified?.text.trim()) content = { ...content, overview: verified }
           }
         } catch (error) {
           overviewFailed = true

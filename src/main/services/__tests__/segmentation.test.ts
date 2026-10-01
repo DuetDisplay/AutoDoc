@@ -144,6 +144,47 @@ describe('SegmentationService', () => {
     }
   )
 
+  describe('overview claim verification', () => {
+    const judge = () => vi.fn(async () => JSON.stringify({ verdict: 'supported' }))
+
+    it.each([
+      ['darwin', true],
+      ['win32', false]
+    ] as const)('is available on %s: %s', (platform, available) => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+      provider.completePrompt = judge()
+      try {
+        expect((service as any).claimVerificationComplete() !== null).toBe(available)
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    })
+
+    it('can be switched off for evaluation', () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      process.env.AUTODOC_TEST_NOTES_SKIP_CLAIM_VERIFICATION = '1'
+      provider.completePrompt = judge()
+      try {
+        expect((service as any).claimVerificationComplete()).toBeNull()
+      } finally {
+        delete process.env.AUTODOC_TEST_NOTES_SKIP_CLAIM_VERIFICATION
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    })
+
+    it('keeps the generated overview when the check throws', async () => {
+      const overview = { text: 'The team reviewed the launch.' }
+      const failing = vi.fn(async () => {
+        throw new Error('ollama down')
+      })
+      await expect(
+        (service as any).verifyOverviewClaimsForJob('meeting', '- note', overview, failing)
+      ).resolves.toEqual(overview)
+    })
+  })
+
   it.each(['win32', 'darwin'] as const)(
     'keeps notes memory evidence across a restart on %s',
     async (platform) => {

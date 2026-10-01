@@ -45,6 +45,11 @@ import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
 import { NotesRepository } from './notes-repository'
 import { removeExactDuplicateSegments } from './notes-exact-duplicates'
 import {
+  isClaimVerificationSkipped,
+  verifyOverviewClaims,
+  type ClaimCompleteFn
+} from './notes-claim-verification'
+import {
   computeLegacyNotesRevision,
   computeNotesAttributionRevision,
   computeTranscriptRevision
@@ -750,6 +755,46 @@ export class SegmentationService {
     }
   }
 
+  /**
+   * Mac notes: the notes model checks each overview sentence against the notes.
+   * The request bypasses the meeting-language directive; the answer is an enum.
+   */
+  private claimVerificationComplete(): ClaimCompleteFn | null {
+    const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
+    if (process.platform !== 'darwin' || !completePrompt || isClaimVerificationSkipped()) {
+      return null
+    }
+    return (prompt, options) => completePrompt(prompt, options)
+  }
+
+  private async verifyOverviewClaimsForJob<T extends { text: string }>(
+    meetingId: string,
+    catalog: string,
+    overview: T,
+    complete: ClaimCompleteFn
+  ): Promise<T | null> {
+    const startedAt = Date.now()
+    try {
+      const result = await verifyOverviewClaims(overview, catalog, complete)
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes overview claim verification completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          checked: result.checked,
+          removed: result.removed,
+          droppedSentences: result.dropped,
+          errors: result.errors,
+          keptModelOverview: result.overview !== null
+        }
+      })
+      return result.overview
+    } catch {
+      return overview
+    }
+  }
+
   private async persistScanLayerNotes(
     meetingId: string,
     segments: MeetingSegments,
@@ -794,6 +839,7 @@ export class SegmentationService {
             ? CPU_CONSTRAINED_REWRITE_POLICY
             : undefined
       let missingModelError: unknown
+      const claimComplete = presentationMode ? this.claimVerificationComplete() : null
       const result = await runNotesScanPipeline(segments, {
         embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
         title,
@@ -838,6 +884,10 @@ export class SegmentationService {
             throw error
           })
         },
+        verifyOverview: claimComplete
+          ? (catalog, overview) =>
+              this.verifyOverviewClaimsForJob(meetingId, catalog, overview, claimComplete)
+          : undefined,
         onProgress: (update) => onProgress?.(update.fraction, update.stage)
       })
       // Optional scan passes may catch generation errors. A missing model must
