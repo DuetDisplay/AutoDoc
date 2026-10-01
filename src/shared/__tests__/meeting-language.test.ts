@@ -3,6 +3,7 @@ import {
   DEFAULT_MEETING_LANGUAGE,
   getMeetingAsrRoute,
   getMeetingLanguageDefinition,
+  isDenseScriptMeetingLanguage,
   isEnglishMeetingLanguage,
   isMeetingLanguageAvailable,
   isWhisperTurboMeetingLanguage,
@@ -10,6 +11,8 @@ import {
   meetingLanguageAvailability,
   normalizeMeetingLanguage
 } from '../meeting-language'
+
+const WHISPER_TURBO_EU_CODES = ['el', 'ru', 'es']
 
 const CANARY_CODES = [
   'bg',
@@ -35,24 +38,37 @@ const CANARY_CODES = [
 ]
 
 describe('meeting languages', () => {
-  it('exposes English, 20 Canary EU languages, and Japanese, Chinese, Korean', () => {
-    expect(MEETING_LANGUAGE_DEFINITIONS.map(({ code }) => code)).toEqual([
-      'en',
-      ...CANARY_CODES,
-      'ja',
-      'zh-Hans',
-      'ko'
-    ])
+  it('exposes English, 20 Canary EU languages, Greek, Russian, Spanish and Japanese, Chinese, Korean', () => {
+    const codes = MEETING_LANGUAGE_DEFINITIONS.map(({ code }) => code)
+    expect(codes).toHaveLength(27)
+    expect([...codes].sort()).toEqual(
+      ['en', ...CANARY_CODES, ...WHISPER_TURBO_EU_CODES, 'ja', 'zh-Hans', 'ko'].sort()
+    )
+    // Rows stay in label order after English, ending with the Asian languages.
+    expect(codes.slice(-3)).toEqual(['ja', 'zh-Hans', 'ko'])
   })
 
   it('routes each language to exactly one transcription family', () => {
     expect(getMeetingAsrRoute('en')).toBe('english')
     for (const code of CANARY_CODES) expect(getMeetingAsrRoute(code)).toBe('canary')
-    for (const code of ['ja', 'zh-Hans', 'ko']) {
+    for (const code of [...WHISPER_TURBO_EU_CODES, 'ja', 'zh-Hans', 'ko']) {
       expect(getMeetingAsrRoute(code)).toBe('whisper-turbo')
       expect(isWhisperTurboMeetingLanguage(code)).toBe(true)
     }
     expect(isWhisperTurboMeetingLanguage('de')).toBe(false)
+  })
+
+  it('pins Greek, Russian and Spanish to their Whisper decoders', () => {
+    for (const code of WHISPER_TURBO_EU_CODES) {
+      expect(getMeetingLanguageDefinition(code)).toMatchObject({ decoderLanguage: code })
+    }
+  })
+
+  it('shrinks notes chunks only for Japanese, Chinese and Korean', () => {
+    for (const code of ['ja', 'zh-Hans', 'ko']) expect(isDenseScriptMeetingLanguage(code)).toBe(true)
+    for (const code of ['en', 'de', ...WHISPER_TURBO_EU_CODES]) {
+      expect(isDenseScriptMeetingLanguage(code)).toBe(false)
+    }
   })
 
   it('pins Simplified Chinese to the Whisper zh decoder', () => {
@@ -80,7 +96,7 @@ describe('meeting languages', () => {
     }
   )
 
-  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th', 'el', 'es', 'mt', 'ru'])(
+  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th', 'mt'])(
     'does not support %s',
     (code) => {
       expect(normalizeMeetingLanguage(code)).toBe('en')
@@ -96,7 +112,7 @@ describe('meetingLanguageAvailability', () => {
 
     const small = meetingLanguageAvailability(true)
     expect(small.restricted).toBe(true)
-    expect(small.availableLanguages).toEqual(['en', 'de', 'fr', 'it', 'pt'])
+    expect(small.availableLanguages).toEqual(['en', 'de', 'fr', 'it', 'pt', 'es'])
     expect(isMeetingLanguageAvailable('de', small)).toBe(true)
     expect(isMeetingLanguageAvailable('ja', small)).toBe(false)
     expect(isMeetingLanguageAvailable('pl', small)).toBe(false)

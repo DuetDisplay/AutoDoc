@@ -42,8 +42,8 @@ import { OllamaEmbeddingProvider } from './ollama-embedding'
 import { WINDOWS_OUTLINE_PROMPT, countCompleteOutlineBullets, outlineToWriterJson } from './windows-notes-outline'
 import { windowsNotesModelExperiment } from './windows-notes-model-experiment'
 import { isWindowsEvidenceWriterEnabled, WINDOWS_EVIDENCE_WRITER_PROMPT, WINDOWS_EVIDENCE_WRITER_FORMAT, evidenceToWriterJson } from './windows-notes-evidence'
+import { isDenseScriptMeetingLanguage } from '../../shared/meeting-language'
 import {
-  activeMeetingAsrRoute,
   activeMeetingLanguage,
   appendMeetingLanguageDirective,
   isEnglishMeetingJob
@@ -103,7 +103,7 @@ export const WINDOWS_CHUNK_CHARS = 8000
  * Chunk sizes above assume Latin text at ~4 characters per model token. Japanese,
  * Chinese, and Korean run near 1-1.5, so their chunks shrink to stay near ~1K tokens.
  */
-export const WHISPER_TURBO_CHUNK_CHARS_DIVISOR = 3
+export const DENSE_SCRIPT_CHUNK_CHARS_DIVISOR = 3
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token is received for 2 minutes
 const SLOW_STREAM_ACTIVITY_DELAY_MS = 60_000
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
@@ -2283,8 +2283,8 @@ export class OllamaProvider implements LLMProvider {
       : this.windowsWideChunks
         ? 12000
         : (getDevNotesChunkCharsOverride() ?? CHUNK_CHARS)
-    return activeMeetingAsrRoute() === 'whisper-turbo'
-      ? Math.round(chars / WHISPER_TURBO_CHUNK_CHARS_DIVISOR)
+    return isDenseScriptMeetingLanguage(activeMeetingLanguage())
+      ? Math.round(chars / DENSE_SCRIPT_CHUNK_CHARS_DIVISOR)
       : chars
   }
 

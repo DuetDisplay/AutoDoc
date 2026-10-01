@@ -15,7 +15,7 @@ describe('MeetingLanguagePicker', () => {
     await user.click(trigger)
 
     expect(screen.getByRole('listbox', { name: 'Meeting language options' })).toBeInTheDocument()
-    expect(screen.getAllByRole('option')).toHaveLength(24)
+    expect(screen.getAllByRole('option')).toHaveLength(27)
     expect(screen.getByRole('option', { name: /English Default · optimized/i })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -61,17 +61,18 @@ describe('MeetingLanguagePicker on a Mac with the small notes model', () => {
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
 
     const options = screen.getAllByRole('option')
-    expect(options).toHaveLength(24)
-    expect(options.slice(0, 5).map((option) => option.textContent)).toEqual([
+    expect(options).toHaveLength(27)
+    expect(options.slice(0, 6).map((option) => option.textContent)).toEqual([
       'EnglishDefault · optimized✓',
       'French',
       'German',
       'Italian',
-      'Portuguese'
+      'Portuguese',
+      'Spanish'
     ])
-    expect(options.slice(0, 5).every((option) => !option.hasAttribute('aria-disabled'))).toBe(true)
+    expect(options.slice(0, 6).every((option) => !option.hasAttribute('aria-disabled'))).toBe(true)
     expect(
-      options.slice(5).every((option) => option.getAttribute('aria-disabled') === 'true')
+      options.slice(6).every((option) => option.getAttribute('aria-disabled') === 'true')
     ).toBe(true)
     expect(screen.getByText(LOCKED_MEETING_LANGUAGES_HEADING)).toBeInTheDocument()
   })

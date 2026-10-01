@@ -9,10 +9,13 @@ export const DEFAULT_MEETING_LANGUAGE = 'en' as const
 export type MeetingAsrRoute = 'english' | 'canary' | 'whisper-turbo'
 
 /**
- * Held from the picker after the AD-100 run-4 eval (restore a row once fixed):
- * - el Greek: Canary's tokenizer cannot emit final sigma (NVIDIA-NeMo/Speech#15936).
- * - es Spanish, ru Russian: unknown-token rates and a party-name error.
- * - mt Maltese: below the language-identification threshold, garbled names.
+ * Greek, Spanish and Russian run on Whisper turbo, not Canary: on the run-4
+ * clips Canary could not emit Greek final sigma (NVIDIA-NeMo/Speech#15936) and
+ * produced unknown tokens and a party-name error in Spanish and Russian, while
+ * turbo transcribed the same clips cleanly (2026-10-01).
+ *
+ * Held from the picker (restore a row once fixed):
+ * - mt Maltese: garbled on both Canary and turbo.
  */
 export const MEETING_LANGUAGE_DEFINITIONS = [
   { code: 'en', label: 'English', asr: 'english' },
@@ -25,6 +28,7 @@ export const MEETING_LANGUAGE_DEFINITIONS = [
   { code: 'fi', label: 'Finnish', asr: 'canary' },
   { code: 'fr', label: 'French', asr: 'canary' },
   { code: 'de', label: 'German', asr: 'canary' },
+  { code: 'el', label: 'Greek', asr: 'whisper-turbo', decoderLanguage: 'el' },
   { code: 'hu', label: 'Hungarian', asr: 'canary' },
   { code: 'it', label: 'Italian', asr: 'canary' },
   { code: 'lv', label: 'Latvian', asr: 'canary' },
@@ -32,8 +36,10 @@ export const MEETING_LANGUAGE_DEFINITIONS = [
   { code: 'pl', label: 'Polish', asr: 'canary' },
   { code: 'pt', label: 'Portuguese', asr: 'canary' },
   { code: 'ro', label: 'Romanian', asr: 'canary' },
+  { code: 'ru', label: 'Russian', asr: 'whisper-turbo', decoderLanguage: 'ru' },
   { code: 'sk', label: 'Slovak', asr: 'canary' },
   { code: 'sl', label: 'Slovenian', asr: 'canary' },
+  { code: 'es', label: 'Spanish', asr: 'whisper-turbo', decoderLanguage: 'es' },
   { code: 'sv', label: 'Swedish', asr: 'canary' },
   { code: 'uk', label: 'Ukrainian', asr: 'canary' },
   { code: 'ja', label: 'Japanese', asr: 'whisper-turbo', decoderLanguage: 'ja' },
@@ -94,17 +100,25 @@ export function isWhisperTurboMeetingLanguage(value: unknown): boolean {
   return getMeetingAsrRoute(value) === 'whisper-turbo'
 }
 
+const DENSE_SCRIPT_MEETING_LANGUAGES: readonly MeetingLanguageCode[] = ['ja', 'zh-Hans', 'ko']
+
+/** Japanese, Chinese and Korean carry about one model token per character. */
+export function isDenseScriptMeetingLanguage(value: unknown): boolean {
+  return DENSE_SCRIPT_MEETING_LANGUAGES.includes(normalizeMeetingLanguage(value))
+}
+
 /**
  * Languages the small notes model on 8 GB Macs (`llama3.2:3b`) officially
  * supports, limited to picker rows. Meta documents en, de, fr, it, pt, hi, es
- * and th; Spanish is held and Hindi and Thai are not offered.
+ * and th; Hindi and Thai are not offered.
  */
 export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[] = [
   'en',
   'de',
   'fr',
   'it',
-  'pt'
+  'pt',
+  'es'
 ]
 
 export interface MeetingLanguageAvailability {

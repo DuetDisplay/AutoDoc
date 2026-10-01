@@ -137,7 +137,7 @@ describe('PrefsStore', () => {
 
     expect(handler('prefs:get-meeting-language-availability')()).toMatchObject({
       restricted: true,
-      availableLanguages: ['en', 'de', 'fr', 'it', 'pt']
+      availableLanguages: ['en', 'de', 'fr', 'it', 'pt', 'es']
     })
     handler('prefs:set-meeting-language')({}, 'de')
     expect(store.getMeetingLanguage()).toBe('de')
