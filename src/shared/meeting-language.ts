@@ -93,3 +93,40 @@ export function getMeetingAsrRoute(value: unknown): MeetingAsrRoute {
 export function isWhisperTurboMeetingLanguage(value: unknown): boolean {
   return getMeetingAsrRoute(value) === 'whisper-turbo'
 }
+
+/**
+ * Languages the small notes model on 8 GB Macs (`llama3.2:3b`) officially
+ * supports, limited to picker rows. Meta documents en, de, fr, it, pt, hi, es
+ * and th; Spanish is held and Hindi and Thai are not offered.
+ */
+export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[] = [
+  'en',
+  'de',
+  'fr',
+  'it',
+  'pt'
+]
+
+export interface MeetingLanguageAvailability {
+  /** True when this machine writes notes with the small notes model. */
+  restricted: boolean
+  availableLanguages: readonly MeetingLanguageCode[]
+}
+
+export const UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY: MeetingLanguageAvailability = {
+  restricted: false,
+  availableLanguages: MEETING_LANGUAGE_DEFINITIONS.map((definition) => definition.code)
+}
+
+export function meetingLanguageAvailability(restricted: boolean): MeetingLanguageAvailability {
+  return restricted
+    ? { restricted, availableLanguages: SMALL_NOTES_MODEL_MEETING_LANGUAGES }
+    : UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY
+}
+
+export function isMeetingLanguageAvailable(
+  value: unknown,
+  availability: MeetingLanguageAvailability
+): boolean {
+  return availability.availableLanguages.includes(normalizeMeetingLanguage(value))
+}

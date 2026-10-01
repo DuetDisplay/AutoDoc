@@ -7,9 +7,18 @@ import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
 import {
   DEFAULT_MEETING_LANGUAGE,
+  getMeetingLanguageDefinition,
+  isMeetingLanguageAvailable,
   normalizeMeetingLanguage,
+  SMALL_NOTES_MODEL_MEETING_LANGUAGES,
+  UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../shared/meeting-language'
+
+const SMALL_NOTES_MODEL_LANGUAGE_LIST = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+  SMALL_NOTES_MODEL_MEETING_LANGUAGES.map((code) => getMeetingLanguageDefinition(code).label)
+)
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -81,6 +90,8 @@ export function Settings() {
     useState<MeetingLanguageCode>(DEFAULT_MEETING_LANGUAGE)
   const [isSavingMeetingLanguage, setIsSavingMeetingLanguage] = useState(false)
   const [meetingLanguageError, setMeetingLanguageError] = useState<string | null>(null)
+  const [meetingLanguageAvailability, setMeetingLanguageAvailability] =
+    useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -112,6 +123,12 @@ export function Settings() {
     )
     void window.electronAPI.invoke('prefs:get-meeting-language').then(
       (language) => setMeetingLanguageState(normalizeMeetingLanguage(language)),
+      () => undefined
+    )
+    void window.electronAPI.invoke('prefs:get-meeting-language-availability').then(
+      (availability) => {
+        if (availability) setMeetingLanguageAvailability(availability)
+      },
       () => undefined
     )
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
@@ -450,6 +467,18 @@ export function Settings() {
                   The language spoken in new recordings, including auto-record. Transcripts and
                   notes are written in this language.
                 </p>
+                {meetingLanguageAvailability.restricted && (
+                  <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">
+                    This Mac has 8 GB of memory, so notes use a smaller model. It supports{' '}
+                    {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need 16 GB or more.
+                  </p>
+                )}
+                {!isMeetingLanguageAvailable(meetingLanguage, meetingLanguageAvailability) && (
+                  <p role="status" className="mt-1 text-[11px] text-clay-dark">
+                    {getMeetingLanguageDefinition(meetingLanguage).label} isn&apos;t available on this
+                    Mac. New recordings use English.
+                  </p>
+                )}
                 {meetingLanguageError && (
                   <p role="alert" className="mt-1 text-[11px] text-clay-dark">
                     {meetingLanguageError}
@@ -459,6 +488,7 @@ export function Settings() {
               <MeetingLanguagePicker
                 value={meetingLanguage}
                 disabled={isSavingMeetingLanguage}
+                availability={meetingLanguageAvailability}
                 onChange={(language) => void handleSetMeetingLanguage(language)}
               />
             </div>

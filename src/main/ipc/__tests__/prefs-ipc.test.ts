@@ -25,6 +25,7 @@ vi.mock('electron-store', () => {
 import { PrefsStore } from '../../services/prefs-store'
 import { registerPrefsIpc } from '../prefs-ipc'
 import { BrowserWindow, ipcMain } from 'electron'
+import { meetingLanguageAvailability } from '../../../shared/meeting-language'
 
 describe('PrefsStore', () => {
   let store: PrefsStore
@@ -119,6 +120,29 @@ describe('PrefsStore', () => {
     expect(handler('prefs:get-meeting-language')()).toBe('en')
     handler('prefs:set-meeting-language')({}, 'fr')
     expect(handler('prefs:get-meeting-language')()).toBe('fr')
+  })
+
+  it('rejects meeting languages the small notes model cannot write', () => {
+    registerPrefsIpc(store, undefined, undefined, undefined, () =>
+      meetingLanguageAvailability(true)
+    )
+
+    const handler = (channel: string) => {
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(([registered]) => registered === channel)
+      if (!registration) throw new Error(`Expected ${channel} to be registered`)
+      return registration[1] as unknown as (...args: unknown[]) => unknown
+    }
+
+    expect(handler('prefs:get-meeting-language-availability')()).toMatchObject({
+      restricted: true,
+      availableLanguages: ['en', 'de', 'fr', 'it', 'pt']
+    })
+    handler('prefs:set-meeting-language')({}, 'de')
+    expect(store.getMeetingLanguage()).toBe('de')
+    expect(() => handler('prefs:set-meeting-language')({}, 'ja')).toThrow(/16 GB/)
+    expect(store.getMeetingLanguage()).toBe('de')
   })
 
   it('broadcasts video watermark preference changes to renderer windows', () => {

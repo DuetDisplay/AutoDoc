@@ -4,8 +4,10 @@ import {
   getMeetingAsrRoute,
   getMeetingLanguageDefinition,
   isEnglishMeetingLanguage,
+  isMeetingLanguageAvailable,
   isWhisperTurboMeetingLanguage,
   MEETING_LANGUAGE_DEFINITIONS,
+  meetingLanguageAvailability,
   normalizeMeetingLanguage
 } from '../meeting-language'
 
@@ -84,4 +86,28 @@ describe('meeting languages', () => {
       expect(normalizeMeetingLanguage(code)).toBe('en')
     }
   )
+})
+
+describe('meetingLanguageAvailability', () => {
+  it('offers every picker language unless the machine uses the small notes model', () => {
+    const full = meetingLanguageAvailability(false)
+    expect(full.restricted).toBe(false)
+    expect(full.availableLanguages).toHaveLength(MEETING_LANGUAGE_DEFINITIONS.length)
+
+    const small = meetingLanguageAvailability(true)
+    expect(small.restricted).toBe(true)
+    expect(small.availableLanguages).toEqual(['en', 'de', 'fr', 'it', 'pt'])
+    expect(isMeetingLanguageAvailable('de', small)).toBe(true)
+    expect(isMeetingLanguageAvailable('ja', small)).toBe(false)
+    expect(isMeetingLanguageAvailable('pl', small)).toBe(false)
+    // Unknown values normalize to English, which is always available.
+    expect(isMeetingLanguageAvailable('auto', small)).toBe(true)
+  })
+
+  it('only offers languages that are in the picker', () => {
+    const codes = MEETING_LANGUAGE_DEFINITIONS.map((definition) => definition.code)
+    for (const code of meetingLanguageAvailability(true).availableLanguages) {
+      expect(codes).toContain(code)
+    }
+  })
 })

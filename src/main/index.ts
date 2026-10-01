@@ -56,6 +56,7 @@ import {
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import { recordingMeetingLanguage } from './services/meeting-language-availability'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
@@ -1826,7 +1827,7 @@ app.whenReady().then(async () => {
     transcriptionService,
     whisperManager,
     calendarManager,
-    () => prefsStore.getMeetingLanguage()
+    () => recordingMeetingLanguage(prefsStore.getMeetingLanguage())
   )
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
 

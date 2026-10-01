@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_OLLAMA_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
 import {
   isMemoryHealthyForConcurrentProcessing,
+  macUsesSmallNotesModel,
   parseMacAvailableMemoryGiBFromVmStat,
   parseMacMemoryPressureOutput,
   selectEffectiveMacProcessingProfile,
@@ -148,5 +149,20 @@ Pages wired down:                        236029.
 `
 
     expect(parseMacAvailableMemoryGiBFromVmStat(output)).toBe(9.96)
+  })
+})
+
+describe('macUsesSmallNotesModel', () => {
+  it('follows the hardware tier that selects the small notes model', () => {
+    expect(macUsesSmallNotesModel('darwin', 'arm64', 8)).toBe(true)
+    expect(macUsesSmallNotesModel('darwin', 'arm64', 16)).toBe(false)
+    expect(macUsesSmallNotesModel('darwin', 'arm64', 24)).toBe(false)
+    expect(macUsesSmallNotesModel('win32', 'x64', 8)).toBe(false)
+    expect(selectMacProcessingProfile(hardware({ totalMemoryGiB: 8 })).notesModel).toBe(
+      LOW_SPEC_MAC_OLLAMA_MODEL
+    )
+    expect(selectMacProcessingProfile(hardware({ totalMemoryGiB: 16 })).notesModel).toBe(
+      DEFAULT_OLLAMA_MODEL
+    )
   })
 })

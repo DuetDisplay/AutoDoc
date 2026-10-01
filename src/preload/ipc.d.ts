@@ -56,7 +56,7 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
-import type { MeetingLanguageCode } from '../shared/meeting-language'
+import type { MeetingLanguageAvailability, MeetingLanguageCode } from '../shared/meeting-language'
 import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
@@ -231,6 +231,7 @@ export interface IpcInvokeEvents {
   'prefs:get-video-watermark-visible': []
   'prefs:set-video-watermark-visible': [visible: boolean]
   'prefs:get-meeting-language': []
+  'prefs:get-meeting-language-availability': []
   'prefs:set-meeting-language': [language: MeetingLanguageCode]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
@@ -378,6 +379,7 @@ export interface IpcInvokeReturns {
   'prefs:get-video-watermark-visible': boolean
   'prefs:set-video-watermark-visible': void
   'prefs:get-meeting-language': MeetingLanguageCode
+  'prefs:get-meeting-language-availability': MeetingLanguageAvailability
   'prefs:set-meeting-language': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void

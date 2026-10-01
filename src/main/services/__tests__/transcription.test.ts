@@ -2322,59 +2322,77 @@ describe('TranscriptionService', () => {
     )
   })
 
-  it('uses sequential dual-source transcription on low-spec Apple Silicon Macs', async () => {
-    setPlatform('darwin')
-    ;(mockWhisper as any).isMlxWhisperSelected = vi.fn().mockReturnValue(true)
-    ;(mockWhisper as any).getMacProcessingProfile = vi.fn().mockReturnValue({
-      id: 'mac-low-spec',
-      reason: 'totalMemoryGiB <= 8.5',
-      hardware: {
-        platform: 'darwin',
-        arch: 'arm64',
-        isAppleSilicon: true,
-        chip: 'Apple M1',
-        logicalProcessors: 8,
-        totalMemoryGiB: 8,
-        freeMemoryGiB: 2.5,
-        memoryPressure: 'green',
-        swapUsedGiB: 0
-      },
-      transcriptionBackend: 'mlx-whisper',
-      transcriptionModel: 'distil-large-v3',
-      notesModel: 'llama3.2:3b',
-      dualSourceMode: 'sequential',
-      notesAfterTranscriptionOnly: true,
-      serializeLocalProcessing: true
-    })
-    fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) {
-        return undefined
-      }
-      throw new Error('ENOENT')
-    })
-    ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
-    const order: string[] = []
-    ;(service as any).transcribeWithFallback = vi.fn(async (_wav: string, _meeting: string) => {
-      order.push(order.length === 0 ? 'first-complete' : 'second-complete')
-      return { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'words' }] }
-    })
-    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
-      {
-        id: 'meeting-low-spec-0',
-        meetingId: 'meeting-low-spec',
-        speaker: 'Speaker',
-        text: 'words',
-        startMs: 0,
-        endMs: 1000,
-        confidence: -1
-      }
-    ])
+  it.each(['en', 'de', 'ja'])(
+    'uses sequential dual-source transcription on low-spec Apple Silicon Macs (%s meeting)',
+    async (meetingLanguage) => {
+      setPlatform('darwin')
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/mock/canary/python3',
+        scriptPath: '/mock/canary-mlx-transcribe.py',
+        modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        env: { HF_HOME: '/mock/canary-cache' }
+      })
+      const readFileImpl = fsMock.readFile.getMockImplementation()
+      fsMock.readFile.mockImplementation(async (file, ...rest) =>
+        String(file).endsWith('metadata.json')
+          ? JSON.stringify({ sourceName: 'Zoom', startedAt: 0, stoppedAt: 60_000, meetingLanguage })
+          : ((readFileImpl as any)?.(file, ...rest) ?? '')
+      )
+      ;(mockWhisper as any).isMlxWhisperSelected = vi.fn().mockReturnValue(true)
+      ;(mockWhisper as any).getMlxWhisperTurboModelRef = vi
+        .fn()
+        .mockReturnValue('mlx-community/whisper-large-v3-turbo')
+      ;(mockWhisper as any).getMacProcessingProfile = vi.fn().mockReturnValue({
+        id: 'mac-low-spec',
+        reason: 'totalMemoryGiB <= 8.5',
+        hardware: {
+          platform: 'darwin',
+          arch: 'arm64',
+          isAppleSilicon: true,
+          chip: 'Apple M1',
+          logicalProcessors: 8,
+          totalMemoryGiB: 8,
+          freeMemoryGiB: 2.5,
+          memoryPressure: 'green',
+          swapUsedGiB: 0
+        },
+        transcriptionBackend: 'mlx-whisper',
+        transcriptionModel: 'distil-large-v3',
+        notesModel: 'llama3.2:3b',
+        dualSourceMode: 'sequential',
+        notesAfterTranscriptionOnly: true,
+        serializeLocalProcessing: true
+      })
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) {
+          return undefined
+        }
+        throw new Error('ENOENT')
+      })
+      ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+      const order: string[] = []
+      ;(service as any).transcribeWithFallback = vi.fn(async (_wav: string, _meeting: string) => {
+        order.push(order.length === 0 ? 'first-complete' : 'second-complete')
+        return { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'words' }] }
+      })
+      ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+        {
+          id: 'meeting-low-spec-0',
+          meetingId: 'meeting-low-spec',
+          speaker: 'Speaker',
+          text: 'words',
+          startMs: 0,
+          endMs: 1000,
+          confidence: -1
+        }
+      ])
 
-    await expect((service as any).processJob('meeting-low-spec')).resolves.toBeUndefined()
+      await expect((service as any).processJob('meeting-low-spec')).resolves.toBeUndefined()
 
-    expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
-    expect(order).toEqual(['first-complete', 'second-complete'])
-  })
+      expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
+      expect(order).toEqual(['first-complete', 'second-complete'])
+    }
+  )
 })
 
 describe('TranscriptionService meeting-language routing', () => {

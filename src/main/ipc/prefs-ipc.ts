@@ -1,6 +1,12 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
-import type { MeetingLanguageCode } from '../../shared/meeting-language'
+import {
+  isMeetingLanguageAvailable,
+  normalizeMeetingLanguage,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
+import { currentMeetingLanguageAvailability } from '../services/meeting-language-availability'
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -34,7 +40,8 @@ export function registerPrefsIpc(
   prefsStore: PrefsStore,
   onAnalyticsConsentChanged?: (enabled: boolean) => void,
   onDiagnosticLogUploadConsentChanged?: (enabled: boolean) => void,
-  onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void
+  onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void,
+  getMeetingLanguageAvailability: () => MeetingLanguageAvailability = currentMeetingLanguageAvailability
 ): void {
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {
     return prefsStore.isOnboardingComplete()
@@ -107,7 +114,17 @@ export function registerPrefsIpc(
     return prefsStore.getMeetingLanguage()
   })
 
+  ipcMain.handle(
+    'prefs:get-meeting-language-availability',
+    (): MeetingLanguageAvailability => getMeetingLanguageAvailability()
+  )
+
   ipcMain.handle('prefs:set-meeting-language', (_event, language: unknown): void => {
+    if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
+      throw new Error(
+        `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this Mac`
+      )
+    }
     prefsStore.setMeetingLanguage(language)
   })
 
