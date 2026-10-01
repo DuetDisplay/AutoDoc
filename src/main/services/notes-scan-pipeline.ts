@@ -126,6 +126,15 @@ export interface RunNotesScanOptions {
   onProgress?: (update: { stage: string; fraction: number }) => void
   rewritePolicy?: NotesRewritePolicy
   /**
+   * Lossless mode (Mac): chooses `k` Key Takeaways among the presented notes,
+   * most important first, returning their ids, or null to keep the ranking.
+   * Must not throw.
+   */
+  selectTakeaways?: (
+    notes: readonly { id: string; title: string; content: string }[],
+    k: number
+  ) => Promise<string[] | null>
+  /**
    * Lossless mode: returns the generated overview without sentences the notes
    * catalog does not state, or null when none remain. Must not throw.
    */
@@ -385,6 +394,23 @@ export async function runNotesScanPipeline(
     let content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
       summarySegments
     })
+    // The overview is written from the ranking's layout, so choosing different
+    // Key Takeaways cannot change the overview's input.
+    const overviewCatalogSource = content
+    if (options.selectTakeaways && process.platform === 'darwin' && !organization) {
+      const notes = [
+        ...content.sections.flatMap((section) => [...section.keyPoints, ...section.supportingDetails]),
+        ...content.decisions,
+        ...content.nextSteps
+      ].map((item) => ({ id: item.id, title: item.title ?? '', content: item.text }))
+      const takeawayIds = await options.selectTakeaways(notes, content.keyTakeaways.length)
+      if (takeawayIds) {
+        content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
+          summarySegments,
+          takeawayIds
+        })
+      }
+    }
     if (organization?.overview) content.overview = organization.overview
     // An overview must add a grounded synthesis; copying selected body records
     // into another area adds repetition without adding meaning.
@@ -396,7 +422,7 @@ export async function runNotesScanPipeline(
       !isWindowsTopicWriterEnabled() &&
       !organization?.overview
     ) {
-      const catalog = notesCatalogMarkdown(content)
+      const catalog = notesCatalogMarkdown(overviewCatalogSource)
       if (catalog) {
         reportProgress('overview', 0.95)
         try {

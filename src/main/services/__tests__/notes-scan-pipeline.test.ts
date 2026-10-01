@@ -558,6 +558,55 @@ describe('runNotesScanPipeline', () => {
     )
   })
 
+  it('lets the Mac selector choose Key Takeaways among the presented notes without changing the body', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const base = {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless' as const,
+      attributionTranscript: [],
+      spanSources: [{ startMs: 0, endMs: 5000 }]
+    }
+    const rankedGenerate = overviewGenerate()
+    const ranked = await runNotesScanPipeline(segments(), { ...base, generate: rankedGenerate })
+    const body = (result: typeof ranked) =>
+      result.content.sections.flatMap((section) => [...section.keyPoints, ...section.supportingDetails])
+    expect(ranked.content.keyTakeaways.map((item) => item.text)).toEqual([
+      "HP's opt-in analytics rate for gaming PCs is 80-95%."
+    ])
+
+    const selectTakeaways = vi.fn(async (notes: readonly { id: string }[], k: number) =>
+      notes
+        .map((note) => note.id)
+        .filter((id) => id !== 'i1')
+        .slice(0, k)
+    )
+    const chosenGenerate = overviewGenerate()
+    const chosen = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: chosenGenerate,
+      selectTakeaways
+    })
+    expect(chosenGenerate.mock.calls[0]?.[0]?.prompt).toBe(rankedGenerate.mock.calls[0]?.[0]?.prompt)
+    expect(selectTakeaways).toHaveBeenCalledWith(
+      body(ranked).map((item) => ({ id: item.id, title: item.title ?? '', content: item.text })),
+      1
+    )
+    expect(chosen.content.keyTakeaways.map((item) => item.text)).toEqual([
+      'The team decided to collect login events from all users.'
+    ])
+    expect(body(chosen)).toEqual(body(ranked))
+    // The overview request sees the ranking's notes list, not the chosen takeaways.
+    expect(chosen.content.overview).toEqual(ranked.content.overview)
+
+    const kept = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: overviewGenerate(),
+      selectTakeaways: async () => null
+    })
+    expect(kept.content).toEqual(ranked.content)
+  })
+
   it('keeps the first-fact Mac overview when generated text is rejected', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const result = await runNotesScanPipeline(segments(), {

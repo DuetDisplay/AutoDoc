@@ -44,6 +44,7 @@ import {
 import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
 import { NotesRepository } from './notes-repository'
 import { removeExactDuplicateSegments } from './notes-exact-duplicates'
+import { selectKeyTakeaways } from './notes-takeaway-selection'
 import {
   isClaimVerificationSkipped,
   verifyOverviewClaims,
@@ -57,7 +58,8 @@ import {
 import {
   runNotesScanPipeline,
   scanLayerProgress,
-  type NotesRewritePolicy
+  type NotesRewritePolicy,
+  type RunNotesScanOptions
 } from './notes-scan-pipeline'
 import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
@@ -767,6 +769,40 @@ export class SegmentationService {
     return (prompt, options) => completePrompt(prompt, options)
   }
 
+  /**
+   * Mac notes: the notes model picks Key Takeaways among the presented notes.
+   * The request bypasses the meeting-language directive; the answer is note
+   * numbers, and anything invalid keeps the ranking's takeaways.
+   */
+  private takeawaySelector(meetingId: string): RunNotesScanOptions['selectTakeaways'] {
+    const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
+    if (process.platform !== 'darwin' || !completePrompt) return undefined
+    return async (notes, k) => {
+      const startedAt = Date.now()
+      const outcome = await selectKeyTakeaways(notes, k, (prompt, options) =>
+        completePrompt(prompt, options)
+      )
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes takeaway selection completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          status: outcome.status,
+          reason: outcome.status === 'selected' ? null : outcome.reason,
+          noteCount: notes.length,
+          takeawayCount: k,
+          // Positions in the presented order (1-based), never note text.
+          picks:
+            outcome.status === 'selected'
+              ? outcome.ids.map((id) => notes.findIndex((note) => note.id === id) + 1)
+              : null
+        }
+      })
+      return outcome.status === 'selected' ? outcome.ids : null
+    }
+  }
+
   private async verifyOverviewClaimsForJob<T extends { text: string }>(
     meetingId: string,
     catalog: string,
@@ -884,6 +920,7 @@ export class SegmentationService {
             throw error
           })
         },
+        selectTakeaways: presentationMode ? this.takeawaySelector(meetingId) : undefined,
         verifyOverview: claimComplete
           ? (catalog, overview) =>
               this.verifyOverviewClaimsForJob(meetingId, catalog, overview, claimComplete)
