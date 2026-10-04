@@ -758,12 +758,38 @@ export class SegmentationService {
   }
 
   /**
+   * Reversible safety restriction: disable overview check and takeaway
+   * selection only for the small notes model (llama3.2:3b) pending an
+   * evaluation of that model. Missing `getModel` (or an undefined result)
+   * keeps the pre-rule-4 behavior — the features run whenever the platform
+   * allows.
+   */
+  private notesModelAllowsOverviewCheckAndTakeawaySelection(): boolean {
+    return this.llmProvider.getModel?.() !== LOW_SPEC_MAC_OLLAMA_MODEL
+  }
+
+  /**
    * Mac notes: the notes model checks each overview sentence against the notes.
    * The request bypasses the meeting-language directive; the answer is an enum.
    */
-  private claimVerificationComplete(): ClaimCompleteFn | null {
+  private claimVerificationComplete(meetingId?: string): ClaimCompleteFn | null {
     const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
     if (process.platform !== 'darwin' || !completePrompt || isClaimVerificationSkipped()) {
+      return null
+    }
+    if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes overview claim verification completed',
+        meetingId,
+        context: {
+          status: 'skipped',
+          reason: 'unsupported-model',
+          model: this.llmProvider.getModel?.() ?? null,
+          checked: 0,
+          removed: 0
+        }
+      })
       return null
     }
     return (prompt, options) => completePrompt(prompt, options)
@@ -777,6 +803,22 @@ export class SegmentationService {
   private takeawaySelector(meetingId: string): RunNotesScanOptions['selectTakeaways'] {
     const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
     if (process.platform !== 'darwin' || !completePrompt) return undefined
+    if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes takeaway selection completed',
+        meetingId,
+        context: {
+          status: 'skipped',
+          reason: 'unsupported-model',
+          model: this.llmProvider.getModel?.() ?? null,
+          noteCount: null,
+          takeawayCount: null,
+          picks: null
+        }
+      })
+      return undefined
+    }
     return async (notes, k) => {
       const startedAt = Date.now()
       const outcome = await selectKeyTakeaways(notes, k, (prompt, options) =>
@@ -875,7 +917,7 @@ export class SegmentationService {
             ? CPU_CONSTRAINED_REWRITE_POLICY
             : undefined
       let missingModelError: unknown
-      const claimComplete = presentationMode ? this.claimVerificationComplete() : null
+      const claimComplete = presentationMode ? this.claimVerificationComplete(meetingId) : null
       const result = await runNotesScanPipeline(segments, {
         embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
         title,

@@ -72,6 +72,7 @@ function createMockProvider(): LLMProvider {
     checkConnection: vi.fn().mockResolvedValue(true),
     abortActiveRequests: vi.fn(),
     setModel: vi.fn(),
+    getModel: vi.fn().mockReturnValue(DEFAULT_OLLAMA_MODEL),
     setLowMemoryMode: vi.fn(),
     releaseResources: vi.fn().mockResolvedValue(undefined),
     getLastWriterSkips: vi.fn().mockReturnValue([])
@@ -160,6 +161,68 @@ describe('SegmentationService', () => {
         Object.defineProperty(process, 'platform', { value: original, configurable: true })
       }
     })
+
+    it.each([
+      ['darwin', DEFAULT_OLLAMA_MODEL, true],
+      ['darwin', LOW_SPEC_MAC_OLLAMA_MODEL, false],
+      ['darwin', 'qwen3:8b', true]
+    ] as const)(
+      'overview check and takeaway selection for %s %s: %s',
+      (platform, model, enabled) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = judge()
+        provider.getModel = () => model
+        try {
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(enabled)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(enabled)
+          if (!enabled) {
+            expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                message: 'notes overview claim verification completed',
+                context: expect.objectContaining({
+                  status: 'skipped',
+                  reason: 'unsupported-model',
+                  model
+                })
+              })
+            )
+            expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                message: 'notes takeaway selection completed',
+                context: expect.objectContaining({
+                  status: 'skipped',
+                  reason: 'unsupported-model',
+                  model
+                })
+              })
+            )
+          }
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
+
+    it.each(['darwin'] as const)(
+      'keeps overview check and takeaway selection enabled on %s when getModel is missing or undefined',
+      (platform) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = judge()
+        try {
+          delete (provider as { getModel?: LLMProvider['getModel'] }).getModel
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(true)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(true)
+
+          provider.getModel = () => undefined as unknown as string
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(true)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(true)
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
 
     it('can be switched off for evaluation', () => {
       const original = process.platform
