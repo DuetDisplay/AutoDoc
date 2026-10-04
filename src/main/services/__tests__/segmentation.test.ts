@@ -150,13 +150,14 @@ describe('SegmentationService', () => {
 
     it.each([
       ['darwin', true],
-      ['win32', false]
+      ['win32', true]
     ] as const)('is available on %s: %s', (platform, available) => {
       const original = process.platform
       Object.defineProperty(process, 'platform', { value: platform, configurable: true })
       provider.completePrompt = judge()
       try {
         expect((service as any).claimVerificationComplete() !== null).toBe(available)
+        expect((service as any).takeawaySelector('meeting') !== undefined).toBe(available)
       } finally {
         Object.defineProperty(process, 'platform', { value: original, configurable: true })
       }
@@ -165,7 +166,10 @@ describe('SegmentationService', () => {
     it.each([
       ['darwin', DEFAULT_OLLAMA_MODEL, true],
       ['darwin', LOW_SPEC_MAC_OLLAMA_MODEL, false],
-      ['darwin', 'qwen3:8b', true]
+      ['darwin', 'qwen3:8b', true],
+      ['win32', DEFAULT_OLLAMA_MODEL, true],
+      ['win32', LOW_SPEC_MAC_OLLAMA_MODEL, false],
+      ['win32', 'qwen3:8b', true]
     ] as const)(
       'overview check and takeaway selection for %s %s: %s',
       (platform, model, enabled) => {
@@ -204,7 +208,7 @@ describe('SegmentationService', () => {
       }
     )
 
-    it.each(['darwin'] as const)(
+    it.each(['darwin', 'win32'] as const)(
       'keeps overview check and takeaway selection enabled on %s when getModel is missing or undefined',
       (platform) => {
         const original = process.platform
@@ -236,6 +240,38 @@ describe('SegmentationService', () => {
         Object.defineProperty(process, 'platform', { value: original, configurable: true })
       }
     })
+
+    it.each(['darwin', 'win32'] as const)(
+      'logs takeaway selection and overview verification on %s',
+      async (platform) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = vi.fn(async () => '{"picks":[2,1]}')
+        try {
+          const selector = (service as any).takeawaySelector('meeting')
+          expect(selector).toBeTypeOf('function')
+          await expect(
+            selector(
+              [
+                { id: 'a', title: '', content: 'First displayed note about rollout.' },
+                { id: 'b', title: '', content: 'Second displayed note about billing.' },
+                { id: 'c', title: '', content: 'Third displayed note about mobile.' }
+              ],
+              2
+            )
+          ).resolves.toEqual(['b', 'a'])
+          expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              message: 'notes takeaway selection completed',
+              meetingId: 'meeting',
+              context: expect.objectContaining({ status: 'selected', takeawayCount: 2 })
+            })
+          )
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
 
     it('keeps the generated overview when the check throws', async () => {
       const overview = { text: 'The team reviewed the launch.' }

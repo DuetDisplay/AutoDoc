@@ -768,13 +768,21 @@ export class SegmentationService {
     return this.llmProvider.getModel?.() !== LOW_SPEC_MAC_OLLAMA_MODEL
   }
 
+  private notesOverviewAndTakeawayPlatformEnabled(): boolean {
+    return process.platform === 'darwin' || process.platform === 'win32'
+  }
+
   /**
-   * Mac notes: the notes model checks each overview sentence against the notes.
+   * The notes model checks each overview sentence against the notes.
    * The request bypasses the meeting-language directive; the answer is an enum.
    */
   private claimVerificationComplete(meetingId?: string): ClaimCompleteFn | null {
     const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
-    if (process.platform !== 'darwin' || !completePrompt || isClaimVerificationSkipped()) {
+    if (
+      !this.notesOverviewAndTakeawayPlatformEnabled() ||
+      !completePrompt ||
+      isClaimVerificationSkipped()
+    ) {
       return null
     }
     if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
@@ -796,13 +804,13 @@ export class SegmentationService {
   }
 
   /**
-   * Mac notes: the notes model picks Key Takeaways among the presented notes.
+   * The notes model picks Key Takeaways among the presented notes.
    * The request bypasses the meeting-language directive; the answer is note
    * numbers, and anything invalid keeps the ranking's takeaways.
    */
   private takeawaySelector(meetingId: string): RunNotesScanOptions['selectTakeaways'] {
     const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
-    if (process.platform !== 'darwin' || !completePrompt) return undefined
+    if (!this.notesOverviewAndTakeawayPlatformEnabled() || !completePrompt) return undefined
     if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
       logAutodocEvent({
         area: 'segmentation',

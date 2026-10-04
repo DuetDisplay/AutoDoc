@@ -607,6 +607,170 @@ describe('runNotesScanPipeline', () => {
     expect(kept.content).toEqual(ranked.content)
   })
 
+  it('lets the Windows selector choose among displayed notes, excluding Needs Review', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const input: MeetingSegments = {
+      decisions: [
+        segment({
+          id: 'd1',
+          category: 'decision',
+          topic: 'Rollout',
+          title: 'Release at a 50/50 split',
+          content: 'Release the free tier at a 50/50 split after QA clears.'
+        })
+      ],
+      actionItems: [
+        segment({
+          id: 'a1',
+          category: 'action_item',
+          topic: 'Rollout',
+          title: 'Ping Sergio for the smoke-test ETA',
+          content: 'Greg will ask Sergio for an estimate as soon as he receives a build.',
+          assignee: 'Greg'
+        })
+      ],
+      information: [
+        segment({
+          id: 'i1',
+          category: 'information',
+          topic: 'A/B Tests',
+          title: 'Mac trial starts increased',
+          content: 'Trial starts increased by 12% on Mac.'
+        }),
+        segment({
+          id: 'i2',
+          category: 'information',
+          topic: 'Billing',
+          title: 'Stripe improved',
+          content: 'Stripe was higher week over week for two consecutive days.'
+        }),
+        segment({
+          id: 'junk',
+          category: 'information',
+          topic: 'Needs Review',
+          title: 'Give some feedback',
+          content: 'Give some feedback on the supplier contract by Friday.'
+        })
+      ],
+      discussion: [
+        segment({
+          id: 'disc1',
+          category: 'discussion',
+          topic: 'Cancellations',
+          title: 'Cancel-rate uncertainty',
+          content: 'The team discussed two competing effects on cancellation rate.'
+        })
+      ],
+      statusUpdates: [
+        segment({
+          id: 's1',
+          category: 'status_update',
+          topic: 'Mobile Releases',
+          title: 'Android RC passed QA',
+          content: 'The Android release started today.'
+        })
+      ]
+    }
+    const base = {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless' as const,
+      attributionTranscript: [],
+      spanSources: [{ startMs: 0, endMs: 5000 }]
+    }
+    const rankedGenerate = overviewGenerate()
+    const ranked = await runNotesScanPipeline(input, { ...base, generate: rankedGenerate })
+    const body = (result: typeof ranked) =>
+      result.content.sections.flatMap((section) => [
+        ...section.keyPoints,
+        ...section.supportingDetails
+      ])
+    const displayed = [
+      ...body(ranked).filter((item) => item.topic !== 'Needs Review'),
+      ...ranked.content.decisions.filter((item) => item.topic !== 'Needs Review'),
+      ...ranked.content.nextSteps.filter((item) => item.topic !== 'Needs Review')
+    ]
+    expect(ranked.content.keyTakeaways).toHaveLength(4)
+    expect(ranked.content.keyTakeaways.some((item) => item.topic === 'Needs Review')).toBe(false)
+    expect(body(ranked).some((item) => item.id === 'junk' || item.topic === 'Needs Review')).toBe(
+      true
+    )
+
+    const selectTakeaways = vi.fn(
+      async (notes: readonly { id: string; title: string; content: string }[], k: number) =>
+        notes.map((note) => note.id).slice(0, k)
+    )
+    const chosenGenerate = overviewGenerate()
+    const chosen = await runNotesScanPipeline(input, {
+      ...base,
+      generate: chosenGenerate,
+      selectTakeaways
+    })
+    expect(chosenGenerate.mock.calls[0]?.[0]?.prompt).toBe(rankedGenerate.mock.calls[0]?.[0]?.prompt)
+    expect(selectTakeaways).toHaveBeenCalledOnce()
+    const [offered, k] = selectTakeaways.mock.calls[0]!
+    expect(k).toBe(4)
+    expect(offered.map((note) => note.id)).toEqual(displayed.map((item) => item.id))
+    expect(offered.some((note) => note.id === 'junk')).toBe(false)
+    expect(offered.some((note) => note.content.includes('Give some feedback'))).toBe(false)
+    expect(chosen.content.keyTakeaways).toHaveLength(4)
+    expect(chosen.content.keyTakeaways.map((item) => item.text)).toEqual(
+      offered.slice(0, 4).map((note) => note.content)
+    )
+    expect(body(chosen)).toEqual(body(ranked))
+    expect(chosen.content.overview).toEqual(ranked.content.overview)
+
+    const kept = await runNotesScanPipeline(input, {
+      ...base,
+      generate: overviewGenerate(),
+      selectTakeaways: async () => ['missing-id', 'also-missing', 'still-missing', 'nope']
+    })
+    expect(kept.content.keyTakeaways).toEqual(ranked.content.keyTakeaways)
+
+    const ignored = vi.fn(async () => ['d1'])
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+    await runNotesScanPipeline(input, {
+      ...base,
+      generate: overviewGenerate(),
+      selectTakeaways: ignored
+    })
+    expect(ignored).not.toHaveBeenCalled()
+  })
+
+  it('uses the verified Windows overview and keeps the lossless one when nothing survives', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const base = {
+      title: 'Standup',
+      meetingId: 'meeting-1',
+      presentationMode: 'lossless' as const,
+      attributionTranscript: [],
+      spanSources: [{ startMs: 0, endMs: 5000 }]
+    }
+    const trimmed = vi.fn(async <T extends { text: string }>(_catalog: string, overview: T) => ({
+      ...overview,
+      text: 'The team locked login analytics coverage.'
+    }))
+    const verified = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: overviewGenerate(),
+      verifyOverview: trimmed
+    })
+    expect(trimmed).toHaveBeenCalledWith(
+      expect.stringContaining('login events'),
+      expect.objectContaining({ text: SYNTHESIZED_OVERVIEW })
+    )
+    expect(verified.content.overview?.text).toBe('The team locked login analytics coverage.')
+    expect(verified.overviewFailed).toBe(false)
+
+    const rejected = await runNotesScanPipeline(segments(), {
+      ...base,
+      generate: overviewGenerate(),
+      verifyOverview: async () => null
+    })
+    expect(rejected.content.overview?.text).not.toBe(SYNTHESIZED_OVERVIEW)
+    expect(rejected.content.overview?.text).toContain('login events')
+  })
+
   it('keeps the first-fact Mac overview when generated text is rejected', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     const result = await runNotesScanPipeline(segments(), {

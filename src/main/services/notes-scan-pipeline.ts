@@ -37,7 +37,7 @@ import {
   type TopicGroup
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
-import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
+import { isNeedsReviewTopic, NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
 import type { MeetingNotesContent, MeetingSegments, MeetingSegmentsWithCandidates, Transcript } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
@@ -126,7 +126,7 @@ export interface RunNotesScanOptions {
   onProgress?: (update: { stage: string; fraction: number }) => void
   rewritePolicy?: NotesRewritePolicy
   /**
-   * Lossless mode (Mac): chooses `k` Key Takeaways among the presented notes,
+   * Lossless mode: chooses `k` Key Takeaways among the presented notes,
    * most important first, returning their ids, or null to keep the ranking.
    * Must not throw.
    */
@@ -316,6 +316,39 @@ async function generateFromPlan(
   })
 }
 
+function losslessTakeawayCandidates(
+  content: MeetingNotesContent
+): Array<{ id: string; title: string; content: string }> {
+  const items = [
+    ...content.sections.flatMap((section) => {
+      if (isWindowsNotesQualityEnabled() && isNeedsReviewTopic(section.title)) return []
+      return [...section.keyPoints, ...section.supportingDetails]
+    }),
+    ...content.decisions,
+    ...content.nextSteps
+  ]
+  const visible = isWindowsNotesQualityEnabled()
+    ? items.filter((item) => !isNeedsReviewTopic(item.topic))
+    : items
+  return visible.map((item) => ({
+    id: item.id,
+    title: item.title ?? '',
+    content: item.text
+  }))
+}
+
+function acceptedTakeawayIds(
+  takeawayIds: string[] | null,
+  candidates: readonly { id: string }[],
+  k: number
+): string[] | null {
+  if (!takeawayIds) return null
+  if (!isWindowsNotesQualityEnabled()) return takeawayIds
+  if (takeawayIds.length !== k || new Set(takeawayIds).size !== takeawayIds.length) return null
+  const allowed = new Set(candidates.map((item) => item.id))
+  return takeawayIds.every((id) => allowed.has(id)) ? takeawayIds : null
+}
+
 export async function runNotesScanPipeline(
   segments: MeetingSegmentsWithCandidates,
   options: RunNotesScanOptions
@@ -397,13 +430,17 @@ export async function runNotesScanPipeline(
     // The overview is written from the ranking's layout, so choosing different
     // Key Takeaways cannot change the overview's input.
     const overviewCatalogSource = content
-    if (options.selectTakeaways && process.platform === 'darwin' && !organization) {
-      const notes = [
-        ...content.sections.flatMap((section) => [...section.keyPoints, ...section.supportingDetails]),
-        ...content.decisions,
-        ...content.nextSteps
-      ].map((item) => ({ id: item.id, title: item.title ?? '', content: item.text }))
-      const takeawayIds = await options.selectTakeaways(notes, content.keyTakeaways.length)
+    if (
+      options.selectTakeaways &&
+      (process.platform === 'darwin' || process.platform === 'win32') &&
+      !organization
+    ) {
+      const notes = losslessTakeawayCandidates(content)
+      const takeawayIds = acceptedTakeawayIds(
+        await options.selectTakeaways(notes, content.keyTakeaways.length),
+        notes,
+        content.keyTakeaways.length
+      )
       if (takeawayIds) {
         content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
           summarySegments,
