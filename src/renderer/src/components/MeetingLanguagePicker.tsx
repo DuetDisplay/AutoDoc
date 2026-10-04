@@ -7,6 +7,7 @@ import {
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../shared/meeting-language'
+import { meetingLanguageSelectableNote } from '../services/meeting-language-copy'
 
 interface MeetingLanguagePickerProps {
   value: MeetingLanguageCode
@@ -17,6 +18,13 @@ interface MeetingLanguagePickerProps {
 }
 
 export const LOCKED_MEETING_LANGUAGES_HEADING = 'Needs 16 GB of memory'
+
+function isNotesModelLocked(
+  language: MeetingLanguageCode,
+  availability: MeetingLanguageAvailability
+): boolean {
+  return !availability.availableLanguages.includes(language)
+}
 
 export function MeetingLanguagePicker({
   value,
@@ -35,6 +43,9 @@ export function MeetingLanguagePicker({
   ]
   const firstLockedIndex = options.findIndex(
     (definition) => !isMeetingLanguageAvailable(definition.code, availability)
+  )
+  const firstNotesLockedIndex = options.findIndex((definition) =>
+    isNotesModelLocked(definition.code, availability)
   )
   const listboxId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -196,9 +207,13 @@ export function MeetingLanguagePicker({
           {options.map((definition, index) => {
             const isSelected = definition.code === selected.code
             const isLocked = index >= firstLockedIndex && firstLockedIndex !== -1
+            const engineState = availability.languageStates?.[definition.code]
+            const selectableNote = !isLocked ? meetingLanguageSelectableNote(engineState) : null
+            const lockedReason =
+              isLocked && engineState?.availability === 'locked' ? engineState.reason : null
             return (
               <Fragment key={definition.code}>
-                {index === firstLockedIndex && (
+                {index === firstNotesLockedIndex && firstNotesLockedIndex !== -1 && (
                   <div
                     role="presentation"
                     className="mx-1 mb-1 mt-1.5 border-t border-border-subtle px-2 pb-1 pt-2 text-[10px] font-medium text-ink-faint"
@@ -226,11 +241,23 @@ export function MeetingLanguagePicker({
                         : 'text-ink-muted hover:bg-bg-accent'
                   }`}
                 >
-                  <span className="flex items-baseline gap-2">
-                    <span>{definition.label}</span>
-                    {definition.code === 'en' && (
-                      <span className="text-[10px] font-medium text-ink-faint">
-                        Default · optimized
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex items-baseline gap-2">
+                      <span>{definition.label}</span>
+                      {definition.code === 'en' && (
+                        <span className="text-[10px] font-medium text-ink-faint">
+                          Default · optimized
+                        </span>
+                      )}
+                      {selectableNote && (
+                        <span className="text-[10px] font-medium text-ink-faint">
+                          {selectableNote}
+                        </span>
+                      )}
+                    </span>
+                    {lockedReason && (
+                      <span className="text-[10px] font-medium leading-snug text-ink-faint">
+                        {lockedReason}
                       </span>
                     )}
                   </span>

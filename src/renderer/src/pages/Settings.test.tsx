@@ -1,6 +1,10 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  MeetingLanguageCode,
+  WindowsMeetingLanguageAvailabilityInfo
+} from '../../../shared/meeting-language'
 import { Settings } from './Settings'
 import {
   createCalendarAccount,
@@ -490,4 +494,314 @@ describe('Settings', () => {
       ).toBe(false)
     }
   )
+})
+
+const FIRST_USE_DOWNLOAD_BYTES = 6_012_954_214
+
+function windowsLanguageInfo(
+  overrides: Partial<WindowsMeetingLanguageAvailabilityInfo> = {}
+): WindowsMeetingLanguageAvailabilityInfo {
+  return {
+    availability: 'available',
+    reason: null,
+    engineId: 'canary-cpu',
+    firstUseDownloadBytes: 0,
+    needsSelfTest: false,
+    ...overrides
+  }
+}
+
+describe('Settings Windows meeting languages', () => {
+  beforeEach(() => {
+    resetRendererStores()
+  })
+
+  function installWindowsSettingsApi(options?: {
+    meetingLanguage?: MeetingLanguageCode
+    languages?: Partial<Record<MeetingLanguageCode, WindowsMeetingLanguageAvailabilityInfo>>
+    ensure?: (language: MeetingLanguageCode) => Promise<unknown> | unknown
+  }) {
+    const state = { meetingLanguage: options?.meetingLanguage ?? ('en' as MeetingLanguageCode) }
+    const languages = options?.languages ?? {}
+    return {
+      state,
+      api: installMockElectronApi({
+        'app:get-version': '1.3.0',
+        'updater:get-status': createUpdateStatus(),
+        'app:get-runtime-info': createRuntimeInfo({ platform: 'win32' }),
+        'app:get-storage-info': createStorageInfo(),
+        'prefs:get-analytics-consent': false,
+        'prefs:get-diagnostic-log-upload-consent': false,
+        'prefs:get-meeting-language': () => state.meetingLanguage,
+        'prefs:set-meeting-language': (language: MeetingLanguageCode) => {
+          state.meetingLanguage = language
+        },
+        'whisper:get-windows-meeting-language-availability': (language: MeetingLanguageCode) =>
+          languages[language] ?? windowsLanguageInfo(),
+        'whisper:ensure-windows-multilingual-engine': (language: MeetingLanguageCode) =>
+          options?.ensure ? options.ensure(language) : { engineId: 'canary-cpu', availability: 'available', reason: null },
+        'calendar:get-accounts': [],
+        'calendar:get-events': []
+      })
+    }
+  }
+
+  it('shows a slower note and keeps the language selectable', async () => {
+    const user = userEvent.setup()
+    installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ availability: 'slower' }) }
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    expect(screen.getByRole('option', { name: /German\s+Slower on this PC/ })).not.toHaveAttribute(
+      'aria-disabled'
+    )
+  })
+
+  it('disables a locked language and shows the returned reason', async () => {
+    const user = userEvent.setup()
+    const reason = 'Spanish needs a supported graphics card on this PC.'
+    installWindowsSettingsApi({
+      languages: { es: windowsLanguageInfo({ availability: 'locked', reason, engineId: null }) }
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    expect(spanish).toHaveAttribute('aria-disabled', 'true')
+    await user.click(spanish)
+    expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
+  })
+
+  it('shows the first-use download size on picker rows before a language is selected', async () => {
+    const user = userEvent.setup()
+    installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) }
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    expect(
+      await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    ).toBeInTheDocument()
+  })
+
+  it('shows the first-use download size and hides it when the size is 0', async () => {
+    const user = userEvent.setup()
+    const { api } = installWindowsSettingsApi({
+      meetingLanguage: 'de',
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) }
+    })
+    const view = render(<Settings />)
+
+    expect(await screen.findByText('About 5.6 GB download on first use')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Meeting language: German' }))
+    expect(
+      screen.getByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    ).toBeInTheDocument()
+
+    view.unmount()
+    api.setHandler('whisper:get-windows-meeting-language-availability', () =>
+      windowsLanguageInfo({ firstUseDownloadBytes: 0 })
+    )
+    render(<Settings />)
+
+    expect(await screen.findByRole('button', { name: 'Meeting language: German' })).toBeInTheDocument()
+    expect(screen.queryByText(/download on first use/i)).not.toBeInTheDocument()
+  })
+
+  it('downloads on first use, shows progress, and saves the language', async () => {
+    const user = userEvent.setup()
+    let finishEnsure!: (value: unknown) => void
+    const ensurePromise = new Promise((resolve) => {
+      finishEnsure = resolve
+    })
+    const { state, api } = installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
+      ensure: () => ensurePromise
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    expect(
+      await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: /German\s+About 5\.6 GB download on first use/ }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'de')
+    })
+    await waitFor(() => {
+      expect(api.on).toHaveBeenCalledWith('whisper:setup-progress', expect.any(Function))
+    })
+    expect(state.meetingLanguage).toBe('en')
+
+    act(() => {
+      api.emit('whisper:setup-progress', {
+        phase: 'downloading-model',
+        percent: 42
+      })
+    })
+    expect(await screen.findByText('Downloading speech model... 42%')).toBeInTheDocument()
+
+    await act(async () => {
+      finishEnsure({ engineId: 'canary-cpu', availability: 'available', reason: null })
+      await ensurePromise
+    })
+
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+    expect(state.meetingLanguage).toBe('de')
+    expect(api.invoke).toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
+  })
+
+  it('keeps the previous language when the first-use download fails', async () => {
+    const user = userEvent.setup()
+    const { state, api } = installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
+      ensure: () => Promise.reject(new Error('Disk is full.'))
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(
+      await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Disk is full.')
+    expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
+    expect(state.meetingLanguage).toBe('en')
+    expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
+  })
+
+  it('refreshes availability after a GPU fallback so the language can show as slower', async () => {
+    const user = userEvent.setup()
+    const { api } = installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
+      ensure: () => ({
+        engineId: 'canary-cpu',
+        availability: 'slower',
+        reason: null,
+        fallbackFrom: 'canary-cuda'
+      })
+    })
+    api.setHandler('whisper:get-windows-meeting-language-availability', (language: MeetingLanguageCode) => {
+      const ensureCalls = api.invoke.mock.calls.filter(
+        ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
+      )
+      if (language === 'de' && ensureCalls.length > 0) {
+        return windowsLanguageInfo({ availability: 'slower', firstUseDownloadBytes: 0 })
+      }
+      return windowsLanguageInfo({
+        availability: 'available',
+        firstUseDownloadBytes: language === 'de' ? FIRST_USE_DOWNLOAD_BYTES : 0
+      })
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(
+      await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    )
+
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Meeting language: German' }))
+    expect(await screen.findByRole('option', { name: /German\s+Slower on this PC/ })).toBeInTheDocument()
+  })
+
+  it('runs ensure for an untested GPU self-test and keeps the previous language when locked', async () => {
+    const user = userEvent.setup()
+    const reason = 'Spanish needs a supported graphics card on this PC.'
+    const { state, api } = installWindowsSettingsApi({
+      languages: {
+        es: windowsLanguageInfo({
+          availability: 'available',
+          engineId: 'whisper-turbo-cuda',
+          firstUseDownloadBytes: 0,
+          needsSelfTest: true
+        })
+      },
+      ensure: () => ({
+        engineId: null,
+        availability: 'locked',
+        reason
+      })
+    })
+    api.setHandler(
+      'whisper:get-windows-meeting-language-availability',
+      (language: MeetingLanguageCode) => {
+        const ensureCalls = api.invoke.mock.calls.filter(
+          ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
+        )
+        if (language === 'es' && ensureCalls.length > 0) {
+          return windowsLanguageInfo({
+            availability: 'locked',
+            reason,
+            engineId: null,
+            needsSelfTest: false
+          })
+        }
+        return windowsLanguageInfo({
+          availability: 'available',
+          engineId: 'whisper-turbo-cuda',
+          firstUseDownloadBytes: 0,
+          needsSelfTest: language === 'es'
+        })
+      }
+    )
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(await screen.findByRole('option', { name: 'Spanish' }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'es')
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(reason)
+    expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
+    expect(state.meetingLanguage).toBe('en')
+    expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
+
+    await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
+    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    expect(spanish).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('saves the language when an untested GPU self-test passes', async () => {
+    const user = userEvent.setup()
+    const { state, api } = installWindowsSettingsApi({
+      languages: {
+        es: windowsLanguageInfo({
+          availability: 'available',
+          engineId: 'whisper-turbo-cuda',
+          firstUseDownloadBytes: 0,
+          needsSelfTest: true
+        })
+      },
+      ensure: () => ({
+        engineId: 'whisper-turbo-cuda',
+        availability: 'available',
+        reason: null
+      })
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(await screen.findByRole('option', { name: 'Spanish' }))
+
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'es')
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: Spanish' })
+    ).toBeInTheDocument()
+    expect(state.meetingLanguage).toBe('es')
+    expect(api.invoke).toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
+  })
 })

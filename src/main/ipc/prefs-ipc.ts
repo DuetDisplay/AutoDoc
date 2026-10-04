@@ -7,6 +7,15 @@ import {
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
 import { currentMeetingLanguageAvailability } from '../services/meeting-language-availability'
+import { getWindowsMeetingLanguageAvailability } from '../services/windows-multilingual-readiness'
+
+export function meetingLanguageNeedsMemoryMessage(
+  language: unknown,
+  platform: NodeJS.Platform = process.platform
+): string {
+  const machine = platform === 'win32' ? 'PC' : 'Mac'
+  return `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this ${machine}`
+}
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -119,11 +128,15 @@ export function registerPrefsIpc(
     (): MeetingLanguageAvailability => getMeetingLanguageAvailability()
   )
 
-  ipcMain.handle('prefs:set-meeting-language', (_event, language: unknown): void => {
+  ipcMain.handle('prefs:set-meeting-language', async (_event, language: unknown): Promise<void> => {
     if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
-      throw new Error(
-        `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this Mac`
-      )
+      throw new Error(meetingLanguageNeedsMemoryMessage(language))
+    }
+    if (process.platform === 'win32') {
+      const engine = await getWindowsMeetingLanguageAvailability(String(language ?? ''))
+      if (engine.availability === 'locked') {
+        throw new Error(engine.reason ?? "This language isn't available on this PC.")
+      }
     }
     prefsStore.setMeetingLanguage(language)
   })

@@ -56,7 +56,12 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
-import type { MeetingLanguageAvailability, MeetingLanguageCode } from '../shared/meeting-language'
+import type {
+  MeetingLanguageAvailability,
+  MeetingLanguageCode,
+  WindowsMeetingLanguageAvailabilityInfo,
+  WindowsMultilingualEngineReadyInfo
+} from '../shared/meeting-language'
 import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
@@ -244,6 +249,8 @@ export interface IpcInvokeEvents {
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
   'whisper:retry-setup': []
+  'whisper:get-windows-meeting-language-availability': [language: MeetingLanguageCode]
+  'whisper:ensure-windows-multilingual-engine': [language: MeetingLanguageCode]
   'e2e:set-whisper-status': [status: WhisperSetupStatus]
   'e2e:set-ollama-status': [status: OllamaSetupStatus]
   'e2e:get-detection-state': []
@@ -392,6 +399,8 @@ export interface IpcInvokeReturns {
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
   'whisper:retry-setup': void
+  'whisper:get-windows-meeting-language-availability': WindowsMeetingLanguageAvailabilityInfo
+  'whisper:ensure-windows-multilingual-engine': WindowsMultilingualEngineReadyInfo
   'e2e:set-whisper-status': void
   'e2e:set-ollama-status': void
   'e2e:get-detection-state': E2EDetectionState
