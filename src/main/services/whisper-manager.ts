@@ -85,6 +85,18 @@ const MAC_WHISPER_RUNTIME_REQUIRED_FILE_PATTERNS = [
   { label: 'libggml backend plugin', pattern: /^libggml.*\.so$/i }
 ]
 
+function isSha256Hex(value: string | undefined): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
+}
+
+function parseHttpContentRangeTotal(value: string | null): number | null {
+  if (!value) return null
+  const match = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(value.trim())
+  if (!match) return null
+  const total = Number(match[1])
+  return Number.isFinite(total) && total > 0 ? total : null
+}
+
 type WhisperUsabilityResult =
   | 'ready'
   | 'missing-assets'
@@ -1447,6 +1459,8 @@ export class WhisperManager extends EventEmitter {
       this.emit('setup-status', this.getSetupStatus())
     }
 
+    let succeeded = false
+    let verifiedArchiveSha256: string | null = null
     try {
       if (asset.parts?.length) {
         const totalBytes = asset.parts.reduce((sum, part) => sum + part.bytes, 0)
@@ -1457,7 +1471,7 @@ export class WhisperManager extends EventEmitter {
           const partPath = `${archivePath}.part${index + 1}`
           partPaths.push(partPath)
 
-          await this.downloadFile(
+          const partSha256 = await this.downloadFile(
             part.url,
             partPath,
             `${asset.filename} (part ${index + 1})`,
@@ -1467,9 +1481,13 @@ export class WhisperManager extends EventEmitter {
                 ((completedBytes + partProgressBytes) / totalBytes) * 100
               )
               reportDownloadProgress(overallPercent)
-            }
+            },
+            undefined,
+            { expectedSha256: part.sha256 }
           )
-          await this.verifyFileSha256(partPath, part.sha256, part.filename)
+          if (!partSha256) {
+            await this.verifyFileSha256(partPath, part.sha256, part.filename)
+          }
           completedBytes += part.bytes
         }
 
@@ -1491,10 +1509,22 @@ export class WhisperManager extends EventEmitter {
         }
         partPaths.length = 0
       } else {
-        await this.downloadFile(asset.url, archivePath, asset.filename, reportDownloadProgress)
+        const downloadedSha256 = await this.downloadFile(
+          asset.url,
+          archivePath,
+          asset.filename,
+          reportDownloadProgress,
+          undefined,
+          { expectedSha256: asset.sha256 }
+        )
+        if (downloadedSha256) {
+          verifiedArchiveSha256 = downloadedSha256
+        }
       }
 
-      const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+      const actualSha256 =
+        verifiedArchiveSha256 ??
+        (await this.verifyFileSha256(archivePath, asset.sha256, asset.filename))
       const archiveStats = await stat(archivePath)
       if (this.inFirstRunSetup) {
         this.firstRunDownloadedBytes += archiveStats.size
@@ -1542,10 +1572,13 @@ export class WhisperManager extends EventEmitter {
       await rm(targetDir, { recursive: true, force: true })
       await rename(extractDir, targetDir)
       extractDir = null
+      succeeded = true
     } finally {
-      await rm(archivePath, { force: true })
-      for (const partPath of partPaths) {
-        await rm(partPath, { force: true })
+      if (succeeded) {
+        await rm(archivePath, { force: true })
+        for (const partPath of partPaths) {
+          await rm(partPath, { force: true })
+        }
       }
       if (extractDir) {
         await rm(extractDir, { recursive: true, force: true })
@@ -2731,14 +2764,86 @@ export class WhisperManager extends EventEmitter {
     destPath: string,
     label: string,
     onProgress?: (percent: number) => void,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: { expectedSha256?: string }
+  ): Promise<string | null> {
+    const expectedSha256 = options?.expectedSha256
+    if (isSha256Hex(expectedSha256) && (await this.fileExists(destPath))) {
+      try {
+        return await this.verifyFileSha256(destPath, expectedSha256, label)
+      } catch {
+        // Mismatch deletes destPath; fetch a replacement once below.
+      }
+    }
+
+    const canResume = isSha256Hex(expectedSha256)
+    await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: canResume })
+
+    if (!canResume) {
+      return null
+    }
+
+    try {
+      return await this.verifyFileSha256(destPath, expectedSha256, label)
+    } catch {
+      await rm(`${destPath}.tmp`, { force: true })
+      await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: true })
+      return await this.verifyFileSha256(destPath, expectedSha256, label)
+    }
+  }
+
+  private async downloadResumableFile(
+    url: string,
+    destPath: string,
+    label: string,
+    onProgress?: (percent: number) => void,
+    init?: RequestInit,
+    options?: { resume?: boolean }
   ): Promise<void> {
-    const response = await fetch(url, { redirect: 'follow', ...init })
+    const tempPath = `${destPath}.tmp`
+    const resume = options?.resume === true
+    let existingBytes = 0
+    if (resume) {
+      try {
+        const info = await stat(tempPath)
+        if (info.size > 0) {
+          existingBytes = info.size
+        }
+      } catch {
+        existingBytes = 0
+      }
+    } else {
+      await rm(tempPath, { force: true })
+    }
+
+    const headers = new Headers(init?.headers)
+    if (existingBytes > 0) {
+      headers.set('Range', `bytes=${existingBytes}-`)
+    }
+
+    let response = await fetch(url, { redirect: 'follow', ...init, headers })
+
+    if (existingBytes > 0 && response.status === 416) {
+      await rm(tempPath, { force: true })
+      existingBytes = 0
+      headers.delete('Range')
+      response = await fetch(url, { redirect: 'follow', ...init, headers })
+    }
+
+    if (existingBytes > 0 && response.status !== 206) {
+      await rm(tempPath, { force: true })
+      existingBytes = 0
+    }
+
     if (!response.ok) {
       throw new Error(`Failed to download ${label}: ${response.status} ${response.statusText}`)
     }
 
-    const totalBytes = Number(response.headers.get('content-length') ?? 0)
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    const rangeTotal = parseHttpContentRangeTotal(response.headers.get('content-range'))
+    const totalBytes =
+      rangeTotal ??
+      (existingBytes > 0 && contentLength > 0 ? existingBytes + contentLength : contentLength)
     let downloadedBytes = 0
     let lastReportedPercent: number | undefined
     const reportProgress = (percent: number): void => {
@@ -2746,10 +2851,8 @@ export class WhisperManager extends EventEmitter {
       lastReportedPercent = percent
       onProgress?.(percent)
     }
-    const tempPath = `${destPath}.tmp`
 
-    await rm(tempPath, { force: true })
-    const fileStream = createWriteStream(tempPath)
+    const fileStream = createWriteStream(tempPath, { flags: existingBytes > 0 ? 'a' : 'w' })
     const reader = response.body?.getReader()
     if (!reader) throw new Error(`No response body for ${label}`)
 
@@ -2763,12 +2866,13 @@ export class WhisperManager extends EventEmitter {
           await once(fileStream, 'drain')
         }
         downloadedBytes += value.length
-        const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
+        const completedBytes = existingBytes + downloadedBytes
+        const percent = totalBytes > 0 ? Math.round((completedBytes / totalBytes) * 100) : 0
         reportProgress(percent)
         this.emit('download-progress', {
           file: label,
           percent,
-          bytesDownloaded: downloadedBytes,
+          bytesDownloaded: completedBytes,
           bytesTotal: totalBytes
         } as DownloadProgress)
       }
@@ -2780,9 +2884,9 @@ export class WhisperManager extends EventEmitter {
         fileStream.on('error', reject)
       })
 
-      if (totalBytes > 0 && downloadedBytes !== totalBytes) {
+      if (contentLength > 0 && downloadedBytes !== contentLength) {
         throw new Error(
-          `Downloaded ${label} was incomplete: expected ${totalBytes} bytes, received ${downloadedBytes}.`
+          `Downloaded ${label} was incomplete: expected ${contentLength} bytes, received ${downloadedBytes}.`
         )
       }
 
@@ -2790,7 +2894,9 @@ export class WhisperManager extends EventEmitter {
       await rename(tempPath, destPath)
     } catch (err) {
       await this.closeFileStream(fileStream)
-      await rm(tempPath, { force: true })
+      if (!resume) {
+        await rm(tempPath, { force: true })
+      }
       throw err
     }
   }

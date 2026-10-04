@@ -1430,14 +1430,18 @@ describe('Whisper onboarding dependency installation', () => {
         'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part1',
         expect.stringMatching(/\.part1$/),
         'parakeet-tdt-0.6b-v3-fp32.zip (part 1)',
-        expect.any(Function)
+        expect.any(Function),
+        undefined,
+        { expectedSha256: part1Sha256 }
       )
       expect(downloadFileSpy).toHaveBeenNthCalledWith(
         2,
         'https://example.invalid/parakeet-tdt-0.6b-v3-fp32.zip.part2',
         expect.stringMatching(/\.part2$/),
         'parakeet-tdt-0.6b-v3-fp32.zip (part 2)',
-        expect.any(Function)
+        expect.any(Function),
+        undefined,
+        { expectedSha256: part2Sha256 }
       )
       expect(execFileMock).toHaveBeenCalledWith(
         'tar',
