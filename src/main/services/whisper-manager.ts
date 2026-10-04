@@ -38,9 +38,14 @@ import {
   loadWindowsTranscriptionProfiles,
   selectWindowsTranscriptionProfile,
   WINDOWS_TRANSCRIPTION_PROFILES,
+  type WindowsTranscriptionAsset,
   type WindowsTranscriptionBackendId,
   type WindowsTranscriptionProfile
 } from './windows-transcription-runtime'
+import {
+  listWindowsMultilingualEngineAssets,
+  type WindowsMultilingualEngineId
+} from './windows-multilingual-engine'
 import {
   selectEffectiveWindowsProcessingProfile,
   selectWindowsProcessingProfile,
@@ -120,6 +125,17 @@ export interface WhisperModelInfo {
 }
 
 export type TranscriptionBackendId = WindowsTranscriptionBackendId | 'mlx-whisper'
+
+export interface WindowsEngineRuntime {
+  pythonPath: string
+  modelPath: string
+  processEnv: NodeJS.ProcessEnv
+  device: WindowsTranscriptionProfile['device']
+  computeType: WindowsTranscriptionProfile['computeType']
+  workerEngine: 'canary' | 'whisper-turbo' | null
+  cliPath: string | null
+  scriptPath: string | null
+}
 
 export interface DownloadProgress {
   file: string
@@ -355,6 +371,13 @@ export class WhisperManager extends EventEmitter {
     return this.getDevelopmentResourcePath('mlx-whisper-turbo-transcribe.py')
   }
 
+  getWhisperCppTurboScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('whisper-cpp-turbo-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('whisper-cpp-turbo-transcribe.py')
+  }
+
   getMlxWhisperTurboModelRef(): string {
     return process.env.AUTODOC_MLX_WHISPER_TURBO_MODEL ?? MLX_WHISPER_TURBO_MODEL
   }
@@ -383,8 +406,8 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  getFasterWhisperPythonPath(): string {
-    return join(this.getFasterWhisperRuntimeDir(), 'python.exe')
+  getFasterWhisperPythonPath(profile = this.getSelectedWindowsProfile()): string {
+    return join(this.getFasterWhisperRuntimeDir(profile), 'python.exe')
   }
 
   getFasterWhisperModelPath(): string {
@@ -450,8 +473,8 @@ export class WhisperManager extends EventEmitter {
     await this.selectWindowsProfile()
   }
 
-  getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
-    const runtimeDir = this.getFasterWhisperRuntimeDir()
+  getFasterWhisperProcessEnv(profile = this.getSelectedWindowsProfile()): NodeJS.ProcessEnv {
+    const runtimeDir = this.getFasterWhisperRuntimeDir(profile)
     const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
     const pathAdditions = [
       runtimeDir,
@@ -505,6 +528,180 @@ export class WhisperManager extends EventEmitter {
     return { ...this.setupStatus }
   }
 
+  getWindowsTranscriptionProfiles(): Record<
+    WindowsTranscriptionBackendId,
+    WindowsTranscriptionProfile
+  > {
+    return this.windowsTranscriptionProfiles
+  }
+
+  recordWindowsTranscriptionDowngrade(
+    fromBackend: WindowsTranscriptionBackendId,
+    toBackend: WindowsTranscriptionBackendId
+  ): void {
+    this.recordDowngrade(fromBackend, toBackend)
+  }
+
+  async areWindowsEngineAssetsPresent(engineId: WindowsMultilingualEngineId): Promise<boolean> {
+    await this.selectWindowsProfile()
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const assets = listWindowsMultilingualEngineAssets(engineId, this.windowsTranscriptionProfiles)
+    for (const asset of assets) {
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length > 0) {
+        return false
+      }
+    }
+    return assets.length > 0
+  }
+
+  async isWindowsTranscriptionAssetPresent(filename: string): Promise<boolean> {
+    await this.selectWindowsProfile()
+    for (const profile of Object.values(this.windowsTranscriptionProfiles)) {
+      for (const asset of profile.assets) {
+        if (asset.filename !== filename) continue
+        const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+        const missingExpectedFiles = await this.getMissingExpectedFiles(
+          assetRoot,
+          asset.expectedFiles
+        )
+        return missingExpectedFiles.length === 0
+      }
+    }
+    return false
+  }
+
+  async ensureWindowsEngineAssets(engineId: WindowsMultilingualEngineId): Promise<void> {
+    await this.selectWindowsProfile()
+    await this.ensureFfmpegForSelectedRuntime()
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const assets = listWindowsMultilingualEngineAssets(engineId, this.windowsTranscriptionProfiles)
+    if (assets.some((asset) => !asset.url)) {
+      throw new Error(
+        'Managed Windows transcription assets are not configured for this build. Set AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL or use an official AutoDoc build.'
+      )
+    }
+
+    for (const asset of assets) {
+      const ownerProfile = this.profileOwningWindowsAsset(asset, profile)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(
+        ownerProfile,
+        asset.id,
+        asset.filename
+      )
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length === 0) {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset already present',
+          context: {
+            backend: engineId,
+            assetId: asset.id,
+            filename: asset.filename,
+            targetDir: assetRoot
+          }
+        })
+        continue
+      }
+
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset missing expected files before download',
+        context: {
+          backend: engineId,
+          assetId: asset.id,
+          filename: asset.filename,
+          targetDir: assetRoot,
+          missingExpectedFiles
+        }
+      })
+      this.setupStatus = this.withBackendStatus({
+        phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
+        percent: 0
+      })
+      this.emit('setup-status', this.getSetupStatus())
+      await this.downloadWithRetry(
+        () => this.downloadAndExtractWindowsTranscriptionAsset(ownerProfile, asset),
+        asset.id
+      )
+    }
+  }
+
+  getWindowsEngineRuntime(engineId: WindowsMultilingualEngineId): WindowsEngineRuntime {
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const modelRoot = this.getWindowsTranscriptionAssetRoot(profile, 'model')
+    if (engineId === 'canary-cpu') {
+      return {
+        pythonPath: this.getParakeetPythonPath(),
+        modelPath: modelRoot,
+        processEnv: this.getParakeetProcessEnv(),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'canary',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'canary-cuda') {
+      const runtimeDir = this.getWindowsTranscriptionAssetRoot(profile, 'runtime')
+      return {
+        pythonPath: join(runtimeDir, 'python.exe'),
+        modelPath: modelRoot,
+        processEnv: this.getOnnxRuntimeProcessEnv(runtimeDir),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'canary',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'whisper-turbo-cuda') {
+      const cudaProfile = this.windowsTranscriptionProfiles['faster-whisper-cuda']
+      return {
+        pythonPath: this.getFasterWhisperPythonPath(cudaProfile),
+        modelPath: modelRoot,
+        processEnv: this.getFasterWhisperProcessEnv(cudaProfile),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'whisper-turbo',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'whisper-turbo-cpu') {
+      const cpuProfile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+      return {
+        pythonPath: this.getFasterWhisperPythonPath(cpuProfile),
+        modelPath: modelRoot,
+        processEnv: this.getFasterWhisperProcessEnv(cpuProfile),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'whisper-turbo',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+
+    const runtimeDir = this.getWindowsTranscriptionAssetRoot(profile, 'runtime')
+    return {
+      pythonPath: this.getParakeetPythonPath(),
+      modelPath: join(modelRoot, 'ggml-large-v3-turbo.bin'),
+      processEnv: this.getParakeetProcessEnv(),
+      device: profile.device,
+      computeType: profile.computeType,
+      workerEngine: null,
+      cliPath: join(runtimeDir, 'whisper-cli.exe'),
+      scriptPath: this.getWhisperCppTurboScriptPath()
+    }
+  }
+
   async installBundledMacWhisperRuntimeOnly(): Promise<void> {
     if (IS_WIN) {
       throw new Error('Bundled macOS Whisper runtime install is not available on Windows.')
@@ -552,7 +749,7 @@ export class WhisperManager extends EventEmitter {
 
     const profile = this.getSelectedWindowsProfile()
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -674,8 +871,37 @@ export class WhisperManager extends EventEmitter {
 
   private getWindowsTranscriptionAssetRoot(
     profile: WindowsTranscriptionProfile,
-    assetId: 'runtime' | 'model'
+    assetId: 'runtime' | 'model',
+    filename?: string
   ): string {
+    if (filename === 'parakeet-runtime-win-x64.zip') {
+      return this.getParakeetRuntimeDir()
+    }
+    if (filename === 'faster-whisper-runtime-cuda-win-x64.zip') {
+      return this.getFasterWhisperRuntimeDir(this.windowsTranscriptionProfiles['faster-whisper-cuda'])
+    }
+    if (filename === 'faster-whisper-runtime-cpu-win-x64.zip') {
+      return this.getFasterWhisperRuntimeDir(this.windowsTranscriptionProfiles['faster-whisper-cpu'])
+    }
+    if (filename === 'canary-cuda-runtime-win-x64.zip') {
+      return join(this.getModelsDir(), 'transcription-runtimes', 'canary-cuda')
+    }
+    if (filename === 'whisper-cpp-vulkan-runtime-win-x64.zip') {
+      return join(this.getModelsDir(), 'transcription-runtimes', 'whisper-turbo-vulkan')
+    }
+    if (filename === 'canary-1b-v2-int8.zip') {
+      return join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-int8')
+    }
+    if (filename === 'canary-1b-v2-fp32.zip') {
+      return join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-fp32')
+    }
+    if (filename === 'faster-whisper-large-v3-turbo-ct2.zip') {
+      return join(this.getModelsDir(), 'faster-whisper-models', 'large-v3-turbo')
+    }
+    if (filename === 'ggml-large-v3-turbo.zip') {
+      return join(this.getModelsDir(), 'whisper-cpp-models', 'ggml-large-v3-turbo')
+    }
+
     if (profile.engine === 'parakeet') {
       return assetId === 'runtime'
         ? this.getParakeetRuntimeDir()
@@ -686,9 +912,66 @@ export class WhisperManager extends EventEmitter {
           )
     }
 
+    if (profile.id === 'canary-cpu') {
+      return assetId === 'runtime'
+        ? this.getParakeetRuntimeDir()
+        : join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-int8')
+    }
+    if (profile.id === 'canary-cuda') {
+      return assetId === 'runtime'
+        ? join(this.getModelsDir(), 'transcription-runtimes', 'canary-cuda')
+        : join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-fp32')
+    }
+    if (profile.id === 'whisper-turbo-cuda' || profile.id === 'whisper-turbo-cpu') {
+      return assetId === 'runtime'
+        ? this.getFasterWhisperRuntimeDir(
+            this.windowsTranscriptionProfiles[
+              profile.id === 'whisper-turbo-cuda' ? 'faster-whisper-cuda' : 'faster-whisper-cpu'
+            ]
+          )
+        : join(this.getModelsDir(), 'faster-whisper-models', 'large-v3-turbo')
+    }
+    if (profile.id === 'whisper-turbo-vulkan') {
+      return assetId === 'runtime'
+        ? join(this.getModelsDir(), 'transcription-runtimes', 'whisper-turbo-vulkan')
+        : join(this.getModelsDir(), 'whisper-cpp-models', 'ggml-large-v3-turbo')
+    }
+
     return assetId === 'runtime'
       ? this.getFasterWhisperRuntimeDir(profile)
       : join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
+  }
+
+  private profileOwningWindowsAsset(
+    asset: WindowsTranscriptionAsset,
+    fallback: WindowsTranscriptionProfile
+  ): WindowsTranscriptionProfile {
+    if (asset.filename === 'parakeet-runtime-win-x64.zip') {
+      return this.windowsTranscriptionProfiles['parakeet-cpu']
+    }
+    if (asset.filename === 'faster-whisper-runtime-cuda-win-x64.zip') {
+      return this.windowsTranscriptionProfiles['faster-whisper-cuda']
+    }
+    if (asset.filename === 'faster-whisper-runtime-cpu-win-x64.zip') {
+      return this.windowsTranscriptionProfiles['faster-whisper-cpu']
+    }
+    return fallback
+  }
+
+  private getOnnxRuntimeProcessEnv(runtimeDir: string): NodeJS.ProcessEnv {
+    const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
+    const pathAdditions = [
+      runtimeDir,
+      join(runtimeDir, 'DLLs'),
+      join(sitePackagesDir, 'onnxruntime', 'capi')
+    ].filter((candidate) => existsSync(candidate))
+
+    return {
+      ...process.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+      PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+    }
   }
 
   private withBackendStatus(status: WhisperSetupStatus): WhisperSetupStatus {
@@ -1229,7 +1512,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1283,7 +1566,7 @@ export class WhisperManager extends EventEmitter {
     profile: WindowsTranscriptionProfile
   ): Promise<boolean> {
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1313,7 +1596,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1430,7 +1713,7 @@ export class WhisperManager extends EventEmitter {
   ): Promise<void> {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
-    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
     let extractDir: string | null = null
     const partPaths: string[] = []
 

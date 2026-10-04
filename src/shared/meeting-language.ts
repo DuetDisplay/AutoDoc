@@ -121,10 +121,42 @@ export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[]
   'es'
 ]
 
+export type MeetingLanguageEngineAvailability = 'available' | 'slower' | 'locked'
+
+/** Windows speech-engine state for one picker language. Absent on Mac. */
+export interface MeetingLanguageEngineState {
+  availability: MeetingLanguageEngineAvailability
+  reason: string | null
+  engineId?: string | null
+  firstUseDownloadBytes: number
+  /** GPU engine is selected but its self-test has not run yet. */
+  needsSelfTest?: boolean
+}
+
+export interface WindowsMeetingLanguageAvailabilityInfo {
+  availability: MeetingLanguageEngineAvailability
+  reason: string | null
+  engineId: string | null
+  firstUseDownloadBytes: number
+  needsSelfTest?: boolean
+}
+
+export interface WindowsMultilingualEngineReadyInfo {
+  engineId: string | null
+  availability: MeetingLanguageEngineAvailability
+  reason: string | null
+  fallbackFrom?: string
+  fallbackReason?: string | null
+}
+
 export interface MeetingLanguageAvailability {
   /** True when this machine writes notes with the small notes model. */
   restricted: boolean
   availableLanguages: readonly MeetingLanguageCode[]
+  /** Per-language Windows engine availability. Mac leaves this unset. */
+  languageStates?: Readonly<
+    Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
+  >
 }
 
 export const UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY: MeetingLanguageAvailability = {
@@ -142,5 +174,7 @@ export function isMeetingLanguageAvailable(
   value: unknown,
   availability: MeetingLanguageAvailability
 ): boolean {
-  return availability.availableLanguages.includes(normalizeMeetingLanguage(value))
+  const code = normalizeMeetingLanguage(value)
+  if (!availability.availableLanguages.includes(code)) return false
+  return availability.languageStates?.[code]?.availability !== 'locked'
 }

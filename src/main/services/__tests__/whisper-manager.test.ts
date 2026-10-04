@@ -344,4 +344,51 @@ describe('WhisperManager', () => {
     expect(setupStatuses.some((status) => status.backend === 'parakeet-gpu')).toBe(true)
     expect(ensureReadySpy).not.toHaveBeenCalled()
   })
+
+  it('keeps English Windows backend assets identical after multilingual profiles were added', () => {
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets.map((asset) => asset.filename)
+    ).toEqual(['parakeet-runtime-win-x64.zip', 'parakeet-tdt-0.6b-v3-fp32.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].assets.map((asset) => asset.filename)
+    ).toEqual(['parakeet-runtime-win-x64.zip', 'parakeet-tdt-0.6b-v3-int8.zip'])
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].modelName).toBe('distil-large-v3')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].computeType).toBe('int8_float32')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].modelName).toBe('small.en')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-cpp'].assets).toEqual([])
+  })
+
+  it('keeps English Windows asset install directories unchanged', () => {
+    const modelsDir = manager.getModelsDir()
+    const expectedRoot = (
+      profile: (typeof WINDOWS_TRANSCRIPTION_PROFILES)[keyof typeof WINDOWS_TRANSCRIPTION_PROFILES],
+      assetId: 'runtime' | 'model'
+    ): string => {
+      if (profile.engine === 'parakeet') {
+        return assetId === 'runtime'
+          ? join(modelsDir, 'transcription-runtimes', 'parakeet')
+          : join(modelsDir, 'parakeet-models', `${profile.modelName}-${profile.computeType}`)
+      }
+      return assetId === 'runtime'
+        ? join(modelsDir, 'transcription-runtimes', profile.id)
+        : join(modelsDir, 'faster-whisper-models', profile.modelName)
+    }
+
+    for (const id of ['faster-whisper-cuda', 'faster-whisper-cpu', 'parakeet-gpu', 'parakeet-cpu'] as const) {
+      const profile = WINDOWS_TRANSCRIPTION_PROFILES[id]
+      expect(profile.assets.length).toBeGreaterThan(0)
+      for (const asset of profile.assets) {
+        const actual = (manager as any).getWindowsTranscriptionAssetRoot(
+          profile,
+          asset.id,
+          asset.filename
+        )
+        expect({ id, asset: asset.filename, dir: actual }).toEqual({
+          id,
+          asset: asset.filename,
+          dir: expectedRoot(profile, asset.id)
+        })
+      }
+    }
+  })
 })

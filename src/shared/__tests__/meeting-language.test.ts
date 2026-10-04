@@ -120,6 +120,21 @@ describe('meetingLanguageAvailability', () => {
     expect(isMeetingLanguageAvailable('auto', small)).toBe(true)
   })
 
+  it('treats a Windows engine lock as unavailable even when the notes model allows the language', () => {
+    const availability = {
+      ...meetingLanguageAvailability(true),
+      languageStates: {
+        es: {
+          availability: 'locked' as const,
+          reason: 'Spanish needs a supported graphics card on this PC.',
+          firstUseDownloadBytes: 0
+        }
+      }
+    }
+    expect(isMeetingLanguageAvailable('es', availability)).toBe(false)
+    expect(isMeetingLanguageAvailable('de', availability)).toBe(true)
+  })
+
   it('only offers languages that are in the picker', () => {
     const codes = MEETING_LANGUAGE_DEFINITIONS.map((definition) => definition.code)
     for (const code of meetingLanguageAvailability(true).availableLanguages) {

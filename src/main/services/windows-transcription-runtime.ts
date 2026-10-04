@@ -6,14 +6,25 @@ import { getConfiguredWindowsTranscriptionAssetBaseUrl } from './distribution-co
 
 const execFileAsync = promisify(execFile)
 
-export type WindowsTranscriptionBackendId =
+export type WindowsEnglishTranscriptionBackendId =
   | 'faster-whisper-cuda'
   | 'faster-whisper-cpu'
   | 'parakeet-gpu'
   | 'parakeet-cpu'
   | 'whisper-cpp'
 
-export type WindowsTranscriptionEngine = 'faster-whisper' | 'parakeet' | 'whisper-cpp'
+export type WindowsMultilingualTranscriptionBackendId =
+  | 'canary-cpu'
+  | 'canary-cuda'
+  | 'whisper-turbo-cuda'
+  | 'whisper-turbo-cpu'
+  | 'whisper-turbo-vulkan'
+
+export type WindowsTranscriptionBackendId =
+  | WindowsEnglishTranscriptionBackendId
+  | WindowsMultilingualTranscriptionBackendId
+
+export type WindowsTranscriptionEngine = 'faster-whisper' | 'parakeet' | 'whisper-cpp' | 'canary'
 
 export type WindowsGpuVendor = 'nvidia' | 'intel' | 'amd' | 'unknown'
 
@@ -21,7 +32,14 @@ export interface WindowsGpuInfo {
   name: string
   vendor: WindowsGpuVendor
   adapterRamGiB: number | null
+  driverVersion?: string | null
 }
+
+export const ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS: readonly WindowsEnglishTranscriptionBackendId[] =
+  ['faster-whisper-cuda', 'faster-whisper-cpu', 'parakeet-gpu', 'parakeet-cpu', 'whisper-cpp']
+
+/** Canary CUDA uses the same 6 GiB floor as faster-whisper-cuda. Peak is ~5.4–5.5 GiB. */
+export const CANARY_CUDA_MIN_VRAM_GIB = 6
 
 export interface NvidiaSmiGpuInfo {
   name: string
@@ -86,11 +104,12 @@ export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_LOGICAL_PROCESSORS = 12
 export const WINDOWS_CONCURRENT_LOCAL_PROCESSING_MIN_FREE_MEMORY_GIB = 6
 
 const KNOWN_WINDOWS_TRANSCRIPTION_PROFILE_IDS: WindowsTranscriptionBackendId[] = [
-  'faster-whisper-cuda',
-  'faster-whisper-cpu',
-  'parakeet-gpu',
-  'parakeet-cpu',
-  'whisper-cpp'
+  ...ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS,
+  'canary-cpu',
+  'canary-cuda',
+  'whisper-turbo-cuda',
+  'whisper-turbo-cpu',
+  'whisper-turbo-vulkan'
 ]
 
 export function shouldSerializeWindowsLocalProcessing(
@@ -271,6 +290,203 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     minSystemMemoryGiB: 8,
     estimatedMemoryGiB: 2.5,
     assets: []
+  },
+  'canary-cpu': {
+    id: 'canary-cpu',
+    label: 'Canary CPU transcription',
+    modelName: 'canary-1b-v2',
+    engine: 'canary',
+    device: 'cpu',
+    computeType: 'int8',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 1.5,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'parakeet-runtime-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
+        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
+        bytes: 87511283,
+        expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
+      },
+      {
+        id: 'model',
+        filename: 'canary-1b-v2-int8.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/canary-1b-v2-int8.zip` : '',
+        sha256: '3bec864dd27e85a43927efb21feb1839335a40a055564459feaa6ece5092c389',
+        bytes: 727296090,
+        expectedFiles: [
+          'encoder-model.int8.onnx',
+          'decoder-model.int8.onnx',
+          'vocab.txt',
+          'config.json',
+          'silero_vad.onnx'
+        ]
+      }
+    ]
+  },
+  'canary-cuda': {
+    id: 'canary-cuda',
+    label: 'Canary NVIDIA transcription',
+    modelName: 'canary-1b-v2',
+    engine: 'canary',
+    device: 'cuda',
+    computeType: 'fp32',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 5.5,
+    minVramGiB: CANARY_CUDA_MIN_VRAM_GIB,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'canary-cuda-runtime-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/canary-cuda-runtime-win-x64.zip` : '',
+        sha256: '4f6cd9d0dc4e213ffd940beb04af87ca591a41bafc9293b98535407a79ac730f',
+        bytes: 1873087180,
+        expectedFiles: [
+          'python.exe',
+          'Lib/site-packages/sitecustomize.py',
+          'Lib/site-packages/onnx_asr',
+          'Lib/site-packages/onnxruntime'
+        ]
+      },
+      {
+        id: 'model',
+        filename: 'canary-1b-v2-fp32.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/canary-1b-v2-fp32.zip` : '',
+        sha256: 'dbbd66c43900bfca4deafd20796c4c033b78592994866cfab016ea90824b456c',
+        bytes: 3680120712,
+        parts: ASSET_BASE_URL
+          ? [
+              {
+                filename: 'canary-1b-v2-fp32.zip.part1',
+                url: `${ASSET_BASE_URL}/canary-1b-v2-fp32.zip.part1`,
+                sha256: '2b77949e7c13bcd596717da9edd0a1de079b9486349d9e0b902dc53c8df46c0e',
+                bytes: 2000000000
+              },
+              {
+                filename: 'canary-1b-v2-fp32.zip.part2',
+                url: `${ASSET_BASE_URL}/canary-1b-v2-fp32.zip.part2`,
+                sha256: 'd53953808441b900abfcbd9de33971aedf49e69df7bd487899ce1eca8d03c9c2',
+                bytes: 1680120712
+              }
+            ]
+          : [
+              {
+                filename: 'canary-1b-v2-fp32.zip.part1',
+                url: '',
+                sha256: '2b77949e7c13bcd596717da9edd0a1de079b9486349d9e0b902dc53c8df46c0e',
+                bytes: 2000000000
+              },
+              {
+                filename: 'canary-1b-v2-fp32.zip.part2',
+                url: '',
+                sha256: 'd53953808441b900abfcbd9de33971aedf49e69df7bd487899ce1eca8d03c9c2',
+                bytes: 1680120712
+              }
+            ],
+        expectedFiles: [
+          'encoder-model.onnx',
+          'encoder-model.onnx.data',
+          'decoder-model.onnx',
+          'vocab.txt',
+          'config.json',
+          'silero_vad.onnx'
+        ]
+      }
+    ]
+  },
+  'whisper-turbo-cuda': {
+    id: 'whisper-turbo-cuda',
+    label: 'Whisper turbo NVIDIA transcription',
+    modelName: 'large-v3-turbo',
+    engine: 'faster-whisper',
+    device: 'cuda',
+    computeType: 'float16',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 1.5,
+    minVramGiB: 6,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'faster-whisper-runtime-cuda-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip` : '',
+        sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
+        bytes: 1439431425,
+        expectedFiles: [
+          'python.exe',
+          'Lib/site-packages/faster_whisper',
+          'Lib/site-packages/ctranslate2'
+        ]
+      },
+      {
+        id: 'model',
+        filename: 'faster-whisper-large-v3-turbo-ct2.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-large-v3-turbo-ct2.zip` : '',
+        sha256: '4c1f29dd1ed3367df27240142991bb80d122c2575e8b148e75e0e34b434f4088',
+        bytes: 1492333094,
+        expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
+      }
+    ]
+  },
+  'whisper-turbo-cpu': {
+    id: 'whisper-turbo-cpu',
+    label: 'Whisper turbo CPU transcription',
+    modelName: 'large-v3-turbo',
+    engine: 'faster-whisper',
+    device: 'cpu',
+    computeType: 'int8',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 1.6,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'faster-whisper-runtime-cpu-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip` : '',
+        sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
+        bytes: 122910760,
+        expectedFiles: [
+          'python.exe',
+          'Lib/site-packages/faster_whisper',
+          'Lib/site-packages/ctranslate2'
+        ]
+      },
+      {
+        id: 'model',
+        filename: 'faster-whisper-large-v3-turbo-ct2.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-large-v3-turbo-ct2.zip` : '',
+        sha256: '4c1f29dd1ed3367df27240142991bb80d122c2575e8b148e75e0e34b434f4088',
+        bytes: 1492333094,
+        expectedFiles: ['config.json', 'model.bin', 'tokenizer.json']
+      }
+    ]
+  },
+  'whisper-turbo-vulkan': {
+    id: 'whisper-turbo-vulkan',
+    label: 'Whisper turbo Vulkan transcription',
+    modelName: 'large-v3-turbo',
+    engine: 'whisper-cpp',
+    device: 'cpu',
+    computeType: 'float16',
+    minSystemMemoryGiB: 8,
+    estimatedMemoryGiB: 2.5,
+    assets: [
+      {
+        id: 'runtime',
+        filename: 'whisper-cpp-vulkan-runtime-win-x64.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/whisper-cpp-vulkan-runtime-win-x64.zip` : '',
+        sha256: '7de1038df721cba706103913dc5d0e09411a62680b64b30a7d7e37eb450399fc',
+        bytes: 17846476,
+        expectedFiles: ['whisper-cli.exe']
+      },
+      {
+        id: 'model',
+        filename: 'ggml-large-v3-turbo.zip',
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/ggml-large-v3-turbo.zip` : '',
+        sha256: 'beb7999b2749cad40c96e80f4732642f14f1c87c195dcd82df9e1c80461996e1',
+        bytes: 1493368050,
+        expectedFiles: ['ggml-large-v3-turbo.bin']
+      }
+    ]
   }
 }
 
@@ -562,7 +778,12 @@ function normalizeForcedBackend(value: string | undefined): WindowsTranscription
     value === 'faster-whisper-cpu' ||
     value === 'parakeet-gpu' ||
     value === 'parakeet-cpu' ||
-    value === 'whisper-cpp'
+    value === 'whisper-cpp' ||
+    value === 'canary-cpu' ||
+    value === 'canary-cuda' ||
+    value === 'whisper-turbo-cuda' ||
+    value === 'whisper-turbo-cpu' ||
+    value === 'whisper-turbo-vulkan'
   ) {
     return value
   }
@@ -685,7 +906,8 @@ export function applyNvidiaSmiMemory(
       usedIndexes.add(matchIndex)
       next[matchIndex] = {
         ...next[matchIndex],
-        adapterRamGiB: adapterRamGiB ?? next[matchIndex].adapterRamGiB
+        adapterRamGiB: adapterRamGiB ?? next[matchIndex].adapterRamGiB,
+        driverVersion: nvidiaGpu.driverVersion ?? next[matchIndex].driverVersion ?? null
       }
       continue
     }
@@ -693,7 +915,8 @@ export function applyNvidiaSmiMemory(
     next.push({
       name: nvidiaGpu.name,
       vendor: 'nvidia',
-      adapterRamGiB
+      adapterRamGiB,
+      driverVersion: nvidiaGpu.driverVersion
     })
     usedIndexes.add(next.length - 1)
   }

@@ -56,7 +56,11 @@ import {
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
-import { recordingMeetingLanguage } from './services/meeting-language-availability'
+import {
+  bindWindowsNotesModelSource,
+  resolveRecordingMeetingLanguage
+} from './services/meeting-language-availability'
+import { bindWindowsMultilingualReadiness } from './services/windows-multilingual-readiness'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
@@ -894,6 +898,11 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
+  bindWindowsMultilingualReadiness({ whisperManager })
+  bindWindowsNotesModelSource(() => {
+    const profile = whisperManager.getWindowsProcessingProfile()
+    return profile ? { id: profile.id, hardware: profile.hardware } : null
+  })
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -1827,7 +1836,7 @@ app.whenReady().then(async () => {
     transcriptionService,
     whisperManager,
     calendarManager,
-    () => recordingMeetingLanguage(prefsStore.getMeetingLanguage())
+    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
   )
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
 

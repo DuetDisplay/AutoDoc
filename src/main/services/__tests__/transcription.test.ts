@@ -57,6 +57,7 @@ const workerClientMock = vi.hoisted(() => ({
   load: vi.fn(),
   transcribe: vi.fn(),
   unload: vi.fn(),
+  selftest: vi.fn(),
   ping: vi.fn(),
   dispose: vi.fn(),
   disposeAndWait: vi.fn(),
@@ -68,6 +69,21 @@ vi.mock('../transcription-worker-client', () => ({
     workerClientMock.lastOptions = options
     return workerClientMock
   })
+}))
+
+const multilingualReadyMock = vi.hoisted(() => ({
+  ensureWindowsMultilingualEngineReady: vi.fn(),
+  windowsMultilingualTranscribeLanguage: vi.fn((language: string) =>
+    language === 'zh-Hans' ? 'zh' : language
+  )
+}))
+
+vi.mock('../windows-multilingual-readiness', () => ({
+  ensureWindowsMultilingualEngineReady: multilingualReadyMock.ensureWindowsMultilingualEngineReady,
+  windowsMultilingualTranscribeLanguage: multilingualReadyMock.windowsMultilingualTranscribeLanguage,
+  windowsVulkanBridgeDeviceNameArgs: (gpuName?: string | null) =>
+    gpuName?.trim() ? ['--device-name', gpuName.trim()] : [],
+  bindWindowsMultilingualReadiness: vi.fn()
 }))
 
 vi.mock('../mac-canary-transcription', () => ({
@@ -94,6 +110,34 @@ class MockChildProcess extends EventEmitter {
   pid = 1234
   stderr = new EventEmitter()
   stdout = new EventEmitter()
+}
+
+function readyWindowsEngine(language: string) {
+  const turbo = ['el', 'ru', 'es', 'ja', 'zh-Hans', 'ko'].includes(language)
+  const engineId = turbo ? 'whisper-turbo-cuda' : 'canary-cpu'
+  return {
+    engineId,
+    availability: 'available' as const,
+    reason: null,
+    selfTest: turbo ? ('passed' as const) : null,
+    pythonPath: '/mock/python.exe',
+    modelPath: '/mock/model',
+    processEnv: { PATH: '/mock/path' },
+    device: turbo ? ('cuda' as const) : ('cpu' as const),
+    computeType: turbo ? 'float16' : 'int8',
+    workerEngine: turbo ? ('whisper-turbo' as const) : ('canary' as const),
+    cliPath: null,
+    scriptPath: null,
+    gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+    plan: {
+      route: turbo ? 'whisper-turbo' : 'canary',
+      kind: 'resolved',
+      primary: { engine: engineId, availability: 'available', reason: null },
+      fallbacks: [],
+      availability: 'available',
+      reason: null
+    }
+  }
 }
 
 function createMockWhisperManager(ready = true): WhisperManager {
@@ -173,7 +217,11 @@ describe('TranscriptionService', () => {
     })
     workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
     workerClientMock.unload.mockResolvedValue(undefined)
+    workerClientMock.selftest.mockResolvedValue({ ok: true })
     workerClientMock.ping.mockResolvedValue(undefined)
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
+      async (language: string) => readyWindowsEngine(language)
+    )
     workerClientMock.dispose.mockImplementation(() => {
       workerClientMock.isLoaded = false
     })
@@ -1139,6 +1187,97 @@ describe('TranscriptionService', () => {
 
     expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
     ;(service as any).lowerWhisperPriority(1234, 'meeting-123')
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it.each([
+    ['canary-cuda', 'cuda', 'fp32', 'canary', 'passed' as const],
+    ['whisper-turbo-cuda', 'cuda', 'float16', 'whisper-turbo', 'passed' as const],
+    ['canary-cpu', 'cpu', 'int8', 'canary', null],
+    ['whisper-turbo-cpu', 'cpu', 'int8', 'whisper-turbo', null]
+  ] as const)(
+    'disables EcoQoS and uses below-normal priority for the %s worker',
+    async (engineId, device, computeType, workerEngine, selfTest) => {
+      setPlatform('win32')
+      const local = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false
+      )
+      ;(local as any).windowsMultilingualReady = {
+        engineId,
+        availability: 'available',
+        reason: null,
+        selfTest,
+        pythonPath: '/mock/python.exe',
+        modelPath: '/mock/model',
+        processEnv: { PATH: '/mock/path' },
+        device,
+        computeType,
+        workerEngine,
+        cliPath: null,
+        scriptPath: null,
+        gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+        plan: {
+          route: workerEngine === 'canary' ? 'canary' : 'whisper-turbo',
+          kind: 'resolved',
+          primary: { engine: engineId, availability: 'available', reason: null },
+          fallbacks: [],
+          availability: 'available',
+          reason: null
+        }
+      }
+      await (local as any).ensureWindowsMultilingualWorkerLoaded(1)
+      expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+      osMock.setPriority.mockClear()
+      ;(workerClientMock.lastOptions?.applyPriority as (pid: number) => void)(1234)
+      expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+    }
+  )
+
+  it('disables EcoQoS for multilingual CPU even when English DML is selected', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getWorkerDevice: vi.fn().mockReturnValue('dml'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu')
+    } as unknown as WhisperManager
+    const local = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    ;(local as any).windowsMultilingualReady = {
+      engineId: 'canary-cpu',
+      availability: 'available',
+      reason: null,
+      selfTest: null,
+      pythonPath: '/mock/python.exe',
+      modelPath: '/mock/model',
+      processEnv: { PATH: '/mock/path' },
+      device: 'cpu',
+      computeType: 'int8',
+      workerEngine: 'canary',
+      cliPath: null,
+      scriptPath: null,
+      gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+      plan: {
+        route: 'canary',
+        kind: 'resolved',
+        primary: { engine: 'canary-cpu', availability: 'available', reason: null },
+        fallbacks: [],
+        availability: 'available',
+        reason: null
+      }
+    }
+    await (local as any).ensureWindowsMultilingualWorkerLoaded(1)
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    osMock.setPriority.mockClear()
+    ;(workerClientMock.lastOptions?.applyPriority as (pid: number) => void)(1234)
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
   })
 
@@ -2444,11 +2583,14 @@ describe('TranscriptionService meeting-language routing', () => {
     fsMock.writeFile.mockResolvedValue(undefined as any)
     fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
+      async (language: string) => readyWindowsEngine(language)
+    )
   })
 
   afterEach(() => setPlatform(originalPlatform))
 
-  it('installs Parakeet for a German Windows meeting instead of using an English-only model', async () => {
+  it('installs Canary for a German Windows meeting instead of using an English-only model', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -2459,14 +2601,18 @@ describe('TranscriptionService meeting-language routing', () => {
     const transcribe = stubTranscribe(service)
     recordMeeting('de')
 
-    await expect((service as any).processJob('german')).rejects.toThrow(
-      'German transcription needs Parakeet'
+    await (service as any).processJob('german')
+
+    expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith(
+      'de',
+      expect.any(Function),
+      expect.objectContaining({ whisperManager: mockWhisper })
     )
-    expect(mockWhisper.ensureReady).toHaveBeenCalledWith({ allowBackendInstall: true })
-    expect(transcribe).not.toHaveBeenCalled()
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
   })
 
-  it('transcribes a German Windows meeting once Parakeet is selected', async () => {
+  it('transcribes a German Windows meeting on the Canary route', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -2477,7 +2623,7 @@ describe('TranscriptionService meeting-language routing', () => {
     const transcribe = stubTranscribe(service)
     recordMeeting('de')
 
-    await (service as any).processJob('german-parakeet')
+    await (service as any).processJob('german-canary')
 
     expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
     expect(transcribe).toHaveBeenCalled()
@@ -2500,6 +2646,7 @@ describe('TranscriptionService meeting-language routing', () => {
       await (service as any).processJob('english')
 
       expect(mockWhisper.ensureReady).toHaveBeenCalledWith()
+      expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
       expect(transcribe).toHaveBeenCalled()
     }
   )
@@ -2657,7 +2804,7 @@ describe('TranscriptionService meeting-language routing', () => {
     }
   )
 
-  it('refuses a Japanese Windows meeting instead of using Parakeet or an English-only model', async () => {
+  it('runs a Japanese Windows meeting on Whisper turbo instead of Parakeet', async () => {
     setPlatform('win32')
     mockWhisper = {
       ...mockWhisper,
@@ -2668,11 +2815,129 @@ describe('TranscriptionService meeting-language routing', () => {
     const transcribe = stubTranscribe(service)
     recordMeeting('ja')
 
-    await expect((service as any).processJob('japanese-windows')).rejects.toThrow(
-      'Japanese transcription needs Whisper large-v3-turbo, which is not available on Windows'
+    await (service as any).processJob('japanese-windows')
+
+    expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith(
+      'ja',
+      expect.any(Function),
+      expect.objectContaining({ whisperManager: mockWhisper })
     )
-    expect(mockWhisper.ensureReady).not.toHaveBeenCalledWith({ allowBackendInstall: true })
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
+  })
+
+  it('fails a locked low-spec Windows turbo language with the plan reason', async () => {
+    setPlatform('win32')
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockResolvedValue({
+      ...readyWindowsEngine('es'),
+      engineId: null,
+      availability: 'locked',
+      reason: 'Spanish needs a supported graphics card on this PC.',
+      workerEngine: null
+    })
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('es')
+
+    await expect((service as any).processJob('spanish-locked')).rejects.toThrow(
+      'Spanish needs a supported graphics card on this PC.'
+    )
     expect(transcribe).not.toHaveBeenCalled()
+  })
+
+  it('passes --cli and --device-name to the Vulkan turbo bridge', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValueOnce(child as any)
+
+    await runWithMeetingLanguage('ja', async () => {
+      ;(service as any).windowsMultilingualReady = {
+        ...readyWindowsEngine('ja'),
+        engineId: 'whisper-turbo-vulkan',
+        workerEngine: null,
+        device: 'cpu',
+        pythonPath: '/mock/parakeet/python.exe',
+        modelPath: '/mock/ggml-large-v3-turbo.bin',
+        cliPath: '/mock/whisper-cli.exe',
+        scriptPath: '/mock/whisper-cpp-turbo-transcribe.py',
+        gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU'
+      }
+      const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+      child.emit('close', 0)
+      await pass
+    })
+
+    const argv = childProcessMock.spawn.mock.calls[0]?.[1] as string[]
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '/mock/whisper-cpp-turbo-transcribe.py',
+        '--model',
+        '/mock/ggml-large-v3-turbo.bin',
+        '--cli',
+        '/mock/whisper-cli.exe',
+        '--language',
+        'ja',
+        '--device-name',
+        'NVIDIA GeForce RTX 4060 Laptop GPU'
+      ])
+    )
+    expect(argv).not.toContain('--device')
+  })
+
+  it('never pre-cuts long Windows multilingual recordings into 90-second windows', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const chunked = vi.fn()
+    ;(service as any).runWhisperChunked = chunked
+    ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('de')
+
+    await runWithMeetingLanguage('de', () =>
+      (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
+    )
+
+    expect(chunked).not.toHaveBeenCalled()
+    expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('restarts the worker process when switching Windows multilingual engines', async () => {
+    setPlatform('win32')
+    const service = createService()
+    workerClientMock.disposeAndWait.mockResolvedValue(undefined)
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('de')
+    await (service as any).ensureWindowsMultilingualWorkerLoaded(1)
+    expect(workerClientMock.load).toHaveBeenLastCalledWith(
+      expect.objectContaining({ engine: 'canary' })
+    )
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('ja')
+    await (service as any).ensureWindowsMultilingualWorkerLoaded(1)
+
+    expect(workerClientMock.disposeAndWait).toHaveBeenCalled()
+    expect(TranscriptionWorkerClient).toHaveBeenCalledTimes(2)
+    expect(workerClientMock.load).toHaveBeenLastCalledWith(
+      expect.objectContaining({ engine: 'whisper-turbo' })
+    )
+  })
+
+  it('releases the Windows multilingual worker before notes start', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+    workerClientMock.disposeAndWait.mockResolvedValue(undefined)
+    ;(service as any).transcriptionWorkerClient = workerClientMock
+
+    await (service as any).processJob('german-release')
+
+    expect(transcribe).toHaveBeenCalled()
+    expect(workerClientMock.disposeAndWait).toHaveBeenCalled()
+    expect(onComplete).toHaveBeenCalledWith('german-release')
+    const disposeOrder = workerClientMock.disposeAndWait.mock.invocationCallOrder[0]
+    const completeOrder = onComplete.mock.invocationCallOrder[0]
+    expect(disposeOrder).toBeLessThan(completeOrder)
   })
 
   it.each([

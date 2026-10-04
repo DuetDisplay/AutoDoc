@@ -50,6 +50,17 @@ import {
 import { MAC_CANARY_MODEL, resolveMacCanaryTranscriber } from './mac-canary-transcription'
 import { tokenizeUnicodeWords } from './unicode-text'
 import { getMeetingLanguageDefinition } from '../../shared/meeting-language'
+import {
+  ensureWindowsMultilingualEngineReady,
+  windowsMultilingualTranscribeLanguage,
+  windowsVulkanBridgeDeviceNameArgs,
+  type WindowsMultilingualEngineReadyResult
+} from './windows-multilingual-readiness'
+import {
+  windowsMultilingualEngineLogIdentity,
+  windowsMultilingualWorkerEngine,
+  type WindowsMultilingualEngineId
+} from './windows-multilingual-engine'
 
 interface WhisperSegment {
   offsets: { from: number; to: number }
@@ -168,6 +179,7 @@ export class TranscriptionService {
   private windowsAttempt: WindowsTranscriptionAttempt | null = null
   private windowsRecordingGpuEligible = false
   private windowsWorkerShutdown: Promise<Error | null> | null = null
+  private windowsMultilingualReady: WindowsMultilingualEngineReadyResult | null = null
 
   constructor(
     private whisperManager: WhisperManager,
@@ -528,6 +540,16 @@ export class TranscriptionService {
     const tempFiles: string[] = []
 
     try {
+      this.windowsMultilingualReady = null
+      if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
+        await this.releaseMismatchedWindowsWorker()
+      }
+      if (process.platform === 'win32' && activeMeetingAsrRoute() !== 'english') {
+        this.activeStatus = 'downloading'
+        this.broadcastStatus(meetingId, 'downloading')
+        await this.prepareWindowsMultilingualRoute(meetingId)
+      }
+
       const source = this.enqueueSource.get(meetingId) ?? 'direct'
       const processingProfile = await this.getProcessingProfileLogContext()
       logAutodocEvent({
@@ -543,29 +565,20 @@ export class TranscriptionService {
           ...this.jobTranscriptionEngine(),
           meetingLanguage: activeMeetingLanguage(),
           asrRoute: activeMeetingAsrRoute(),
+          ...this.windowsMultilingualLogContext(),
           processingProfile
         }
       })
       this.jobDualSource = hasMic && hasSystem
       await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
-      if (process.platform === 'win32' && this.whisperManager.isWorkerEngineSelected?.()) {
-        await this.releaseMismatchedWindowsWorker()
-      }
-      // Windows runs the Canary route on Parakeet v3 until its Canary runtime lands.
-      const windowsParakeetRoute =
-        process.platform === 'win32' && activeMeetingAsrRoute() === 'canary'
-      const englishOnlyWindowsBackend =
-        windowsParakeetRoute && !this.whisperManager.isParakeetSelected?.()
-      if (!(await this.whisperManager.isReady()) || englishOnlyWindowsBackend) {
+      if (
+        !(process.platform === 'win32' && activeMeetingAsrRoute() !== 'english') &&
+        !(await this.whisperManager.isReady())
+      ) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        if (windowsParakeetRoute) {
-          // Install Parakeet rather than prefer an installed English-only model.
-          await this.whisperManager.ensureReady({ allowBackendInstall: true })
-        } else {
-          await this.whisperManager.ensureReady()
-        }
+        await this.whisperManager.ensureReady()
       }
       this.assertMeetingLanguageRoute()
       if (
@@ -765,6 +778,9 @@ export class TranscriptionService {
           postProcessingWallSec,
           transcriptionWallSec,
           ...this.jobTranscriptionEngine(),
+          meetingLanguage: activeMeetingLanguage(),
+          asrRoute: activeMeetingAsrRoute(),
+          ...this.windowsMultilingualLogContext(),
           processingProfile: completedProcessingProfile,
           processingProfileId,
           workerReuseCount: this.workerJobsServed,
@@ -808,6 +824,9 @@ export class TranscriptionService {
       this.broadcastStatus(meetingId, 'complete', undefined, undefined, {
         recordingDurationSec: metadata?.durationSeconds ?? this.jobAudioDurationSec ?? null
       })
+      if (process.platform === 'win32' && this.windowsMultilingualReady) {
+        await this.releaseWindowsSpeechWorker()
+      }
       this.onCompleteCallback?.(meetingId)
     } catch (error) {
       if (
@@ -823,6 +842,7 @@ export class TranscriptionService {
     } finally {
       this.transcriptionJobStartedAt = null
       this.lastEtaSeconds = null
+      this.windowsMultilingualReady = null
       if (process.platform === 'win32') await this.windowsWorkerShutdown
       for (const f of tempFiles) {
         await unlink(f).catch(() => {})
@@ -946,6 +966,9 @@ export class TranscriptionService {
         backend: engine.backend,
         backendLabel: engine.backendLabel,
         model: engine.modelName,
+        meetingLanguage: activeMeetingLanguage(),
+        asrRoute: activeMeetingAsrRoute(),
+        ...this.windowsMultilingualLogContext(),
         audioDurationSec: audioDuration ?? null,
         concurrentSources,
         processingProfile
@@ -1718,7 +1741,9 @@ export class TranscriptionService {
     // The macOS Canary and turbo bridges split speech themselves (Silero VAD spans,
     // pause-split clips of at most 30 s). App 90 s windows would cut through words
     // and made turbo loop.
-    const bridgePauseSplits = process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english'
+    const bridgePauseSplits =
+      (process.platform === 'darwin' || process.platform === 'win32') &&
+      activeMeetingAsrRoute() !== 'english'
     const shouldPreChunk =
       !bridgePauseSplits &&
       audioDurationSec &&
@@ -1961,6 +1986,9 @@ export class TranscriptionService {
    * English route only; the macOS Canary and turbo routes use their own bridges.
    */
   private jobTranscriptionEngine(): { backend: string; backendLabel: string; modelName: string } {
+    if (process.platform === 'win32' && this.windowsMultilingualReady?.engineId) {
+      return windowsMultilingualEngineLogIdentity(this.windowsMultilingualReady.engineId)
+    }
     if (process.platform === 'darwin') {
       const route = activeMeetingAsrRoute()
       if (route === 'canary') {
@@ -2000,16 +2028,27 @@ export class TranscriptionService {
           `${label} transcription on macOS needs the Canary runtime, which is not available in this build.`
         )
       }
-      if (process.platform === 'win32' && this.whisperManager.isParakeetSelected?.()) return
+      if (process.platform === 'win32') {
+        if (this.windowsMultilingualReady?.engineId?.startsWith('canary')) return
+        throw new Error(
+          this.windowsMultilingualReady?.reason ??
+            `${label} transcription needs Canary, which is unavailable on this device.`
+        )
+      }
       throw new Error(
         `${label} transcription needs Parakeet, which is unavailable on this device. English-only transcription models cannot transcribe ${label}.`
       )
     }
     if (process.platform === 'darwin' && this.whisperManager.isMlxWhisperSelected?.()) return
+    if (process.platform === 'win32') {
+      if (this.windowsMultilingualReady?.engineId?.startsWith('whisper-turbo')) return
+      throw new Error(
+        this.windowsMultilingualReady?.reason ??
+          `${label} transcription needs Whisper large-v3-turbo, which is unavailable on this device.`
+      )
+    }
     throw new Error(
-      process.platform === 'win32'
-        ? `${label} transcription needs Whisper large-v3-turbo, which is not available on Windows in this build yet.`
-        : `${label} transcription needs Whisper large-v3-turbo on the MLX runtime, which is unavailable on this device.`
+      `${label} transcription needs Whisper large-v3-turbo on the MLX runtime, which is unavailable on this device.`
     )
   }
 
@@ -2030,6 +2069,17 @@ export class TranscriptionService {
       if (route === 'whisper-turbo') {
         return this.runMacWhisperTurboPass(audioWavPath, meetingId, audioDurationSec, progressRange)
       }
+    }
+
+    if (process.platform === 'win32' && this.windowsMultilingualReady?.engineId) {
+      return this.runWindowsMultilingualPass(
+        audioWavPath,
+        meetingId,
+        audioDurationSec,
+        progressRange,
+        concurrentSources,
+        window
+      )
     }
 
     if (
@@ -2243,6 +2293,7 @@ export class TranscriptionService {
       language: string
       env: NodeJS.ProcessEnv
       perfLabel: string
+      extraArgs?: string[]
     },
     audioWavPath: string,
     meetingId: string,
@@ -2261,7 +2312,8 @@ export class TranscriptionService {
         '--output',
         jsonPath,
         '--language',
-        bridge.language
+        bridge.language,
+        ...(bridge.extraArgs ?? [])
       ]
 
       const proc = spawn(bridge.pythonPath, args, {
@@ -2312,17 +2364,25 @@ export class TranscriptionService {
   }
 
   /**
-   * The DML (GPU) worker must not be throttled: the heavy compute runs on the
-   * GPU, but the parakeet TDT decode loop that feeds it is CPU-side Python.
-   * EcoQoS pins that loop to efficiency cores (~5x slowdown measured in
-   * Phase 1/3), which defeats the GPU tier's purpose while buying little
-   * responsiveness. CPU tiers keep EcoQoS + Low priority.
+   * English DML and every Windows multilingual worker engine (Canary CUDA/CPU
+   * and turbo CUDA/CPU) run `--no-eco` + BelowNormal. Research speed parity
+   * was measured without EcoQoS; EcoQoS pins the Python decode loop to
+   * efficiency cores. English CPU remains EcoQoS + Low pending a follow-up.
+   * Vulkan is not a worker engine and is unchanged.
    */
-  private isDmlWorkerSelected(): boolean {
+  private isWindowsMultilingualOrDmlWorkerSelected(): boolean {
+    const multilingualEngine = this.windowsMultilingualReady?.engineId
+    if (multilingualEngine && windowsMultilingualWorkerEngine(multilingualEngine)) {
+      return true
+    }
     return (
       typeof this.whisperManager.getWorkerDevice === 'function' &&
       this.whisperManager.getWorkerDevice() === 'dml'
     )
+  }
+
+  private windowsSpeechWorkerExtraArgs(): string[] {
+    return this.isWindowsMultilingualOrDmlWorkerSelected() ? ['--no-eco'] : []
   }
 
   private isDmlDeviceLossError(message: string): boolean {
@@ -2372,11 +2432,311 @@ export class TranscriptionService {
       scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
       processEnv: this.whisperManager.getWorkerProcessEnv(),
       applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
-      extraArgs: this.isDmlWorkerSelected() ? ['--no-eco'] : []
+      extraArgs: this.windowsSpeechWorkerExtraArgs()
     })
     this.transcriptionWorkerClientFingerprint = fingerprint
     this.workerLoadedFingerprint = null
     return this.transcriptionWorkerClient
+  }
+
+  private windowsMultilingualLogContext(): Record<string, unknown> {
+    const ready = this.windowsMultilingualReady
+    if (!ready) {
+      return {}
+    }
+    return {
+      fallbackReason: ready.fallbackReason ?? null,
+      selfTest: ready.selfTest
+    }
+  }
+
+  private async prepareWindowsMultilingualRoute(meetingId: string): Promise<void> {
+    await this.releaseWindowsSpeechWorker()
+    const language = activeMeetingLanguage()
+    const definition = getMeetingLanguageDefinition(language)
+    const ready = await ensureWindowsMultilingualEngineReady(
+      language,
+      (progress) => {
+        this.broadcastStatus(meetingId, 'downloading', progress.percent)
+      },
+      { whisperManager: this.whisperManager }
+    )
+    this.windowsMultilingualReady = ready
+    if (!ready.engineId || ready.availability === 'locked') {
+      throw new Error(
+        ready.reason ??
+          `${definition.label} transcription is unavailable on this device.`
+      )
+    }
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Windows multilingual engine ready',
+      meetingId,
+      context: {
+        ...windowsMultilingualEngineLogIdentity(ready.engineId),
+        meetingLanguage: language,
+        asrRoute: activeMeetingAsrRoute(),
+        fallbackReason: ready.fallbackReason ?? null,
+        selfTest: ready.selfTest
+      }
+    })
+  }
+
+  private async releaseWindowsSpeechWorker(): Promise<void> {
+    if (!this.transcriptionWorkerClient) {
+      return
+    }
+    const previous = this.transcriptionWorkerClient
+    this.transcriptionWorkerClient = null
+    this.transcriptionWorkerClientFingerprint = null
+    this.workerLoadedFingerprint = null
+    await previous.disposeAndWait().catch((error) => {
+      logAutodocFailure({
+        area: 'transcription',
+        message: 'Failed to release Windows speech worker before switching engines or notes',
+        error
+      })
+    })
+  }
+
+  private async runWindowsMultilingualPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
+  ): Promise<void> {
+    const tried = new Set<string>()
+    let lastError: Error | null = null
+
+    while (this.windowsMultilingualReady?.engineId) {
+      const engineId = this.windowsMultilingualReady.engineId
+      if (tried.has(engineId)) {
+        break
+      }
+      tried.add(engineId)
+      try {
+        if (this.windowsMultilingualReady.workerEngine) {
+          await this.runWindowsMultilingualWorkerPass(
+            audioWavPath,
+            meetingId,
+            audioDurationSec,
+            progressRange,
+            concurrentSources,
+            window
+          )
+          return
+        }
+        if (this.windowsMultilingualReady.cliPath && this.windowsMultilingualReady.scriptPath) {
+          await this.runWindowsWhisperTurboVulkanPass(
+            audioWavPath,
+            meetingId,
+            audioDurationSec,
+            progressRange,
+            concurrentSources
+          )
+          return
+        }
+        throw new Error(`${engineId} has no Windows transcription runtime`)
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        logAutodocFailure({
+          area: 'transcription',
+          message: 'Windows multilingual decode failed',
+          error: lastError,
+          meetingId,
+          context: { engineId }
+        })
+        const next = await ensureWindowsMultilingualEngineReady(
+          activeMeetingLanguage(),
+          (progress) => {
+            this.broadcastStatus(meetingId, 'downloading', progress.percent)
+          },
+          {
+            whisperManager: this.whisperManager,
+            skipEngines: [...tried] as WindowsMultilingualEngineId[]
+          }
+        )
+        if (!next.engineId || tried.has(next.engineId)) {
+          break
+        }
+        this.whisperManager.recordWindowsTranscriptionDowngrade?.(engineId, next.engineId)
+        this.windowsMultilingualReady = next
+        await this.releaseWindowsSpeechWorker()
+      }
+    }
+
+    throw lastError ?? new Error('Windows multilingual transcription failed')
+  }
+
+  private async runWindowsWhisperTurboVulkanPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1
+  ): Promise<void> {
+    const ready = this.windowsMultilingualReady
+    if (!ready?.pythonPath || !ready.scriptPath || !ready.cliPath || !ready.modelPath) {
+      throw new Error('whisper-turbo-vulkan runtime is not ready')
+    }
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    return this.runPythonBridgePass(
+      {
+        name: 'whisper-cpp-turbo',
+        pythonPath: ready.pythonPath,
+        scriptPath: ready.scriptPath,
+        modelRef: ready.modelPath,
+        language: windowsMultilingualTranscribeLanguage(activeMeetingLanguage()),
+        env: ready.processEnv,
+        extraArgs: [
+          '--cli',
+          ready.cliPath,
+          ...windowsVulkanBridgeDeviceNameArgs(ready.gpuName),
+          ...(threadCount != null ? ['--threads', String(threadCount)] : [])
+        ],
+        perfLabel: `Whisper turbo Vulkan backend: ${ready.modelPath}`
+      },
+      audioWavPath,
+      meetingId,
+      audioDurationSec,
+      progressRange
+    )
+  }
+
+  private async runWindowsMultilingualWorkerPass(
+    audioWavPath: string,
+    meetingId: string,
+    audioDurationSec?: number,
+    progressRange?: { start: number; end: number },
+    concurrentSources = 1,
+    window: { startSec: number; endSec: number } | null = null
+  ): Promise<void> {
+    const ready = this.windowsMultilingualReady
+    if (!ready?.pythonPath || !ready.modelPath || !ready.workerEngine || !ready.device) {
+      throw new Error('Windows multilingual worker runtime is not ready')
+    }
+
+    const jsonPath = this.getFasterWhisperJsonPath(audioWavPath, window)
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    if (threadCount !== null) {
+      console.log(`[perf] Windows multilingual threads: ${threadCount} (${meetingId})`)
+    }
+    console.log(
+      `[perf] Worker transcription backend: ${ready.engineId} (${meetingId})`
+    )
+
+    const startedAt = Date.now()
+    let lastTimestampProgress = 0
+    let progressTimer: ReturnType<typeof setInterval> | null = null
+    const expectedDurationRatio = ready.device === 'cuda' ? 0.12 : 0.3
+
+    const getElapsedProgress = (): number => {
+      if (!audioDurationSec || audioDurationSec <= 0) return 0
+      const elapsedSec = (Date.now() - startedAt) / 1000
+      const estimatedRatio = Math.min(
+        0.95,
+        elapsedSec / Math.max(audioDurationSec * expectedDurationRatio, 30)
+      )
+      return Math.round(estimatedRatio * 100)
+    }
+
+    const broadcastBestProgress = (timestampProgress?: number): void => {
+      if (!audioDurationSec || audioDurationSec <= 0) return
+      if (timestampProgress !== undefined) {
+        lastTimestampProgress = Math.max(lastTimestampProgress, timestampProgress)
+      }
+      const progress = Math.max(lastTimestampProgress, getElapsedProgress())
+      this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(progress, progressRange))
+    }
+
+    if (audioDurationSec && audioDurationSec > 0) {
+      progressTimer = setInterval(() => {
+        broadcastBestProgress()
+      }, 1500)
+    }
+
+    try {
+      await this.ensureWindowsMultilingualWorkerLoaded(concurrentSources)
+      const client = this.transcriptionWorkerClient
+      if (!client) {
+        throw new Error('Windows multilingual worker client is not available')
+      }
+      const result = await client.transcribe(
+        {
+          audio: audioWavPath,
+          language: windowsMultilingualTranscribeLanguage(activeMeetingLanguage()),
+          window
+        },
+        (segment) => {
+          if (audioDurationSec && audioDurationSec > 0) {
+            const progress = Math.min(
+              99,
+              Math.round((segment.endMs / (audioDurationSec * 1000)) * 100)
+            )
+            broadcastBestProgress(progress)
+          }
+        }
+      )
+      await writeFile(jsonPath, JSON.stringify(result), 'utf-8')
+      this.broadcastStatus(meetingId, 'transcribing', this.scaleProgress(99, progressRange))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`${ready.workerEngine} worker failed: ${message.slice(-500)}`)
+    } finally {
+      if (progressTimer) clearInterval(progressTimer)
+    }
+  }
+
+  private async ensureWindowsMultilingualWorkerLoaded(concurrentSources: number): Promise<void> {
+    const ready = this.windowsMultilingualReady
+    if (!ready?.pythonPath || !ready.modelPath || !ready.workerEngine || !ready.device) {
+      throw new Error('Windows multilingual worker runtime is not ready')
+    }
+    const fingerprint = [
+      ready.pythonPath,
+      ready.modelPath,
+      ready.device,
+      ready.computeType,
+      ready.workerEngine
+    ].join('|')
+    if (
+      this.transcriptionWorkerClient &&
+      this.transcriptionWorkerClientFingerprint !== fingerprint
+    ) {
+      await this.releaseWindowsSpeechWorker()
+    }
+
+    if (
+      !this.transcriptionWorkerClient ||
+      this.transcriptionWorkerClientFingerprint !== fingerprint
+    ) {
+      this.transcriptionWorkerClient = new TranscriptionWorkerClient({
+        pythonPath: ready.pythonPath,
+        scriptPath: this.whisperManager.getTranscriptionWorkerScriptPath(),
+        processEnv: ready.processEnv,
+        applyPriority: (pid) => this.lowerWhisperPriority(pid, this.activeJobId ?? 'worker'),
+        extraArgs: this.windowsSpeechWorkerExtraArgs()
+      })
+      this.transcriptionWorkerClientFingerprint = fingerprint
+      this.workerLoadedFingerprint = null
+    }
+
+    const client = this.transcriptionWorkerClient
+    const threadCount = this.getWhisperThreadCount(concurrentSources)
+    const loadedFingerprint = `${fingerprint}|threads=${threadCount}`
+    if (client.isLoaded && this.workerLoadedFingerprint === loadedFingerprint) {
+      return
+    }
+    await client.load({
+      engine: ready.workerEngine,
+      model: ready.modelPath,
+      device: ready.device,
+      computeType: ready.computeType ?? 'int8',
+      threads: threadCount
+    })
+    this.workerLoadedFingerprint = loadedFingerprint
   }
 
   private async releaseMismatchedWindowsWorker(): Promise<void> {
@@ -2686,7 +3046,7 @@ export class TranscriptionService {
       return
     }
 
-    const useBelowNormal = this.isDmlWorkerSelected()
+    const useBelowNormal = this.isWindowsMultilingualOrDmlWorkerSelected()
     const priority = useBelowNormal
       ? osConstants.priority.PRIORITY_BELOW_NORMAL
       : osConstants.priority.PRIORITY_LOW

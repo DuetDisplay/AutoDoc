@@ -503,6 +503,11 @@ export interface WhisperSetupStatus {
     | 'parakeet-gpu'
     | 'parakeet-cpu'
     | 'whisper-cpp'
+    | 'canary-cpu'
+    | 'canary-cuda'
+    | 'whisper-turbo-cuda'
+    | 'whisper-turbo-cpu'
+    | 'whisper-turbo-vulkan'
   backendLabel?: string
   macProcessingProfileId?: 'mac-normal' | 'mac-low-spec'
   macProcessingProfileReason?: string

@@ -834,7 +834,8 @@ export function registerRecordingIpc(
   transcriptionService: TranscriptionService,
   whisperManager: WhisperManager,
   calendarManager: CalendarManager,
-  getMeetingLanguage: () => MeetingLanguageCode = () => DEFAULT_MEETING_LANGUAGE
+  getMeetingLanguage: () => MeetingLanguageCode | Promise<MeetingLanguageCode> = () =>
+    DEFAULT_MEETING_LANGUAGE
 ): {
   stopActiveRecording: () => ReturnType<RecordingService['stopRecording']>
   recoverWindowsFinalizingMeetings: () => Promise<void>
@@ -1795,7 +1796,7 @@ export function registerRecordingIpc(
     ) => {
       let meetingLanguage: MeetingLanguageCode = DEFAULT_MEETING_LANGUAGE
       try {
-        meetingLanguage = getMeetingLanguage()
+        meetingLanguage = await Promise.resolve(getMeetingLanguage())
         const paths = await recordingService.startRecording(
           sourceId,
           sourceName,
