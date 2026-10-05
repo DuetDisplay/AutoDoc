@@ -6,7 +6,13 @@ const path = require('node:path')
 
 const signBinary = require('./windows-sign').default
 
-const SIGN_ZIPS = ['whisper-cpp-vulkan-runtime-win-x64.zip', 'canary-cuda-runtime-win-x64.zip']
+const SIGN_ZIPS = [
+  'whisper-cpp-vulkan-runtime-win-x64.zip',
+  'canary-cuda-runtime-win-x64.zip',
+  'faster-whisper-runtime-cpu-win-x64-v3.zip',
+  'faster-whisper-runtime-cuda-win-x64-v3.zip',
+  'parakeet-runtime-win-x64-v3.zip'
+]
 const MAX_ZIP_BYTES = 2_000_000_000
 const VENDOR_UNSIGNED_PREFIXES = ['Lib/site-packages/nvidia/']
 

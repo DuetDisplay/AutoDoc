@@ -9,8 +9,17 @@ const MANIFEST_PATH = path.join(ROOT, 'resources', 'windows-transcription-manife
 const MAX_RELEASE_PART_BYTES = 2_000_000_000
 const UNSIGNED_RUNTIME_NAMES = [
   'canary-cuda-runtime-win-x64.zip',
+  'faster-whisper-runtime-cpu-win-x64-v3.zip',
+  'faster-whisper-runtime-cuda-win-x64-v3.zip',
+  'parakeet-runtime-win-x64-v3.zip',
   'whisper-cpp-vulkan-runtime-win-x64.zip'
 ]
+
+const V2_REPLACEMENTS = {
+  'faster-whisper-runtime-cpu-win-x64.zip': 'faster-whisper-runtime-cpu-win-x64-v3.zip',
+  'faster-whisper-runtime-cuda-win-x64.zip': 'faster-whisper-runtime-cuda-win-x64-v3.zip',
+  'parakeet-runtime-win-x64.zip': 'parakeet-runtime-win-x64-v3.zip'
+}
 
 // Immutable windows-transcription-v2 GitHub release files. Never modify v2.
 const V2_RELEASE_FILES = {
@@ -253,7 +262,7 @@ async function main() {
   const pendingSigning = await signingIsPending(assetDir)
   if (pendingSigning) {
     console.warn(
-      'WARNING: canary-cuda-runtime-win-x64.zip and whisper-cpp-vulkan-runtime-win-x64.zip look unsigned. ' +
+      `WARNING: ${UNSIGNED_RUNTIME_NAMES.join(', ')} look unsigned. ` +
         'SIGNING-REPORT.md is missing or its first non-empty line contains DRY RUN. Re-run this script after signing.'
     )
   }
@@ -283,11 +292,19 @@ async function main() {
           `${filename} is ${info.bytes} bytes and exceeds the ${MAX_RELEASE_PART_BYTES} GitHub upload limit; split it into .partN files`
         )
       }
-      const origin = V2_RELEASE_FILES[filename] ? 'v2 (byte-identical)' : 'new'
+      const replacedV2Name = Object.keys(V2_REPLACEMENTS).find(
+        (oldName) => V2_REPLACEMENTS[oldName] === filename
+      )
+      const origin = V2_RELEASE_FILES[filename]
+        ? 'v2 (byte-identical)'
+        : replacedV2Name
+          ? `new (replaces v2 ${replacedV2Name})`
+          : 'new'
       const pending =
         pendingSigning && UNSIGNED_RUNTIME_NAMES.includes(filename) ? 'PENDING SIGNING' : ''
-      const provenance =
-        origin === 'new' ? provenanceSummary(lookupProvenance(filename, provenanceByName)) : ''
+      const provenance = origin.startsWith('new')
+        ? provenanceSummary(lookupProvenance(filename, provenanceByName))
+        : ''
       uploadRows.push({
         filename,
         bytes: info.bytes,
@@ -297,7 +314,21 @@ async function main() {
       })
     }
   }
-  const missingV2 = Object.keys(V2_RELEASE_FILES).filter((filename) => !seenUploads.has(filename))
+  for (const [oldName, newName] of Object.entries(V2_REPLACEMENTS)) {
+    if (seenUploads.has(oldName)) {
+      throw new Error(
+        `windows-transcription-v3 upload set must not include replaced v2 file: ${oldName}`
+      )
+    }
+    if (!seenUploads.has(newName)) {
+      throw new Error(
+        `windows-transcription-v3 upload set is missing replacement for ${oldName}: ${newName}`
+      )
+    }
+  }
+  const missingV2 = Object.keys(V2_RELEASE_FILES).filter(
+    (filename) => !V2_REPLACEMENTS[filename] && !seenUploads.has(filename)
+  )
   if (missingV2.length) {
     throw new Error(
       `windows-transcription-v3 upload set is missing v2 files: ${missingV2.join(', ')}`
