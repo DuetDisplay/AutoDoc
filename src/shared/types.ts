@@ -484,6 +484,7 @@ export interface OllamaSetupStatus {
 }
 
 export interface WhisperSetupStatus {
+  meetingLanguage?: MeetingLanguageCode
   phase:
     | 'checking'
     | 'downloading-whisper'

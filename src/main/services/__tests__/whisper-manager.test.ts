@@ -103,6 +103,26 @@ describe('WhisperManager', () => {
     }
   )
 
+  it('deduplicates setup and queues language changes until the current download finishes', async () => {
+    vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+    let finishDownload!: () => void
+    vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishDownload = resolve
+        })
+    )
+    const french = manager.prepareMeetingLanguage('fr')
+    expect(manager.prepareMeetingLanguage('fr')).toBe(french)
+    const spanish = manager.prepareMeetingLanguage('es')
+    await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+    expect(manager.getSetupStatus().meetingLanguage).toBe('fr')
+    finishDownload()
+    await Promise.all([french, spanish])
+    expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
+    expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+  })
+
   it('downloads English on demand after non-English setup', async () => {
     vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
     const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()

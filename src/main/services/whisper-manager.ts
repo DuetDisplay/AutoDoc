@@ -157,6 +157,9 @@ interface MacWhisperRuntimeAsset {
 
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
+  private languageSetupQueue: Promise<void> = Promise.resolve()
+  private languageSetupRequests = new Map<MeetingLanguageCode, Promise<void>>()
+  private activeSetupLanguage: MeetingLanguageCode | undefined
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private runtimeValidated = false
   private validatedWorkerFingerprint: string | null = null
@@ -528,7 +531,10 @@ export class WhisperManager extends EventEmitter {
   }
 
   getSetupStatus(): WhisperSetupStatus {
-    return { ...this.setupStatus }
+    return {
+      ...this.setupStatus,
+      meetingLanguage: this.activeSetupLanguage ?? this.setupStatus.meetingLanguage
+    }
   }
 
   getWindowsTranscriptionProfiles(): Record<
@@ -1194,7 +1200,25 @@ export class WhisperManager extends EventEmitter {
   }
 
   /** Non-English setup installs its route, without downloading the English model. */
-  async prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
+  prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
+    const pending = this.languageSetupRequests.get(language)
+    if (pending) return pending
+    const request = this.languageSetupQueue.then(async () => {
+      this.activeSetupLanguage = language
+      try {
+        await this.runMeetingLanguageSetup(language)
+      } finally {
+        this.setupStatus = { ...this.setupStatus, meetingLanguage: language }
+        this.activeSetupLanguage = undefined
+        this.languageSetupRequests.delete(language)
+      }
+    })
+    this.languageSetupRequests.set(language, request)
+    this.languageSetupQueue = request.catch(() => {})
+    return request
+  }
+
+  private async runMeetingLanguageSetup(language: MeetingLanguageCode): Promise<void> {
     if (getMeetingAsrRoute(language) === 'english') return this.startSetup()
     try {
       if (IS_WIN) {

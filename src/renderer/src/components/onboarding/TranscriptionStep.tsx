@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
+import { normalizeMeetingLanguage } from '../../../../shared/meeting-language'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
 
@@ -128,15 +129,30 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   useEffect(() => {
     setupStartedAt.current ??= performance.now()
     trackEvent('setup_component_started', { component: 'whisper', phase: 'checking' })
+    let mounted = true
+    const selectedLanguage = window.electronAPI
+      .invoke('prefs:get-meeting-language')
+      .then(normalizeMeetingLanguage)
     window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
-      await applyStatus(status, true)
+      const language = await selectedLanguage
+      if (!mounted) return
+      await applyStatus(
+        status.meetingLanguage && status.meetingLanguage !== language
+          ? { phase: 'checking', percent: 0 }
+          : status,
+        true
+      )
     })
 
     const unsub = window.electronAPI.on('whisper:setup-progress', async (status) => {
-      await applyStatus(status)
+      const language = await selectedLanguage
+      if (mounted && (!status.meetingLanguage || status.meetingLanguage === language)) {
+        await applyStatus(status)
+      }
     })
 
     return () => {
+      mounted = false
       unsub()
       clearRetryTimer()
     }

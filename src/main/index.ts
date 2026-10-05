@@ -1558,6 +1558,7 @@ app.whenReady().then(async () => {
     phase: status.phase,
     percent: status.percent,
     error: status.error,
+    meetingLanguage: whisperStatus.meetingLanguage,
     backend: whisperStatus.backend,
     backendLabel: whisperStatus.backendLabel,
     failedStep: status.failedStep
@@ -1642,6 +1643,7 @@ app.whenReady().then(async () => {
     if (status.phase !== 'error') {
       lastSuccessfulWhisperPhase = status.phase
     }
+    whisperEngineSetupState.meetingLanguage = status.meetingLanguage
     whisperEngineSetupState.phase = status.phase
     whisperEngineSetupState.percent = status.percent
     whisperEngineSetupState.error = status.error

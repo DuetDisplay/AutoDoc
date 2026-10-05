@@ -138,6 +138,37 @@ describe('TranscriptionStep', () => {
     }
   })
 
+  it('ignores progress from the previous language after returning to the picker', async () => {
+    let progress!: (status: unknown) => Promise<void>
+    vi.mocked(window.electronAPI.on).mockImplementation((_channel, callback) => {
+      progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) =>
+      Promise.resolve(
+        channel === 'prefs:get-meeting-language'
+          ? 'es'
+          : {
+              phase: 'ready',
+              percent: 100,
+              meetingLanguage: 'fr'
+            }
+      )
+    )
+    render(<TranscriptionStep onNext={vi.fn()} />)
+    await waitFor(() =>
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+    )
+    await act(async () => {
+      await progress({ phase: 'ready', percent: 100, meetingLanguage: 'fr' })
+    })
+    expect(screen.queryByText('Transcription Ready')).not.toBeInTheDocument()
+    await act(async () => {
+      await progress({ phase: 'ready', percent: 100, meetingLanguage: 'es' })
+    })
+    expect(screen.getByText('Transcription Ready')).toBeInTheDocument()
+  })
+
   it('auto-retries managed setup failures before surfacing a manual retry', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {
