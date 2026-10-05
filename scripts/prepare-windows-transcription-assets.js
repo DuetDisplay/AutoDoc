@@ -7,7 +7,7 @@ const path = require('node:path')
 
 const ROOT = process.cwd()
 const RELEASE_TAG =
-  process.env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG ?? 'windows-transcription-v2'
+  process.env.AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG ?? 'windows-transcription-v3'
 const OUT_DIR = path.join(ROOT, '.benchmarks', 'windows-transcription-assets', RELEASE_TAG)
 const STAGING_DIR = path.join(OUT_DIR, '_staging')
 const MANIFEST_PATH = path.join(ROOT, 'resources', 'windows-transcription-manifest.json')
@@ -31,12 +31,10 @@ const BOOTSTRAP_PACKAGES = ['pip==26.1.1', 'setuptools==82.0.1', 'wheel==0.47.0'
 const CPU_RUNTIME_PACKAGES = [
   'annotated-doc==0.0.4',
   'anyio==4.13.0',
-  'av==17.0.1',
   'certifi==2026.4.22',
   'click==8.3.3',
   'colorama==0.4.6',
   'ctranslate2==4.7.1',
-  'faster-whisper==1.2.1',
   'filelock==3.29.0',
   'flatbuffers==25.12.19',
   'fsspec==2026.4.0',
@@ -67,13 +65,27 @@ const CUDA_PACKAGES = [
   'nvidia-cuda-nvrtc-cu12==12.9.86'
 ]
 const PARAKEET_RUNTIME_PACKAGES = [
+  'flatbuffers==25.12.19',
+  'mpmath==1.3.0',
   'numpy==2.4.4',
   'onnx-asr==0.11.0',
   'onnxruntime-directml==1.24.4',
-  // Build-time only: resolveParakeetModelSnapshot/resolveSileroVadSnapshot run
-  // huggingface_hub downloads through this staged runtime (onnx-asr does not
-  // depend on it, unlike faster-whisper which pulls it in transitively).
-  'huggingface_hub==1.22.0'
+  'packaging==26.2',
+  'protobuf==7.35.1',
+  'sympy==1.14.0'
+]
+const CANARY_CUDA_RUNTIME_PACKAGES = [
+  'flatbuffers==25.12.19',
+  'numpy==2.4.4',
+  'nvidia-cuda-runtime-cu12==12.9.79',
+  'nvidia-cufft-cu12==11.4.1.4',
+  'nvidia-curand-cu12==10.3.10.19',
+  'nvidia-nvjitlink-cu12==12.9.86',
+  'onnx-asr==0.11.0',
+  'onnxruntime-gpu==1.25.1',
+  'packaging==26.2',
+  'protobuf==7.35.1',
+  ...CUDA_PACKAGES
 ]
 
 const MODELS = [
@@ -149,20 +161,61 @@ async function main() {
   const artifacts = new Map()
 
   if (!skipRuntime) {
+    const fasterWhisperOptions = {
+      noDepsPackages: ['faster-whisper==1.2.1'],
+      allowedPipCheckLines: ['faster-whisper 1.2.1 requires av, which is not installed.']
+    }
     artifacts.set(
-      'faster-whisper-runtime-cpu-win-x64.zip',
-      await prepareRuntime('cpu', 'faster-whisper-runtime-cpu-win-x64.zip', CPU_RUNTIME_PACKAGES)
+      'faster-whisper-runtime-cpu-win-x64-v3.zip',
+      await prepareRuntime(
+        'cpu',
+        'faster-whisper-runtime-cpu-win-x64-v3.zip',
+        CPU_RUNTIME_PACKAGES,
+        fasterWhisperOptions
+      )
     )
     artifacts.set(
-      'faster-whisper-runtime-cuda-win-x64.zip',
-      await prepareRuntime('cuda', 'faster-whisper-runtime-cuda-win-x64.zip', [
-        ...CPU_RUNTIME_PACKAGES,
-        ...CUDA_PACKAGES
-      ])
+      'faster-whisper-runtime-cuda-win-x64-v3.zip',
+      await prepareRuntime(
+        'cuda',
+        'faster-whisper-runtime-cuda-win-x64-v3.zip',
+        [...CPU_RUNTIME_PACKAGES, ...CUDA_PACKAGES],
+        fasterWhisperOptions
+      )
     )
     artifacts.set(
-      'parakeet-runtime-win-x64.zip',
-      await prepareRuntime('parakeet', 'parakeet-runtime-win-x64.zip', PARAKEET_RUNTIME_PACKAGES)
+      'parakeet-runtime-win-x64-v3.zip',
+      await prepareRuntime('parakeet', 'parakeet-runtime-win-x64-v3.zip', PARAKEET_RUNTIME_PACKAGES)
+    )
+    artifacts.set(
+      'canary-cuda-runtime-win-x64.zip',
+      await prepareRuntime(
+        'canary-cuda',
+        'canary-cuda-runtime-win-x64.zip',
+        CANARY_CUDA_RUNTIME_PACKAGES,
+        {
+          beforeZip: async (runtimeDir) => {
+            await cp(
+              path.join(ROOT, 'scripts', 'canary-cuda-sitecustomize.py'),
+              path.join(runtimeDir, 'Lib', 'site-packages', 'sitecustomize.py')
+            )
+            const tensorrtDll = path.join(
+              runtimeDir,
+              'Lib',
+              'site-packages',
+              'onnxruntime',
+              'capi',
+              'onnxruntime_providers_tensorrt.dll'
+            )
+            if (!(await exists(tensorrtDll))) {
+              throw new Error(
+                'Expected onnxruntime_providers_tensorrt.dll in the canary-cuda runtime, but it was not there.'
+              )
+            }
+            await rm(tensorrtDll)
+          }
+        }
+      )
     )
   }
 
@@ -175,12 +228,12 @@ async function main() {
     }
   }
 
-  await updateManifest(artifacts)
   await writeSummary(artifacts)
   console.log(`[windows-transcription-assets] Wrote assets to ${OUT_DIR}`)
 }
 
-async function prepareRuntime(kind, zipName, packages) {
+async function prepareRuntime(kind, zipName, packages, options = {}) {
+  const { noDepsPackages = [], allowedPipCheckLines = [], beforeZip } = options
   const runtimeDir = path.join(STAGING_DIR, `runtime-${kind}`)
   const extractDir = path.join(STAGING_DIR, `python-extract-${kind}`)
   const zipPath = path.join(OUT_DIR, zipName)
@@ -196,9 +249,14 @@ async function prepareRuntime(kind, zipName, packages) {
   const pythonPath = path.join(runtimeDir, 'python.exe')
   run(pythonPath, ['-m', 'pip', 'install', '--no-compile', '--upgrade', ...BOOTSTRAP_PACKAGES])
   run(pythonPath, ['-m', 'pip', 'install', '--no-compile', ...packages])
-  run(pythonPath, ['-m', 'pip', 'check'])
+  if (noDepsPackages.length) {
+    run(pythonPath, ['-m', 'pip', 'install', '--no-compile', '--no-deps', ...noDepsPackages])
+  }
+  checkPip(pythonPath, allowedPipCheckLines)
+  assertPinnedRuntime(pythonPath, [...packages, ...noDepsPackages])
 
   await pruneRuntime(runtimeDir)
+  if (beforeZip) await beforeZip(runtimeDir)
   await zipDirectory(runtimeDir, zipPath)
   return await describeArtifact(zipPath, zipName)
 }
@@ -250,10 +308,10 @@ async function resolveParakeetModelSnapshot(model) {
     return existing
   }
 
-  const pythonPath = path.join(STAGING_DIR, 'runtime-parakeet', 'python.exe')
+  const pythonPath = path.join(STAGING_DIR, 'runtime-cpu', 'python.exe')
   if (!(await exists(pythonPath))) {
     throw new Error(
-      `Parakeet runtime is required to download ${model.repoId}. Run without --skip-runtime.`
+      `CPU runtime is required to download ${model.repoId}. Run without --skip-runtime.`
     )
   }
 
@@ -285,11 +343,9 @@ async function resolveSileroVadSnapshot() {
     }
   }
 
-  const pythonPath = path.join(STAGING_DIR, 'runtime-parakeet', 'python.exe')
+  const pythonPath = path.join(STAGING_DIR, 'runtime-cpu', 'python.exe')
   if (!(await exists(pythonPath))) {
-    throw new Error(
-      'Parakeet runtime is required to download silero VAD. Run without --skip-runtime.'
-    )
+    throw new Error('CPU runtime is required to download silero VAD. Run without --skip-runtime.')
   }
 
   run(pythonPath, [
@@ -521,24 +577,6 @@ async function describeArtifact(filePath, zipName = path.basename(filePath)) {
   }
 }
 
-async function updateManifest(artifacts) {
-  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'))
-  for (const profile of manifest.profiles ?? []) {
-    for (const asset of profile.assets ?? []) {
-      const artifact = artifacts.get(asset.filename)
-      if (!artifact) continue
-      asset.sha256 = artifact.sha256
-      asset.bytes = artifact.bytes
-      if (artifact.parts?.length) {
-        asset.parts = artifact.parts
-      } else {
-        delete asset.parts
-      }
-    }
-  }
-  await writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`)
-}
-
 async function writeSummary(artifacts) {
   const lines = ['# Windows transcription assets', '']
   for (const artifact of artifacts.values()) {
@@ -552,6 +590,83 @@ async function writeSummary(artifacts) {
     }
   }
   await writeFile(path.join(OUT_DIR, 'SHA256SUMS.md'), `${lines.join('\n')}\n`)
+}
+
+function distName(spec) {
+  return spec.split('==')[0].toLowerCase().replace(/[_.]/g, '-')
+}
+
+function checkPip(pythonPath, allowedLines) {
+  if (!allowedLines.length) {
+    run(pythonPath, ['-m', 'pip', 'check'])
+    return
+  }
+
+  const args = ['-m', 'pip', 'check']
+  console.log(`[windows-transcription-assets] ${pythonPath} ${args.join(' ')}`)
+  const result = spawnSync(pythonPath, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: BUILD_ENV
+  })
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status === 0) return
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (
+    lines.length === allowedLines.length &&
+    lines.every((line, index) => line === allowedLines[index])
+  ) {
+    return
+  }
+  process.stdout.write(output)
+  throw new Error(`pip check exited with code ${result.status}`)
+}
+
+function assertPinnedRuntime(pythonPath, packages) {
+  const args = ['-m', 'pip', 'list', '--format=freeze']
+  const result = spawnSync(pythonPath, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: BUILD_ENV
+  })
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status !== 0) {
+    process.stdout.write(`${result.stdout ?? ''}${result.stderr ?? ''}`)
+    throw new Error(`pip list exited with code ${result.status}`)
+  }
+
+  const pins = new Map(packages.map((spec) => [distName(spec), spec.split('==')[1]]))
+  for (const line of result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)) {
+    const name = distName(line)
+    const version = line.split('==')[1]
+    if (name === 'pip' || name === 'setuptools' || name === 'wheel') continue
+    const pinned = pins.get(name)
+    if (!pinned) {
+      throw new Error(`Unpinned distribution leaked into runtime: ${line}`)
+    }
+    if (pinned !== version) {
+      throw new Error(`Pinned ${name}==${pinned} but installed ${line}`)
+    }
+    pins.delete(name)
+  }
+  if (pins.size) {
+    throw new Error(
+      `Pinned packages missing from runtime: ${[...pins.entries()]
+        .map(([name, version]) => `${name}==${version}`)
+        .join(', ')}`
+    )
+  }
 }
 
 function run(command, args) {
