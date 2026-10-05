@@ -53,6 +53,13 @@ mac:
       filter:
         - '**/*'
         - '!**/._*'
+    - from: vendor/canary-mlx-runtime
+      to: canary-mlx-runtime
+      filter:
+        - '**/*'
+        - '!**/._*'
+    - from: resources/canary-mlx-transcribe.py
+      to: canary-mlx-transcribe.py
     - from: resources/mlx-whisper-transcribe.py
       to: mlx-whisper-transcribe.py
     - from: resources/mlx-whisper-turbo-transcribe.py
