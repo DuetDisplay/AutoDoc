@@ -46,7 +46,8 @@ import { isDenseScriptMeetingLanguage } from '../../shared/meeting-language'
 import {
   activeMeetingLanguage,
   appendMeetingLanguageDirective,
-  isEnglishMeetingJob
+  isEnglishMeetingJob,
+  meetingOutputTokenCap
 } from './notes-language'
 import { unicodeContentTokens } from './unicode-text'
 
@@ -809,11 +810,12 @@ function matchJsonBrace(raw: string, openIdx: number): number {
   return -1
 }
 
-/** Count finished tight tuples in a possibly truncated writer payload. */
+/** Count finished tight tuples or keyed records in a possibly truncated writer payload. */
 export function countCompleteTightWriterItems(raw: string): number {
+  const countRecords = isWindowsCatalogWriterEnabled() || usesKeyedTightWriterRecords()
   let count = 0
   for (let i = 0; i < raw.length; i++) {
-    if (isWindowsCatalogWriterEnabled() && raw[i] === '{') {
+    if (countRecords && raw[i] === '{') {
       const end = matchJsonBrace(raw, i)
       if (end >= 0) {
         try {
@@ -1113,18 +1115,22 @@ export function extractWriterCategoryObject(
 
       // Stay inside this category occurrence. Never walk through an invalid
       // child or a closing brace to borrow a tuple from the next category.
+      const recoverRecords = usesKeyedTightWriterRecords()
       let cursor = i + 1
       while (cursor < raw.length) {
         while (/\s/.test(raw[cursor] ?? '') && cursor < raw.length) cursor++
-        if (raw[cursor] !== '[') break
-        const childEnd = matchJsonBracket(raw, cursor)
+        const isRecord = recoverRecords && raw[cursor] === '{'
+        if (raw[cursor] !== '[' && !isRecord) break
+        const childEnd = isRecord ? matchJsonBrace(raw, cursor) : matchJsonBracket(raw, cursor)
         if (childEnd < 0) break
         try {
           const child = JSON.parse(
             repairJsonLeadingZeroIntegers(raw.slice(cursor, childEnd + 1)).json
           )
-          if (!Array.isArray(child) || typeof child[0] !== 'string' || typeof child[1] !== 'string')
-            break
+          const usable = isRecord
+            ? child != null && typeof child === 'object' && typeof child.c === 'string'
+            : Array.isArray(child) && typeof child[0] === 'string' && typeof child[1] === 'string'
+          if (!usable) break
           found = true
           ;(merged[key] ??= []).push(child)
         } catch {
@@ -1377,18 +1383,41 @@ export const WRITER_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
   [
     '{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}',
     '{"t":"","h":"","c":"","s":7,"e":9}'
+  ]
+]
+
+/**
+ * Non-English only. A blank positional tuple names none of its fields, and the
+ * notes model left every content slot empty. Keyed records keep each field's
+ * name when its example value is blank, as the Mac writer example does.
+ */
+export const TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS: ReadonlyArray<
+  readonly [tuple: string, keyed: string]
+> = [
+  [
+    'You extract meeting notes as compact JSON tuples.',
+    'You extract meeting notes as compact JSON records.'
+  ],
+  [
+    'Each item is [title, content, s, e] or [title, content, s, e, owner, deadline].',
+    'Each item is {"h":title,"c":content,"s":s,"e":e}. Add "o":owner and "l":deadline only when explicit.'
   ],
   [
     '{"i":[["specific title","One sentence from this section.",s,e]],"a":[["specific task","One sentence saying who does what.",s,e,"Name"]]}',
-    '{"i":[["","",s,e]],"a":[["","",s,e,""]]}'
+    '{"i":[{"h":"","c":"","s":s,"e":e}],"a":[{"h":"","c":"","s":s,"e":e,"o":""}]}'
   ]
 ]
 
 function withoutEnglishWriterExampleValues(prompt: string): string {
-  return WRITER_EXAMPLE_VALUE_REPLACEMENTS.reduce(
+  return [...TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS, ...WRITER_EXAMPLE_VALUE_REPLACEMENTS].reduce(
     (current, [english, blank]) => current.replace(english, blank),
     prompt
   )
+}
+
+/** Non-English Windows tight prompts ask for keyed records instead of tuples. */
+function usesKeyedTightWriterRecords(): boolean {
+  return isTightWriterEnabled() && !isEnglishMeetingJob()
 }
 
 const MAC_NOTES_PRIORITY_LABEL =
@@ -2840,7 +2869,7 @@ export class OllamaProvider implements LLMProvider {
     if (this.windowsWideChunks && isWindowsWideWriterEnabled()) return 1536
     if (process.platform === 'darwin') return MAC_MAX_OUTPUT_TOKENS
     if (process.platform !== 'win32') return MAX_OUTPUT_TOKENS
-    if (isTightWriterEnabled()) return WINDOWS_TIGHT_MAX_OUTPUT_TOKENS
+    if (isTightWriterEnabled()) return meetingOutputTokenCap(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
     return WINDOWS_MAX_OUTPUT_TOKENS
   }
 

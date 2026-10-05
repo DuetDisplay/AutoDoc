@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { OllamaProvider, WRITER_EXAMPLE_VALUE_REPLACEMENTS } from '../llm'
+import {
+  OllamaProvider,
+  TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS,
+  WINDOWS_TIGHT_MAX_OUTPUT_TOKENS,
+  WRITER_EXAMPLE_VALUE_REPLACEMENTS
+} from '../llm'
 import { generateNotesOverview, OVERVIEW_EXAMPLE_VALUE_REPLACEMENTS } from '../notes-overview'
-import { runWithMeetingLanguage } from '../notes-language'
+import { NON_ENGLISH_OUTPUT_TOKEN_FACTOR, runWithMeetingLanguage } from '../notes-language'
 
 vi.mock('../autodoc-log', () => ({ logAutodocEvent: vi.fn(), logAutodocFailure: vi.fn() }))
 vi.mock('../sentry-reporter', () => ({ captureMessage: vi.fn() }))
@@ -131,9 +136,20 @@ describe('non-English notes requests', () => {
         expect(user).not.toMatch(/\bde\b/)
         expect(system).not.toContain('broad theme')
         expect(system).not.toContain('One sentence from this section.')
-        // Same stages, model, and options; only prompt text differs.
+        if (platform === 'win32') {
+          expect(system).toContain('{"i":[{"h":"","c":"","s":s,"e":e}]')
+          expect(system).not.toContain('tuples')
+        }
+        // Same stages, model, and options; only prompt text and the Windows output cap differ.
         expect(body.model).toBe(englishBody.model)
-        expect(body.options).toEqual(englishBody.options)
+        expect(body.options).toEqual(
+          platform === 'win32'
+            ? {
+                ...englishBody.options,
+                num_predict: WINDOWS_TIGHT_MAX_OUTPUT_TOKENS * NON_ENGLISH_OUTPUT_TOKEN_FACTOR
+              }
+            : englishBody.options
+        )
         expect(body.format).toEqual(englishBody.format)
       }
     }
@@ -166,7 +182,9 @@ describe('non-English notes requests', () => {
     const overviewPrompts = (await captureOverviewRequests()).map((raw) => JSON.parse(raw).prompt)
 
     expect(macBody.messages[0].content).toContain(WRITER_EXAMPLE_VALUE_REPLACEMENTS[0]![0])
-    expect(windowsBody.messages[0].content).toContain(WRITER_EXAMPLE_VALUE_REPLACEMENTS[1]![0])
+    for (const [tuple] of TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS) {
+      expect(windowsBody.messages[0].content).toContain(tuple)
+    }
     for (const [english] of OVERVIEW_EXAMPLE_VALUE_REPLACEMENTS) {
       expect(overviewPrompts.some((prompt: string) => prompt.includes(english))).toBe(true)
     }
