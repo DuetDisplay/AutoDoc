@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { MAC_SPEECH_MODELS, macSpeechModelCacheDir, macSpeechModelPath } from './mac-speech-models'
 
 /** 8-bit build chosen in the AD-100 run-4 eval: within noise of full precision, ~40% less memory. */
 export const MAC_CANARY_MODEL = 'Mediform/canary-1b-v2-mlx-q8'
@@ -9,6 +10,7 @@ export interface MacCanaryTranscriber {
   pythonPath: string
   scriptPath: string
   modelRef: string
+  vadPath: string
   env: NodeJS.ProcessEnv
 }
 
@@ -43,17 +45,18 @@ export function resolveMacCanaryTranscriber(): MacCanaryTranscriber | null {
   ).find((candidate) => existsSync(candidate))
   if (!pythonPath || !scriptPath) return null
 
-  const cacheDir =
-    process.env.AUTODOC_MAC_CANARY_CACHE_DIR?.trim() ||
-    join(app.getPath('userData'), 'models', 'canary-mlx-cache')
+  const cacheDir = macSpeechModelCacheDir('canary')
   return {
     pythonPath,
     scriptPath,
-    modelRef: MAC_CANARY_MODEL,
+    modelRef: macSpeechModelPath(MAC_SPEECH_MODELS.canary, cacheDir),
+    vadPath: macSpeechModelPath(MAC_SPEECH_MODELS.vad, cacheDir),
     env: {
       ...process.env,
       HF_HOME: cacheDir,
       HF_HUB_CACHE: join(cacheDir, 'hub'),
+      HF_HUB_OFFLINE: '1',
+      TRANSFORMERS_OFFLINE: '1',
       PYTHONDONTWRITEBYTECODE: '1'
     }
   }

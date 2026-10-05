@@ -80,7 +80,8 @@ const multilingualReadyMock = vi.hoisted(() => ({
 
 vi.mock('../windows-multilingual-readiness', () => ({
   ensureWindowsMultilingualEngineReady: multilingualReadyMock.ensureWindowsMultilingualEngineReady,
-  windowsMultilingualTranscribeLanguage: multilingualReadyMock.windowsMultilingualTranscribeLanguage,
+  windowsMultilingualTranscribeLanguage:
+    multilingualReadyMock.windowsMultilingualTranscribeLanguage,
   windowsVulkanBridgeDeviceNameArgs: (gpuName?: string | null) =>
     gpuName?.trim() ? ['--device-name', gpuName.trim()] : [],
   bindWindowsMultilingualReadiness: vi.fn()
@@ -232,6 +233,7 @@ describe('TranscriptionService', () => {
     fsMock.unlink.mockResolvedValue(undefined as any)
     fsMock.writeFile.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
+    mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
     service = new TranscriptionService(
@@ -2469,6 +2471,7 @@ describe('TranscriptionService', () => {
         pythonPath: '/mock/canary/python3',
         scriptPath: '/mock/canary-mlx-transcribe.py',
         modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        vadPath: '/mock/vad',
         env: { HF_HOME: '/mock/canary-cache' }
       })
       const readFileImpl = fsMock.readFile.getMockImplementation()
@@ -2583,6 +2586,7 @@ describe('TranscriptionService meeting-language routing', () => {
     fsMock.writeFile.mockResolvedValue(undefined as any)
     fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
+    mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
       async (language: string) => readyWindowsEngine(language)
     )
@@ -2651,6 +2655,26 @@ describe('TranscriptionService meeting-language routing', () => {
     }
   )
 
+  it.each(['de', 'es'])(
+    'checks local Mac assets for %s without English setup',
+    async (language) => {
+      setPlatform('darwin')
+      vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+      vi.mocked(mockWhisper.assertMacMeetingLanguageReady).mockRejectedValue(
+        new Error('Select the meeting language in Settings to download it.')
+      )
+      const service = createService()
+      const transcribe = stubTranscribe(service)
+      recordMeeting(language)
+      mockWhisper.getMlxWhisperTurboModelRef = vi.fn().mockReturnValue('/local/turbo')
+      await expect((service as any).processJob('missing-model')).rejects.toThrow('Settings')
+      expect(mockWhisper.assertMacMeetingLanguageReady).toHaveBeenCalledWith(language)
+      expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+      expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
+      expect(transcribe).not.toHaveBeenCalled()
+    }
+  )
+
   it('fails a German macOS meeting clearly when the Canary runtime is unavailable', async () => {
     setPlatform('darwin')
     mockWhisper = {
@@ -2681,6 +2705,7 @@ describe('TranscriptionService meeting-language routing', () => {
       pythonPath: '/mock/canary/python3',
       scriptPath: '/mock/canary-mlx-transcribe.py',
       modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+      vadPath: '/mock/vad',
       env: { HF_HOME: '/mock/canary-cache' }
     })
     const service = createService()
@@ -2707,7 +2732,9 @@ describe('TranscriptionService meeting-language routing', () => {
         '--output',
         '/mock/tmp/audio.wav.json',
         '--language',
-        'bg'
+        'bg',
+        '--vad',
+        '/mock/vad'
       ],
       { env: { HF_HOME: '/mock/canary-cache' } }
     )
@@ -3003,6 +3030,7 @@ describe('TranscriptionService meeting-language routing', () => {
         pythonPath: '/mock/canary/python3',
         scriptPath: '/mock/canary-mlx-transcribe.py',
         modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        vadPath: '/mock/vad',
         env: {}
       })
       const service = createService()

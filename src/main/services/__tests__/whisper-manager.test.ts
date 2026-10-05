@@ -25,7 +25,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('../mac-speech-models', () => ({
+vi.mock('../mac-speech-models', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../mac-speech-models')>()),
   downloadMacSpeechModels: vi.fn().mockResolvedValue(undefined),
   getMacRouteFirstUseDownloadBytes: vi.fn().mockResolvedValue(100)
 }))

@@ -101,9 +101,10 @@ const VERIFIED_MARKER = 'AUTODOC_VERIFIED.json'
 
 async function verifiedFiles(model: MacSpeechModel, cacheDir: string): Promise<VerifiedFiles> {
   try {
-    return JSON.parse(
+    const parsed = JSON.parse(
       await readFile(join(macSpeechModelPath(model, cacheDir), VERIFIED_MARKER), 'utf8')
     )
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch {
     return {}
   }

@@ -12,6 +12,8 @@ it: Whisper's own hallucination_silence_threshold, and dropping any word whose
 time span holds no speech energy in the audio.
 """
 import argparse
+import os
+from pathlib import Path
 import json
 import sys
 
@@ -76,6 +78,12 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--language", required=True)
     args = parser.parse_args()
+    # Setup owns downloads; a recording must never contact Hugging Face.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    if not Path(args.model).is_dir():
+        print("speech model is missing; select the language in Settings to download it", file=sys.stderr)
+        return 1
 
     try:
         import numpy as np

@@ -64,7 +64,13 @@ import {
 import { getManagedPythonTarget } from './managed-python'
 import { classifyWindowsTranscriptionTier, logQaGateFirstRunSetup } from './qa-gate-log'
 import { getMeetingAsrRoute, type MeetingLanguageCode } from '../../shared/meeting-language'
-import { downloadMacSpeechModels, getMacRouteFirstUseDownloadBytes } from './mac-speech-models'
+import {
+  downloadMacSpeechModels,
+  getMacRouteFirstUseDownloadBytes,
+  MAC_SPEECH_MODELS,
+  macSpeechModelCacheDir,
+  macSpeechModelPath
+} from './mac-speech-models'
 import { resolveMacCanaryTranscriber } from './mac-canary-transcription'
 
 const IS_WIN = process.platform === 'win32'
@@ -82,8 +88,6 @@ const FASTER_WHISPER_PROBE_LOAD_TIMEOUT_MS = 3 * 60_000
 const MLX_WHISPER_PROBE_TIMEOUT_MS = 10 * 60_000
 const MLX_WHISPER_MODEL = 'mlx-community/distil-whisper-large-v3'
 const MLX_WHISPER_LABEL = 'Apple Silicon optimized transcription'
-/** Japanese, Simplified Chinese, Korean only. English stays on Distil. */
-const MLX_WHISPER_TURBO_MODEL = 'mlx-community/whisper-large-v3-turbo'
 const MLX_WHISPER_RUNTIME_EXPECTED_FILES = ['python/bin/python3', 'AUTODOC_MLX_WHISPER_READY.txt']
 const MAC_WHISPER_RUNTIME_EXPECTED_FILES = [
   'whisper-cpp',
@@ -388,19 +392,22 @@ export class WhisperManager extends EventEmitter {
   }
 
   getMlxWhisperTurboModelRef(): string {
-    return process.env.AUTODOC_MLX_WHISPER_TURBO_MODEL ?? MLX_WHISPER_TURBO_MODEL
+    return macSpeechModelPath(
+      MAC_SPEECH_MODELS['whisper-turbo'],
+      macSpeechModelCacheDir('whisper-turbo')
+    )
   }
 
   /** Same runtime as Distil, separate weights cache, so a turbo download never touches Distil. */
   getMlxWhisperTurboProcessEnv(): NodeJS.ProcessEnv {
-    const cacheDir =
-      process.env.AUTODOC_MLX_WHISPER_TURBO_CACHE_DIR?.trim() ||
-      join(app.getPath('userData'), 'models', 'mlx-whisper-turbo-cache')
+    const cacheDir = macSpeechModelCacheDir('whisper-turbo')
     return {
       ...this.getMlxWhisperProcessEnv(),
       HF_HOME: cacheDir,
       HF_HUB_CACHE: join(cacheDir, 'hub'),
-      TRANSFORMERS_CACHE: join(cacheDir, 'transformers')
+      TRANSFORMERS_CACHE: join(cacheDir, 'transformers'),
+      HF_HUB_OFFLINE: '1',
+      TRANSFORMERS_OFFLINE: '1'
     }
   }
 
@@ -1286,6 +1293,15 @@ export class WhisperManager extends EventEmitter {
       availability: 'available' as const,
       reason: null,
       firstUseDownloadBytes: await getMacRouteFirstUseDownloadBytes(language)
+    }
+  }
+
+  /** Recording jobs check local assets only; first-use downloads belong to setup. */
+  async assertMacMeetingLanguageReady(language: MeetingLanguageCode): Promise<void> {
+    if ((await getMacRouteFirstUseDownloadBytes(language)) > 0) {
+      throw new Error(
+        'The speech model is missing or incomplete. Select the meeting language in Settings to download it.'
+      )
     }
   }
 

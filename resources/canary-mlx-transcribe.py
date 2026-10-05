@@ -8,6 +8,8 @@ at most 25 seconds; silence is never decoded, and each span's text is timed by
 its span.
 """
 import argparse
+import os
+from pathlib import Path
 import json
 import sys
 
@@ -18,10 +20,17 @@ SAMPLE_RATE = 16000
 def main() -> int:
     parser = argparse.ArgumentParser(description="AutoDoc Canary MLX bridge")
     parser.add_argument("--model", required=True)
+    parser.add_argument("--vad", required=True)
     parser.add_argument("--audio", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--language", required=True)
     args = parser.parse_args()
+    # Setup owns downloads; a recording must never contact Hugging Face.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    if not Path(args.model).is_dir():
+        print("speech model is missing; select the language in Settings to download it", file=sys.stderr)
+        return 1
 
     try:
         import tempfile
@@ -41,7 +50,7 @@ def main() -> int:
         if rate != SAMPLE_RATE or audio.ndim != 1:
             raise ValueError(f"expected {SAMPLE_RATE} Hz mono audio, got {rate} Hz with shape {audio.shape}")
 
-        vad = onnx_asr.load_vad("silero", providers=["CPUExecutionProvider"])
+        vad = onnx_asr.load_vad("silero", path=args.vad, providers=["CPUExecutionProvider"])
         waveforms, lengths = pad_list([audio])
         spans = list(
             next(vad.segment_batch(waveforms, lengths, rate, max_speech_duration_s=MAX_SPEECH_SEC))

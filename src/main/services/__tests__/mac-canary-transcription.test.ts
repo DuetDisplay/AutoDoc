@@ -35,6 +35,13 @@ describe('Canary runtime resolution', () => {
     state.files.add(python)
     state.files.add(join(root, 'canary-mlx-transcribe.py'))
     expect(resolveMacCanaryTranscriber()?.pythonPath).toBe(python)
+    expect(resolveMacCanaryTranscriber()?.env.HF_HUB_OFFLINE).toBe('1')
+    expect(resolveMacCanaryTranscriber()?.modelRef).toContain(
+      'snapshots/0b6b32ee10f30c89e3ead7249bb636445e3019ee'
+    )
+    expect(resolveMacCanaryTranscriber()?.vadPath).toContain(
+      'snapshots/b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6'
+    )
     expect(resolveMacCanaryTranscriber()?.env.HF_HOME).toBe('/user/models/canary-mlx-cache')
   })
   it('keeps development Python and cache overrides', () => {

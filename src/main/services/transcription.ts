@@ -572,7 +572,9 @@ export class TranscriptionService {
       this.jobDualSource = hasMic && hasSystem
       await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
-      if (
+      if (process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english') {
+        await this.whisperManager.assertMacMeetingLanguageReady(activeMeetingLanguage())
+      } else if (
         !(process.platform === 'win32' && activeMeetingAsrRoute() !== 'english') &&
         !(await this.whisperManager.isReady())
       ) {
@@ -2241,6 +2243,7 @@ export class TranscriptionService {
       {
         name: 'canary-mlx',
         ...transcriber,
+        extraArgs: ['--vad', transcriber.vadPath],
         language: activeMeetingLanguage(),
         perfLabel: `Canary MLX backend: ${transcriber.modelRef}`
       },
@@ -2464,8 +2467,7 @@ export class TranscriptionService {
     this.windowsMultilingualReady = ready
     if (!ready.engineId || ready.availability === 'locked') {
       throw new Error(
-        ready.reason ??
-          `${definition.label} transcription is unavailable on this device.`
+        ready.reason ?? `${definition.label} transcription is unavailable on this device.`
       )
     }
     logAutodocEvent({
@@ -2623,9 +2625,7 @@ export class TranscriptionService {
     if (threadCount !== null) {
       console.log(`[perf] Windows multilingual threads: ${threadCount} (${meetingId})`)
     }
-    console.log(
-      `[perf] Worker transcription backend: ${ready.engineId} (${meetingId})`
-    )
+    console.log(`[perf] Worker transcription backend: ${ready.engineId} (${meetingId})`)
 
     const startedAt = Date.now()
     let lastTimestampProgress = 0
