@@ -60,6 +60,9 @@ import {
 } from './mac-processing-profile'
 import { getManagedPythonTarget } from './managed-python'
 import { classifyWindowsTranscriptionTier, logQaGateFirstRunSetup } from './qa-gate-log'
+import { getMeetingAsrRoute, type MeetingLanguageCode } from '../../shared/meeting-language'
+import { downloadMacSpeechModels, getMacRouteFirstUseDownloadBytes } from './mac-speech-models'
+import { resolveMacCanaryTranscriber } from './mac-canary-transcription'
 
 const IS_WIN = process.platform === 'win32'
 const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
@@ -878,10 +881,14 @@ export class WhisperManager extends EventEmitter {
       return this.getParakeetRuntimeDir()
     }
     if (filename === 'faster-whisper-runtime-cuda-win-x64.zip') {
-      return this.getFasterWhisperRuntimeDir(this.windowsTranscriptionProfiles['faster-whisper-cuda'])
+      return this.getFasterWhisperRuntimeDir(
+        this.windowsTranscriptionProfiles['faster-whisper-cuda']
+      )
     }
     if (filename === 'faster-whisper-runtime-cpu-win-x64.zip') {
-      return this.getFasterWhisperRuntimeDir(this.windowsTranscriptionProfiles['faster-whisper-cpu'])
+      return this.getFasterWhisperRuntimeDir(
+        this.windowsTranscriptionProfiles['faster-whisper-cpu']
+      )
     }
     if (filename === 'canary-cuda-runtime-win-x64.zip') {
       return join(this.getModelsDir(), 'transcription-runtimes', 'canary-cuda')
@@ -1184,6 +1191,75 @@ export class WhisperManager extends EventEmitter {
       })
     }
     return this.setupPromise
+  }
+
+  /** Non-English setup installs its route, without downloading the English model. */
+  async prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
+    if (getMeetingAsrRoute(language) === 'english') return this.startSetup()
+    try {
+      if (IS_WIN) {
+        const { ensureWindowsMultilingualEngineReady } =
+          await import('./windows-multilingual-readiness')
+        const ready = await ensureWindowsMultilingualEngineReady(language)
+        if (ready.availability === 'locked' || !ready.engineId) {
+          throw new Error(ready.reason ?? 'This meeting language is unavailable on this PC.')
+        }
+      } else if (IS_MAC_ARM) {
+        await this.selectMacProfile()
+        const canary = getMeetingAsrRoute(language) === 'canary'
+        if (
+          canary
+            ? !resolveMacCanaryTranscriber()
+            : !(await this.fileExists(this.getMlxWhisperPythonPath()))
+        ) {
+          throw new Error('The bundled speech runtime is missing. Reinstall AutoDoc.')
+        }
+        await this.ensureFfmpegForSelectedRuntime()
+        this.setupStatus = {
+          phase: 'downloading-model',
+          percent: 0,
+          backendLabel: canary ? 'Canary' : 'Whisper turbo'
+        }
+        this.emit('setup-status', this.getSetupStatus())
+        await downloadMacSpeechModels(
+          language,
+          async (url, path, sha256, progress) => {
+            await this.downloadWithRetry(async () => {
+              await this.downloadFile(url, path, 'speech model', progress, undefined, {
+                expectedSha256: sha256
+              })
+            }, 'model')
+          },
+          (percent) => {
+            this.setupStatus = { ...this.setupStatus, percent }
+            this.emit('setup-status', this.getSetupStatus())
+          }
+        )
+      } else {
+        throw new Error(
+          'This meeting language needs an Apple Silicon Mac or a supported Windows PC.'
+        )
+      }
+      this.setupStatus = { ...this.setupStatus, phase: 'ready', percent: 100, error: undefined }
+      this.emit('setup-status', this.getSetupStatus())
+    } catch (error) {
+      this.setupStatus = {
+        phase: 'error',
+        percent: 0,
+        failedStep: 'downloading-model',
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.emit('setup-status', this.getSetupStatus())
+      throw error
+    }
+  }
+
+  async getMacMeetingLanguageState(language: MeetingLanguageCode) {
+    return {
+      availability: 'available' as const,
+      reason: null,
+      firstUseDownloadBytes: await getMacRouteFirstUseDownloadBytes(language)
+    }
   }
 
   private async runSetup(): Promise<void> {

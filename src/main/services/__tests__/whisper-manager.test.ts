@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as childProcess from 'child_process'
 import * as fsPromises from 'fs/promises'
 import { join } from 'path'
+import { downloadMacSpeechModels } from '../mac-speech-models'
 import { WhisperManager } from '../whisper-manager'
 import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
 vi.mock('../windows-dml-restriction', () => ({
@@ -19,6 +20,14 @@ vi.mock('electron', () => ({
       return isPackaged
     }
   }
+}))
+
+vi.mock('../mac-speech-models', () => ({
+  downloadMacSpeechModels: vi.fn().mockResolvedValue(undefined),
+  getMacRouteFirstUseDownloadBytes: vi.fn().mockResolvedValue(100)
+}))
+vi.mock('../mac-canary-transcription', () => ({
+  resolveMacCanaryTranscriber: vi.fn(() => ({ pythonPath: '/canary/python3' }))
 }))
 
 vi.mock('ffmpeg-static', () => ({
@@ -69,6 +78,38 @@ describe('WhisperManager', () => {
       callback(null)
       return {} as never
     })
+  })
+
+  it('keeps English on the existing setup path', async () => {
+    const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+    await manager.prepareMeetingLanguage('en')
+    expect(english).toHaveBeenCalledOnce()
+    expect(downloadMacSpeechModels).not.toHaveBeenCalled()
+  })
+
+  it.each(['fr', 'es'] as const)(
+    'prepares %s without the Distil setup or model',
+    async (language) => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage(language)
+      expect(downloadMacSpeechModels).toHaveBeenCalledWith(
+        language,
+        expect.any(Function),
+        expect.any(Function)
+      )
+      expect(english).not.toHaveBeenCalled()
+      expect(manager.getSetupStatus().phase).toBe('ready')
+    }
+  )
+
+  it('downloads English on demand after non-English setup', async () => {
+    vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+    const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+    await manager.prepareMeetingLanguage('fr')
+    expect(english).not.toHaveBeenCalled()
+    await manager.prepareMeetingLanguage('en')
+    expect(english).toHaveBeenCalledOnce()
   })
 
   it('returns correct models directory path', () => {
@@ -374,7 +415,12 @@ describe('WhisperManager', () => {
         : join(modelsDir, 'faster-whisper-models', profile.modelName)
     }
 
-    for (const id of ['faster-whisper-cuda', 'faster-whisper-cpu', 'parakeet-gpu', 'parakeet-cpu'] as const) {
+    for (const id of [
+      'faster-whisper-cuda',
+      'faster-whisper-cpu',
+      'parakeet-gpu',
+      'parakeet-cpu'
+    ] as const) {
       const profile = WINDOWS_TRANSCRIPTION_PROFILES[id]
       expect(profile.assets.length).toBeGreaterThan(0)
       for (const asset of profile.assets) {
