@@ -63,7 +63,12 @@ import {
 } from './mac-processing-profile'
 import { getManagedPythonTarget } from './managed-python'
 import { classifyWindowsTranscriptionTier, logQaGateFirstRunSetup } from './qa-gate-log'
-import { getMeetingAsrRoute, type MeetingLanguageCode } from '../../shared/meeting-language'
+import {
+  getMeetingAsrRoute,
+  type MeetingLanguageCode,
+  type MeetingAsrRoute,
+  type MeetingLanguageEngineState
+} from '../../shared/meeting-language'
 import {
   downloadMacSpeechModels,
   getMacRouteFirstUseDownloadBytes,
@@ -168,6 +173,7 @@ export class WhisperManager extends EventEmitter {
   private languageSetupRequests = new Map<MeetingLanguageCode, Promise<void>>()
   private activeSetupLanguage: MeetingLanguageCode | undefined
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
+  private macLanguageSetupErrors = new Map<MeetingAsrRoute, string>()
   private runtimeValidated = false
   private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
@@ -1274,9 +1280,15 @@ export class WhisperManager extends EventEmitter {
           'This meeting language needs an Apple Silicon Mac or a supported Windows PC.'
         )
       }
+      this.macLanguageSetupErrors.delete(getMeetingAsrRoute(language))
       this.setupStatus = { ...this.setupStatus, phase: 'ready', percent: 100, error: undefined }
       this.emit('setup-status', this.getSetupStatus())
     } catch (error) {
+      if (IS_MAC_ARM)
+        this.macLanguageSetupErrors.set(
+          getMeetingAsrRoute(language),
+          error instanceof Error ? error.message : String(error)
+        )
       this.setupStatus = {
         phase: 'error',
         percent: 0,
@@ -1288,10 +1300,28 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  async getMacMeetingLanguageState(language: MeetingLanguageCode) {
+  async getMacMeetingLanguageState(
+    language: MeetingLanguageCode
+  ): Promise<MeetingLanguageEngineState> {
+    const route = getMeetingAsrRoute(language)
+    if (route !== 'english') {
+      const hasRuntime =
+        IS_MAC_ARM &&
+        (route === 'canary'
+          ? !!resolveMacCanaryTranscriber()
+          : this.isMlxWhisperSelected() &&
+            (await this.fileExists(this.getMlxWhisperPythonPath())) &&
+            (await this.fileExists(this.getMlxWhisperTurboScriptPath())))
+      if (!hasRuntime)
+        return {
+          availability: 'locked',
+          reason: 'The speech runtime is missing from this build. Reinstall AutoDoc.',
+          firstUseDownloadBytes: 0
+        }
+    }
     return {
       availability: 'available' as const,
-      reason: null,
+      reason: this.macLanguageSetupErrors.get(route) ?? null,
       firstUseDownloadBytes: await getMacRouteFirstUseDownloadBytes(language)
     }
   }

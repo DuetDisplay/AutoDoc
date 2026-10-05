@@ -91,7 +91,8 @@ export function MeetingLanguagePicker({
 
   const select = (language: MeetingLanguageCode) => {
     if (!isMeetingLanguageAvailable(language, availability)) return
-    if (language !== value) {
+    const state = availability.languageStates?.[language]
+    if (language !== value || (state?.firstUseDownloadBytes ?? 0) > 0 || state?.needsSelfTest) {
       onChange(language)
     }
     close(true)

@@ -498,6 +498,97 @@ describe('Settings', () => {
 
 const FIRST_USE_DOWNLOAD_BYTES = 6_012_954_214
 
+describe('Settings Mac meeting languages', () => {
+  beforeEach(() => resetRendererStores())
+
+  function macSettingsApi(
+    saved: MeetingLanguageCode = 'en',
+    ensure?: (language: MeetingLanguageCode) => Promise<void>
+  ) {
+    const state = { language: saved }
+    const api = installMockElectronApi({
+      'app:get-runtime-info': createRuntimeInfo({ platform: 'darwin' }),
+      'updater:get-status': createUpdateStatus(),
+      'calendar:get-accounts': [],
+      'prefs:get-meeting-language': () => state.language,
+      'prefs:set-meeting-language': (language: MeetingLanguageCode) => {
+        state.language = language
+      },
+      'whisper:get-meeting-language-states': {
+        de: { availability: 'available', reason: null, firstUseDownloadBytes: 1_139_437_167 }
+      },
+      'whisper:prepare-meeting-language': (language: MeetingLanguageCode) => ensure?.(language)
+    })
+    return { api, state }
+  }
+
+  it('shows the Mac model size and saves only after the download succeeds', async () => {
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const { api, state } = macSettingsApi('en', () => pending)
+    render(<Settings />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await userEvent.click(await screen.findByRole('option', { name: /German.*1.1 GB/ }))
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'de')
+    )
+    expect(state.language).toBe('en')
+    expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
+    act(() => api.emit('whisper:setup-progress', { phase: 'downloading-model', percent: 42 }))
+    expect(await screen.findByText(/42%/)).toBeInTheDocument()
+    await act(async () => {
+      finish()
+      await pending
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
+    expect(state.language).toBe('de')
+  })
+
+  it('keeps the previous language on an offline download failure', async () => {
+    const { api, state } = macSettingsApi('en', async () => {
+      throw new Error('Download failed: offline. Try again when connected.')
+    })
+    render(<Settings />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await userEvent.click(await screen.findByRole('option', { name: /German/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('offline')
+    expect(state.language).toBe('en')
+    expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
+    expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeEnabled()
+  })
+
+  it('prepares English before saving on a fresh non-English install', async () => {
+    const { api, state } = macSettingsApi('de')
+    render(<Settings />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Meeting language: German' }))
+    await userEvent.click(await screen.findByRole('option', { name: /^English/ }))
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: English' })
+    ).toBeInTheDocument()
+    expect(state.language).toBe('en')
+    expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'en')
+    expect(
+      api.invoke.mock.calls.findIndex(([channel]) => channel === 'whisper:prepare-meeting-language')
+    ).toBeLessThan(
+      api.invoke.mock.calls.findIndex(([channel]) => channel === 'prefs:set-meeting-language')
+    )
+  })
+
+  it('lets a saved language download again when its files are missing', async () => {
+    const { api } = macSettingsApi('de')
+    render(<Settings />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Meeting language: German' }))
+    await userEvent.click(await screen.findByRole('option', { name: /German/ }))
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'de')
+    )
+  })
+})
+
 function windowsLanguageInfo(
   overrides: Partial<WindowsMeetingLanguageAvailabilityInfo> = {}
 ): WindowsMeetingLanguageAvailabilityInfo {
@@ -539,7 +630,9 @@ describe('Settings Windows meeting languages', () => {
         'whisper:get-windows-meeting-language-availability': (language: MeetingLanguageCode) =>
           languages[language] ?? windowsLanguageInfo(),
         'whisper:ensure-windows-multilingual-engine': (language: MeetingLanguageCode) =>
-          options?.ensure ? options.ensure(language) : { engineId: 'canary-cpu', availability: 'available', reason: null },
+          options?.ensure
+            ? options.ensure(language)
+            : { engineId: 'canary-cpu', availability: 'available', reason: null },
         'calendar:get-accounts': [],
         'calendar:get-events': []
       })
@@ -608,7 +701,9 @@ describe('Settings Windows meeting languages', () => {
     )
     render(<Settings />)
 
-    expect(await screen.findByRole('button', { name: 'Meeting language: German' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: German' })
+    ).toBeInTheDocument()
     expect(screen.queryByText(/download on first use/i)).not.toBeInTheDocument()
   })
 
@@ -628,7 +723,9 @@ describe('Settings Windows meeting languages', () => {
     expect(
       await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
     ).toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: /German\s+About 5\.6 GB download on first use/ }))
+    await user.click(
+      screen.getByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    )
 
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'de')
@@ -688,18 +785,21 @@ describe('Settings Windows meeting languages', () => {
         fallbackFrom: 'canary-cuda'
       })
     })
-    api.setHandler('whisper:get-windows-meeting-language-availability', (language: MeetingLanguageCode) => {
-      const ensureCalls = api.invoke.mock.calls.filter(
-        ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
-      )
-      if (language === 'de' && ensureCalls.length > 0) {
-        return windowsLanguageInfo({ availability: 'slower', firstUseDownloadBytes: 0 })
+    api.setHandler(
+      'whisper:get-windows-meeting-language-availability',
+      (language: MeetingLanguageCode) => {
+        const ensureCalls = api.invoke.mock.calls.filter(
+          ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
+        )
+        if (language === 'de' && ensureCalls.length > 0) {
+          return windowsLanguageInfo({ availability: 'slower', firstUseDownloadBytes: 0 })
+        }
+        return windowsLanguageInfo({
+          availability: 'available',
+          firstUseDownloadBytes: language === 'de' ? FIRST_USE_DOWNLOAD_BYTES : 0
+        })
       }
-      return windowsLanguageInfo({
-        availability: 'available',
-        firstUseDownloadBytes: language === 'de' ? FIRST_USE_DOWNLOAD_BYTES : 0
-      })
-    })
+    )
     render(<Settings />)
 
     await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
@@ -712,7 +812,9 @@ describe('Settings Windows meeting languages', () => {
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: German' }))
-    expect(await screen.findByRole('option', { name: /German\s+Slower on this PC/ })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('option', { name: /German\s+Slower on this PC/ })
+    ).toBeInTheDocument()
   })
 
   it('runs ensure for an untested GPU self-test and keeps the previous language when locked', async () => {

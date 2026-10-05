@@ -9,7 +9,6 @@ import {
   DEFAULT_MEETING_LANGUAGE,
   getMeetingLanguageDefinition,
   isMeetingLanguageAvailable,
-  MEETING_LANGUAGE_DEFINITIONS,
   normalizeMeetingLanguage,
   SMALL_NOTES_MODEL_MEETING_LANGUAGES,
   UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
@@ -19,6 +18,7 @@ import {
 } from '../../../shared/meeting-language'
 import type { WhisperSetupStatus } from '../../../shared/types'
 import { formatBytes, formatMeetingLanguageFirstUseDownload } from '../services/format-bytes'
+import { loadMeetingLanguageStates } from '../services/meeting-language-setup'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
 
 const SMALL_NOTES_MODEL_LANGUAGE_LIST = new Intl.ListFormat('en', { type: 'conjunction' }).format(
@@ -64,23 +64,6 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
   return null
 }
 
-async function loadWindowsMeetingLanguageStates(): Promise<
-  Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
-> {
-  const entries = await Promise.all(
-    MEETING_LANGUAGE_DEFINITIONS.filter((definition) => definition.code !== 'en').map(
-      async (definition) => {
-        const result = await window.electronAPI.invoke(
-          'whisper:get-windows-meeting-language-availability',
-          definition.code
-        )
-        return [definition.code, result] as const
-      }
-    )
-  )
-  return Object.fromEntries(entries)
-}
-
 export function Settings() {
   const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
     useCalendarStore()
@@ -97,7 +80,7 @@ export function Settings() {
   const [meetingLanguageError, setMeetingLanguageError] = useState<string | null>(null)
   const [meetingLanguageAvailability, setMeetingLanguageAvailability] =
     useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
-  const [windowsLanguageStates, setWindowsLanguageStates] = useState<
+  const [languageStates, setLanguageStates] = useState<
     Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
   >({})
   const [preparingMeetingLanguage, setPreparingMeetingLanguage] =
@@ -166,18 +149,18 @@ export function Settings() {
 
   const isWindows = runtimeInfo?.platform === 'win32'
 
-  const refreshWindowsLanguageStates = useCallback(async () => {
-    if (runtimeInfo?.platform !== 'win32') return
+  const refreshLanguageStates = useCallback(async () => {
+    if (!runtimeInfo?.platform) return
     try {
-      setWindowsLanguageStates(await loadWindowsMeetingLanguageStates())
+      setLanguageStates(await loadMeetingLanguageStates(runtimeInfo.platform))
     } catch {
-      // Keep the last known Windows engine states if a refresh fails.
+      // Keep the last known engine states if a refresh fails.
     }
   }, [runtimeInfo?.platform])
 
   useEffect(() => {
-    void refreshWindowsLanguageStates()
-  }, [refreshWindowsLanguageStates])
+    void refreshLanguageStates()
+  }, [refreshLanguageStates])
 
   useEffect(() => {
     if (!preparingMeetingLanguage) {
@@ -332,7 +315,7 @@ export function Settings() {
     setIsSavingMeetingLanguage(true)
     try {
       if (isWindows && language !== DEFAULT_MEETING_LANGUAGE) {
-        let engineState = windowsLanguageStates[language]
+        let engineState = languageStates[language]
         if (!engineState) {
           const fetched = await window.electronAPI.invoke(
             'whisper:get-windows-meeting-language-availability',
@@ -340,13 +323,11 @@ export function Settings() {
           )
           if (fetched) {
             engineState = fetched
-            setWindowsLanguageStates((current) => ({ ...current, [language]: fetched }))
+            setLanguageStates((current) => ({ ...current, [language]: fetched }))
           }
         }
         if (engineState?.availability === 'locked') {
-          setMeetingLanguageError(
-            engineState.reason ?? "This language isn't available on this PC."
-          )
+          setMeetingLanguageError(engineState.reason ?? "This language isn't available on this PC.")
           return
         }
         const needsEnsure =
@@ -362,9 +343,13 @@ export function Settings() {
               throw new Error(ready.reason ?? 'Failed to download the speech model.')
             }
           } finally {
-            await refreshWindowsLanguageStates()
+            await refreshLanguageStates()
           }
         }
+      } else if (runtimeInfo?.platform === 'darwin' || language === DEFAULT_MEETING_LANGUAGE) {
+        setPreparingMeetingLanguage(language)
+        setMeetingLanguageSetupStatus({ phase: 'checking', percent: 0 })
+        await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
       }
       await window.electronAPI.invoke('prefs:set-meeting-language', language)
       setMeetingLanguageState(language)
@@ -378,6 +363,7 @@ export function Settings() {
         err instanceof Error ? err.message : 'Failed to save the meeting language.'
       )
     } finally {
+      if (!isWindows) await refreshLanguageStates()
       setPreparingMeetingLanguage(null)
       setMeetingLanguageSetupStatus(null)
       setIsSavingMeetingLanguage(false)
@@ -432,12 +418,13 @@ export function Settings() {
       : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
 
   const machineNoun = isWindows ? 'PC' : 'Mac'
-  const pickerAvailability: MeetingLanguageAvailability = isWindows
-    ? { ...meetingLanguageAvailability, languageStates: windowsLanguageStates }
-    : meetingLanguageAvailability
+  const pickerAvailability: MeetingLanguageAvailability = {
+    ...meetingLanguageAvailability,
+    languageStates
+  }
   const sizeLanguage = preparingMeetingLanguage ?? meetingLanguage
   const firstUseDownloadLabel = formatMeetingLanguageFirstUseDownload(
-    windowsLanguageStates[sizeLanguage]?.firstUseDownloadBytes ?? 0
+    languageStates[sizeLanguage]?.firstUseDownloadBytes ?? 0
   )
   const meetingLanguageSetupLabel = getWhisperSetupLabel(meetingLanguageSetupStatus)
 
@@ -558,8 +545,8 @@ export function Settings() {
                 )}
                 {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (
                   <p role="status" className="mt-1 text-[11px] text-clay-dark">
-                    {getMeetingLanguageDefinition(meetingLanguage).label} isn&apos;t available on this{' '}
-                    {machineNoun}. New recordings use English.
+                    {getMeetingLanguageDefinition(meetingLanguage).label} isn&apos;t available on
+                    this {machineNoun}. New recordings use English.
                   </p>
                 )}
                 {firstUseDownloadLabel && (
@@ -580,7 +567,7 @@ export function Settings() {
               </div>
               <MeetingLanguagePicker
                 value={meetingLanguage}
-                disabled={isSavingMeetingLanguage}
+                disabled={isSavingMeetingLanguage || !runtimeInfo}
                 availability={pickerAvailability}
                 onChange={(language) => void handleSetMeetingLanguage(language)}
               />
