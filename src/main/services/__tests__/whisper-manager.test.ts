@@ -80,56 +80,74 @@ describe('WhisperManager', () => {
     })
   })
 
-  it('keeps English on the existing setup path', async () => {
-    const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
-    await manager.prepareMeetingLanguage('en')
-    expect(english).toHaveBeenCalledOnce()
-    expect(downloadMacSpeechModels).not.toHaveBeenCalled()
-  })
+  describe('meeting language setup on Apple Silicon', () => {
+    beforeEach(async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      const arch = Object.getOwnPropertyDescriptor(process, 'arch')!
+      try {
+        Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+        Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' })
+        vi.resetModules()
+        const { WhisperManager: MacManager } = await import('../whisper-manager')
+        manager = new MacManager()
+        vi.spyOn(manager as never, 'selectMacProfile').mockResolvedValue(undefined)
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+        Object.defineProperty(process, 'arch', arch)
+      }
+    })
 
-  it.each(['fr', 'es'] as const)(
-    'prepares %s without the Distil setup or model',
-    async (language) => {
+    it('keeps English on the existing setup path', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+      expect(downloadMacSpeechModels).not.toHaveBeenCalled()
+    })
+
+    it.each(['fr', 'es'] as const)(
+      'prepares %s without the Distil setup or model',
+      async (language) => {
+        vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+        const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+        await manager.prepareMeetingLanguage(language)
+        expect(downloadMacSpeechModels).toHaveBeenCalledWith(
+          language,
+          expect.any(Function),
+          expect.any(Function)
+        )
+        expect(english).not.toHaveBeenCalled()
+        expect(manager.getSetupStatus().phase).toBe('ready')
+      }
+    )
+
+    it('deduplicates setup and queues language changes until the current download finishes', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      let finishDownload!: () => void
+      vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishDownload = resolve
+          })
+      )
+      const french = manager.prepareMeetingLanguage('fr')
+      expect(manager.prepareMeetingLanguage('fr')).toBe(french)
+      const spanish = manager.prepareMeetingLanguage('es')
+      await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      expect(manager.getSetupStatus().meetingLanguage).toBe('fr')
+      finishDownload()
+      await Promise.all([french, spanish])
+      expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
+      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+    })
+
+    it('downloads English on demand after non-English setup', async () => {
       vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
       const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
-      await manager.prepareMeetingLanguage(language)
-      expect(downloadMacSpeechModels).toHaveBeenCalledWith(
-        language,
-        expect.any(Function),
-        expect.any(Function)
-      )
+      await manager.prepareMeetingLanguage('fr')
       expect(english).not.toHaveBeenCalled()
-      expect(manager.getSetupStatus().phase).toBe('ready')
-    }
-  )
-
-  it('deduplicates setup and queues language changes until the current download finishes', async () => {
-    vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
-    let finishDownload!: () => void
-    vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishDownload = resolve
-        })
-    )
-    const french = manager.prepareMeetingLanguage('fr')
-    expect(manager.prepareMeetingLanguage('fr')).toBe(french)
-    const spanish = manager.prepareMeetingLanguage('es')
-    await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
-    expect(manager.getSetupStatus().meetingLanguage).toBe('fr')
-    finishDownload()
-    await Promise.all([french, spanish])
-    expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
-    expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
-  })
-
-  it('downloads English on demand after non-English setup', async () => {
-    vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
-    const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
-    await manager.prepareMeetingLanguage('fr')
-    expect(english).not.toHaveBeenCalled()
-    await manager.prepareMeetingLanguage('en')
-    expect(english).toHaveBeenCalledOnce()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+    })
   })
 
   it('returns correct models directory path', () => {
