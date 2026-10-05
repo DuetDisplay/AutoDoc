@@ -60,9 +60,20 @@ async function reachCalendarStep(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
 }
 
+async function completeMeetingLanguageStep(page: Page): Promise<void> {
+  await expect(page.getByRole('heading', { name: 'Choose your meeting language' })).toBeVisible()
+  await page.getByRole('button', { name: /meeting language:/i }).click()
+  await page.getByRole('option', { name: /^English/ }).click()
+  await page.getByRole('button', { name: /^continue$/i }).click()
+  expect(await page.evaluate(() => window.electronAPI.invoke('prefs:get-meeting-language'))).toBe(
+    'en'
+  )
+}
+
 async function reachTranscriptionStep(page: Page): Promise<void> {
   await reachCalendarStep(page)
   await page.getByRole('button', { name: /skip for now/i }).click()
+  await completeMeetingLanguageStep(page)
   await expect(
     page.getByRole('heading', { name: /^(Setting Up Transcription|Transcription Ready)$/i })
   ).toBeVisible()
@@ -261,6 +272,7 @@ test('allows onboarding to connect a calendar account in e2e mode', async () => 
     await page.getByRole('button', { name: /connect google calendar/i }).click()
     await expect(page.getByRole('button', { name: /continue/i })).toBeVisible()
     await page.getByRole('button', { name: /continue/i }).click()
+    await completeMeetingLanguageStep(page)
     await expect(page.getByRole('heading', { name: 'Transcription Ready' })).toBeVisible()
   } finally {
     await cleanup()
@@ -516,6 +528,7 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await advanceFeatureSteps(page)
     await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
     await page.getByRole('button', { name: /skip for now/i }).click()
+    await completeMeetingLanguageStep(page)
 
     await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
     await expect(page.getByText(/downloading transcription engine\.\.\. 12%/i)).toBeVisible()
