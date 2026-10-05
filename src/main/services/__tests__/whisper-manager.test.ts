@@ -4,7 +4,10 @@ import * as fsPromises from 'fs/promises'
 import { join } from 'path'
 import { downloadMacSpeechModels } from '../mac-speech-models'
 import { WhisperManager } from '../whisper-manager'
-import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
+import {
+  PARAKEET_RUNTIME_FILENAME,
+  WINDOWS_TRANSCRIPTION_PROFILES
+} from '../windows-transcription-runtime'
 vi.mock('../windows-dml-restriction', () => ({
   readDmlRestriction: vi.fn().mockResolvedValue(null),
   writeDmlRestriction: vi.fn().mockResolvedValue(undefined),
@@ -427,10 +430,10 @@ describe('WhisperManager', () => {
   it('keeps English Windows backend assets identical after multilingual profiles were added', () => {
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets.map((asset) => asset.filename)
-    ).toEqual(['parakeet-runtime-win-x64.zip', 'parakeet-tdt-0.6b-v3-fp32.zip'])
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'parakeet-tdt-0.6b-v3-fp32.zip'])
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].assets.map((asset) => asset.filename)
-    ).toEqual(['parakeet-runtime-win-x64.zip', 'parakeet-tdt-0.6b-v3-int8.zip'])
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'parakeet-tdt-0.6b-v3-int8.zip'])
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].modelName).toBe('distil-large-v3')
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].computeType).toBe('int8_float32')
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].modelName).toBe('small.en')

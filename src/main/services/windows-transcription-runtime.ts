@@ -41,6 +41,10 @@ export const ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS: readonly WindowsEnglishT
 /** Canary CUDA uses the same 6 GiB floor as faster-whisper-cuda. Peak is ~5.4–5.5 GiB. */
 export const CANARY_CUDA_MIN_VRAM_GIB = 6
 
+export const FASTER_WHISPER_CUDA_RUNTIME_FILENAME = 'faster-whisper-runtime-cuda-win-x64-v3.zip'
+export const FASTER_WHISPER_CPU_RUNTIME_FILENAME = 'faster-whisper-runtime-cpu-win-x64-v3.zip'
+export const PARAKEET_RUNTIME_FILENAME = 'parakeet-runtime-win-x64-v3.zip'
+
 export interface NvidiaSmiGpuInfo {
   name: string
   memoryTotalMiB: number | null
@@ -160,10 +164,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'faster-whisper-runtime-cuda-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip` : '',
-        sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
-        bytes: 1439431425,
+        filename: FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${FASTER_WHISPER_CUDA_RUNTIME_FILENAME}` : '',
+        sha256: '79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad',
+        bytes: 1411259196,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -192,10 +196,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'faster-whisper-runtime-cpu-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip` : '',
-        sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
-        bytes: 122910760,
+        filename: FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${FASTER_WHISPER_CPU_RUNTIME_FILENAME}` : '',
+        sha256: 'dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c',
+        bytes: 94738531,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -225,10 +229,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'parakeet-runtime-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
-        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
-        bytes: 87511283,
+        filename: PARAKEET_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${PARAKEET_RUNTIME_FILENAME}` : '',
+        sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+        bytes: 81685779,
         expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
       },
       {
@@ -275,10 +279,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'parakeet-runtime-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
-        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
-        bytes: 87511283,
+        filename: PARAKEET_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${PARAKEET_RUNTIME_FILENAME}` : '',
+        sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+        bytes: 81685779,
         expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
       },
       {
@@ -321,10 +325,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'parakeet-runtime-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
-        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
-        bytes: 87511283,
+        filename: PARAKEET_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${PARAKEET_RUNTIME_FILENAME}` : '',
+        sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+        bytes: 81685779,
         expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
       },
       {
@@ -358,8 +362,8 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'canary-cuda-runtime-win-x64.zip',
         url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/canary-cuda-runtime-win-x64.zip` : '',
-        sha256: '4f6cd9d0dc4e213ffd940beb04af87ca591a41bafc9293b98535407a79ac730f',
-        bytes: 1873087180,
+        sha256: '9a29f788a0d530439ae6c2c48265f43875dd0aaf7c1dd6261dba96391b10de16',
+        bytes: 1897898949,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/sitecustomize.py',
@@ -426,10 +430,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'faster-whisper-runtime-cuda-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cuda-win-x64.zip` : '',
-        sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
-        bytes: 1439431425,
+        filename: FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${FASTER_WHISPER_CUDA_RUNTIME_FILENAME}` : '',
+        sha256: '79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad',
+        bytes: 1411259196,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',
@@ -458,10 +462,10 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
     assets: [
       {
         id: 'runtime',
-        filename: 'faster-whisper-runtime-cpu-win-x64.zip',
-        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/faster-whisper-runtime-cpu-win-x64.zip` : '',
-        sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
-        bytes: 122910760,
+        filename: FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+        url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/${FASTER_WHISPER_CPU_RUNTIME_FILENAME}` : '',
+        sha256: 'dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c',
+        bytes: 94738531,
         expectedFiles: [
           'python.exe',
           'Lib/site-packages/faster_whisper',

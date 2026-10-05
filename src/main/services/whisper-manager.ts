@@ -34,8 +34,11 @@ import {
 } from './runtime-policy'
 import {
   detectWindowsHardwareProfile,
+  FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+  FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
   getSystemMemorySnapshot,
   loadWindowsTranscriptionProfiles,
+  PARAKEET_RUNTIME_FILENAME,
   selectWindowsTranscriptionProfile,
   WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsTranscriptionAsset,
@@ -883,15 +886,15 @@ export class WhisperManager extends EventEmitter {
     assetId: 'runtime' | 'model',
     filename?: string
   ): string {
-    if (filename === 'parakeet-runtime-win-x64.zip') {
+    if (filename === PARAKEET_RUNTIME_FILENAME) {
       return this.getParakeetRuntimeDir()
     }
-    if (filename === 'faster-whisper-runtime-cuda-win-x64.zip') {
+    if (filename === FASTER_WHISPER_CUDA_RUNTIME_FILENAME) {
       return this.getFasterWhisperRuntimeDir(
         this.windowsTranscriptionProfiles['faster-whisper-cuda']
       )
     }
-    if (filename === 'faster-whisper-runtime-cpu-win-x64.zip') {
+    if (filename === FASTER_WHISPER_CPU_RUNTIME_FILENAME) {
       return this.getFasterWhisperRuntimeDir(
         this.windowsTranscriptionProfiles['faster-whisper-cpu']
       )
@@ -959,13 +962,13 @@ export class WhisperManager extends EventEmitter {
     asset: WindowsTranscriptionAsset,
     fallback: WindowsTranscriptionProfile
   ): WindowsTranscriptionProfile {
-    if (asset.filename === 'parakeet-runtime-win-x64.zip') {
+    if (asset.filename === PARAKEET_RUNTIME_FILENAME) {
       return this.windowsTranscriptionProfiles['parakeet-cpu']
     }
-    if (asset.filename === 'faster-whisper-runtime-cuda-win-x64.zip') {
+    if (asset.filename === FASTER_WHISPER_CUDA_RUNTIME_FILENAME) {
       return this.windowsTranscriptionProfiles['faster-whisper-cuda']
     }
-    if (asset.filename === 'faster-whisper-runtime-cpu-win-x64.zip') {
+    if (asset.filename === FASTER_WHISPER_CPU_RUNTIME_FILENAME) {
       return this.windowsTranscriptionProfiles['faster-whisper-cpu']
     }
     return fallback

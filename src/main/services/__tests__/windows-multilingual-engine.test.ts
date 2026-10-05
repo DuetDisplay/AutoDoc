@@ -21,7 +21,11 @@ import {
   type WindowsMultilingualGpuSnapshot,
   type WindowsMultilingualSelfTestRecord
 } from '../windows-multilingual-engine'
-import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
+import {
+  FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
+  PARAKEET_RUNTIME_FILENAME,
+  WINDOWS_TRANSCRIPTION_PROFILES
+} from '../windows-transcription-runtime'
 
 const nvidia: WindowsMultilingualGpuSnapshot = {
   vendor: 'nvidia',
@@ -290,7 +294,7 @@ describe('Windows multilingual assets and download size', () => {
         route: 'canary',
         engineId: 'canary-cuda'
       })
-    ).toBe(1_873_087_180 + 3_680_120_712)
+    ).toBe(1_897_898_949 + 3_680_120_712)
   })
 
   it('returns 0 for the English route so Settings keeps the existing English installer', () => {
@@ -303,7 +307,7 @@ describe('Windows multilingual assets and download size', () => {
   })
 
   it('omits assets that are already installed, including the shared turbo model', () => {
-    const installed = new Set(['faster-whisper-runtime-cuda-win-x64.zip'])
+    const installed = new Set([FASTER_WHISPER_CUDA_RUNTIME_FILENAME])
     expect(
       getWindowsRouteFirstUseDownloadBytes({
         route: 'whisper-turbo',
@@ -320,7 +324,7 @@ describe('Windows multilingual assets and download size', () => {
     expect(filenames).toEqual([
       'whisper-cpp-vulkan-runtime-win-x64.zip',
       'ggml-large-v3-turbo.zip',
-      'parakeet-runtime-win-x64.zip'
+      PARAKEET_RUNTIME_FILENAME
     ])
   })
 
@@ -329,7 +333,7 @@ describe('Windows multilingual assets and download size', () => {
       getWindowsRouteFirstUseDownloadBytes({
         route: 'canary',
         engineId: 'canary-cpu',
-        isAssetPresent: (filename) => filename === 'parakeet-runtime-win-x64.zip'
+        isAssetPresent: (filename) => filename === PARAKEET_RUNTIME_FILENAME
       })
     ).toBe(WINDOWS_TRANSCRIPTION_PROFILES['canary-cpu'].assets[1].bytes)
   })

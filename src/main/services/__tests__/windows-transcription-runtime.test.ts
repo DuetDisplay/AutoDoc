@@ -9,8 +9,11 @@ import {
   classifyWindowsGpuVendor,
   electronMemoryKbToGiB,
   ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS,
+  FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+  FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
   getUsableLogicalProcessorCount,
   isLikelyDiscreteGpuName,
+  PARAKEET_RUNTIME_FILENAME,
   loadWindowsTranscriptionProfiles,
   normalizeImplausibleDiscreteVram,
   parseNvidiaSmiGpuRows,
@@ -70,10 +73,10 @@ describe('Windows transcription runtime selection', () => {
 
   it('uses the public asset-only repository for fallback asset URLs', () => {
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cpu-win-x64.zip'
+      `https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/${FASTER_WHISPER_CPU_RUNTIME_FILENAME}`
     )
     expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-runtime-win-x64.zip'
+      `https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/${PARAKEET_RUNTIME_FILENAME}`
     )
   })
 
@@ -420,9 +423,9 @@ describe('Windows transcription runtime selection', () => {
       modelName: 'distil-large-v3',
       assets: [
         {
-          filename: 'faster-whisper-runtime-cuda-win-x64.zip',
-          sha256: '785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a',
-          bytes: 1439431425
+          filename: FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
+          sha256: '79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad',
+          bytes: 1411259196
         },
         {
           filename: 'faster-whisper-distil-large-v3-ct2.zip',
@@ -438,9 +441,9 @@ describe('Windows transcription runtime selection', () => {
       modelName: 'small.en',
       assets: [
         {
-          filename: 'faster-whisper-runtime-cpu-win-x64.zip',
-          sha256: '63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9',
-          bytes: 122910760
+          filename: FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+          sha256: 'dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c',
+          bytes: 94738531
         },
         {
           filename: 'faster-whisper-small-en-ct2-int8.zip',
@@ -457,9 +460,9 @@ describe('Windows transcription runtime selection', () => {
       modelName: 'parakeet-tdt-0.6b-v3',
       assets: [
         {
-          filename: 'parakeet-runtime-win-x64.zip',
-          sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
-          bytes: 87511283
+          filename: PARAKEET_RUNTIME_FILENAME,
+          sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+          bytes: 81685779
         },
         {
           filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
@@ -475,9 +478,9 @@ describe('Windows transcription runtime selection', () => {
       modelName: 'parakeet-tdt-0.6b-v3',
       assets: [
         {
-          filename: 'parakeet-runtime-win-x64.zip',
-          sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
-          bytes: 87511283
+          filename: PARAKEET_RUNTIME_FILENAME,
+          sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+          bytes: 81685779
         },
         {
           filename: 'parakeet-tdt-0.6b-v3-int8.zip',
@@ -496,18 +499,18 @@ describe('Windows transcription runtime selection', () => {
     ).toEqual(['canary-cuda-runtime-win-x64.zip', 'canary-1b-v2-fp32.zip'])
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['canary-cpu'].assets.map((asset) => asset.filename)
-    ).toEqual(['parakeet-runtime-win-x64.zip', 'canary-1b-v2-int8.zip'])
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'canary-1b-v2-int8.zip'])
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cuda'].assets.map((asset) => asset.filename)
-    ).toEqual(['faster-whisper-runtime-cuda-win-x64.zip', 'faster-whisper-large-v3-turbo-ct2.zip'])
+    ).toEqual([FASTER_WHISPER_CUDA_RUNTIME_FILENAME, 'faster-whisper-large-v3-turbo-ct2.zip'])
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cpu'].assets.map((asset) => asset.filename)
-    ).toEqual(['faster-whisper-runtime-cpu-win-x64.zip', 'faster-whisper-large-v3-turbo-ct2.zip'])
+    ).toEqual([FASTER_WHISPER_CPU_RUNTIME_FILENAME, 'faster-whisper-large-v3-turbo-ct2.zip'])
     expect(
       WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-vulkan'].assets.map((asset) => asset.filename)
     ).toEqual(['whisper-cpp-vulkan-runtime-win-x64.zip', 'ggml-large-v3-turbo.zip'])
     expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cuda'].assets[0].sha256).toBe(
-      '4f6cd9d0dc4e213ffd940beb04af87ca591a41bafc9293b98535407a79ac730f'
+      '9a29f788a0d530439ae6c2c48265f43875dd0aaf7c1dd6261dba96391b10de16'
     )
     expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cpu'].assets[1].bytes).toBe(727296090)
     expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cuda'].assets[1].bytes).toBe(1492333094)
@@ -805,13 +808,13 @@ describe('Windows transcription runtime selection', () => {
       ).id
     ).toBe('parakeet-gpu')
     expect(profiles['parakeet-gpu'].assets[0].sha256).toBe(
-      'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3'
+      'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded'
     )
     expect(profiles['parakeet-gpu'].assets[1].sha256).toBe(
       'ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23'
     )
     expect(profiles['faster-whisper-cuda'].assets[0].filename).toBe(
-      'faster-whisper-runtime-cuda-win-x64.zip'
+      FASTER_WHISPER_CUDA_RUNTIME_FILENAME
     )
     expect(profiles['canary-cuda'].assets[0].filename).toBe('canary-cuda-runtime-win-x64.zip')
     expect(profiles['canary-cuda'].minVramGiB).toBe(6)

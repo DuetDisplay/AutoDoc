@@ -136,7 +136,7 @@ describe('windows-multilingual-readiness', () => {
     expect(german).toMatchObject({
       availability: 'available',
       engineId: 'canary-cuda',
-      firstUseDownloadBytes: 1_873_087_180 + 3_680_120_712
+      firstUseDownloadBytes: 1_897_898_949 + 3_680_120_712
     })
     expect(english).toEqual({
       availability: 'available',

@@ -5,6 +5,7 @@ import type { WindowsProcessingProfileId } from './windows-processing-profile'
 import {
   CANARY_CUDA_MIN_VRAM_GIB,
   isLikelyDiscreteGpuName,
+  PARAKEET_RUNTIME_FILENAME,
   WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsGpuInfo,
   type WindowsTranscriptionAsset,
@@ -246,9 +247,7 @@ export const WINDOWS_MULTILINGUAL_GPU_ENGINE_IDS: readonly WindowsMultilingualEn
   'whisper-turbo-vulkan'
 ]
 
-export function isWindowsMultilingualGpuEngine(
-  engineId: WindowsMultilingualEngineId
-): boolean {
+export function isWindowsMultilingualGpuEngine(engineId: WindowsMultilingualEngineId): boolean {
   return WINDOWS_MULTILINGUAL_GPU_ENGINE_IDS.includes(engineId)
 }
 
@@ -469,11 +468,9 @@ export function listWindowsMultilingualEngineAssets(
   if (engineId === 'whisper-turbo-vulkan') {
     const pythonRuntime =
       profiles['canary-cpu']?.assets.find(
-        (asset) => asset.filename === 'parakeet-runtime-win-x64.zip'
+        (asset) => asset.filename === PARAKEET_RUNTIME_FILENAME
       ) ??
-      profiles['parakeet-cpu']?.assets.find(
-        (asset) => asset.filename === 'parakeet-runtime-win-x64.zip'
-      )
+      profiles['parakeet-cpu']?.assets.find((asset) => asset.filename === PARAKEET_RUNTIME_FILENAME)
     if (pythonRuntime && !assets.some((asset) => asset.filename === pythonRuntime.filename)) {
       assets.push(pythonRuntime)
     }

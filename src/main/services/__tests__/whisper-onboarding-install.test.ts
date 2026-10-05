@@ -767,7 +767,7 @@ describe('Whisper onboarding dependency installation', () => {
       expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cuda')
       expect(manager.getModelName()).toBe('distil-large-v3')
       expect(assetDownloads).toEqual([
-        'faster-whisper-runtime-cuda-win-x64.zip',
+        'faster-whisper-runtime-cuda-win-x64-v3.zip',
         'faster-whisper-distil-large-v3-ct2.zip'
       ])
       expect(resolveWhisperSpy).not.toHaveBeenCalled()
@@ -844,7 +844,7 @@ describe('Whisper onboarding dependency installation', () => {
       expect(manager.getTranscriptionBackend()).toBe('faster-whisper-cpu')
       expect(manager.getModelName()).toBe('small.en')
       expect(assetDownloads).toEqual([
-        'faster-whisper-runtime-cpu-win-x64.zip',
+        'faster-whisper-runtime-cpu-win-x64-v3.zip',
         'faster-whisper-small-en-ct2-int8.zip'
       ])
       await expect(access(manager.getFasterWhisperPythonPath())).resolves.toBeUndefined()
@@ -888,7 +888,7 @@ describe('Whisper onboarding dependency installation', () => {
       expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
       expect(manager.getModelName()).toBe('parakeet-tdt-0.6b-v3')
       expect(assetDownloads).toEqual([
-        'parakeet-runtime-win-x64.zip',
+        'parakeet-runtime-win-x64-v3.zip',
         'parakeet-tdt-0.6b-v3-fp32.zip'
       ])
       await expect(access(manager.getParakeetPythonPath())).resolves.toBeUndefined()
@@ -931,7 +931,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
       expect(assetDownloads).toEqual([
-        'parakeet-runtime-win-x64.zip',
+        'parakeet-runtime-win-x64-v3.zip',
         'parakeet-tdt-0.6b-v3-int8.zip'
       ])
       await expect(
@@ -972,7 +972,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       await manager.ensureReady()
       expect(assetDownloads).toEqual([
-        'parakeet-runtime-win-x64.zip',
+        'parakeet-runtime-win-x64-v3.zip',
         'parakeet-tdt-0.6b-v3-fp32.zip'
       ])
       await expect(manager.isReady()).resolves.toBe(true)
@@ -1161,7 +1161,7 @@ describe('Whisper onboarding dependency installation', () => {
 
       expect(downloadSpy).toHaveBeenCalled()
       expect(assetDownloads).toEqual([
-        'parakeet-runtime-win-x64.zip',
+        'parakeet-runtime-win-x64-v3.zip',
         'parakeet-tdt-0.6b-v3-int8.zip'
       ])
       expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
