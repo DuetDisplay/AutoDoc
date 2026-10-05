@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -70,10 +70,10 @@ describe('Windows transcription runtime selection', () => {
 
   it('uses the public asset-only repository for fallback asset URLs', () => {
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cpu-win-x64.zip'
     )
     expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-runtime-win-x64.zip'
     )
   })
 
@@ -456,8 +456,16 @@ describe('Windows transcription runtime selection', () => {
       minVramGiB: 4,
       modelName: 'parakeet-tdt-0.6b-v3',
       assets: [
-        { filename: 'parakeet-runtime-win-x64.zip', sha256: '' },
-        { filename: 'parakeet-tdt-0.6b-v3-fp32.zip', sha256: '' }
+        {
+          filename: 'parakeet-runtime-win-x64.zip',
+          sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
+          bytes: 87511283
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+          sha256: 'ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23',
+          bytes: 2370811633
+        }
       ]
     })
     expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu']).toMatchObject({
@@ -466,8 +474,16 @@ describe('Windows transcription runtime selection', () => {
       computeType: 'int8',
       modelName: 'parakeet-tdt-0.6b-v3',
       assets: [
-        { filename: 'parakeet-runtime-win-x64.zip', sha256: '' },
-        { filename: 'parakeet-tdt-0.6b-v3-int8.zip', sha256: '' }
+        {
+          filename: 'parakeet-runtime-win-x64.zip',
+          sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
+          bytes: 87511283
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-int8.zip',
+          sha256: '656335b7d7a4e1c6ecb3d78f2ac2ad342ae7865e34ec9d21905ea8c1a5e65733',
+          bytes: 480454890
+        }
       ]
     })
     expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-cpp'].assets).toEqual([])
@@ -728,6 +744,48 @@ describe('Windows transcription runtime selection', () => {
     } finally {
       delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
       await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps fallback profile assets aligned with the shipped manifest', async () => {
+    const raw = await readFile(
+      join(process.cwd(), 'resources', 'windows-transcription-manifest.json'),
+      'utf-8'
+    )
+    const manifest = JSON.parse(raw) as {
+      profiles: Array<{
+        id: keyof typeof WINDOWS_TRANSCRIPTION_PROFILES
+        assets: Array<{
+          filename: string
+          sha256: string
+          bytes?: number
+          parts?: Array<{ filename: string; sha256: string; bytes: number }>
+        }>
+      }>
+    }
+
+    for (const profile of manifest.profiles) {
+      const fallback = WINDOWS_TRANSCRIPTION_PROFILES[profile.id]
+      expect(fallback.assets).toHaveLength(profile.assets.length)
+      for (const [index, shipped] of profile.assets.entries()) {
+        const asset = fallback.assets[index]
+        expect(asset.filename).toBe(shipped.filename)
+        expect(asset.sha256).toBe(shipped.sha256)
+        expect(asset.bytes).toBe(shipped.bytes)
+        expect(
+          asset.parts?.map((part) => ({
+            filename: part.filename,
+            sha256: part.sha256,
+            bytes: part.bytes
+          }))
+        ).toEqual(
+          shipped.parts?.map((part) => ({
+            filename: part.filename,
+            sha256: part.sha256,
+            bytes: part.bytes
+          }))
+        )
+      }
     }
   })
 

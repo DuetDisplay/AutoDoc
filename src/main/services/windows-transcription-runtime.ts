@@ -227,14 +227,30 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'parakeet-runtime-win-x64.zip',
         url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
-        sha256: '',
+        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
+        bytes: 87511283,
         expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
       },
       {
         id: 'model',
         filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
         url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-fp32.zip` : '',
-        sha256: '',
+        sha256: 'ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23',
+        bytes: 2370811633,
+        parts: [
+          {
+            filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part1',
+            url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-fp32.zip.part1` : '',
+            sha256: 'e0f7ef1d42db37c3d2866d13bd68d251697e50ba877a3c39375ee1df005f0bf1',
+            bytes: 1185405817
+          },
+          {
+            filename: 'parakeet-tdt-0.6b-v3-fp32.zip.part2',
+            url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-fp32.zip.part2` : '',
+            sha256: 'b2e1f79ab9e2467617dae80709646621b470a3e0343f63b332a2c6addfe2a298',
+            bytes: 1185405816
+          }
+        ],
         expectedFiles: [
           'encoder-model.onnx',
           'encoder-model.onnx.data',
@@ -261,14 +277,16 @@ export const WINDOWS_TRANSCRIPTION_PROFILES: Record<
         id: 'runtime',
         filename: 'parakeet-runtime-win-x64.zip',
         url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-runtime-win-x64.zip` : '',
-        sha256: '',
+        sha256: 'e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3',
+        bytes: 87511283,
         expectedFiles: ['python.exe', 'Lib/site-packages/onnx_asr', 'Lib/site-packages/onnxruntime']
       },
       {
         id: 'model',
         filename: 'parakeet-tdt-0.6b-v3-int8.zip',
         url: ASSET_BASE_URL ? `${ASSET_BASE_URL}/parakeet-tdt-0.6b-v3-int8.zip` : '',
-        sha256: '',
+        sha256: '656335b7d7a4e1c6ecb3d78f2ac2ad342ae7865e34ec9d21905ea8c1a5e65733',
+        bytes: 480454890,
         expectedFiles: [
           'encoder-model.int8.onnx',
           'decoder_joint-model.int8.onnx',

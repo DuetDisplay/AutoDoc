@@ -25,7 +25,7 @@ describe('distribution config', () => {
     expect(getSupportEmail()).toBeNull()
     expect(getConfiguredMacWhisperRuntimeAssetBaseUrl()).toBeNull()
     expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3'
     )
   })
 
@@ -38,7 +38,7 @@ describe('distribution config', () => {
       'https://github.com/DuetDisplay/AutoDoc/releases/download/macos-whisper-runtime-v1'
     )
     expect(getConfiguredWindowsTranscriptionAssetBaseUrl()).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2'
+      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3'
     )
   })
 
