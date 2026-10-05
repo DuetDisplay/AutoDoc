@@ -269,9 +269,9 @@ class TranscriptionWorker:
 
         if window:
             audio = _read_window_audio(audio_path, window)
-            segments, _info = self.model.transcribe(audio, **transcribe_kwargs)
         else:
-            segments, _info = self.model.transcribe(audio_path, **transcribe_kwargs)
+            audio = _read_full_audio(audio_path)
+        segments, _info = self.model.transcribe(audio, **transcribe_kwargs)
 
         transcription = []
         for segment in segments:
@@ -466,6 +466,14 @@ class TranscriptionWorker:
         )
 
     def _load_faster_whisper(self, request: dict) -> None:
+        import types
+
+        # Runtime ships without PyAV; faster_whisper imports it at module load
+        # but only uses it to decode file paths, which the worker never passes.
+        try:
+            import av
+        except ImportError:
+            sys.modules["av"] = types.ModuleType("av")
         from faster_whisper import WhisperModel
 
         model_name = request["model"]
