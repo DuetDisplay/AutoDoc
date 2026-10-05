@@ -24,6 +24,9 @@ asarUnpack:
 win:
   target:
     - nsis
+  extraResources:
+    - from: resources/windows-speech-runtime-licenses.json
+      to: speech-runtime-licenses/win32-x64.json
   executableName: autodoc
   icon: build/icon.ico
   forceCodeSigning: true
