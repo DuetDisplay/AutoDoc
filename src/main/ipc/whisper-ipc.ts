@@ -2,9 +2,16 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type { WhisperManager } from '../services/whisper-manager'
 import type { WhisperSetupStatus } from '../../shared/types'
 import type {
+  MeetingLanguageCode,
+  MeetingLanguageEngineState,
   WindowsMeetingLanguageAvailabilityInfo,
   WindowsMultilingualEngineReadyInfo
 } from '../../shared/meeting-language'
+import {
+  isMeetingLanguageAvailable,
+  MEETING_LANGUAGE_DEFINITIONS
+} from '../../shared/meeting-language'
+import { currentMeetingLanguageAvailability } from '../services/meeting-language-availability'
 import { getE2EWhisperStatus, retryE2EWhisperSetup } from '../services/e2e-fixtures'
 import {
   ensureWindowsMultilingualEngineReady,
@@ -30,8 +37,32 @@ const UNUSED_WINDOWS_ENGINE_READY: WindowsMultilingualEngineReadyInfo = {
 export function registerWhisperIpc(
   whisperManager: WhisperManager,
   getWhisperSetupStatus: () => WhisperSetupStatus,
-  retryTranscriptionSetup?: () => Promise<void>
+  retryTranscriptionSetup?: (language?: MeetingLanguageCode) => Promise<void>
 ): void {
+  ipcMain.handle('whisper:get-meeting-language-states', async () => {
+    const entries = await Promise.all(
+      MEETING_LANGUAGE_DEFINITIONS.map(async ({ code }) => {
+        const state: MeetingLanguageEngineState =
+          process.platform === 'win32'
+            ? await getWindowsMeetingLanguageAvailability(code)
+            : await whisperManager.getMacMeetingLanguageState(code)
+        return [code, state] as const
+      })
+    )
+    return Object.fromEntries(entries)
+  })
+
+  ipcMain.handle(
+    'whisper:prepare-meeting-language',
+    async (_event, language: MeetingLanguageCode) => {
+      if (!isMeetingLanguageAvailable(language, currentMeetingLanguageAvailability())) {
+        throw new Error('This meeting language needs 16 GB of memory.')
+      }
+      if (retryTranscriptionSetup) await retryTranscriptionSetup(language)
+      else await whisperManager.prepareMeetingLanguage(language)
+    }
+  )
+
   ipcMain.handle('whisper:get-setup-status', (): WhisperSetupStatus => {
     if (isE2E) {
       return getE2EWhisperStatus()

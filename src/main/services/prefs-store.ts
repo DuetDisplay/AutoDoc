@@ -11,6 +11,7 @@ const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 interface PrefsSchema {
   onboardingComplete: boolean
+  onboardingLanguageConfirmed: boolean
   onboardingStep: number
   onboardingMicSettingsOpened: boolean
   onboardingScreenSettingsOpened: boolean
@@ -30,6 +31,7 @@ function createPrefsStore(): Store<PrefsSchema> {
     name: 'autodoc-prefs',
     defaults: {
       onboardingComplete: false,
+      onboardingLanguageConfirmed: false,
       onboardingStep: 0,
       onboardingMicSettingsOpened: false,
       onboardingScreenSettingsOpened: false,
@@ -75,6 +77,14 @@ export class PrefsStore {
     this.store.set('onboardingScreenSettingsOpened', false)
     // Enable launch at login when onboarding finishes
     this.setLaunchAtLogin(true)
+  }
+
+  getOnboardingLanguageConfirmed(): boolean {
+    return this.store.get('onboardingLanguageConfirmed')
+  }
+
+  confirmOnboardingLanguage(): void {
+    this.store.set('onboardingLanguageConfirmed', true)
   }
 
   getOnboardingStep(): number {

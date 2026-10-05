@@ -123,7 +123,7 @@ export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[]
 
 export type MeetingLanguageEngineAvailability = 'available' | 'slower' | 'locked'
 
-/** Windows speech-engine state for one picker language. Absent on Mac. */
+/** Speech-engine state shared by Settings and onboarding on both platforms. */
 export interface MeetingLanguageEngineState {
   availability: MeetingLanguageEngineAvailability
   reason: string | null
@@ -153,10 +153,8 @@ export interface MeetingLanguageAvailability {
   /** True when this machine writes notes with the small notes model. */
   restricted: boolean
   availableLanguages: readonly MeetingLanguageCode[]
-  /** Per-language Windows engine availability. Mac leaves this unset. */
-  languageStates?: Readonly<
-    Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
-  >
+  /** Per-language engine availability and remaining first-use download sizes. */
+  languageStates?: Readonly<Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>>
 }
 
 export const UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY: MeetingLanguageAvailability = {
@@ -177,4 +175,18 @@ export function isMeetingLanguageAvailable(
   const code = normalizeMeetingLanguage(value)
   if (!availability.availableLanguages.includes(code)) return false
   return availability.languageStates?.[code]?.availability !== 'locked'
+}
+
+/** OS locales include regions; never map Traditional Chinese to Simplified. */
+export function defaultMeetingLanguageForLocale(
+  locale: string,
+  availability: MeetingLanguageAvailability
+): MeetingLanguageCode {
+  const tag = locale.toLowerCase().replaceAll('_', '-')
+  const language = tag.startsWith('zh')
+    ? normalizeMeetingLanguage(
+        /hant|-(tw|hk|mo)(-|$)/.test(tag) ? 'en' : tag.startsWith('zh-hans') ? 'zh-Hans' : tag
+      )
+    : normalizeMeetingLanguage(tag.split('-')[0])
+  return isMeetingLanguageAvailable(language, availability) ? language : DEFAULT_MEETING_LANGUAGE
 }

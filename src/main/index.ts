@@ -1999,11 +1999,21 @@ app.whenReady().then(async () => {
     markReprocessNotificationPending,
     recordingService.getRecordingsBaseDir()
   )
+  let preparedMeetingLanguage = 'en'
   registerWhisperIpc(
     whisperManager,
-    () => getCombinedTranscriptionSetupStatus(),
-    async () => {
-      await Promise.allSettled([whisperManager.startSetup(), startDiarizationSetup()])
+    () =>
+      prefsStore.getMeetingLanguage() === preparedMeetingLanguage
+        ? getCombinedTranscriptionSetupStatus()
+        : { phase: 'checking', percent: 0 },
+    async (language = prefsStore.getMeetingLanguage()) => {
+      const results = await Promise.allSettled([
+        whisperManager.prepareMeetingLanguage(language),
+        startDiarizationSetup()
+      ])
+      const failure = results.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
+      preparedMeetingLanguage = language
     }
   )
   registerSearchIpc(recordingService.getRecordingsBaseDir())

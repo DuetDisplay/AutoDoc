@@ -51,6 +51,15 @@ describe('PrefsStore', () => {
     })
   })
 
+  it('tracks language-step confirmation separately from the shared language preference', () => {
+    expect(store.getOnboardingLanguageConfirmed()).toBe(false)
+    store.setMeetingLanguage('fr')
+    expect(store.getOnboardingLanguageConfirmed()).toBe(false)
+    store.confirmOnboardingLanguage()
+    expect(store.getOnboardingLanguageConfirmed()).toBe(true)
+    expect(store.getMeetingLanguage()).toBe('fr')
+  })
+
   it('returns false for onboardingComplete by default', () => {
     expect(store.isOnboardingComplete()).toBe(false)
   })

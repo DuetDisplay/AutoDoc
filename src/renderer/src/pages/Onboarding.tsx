@@ -5,6 +5,7 @@ import { FeatureStep } from '../components/onboarding/FeatureStep'
 import { MicPermissionStep } from '../components/onboarding/MicPermissionStep'
 import { ScreenPermissionStep } from '../components/onboarding/ScreenPermissionStep'
 import { CalendarStep } from '../components/onboarding/CalendarStep'
+import { MeetingLanguageStep } from '../components/onboarding/MeetingLanguageStep'
 import { TranscriptionStep } from '../components/onboarding/TranscriptionStep'
 import { OllamaStep } from '../components/onboarding/OllamaStep'
 import { AnalyticsStep } from '../components/onboarding/AnalyticsStep'
@@ -23,8 +24,8 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 
-const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
-const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 7, 8, 9, 10] as const
+const DARWIN_STEP_ORDER = [0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10] as const
+const WINDOWS_STEP_ORDER = [0, 1, 2, 3, 6, 11, 7, 8, 9, 10] as const
 type NavigationMode = 'restore' | 'forward' | 'back'
 
 function getVisibleStepOrder(platform: string | null): readonly number[] {
@@ -48,21 +49,26 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
     Promise.all([
       window.electronAPI.invoke('prefs:get-onboarding-step'),
-      window.electronAPI.invoke('app:get-runtime-info')
-    ]).then(([saved, runtimeInfo]) => {
+      window.electronAPI.invoke('app:get-runtime-info'),
+      window.electronAPI.invoke('prefs:get-onboarding-language-confirmed')
+    ]).then(([saved, runtimeInfo, languageConfirmed]) => {
       const resolvedPlatform = runtimeInfo?.platform ?? 'darwin'
       const visibleSteps = getVisibleStepOrder(resolvedPlatform)
-      const savedStep = saved ?? 0
+      const savedStep = languageConfirmed === false && saved >= 7 && saved <= 10 ? 11 : (saved ?? 0)
       const exactIndex = visibleSteps.indexOf(savedStep)
 
       setPlatform(resolvedPlatform)
 
       if (exactIndex !== -1) {
+        if (savedStep !== saved)
+          void window.electronAPI.invoke('prefs:set-onboarding-step', savedStep)
         setStepIndex(exactIndex)
         return
       }
 
-      const migratedIndex = visibleSteps.findIndex((candidate) => candidate > savedStep)
+      const migratedIndex = visibleSteps.findIndex(
+        (candidate) => candidate !== 11 && candidate > savedStep
+      )
       const nextIndex = migratedIndex === -1 ? visibleSteps.length - 1 : migratedIndex
       const normalizedStep = visibleSteps[nextIndex] ?? visibleSteps[0]
       setStepIndex(nextIndex)
@@ -230,6 +236,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         )
       case 6:
         return <CalendarStep onNext={next} />
+      case 11:
+        return <MeetingLanguageStep onNext={next} />
       case 7:
         return <TranscriptionStep onNext={next} />
       case 8:

@@ -112,7 +112,7 @@ describe('Onboarding', () => {
     await screen.findByText(/your meetings talk/i)
     await waitFor(() => {
       const dots = document.querySelectorAll('[data-testid="step-dot"]')
-      expect(dots.length).toBe(10)
+      expect(dots.length).toBe(11)
     })
   })
 
@@ -254,7 +254,7 @@ describe('Onboarding', () => {
 
     await waitFor(() => {
       const dots = document.querySelectorAll('[data-testid="step-dot"]')
-      expect(dots.length).toBe(8)
+      expect(dots.length).toBe(9)
     })
   })
 
@@ -275,5 +275,57 @@ describe('Onboarding', () => {
     await waitFor(() => {
       expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 6)
     })
+  })
+  it.each(['darwin', 'win32'])(
+    'inserts the language step after calendar on %s',
+    async (platform) => {
+      vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+        if (channel === 'prefs:get-onboarding-step') return Promise.resolve(6)
+        if (channel === 'app:get-runtime-info')
+          return Promise.resolve(createRuntimeInfo({ platform }))
+        if (channel === 'calendar:get-accounts') return Promise.resolve([])
+        if (channel === 'prefs:get-meeting-language-availability')
+          return Promise.resolve({ restricted: false, availableLanguages: ['en'] })
+        if (channel === 'whisper:get-meeting-language-states') return Promise.resolve({})
+        return Promise.resolve({} as never)
+      })
+      render(<Onboarding onComplete={vi.fn()} />)
+      await userEvent.click(await screen.findByRole('button', { name: /skip for now/i }))
+      expect(
+        await screen.findByRole('heading', { name: 'Choose your meeting language' })
+      ).toBeInTheDocument()
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('prefs:set-onboarding-step', 11)
+    }
+  )
+
+  it.each([7, 8, 9, 10, 11])(
+    'restores unconfirmed saved step %s at the language step',
+    async (saved) => {
+      vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+        if (channel === 'prefs:get-onboarding-step') return Promise.resolve(saved)
+        if (channel === 'prefs:get-onboarding-language-confirmed') return Promise.resolve(false)
+        if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+        if (channel === 'prefs:get-meeting-language-availability')
+          return Promise.resolve({ restricted: false, availableLanguages: ['en'] })
+        return Promise.resolve({} as never)
+      })
+      render(<Onboarding onComplete={vi.fn()} />)
+      expect(
+        await screen.findByRole('heading', { name: 'Choose your meeting language' })
+      ).toBeInTheDocument()
+    }
+  )
+
+  it('restores confirmed progress without visiting the language step again', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(7)
+      if (channel === 'prefs:get-onboarding-language-confirmed') return Promise.resolve(true)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'ready', percent: 100 })
+      return Promise.resolve({} as never)
+    })
+    render(<Onboarding onComplete={vi.fn()} />)
+    expect(await screen.findByRole('heading', { name: 'Transcription Ready' })).toBeInTheDocument()
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  defaultMeetingLanguageForLocale,
   DEFAULT_MEETING_LANGUAGE,
   getMeetingAsrRoute,
   getMeetingLanguageDefinition,
@@ -65,7 +66,8 @@ describe('meeting languages', () => {
   })
 
   it('shrinks notes chunks only for Japanese, Chinese and Korean', () => {
-    for (const code of ['ja', 'zh-Hans', 'ko']) expect(isDenseScriptMeetingLanguage(code)).toBe(true)
+    for (const code of ['ja', 'zh-Hans', 'ko'])
+      expect(isDenseScriptMeetingLanguage(code)).toBe(true)
     for (const code of ['en', 'de', ...WHISPER_TURBO_EU_CODES]) {
       expect(isDenseScriptMeetingLanguage(code)).toBe(false)
     }
@@ -96,12 +98,9 @@ describe('meeting languages', () => {
     }
   )
 
-  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th', 'mt'])(
-    'does not support %s',
-    (code) => {
-      expect(normalizeMeetingLanguage(code)).toBe('en')
-    }
-  )
+  it.each(['zh-Hant', 'zh-tw', 'yue', 'hi', 'th', 'mt'])('does not support %s', (code) => {
+    expect(normalizeMeetingLanguage(code)).toBe('en')
+  })
 })
 
 describe('meetingLanguageAvailability', () => {
@@ -140,5 +139,32 @@ describe('meetingLanguageAvailability', () => {
     for (const code of meetingLanguageAvailability(true).availableLanguages) {
       expect(codes).toContain(code)
     }
+  })
+})
+
+describe('onboarding locale default', () => {
+  it.each([
+    ['fr-FR', 'fr'],
+    ['pt-BR', 'pt'],
+    ['es-MX', 'es'],
+    ['zh-Hans-CN', 'zh-Hans'],
+    ['zh-TW', 'en'],
+    ['zh-Hant-HK', 'en'],
+    ['mt-MT', 'en']
+  ])('maps %s to %s', (locale, expected) => {
+    expect(defaultMeetingLanguageForLocale(locale, meetingLanguageAvailability(false))).toBe(
+      expected
+    )
+  })
+  it('uses English for notes-model and engine locks', () => {
+    expect(defaultMeetingLanguageForLocale('ja-JP', meetingLanguageAvailability(true))).toBe('en')
+    expect(
+      defaultMeetingLanguageForLocale('es-ES', {
+        ...meetingLanguageAvailability(false),
+        languageStates: {
+          es: { availability: 'locked', reason: 'Needs a GPU', firstUseDownloadBytes: 0 }
+        }
+      })
+    ).toBe('en')
   })
 })

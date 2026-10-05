@@ -59,6 +59,7 @@ import type {
 import type {
   MeetingLanguageAvailability,
   MeetingLanguageCode,
+  MeetingLanguageEngineState,
   WindowsMeetingLanguageAvailabilityInfo,
   WindowsMultilingualEngineReadyInfo
 } from '../shared/meeting-language'
@@ -110,6 +111,11 @@ export interface IpcSendEvents {
 
 export interface IpcInvokeEvents {
   'app:get-version': []
+  'app:get-locale': []
+  'prefs:get-onboarding-language-confirmed': []
+  'prefs:confirm-onboarding-language': []
+  'whisper:get-meeting-language-states': []
+  'whisper:prepare-meeting-language': [language: MeetingLanguageCode]
   'app:get-runtime-info': []
   'app:get-storage-info': []
   'app:clear-downloaded-components': []
@@ -275,6 +281,13 @@ export interface IpcInvokeEvents {
 
 export interface IpcInvokeReturns {
   'app:get-version': string
+  'app:get-locale': string
+  'prefs:get-onboarding-language-confirmed': boolean
+  'prefs:confirm-onboarding-language': void
+  'whisper:get-meeting-language-states': Partial<
+    Record<MeetingLanguageCode, MeetingLanguageEngineState>
+  >
+  'whisper:prepare-meeting-language': void
   'app:get-runtime-info': AppRuntimeInfo
   'app:get-storage-info': AppStorageInfo
   'app:clear-downloaded-components': AppStorageInfo

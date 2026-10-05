@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
 import {
   isMeetingLanguageAvailable,
@@ -52,6 +52,12 @@ export function registerPrefsIpc(
   onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void,
   getMeetingLanguageAvailability: () => MeetingLanguageAvailability = currentMeetingLanguageAvailability
 ): void {
+  ipcMain.handle('prefs:get-onboarding-language-confirmed', () =>
+    prefsStore.getOnboardingLanguageConfirmed()
+  )
+  ipcMain.handle('prefs:confirm-onboarding-language', () => prefsStore.confirmOnboardingLanguage())
+  ipcMain.handle('app:get-locale', () => app.getLocale())
+
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {
     return prefsStore.isOnboardingComplete()
   })
