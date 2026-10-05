@@ -167,7 +167,11 @@ export function Settings() {
       setMeetingLanguageSetupStatus(null)
       return
     }
-    const unsub = window.electronAPI.on('whisper:setup-progress', setMeetingLanguageSetupStatus)
+    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
+      if (!status.meetingLanguage || status.meetingLanguage === preparingMeetingLanguage) {
+        setMeetingLanguageSetupStatus(status)
+      }
+    })
     return unsub
   }, [preparingMeetingLanguage])
 

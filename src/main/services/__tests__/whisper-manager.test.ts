@@ -152,19 +152,19 @@ describe('WhisperManager', () => {
       await manager.prepareMeetingLanguage('en')
       expect(english).toHaveBeenCalledOnce()
     })
-  })
 
-  it('retains a Mac download failure in picker state and clears it after retry', async () => {
-    vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
-    vi.mocked(downloadMacSpeechModels).mockRejectedValueOnce(new Error('offline'))
-    await expect(manager.prepareMeetingLanguage('fr')).rejects.toThrow('offline')
-    expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
-      availability: 'available',
-      reason: 'offline',
-      firstUseDownloadBytes: 100
+    it('retains a Mac download failure in picker state and clears it after retry', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      vi.mocked(downloadMacSpeechModels).mockRejectedValueOnce(new Error('offline'))
+      await expect(manager.prepareMeetingLanguage('fr')).rejects.toThrow('offline')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        availability: 'available',
+        reason: 'offline',
+        firstUseDownloadBytes: 100
+      })
+      await manager.prepareMeetingLanguage('fr')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({ reason: null })
     })
-    await manager.prepareMeetingLanguage('fr')
-    expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({ reason: null })
   })
 
   it('locks a missing Mac turbo runtime with a reason', async () => {
