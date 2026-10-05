@@ -17,14 +17,19 @@ A published tag is never modified, because installed versions keep downloading f
 
 ## Code signing
 
-`scripts/sign-windows-transcription-assets.js` processes only `whisper-cpp-vulkan-runtime-win-x64.zip` and `canary-cuda-runtime-win-x64.zip`. It signs every PE file (`.exe`, `.dll`, `.pyd`) without an Authenticode signature through `scripts/windows-sign.js`, re-zips with the original entry list, and writes `SIGNING-REPORT.md`.
+`scripts/sign-windows-transcription-assets.js` processes the runtimes new in v3: `whisper-cpp-vulkan-runtime-win-x64.zip`, `canary-cuda-runtime-win-x64.zip`, `faster-whisper-runtime-cpu-win-x64-v3.zip`, `faster-whisper-runtime-cuda-win-x64-v3.zip` and `parakeet-runtime-win-x64-v3.zip`. It signs every PE file (`.exe`, `.dll`, `.pyd`) without an Authenticode signature through `scripts/windows-sign.js`, re-zips with the original entry list, and writes `SIGNING-REPORT.md`.
+
+The CPython set signed in every Python runtime is `python.exe`, `pythonw.exe`, `python3.dll`, `python311.dll`, the stdlib `.pyd` files, OpenSSL, libffi and sqlite, plus numpy and OpenBLAS and the protobuf extension.
 
 | Runtime | Signed by us | Left as shipped |
 |---|---|---|
-| whisper-cpp-vulkan | `whisper-cli.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll`, `ggml-vulkan.dll` | none |
-| canary-cuda | 64 files: CPython (`python.exe`, `pythonw.exe`, `python3.dll`, `python311.dll`, stdlib `.pyd`, OpenSSL, libffi, sqlite), numpy and OpenBLAS, PyYAML, hf-xet | Vendor-signed (19): cuDNN (NVIDIA), onnxruntime-gpu (Microsoft), MSVC runtime (Microsoft), Tcl/Tk (PSF). Unsigned NVIDIA redistributables (10) under `Lib/site-packages/nvidia/`: cuBLAS, cuBLASLt, NVBLAS, NVRTC, cudart, cuFFT, cuRAND |
+| whisper-cpp-vulkan | 6: `whisper-cli.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll`, `ggml-vulkan.dll` | none |
+| faster-whisper CPU | 67: CPython set, CTranslate2, tokenizers, hf-xet, PyYAML | Vendor-signed (10): onnxruntime (Microsoft), MSVC runtime (Microsoft), Intel OpenMP (Intel), CTranslate2's cuDNN stub (NVIDIA), Tcl/Tk (PSF) |
+| faster-whisper CUDA | 67: as CPU | Vendor-signed (19): as CPU plus cuDNN (NVIDIA). Unsigned NVIDIA redistributables (6) under `Lib/site-packages/nvidia/`: cuBLAS, cuBLASLt, NVBLAS, NVRTC |
+| parakeet | 62: CPython set | Vendor-signed (9): onnxruntime-directml and DirectML (Microsoft), MSVC runtime (Microsoft), Tcl/Tk (PSF) |
+| canary-cuda | 62: CPython set | Vendor-signed (18): cuDNN (NVIDIA), onnxruntime-gpu (Microsoft), MSVC runtime (Microsoft), Tcl/Tk (PSF). Unsigned NVIDIA redistributables (11) under `Lib/site-packages/nvidia/`: cuBLAS, cuBLASLt, NVBLAS, NVRTC, cudart, cuFFT, cuRAND, nvJitLink |
 
-NVIDIA's redistributable DLLs are never modified, signed or not. The previously published runtimes (faster-whisper, Parakeet) aren't re-signed: their bytes are fixed by the earlier release. The Authenticode states in the license tables below are as built, before signing.
+NVIDIA's redistributable DLLs are never modified, signed or not. Files carried over unchanged from v2 aren't re-signed: their bytes are fixed by the earlier release. The Authenticode states in the license tables below are as built, before signing.
 
 ## Licenses
 
@@ -38,9 +43,9 @@ Authenticode CN is from `Get-AuthenticodeSignature` on extracted binaries. `NotS
 
 ---
 
-### faster-whisper-runtime-cpu-win-x64.zip
+### faster-whisper-runtime-cpu-win-x64-v3.zip
 
-English CPU route and Whisper turbo CPU. Pinned in `scripts/prepare-windows-transcription-assets.js` (`CPU_RUNTIME_PACKAGES`). No extra site-packages beyond that pin list and its declared deps.
+English CPU route and Whisper turbo CPU. Pinned in `scripts/prepare-windows-transcription-assets.js` (`CPU_RUNTIME_PACKAGES`); the build fails if any other distribution is installed. Replaces v2's `faster-whisper-runtime-cpu-win-x64.zip`, which is identical except that it also ships PyAV 17.0.1 and its FFmpeg DLLs (including GPL `libx264` / `libx265`). faster-whisper is installed with `--no-deps` so PyAV is left out: it only decodes audio files, and the worker passes faster-whisper decoded WAV samples instead.
 
 #### Python distributions
 
@@ -48,7 +53,6 @@ English CPU route and Whisper turbo CPU. Pinned in `scripts/prepare-windows-tran
 |---|---|---|---|
 | annotated-doc | 0.0.4 | MIT | License-Expression; `licenses/LICENSE` |
 | anyio | 4.13.0 | MIT | License-Expression; `licenses/LICENSE` |
-| av | 17.0.1 | BSD-3-Clause | License-Expression; `licenses/LICENSE.txt`. Bundles a full FFmpeg codec DLL set (see Native) |
 | certifi | 2026.4.22 | MPL-2.0 | `License` + classifier; `licenses/LICENSE` |
 | click | 8.3.3 | BSD-3-Clause | License-Expression; `licenses/LICENSE.txt` |
 | colorama | 0.4.6 | BSD-3-Clause | METADATA `License` empty; classifier only “BSD License”; `licenses/LICENSE.txt` is 3-clause BSD |
@@ -104,13 +108,12 @@ English CPU route and Whisper turbo CPU. Pinned in `scripts/prepare-windows-tran
 | `onnxruntime/capi/onnxruntime_providers_shared.dll` | 1.25.1 | MIT | Authenticode Valid, CN=`Microsoft Corporation` |
 | `numpy.libs/msvcp140-*.dll` | (VS redist, hashed name) | Microsoft Visual C++ redistributable terms | Authenticode Valid, CN=`Microsoft Windows Software Compatibility Publisher` |
 | `numpy.libs/libscipy_openblas64_*.dll` | (OpenBLAS, hashed) | BSD-3-Clause (OpenBLAS; covered by numpy License-Expression) | Not separately signed-checked |
-| PyAV `av.libs/*` (FFmpeg 8 + codecs) | av 17.0.1 | mixed; **includes GPL** | 29 DLLs. GPL-licensed names present: `libx264-165-*.dll`, `libx265-*.dll`. Also LAME, OpenH264, dav1d, opus, vorbis, vpx, webp, SVT-AV1, plus MinGW `libgcc_s_seh`, `libstdc++`, `libwinpthread`. `libx264` **NotSigned** |
 
 ---
 
-### faster-whisper-runtime-cuda-win-x64.zip
+### faster-whisper-runtime-cuda-win-x64-v3.zip
 
-English NVIDIA and Whisper turbo NVIDIA. Same Python set as the CPU zip **plus** the three pinned CUDA wheels. CPython / OpenSSL / libffi / sqlite / Tcl/Tk / MSVC / PyAV / CTranslate2 / ORT CPU DLLs match the CPU zip (same versions; `ctranslate2.dll` also **NotSigned**).
+English NVIDIA and Whisper turbo NVIDIA. Same Python set as the CPU zip **plus** the three pinned CUDA wheels. CPython / OpenSSL / libffi / sqlite / Tcl/Tk / MSVC / CTranslate2 / ORT CPU DLLs match the CPU zip (same versions; `ctranslate2.dll` also **NotSigned**). Replaces v2's `faster-whisper-runtime-cuda-win-x64.zip`; the only difference is that PyAV is removed, as in the CPU zip.
 
 #### Additional Python distributions
 
@@ -120,7 +123,7 @@ English NVIDIA and Whisper turbo NVIDIA. Same Python set as the CPU zip **plus**
 | nvidia-cuda-nvrtc-cu12 | 12.9.86 | LicenseRef-NVIDIA-Proprietary | `License` + classifier `Other/Proprietary License`; `licenses/License.txt` (same EULA family). No license URL in METADATA |
 | nvidia-cudnn-cu12 | 9.21.1.3 | LicenseRef-NVIDIA-Proprietary | License-Expression; `licenses/License.txt`. No license URL in METADATA |
 
-CPU-zip Python rows that are identical here (not repeated): annotated-doc 0.0.4 through typing_extensions 4.15.0, including av 17.0.1, ctranslate2 4.7.1, faster-whisper 1.2.1, huggingface_hub 1.14.0, numpy 2.4.4, onnxruntime 1.25.1, tokenizers 0.23.1.
+CPU-zip Python rows that are identical here (not repeated): annotated-doc 0.0.4 through typing_extensions 4.15.0, including ctranslate2 4.7.1, faster-whisper 1.2.1, huggingface_hub 1.14.0, numpy 2.4.4, onnxruntime 1.25.1, tokenizers 0.23.1.
 
 #### Additional native / vendor DLLs
 
@@ -139,37 +142,22 @@ No `cudart` / `cufft` / `curand` wheels in this zip (unlike canary-cuda). No `vu
 
 ---
 
-### parakeet-runtime-win-x64.zip
+### parakeet-runtime-win-x64-v3.zip
 
-English Parakeet and Canary CPU. Pinned: `numpy==2.4.4`, `onnx-asr==0.11.0`, `onnxruntime-directml==1.24.4`, plus **build-only** `huggingface_hub==1.22.0` which was **not pruned** and pulled its dependency tree. `sympy` / `mpmath` come from `onnxruntime-directml` (`Requires-Dist: sympy`), not from onnx-asr.
+English Parakeet and Canary CPU. Pinned in `PARAKEET_RUNTIME_PACKAGES`, at the versions v2 shipped. Replaces v2's `parakeet-runtime-win-x64.zip`, which is identical except that it also ships `huggingface_hub` 1.22.0 and its dependency tree (anyio, certifi, click, colorama, filelock, fsspec, h11, hf-xet, httpcore, httpx, idna, PyYAML, tqdm, typing_extensions). That was installed only to download models during the build; the build now downloads through the faster-whisper CPU runtime. `sympy` / `mpmath` come from `onnxruntime-directml` (`Requires-Dist: sympy`), not from onnx-asr.
 
 #### Python distributions
 
 | Component | Version | License | Notes |
 |---|---|---|---|
-| anyio | 4.14.1 | MIT | Transitive via huggingface_hub → httpx. License-Expression; `licenses/LICENSE` |
-| certifi | 2026.6.17 | MPL-2.0 | Transitive (hf). `License` + classifier; `licenses/LICENSE` |
-| click | 8.4.2 | BSD-3-Clause | Transitive (hf). License-Expression; `licenses/LICENSE.txt` |
-| colorama | 0.4.6 | BSD-3-Clause | Transitive (hf). Same METADATA gap as CPU zip; `licenses/LICENSE.txt` is 3-clause |
-| filelock | 3.29.5 | MIT | Transitive (hf). License-Expression; `licenses/LICENSE` |
 | flatbuffers | 25.12.19 | Apache-2.0 | Via onnxruntime-directml. **no LICENSE file** |
-| fsspec | 2026.6.0 | BSD-3-Clause | Transitive (hf). License-Expression; `licenses/LICENSE` |
-| h11 | 0.16.0 | MIT | Transitive (hf). `licenses/LICENSE.txt` |
-| hf-xet | 1.5.1 | Apache-2.0 | Transitive (hf). License-Expression; `licenses/LICENSE` |
-| httpcore | 1.0.9 | BSD-3-Clause | Transitive (hf) |
-| httpx | 0.28.1 | BSD-3-Clause | Transitive (hf) |
-| huggingface_hub | 1.22.0 | Apache-2.0 | **Build-only leak.** Prepare script comment: onnx-asr does not depend on it; installed so model snapshots can be downloaded, then left in the runtime |
-| idna | 3.18 | BSD-3-Clause | Transitive (hf) |
 | mpmath | 1.3.0 | BSD | Via sympy. `License: BSD`; dist-info `LICENSE` |
-| numpy | 2.4.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | Pinned |
-| onnx-asr | 0.11.0 | MIT | Pinned. License-Expression; `licenses/LICENSE`. Requires only numpy (and typing-extensions on older Python) |
-| onnxruntime-directml | 1.24.4 | MIT | Pinned. `License: MIT License`; **no LICENSE file in dist-info**; package `onnxruntime/LICENSE` is MIT. Requires sympy |
-| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause | Via ORT / hf |
+| numpy | 2.4.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | License-Expression; `licenses/LICENSE.txt` |
+| onnx-asr | 0.11.0 | MIT | License-Expression; `licenses/LICENSE`. Requires only numpy (and typing-extensions on older Python) |
+| onnxruntime-directml | 1.24.4 | MIT | `License: MIT License`; **no LICENSE file in dist-info**; package `onnxruntime/LICENSE` is MIT. Requires sympy |
+| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause | Via ORT |
 | protobuf | 7.35.1 | BSD-3-Clause | Via ORT (newer than the faster-whisper pin) |
-| PyYAML | 6.0.3 | MIT | Transitive (hf) |
 | sympy | 1.14.0 | BSD | Via onnxruntime-directml. `License: BSD`; `licenses/LICENSE` |
-| tqdm | 4.68.3 | MPL-2.0 AND MIT | Transitive (hf) |
-| typing_extensions | 4.16.0 | PSF-2.0 | Transitive (hf) |
 
 #### CPython and bundled libs
 
@@ -189,17 +177,21 @@ Same CPython 3.11.15 standalone layout as the faster-whisper CPU zip (same `LICE
 
 ### canary-cuda-runtime-win-x64.zip
 
-Canary NVIDIA. Built by the AD-100 asset build script (`build_assets.py`) as a **copy of this parakeet runtime** with `onnxruntime-directml` removed and `onnxruntime-gpu==1.25.1` plus NVIDIA `cuda_runtime` / `cufft` / `curand` / `cublas` / `cudnn` / `cuda_nvrtc` wheels added. `Lib/site-packages/sitecustomize.py` registers those NVIDIA `bin` dirs. Therefore **huggingface_hub 1.22.0 and its tree are still present**.
+Canary NVIDIA. Pinned in `CANARY_CUDA_RUNTIME_PACKAGES`. The build copies `scripts/canary-cuda-sitecustomize.py` to `Lib/site-packages/sitecustomize.py`, which registers the NVIDIA `bin` dirs, and deletes `onnxruntime_providers_tensorrt.dll`: the worker only requests the CUDA and CPU providers, and no TensorRT redistributable is bundled. Not in v2.
 
 #### Python distributions
 
-Parakeet rows that remain (same versions): anyio 4.14.1, certifi 2026.6.17, click 8.4.2, colorama 0.4.6, filelock 3.29.5, flatbuffers 25.12.19, fsspec 2026.6.0, h11 0.16.0, hf-xet 1.5.1, httpcore 1.0.9, httpx 0.28.1, **huggingface_hub 1.22.0**, idna 3.18, mpmath 1.3.0, numpy 2.4.4, onnx-asr 0.11.0, packaging 26.2, protobuf 7.35.1, PyYAML 6.0.3, sympy 1.14.0, tqdm 4.68.3, typing_extensions 4.16.0.
-
 | Component | Version | License | Notes |
 |---|---|---|---|
-| onnxruntime-gpu | 1.25.1 | MIT | Replaces onnxruntime-directml. `License: MIT License`; **no LICENSE file in dist-info**; package `onnxruntime/LICENSE` is MIT. Hard deps: flatbuffers, numpy, packaging, protobuf (no sympy; sympy remains only because it was already in the parakeet copy) |
+| flatbuffers | 25.12.19 | Apache-2.0 | Via onnxruntime-gpu. **no LICENSE file** |
+| numpy | 2.4.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | License-Expression; `licenses/LICENSE.txt` |
+| onnx-asr | 0.11.0 | MIT | License-Expression; `licenses/LICENSE` |
+| onnxruntime-gpu | 1.25.1 | MIT | `License: MIT License`; **no LICENSE file in dist-info**; package `onnxruntime/LICENSE` is MIT. Hard deps: flatbuffers, numpy, packaging, protobuf (no sympy) |
+| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause | Via ORT |
+| protobuf | 7.35.1 | BSD-3-Clause | Via ORT |
 | nvidia-cuda-runtime-cu12 | 12.9.79 | LicenseRef-NVIDIA-Proprietary | `License` + classifier `Other/Proprietary License`; `licenses/License.txt`. **No license URL in METADATA** |
-| nvidia-cufft-cu12 | 11.4.1.4 | LicenseRef-NVIDIA-Proprietary | Same; classifier `Other/Proprietary License`; `licenses/License.txt` |
+| nvidia-cufft-cu12 | 11.4.1.4 | LicenseRef-NVIDIA-Proprietary | Same; classifier `Other/Proprietary License`; `licenses/License.txt`. Requires nvidia-nvjitlink-cu12 |
+| nvidia-nvjitlink-cu12 | 12.9.86 | LicenseRef-NVIDIA-Proprietary | Via nvidia-cufft-cu12. Classifier `Other/Proprietary License`; `licenses/License.txt` |
 | nvidia-curand-cu12 | 10.3.10.19 | NVIDIA Proprietary Software | `License: NVIDIA Proprietary Software`; classifier `Other/Proprietary License`; dist-info root `License.txt` (not under `licenses/`) |
 | nvidia-cublas-cu12 | 12.9.2.10 | LicenseRef-NVIDIA-Proprietary | Same wheel as faster-whisper-cuda |
 | nvidia-cudnn-cu12 | 9.21.1.3 | LicenseRef-NVIDIA-Proprietary | Same wheel as faster-whisper-cuda |
@@ -207,7 +199,7 @@ Parakeet rows that remain (same versions): anyio 4.14.1, certifi 2026.6.17, clic
 
 #### CPython and bundled libs
 
-Same CPython 3.11.15 standalone as parakeet (this zip is a copy). Same `LICENSE.txt` and `DLLs/` set. Same MSVC `vcruntime140.dll` / `vcruntime140_1.dll`.
+Same CPython 3.11.15 standalone as parakeet. Same `LICENSE.txt` and `DLLs/` set. Same MSVC `vcruntime140.dll` / `vcruntime140_1.dll`.
 
 #### Native / vendor DLLs
 
@@ -217,15 +209,14 @@ Same CPython 3.11.15 standalone as parakeet (this zip is a copy). Same `LICENSE.
 | `nvidia/cufft/bin/cufft64_11.dll` | 11.4.1.4 | NVIDIA proprietary | **NotSigned** (287 136 768 bytes) |
 | `nvidia/cufft/bin/cufftw64_11.dll` | 11.4.1.4 | NVIDIA proprietary | |
 | `nvidia/curand/bin/curand64_10.dll` | 10.3.10.19 | NVIDIA proprietary | **NotSigned** |
+| `nvidia/nvjitlink/bin/nvJitLink_120_0.dll` | 12.9.86 | NVIDIA proprietary | |
 | `nvidia/cublas/bin/cublas64_12.dll`, `cublasLt64_12.dll`, `nvblas64_12.dll` | 12.9.2.10 | NVIDIA proprietary | |
 | `nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll`, `nvrtc64_120_0.alt.dll`, `nvrtc-builtins64_129.dll` | 12.9.86 | NVIDIA proprietary | |
 | `nvidia/cudnn/bin/cudnn64_9.dll` + `cudnn_*64_9.dll` (8 extra) | 9.21.1.3 | NVIDIA proprietary (cuDNN) | Same set as faster-whisper-cuda |
 | `onnxruntime/capi/onnxruntime.dll` | 1.25.1 (GPU build) | MIT | Authenticode Valid, CN=`Microsoft Corporation` (16 200 504 bytes; different from CPU and DirectML builds) |
 | `onnxruntime/capi/onnxruntime_providers_shared.dll` | 1.25.1 | MIT | |
 | `onnxruntime/capi/onnxruntime_providers_cuda.dll` | 1.25.1 | MIT | Authenticode Valid, CN=`Microsoft Corporation` |
-| `onnxruntime/capi/onnxruntime_providers_tensorrt.dll` | 1.25.1 | MIT (provider); TensorRT itself **not** bundled | Authenticode Valid, CN=`Microsoft Corporation`. Ships even though no TensorRT redistributable is in the zip |
-| `numpy.libs/msvcp140-*.dll`, `libscipy_openblas64_*.dll` | (from parakeet copy) | MSVC redist / BSD-3-Clause | |
-| DirectML.dll | — | — | **Removed** with onnxruntime-directml |
+| `numpy.libs/msvcp140-*.dll`, `libscipy_openblas64_*.dll` | (same numpy wheel as parakeet) | MSVC redist / BSD-3-Clause | |
 
 ---
 
@@ -277,16 +268,12 @@ ONNX conversions of Canary and Parakeet are by **istupakov** on Hugging Face (`i
 
 1. **NVIDIA CUDA / cuDNN EULA** — `LicenseRef-NVIDIA-Proprietary` / “NVIDIA Proprietary Software” / classifier `Other/Proprietary License`. Bundled `License.txt` is the CUDA Toolkit EULA (redistribute only Attachment A runtime DLLs; not a full toolkit; GPU-only use). **METADATA does not include a license URL.** Sampled wheel DLLs (`cudart64_12.dll`, `cufft64_11.dll`, `curand64_10.dll`, `nvrtc-builtins64_129.dll`, `nvblas64_12.dll`) are **NotSigned**.
 2. **MSVC redistributables** — root `vcruntime140.dll` / `vcruntime140_1.dll` and numpy’s hashed `msvcp140-*.dll`. Also CPython `LICENSE.txt` “Microsoft Distributable Code” conditions on every linked `.exe`/`.dll`/`.pyd`.
-3. **PyAV / FFmpeg GPL** — `av` 17.0.1 is BSD-3-Clause, but `av.libs` includes `libx264` and `libx265` (GPL). Also LAME, OpenH264, MinGW runtime (`libgcc`, `libstdc++`, `libwinpthread`). Present in both faster-whisper runtimes.
-4. **CPython `LICENSE.txt` gap** — OpenSSL 3, libffi, SQLite, zlib, and xz binaries/extensions are in the runtime, but this standalone `LICENSE.txt` only spells out PSF-2.0, Microsoft Distributable Code, bzip2 1.0.8, and Tcl/Tk.
-5. **tokenizers 0.23.1** — Apache classifier only; no License field, License-Expression, or LICENSE file (Apache 1.1 vs 2.0 not stated in-tree).
-6. **colorama 0.4.6** — METADATA license empty; classifier only “BSD License”. LICENSE.txt is BSD-3-Clause.
-7. **DirectML.dll** (parakeet) — Microsoft-signed; redistributable terms are not in the wheel METADATA (ORT itself is MIT).
-8. **Intel OpenMP `libiomp5md.dll`** (CTranslate2) — Intel-signed; no dist-info license file.
-9. **onnxruntime `ThirdPartyNotices.txt`** — includes Intel MKL ISSL and a notice that LGPL components may be reverse-engineered to debug modifications. ORT 1.24.4 DirectML still hard-depends on **sympy**.
-10. **`onnxruntime_providers_tensorrt.dll`** in canary-cuda — Microsoft-signed ORT provider; TensorRT redistributable is **not** in the zip. Confirm whether shipping the provider DLL has extra conditions.
-11. **MPL-2.0** — `certifi` and `tqdm` (`MPL-2.0 AND MIT`). File-level copyleft if those files are modified.
-12. **ctranslate2 CPU wheel ships `cudnn64_9.dll`** (NVIDIA-signed stub) even in the CPU-only zip.
-13. **huggingface_hub 1.22.0 + deps leaked** into parakeet and canary-cuda (prepare script marks it build-only). Not a license mystery, but it widens the redistributed surface (httpx, hf-xet, click, …).
-14. **ensurepip bundled wheels** (`pip-24.0`, `setuptools-79.0.1`) remain inside every Python runtime under `Lib/ensurepip/_bundled/`.
-)
+3. **CPython `LICENSE.txt` gap** — OpenSSL 3, libffi, SQLite, zlib, and xz binaries/extensions are in the runtime, but this standalone `LICENSE.txt` only spells out PSF-2.0, Microsoft Distributable Code, bzip2 1.0.8, and Tcl/Tk.
+4. **tokenizers 0.23.1** — Apache classifier only; no License field, License-Expression, or LICENSE file (Apache 1.1 vs 2.0 not stated in-tree).
+5. **colorama 0.4.6** — METADATA license empty; classifier only “BSD License”. LICENSE.txt is BSD-3-Clause.
+6. **DirectML.dll** (parakeet) — Microsoft-signed; redistributable terms are not in the wheel METADATA (ORT itself is MIT).
+7. **Intel OpenMP `libiomp5md.dll`** (CTranslate2) — Intel-signed; no dist-info license file.
+8. **onnxruntime `ThirdPartyNotices.txt`** — includes Intel MKL ISSL and a notice that LGPL components may be reverse-engineered to debug modifications. ORT 1.24.4 DirectML still hard-depends on **sympy**.
+9. **MPL-2.0** — `certifi` and `tqdm` (`MPL-2.0 AND MIT`) in the faster-whisper runtimes. File-level copyleft if those files are modified.
+10. **ctranslate2 CPU wheel ships `cudnn64_9.dll`** (NVIDIA-signed stub) even in the CPU-only zip.
+11. **ensurepip bundled wheels** (`pip-24.0`, `setuptools-79.0.1`) remain inside every Python runtime under `Lib/ensurepip/_bundled/`.
