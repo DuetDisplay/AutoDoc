@@ -63,6 +63,7 @@ import {
 import { bindWindowsMultilingualReadiness } from './services/windows-multilingual-readiness'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
+import { speechRuntimeLicenseNotices } from './services/speech-runtime-licenses'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
 import { registerNotesFeedbackIpc } from './ipc/notes-feedback-ipc'
@@ -565,6 +566,8 @@ app.whenReady().then(async () => {
       context: buildPermissionLogContext(context)
     })
   }
+
+  ipcMain.handle('app:get-speech-runtime-licenses', () => speechRuntimeLicenseNotices())
 
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {

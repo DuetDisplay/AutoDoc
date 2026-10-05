@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
+import { SpeechLicenses } from '../components/SpeechLicenses'
 import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
@@ -67,6 +68,7 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
 export function Settings() {
   const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
     useCalendarStore()
+  const [showSpeechLicenses, setShowSpeechLicenses] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
@@ -729,6 +731,20 @@ export function Settings() {
           )}
           <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
+            <button
+              type="button"
+              aria-expanded={showSpeechLicenses}
+              aria-controls="speech-licenses"
+              onClick={() => setShowSpeechLicenses((open) => !open)}
+              className="mb-3 text-[12px] font-medium text-sage-dark underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
+            >
+              Open-source and model licenses
+            </button>
+            {showSpeechLicenses && runtimeInfo && (
+              <div id="speech-licenses">
+                <SpeechLicenses platform={runtimeInfo.platform} />
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
               {updateStatus.state === 'idle' && !__AUTODOC_QA_BUILD__ && (

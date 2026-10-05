@@ -143,7 +143,7 @@ jobs:
         run: npm run test:main:run -- src/main/services/__tests__/whisper-manager.test.ts
 
       - name: Build macOS CI artifacts (unsigned)
-        run: npm run prepare:macos-mlx-runtime && npm run prepare:macos-canary-runtime && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false -c.mac.identity=null $AUTODOC_BUILDER_CONFIG_ARGS
+        run: npm run prepare:macos-mlx-runtime && npm run prepare:macos-canary-runtime && npm run prepare:macos-speech-licenses && npm run build && npx electron-builder --mac --publish never --config.mac.notarize=false -c.mac.identity=null $AUTODOC_BUILDER_CONFIG_ARGS
 
       - name: Upload macOS artifacts
         if: success()
@@ -236,6 +236,7 @@ jobs:
         run: |
           npm run prepare:macos-mlx-runtime
           npm run prepare:macos-canary-runtime
+          npm run prepare:macos-speech-licenses
           npm run build
           npx electron-builder --mac --publish never "-c.extraMetadata.version=${{ needs.validate-release-request.outputs.release_version }}"
 

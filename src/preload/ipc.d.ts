@@ -1,3 +1,4 @@
+import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
   NotesFeedbackRequest,
@@ -111,6 +112,7 @@ export interface IpcSendEvents {
 
 export interface IpcInvokeEvents {
   'app:get-version': []
+  'app:get-speech-runtime-licenses': []
   'app:get-locale': []
   'prefs:get-onboarding-language-confirmed': []
   'prefs:confirm-onboarding-language': []
@@ -281,6 +283,7 @@ export interface IpcInvokeEvents {
 
 export interface IpcInvokeReturns {
   'app:get-version': string
+  'app:get-speech-runtime-licenses': SpeechLicenseNotice[]
   'app:get-locale': string
   'prefs:get-onboarding-language-confirmed': boolean
   'prefs:confirm-onboarding-language': void

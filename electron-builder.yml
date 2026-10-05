@@ -58,6 +58,8 @@ mac:
       filter:
         - '**/*'
         - '!**/._*'
+    - from: vendor/speech-runtime-licenses/darwin-arm64.json
+      to: speech-runtime-licenses/darwin-arm64.json
     - from: resources/canary-mlx-transcribe.py
       to: canary-mlx-transcribe.py
     - from: resources/mlx-whisper-transcribe.py
