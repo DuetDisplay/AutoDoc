@@ -22,6 +22,7 @@ vi.mock('../../services/e2e-fixtures', () => ({
 
 import { ipcMain } from 'electron'
 import { registerWhisperIpc } from '../whisper-ipc'
+import { bindMeetingLanguagePreferenceStore } from '../../services/meeting-language-availability'
 
 function handler(channel: string) {
   const registration = vi
@@ -36,6 +37,7 @@ describe('whisper Windows multilingual IPC', () => {
     vi.mocked(ipcMain.handle).mockClear()
     getWindowsMeetingLanguageAvailability.mockReset()
     ensureWindowsMultilingualEngineReady.mockReset()
+    bindMeetingLanguagePreferenceStore(null)
     registerWhisperIpc(
       { startSetup: vi.fn() } as never,
       () => ({ phase: 'ready', percent: 100 })
@@ -89,5 +91,60 @@ describe('whisper Windows multilingual IPC', () => {
       fallbackReason: 'canary-cuda self-test failed'
     })
     expect(ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith('de')
+  })
+
+  it('restores the previous saved language when ensure returns locked', async () => {
+    if (process.platform !== 'win32') return
+    let current: 'en' | 'de' = 'de'
+    bindMeetingLanguagePreferenceStore({
+      getMeetingLanguage: () => current,
+      restorePreviousMeetingLanguageIfCurrent(locked) {
+        if (current !== locked) return current
+        current = 'en'
+        return current
+      }
+    })
+    ensureWindowsMultilingualEngineReady.mockResolvedValue({
+      engineId: null,
+      availability: 'locked',
+      reason: 'German needs a supported graphics card on this PC.'
+    })
+
+    await expect(handler('whisper:ensure-windows-multilingual-engine')({}, 'de')).resolves.toEqual({
+      engineId: null,
+      availability: 'locked',
+      reason: 'German needs a supported graphics card on this PC.',
+      fallbackFrom: undefined,
+      fallbackReason: undefined
+    })
+    expect(current).toBe('en')
+    bindMeetingLanguagePreferenceStore(null)
+  })
+
+  it('does not restore when ensure throws a download error', async () => {
+    if (process.platform !== 'win32') return
+    let current: 'en' | 'de' = 'de'
+    bindMeetingLanguagePreferenceStore({
+      getMeetingLanguage: () => current,
+      restorePreviousMeetingLanguageIfCurrent(locked) {
+        if (current !== locked) return current
+        current = 'en'
+        return current
+      }
+    })
+    ensureWindowsMultilingualEngineReady.mockRejectedValue(new Error('Failed to download the speech model.'))
+    getWindowsMeetingLanguageAvailability.mockResolvedValue({
+      availability: 'available',
+      reason: null,
+      engineId: 'whisper-turbo-cuda',
+      firstUseDownloadBytes: 100,
+      needsSelfTest: true
+    })
+
+    await expect(handler('whisper:ensure-windows-multilingual-engine')({}, 'de')).rejects.toThrow(
+      'Failed to download the speech model.'
+    )
+    expect(current).toBe('de')
+    bindMeetingLanguagePreferenceStore(null)
   })
 })

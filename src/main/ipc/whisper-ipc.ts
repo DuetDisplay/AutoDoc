@@ -9,9 +9,14 @@ import type {
 } from '../../shared/meeting-language'
 import {
   isMeetingLanguageAvailable,
-  MEETING_LANGUAGE_DEFINITIONS
+  MEETING_LANGUAGE_DEFINITIONS,
+  normalizeMeetingLanguage
 } from '../../shared/meeting-language'
-import { currentMeetingLanguageAvailability } from '../services/meeting-language-availability'
+import {
+  currentMeetingLanguageAvailability,
+  restorePreviousMeetingLanguageIfWindowsLocked,
+  restorePreviousMeetingLanguageOnLock
+} from '../services/meeting-language-availability'
 import { getE2EWhisperStatus, retryE2EWhisperSetup } from '../services/e2e-fixtures'
 import {
   ensureWindowsMultilingualEngineReady,
@@ -108,7 +113,17 @@ export function registerWhisperIpc(
       if (process.platform !== 'win32') {
         return UNUSED_WINDOWS_ENGINE_READY
       }
-      const ready = await ensureWindowsMultilingualEngineReady(String(language ?? ''))
+      const selected = normalizeMeetingLanguage(language)
+      let ready
+      try {
+        ready = await ensureWindowsMultilingualEngineReady(selected)
+      } catch (error) {
+        await restorePreviousMeetingLanguageIfWindowsLocked(selected)
+        throw error
+      }
+      if (ready.availability === 'locked' || !ready.engineId) {
+        restorePreviousMeetingLanguageOnLock(selected)
+      }
       return {
         engineId: ready.engineId,
         availability: ready.availability,

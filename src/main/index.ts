@@ -57,6 +57,7 @@ import {
 } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import {
+  bindMeetingLanguagePreferenceStore,
   bindWindowsNotesModelSource,
   resolveRecordingMeetingLanguage
 } from './services/meeting-language-availability'
@@ -902,6 +903,7 @@ app.whenReady().then(async () => {
 
   const whisperManager = new WhisperManager()
   bindWindowsMultilingualReadiness({ whisperManager })
+  bindMeetingLanguagePreferenceStore(prefsStore)
   bindWindowsNotesModelSource(() => {
     const profile = whisperManager.getWindowsProcessingProfile()
     return profile ? { id: profile.id, hardware: profile.hardware } : null

@@ -4,6 +4,7 @@ import {
   isEnglishMeetingLanguage,
   isMeetingLanguageAvailable,
   meetingLanguageAvailability,
+  normalizeMeetingLanguage,
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
@@ -24,9 +25,53 @@ type WindowsNotesModelSource = () => WindowsNotesModelProfile | null
 
 let windowsNotesModelSource: WindowsNotesModelSource | null = null
 
+export interface MeetingLanguagePreferenceStore {
+  getMeetingLanguage(): MeetingLanguageCode
+  restorePreviousMeetingLanguageIfCurrent(lockedLanguage: unknown): MeetingLanguageCode
+}
+
+let meetingLanguagePreferenceStore: MeetingLanguagePreferenceStore | null = null
+
 /** Lets Settings and recording read the same notes-model decision Whisper already made. */
 export function bindWindowsNotesModelSource(source: WindowsNotesModelSource): void {
   windowsNotesModelSource = source
+}
+
+export function bindMeetingLanguagePreferenceStore(
+  store: MeetingLanguagePreferenceStore | null
+): void {
+  meetingLanguagePreferenceStore = store
+}
+
+/** Restore the last saved language when setup already reported a lock. */
+export function restorePreviousMeetingLanguageOnLock(
+  language: MeetingLanguageCode
+): MeetingLanguageCode | null {
+  const store = meetingLanguagePreferenceStore
+  if (!store) return null
+  const locked = normalizeMeetingLanguage(language)
+  if (store.getMeetingLanguage() !== locked) return null
+  return store.restorePreviousMeetingLanguageIfCurrent(locked)
+}
+
+/**
+ * Restore only when Windows routing/self-test reports locked — not download or
+ * other transient setup failures.
+ */
+export async function restorePreviousMeetingLanguageIfWindowsLocked(
+  language: MeetingLanguageCode
+): Promise<MeetingLanguageCode | null> {
+  if (process.platform !== 'win32') return null
+  try {
+    const { getWindowsMeetingLanguageAvailability } = await import(
+      './windows-multilingual-readiness'
+    )
+    const engine = await getWindowsMeetingLanguageAvailability(language)
+    if (engine.availability !== 'locked') return null
+  } catch {
+    return null
+  }
+  return restorePreviousMeetingLanguageOnLock(language)
 }
 
 export function usesSmallNotesModel(options?: {

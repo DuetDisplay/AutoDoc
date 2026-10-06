@@ -126,6 +126,20 @@ describe('PrefsStore', () => {
     expect(store.getMeetingLanguage()).toBe('fr')
   })
 
+  it('restores the previous saved language when a later pick is locked', () => {
+    store.setMeetingLanguage('fr')
+    store.setMeetingLanguage('es')
+    expect(store.restorePreviousMeetingLanguageIfCurrent('es')).toBe('fr')
+    expect(store.getMeetingLanguage()).toBe('fr')
+    expect(store.restorePreviousMeetingLanguageIfCurrent('es')).toBe('fr')
+  })
+
+  it('restores English when the locked pick was the first saved language', () => {
+    store.setMeetingLanguage('es')
+    expect(store.restorePreviousMeetingLanguageIfCurrent('es')).toBe('en')
+    expect(store.getMeetingLanguage()).toBe('en')
+  })
+
   it('normalizes an invalid meeting language back to English', () => {
     store.setMeetingLanguage('auto')
 

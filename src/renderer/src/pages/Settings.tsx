@@ -368,6 +368,15 @@ export function Settings() {
       setMeetingLanguageError(
         err instanceof Error ? err.message : 'Failed to save the meeting language.'
       )
+      try {
+        setMeetingLanguageState(
+          normalizeMeetingLanguage(
+            await window.electronAPI.invoke('prefs:get-meeting-language')
+          )
+        )
+      } catch {
+        // Keep the last picker value if the saved preference cannot be read.
+      }
     } finally {
       if (!isWindows) await refreshLanguageStates()
       setPreparingMeetingLanguage(null)

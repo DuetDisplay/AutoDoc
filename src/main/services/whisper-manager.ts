@@ -1240,8 +1240,19 @@ export class WhisperManager extends EventEmitter {
       if (IS_WIN) {
         const { ensureWindowsMultilingualEngineReady } =
           await import('./windows-multilingual-readiness')
-        const ready = await ensureWindowsMultilingualEngineReady(language)
+        const {
+          restorePreviousMeetingLanguageIfWindowsLocked,
+          restorePreviousMeetingLanguageOnLock
+        } = await import('./meeting-language-availability')
+        let ready
+        try {
+          ready = await ensureWindowsMultilingualEngineReady(language)
+        } catch (error) {
+          await restorePreviousMeetingLanguageIfWindowsLocked(language)
+          throw error
+        }
         if (ready.availability === 'locked' || !ready.engineId) {
+          restorePreviousMeetingLanguageOnLock(language)
           throw new Error(ready.reason ?? 'This meeting language is unavailable on this PC.')
         }
       } else if (IS_MAC_ARM) {

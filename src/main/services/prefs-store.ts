@@ -58,6 +58,7 @@ export function readInitialDiagnosticLogUploadConsent(): boolean {
 
 export class PrefsStore {
   private store: Store<PrefsSchema>
+  private previousMeetingLanguage: MeetingLanguageCode | null = null
 
   constructor() {
     this.store = createPrefsStore()
@@ -150,7 +151,23 @@ export class PrefsStore {
   }
 
   setMeetingLanguage(language: unknown): void {
-    this.store.set('meetingLanguage', normalizeMeetingLanguage(language))
+    const next = normalizeMeetingLanguage(language)
+    const current = this.getMeetingLanguage()
+    if (next !== current) {
+      this.previousMeetingLanguage = current
+    }
+    this.store.set('meetingLanguage', next)
+  }
+
+  /** Undo a tentative pick when first-use setup locks that language. */
+  restorePreviousMeetingLanguageIfCurrent(lockedLanguage: unknown): MeetingLanguageCode {
+    const locked = normalizeMeetingLanguage(lockedLanguage)
+    if (this.getMeetingLanguage() !== locked) {
+      return this.getMeetingLanguage()
+    }
+    const previous = this.previousMeetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    this.store.set('meetingLanguage', previous)
+    return previous
   }
 
   getExperimentalSpeakerDiarization(): boolean {

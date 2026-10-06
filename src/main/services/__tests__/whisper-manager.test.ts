@@ -39,10 +39,19 @@ const ensureWindowsMultilingualEngineReady = vi.fn().mockResolvedValue({
   availability: 'available',
   reason: null
 })
+const getWindowsMeetingLanguageAvailability = vi.fn().mockResolvedValue({
+  availability: 'available',
+  reason: null,
+  engineId: 'whisper-turbo-cuda',
+  firstUseDownloadBytes: 0,
+  needsSelfTest: false
+})
 
 vi.mock('../windows-multilingual-readiness', () => ({
   ensureWindowsMultilingualEngineReady: (...args: unknown[]) =>
-    ensureWindowsMultilingualEngineReady(...args)
+    ensureWindowsMultilingualEngineReady(...args),
+  getWindowsMeetingLanguageAvailability: (...args: unknown[]) =>
+    getWindowsMeetingLanguageAvailability(...args)
 }))
 
 vi.mock('ffmpeg-static', () => ({
@@ -188,10 +197,18 @@ describe('WhisperManager', () => {
   describe('meeting language setup on Windows', () => {
     beforeEach(async () => {
       ensureWindowsMultilingualEngineReady.mockReset()
+      getWindowsMeetingLanguageAvailability.mockReset()
       ensureWindowsMultilingualEngineReady.mockResolvedValue({
         engineId: 'whisper-turbo-cuda',
         availability: 'available',
         reason: null
+      })
+      getWindowsMeetingLanguageAvailability.mockResolvedValue({
+        availability: 'available',
+        reason: null,
+        engineId: 'whisper-turbo-cuda',
+        firstUseDownloadBytes: 0,
+        needsSelfTest: false
       })
       const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
       try {
@@ -234,6 +251,57 @@ describe('WhisperManager', () => {
         error: 'Spanish needs a supported graphics card on this PC.',
         meetingLanguage: 'es'
       })
+    })
+
+    it('restores the previous saved language when Windows ensure reports a lock', async () => {
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: null,
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.'
+      })
+      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      let current: 'en' | 'es' = 'es'
+      bindMeetingLanguagePreferenceStore({
+        getMeetingLanguage: () => current,
+        restorePreviousMeetingLanguageIfCurrent(locked) {
+          if (current !== locked) return current
+          current = 'en'
+          return current
+        }
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Spanish needs a supported graphics card on this PC.'
+      )
+      expect(current).toBe('en')
+      bindMeetingLanguagePreferenceStore(null)
+    })
+
+    it('does not restore when Windows ensure throws a download error', async () => {
+      ensureWindowsMultilingualEngineReady.mockRejectedValue(
+        new Error('Failed to download the speech model.')
+      )
+      getWindowsMeetingLanguageAvailability.mockResolvedValue({
+        availability: 'available',
+        reason: null,
+        engineId: 'whisper-turbo-cuda',
+        firstUseDownloadBytes: 100,
+        needsSelfTest: true
+      })
+      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      let current: 'en' | 'es' = 'es'
+      bindMeetingLanguagePreferenceStore({
+        getMeetingLanguage: () => current,
+        restorePreviousMeetingLanguageIfCurrent(locked) {
+          if (current !== locked) return current
+          current = 'en'
+          return current
+        }
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Failed to download the speech model.'
+      )
+      expect(current).toBe('es')
+      bindMeetingLanguagePreferenceStore(null)
     })
   })
 
