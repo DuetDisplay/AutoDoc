@@ -8,7 +8,7 @@ A published tag is never modified, because installed versions keep downloading f
 
 Releases are built and published by the manual workflow `.github/workflows/windows-transcription-assets.yml`, in two runs:
 
-1. Run it with `publish_assets` off. It builds every asset from source with `npm run prepare:windows-transcription-assets` (pinned Python packages, Hugging Face files checked against pinned SHA-256s, whisper.cpp v1.9.4 plus `scripts/whisper-cpp/*.patch` built against Vulkan SDK 1.4.341.1). Then it signs the runtimes with DigiCert and runs `scripts/write-windows-transcription-release-manifest.js`. That script fails if a previous-release file changed or is missing, or if an upload file is over 2 GB. The artifact holds the upload files, `SHA256SUMS.md`, `UPLOAD-MANIFEST.md`, `SIGNING-REPORT.md` and the generated `windows-transcription-manifest.json`.
+1. Run it with `publish_assets` off. It builds every asset from source with `npm run prepare:windows-transcription-assets` (pinned Python packages, Hugging Face files checked against pinned SHA-256s, whisper.cpp v1.9.4 plus `scripts/whisper-cpp/*.patch` built against Vulkan SDK 1.4.341.1). Then it signs the whisper.cpp runtime with DigiCert and runs `scripts/write-windows-transcription-release-manifest.js`. That script fails if a previous-release file changed or is missing, or if an upload file is over 2 GB. The artifact holds the upload files, `SHA256SUMS.md`, `UPLOAD-MANIFEST.md`, `SIGNING-REPORT.md` and the generated `windows-transcription-manifest.json`.
 2. Commit that manifest as `resources/windows-transcription-manifest.json` and copy changed hashes into the fallback profiles in `src/main/services/windows-transcription-runtime.ts`. A unit test fails until they match.
 3. Run the workflow with `publish_assets` on and `build_run_id` set to the first run. It doesn't rebuild, because signatures are timestamped and a second build can't match. It downloads that run's artifact. `scripts/verify-windows-transcription-release-assets.js` then checks that the committed manifest equals the generated one, that signing wasn't a dry run, and that every upload file has the committed bytes and SHA-256. Only then does it upload to the release.
 
@@ -18,19 +18,9 @@ To build locally, run `npm run prepare:windows-transcription-assets` with `VULKA
 
 ## Code signing
 
-`scripts/sign-windows-transcription-assets.js` processes the runtimes new in v3: `whisper-cpp-vulkan-runtime-win-x64.zip`, `canary-cuda-runtime-win-x64.zip`, `faster-whisper-runtime-cpu-win-x64-v3.zip`, `faster-whisper-runtime-cuda-win-x64-v3.zip` and `parakeet-runtime-win-x64-v3.zip`. It signs every PE file (`.exe`, `.dll`, `.pyd`) without an Authenticode signature through `scripts/windows-sign.js`, re-zips with the original entry list, and writes `SIGNING-REPORT.md`.
+`scripts/sign-windows-transcription-assets.js` signs the self-built whisper.cpp runtime, `whisper-cpp-vulkan-runtime-win-x64.zip`: `whisper-cli.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll` and `ggml-vulkan.dll`, through `scripts/windows-sign.js`. It re-zips with the original entry list and writes `SIGNING-REPORT.md`.
 
-The CPython set signed in every Python runtime is `python.exe`, `pythonw.exe`, `python3.dll`, `python311.dll`, the stdlib `.pyd` files, OpenSSL, libffi and sqlite, plus numpy and OpenBLAS and the protobuf extension.
-
-| Runtime | Signed by us | Left as shipped |
-|---|---|---|
-| whisper-cpp-vulkan | 6: `whisper-cli.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll`, `ggml-vulkan.dll` | none |
-| faster-whisper CPU | 67: CPython set, CTranslate2, tokenizers, hf-xet, PyYAML | Vendor-signed (10): onnxruntime (Microsoft), MSVC runtime (Microsoft), Intel OpenMP (Intel), CTranslate2's cuDNN stub (NVIDIA), Tcl/Tk (PSF) |
-| faster-whisper CUDA | 67: as CPU | Vendor-signed (19): as CPU plus cuDNN (NVIDIA). Unsigned NVIDIA redistributables (6) under `Lib/site-packages/nvidia/`: cuBLAS, cuBLASLt, NVBLAS, NVRTC |
-| parakeet | 62: CPython set | Vendor-signed (9): onnxruntime-directml and DirectML (Microsoft), MSVC runtime (Microsoft), Tcl/Tk (PSF) |
-| canary-cuda | 62: CPython set | Vendor-signed (18): cuDNN (NVIDIA), onnxruntime-gpu (Microsoft), MSVC runtime (Microsoft), Tcl/Tk (PSF). Unsigned NVIDIA redistributables (11) under `Lib/site-packages/nvidia/`: cuBLAS, cuBLASLt, NVBLAS, NVRTC, cudart, cuFFT, cuRAND, nvJitLink |
-
-NVIDIA's redistributable DLLs are never modified, signed or not. Files carried over unchanged from v2 aren't re-signed: their bytes are fixed by the earlier release. The Authenticode states in the license tables below are as built, before signing.
+The Python runtimes (faster-whisper CPU and CUDA, parakeet, canary-cuda) aren't signed, matching v2, which shipped its Python runtimes unsigned. The app verifies every zip by SHA-256, not Authenticode. Signing them would take about 260 DigiCert signatures per build. The Authenticode states in the license tables below are as shipped.
 
 ## Licenses
 

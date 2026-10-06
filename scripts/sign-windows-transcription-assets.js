@@ -6,13 +6,7 @@ const path = require('node:path')
 
 const signBinary = require('./windows-sign').default
 
-const SIGN_ZIPS = [
-  'whisper-cpp-vulkan-runtime-win-x64.zip',
-  'canary-cuda-runtime-win-x64.zip',
-  'faster-whisper-runtime-cpu-win-x64-v3.zip',
-  'faster-whisper-runtime-cuda-win-x64-v3.zip',
-  'parakeet-runtime-win-x64-v3.zip'
-]
+const SIGN_ZIPS = ['whisper-cpp-vulkan-runtime-win-x64.zip']
 const MAX_ZIP_BYTES = 2_000_000_000
 const VENDOR_UNSIGNED_PREFIXES = ['Lib/site-packages/nvidia/']
 
@@ -82,18 +76,7 @@ async function processZip(assetDir, stagingRoot, zipName, dryRun) {
   if (!dryRun) {
     process.env.REQUIRE_WINDOWS_SIGNING = '1'
     for (const row of toSign) {
-      const filePath = path.join(extractDir, row.path)
-      if (filePath.toLowerCase().endsWith('.pyd')) {
-        const signPath = `${filePath}.dll`
-        await rename(filePath, signPath)
-        try {
-          await signBinary({ path: signPath })
-        } finally {
-          await rename(signPath, filePath)
-        }
-      } else {
-        await signBinary({ path: filePath })
-      }
+      await signBinary({ path: path.join(extractDir, row.path) })
     }
 
     const after = await classifyPeFiles(extractDir, zipName)
