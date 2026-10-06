@@ -82,7 +82,18 @@ async function processZip(assetDir, stagingRoot, zipName, dryRun) {
   if (!dryRun) {
     process.env.REQUIRE_WINDOWS_SIGNING = '1'
     for (const row of toSign) {
-      await signBinary({ path: path.join(extractDir, row.path) })
+      const filePath = path.join(extractDir, row.path)
+      if (filePath.toLowerCase().endsWith('.pyd')) {
+        const signPath = `${filePath}.dll`
+        await rename(filePath, signPath)
+        try {
+          await signBinary({ path: signPath })
+        } finally {
+          await rename(signPath, filePath)
+        }
+      } else {
+        await signBinary({ path: filePath })
+      }
     }
 
     const after = await classifyPeFiles(extractDir, zipName)
