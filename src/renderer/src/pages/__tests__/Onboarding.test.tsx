@@ -328,4 +328,42 @@ describe('Onboarding', () => {
     render(<Onboarding onComplete={vi.fn()} />)
     expect(await screen.findByRole('heading', { name: 'Transcription Ready' })).toBeInTheDocument()
   })
+
+  it('returns to the meeting-language step from Choose another language', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-onboarding-step') return Promise.resolve(7)
+      if (channel === 'prefs:get-onboarding-language-confirmed') return Promise.resolve(true)
+      if (channel === 'app:get-runtime-info') return Promise.resolve(createRuntimeInfo())
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'error',
+          percent: 0,
+          error: 'whisper-turbo-cuda self-test failed'
+        })
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({
+          availability: 'locked',
+          reason: 'This PC cannot run Spanish transcription.',
+          engineId: null,
+          firstUseDownloadBytes: 0
+        })
+      }
+      if (channel === 'prefs:get-meeting-language-availability') {
+        return Promise.resolve({ restricted: false, availableLanguages: ['en'] })
+      }
+      if (channel === 'whisper:get-meeting-language-states') return Promise.resolve({})
+      if (channel === 'prefs:set-onboarding-step') return Promise.resolve(undefined)
+      return Promise.resolve({} as never)
+    })
+
+    render(<Onboarding onComplete={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Choose another language' }))
+
+    expect(
+      await screen.findByRole('heading', { name: 'Choose your meeting language' })
+    ).toBeInTheDocument()
+  })
 })

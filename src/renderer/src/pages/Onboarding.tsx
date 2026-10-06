@@ -239,7 +239,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       case 11:
         return <MeetingLanguageStep onNext={next} />
       case 7:
-        return <TranscriptionStep onNext={next} />
+        return <TranscriptionStep onNext={next} onChooseLanguage={back} />
       case 8:
         return <OllamaStep onNext={next} />
       case 9:
