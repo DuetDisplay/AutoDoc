@@ -7,7 +7,7 @@ on:
       asset_tag:
         description: Versioned release tag for the transcription asset bundle.
         required: true
-        default: windows-transcription-v2
+        default: windows-transcription-v3
         type: string
       asset_repo:
         description: GitHub repository that hosts the public transcription asset release.
@@ -15,20 +15,30 @@ on:
         default: DuetDisplay/AutoDoc
         type: string
       publish_assets:
-        description: Upload generated assets to the GitHub release.
+        description: Publish the signed assets from build_run_id instead of building.
         required: true
         default: false
         type: boolean
+      build_run_id:
+        description: Run ID of a publish_assets=false run whose signed assets to publish.
+        required: false
+        default: ''
+        type: string
+
+env:
+  ASSET_TAG: ${{ inputs.asset_tag }}
+  ASSET_REPO: ${{ inputs.asset_repo }}
+  AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ inputs.asset_tag }}
+  ASSET_DIR: ${{ github.workspace }}\.benchmarks\windows-transcription-assets\${{ inputs.asset_tag }}
 
 jobs:
   build-windows-transcription-assets:
+    if: ${{ !inputs.publish_assets }}
     runs-on: windows-2022
+    timeout-minutes: 360
     permissions:
-      contents: write
+      contents: read
     env:
-      ASSET_TAG: ${{ inputs.asset_tag }}
-      ASSET_REPO: ${{ inputs.asset_repo }}
-      AUTODOC_WINDOWS_TRANSCRIPTION_RELEASE_TAG: ${{ inputs.asset_tag }}
       AUTODOC_PYTHON_BUNDLE_TARGETS: win32-x64
       PIP_CACHE_DIR: ${{ github.workspace }}\.benchmarks\pip-cache
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
@@ -57,22 +67,50 @@ jobs:
             throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' must end with '$expectedArtifactBaseUrlSuffix'."
           }
 
+      - name: Check runner disk space
+        shell: pwsh
+        run: |
+          $drive = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE))
+          $freeGb = [math]::Round($drive.AvailableFreeSpace / 1GB, 1)
+          Write-Host "$freeGb GB free"
+          if ($drive.AvailableFreeSpace -lt 80GB) {
+            throw "Need at least 80 GB free; peak usage is about 50 GB: ~18 GB of assets plus model downloads and staging"
+          }
+
       - name: Restore Python archive cache
         uses: actions/cache@v4
         with:
           path: vendor/python-runtime
           key: python-runtime-win32-x64-3.11.15-20260414
 
-      - name: Restore asset build caches
+      - name: Restore pip cache
         uses: actions/cache@v4
         with:
-          path: |
-            .benchmarks/faster-whisper-models
-            .benchmarks/pip-cache
-          key: windows-transcription-assets-${{ env.ASSET_TAG }}-${{ hashFiles('scripts/prepare-windows-transcription-assets.js') }}
+          path: .benchmarks/pip-cache
+          key: windows-transcription-pip-${{ hashFiles('scripts/prepare-windows-transcription-assets.js') }}
           restore-keys: |
-            windows-transcription-assets-${{ env.ASSET_TAG }}-
-            windows-transcription-assets-
+            windows-transcription-pip-
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkansdk-windows-X64-1.4.341.1.exe'
+          Invoke-WebRequest -Uri 'https://sdk.lunarg.com/sdk/download/1.4.341.1/windows/vulkansdk-windows-X64-1.4.341.1.exe' -OutFile $installer
+          $expected = 'bcf2d75aa9556889ab974858666e20b3655b6055a0db704ccb47279ff33b5bfe'
+          $actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Vulkan SDK installer hash mismatch: expected $expected, got $actual"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid') {
+            throw "Vulkan SDK installer Authenticode status is $($signature.Status)"
+          }
+          $process = Start-Process -FilePath $installer -ArgumentList '--root', 'C:\VulkanSDK\1.4.341.1', '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Vulkan SDK installer exited with code $($process.ExitCode)"
+          }
+          "VULKAN_SDK=C:\VulkanSDK\1.4.341.1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "C:\VulkanSDK\1.4.341.1\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Prepare managed Python archive
         run: npm run prepare:python-runtime
@@ -80,10 +118,150 @@ jobs:
       - name: Build Windows transcription assets
         run: npm run prepare:windows-transcription-assets
 
-      - name: Verify committed manifest matches generated assets
+      - name: Materialize DigiCert client certificate
+        shell: pwsh
+        env:
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.DD_SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP 'Certificate_pkcs12.p12'
+          [System.IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup DigiCert signing tools
+        uses: digicert/code-signing-software-trust-action@v1.2.1
+        with:
+          use-github-caching-service: true
+        env:
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
+
+      - name: Expose DigiCert tool paths
         shell: pwsh
         run: |
-          git diff --exit-code -- resources/windows-transcription-manifest.json
+          $candidatePaths = @()
+
+          if ($env:LOCALAPPDATA) {
+            $candidatePaths += Join-Path $env:LOCALAPPDATA 'Temp\smtools-windows-x64\smctl.exe'
+          }
+
+          $smctlCommand = Get-Command smctl.exe -ErrorAction SilentlyContinue
+          if ($smctlCommand) {
+            $candidatePaths += $smctlCommand.Source
+          }
+
+          if ($env:ProgramFiles) {
+            $candidatePaths += Join-Path $env:ProgramFiles 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+          }
+          if (${env:ProgramFiles(x86)}) {
+            $candidatePaths += Join-Path ${env:ProgramFiles(x86)} 'DigiCert\DigiCert One Signing Manager Tools\smctl.exe'
+          }
+
+          $smctlPath = $candidatePaths |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique -First 1
+
+          if (-not $smctlPath) {
+            throw 'smctl.exe was not found on PATH or in the standard DigiCert install locations.'
+          }
+
+          Write-Host "Resolved smctl.exe to $smctlPath"
+          try {
+            $versionInfo = (Get-Item $smctlPath).VersionInfo
+            if ($versionInfo.FileVersion) {
+              Write-Host "smctl.exe file version: $($versionInfo.FileVersion)"
+            }
+          } catch {
+            Write-Warning "Unable to read smctl.exe file version: $($_.Exception.Message)"
+          }
+
+          $smToolsDir = Split-Path -Parent $smctlPath
+          $smToolsDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "SMCTL_PATH=$smctlPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $signToolCandidates = @()
+
+          $signToolCommand = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          if ($signToolCommand) {
+            $signToolCandidates += $signToolCommand.Source
+          }
+
+          if (${env:ProgramFiles(x86)}) {
+            $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+            $signToolCandidates += Join-Path $windowsKitsRoot 'App Certification Kit\signtool.exe'
+
+            $windowsKitsBin = Join-Path $windowsKitsRoot 'bin'
+            if (Test-Path $windowsKitsBin) {
+              $signToolCandidates += Get-ChildItem -Path $windowsKitsBin -Filter signtool.exe -File -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -ExpandProperty FullName
+            }
+          }
+
+          $signToolPath = $signToolCandidates |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique -First 1
+
+          if (-not $signToolPath) {
+            throw 'signtool.exe was not found on PATH or in the standard Windows SDK locations.'
+          }
+
+          Write-Host "Resolved signtool.exe to $signToolPath"
+          try {
+            $versionInfo = (Get-Item $signToolPath).VersionInfo
+            if ($versionInfo.FileVersion) {
+              Write-Host "signtool.exe file version: $($versionInfo.FileVersion)"
+            }
+          } catch {
+            Write-Warning "Unable to read signtool.exe file version: $($_.Exception.Message)"
+          }
+
+          $signToolDir = Split-Path -Parent $signToolPath
+          $signToolDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "SIGNTOOL_PATH=$signToolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check DigiCert signing health
+        shell: pwsh
+        env:
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
+          SM_LOG_LEVEL: TRACE
+        run: |
+          & $env:SMCTL_PATH healthcheck
+          & $env:SMCTL_PATH windows certsync --keypair-alias=$env:SM_KEYPAIR_ALIAS --store=system
+
+      - name: Sign runtime zips
+        shell: pwsh
+        env:
+          REQUIRE_WINDOWS_SIGNING: 'true'
+          SM_HOST: https://clientauth.one.digicert.com
+          SM_API_KEY: ${{ secrets.DD_SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DD_SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.DD_SM_KEYPAIR_ALIAS }}
+          SM_LOG_LEVEL: TRACE
+        run: node scripts/sign-windows-transcription-assets.js "$env:ASSET_DIR"
+
+      - name: Write release manifest
+        shell: pwsh
+        run: |
+          node scripts/write-windows-transcription-release-manifest.js "$env:ASSET_DIR"
+          Copy-Item -LiteralPath resources/windows-transcription-manifest.json -Destination $env:ASSET_DIR -Force
+          git diff --stat -- resources/windows-transcription-manifest.json
+          Write-Host "::notice::Commit windows-transcription-manifest.json from this run's artifact, then publish with publish_assets=true and build_run_id=${{ github.run_id }}."
+
+      - name: Drop whole zips that ship as parts
+        shell: pwsh
+        run: |
+          Get-ChildItem -LiteralPath $env:ASSET_DIR -Filter *.zip -File | ForEach-Object {
+            if (Test-Path -LiteralPath "$($_.FullName).part1") {
+              Remove-Item -LiteralPath $_.FullName -Force
+            }
+          }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -93,18 +271,106 @@ jobs:
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/*.zip.part*
             .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/SHA256SUMS.md
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/UPLOAD-MANIFEST.md
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/SIGNING-REPORT.md
+            .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}/windows-transcription-manifest.json
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
+
+      - name: Capture DigiCert signing diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $diagnosticDir = Join-Path $env:RUNNER_TEMP 'digicert-signing-diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnosticDir | Out-Null
+
+          $candidateFiles = @(
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smctl.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smksp.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smcsp.log')
+            (Join-Path $env:USERPROFILE '.signingmanager\logs\smpkcs11.log')
+          ) | Where-Object { $_ }
+
+          foreach ($candidate in $candidateFiles) {
+            if (Test-Path $candidate) {
+              Copy-Item -Path $candidate -Destination $diagnosticDir -Force
+            }
+          }
+
+          [pscustomobject]@{
+            SmctlPath = $env:SMCTL_PATH
+            SmctlExists = [bool]($env:SMCTL_PATH -and (Test-Path $env:SMCTL_PATH))
+            UserProfile = $env:USERPROFILE
+            SigningLogDir = Join-Path $env:USERPROFILE '.signingmanager\logs'
+          } | ConvertTo-Json | Out-File -FilePath (Join-Path $diagnosticDir 'environment.json') -Encoding utf8
+
+      - name: Upload DigiCert signing diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: digicert-signing-diagnostics-${{ github.run_number }}
+          path: ${{ runner.temp }}/digicert-signing-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish-windows-transcription-assets:
+    if: ${{ inputs.publish_assets }}
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Check publish inputs
+        shell: pwsh
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          if (-not $env:BUILD_RUN_ID) {
+            throw 'publish_assets needs build_run_id from a publish_assets=false run'
+          }
+          if ($env:ASSET_TAG -eq 'windows-transcription-v2') {
+            throw 'windows-transcription-v2 is immutable'
+          }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify manifest tag
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath resources/windows-transcription-manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.releaseTag -ne $env:ASSET_TAG) {
+            throw "Manifest releaseTag '$($manifest.releaseTag)' does not match workflow asset tag '$env:ASSET_TAG'."
+          }
+          $expectedArtifactBaseUrlSuffix = "/releases/download/$env:ASSET_TAG"
+          if (-not $manifest.artifactBaseUrl.EndsWith($expectedArtifactBaseUrlSuffix)) {
+            throw "Manifest artifactBaseUrl '$($manifest.artifactBaseUrl)' must end with '$expectedArtifactBaseUrlSuffix'."
+          }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-transcription-assets-${{ env.ASSET_TAG }}
+          path: .benchmarks/windows-transcription-assets/${{ env.ASSET_TAG }}
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify assets against committed manifest
+        shell: pwsh
+        run: node scripts/verify-windows-transcription-release-assets.js "$env:ASSET_DIR"
 
       - name: Publish GitHub release assets
-        if: ${{ inputs.publish_assets }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.WINDOWS_TRANSCRIPTION_ASSET_REPO_TOKEN || github.token }}
         run: |
           $tag = $env:ASSET_TAG
           $repo = $env:ASSET_REPO
-          $assetDir = Join-Path $PWD ".benchmarks/windows-transcription-assets/$tag"
+          $assetDir = $env:ASSET_DIR
 
           gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -ne 0) {
@@ -117,7 +383,7 @@ jobs:
               '--title',
               "Windows transcription assets $tag",
               '--notes',
-              'Versioned faster-whisper runtime and model assets for Windows onboarding.'
+              'Versioned Windows transcription runtimes and models for AutoDoc.'
             )
 
             if ($repo -eq $env:GITHUB_REPOSITORY) {
@@ -127,15 +393,10 @@ jobs:
             & gh @createArgs
           }
 
-          gh release upload $tag `
-            (Join-Path $assetDir 'faster-whisper-runtime-cpu-win-x64.zip') `
-            (Join-Path $assetDir 'faster-whisper-runtime-cuda-win-x64.zip') `
-            (Join-Path $assetDir 'faster-whisper-small-en-ct2-int8.zip') `
-            (Join-Path $assetDir 'faster-whisper-distil-large-v3-ct2.zip') `
-            (Join-Path $assetDir 'parakeet-runtime-win-x64.zip') `
-            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part1') `
-            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-fp32.zip.part2') `
-            (Join-Path $assetDir 'parakeet-tdt-0.6b-v3-int8.zip') `
-            (Join-Path $assetDir 'SHA256SUMS.md') `
-            --repo $repo `
-            --clobber
+          $files = @(
+            Get-Content -LiteralPath (Join-Path $assetDir 'UPLOAD-FILES.txt') |
+              Where-Object { $_.Trim() } |
+              ForEach-Object { Join-Path $assetDir $_.Trim() }
+          )
+          $files += Join-Path $assetDir 'SHA256SUMS.md'
+          gh release upload $tag @files --repo $repo --clobber

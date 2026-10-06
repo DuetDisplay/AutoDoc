@@ -6,14 +6,15 @@ The Windows speech runtimes and models are zips attached to one GitHub release o
 
 A published tag is never modified, because installed versions keep downloading from it. A new tag carries every file of the previous tag, byte-identical, plus the new ones. GitHub limits release files to 2 GB, so larger zips are uploaded only as `.partN` files, which the app concatenates.
 
-1. Put all asset zips (and parts) in one staging folder.
-2. Sign the self-built runtimes (needs the DigiCert environment used by `.github/workflows/build.yml`: `SM_HOST`, `SM_API_KEY`, `SM_CLIENT_CERT_FILE`, `SM_CLIENT_CERT_PASSWORD`, `SM_KEYPAIR_ALIAS`):
-   `node scripts/sign-windows-transcription-assets.js <staging> [--dry-run]`
-3. Hash the folder, update `resources/windows-transcription-manifest.json`, and write `SHA256SUMS.md` and `UPLOAD-MANIFEST.md` into the folder:
-   `node scripts/write-windows-transcription-release-manifest.js <staging>`
-   It fails if a previous-release file changed or is missing, or if an upload file is over 2 GB. It marks the runtimes `PENDING SIGNING` while the signing report is missing or a dry run.
-4. Copy changed hashes into the fallback profiles in `src/main/services/windows-transcription-runtime.ts`. A unit test fails until they match the JSON manifest.
-5. Upload every file listed in `UPLOAD-MANIFEST.md`, then check the release digests against `SHA256SUMS.md`.
+Releases are built and published by the manual workflow `.github/workflows/windows-transcription-assets.yml`, in two runs:
+
+1. Run it with `publish_assets` off. It builds every asset from source with `npm run prepare:windows-transcription-assets` (pinned Python packages, Hugging Face files checked against pinned SHA-256s, whisper.cpp v1.9.4 plus `scripts/whisper-cpp/*.patch` built against Vulkan SDK 1.4.341.1). Then it signs the runtimes with DigiCert and runs `scripts/write-windows-transcription-release-manifest.js`. That script fails if a previous-release file changed or is missing, or if an upload file is over 2 GB. The artifact holds the upload files, `SHA256SUMS.md`, `UPLOAD-MANIFEST.md`, `SIGNING-REPORT.md` and the generated `windows-transcription-manifest.json`.
+2. Commit that manifest as `resources/windows-transcription-manifest.json` and copy changed hashes into the fallback profiles in `src/main/services/windows-transcription-runtime.ts`. A unit test fails until they match.
+3. Run the workflow with `publish_assets` on and `build_run_id` set to the first run. It doesn't rebuild, because signatures are timestamped and a second build can't match. It downloads that run's artifact. `scripts/verify-windows-transcription-release-assets.js` then checks that the committed manifest equals the generated one, that signing wasn't a dry run, and that every upload file has the committed bytes and SHA-256. Only then does it upload to the release.
+
+Model zips and unsigned runtime zips are reproducible: entries are sorted and use a fixed timestamp. Signing changes the runtime zips on every run. To compare a build with another one, compare the zip members' SHA-256s.
+
+To build locally, run `npm run prepare:windows-transcription-assets` with `VULKAN_SDK` set and Visual Studio 2022 installed. Then run `node scripts/sign-windows-transcription-assets.js <dir> [--dry-run]` with the DigiCert environment from `.github/workflows/build.yml`, and the manifest writer.
 
 ## Code signing
 
