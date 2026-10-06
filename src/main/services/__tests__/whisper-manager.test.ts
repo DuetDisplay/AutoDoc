@@ -34,6 +34,17 @@ vi.mock('../mac-canary-transcription', () => ({
   resolveMacCanaryTranscriber: vi.fn(() => ({ pythonPath: '/canary/python3' }))
 }))
 
+const ensureWindowsMultilingualEngineReady = vi.fn().mockResolvedValue({
+  engineId: 'whisper-turbo-cuda',
+  availability: 'available',
+  reason: null
+})
+
+vi.mock('../windows-multilingual-readiness', () => ({
+  ensureWindowsMultilingualEngineReady: (...args: unknown[]) =>
+    ensureWindowsMultilingualEngineReady(...args)
+}))
+
 vi.mock('ffmpeg-static', () => ({
   default: '/mock/ffmpeg-static'
 }))
@@ -171,6 +182,58 @@ describe('WhisperManager', () => {
     expect(await manager.getMacMeetingLanguageState('es')).toMatchObject({
       availability: 'locked',
       reason: expect.stringContaining('runtime')
+    })
+  })
+
+  describe('meeting language setup on Windows', () => {
+    beforeEach(async () => {
+      ensureWindowsMultilingualEngineReady.mockReset()
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: 'whisper-turbo-cuda',
+        availability: 'available',
+        reason: null
+      })
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      try {
+        Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+        vi.resetModules()
+        const { WhisperManager: WindowsManager } = await import('../whisper-manager')
+        manager = new WindowsManager()
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    })
+
+    it('keeps English on the existing setup path', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+      expect(ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
+    })
+
+    it('installs only the Windows multilingual route and skips English Distil setup', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('es')
+      expect(ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith('es')
+      expect(english).not.toHaveBeenCalled()
+      expect(downloadMacSpeechModels).not.toHaveBeenCalled()
+      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+    })
+
+    it('locks the language when Windows ensure reports a failed self-test with no fallback', async () => {
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: null,
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.'
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Spanish needs a supported graphics card on this PC.'
+      )
+      expect(manager.getSetupStatus()).toMatchObject({
+        phase: 'error',
+        error: 'Spanish needs a supported graphics card on this PC.',
+        meetingLanguage: 'es'
+      })
     })
   })
 

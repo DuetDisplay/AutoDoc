@@ -7,6 +7,8 @@ import {
   meetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../../../shared/meeting-language'
+import { SLOWER_MEETING_LANGUAGE_NOTE } from '../../../services/meeting-language-copy'
+import { formatMeetingLanguageFirstUseDownload } from '../../../services/format-bytes'
 import { createRuntimeInfo, resetRendererStores } from '../../../test/fixtures'
 
 let saved: MeetingLanguageCode
@@ -66,5 +68,44 @@ describe('MeetingLanguageStep', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Needs 16 GB')
     expect(next).not.toHaveBeenCalled()
     expect(saved).toBe('en')
+  })
+
+  it('feeds Windows availability into the picker and skips a locked OS language', async () => {
+    const reason = 'Spanish needs a supported graphics card on this PC.'
+    const sizeNote = formatMeetingLanguageFirstUseDownload(1_610_612_736)
+    const invoke = vi.mocked(window.electronAPI.invoke).getMockImplementation()!
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel, ...args) => {
+      if (channel === 'app:get-locale') return Promise.resolve('es-ES')
+      if (channel === 'whisper:get-meeting-language-states') {
+        return Promise.resolve({
+          es: {
+            availability: 'locked',
+            reason,
+            firstUseDownloadBytes: 5_583_216_230
+          },
+          de: {
+            availability: 'slower',
+            reason: null,
+            firstUseDownloadBytes: 1_610_612_736
+          }
+        })
+      }
+      return invoke(channel, ...args)
+    })
+
+    render(<MeetingLanguageStep onNext={vi.fn()} />)
+
+    expect(
+      await screen.findByRole('button', { name: 'Meeting language: English' })
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Meeting language: English' }))
+
+    const spanish = screen.getByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    expect(spanish).toHaveAttribute('aria-disabled', 'true')
+    expect(
+      screen.getByRole('option', {
+        name: `German ${SLOWER_MEETING_LANGUAGE_NOTE} · ${sizeNote}`
+      })
+    ).not.toHaveAttribute('aria-disabled')
   })
 })
