@@ -3,6 +3,7 @@ const { spawnSync } = require('node:child_process')
 const { createReadStream, createWriteStream } = require('node:fs')
 const { open } = require('node:fs/promises')
 const { cp, mkdir, readFile, readdir, rm, stat, writeFile } = require('node:fs/promises')
+const os = require('node:os')
 const path = require('node:path')
 
 const ROOT = process.cwd()
@@ -20,6 +21,8 @@ const PYTHON_ARCHIVE = path.join(
 const MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'faster-whisper-models')
 const PARAKEET_MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'parakeet-models')
 const SILERO_VAD_CACHE_DIR = path.join(ROOT, '.benchmarks', 'silero-vad-onnx')
+const CANARY_MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'canary-models')
+const WHISPER_TURBO_MODEL_CACHE_DIR = path.join(ROOT, '.benchmarks', 'whisper-turbo-models')
 const BUILD_ENV = {
   ...process.env,
   PYTHONDONTWRITEBYTECODE: '1',
@@ -87,6 +90,14 @@ const CANARY_CUDA_RUNTIME_PACKAGES = [
   'protobuf==7.35.1',
   ...CUDA_PACKAGES
 ]
+const ONNX_TOOL_PACKAGES = [
+  'ml_dtypes==0.6.0',
+  'numpy==2.4.6',
+  'onnx==1.23.1',
+  'packaging==26.2',
+  'protobuf==7.36.2',
+  'typing_extensions==4.16.0'
+]
 
 const MODELS = [
   {
@@ -139,10 +150,84 @@ const PARAKEET_MODELS = [
 
 const SILERO_VAD = {
   repoId: 'istupakov/silero-vad-onnx',
-  revision: null,
+  revision: 'b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6',
+  sha256: '1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3',
   cacheDirName: 'models--istupakov--silero-vad-onnx',
   filename: 'silero_vad.onnx'
 }
+
+const CANARY = {
+  repoId: 'istupakov/canary-1b-v2-onnx',
+  revision: '5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc',
+  cacheDir: CANARY_MODEL_CACHE_DIR
+}
+const CANARY_SHARED_FILES = {
+  'vocab.txt': '2c9efe6104fd29522ea27ce0e3aef5d37c690af4e5a4232e643e23ca403ffea3',
+  'config.json': 'f90ace8e35326dcd47c7330b230644fa0835083ed1e89e2f59aa08ba10d74f54'
+}
+
+const HF_FILE_MODELS = [
+  {
+    ...CANARY,
+    zipName: 'canary-1b-v2-int8.zip',
+    sileroVad: true,
+    files: {
+      'encoder-model.int8.onnx': '6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1',
+      'decoder-model.int8.onnx': '52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf',
+      ...CANARY_SHARED_FILES
+    }
+  },
+  {
+    ...CANARY,
+    zipName: 'canary-1b-v2-fp32.zip',
+    sileroVad: true,
+    files: {
+      'encoder-model.onnx': 'c8352f7adf033ad4dfcdc42e665eaacb1ee93e1acf6b168e4f1dfc57c26b0195',
+      'encoder-model.onnx.data': 'a1711a0b88dc1bda0ff94178f2f8c66b1450990599856982ddc8cc6e155384ec',
+      'decoder-model.onnx': '962dc77709f31c1ed8a55a7518ff4bed7316a87c442e7c79aa3573c4bbc39a72',
+      ...CANARY_SHARED_FILES
+    },
+    allowzeroRewrite: {
+      filename: 'encoder-model.onnx',
+      sha256: '52fa8e6bd54d79435e3c4d2d1e2c7367fd9c3a18523fd081274d2fffa1743363'
+    }
+  },
+  {
+    repoId: 'mobiuslabsgmbh/faster-whisper-large-v3-turbo',
+    revision: '0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf',
+    cacheDir: WHISPER_TURBO_MODEL_CACHE_DIR,
+    zipName: 'faster-whisper-large-v3-turbo-ct2.zip',
+    files: {
+      'model.bin': 'e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da',
+      'config.json': 'b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e',
+      'tokenizer.json': '297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd',
+      'vocabulary.json': 'c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1',
+      'preprocessor_config.json': '7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711'
+    }
+  },
+  {
+    repoId: 'ggerganov/whisper.cpp',
+    revision: '5359861c739e955e79d9a303bcbc70fb988958b1',
+    cacheDir: WHISPER_TURBO_MODEL_CACHE_DIR,
+    zipName: 'ggml-large-v3-turbo.zip',
+    files: {
+      'ggml-large-v3-turbo.bin': '1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69'
+    }
+  }
+]
+
+const WHISPER_CPP_TAG = 'v1.9.4'
+const WHISPER_CPP_COMMIT = '927cfce34f31707e17f2bff35c349632fb9e2c3a'
+const WHISPER_CPP_PATCH_NAME = 'whisper-dtw-median-filter-short-window.patch'
+const WHISPER_CPP_VULKAN_FILES = [
+  'BUILD.txt',
+  'ggml-base.dll',
+  'ggml-cpu.dll',
+  'ggml-vulkan.dll',
+  'ggml.dll',
+  'whisper-cli.exe',
+  'whisper.dll'
+]
 
 const MAX_RELEASE_PART_BYTES = 2_000_000_000
 
@@ -217,6 +302,7 @@ async function main() {
         }
       )
     )
+    artifacts.set('whisper-cpp-vulkan-runtime-win-x64.zip', await prepareWhisperCppVulkanRuntime())
   }
 
   if (!skipModels) {
@@ -226,27 +312,31 @@ async function main() {
     for (const model of PARAKEET_MODELS) {
       artifacts.set(model.zipName, await prepareParakeetModel(model))
     }
+    for (const model of HF_FILE_MODELS) {
+      artifacts.set(model.zipName, await prepareHfFileModel(model))
+    }
   }
 
   await writeSummary(artifacts)
   console.log(`[windows-transcription-assets] Wrote assets to ${OUT_DIR}`)
 }
 
-async function prepareRuntime(kind, zipName, packages, options = {}) {
-  const { noDepsPackages = [], allowedPipCheckLines = [], beforeZip } = options
-  const runtimeDir = path.join(STAGING_DIR, `runtime-${kind}`)
-  const extractDir = path.join(STAGING_DIR, `python-extract-${kind}`)
-  const zipPath = path.join(OUT_DIR, zipName)
+async function preparePythonEnv(envDir, packages, options = {}) {
+  const { noDepsPackages = [], allowedPipCheckLines = [] } = options
+  const extractDir = path.join(
+    STAGING_DIR,
+    `python-extract-${path.basename(envDir).replace(/^runtime-/, '')}`
+  )
 
-  await rm(runtimeDir, { recursive: true, force: true })
+  await rm(envDir, { recursive: true, force: true })
   await rm(extractDir, { recursive: true, force: true })
-  await mkdir(runtimeDir, { recursive: true })
+  await mkdir(envDir, { recursive: true })
   await mkdir(extractDir, { recursive: true })
 
   run('tar', ['-xzf', PYTHON_ARCHIVE, '-C', extractDir])
-  await cp(path.join(extractDir, 'python'), runtimeDir, { recursive: true })
+  await cp(path.join(extractDir, 'python'), envDir, { recursive: true })
 
-  const pythonPath = path.join(runtimeDir, 'python.exe')
+  const pythonPath = path.join(envDir, 'python.exe')
   run(pythonPath, ['-m', 'pip', 'install', '--no-compile', '--upgrade', ...BOOTSTRAP_PACKAGES])
   run(pythonPath, ['-m', 'pip', 'install', '--no-compile', ...packages])
   if (noDepsPackages.length) {
@@ -254,11 +344,28 @@ async function prepareRuntime(kind, zipName, packages, options = {}) {
   }
   checkPip(pythonPath, allowedPipCheckLines)
   assertPinnedRuntime(pythonPath, [...packages, ...noDepsPackages])
+  return pythonPath
+}
+
+async function prepareRuntime(kind, zipName, packages, options = {}) {
+  const { beforeZip } = options
+  const runtimeDir = path.join(STAGING_DIR, `runtime-${kind}`)
+  const zipPath = path.join(OUT_DIR, zipName)
+
+  await preparePythonEnv(runtimeDir, packages, options)
 
   await pruneRuntime(runtimeDir)
   if (beforeZip) await beforeZip(runtimeDir)
   await zipDirectory(runtimeDir, zipPath)
   return await describeArtifact(zipPath, zipName)
+}
+
+async function getOnnxToolsPython() {
+  const pythonPath = path.join(STAGING_DIR, 'tools-onnx', 'python.exe')
+  if (!(await exists(pythonPath))) {
+    await preparePythonEnv(path.join(STAGING_DIR, 'tools-onnx'), ONNX_TOOL_PACKAGES)
+  }
+  return pythonPath
 }
 
 async function prepareModel(model) {
@@ -273,7 +380,9 @@ async function prepareModel(model) {
     filter: (source) => !source.includes(`${path.sep}.cache${path.sep}`)
   })
   await zipDirectory(stagingDir, zipPath)
-  return await describeArtifact(zipPath, model.zipName)
+  const artifact = await describeArtifact(zipPath, model.zipName)
+  await rm(stagingDir, { recursive: true, force: true })
+  return artifact
 }
 
 async function prepareParakeetModel(model) {
@@ -291,7 +400,145 @@ async function prepareParakeetModel(model) {
   await cp(sileroVadPath, path.join(stagingDir, SILERO_VAD.filename))
 
   await zipDirectory(stagingDir, zipPath)
-  return await describeArtifact(zipPath, model.zipName)
+  const artifact = await describeArtifact(zipPath, model.zipName)
+  await rm(stagingDir, { recursive: true, force: true })
+  return artifact
+}
+
+async function prepareHfFileModel(model) {
+  const { files, allowzeroRewrite } = model
+  const sourceDir = await downloadHfFiles(model)
+  const stagingDir = path.join(STAGING_DIR, `model-${path.basename(model.zipName, '.zip')}`)
+  const zipPath = path.join(OUT_DIR, model.zipName)
+
+  await rm(stagingDir, { recursive: true, force: true })
+  await mkdir(stagingDir, { recursive: true })
+  for (const filename of Object.keys(files)) {
+    if (filename === allowzeroRewrite?.filename) continue
+    await cp(path.join(sourceDir, filename), path.join(stagingDir, filename))
+  }
+  if (allowzeroRewrite) {
+    const rewritten = path.join(stagingDir, allowzeroRewrite.filename)
+    run(await getOnnxToolsPython(), [
+      path.join(ROOT, 'scripts', 'canary-allowzero-rewrite.py'),
+      path.join(sourceDir, allowzeroRewrite.filename),
+      rewritten
+    ])
+    const actual = await hashFile(rewritten)
+    if (actual !== allowzeroRewrite.sha256) {
+      throw new Error(
+        `Rewritten ${allowzeroRewrite.filename}: expected ${allowzeroRewrite.sha256}, got ${actual}`
+      )
+    }
+  }
+  if (model.sileroVad) {
+    await cp(await resolveSileroVadSnapshot(), path.join(stagingDir, SILERO_VAD.filename))
+  }
+
+  await zipDirectory(stagingDir, zipPath)
+  const artifact = await describeArtifact(zipPath, model.zipName)
+  await rm(stagingDir, { recursive: true, force: true })
+  return artifact
+}
+
+async function prepareWhisperCppVulkanRuntime() {
+  const vulkanSdk = process.env.VULKAN_SDK
+  if (!vulkanSdk || !(await exists(vulkanSdk))) {
+    throw new Error(
+      `VULKAN_SDK must point at an existing Vulkan SDK directory (got ${vulkanSdk ?? 'unset'}).`
+    )
+  }
+
+  // The Vulkan shader-generator build nests deep enough to pass MAX_PATH under STAGING_DIR.
+  const srcDir = path.join(os.tmpdir(), 'autodoc-whisper.cpp')
+  const zipName = 'whisper-cpp-vulkan-runtime-win-x64.zip'
+  const zipPath = path.join(OUT_DIR, zipName)
+  const patchPath = path.join(ROOT, 'scripts', 'whisper-cpp', WHISPER_CPP_PATCH_NAME)
+
+  await rm(srcDir, { recursive: true, force: true })
+  run('git', [
+    '-c',
+    'core.autocrlf=false',
+    'clone',
+    '--depth',
+    '1',
+    '--branch',
+    WHISPER_CPP_TAG,
+    'https://github.com/ggml-org/whisper.cpp',
+    srcDir
+  ])
+
+  const head = runCapture('git', ['-C', srcDir, 'rev-parse', 'HEAD']).trim()
+  if (head !== WHISPER_CPP_COMMIT) {
+    throw new Error(`whisper.cpp HEAD expected ${WHISPER_CPP_COMMIT}, got ${head}`)
+  }
+
+  run('git', ['-C', srcDir, 'apply', patchPath])
+
+  const buildDir = path.join(srcDir, 'build')
+  const configureArgs = [
+    '-S',
+    srcDir,
+    '-B',
+    buildDir,
+    '-G',
+    'Visual Studio 17 2022',
+    '-A',
+    'x64',
+    '-DGGML_VULKAN=ON',
+    '-DWHISPER_BUILD_EXAMPLES=ON'
+  ]
+  const buildArgs = ['--build', buildDir, '--config', 'Release', '--target', 'whisper-cli']
+  run('cmake', configureArgs)
+  run('cmake', buildArgs)
+
+  const releaseDir = path.join(buildDir, 'bin', 'Release')
+  const stagingDir = path.join(STAGING_DIR, 'whisper-cpp-vulkan-runtime')
+  await rm(stagingDir, { recursive: true, force: true })
+  await mkdir(stagingDir, { recursive: true })
+  await cp(path.join(releaseDir, 'whisper-cli.exe'), path.join(stagingDir, 'whisper-cli.exe'))
+  for (const name of await readdir(releaseDir)) {
+    if (name.endsWith('.dll')) {
+      await cp(path.join(releaseDir, name), path.join(stagingDir, name))
+    }
+  }
+
+  const cmakeVersionLine = runCapture('cmake', ['--version']).split(/\r?\n/)[0]
+  const patchText = await readFile(patchPath)
+  const buildTxt = [
+    'whisper.cpp Vulkan Windows runtime for AutoDoc',
+    '',
+    `Tag: ${WHISPER_CPP_TAG}`,
+    `Commit: ${WHISPER_CPP_COMMIT} (ggml-org/whisper.cpp)`,
+    `Patch applied: ${WHISPER_CPP_PATCH_NAME}`,
+    `cmake ${configureArgs.map((arg) => (arg.includes(' ') ? `"${arg}"` : arg)).join(' ')}`,
+    `cmake ${buildArgs.map((arg) => (arg.includes(' ') ? `"${arg}"` : arg)).join(' ')}`,
+    'Toolchain:',
+    cmakeVersionLine,
+    `Vulkan SDK: ${path.basename(vulkanSdk)}`,
+    '===== PATCH DIFF =====',
+    ''
+  ].join('\n')
+  await writeFile(
+    path.join(stagingDir, 'BUILD.txt'),
+    Buffer.concat([Buffer.from(buildTxt), patchText])
+  )
+
+  const staged = (await readdir(stagingDir)).sort()
+  const expected = [...WHISPER_CPP_VULKAN_FILES].sort()
+  const missing = expected.filter((name) => !staged.includes(name))
+  const unexpected = staged.filter((name) => !expected.includes(name))
+  if (missing.length || unexpected.length) {
+    throw new Error(
+      `whisper.cpp Vulkan runtime staged files differ: missing [${missing.join(', ')}]; unexpected [${unexpected.join(', ')}]`
+    )
+  }
+
+  await zipDirectory(stagingDir, zipPath)
+  const artifact = await describeArtifact(zipPath, zipName)
+  await rm(stagingDir, { recursive: true, force: true })
+  await rm(srcDir, { recursive: true, force: true })
+  return artifact
 }
 
 async function resolveParakeetModelSnapshot(model) {
@@ -333,40 +580,59 @@ async function resolveParakeetModelSnapshot(model) {
   return downloaded
 }
 
-async function resolveSileroVadSnapshot() {
-  const snapshotsDir = path.join(SILERO_VAD_CACHE_DIR, SILERO_VAD.cacheDirName, 'snapshots')
-  const existing = await getNewestDirectory(snapshotsDir)
-  if (existing) {
-    const candidate = path.join(existing, SILERO_VAD.filename)
-    if (await exists(candidate)) {
-      return candidate
+async function downloadHfFiles(source) {
+  const { repoId, revision, cacheDir, files } = source
+  const snapshotDir = path.join(
+    cacheDir,
+    `models--${repoId.replaceAll('/', '--')}`,
+    'snapshots',
+    revision
+  )
+
+  const missing = []
+  for (const filename of Object.keys(files)) {
+    if (!(await exists(path.join(snapshotDir, filename)))) {
+      missing.push(filename)
     }
   }
 
-  const pythonPath = path.join(STAGING_DIR, 'runtime-cpu', 'python.exe')
-  if (!(await exists(pythonPath))) {
-    throw new Error('CPU runtime is required to download silero VAD. Run without --skip-runtime.')
+  if (missing.length) {
+    const pythonPath = path.join(STAGING_DIR, 'runtime-cpu', 'python.exe')
+    if (!(await exists(pythonPath))) {
+      throw new Error(`CPU runtime is required to download ${repoId}. Run without --skip-runtime.`)
+    }
+
+    run(pythonPath, [
+      '-c',
+      [
+        'from huggingface_hub import hf_hub_download',
+        ...missing.map(
+          (filename) =>
+            `hf_hub_download(repo_id=${JSON.stringify(repoId)}, filename=${JSON.stringify(filename)}, revision=${JSON.stringify(revision)}, cache_dir=${JSON.stringify(cacheDir)})`
+        )
+      ].join('; ')
+    ])
   }
 
-  run(pythonPath, [
-    '-c',
-    [
-      'from huggingface_hub import hf_hub_download',
-      `print(hf_hub_download(repo_id=${JSON.stringify(SILERO_VAD.repoId)}, filename=${JSON.stringify(SILERO_VAD.filename)}, cache_dir=${JSON.stringify(SILERO_VAD_CACHE_DIR)}))`
-    ].join('; ')
-  ])
-
-  const downloaded = await getNewestDirectory(snapshotsDir)
-  if (!downloaded) {
-    throw new Error(`Could not locate downloaded silero VAD snapshot for ${SILERO_VAD.repoId}.`)
+  for (const [filename, expected] of Object.entries(files)) {
+    const filePath = path.join(snapshotDir, filename)
+    const actual = await hashFile(filePath)
+    if (actual !== expected) {
+      throw new Error(`${repoId}@${revision} ${filename}: expected ${expected}, got ${actual}`)
+    }
   }
 
-  const candidate = path.join(downloaded, SILERO_VAD.filename)
-  if (!(await exists(candidate))) {
-    throw new Error(`Downloaded silero VAD is missing ${SILERO_VAD.filename}.`)
-  }
+  return snapshotDir
+}
 
-  return candidate
+async function resolveSileroVadSnapshot() {
+  const snapshotDir = await downloadHfFiles({
+    repoId: SILERO_VAD.repoId,
+    revision: SILERO_VAD.revision,
+    cacheDir: SILERO_VAD_CACHE_DIR,
+    files: { [SILERO_VAD.filename]: SILERO_VAD.sha256 }
+  })
+  return path.join(snapshotDir, SILERO_VAD.filename)
 }
 
 async function resolveModelSnapshot(model) {
@@ -523,12 +789,14 @@ async function describeArtifact(filePath, zipName = path.basename(filePath)) {
   const artifactBaseUrl = (manifest.artifactBaseUrl ?? '').replace(/\/$/, '')
   const parts = []
   const handle = await open(filePath, 'r')
+  const partCount = Math.ceil(info.size / MAX_RELEASE_PART_BYTES)
+  const partSize = Math.ceil(info.size / partCount)
   let offset = 0
   let partIndex = 1
 
   try {
     while (offset < info.size) {
-      const partBytes = Math.min(MAX_RELEASE_PART_BYTES, info.size - offset)
+      const partBytes = Math.min(partSize, info.size - offset)
       const partFilename = `${zipName}.part${partIndex}`
       const partPath = path.join(OUT_DIR, partFilename)
       const writeStream = createWriteStream(partPath)
@@ -682,6 +950,23 @@ function run(command, args) {
   if (result.status !== 0) {
     throw new Error(`${command} exited with code ${result.status}`)
   }
+}
+
+function runCapture(command, args) {
+  console.log(`[windows-transcription-assets] ${command} ${args.join(' ')}`)
+  const result = spawnSync(command, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: BUILD_ENV
+  })
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status !== 0) {
+    process.stdout.write(`${result.stdout ?? ''}${result.stderr ?? ''}`)
+    throw new Error(`${command} exited with code ${result.status}`)
+  }
+  return result.stdout ?? ''
 }
 
 function hashFile(filePath) {

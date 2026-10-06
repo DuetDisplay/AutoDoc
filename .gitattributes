@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+scripts/whisper-cpp/*.patch -text
+scripts/canary-cuda-sitecustomize.py -text
