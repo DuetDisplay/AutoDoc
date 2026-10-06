@@ -356,10 +356,21 @@ function comparePaths(left, right) {
   return 0
 }
 
+function envWithoutPsModulePath() {
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'psmodulepath') {
+      delete env[key]
+    }
+  }
+  return env
+}
+
 function run(command, args) {
   console.log(`[sign-windows-transcription-assets] ${command} ${args.join(' ')}`)
   const result = spawnSync(command, args, {
-    stdio: 'inherit'
+    stdio: 'inherit',
+    env: envWithoutPsModulePath()
   })
   if (result.error) {
     throw result.error
@@ -372,7 +383,8 @@ function run(command, args) {
 function runCapture(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: envWithoutPsModulePath()
   })
   if (result.error) {
     throw result.error

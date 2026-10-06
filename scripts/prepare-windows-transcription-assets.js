@@ -29,6 +29,11 @@ const BUILD_ENV = {
   PIP_NO_COMPILE: '1',
   SOURCE_DATE_EPOCH: '1767225600'
 }
+for (const key of Object.keys(BUILD_ENV)) {
+  if (key.toLowerCase() === 'psmodulepath') {
+    delete BUILD_ENV[key]
+  }
+}
 
 const BOOTSTRAP_PACKAGES = ['pip==26.1.1', 'setuptools==82.0.1', 'wheel==0.47.0']
 const CPU_RUNTIME_PACKAGES = [
