@@ -237,7 +237,7 @@
           "id": "model",
           "filename": "canary-1b-v2-int8.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-int8.zip",
-          "sha256": "3bec864dd27e85a43927efb21feb1839335a40a055564459feaa6ece5092c389",
+          "sha256": "a6e3615c7dc59c0f8e89b2e1b80058e0bbd4ec2ecb6c668862c6c1e4a26b7192",
           "expectedFiles": [
             "encoder-model.int8.onnx",
             "decoder-model.int8.onnx",
@@ -281,7 +281,7 @@
           "id": "model",
           "filename": "canary-1b-v2-fp32.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip",
-          "sha256": "dbbd66c43900bfca4deafd20796c4c033b78592994866cfab016ea90824b456c",
+          "sha256": "9f4136f1b1a0078169bfa76ad3d2c2f81121d8f478ad0371fe1bdf67d5e731c6",
           "expectedFiles": [
             "encoder-model.onnx",
             "encoder-model.onnx.data",
@@ -292,19 +292,19 @@
           ],
           "sources": ["istupakov/canary-1b-v2-onnx fp32", "istupakov/silero-vad-onnx"],
           "licenses": ["CC-BY-4.0", "MIT"],
-          "bytes": 3680120712,
+          "bytes": 3680120548,
           "parts": [
             {
               "filename": "canary-1b-v2-fp32.zip.part1",
               "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip.part1",
-              "sha256": "2b77949e7c13bcd596717da9edd0a1de079b9486349d9e0b902dc53c8df46c0e",
-              "bytes": 2000000000
+              "sha256": "d0cfa53d7885be419885ff0c06fdd8cebcbe088156793600df35c35f82d45b88",
+              "bytes": 1840060274
             },
             {
               "filename": "canary-1b-v2-fp32.zip.part2",
               "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip.part2",
-              "sha256": "d53953808441b900abfcbd9de33971aedf49e69df7bd487899ce1eca8d03c9c2",
-              "bytes": 1680120712
+              "sha256": "91eee69be49ca664e694909f804aa860879e8ea97f944c56f32c39c233a3672f",
+              "bytes": 1840060274
             }
           ]
         }
@@ -343,7 +343,7 @@
           "id": "model",
           "filename": "faster-whisper-large-v3-turbo-ct2.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-large-v3-turbo-ct2.zip",
-          "sha256": "4c1f29dd1ed3367df27240142991bb80d122c2575e8b148e75e0e34b434f4088",
+          "sha256": "44945f5ed2497a861ce3083d0554e7da09891951c5f42f80040ff632a3582711",
           "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
           "sources": ["mobiuslabsgmbh/faster-whisper-large-v3-turbo"],
           "licenses": ["MIT"],
@@ -383,7 +383,7 @@
           "id": "model",
           "filename": "faster-whisper-large-v3-turbo-ct2.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-large-v3-turbo-ct2.zip",
-          "sha256": "4c1f29dd1ed3367df27240142991bb80d122c2575e8b148e75e0e34b434f4088",
+          "sha256": "44945f5ed2497a861ce3083d0554e7da09891951c5f42f80040ff632a3582711",
           "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
           "sources": ["mobiuslabsgmbh/faster-whisper-large-v3-turbo"],
           "licenses": ["MIT"],
@@ -405,17 +405,17 @@
           "id": "runtime",
           "filename": "whisper-cpp-vulkan-runtime-win-x64.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/whisper-cpp-vulkan-runtime-win-x64.zip",
-          "sha256": "7de1038df721cba706103913dc5d0e09411a62680b64b30a7d7e37eb450399fc",
+          "sha256": "0491afcda8d5da6a319edb374dab35ef290a143110df1c8db46194d5877648f9",
           "expectedFiles": ["whisper-cli.exe"],
           "sources": ["whisper.cpp Vulkan Windows runtime"],
           "licenses": ["MIT"],
-          "bytes": 17846476
+          "bytes": 17870689
         },
         {
           "id": "model",
           "filename": "ggml-large-v3-turbo.zip",
           "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/ggml-large-v3-turbo.zip",
-          "sha256": "beb7999b2749cad40c96e80f4732642f14f1c87c195dcd82df9e1c80461996e1",
+          "sha256": "4a9b9f450a5d2cf505fcf3b2e0a86c824f4c46a5a8fdafe3f2e80976921edaa9",
           "expectedFiles": ["ggml-large-v3-turbo.bin"],
           "sources": ["ggerganov/whisper.cpp ggml-large-v3-turbo"],
           "licenses": ["MIT"],

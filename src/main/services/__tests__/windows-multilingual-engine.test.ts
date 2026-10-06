@@ -294,7 +294,7 @@ describe('Windows multilingual assets and download size', () => {
         route: 'canary',
         engineId: 'canary-cuda'
       })
-    ).toBe(1_897_898_949 + 3_680_120_712)
+    ).toBe(1_897_898_949 + 3_680_120_548)
   })
 
   it('returns 0 for the English route so Settings keeps the existing English installer', () => {
