@@ -39,20 +39,38 @@ it.each([false, true])('reads Windows notices locally (packaged: %s)', async (pa
   )
 })
 
-it('keeps rebuild-dependent Windows entries pending and excludes unbundled Vulkan/TensorRT binaries', () => {
+it('lists the rebuilt Windows runtimes without removed codecs, Hub trees or TensorRT', () => {
   const notices = windowsInventory.notices
-  for (const name of [
-    'av',
-    'huggingface_hub',
-    'PyAV / FFmpeg codec DLLs',
-    'onnxruntime/capi/onnxruntime_providers_tensorrt.dll'
-  ]) {
-    expect(
-      notices
-        .filter((notice) => notice.name === name)
-        .every((notice) => notice.license === 'Pending final inventory')
-    ).toBe(true)
-  }
-  expect(notices.some((notice) => notice.name === 'vulkan-1.dll')).toBe(false)
-  expect(notices.some((notice) => /nvinfer/.test(notice.name))).toBe(false)
+  expect(
+    notices.some((notice) => /^(av|vulkan-1.dll)$|PyAV|FFmpeg|tensorrt|nvinfer/i.test(notice.name))
+  ).toBe(false)
+  expect(notices.some((notice) => notice.license === 'Pending final inventory')).toBe(false)
+  expect(notices.filter((notice) => notice.name === 'huggingface_hub')).toEqual([
+    expect.objectContaining({
+      runtime: 'faster-whisper CPU / CUDA (v3)',
+      version: '1.14.0',
+      license: 'Apache-2.0'
+    })
+  ])
+  expect(
+    notices
+      .filter((notice) => notice.runtime === 'Canary CUDA')
+      .some((notice) => ['sympy', 'mpmath'].includes(notice.name))
+  ).toBe(false)
+  expect(notices).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: 'nvidia-nvjitlink-cu12',
+        version: '12.9.86',
+        license: 'LicenseRef-NVIDIA-Proprietary',
+        runtime: 'Canary CUDA'
+      }),
+      expect.objectContaining({
+        name: 'nvidia/nvjitlink/bin/nvJitLink_120_0.dll',
+        version: '12.9.86',
+        license: 'NVIDIA proprietary',
+        runtime: 'Canary CUDA'
+      })
+    ])
+  )
 })

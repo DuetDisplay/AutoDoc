@@ -1,405 +1,314 @@
 {
-  "source": "origin/ad-100-windows-part-c:docs/windows-transcription-assets.md at 0fdfb0664a91843ceb1995e1cbca0f672e724938",
+  "source": "origin/ad-100-windows-part-c:docs/windows-transcription-assets.md at d634538a5b2f7f3d1ff1cb21918e5034829d43f0",
   "inventoriedAt": "2026-10-05",
   "notices": [
     {
       "name": "annotated-doc",
       "license": "MIT",
       "url": "https://pypi.org/project/annotated-doc/0.0.4/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.0.4"
     },
     {
       "name": "anyio",
       "license": "MIT",
       "url": "https://pypi.org/project/anyio/4.13.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.13.0"
-    },
-    {
-      "name": "av",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/av/17.0.1/",
-      "runtime": "faster-whisper CPU / CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
     },
     {
       "name": "certifi",
       "license": "MPL-2.0",
       "url": "https://pypi.org/project/certifi/2026.4.22/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "2026.4.22"
     },
     {
       "name": "click",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/click/8.3.3/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "8.3.3"
     },
     {
       "name": "colorama",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/colorama/0.4.6/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.4.6"
     },
     {
       "name": "ctranslate2",
       "license": "MIT",
       "url": "https://pypi.org/project/ctranslate2/4.7.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.7.1"
     },
     {
       "name": "faster-whisper",
       "license": "MIT",
       "url": "https://pypi.org/project/faster-whisper/1.2.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.2.1"
     },
     {
       "name": "filelock",
       "license": "MIT",
       "url": "https://pypi.org/project/filelock/3.29.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "3.29.0"
     },
     {
       "name": "flatbuffers",
       "license": "Apache-2.0",
       "url": "https://pypi.org/project/flatbuffers/25.12.19/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "25.12.19"
     },
     {
       "name": "fsspec",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/fsspec/2026.4.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "2026.4.0"
     },
     {
       "name": "h11",
       "license": "MIT",
       "url": "https://pypi.org/project/h11/0.16.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.16.0"
     },
     {
       "name": "hf-xet",
       "license": "Apache-2.0",
       "url": "https://pypi.org/project/hf-xet/1.5.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.5.0"
     },
     {
       "name": "httpcore",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/httpcore/1.0.9/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.0.9"
     },
     {
       "name": "httpx",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/httpx/0.28.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.28.1"
     },
     {
       "name": "huggingface_hub",
-      "license": "Pending final inventory",
+      "license": "Apache-2.0",
       "url": "https://pypi.org/project/huggingface_hub/1.14.0/",
-      "runtime": "faster-whisper CPU / CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
+      "runtime": "faster-whisper CPU / CUDA (v3)",
+      "version": "1.14.0"
     },
     {
       "name": "idna",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/idna/3.13/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "3.13"
     },
     {
       "name": "markdown-it-py",
       "license": "MIT",
       "url": "https://pypi.org/project/markdown-it-py/4.2.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.2.0"
     },
     {
       "name": "mdurl",
       "license": "MIT",
       "url": "https://pypi.org/project/mdurl/0.1.2/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.1.2"
     },
     {
       "name": "numpy",
       "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "url": "https://pypi.org/project/numpy/2.4.4/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "2.4.4"
     },
     {
       "name": "onnxruntime",
       "license": "MIT",
       "url": "https://pypi.org/project/onnxruntime/1.25.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.25.1"
     },
     {
       "name": "packaging",
       "license": "Apache-2.0 OR BSD-2-Clause",
       "url": "https://pypi.org/project/packaging/26.2/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "26.2"
     },
     {
       "name": "protobuf",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/protobuf/7.34.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "7.34.1"
     },
     {
       "name": "Pygments",
       "license": "BSD-2-Clause",
       "url": "https://pypi.org/project/Pygments/2.20.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "2.20.0"
     },
     {
       "name": "PyYAML",
       "license": "MIT",
       "url": "https://pypi.org/project/PyYAML/6.0.3/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "6.0.3"
     },
     {
       "name": "rich",
       "license": "MIT",
       "url": "https://pypi.org/project/rich/15.0.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "15.0.0"
     },
     {
       "name": "shellingham",
       "license": "ISC",
       "url": "https://pypi.org/project/shellingham/1.5.4/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.5.4"
     },
     {
       "name": "tokenizers",
       "license": "Apache Software License (version not stated)",
       "url": "https://pypi.org/project/tokenizers/0.23.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.23.1"
     },
     {
       "name": "tqdm",
       "license": "MPL-2.0 AND MIT",
       "url": "https://pypi.org/project/tqdm/4.67.3/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.67.3"
     },
     {
       "name": "typer",
       "license": "MIT",
       "url": "https://pypi.org/project/typer/0.25.1/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "0.25.1"
     },
     {
       "name": "typing_extensions",
       "license": "PSF-2.0",
       "url": "https://pypi.org/project/typing_extensions/4.15.0/",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.15.0"
     },
     {
       "name": "nvidia-cublas-cu12",
       "license": "LicenseRef-NVIDIA-Proprietary",
       "url": "https://pypi.org/project/nvidia-cublas-cu12/12.9.2.10/",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.2.10"
     },
     {
       "name": "nvidia-cuda-nvrtc-cu12",
       "license": "LicenseRef-NVIDIA-Proprietary",
       "url": "https://pypi.org/project/nvidia-cuda-nvrtc-cu12/12.9.86/",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.86"
     },
     {
       "name": "nvidia-cudnn-cu12",
       "license": "LicenseRef-NVIDIA-Proprietary",
       "url": "https://pypi.org/project/nvidia-cudnn-cu12/9.21.1.3/",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "9.21.1.3"
-    },
-    {
-      "name": "anyio",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/anyio/4.14.1/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "certifi",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/certifi/2026.6.17/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "click",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/click/8.4.2/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "colorama",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/colorama/0.4.6/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "filelock",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/filelock/3.29.5/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
     },
     {
       "name": "flatbuffers",
       "license": "Apache-2.0",
       "url": "https://pypi.org/project/flatbuffers/25.12.19/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "25.12.19"
-    },
-    {
-      "name": "fsspec",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/fsspec/2026.6.0/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "h11",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/h11/0.16.0/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "hf-xet",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/hf-xet/1.5.1/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "httpcore",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/httpcore/1.0.9/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "httpx",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/httpx/0.28.1/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "huggingface_hub",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/huggingface_hub/1.22.0/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
-      "name": "idna",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/idna/3.18/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
     },
     {
       "name": "mpmath",
       "license": "BSD",
       "url": "https://pypi.org/project/mpmath/1.3.0/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "1.3.0"
     },
     {
       "name": "numpy",
       "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "url": "https://pypi.org/project/numpy/2.4.4/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "2.4.4"
     },
     {
       "name": "onnx-asr",
       "license": "MIT",
       "url": "https://pypi.org/project/onnx-asr/0.11.0/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "0.11.0"
     },
     {
       "name": "onnxruntime-directml",
       "license": "MIT",
       "url": "https://pypi.org/project/onnxruntime-directml/1.24.4/",
-      "runtime": "Parakeet",
+      "runtime": "Parakeet (v3)",
       "version": "1.24.4"
     },
     {
       "name": "packaging",
       "license": "Apache-2.0 OR BSD-2-Clause",
       "url": "https://pypi.org/project/packaging/26.2/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "26.2"
     },
     {
       "name": "protobuf",
       "license": "BSD-3-Clause",
       "url": "https://pypi.org/project/protobuf/7.35.1/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "7.35.1"
-    },
-    {
-      "name": "PyYAML",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/PyYAML/6.0.3/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
     },
     {
       "name": "sympy",
       "license": "BSD",
       "url": "https://pypi.org/project/sympy/1.14.0/",
-      "runtime": "Parakeet / Canary CUDA",
+      "runtime": "Parakeet (v3)",
       "version": "1.14.0"
     },
     {
-      "name": "tqdm",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/tqdm/4.68.3/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
+      "name": "flatbuffers",
+      "license": "Apache-2.0",
+      "url": "https://pypi.org/project/flatbuffers/25.12.19/",
+      "runtime": "Canary CUDA",
+      "version": "25.12.19"
     },
     {
-      "name": "typing_extensions",
-      "license": "Pending final inventory",
-      "url": "https://pypi.org/project/typing_extensions/4.16.0/",
-      "runtime": "Parakeet / Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
+      "name": "numpy",
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "url": "https://pypi.org/project/numpy/2.4.4/",
+      "runtime": "Canary CUDA",
+      "version": "2.4.4"
+    },
+    {
+      "name": "onnx-asr",
+      "license": "MIT",
+      "url": "https://pypi.org/project/onnx-asr/0.11.0/",
+      "runtime": "Canary CUDA",
+      "version": "0.11.0"
     },
     {
       "name": "onnxruntime-gpu",
@@ -407,6 +316,20 @@
       "url": "https://pypi.org/project/onnxruntime-gpu/1.25.1/",
       "runtime": "Canary CUDA",
       "version": "1.25.1"
+    },
+    {
+      "name": "packaging",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "url": "https://pypi.org/project/packaging/26.2/",
+      "runtime": "Canary CUDA",
+      "version": "26.2"
+    },
+    {
+      "name": "protobuf",
+      "license": "BSD-3-Clause",
+      "url": "https://pypi.org/project/protobuf/7.35.1/",
+      "runtime": "Canary CUDA",
+      "version": "7.35.1"
     },
     {
       "name": "nvidia-cuda-runtime-cu12",
@@ -421,6 +344,13 @@
       "url": "https://pypi.org/project/nvidia-cufft-cu12/11.4.1.4/",
       "runtime": "Canary CUDA",
       "version": "11.4.1.4"
+    },
+    {
+      "name": "nvidia-nvjitlink-cu12",
+      "license": "LicenseRef-NVIDIA-Proprietary",
+      "url": "https://pypi.org/project/nvidia-nvjitlink-cu12/12.9.86/",
+      "runtime": "Canary CUDA",
+      "version": "12.9.86"
     },
     {
       "name": "nvidia-curand-cu12",
@@ -454,194 +384,187 @@
       "name": "CPython",
       "license": "PSF-2.0",
       "url": "https://docs.python.org/3.11/license.html",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "3.11.15"
     },
     {
       "name": "Microsoft Distributable Code",
       "license": "Microsoft Visual C++ redistributable terms",
       "url": "https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "vcruntime140.dll, vcruntime140_1.dll",
       "license": "Microsoft Visual C++ redistributable terms",
       "url": "https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "OpenSSL (DLLs/libssl-3-x64.dll, libcrypto-3-x64.dll)",
       "license": "Apache-2.0 (OpenSSL 3)",
       "url": "https://openssl-library.org/source/license/",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "OpenSSL 3 (filename)"
     },
     {
       "name": "libffi (DLLs/libffi-8.dll)",
       "license": "MIT (libffi)",
       "url": "https://github.com/libffi/libffi/blob/master/LICENSE",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "8"
     },
     {
       "name": "SQLite (DLLs/sqlite3.dll)",
       "license": "public domain (SQLite)",
       "url": "https://sqlite.org/copyright.html",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "bzip2 (DLLs/_bz2.pyd)",
       "license": "bzip2",
       "url": "https://sourceware.org/bzip2/",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "1.0.8"
     },
     {
       "name": "xz / liblzma (DLLs/_lzma.pyd)",
       "license": "0BSD / public domain (XZ Utils)",
       "url": "https://tukaani.org/xz/",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "zlib",
       "license": "zlib",
       "url": "https://zlib.net/zlib_license.html",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "Tcl/Tk (tcl86t.dll, tk86t.dll, plus tcl/dde1.4, tcl/reg1.3, tcl/tix8.4.3)",
       "license": "Tcl/Tk BSD-style",
       "url": "https://www.tcl-lang.org/software/tcltk/license.html",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "8.6"
     },
     {
       "name": "ctranslate2/ctranslate2.dll",
       "license": "MIT (wheel)",
       "url": "https://github.com/OpenNMT/CTranslate2",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "4.7.1"
     },
     {
       "name": "ctranslate2/cudnn64_9.dll",
       "license": "NVIDIA proprietary (cuDNN)",
       "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
-      "runtime": "faster-whisper CPU / CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3)"
     },
     {
       "name": "ctranslate2/libiomp5md.dll",
       "license": "Intel Simplified Software License (not in a dist-info)",
       "url": "https://www.intel.com/content/www/us/en/developer/articles/license/end-user-license-agreement.html",
-      "runtime": "faster-whisper CPU / CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3)"
     },
     {
       "name": "onnxruntime/capi/onnxruntime.dll",
       "license": "MIT",
       "url": "https://github.com/microsoft/onnxruntime",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.25.1"
     },
     {
       "name": "onnxruntime/capi/onnxruntime_providers_shared.dll",
       "license": "MIT",
       "url": "https://github.com/microsoft/onnxruntime",
-      "runtime": "faster-whisper CPU / CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3)",
       "version": "1.25.1"
     },
     {
       "name": "numpy.libs/msvcp140-*.dll",
       "license": "Microsoft Visual C++ redistributable terms",
       "url": "https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "numpy.libs/libscipy_openblas64_*.dll",
       "license": "BSD-3-Clause (OpenBLAS; covered by numpy License-Expression)",
       "url": "https://github.com/OpenMathLib/OpenBLAS/blob/develop/LICENSE",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA"
-    },
-    {
-      "name": "PyAV / FFmpeg codec DLLs",
-      "license": "Pending final inventory",
-      "url": "https://pyav.org/",
-      "runtime": "faster-whisper CPU / CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA"
     },
     {
       "name": "nvidia/cublas/bin/cublas64_12.dll",
       "license": "NVIDIA proprietary (CUDA EULA / Attachment A)",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.2.10"
     },
     {
       "name": "nvidia/cublas/bin/cublasLt64_12.dll",
       "license": "NVIDIA proprietary",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.2.10"
     },
     {
       "name": "nvidia/cublas/bin/nvblas64_12.dll",
       "license": "NVIDIA proprietary",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.2.10"
     },
     {
       "name": "nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll",
       "license": "NVIDIA proprietary",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.86"
     },
     {
       "name": "nvidia/cuda_nvrtc/bin/nvrtc64_120_0.alt.dll",
       "license": "NVIDIA proprietary",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.86"
     },
     {
       "name": "nvidia/cuda_nvrtc/bin/nvrtc-builtins64_129.dll",
       "license": "NVIDIA proprietary",
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "12.9.86"
     },
     {
       "name": "nvidia/cudnn/bin/cudnn64_9.dll",
       "license": "NVIDIA proprietary (cuDNN EULA)",
       "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
-      "runtime": "faster-whisper CUDA",
+      "runtime": "faster-whisper CUDA (v3)",
       "version": "9.21.1.3"
     },
     {
       "name": "cudnn_adv64_9.dll, cudnn_cnn64_9.dll, cudnn_engines_precompiled64_9.dll, cudnn_engines_runtime_compiled64_9.dll, cudnn_engines_tensor_ir64_9.dll, cudnn_graph64_9.dll, cudnn_heuristic64_9.dll, cudnn_ops64_9.dll",
       "license": "NVIDIA proprietary (cuDNN EULA)",
       "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
-      "runtime": "faster-whisper CUDA / Canary CUDA",
+      "runtime": "faster-whisper CUDA (v3) / Canary CUDA",
       "version": "9.21.1.3"
     },
     {
       "name": "onnxruntime/capi/onnxruntime.dll",
       "license": "MIT",
       "url": "https://github.com/microsoft/onnxruntime",
-      "runtime": "Parakeet",
+      "runtime": "Parakeet (v3)",
       "version": "1.24.4 (DirectML build)"
     },
     {
       "name": "onnxruntime/capi/onnxruntime_providers_shared.dll",
       "license": "MIT",
       "url": "https://github.com/microsoft/onnxruntime",
-      "runtime": "Parakeet",
+      "runtime": "Parakeet (v3)",
       "version": "1.24.4"
     },
     {
       "name": "onnxruntime/capi/DirectML.dll",
       "license": "Microsoft DirectML redistributable terms (not in dist-info)",
       "url": "https://www.nuget.org/packages/Microsoft.AI.DirectML/",
-      "runtime": "Parakeet"
+      "runtime": "Parakeet (v3)"
     },
     {
       "name": "nvidia/cuda_runtime/bin/cudart64_12.dll",
@@ -670,6 +593,13 @@
       "url": "https://docs.nvidia.com/cuda/eula/index.html",
       "runtime": "Canary CUDA",
       "version": "10.3.10.19"
+    },
+    {
+      "name": "nvidia/nvjitlink/bin/nvJitLink_120_0.dll",
+      "license": "NVIDIA proprietary",
+      "url": "https://docs.nvidia.com/cuda/eula/index.html",
+      "runtime": "Canary CUDA",
+      "version": "12.9.86"
     },
     {
       "name": "nvidia/cublas/bin/cublas64_12.dll, cublasLt64_12.dll, nvblas64_12.dll",
@@ -714,67 +644,60 @@
       "version": "1.25.1"
     },
     {
-      "name": "onnxruntime/capi/onnxruntime_providers_tensorrt.dll",
-      "license": "Pending final inventory",
-      "url": "https://github.com/microsoft/onnxruntime",
-      "runtime": "Canary CUDA",
-      "attribution": "Inventory pending the Windows runtime rebuild."
-    },
-    {
       "name": "pip (ensurepip wheel)",
       "license": "MIT",
       "url": "https://pypi.org/project/pip/24.0/",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "24.0"
     },
     {
       "name": "setuptools (ensurepip wheel)",
       "license": "MIT",
       "url": "https://pypi.org/project/setuptools/79.0.1/",
-      "runtime": "faster-whisper CPU / CUDA / Parakeet / Canary CUDA",
+      "runtime": "faster-whisper CPU / CUDA (v3) / Parakeet (v3) / Canary CUDA",
       "version": "79.0.1"
     },
     {
       "name": "whisper-cli.exe",
-      "license": "MIT",
+      "license": "MIT (whisper.cpp)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
       "version": "v1.9.4 + patch"
     },
     {
       "name": "whisper.dll",
-      "license": "MIT",
+      "license": "MIT (whisper.cpp)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
       "version": "v1.9.4 + patch"
     },
     {
       "name": "ggml.dll",
-      "license": "MIT",
+      "license": "MIT (ggml)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
-      "version": "v1.9.4 + patch"
+      "version": "v1.9.4"
     },
     {
       "name": "ggml-base.dll",
-      "license": "MIT",
+      "license": "MIT (ggml)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
-      "version": "v1.9.4 + patch"
+      "version": "v1.9.4"
     },
     {
       "name": "ggml-cpu.dll",
-      "license": "MIT",
+      "license": "MIT (ggml)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
-      "version": "v1.9.4 + patch"
+      "version": "v1.9.4"
     },
     {
       "name": "ggml-vulkan.dll",
-      "license": "MIT",
+      "license": "MIT (ggml)",
       "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE",
       "runtime": "whisper.cpp Vulkan",
-      "version": "v1.9.4 + patch"
+      "version": "v1.9.4"
     }
   ]
 }
