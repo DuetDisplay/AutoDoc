@@ -73,8 +73,8 @@ jobs:
           $drive = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE))
           $freeGb = [math]::Round($drive.AvailableFreeSpace / 1GB, 1)
           Write-Host "$freeGb GB free"
-          if ($drive.AvailableFreeSpace -lt 80GB) {
-            throw "Need at least 80 GB free; peak usage is about 50 GB: ~18 GB of assets plus model downloads and staging"
+          if ($drive.AvailableFreeSpace -lt 60GB) {
+            throw "Need at least 60 GB free; peak usage is about 47 GB: 20 GB of assets, 13 GB of model downloads, 9 GB of runtime staging and pip cache, 5 GB while staging or signing"
           }
 
       - name: Restore Python archive cache
