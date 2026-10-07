@@ -7,6 +7,7 @@ const DEFAULT_WINDOWS_TRANSCRIPTION_ASSET_REPO = 'DuetDisplay/AutoDoc'
 const BUILD_TIME_AUTODOC_OFFICIAL_BUILD = process.env.AUTODOC_OFFICIAL_BUILD
 const BUILD_TIME_AUTH_WORKER_URL = process.env.AUTODOC_AUTH_WORKER_URL
 const BUILD_TIME_SUPPORT_EMAIL = process.env.AUTODOC_SUPPORT_EMAIL
+const BUILD_TIME_PUBLIC_UPDATE_FEED_URL = process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL
 const BUILD_TIME_MAC_WHISPER_RUNTIME_ASSET_BASE_URL =
   process.env.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL
 const BUILD_TIME_MAC_WHISPER_RUNTIME_RELEASE_TAG =
@@ -40,6 +41,25 @@ export function getConfiguredAuthWorkerUrl(): string | null {
     readConfiguredEnv('AUTODOC_AUTH_WORKER_URL', BUILD_TIME_AUTH_WORKER_URL) ??
     (isOfficialAutoDocBuild() ? OFFICIAL_AUTH_WORKER_URL : null)
   )
+}
+
+/** Public official builds migrate only after the verified feed is enabled in release CI. */
+export function getConfiguredPublicUpdateFeedUrl(): string | null {
+  if (!isOfficialAutoDocBuild()) return null
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return null
+  const configured = readConfiguredEnv(
+    'AUTODOC_PUBLIC_UPDATE_FEED_URL',
+    BUILD_TIME_PUBLIC_UPDATE_FEED_URL
+  )
+  if (!configured) return null
+  const url = new URL(configured)
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error(
+      'The official update feed must be an HTTPS URL without credentials or query parameters.'
+    )
+  }
+  if (!url.pathname.endsWith('/')) url.pathname += '/'
+  return url.toString()
 }
 
 export function requireConfiguredAuthWorkerUrl(): string {

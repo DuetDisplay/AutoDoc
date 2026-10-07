@@ -71,7 +71,9 @@
     "test:pr:ai": "npm run test:run -- src/renderer/src/components/__tests__/SpeakerLegend.test.tsx src/renderer/src/pages/AskAI.test.tsx src/renderer/src/pages/MeetingDetail.test.tsx src/renderer/src/pages/Search.test.tsx && npm run test:main:run -- src/main/ipc/__tests__/chat-ipc.test.ts src/main/services/__tests__/llm.test.ts",
     "test:pr:settings": "npm run test:run -- src/renderer/src/App.test.tsx src/renderer/src/components/PageHeader.test.tsx src/renderer/src/components/Sidebar.test.tsx src/renderer/src/pages/Settings.test.tsx && npm run test:main:run -- src/main/ipc/__tests__/prefs-ipc.test.ts src/main/services/__tests__/main-window.test.ts src/main/services/__tests__/token-store.test.ts",
     "test:pr": "npm run test:readme-release-links && npm run test:pr:onboarding && npm run test:pr:recording && npm run test:pr:processing && npm run test:pr:ai && npm run test:pr:settings",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "typecheck:update-worker": "tsc --noEmit -p update-worker/tsconfig.json",
+    "test:update-mirror": "node --test scripts/__tests__/update-mirror.test.mjs scripts/__tests__/update-mirror-worker.test.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -112,6 +114,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
+    "js-yaml": "4.3.0",
     "jsdom": "^25.0.1",
     "prettier": "^3.7.4",
     "react": "^19.2.1",

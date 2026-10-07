@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "autodoc-updates-staging",
+  "account_id": "845df9423020aef6c50697467a04e353",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "logpush": false,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  },
+  "vars": { "ENVIRONMENT": "staging" },
+  "r2_buckets": [{ "binding": "PACKAGES", "bucket_name": "autodoc-updates-staging" }],
+  "d1_databases": [
+    {
+      "binding": "COUNTS",
+      "database_name": "autodoc-update-counts-staging",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "production": {
+      "name": "autodoc-updates",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": { "ENVIRONMENT": "production" },
+      "r2_buckets": [{ "binding": "PACKAGES", "bucket_name": "autodoc-updates" }],
+      "d1_databases": [
+        {
+          "binding": "COUNTS",
+          "database_name": "autodoc-update-counts",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

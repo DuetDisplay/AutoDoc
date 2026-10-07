@@ -15,6 +15,9 @@ out
 .env.local
 .env.production
 .env.development.local
+.dev.vars*
+.wrangler/
+update-worker/.test-state/
 
 # Generated icons (built from SVGs via scripts/generate-icons.js)
 build/icon.png

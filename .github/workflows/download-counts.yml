@@ -55,3 +55,18 @@ jobs:
           fi
 
           node scripts/ingest-github-download-counts.js "${args[@]}"
+
+      - name: Sync production update aggregates to PostHog
+        if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true'
+        env:
+          UPDATE_MIRROR_ORIGIN: ${{ vars.UPDATE_MIRROR_ORIGIN }}
+          COUNTS_EXPORT_TOKEN: ${{ secrets.COUNTS_EXPORT_TOKEN }}
+          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          args=()
+          if [ "$DRY_RUN" = 'true' ]; then args+=(--dry-run); fi
+          node scripts/ingest-hosted-update-counts.mjs "${args[@]}"

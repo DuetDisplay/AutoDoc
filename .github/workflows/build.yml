@@ -119,6 +119,7 @@ jobs:
       contents: read
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
@@ -184,6 +185,7 @@ jobs:
       actions: write
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
@@ -289,6 +291,7 @@ jobs:
       contents: read
     env:
       AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
@@ -646,3 +649,15 @@ jobs:
           while IFS= read -r asset_id; do
             gh api --method DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
           done <<<"$blockmap_ids"
+
+  publish-update-mirror:
+    needs: [validate-release-request, publish-release]
+    if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-mirror.yml
+    with:
+      release_tag: ${{ needs.validate-release-request.outputs.release_tag }}
+      apply: true
+      from_build_artifacts: true
+    secrets: inherit
