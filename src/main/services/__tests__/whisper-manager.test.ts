@@ -283,6 +283,22 @@ describe('WhisperManager', () => {
       }
     })
 
+    it('names the language engine, not the English one, during non-English setup', () => {
+      const internals = manager as unknown as {
+        activeSetupLanguage: string | undefined
+        withBackendStatus: (status: { phase: string; percent: number }) => {
+          backendLabel?: string
+        }
+      }
+      const status = { phase: 'downloading-ffmpeg', percent: 0 }
+      internals.activeSetupLanguage = 'de'
+      expect(internals.withBackendStatus(status).backendLabel).toBe('Canary')
+      internals.activeSetupLanguage = 'ja'
+      expect(internals.withBackendStatus(status).backendLabel).toBe('Whisper turbo')
+      internals.activeSetupLanguage = undefined
+      expect(internals.withBackendStatus(status).backendLabel).not.toMatch(/Canary|turbo/)
+    })
+
     it('keeps English on the existing setup path', async () => {
       const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
       await manager.prepareMeetingLanguage('en')

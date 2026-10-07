@@ -1025,12 +1025,22 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
+  /** A non-English setup names its own engine, not the English one. */
+  private setupLanguageLabel(): string | null {
+    if (!this.activeSetupLanguage) return null
+    const route = getMeetingAsrRoute(this.activeSetupLanguage)
+    if (route === 'canary') return 'Canary'
+    if (route === 'whisper-turbo') return 'Whisper turbo'
+    return null
+  }
+
   private withBackendStatus(status: WhisperSetupStatus): WhisperSetupStatus {
+    const languageLabel = this.setupLanguageLabel()
     if (this.isMlxWhisperSelected()) {
       return {
         ...status,
         backend: 'mlx-whisper',
-        backendLabel: MLX_WHISPER_LABEL,
+        backendLabel: languageLabel ?? MLX_WHISPER_LABEL,
         macProcessingProfileId: this.selectedMacProfile?.id,
         macProcessingProfileReason: this.selectedMacProfile?.reason,
         notesModel: this.selectedMacProfile?.notesModel
@@ -1045,7 +1055,7 @@ export class WhisperManager extends EventEmitter {
     return {
       ...status,
       backend: profile.id,
-      backendLabel: profile.label,
+      backendLabel: languageLabel ?? profile.label,
       windowsProcessingProfileId: this.selectedWindowsProcessingProfile?.id,
       windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason,
       notesModel: this.selectedWindowsProcessingProfile?.notesModel
