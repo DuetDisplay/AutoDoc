@@ -177,14 +177,16 @@ describe('PrefsStore', () => {
 
     expect(await handler('prefs:get-meeting-language-availability')()).toMatchObject({
       restricted: true,
-      availableLanguages: ['en', 'de', 'fr', 'it', 'pt', 'es']
+      availableLanguages: ['en']
     })
-    await handler('prefs:set-meeting-language')({}, 'de')
-    expect(store.getMeetingLanguage()).toBe('de')
-    await expect(handler('prefs:set-meeting-language')({}, 'ja')).rejects.toThrow(
-      meetingLanguageNeedsMemoryMessage('ja')
-    )
-    expect(store.getMeetingLanguage()).toBe('de')
+    await handler('prefs:set-meeting-language')({}, 'en')
+    expect(store.getMeetingLanguage()).toBe('en')
+    for (const language of ['de', 'ja']) {
+      await expect(handler('prefs:set-meeting-language')({}, language)).rejects.toThrow(
+        meetingLanguageNeedsMemoryMessage(language)
+      )
+    }
+    expect(store.getMeetingLanguage()).toBe('en')
   })
 
   it('keeps the Mac notes-model memory error byte-identical', async () => {

@@ -22,10 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- On 8 GB devices, meeting languages are limited to English, German, French,
-  Italian, Portuguese, and Spanish. Spanish requires a supported graphics card
-  on low-spec Windows PCs. Settings explains unavailable languages and flags
-  slower CPU transcription.
+- On 8 GB Macs and low-spec PCs, meetings stay in English: other languages need
+  larger AI models than these devices can run. Settings explains unavailable
+  languages and flags slower CPU transcription.
 - Overview sentences are checked against the meeting notes to remove unsupported
   claims. Smarter **Key Takeaways** selection chooses from the notes shown in the
   meeting. Devices using the small notes model, including 8 GB devices, skip the

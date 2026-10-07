@@ -108,18 +108,13 @@ export function isDenseScriptMeetingLanguage(value: unknown): boolean {
 }
 
 /**
- * Languages the small notes model on 8 GB Macs (`llama3.2:3b`) officially
- * supports, limited to picker rows. Meta documents en, de, fr, it, pt, hi, es
- * and th; Hindi and Thai are not offered.
+ * Languages offered with the small notes model (`llama3.2:3b`, 8 GB Macs and
+ * low-spec PCs). English only for 1.3.0: the e2e verification found the small
+ * model invents transcript line citations in German and Spanish, so grounding
+ * rejected every note on short meetings. Meta documents en, de, fr, it, pt,
+ * hi, es and th; revisit with a stronger small model.
  */
-export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[] = [
-  'en',
-  'de',
-  'fr',
-  'it',
-  'pt',
-  'es'
-]
+export const SMALL_NOTES_MODEL_MEETING_LANGUAGES: readonly MeetingLanguageCode[] = ['en']
 
 export type MeetingLanguageEngineAvailability = 'available' | 'slower' | 'locked'
 

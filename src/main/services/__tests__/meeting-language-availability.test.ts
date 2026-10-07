@@ -39,7 +39,7 @@ const gpuEightGigWindowsProfile = {
 describe('recordingMeetingLanguage', () => {
   it('keeps an available saved language', () => {
     expect(recordingMeetingLanguage('ja', meetingLanguageAvailability(false))).toBe('ja')
-    expect(recordingMeetingLanguage('de', meetingLanguageAvailability(true))).toBe('de')
+    expect(recordingMeetingLanguage('en', meetingLanguageAvailability(true))).toBe('en')
     expect(logAutodocEvent).not.toHaveBeenCalled()
   })
 
@@ -118,7 +118,7 @@ describe('currentMeetingLanguageAvailability', () => {
           windowsProfile: lowSpecWindowsProfile
         })
       )
-    ).toBe('de')
+    ).toBe('en')
   })
 })
 

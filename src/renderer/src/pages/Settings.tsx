@@ -11,7 +11,6 @@ import {
   getMeetingLanguageDefinition,
   isMeetingLanguageAvailable,
   normalizeMeetingLanguage,
-  SMALL_NOTES_MODEL_MEETING_LANGUAGES,
   UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
   type MeetingLanguageAvailability,
   type MeetingLanguageCode,
@@ -22,9 +21,6 @@ import { formatBytes, formatMeetingLanguageFirstUseDownload } from '../services/
 import { loadMeetingLanguageStates } from '../services/meeting-language-setup'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
 
-const SMALL_NOTES_MODEL_LANGUAGE_LIST = new Intl.ListFormat('en', { type: 'conjunction' }).format(
-  SMALL_NOTES_MODEL_MEETING_LANGUAGES.map((code) => getMeetingLanguageDefinition(code).label)
-)
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -550,17 +546,9 @@ export function Settings() {
                 </p>
                 {meetingLanguageAvailability.restricted && (
                   <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">
-                    {isWindows ? (
-                      <>
-                        This PC uses a smaller notes model, which supports{' '}
-                        {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need a more powerful PC.
-                      </>
-                    ) : (
-                      <>
-                        This Mac has 8 GB of memory, so notes use a smaller model. It supports{' '}
-                        {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need 16 GB or more.
-                      </>
-                    )}
+                    {isWindows
+                      ? 'Languages other than English need larger AI models than this PC has the memory and processing power to run, so meetings here are in English.'
+                      : 'Languages other than English need larger AI models than this Mac’s 8 GB of memory can run, so meetings here are in English. They need 16 GB or more.'}
                   </p>
                 )}
                 {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (

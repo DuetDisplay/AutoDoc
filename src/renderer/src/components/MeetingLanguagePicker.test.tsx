@@ -67,17 +67,10 @@ describe('MeetingLanguagePicker on a Mac with the small notes model', () => {
 
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(27)
-    expect(options.slice(0, 6).map((option) => option.textContent)).toEqual([
-      'EnglishDefault · optimized✓',
-      'French',
-      'German',
-      'Italian',
-      'Portuguese',
-      'Spanish'
-    ])
-    expect(options.slice(0, 6).every((option) => !option.hasAttribute('aria-disabled'))).toBe(true)
+    expect(options[0]!.textContent).toBe('EnglishDefault · optimized✓')
+    expect(options[0]).not.toHaveAttribute('aria-disabled')
     expect(
-      options.slice(6).every((option) => option.getAttribute('aria-disabled') === 'true')
+      options.slice(1).every((option) => option.getAttribute('aria-disabled') === 'true')
     ).toBe(true)
     expect(screen.getByText(LOCKED_MEETING_LANGUAGES_HEADING)).toBeInTheDocument()
   })
@@ -89,10 +82,8 @@ describe('MeetingLanguagePicker on a Mac with the small notes model', () => {
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
     await user.click(screen.getByRole('option', { name: 'Japanese' }))
-    expect(onChange).not.toHaveBeenCalled()
-
     await user.click(screen.getByRole('option', { name: 'German' }))
-    expect(onChange).toHaveBeenCalledWith('de')
+    expect(onChange).not.toHaveBeenCalled()
   })
 })
 

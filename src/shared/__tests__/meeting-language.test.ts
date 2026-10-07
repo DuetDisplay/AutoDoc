@@ -111,8 +111,8 @@ describe('meetingLanguageAvailability', () => {
 
     const small = meetingLanguageAvailability(true)
     expect(small.restricted).toBe(true)
-    expect(small.availableLanguages).toEqual(['en', 'de', 'fr', 'it', 'pt', 'es'])
-    expect(isMeetingLanguageAvailable('de', small)).toBe(true)
+    expect(small.availableLanguages).toEqual(['en'])
+    expect(isMeetingLanguageAvailable('de', small)).toBe(false)
     expect(isMeetingLanguageAvailable('ja', small)).toBe(false)
     expect(isMeetingLanguageAvailable('pl', small)).toBe(false)
     // Unknown values normalize to English, which is always available.
@@ -121,7 +121,7 @@ describe('meetingLanguageAvailability', () => {
 
   it('treats a Windows engine lock as unavailable even when the notes model allows the language', () => {
     const availability = {
-      ...meetingLanguageAvailability(true),
+      ...meetingLanguageAvailability(false),
       languageStates: {
         es: {
           availability: 'locked' as const,

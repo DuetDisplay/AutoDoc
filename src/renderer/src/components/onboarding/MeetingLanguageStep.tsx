@@ -81,8 +81,8 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
       {availability?.restricted && (
         <p className="text-[12px] text-ink-muted mb-5">
           {navigator.userAgent.includes('Windows')
-            ? 'This PC uses a smaller notes model. Languages that need the larger notes model are locked.'
-            : 'This Mac has 8 GB of memory. Languages that need the larger notes model are locked.'}
+            ? 'Languages other than English need larger AI models than this PC has the memory and processing power to run.'
+            : 'Languages other than English need larger AI models than this Mac’s 8 GB of memory can run.'}
         </p>
       )}
       {error && (
