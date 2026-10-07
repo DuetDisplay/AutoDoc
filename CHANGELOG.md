@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - While **Next Steps** is hidden, action items are omitted from notes on both
   platforms and in every language, including English. Information mistakenly
   classified as an action item can also be lost.
+- Notes for very short Mandarin meetings (about 90 seconds) may not be generated.
+  Longer Mandarin meetings are not affected.
+- Notes for Greek meetings take longer to generate than for other languages.
 
 ## [1.2.0] — 2026-09-21
 
