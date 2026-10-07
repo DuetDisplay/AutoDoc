@@ -1896,6 +1896,14 @@ export class WhisperManager extends EventEmitter {
     )
   }
 
+  /**
+   * Recording post-processing needs ffmpeg only. Non-English recordings use it
+   * so Stop never starts the English model setup they skipped in onboarding.
+   */
+  async ensureFfmpeg(): Promise<void> {
+    await this.ensureFfmpegForSelectedRuntime()
+  }
+
   private async ensureFfmpegForSelectedRuntime(): Promise<void> {
     if (await this.fileExists(this.getFfmpegPath())) {
       return

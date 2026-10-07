@@ -18,7 +18,11 @@ import { refreshTray } from '../services/tray'
 import { getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
-import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  getMeetingAsrRoute,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 import type {
   CalendarEvent,
   RecordingEntry,
@@ -912,14 +916,27 @@ export function registerRecordingIpc(
     return finalizedMetadata
   }
 
-  async function resolveFfmpegPath(meetingId: string): Promise<string | null> {
+  // English keeps its existing readiness call; other languages only need ffmpeg.
+  const postProcessingLanguages = new Map<string, MeetingLanguageCode>()
+  async function ensurePostProcessingTools(meetingLanguage: unknown): Promise<void> {
+    if (meetingLanguage !== undefined && getMeetingAsrRoute(meetingLanguage) !== 'english') {
+      await whisperManager.ensureFfmpeg()
+    } else {
+      await whisperManager.ensureReady()
+    }
+  }
+
+  async function resolveFfmpegPath(
+    meetingId: string,
+    meetingLanguage: unknown = postProcessingLanguages.get(meetingId)
+  ): Promise<string | null> {
     const e2eFfmpegPath = isE2E ? process.env.AUTODOC_E2E_FFMPEG_PATH : undefined
     if (e2eFfmpegPath) {
       return e2eFfmpegPath
     }
 
     try {
-      await whisperManager.ensureReady()
+      await ensurePostProcessingTools(meetingLanguage)
       return whisperManager.getFfmpegPath()
     } catch (err) {
       const existingFfmpeg = await stat(whisperManager.getFfmpegPath())
@@ -1134,6 +1151,7 @@ export function registerRecordingIpc(
       })
       .finally(() => {
         windowsVideoJobInFlight.delete(meetingId)
+        postProcessingLanguages.delete(meetingId)
         windowsVideoJobProcessing = false
         processNextWindowsVideoJob()
       })
@@ -1145,6 +1163,7 @@ export function registerRecordingIpc(
       return
     }
     windowsPostProcessingInFlight.add(meetingId)
+    if (metadata.meetingLanguage) postProcessingLanguages.set(meetingId, metadata.meetingLanguage)
     void (async () => {
       const postProcessStartedAt = Date.now()
       const baseDir = recordingService.getRecordingsBaseDir()
@@ -1624,7 +1643,7 @@ export function registerRecordingIpc(
         ffmpegPath = e2eFfmpegPath
       } else {
         try {
-          await whisperManager.ensureReady()
+          await ensurePostProcessingTools(result.meetingLanguage)
           ffmpegPath = whisperManager.getFfmpegPath()
         } catch (err) {
           const existingFfmpeg = await stat(whisperManager.getFfmpegPath())

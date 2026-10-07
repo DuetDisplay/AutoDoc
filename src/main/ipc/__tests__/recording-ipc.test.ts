@@ -1478,15 +1478,17 @@ describe('recording IPC meeting language', () => {
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
       startRecording: vi.fn().mockResolvedValue({ meetingId: 'meeting-new' })
     }
+    const whisperManager = {
+      ensureReady: vi.fn(),
+      ensureFfmpeg: vi.fn(),
+      getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
+      getWhisperPath: vi.fn(() => '/mock/whisper'),
+      getModelPath: vi.fn(() => '/mock/model')
+    }
     const registered = registerRecordingIpc(
       recordingService as any,
       { getStatus: vi.fn(), enqueue: vi.fn() } as any,
-      {
-        ensureReady: vi.fn(),
-        getFfmpegPath: vi.fn(() => '/mock/ffmpeg'),
-        getWhisperPath: vi.fn(() => '/mock/whisper'),
-        getModelPath: vi.fn(() => '/mock/model')
-      } as any,
+      whisperManager as any,
       {
         isConnected: vi.fn(() => false),
         fetchAllRecentEvents: vi.fn().mockResolvedValue([])
@@ -1497,7 +1499,7 @@ describe('recording IPC meeting language', () => {
       handle.mock.calls.findLast(([registeredChannel]) => registeredChannel === channel)?.[1] as (
         ...args: unknown[]
       ) => Promise<unknown>
-    return { ...registered, recordingService, handler }
+    return { ...registered, recordingService, handler, whisperManager }
   }
 
   it('starts each recording in the current default meeting language', async () => {
@@ -1537,6 +1539,33 @@ describe('recording IPC meeting language', () => {
           path.join(recordingsDir, 'meeting-german', 'metadata.json')
         )
       })
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('prepares only ffmpeg after a non-English recording stops, never the English model', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-tools-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    try {
+      appGetPath.mockImplementation(() => userDataDir)
+      await fsp.mkdir(path.join(recordingsDir, 'meeting-german'), { recursive: true })
+      const { stopActiveRecording, whisperManager } = register({
+        recordingsDir,
+        stopResult: {
+          meetingId: 'meeting-german',
+          startedAt: Date.now() - 2_000,
+          sourceId: 'screen:0:0',
+          sourceName: 'Entire screen',
+          meetingLanguage: 'de',
+          recordingIntent: 'general'
+        }
+      })
+
+      stopActiveRecording()
+
+      await vi.waitFor(() => expect(whisperManager.ensureFfmpeg).toHaveBeenCalled())
+      expect(whisperManager.ensureReady).not.toHaveBeenCalled()
     } finally {
       await fsp.rm(userDataDir, { recursive: true, force: true })
     }
