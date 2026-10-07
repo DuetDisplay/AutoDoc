@@ -26,6 +26,11 @@ FORCED_CUT_OVERLAP_SEC = 1.5
 # mostly-quiet track cannot lower the gate onto its own background.
 ABSOLUTE_SPEECH_FLOOR_RMS = 10 ** (-50 / 20)
 HALLUCINATION_SILENCE_SEC = 2.0
+# Digital silence (exact zeros from a loopback before audio starts) is not
+# background noise. Counting it pulled the noise floor to ~0 on recordings with
+# a long silent lead-in, so no natural pause qualified and every speech clip
+# became a forced 30 s cut, which Whisper can collapse to a single phrase.
+DIGITAL_SILENCE_RMS = 10 ** (-90 / 20)
 
 # Nudges Whisper's shared zh decoder toward Simplified characters.
 INITIAL_PROMPTS = {"zh": "以下是普通话的句子，使用简体中文。"}
@@ -39,6 +44,8 @@ def pause_split(audio, np):
         return [], lambda start, end: False
     energy = np.sqrt(np.mean(audio[: frame_count * frame].reshape(frame_count, frame) ** 2, axis=1))
     silence = float(np.percentile(energy, 15)) * 1.5 + 1e-4
+    audible = energy[energy > DIGITAL_SILENCE_RMS]
+    pause = float(np.percentile(audible, 15)) * 1.5 + 1e-4 if audible.size else silence
 
     clips = []
     start = 0
@@ -53,7 +60,7 @@ def pause_split(audio, np):
         first = (start + min_len) // frame
         last = (start + max_len) // frame
         quietest = first + int(np.argmin(energy[first:last]))
-        if energy[quietest] <= silence:
+        if energy[quietest] <= pause:
             cut = quietest * frame + frame // 2
             clips.append((start, cut))
             start = cut
@@ -61,6 +68,21 @@ def pause_split(audio, np):
             cut = start + max_len
             clips.append((start, cut))
             start = cut - overlap
+
+    # A clip that opens with more digital silence than
+    # HALLUCINATION_SILENCE_SEC makes Whisper skip the speech after it, so
+    # decode from just before the audio starts.
+    lead = int(0.2 * SAMPLE_RATE)
+    trimmed = []
+    for clip_start, clip_end in clips:
+        first = clip_start // frame
+        last = min(clip_end // frame, frame_count)
+        while first < last and energy[first] <= DIGITAL_SILENCE_RMS:
+            first += 1
+        if first < last:
+            clip_start = max(clip_start, first * frame - lead)
+        trimmed.append((clip_start, clip_end))
+    clips = trimmed
 
     speech_gate = max(2 * silence, ABSOLUTE_SPEECH_FLOOR_RMS)
 

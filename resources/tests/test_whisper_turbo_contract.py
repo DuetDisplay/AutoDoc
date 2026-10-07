@@ -146,6 +146,7 @@ class ConstantsMatchMac(unittest.TestCase):
         self.assertEqual(contract.FORCED_CUT_OVERLAP_SEC, mac.FORCED_CUT_OVERLAP_SEC)
         self.assertEqual(contract.ABSOLUTE_SPEECH_FLOOR_RMS, mac.ABSOLUTE_SPEECH_FLOOR_RMS)
         self.assertEqual(contract.HALLUCINATION_SILENCE_SEC, mac.HALLUCINATION_SILENCE_SEC)
+        self.assertEqual(contract.DIGITAL_SILENCE_RMS, mac.DIGITAL_SILENCE_RMS)
         self.assertEqual(contract.INITIAL_PROMPTS, mac.INITIAL_PROMPTS)
         self.assertEqual(contract.INITIAL_PROMPTS["zh"], "以下是普通话的句子，使用简体中文。")
 
@@ -210,6 +211,34 @@ class PauseSplitMatchesMac(unittest.TestCase):
         quiet_at = 18 * contract.SAMPLE_RATE
         audio[quiet_at : quiet_at + int(0.2 * contract.SAMPLE_RATE)] *= 0.001
         self._compare(audio, "quietest-frame")
+
+    def _silent_lead_in_speech(self):
+        # Live loopback: 50 s of exact zeros, then speech with quiet (not
+        # silent) 0.3 s pauses every 4 s.
+        sr = contract.SAMPLE_RATE
+        rng = np.random.default_rng(3)
+        speech = rng.normal(0.0, 0.08, int(60 * sr)).astype(np.float32)
+        for at in range(4, 60, 4):
+            speech[at * sr : at * sr + int(0.3 * sr)] *= 0.02
+        lead = int(50.3 * sr)
+        return np.concatenate([np.zeros(lead, dtype=np.float32), speech]), lead
+
+    def test_silent_lead_in_still_finds_speech_pauses(self):
+        audio, lead = self._silent_lead_in_speech()
+        self._compare(audio, "silent-lead-in")
+        clips, _ = contract.pause_split(audio, np)
+        speech_clips = [(start, end) for start, end in clips if end > lead]
+        lengths = [(end - start) / contract.SAMPLE_RATE for start, end in speech_clips]
+        # Cut at the natural pauses, not forced 30 s windows.
+        self.assertTrue(all(length < contract.MAX_CLIP_SEC for length in lengths), lengths)
+
+    def test_clips_skip_leading_digital_silence(self):
+        audio, lead = self._silent_lead_in_speech()
+        clips, _ = contract.pause_split(audio, np)
+        first_speech = next(start for start, end in clips if end > lead)
+        margin = int(0.2 * contract.SAMPLE_RATE)
+        frame = int(contract.FRAME_SEC * contract.SAMPLE_RATE)
+        self.assertLessEqual(abs(first_speech - (lead - margin)), frame)
 
     def test_real_run5_ja(self):
         self._compare(load_wav_mono_16k(require_eval_wav(self, RUN5_JA)), "run5-ja")
