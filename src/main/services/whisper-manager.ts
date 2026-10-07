@@ -579,8 +579,18 @@ export class WhisperManager extends EventEmitter {
     this.recordDowngrade(fromBackend, toBackend)
   }
 
+  /**
+   * Presence checks only need the asset manifest. Re-selecting the profile
+   * reruns hardware detection (PowerShell), and availability checks ~16 assets
+   * for each of 26 languages, which made the picker take ~20 s to open.
+   */
+  private async ensureWindowsProfilesLoaded(): Promise<void> {
+    if (this.windowsProfileResolutionPromise) await this.windowsProfileResolutionPromise
+    else if (!this.selectedWindowsProfile) await this.selectWindowsProfile()
+  }
+
   async areWindowsEngineAssetsPresent(engineId: WindowsMultilingualEngineId): Promise<boolean> {
-    await this.selectWindowsProfile()
+    await this.ensureWindowsProfilesLoaded()
     const profile = this.windowsTranscriptionProfiles[engineId]
     const assets = listWindowsMultilingualEngineAssets(engineId, this.windowsTranscriptionProfiles)
     for (const asset of assets) {
@@ -597,7 +607,7 @@ export class WhisperManager extends EventEmitter {
   }
 
   async isWindowsTranscriptionAssetPresent(filename: string): Promise<boolean> {
-    await this.selectWindowsProfile()
+    await this.ensureWindowsProfilesLoaded()
     for (const profile of Object.values(this.windowsTranscriptionProfiles)) {
       for (const asset of profile.assets) {
         if (asset.filename !== filename) continue
