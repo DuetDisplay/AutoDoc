@@ -801,9 +801,7 @@ export class TranscriptionService {
             backendId: backend,
             device: workerDevice
           }),
-          backend,
-          backendLabel: this.whisperManager.getTranscriptionBackendLabel(),
-          modelName: this.whisperManager.getModelName(),
+          ...this.jobTranscriptionEngine(),
           device: workerDevice ?? 'unknown',
           computeType: workerComputeType ?? 'unknown',
           dualSource: this.jobDualSource,
@@ -1899,8 +1897,8 @@ export class TranscriptionService {
           whisperElapsedMs,
           elapsedMs: Date.now() - chunkStartedAt,
           rawSegmentCount: chunkOutput.transcription.length,
-          backend: this.whisperManager.getTranscriptionBackend(),
-          model: this.whisperManager.getModelName(),
+          backend: this.jobTranscriptionEngine().backend,
+          model: this.jobTranscriptionEngine().modelName,
           concurrentSources
         }
       })
@@ -3059,7 +3057,7 @@ export class TranscriptionService {
         pid,
         priorityLabel: label,
         device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
-        backend: this.whisperManager.getTranscriptionBackend()
+        backend: this.jobTranscriptionEngine().backend
       })
     } catch (err) {
       console.warn(`Failed to lower whisper priority for ${meetingId} (pid ${pid}):`, err)
@@ -3294,9 +3292,8 @@ export class TranscriptionService {
         retries,
         errorCode,
         filesCapturedAt: 'job-start',
-        backend:
-          this.windowsAttempt?.backend ?? this.whisperManager.getTranscriptionBackend?.() ?? null,
-        modelName: this.windowsAttempt?.modelName ?? this.whisperManager.getModelName?.() ?? null,
+        backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
+        modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
         processingProfile:
           this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
       }

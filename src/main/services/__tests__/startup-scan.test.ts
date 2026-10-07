@@ -18,6 +18,7 @@ function createMockWhisperManager() {
     getFfmpegPath: vi.fn(),
     getModelPath: vi.fn(),
     getTranscriptionBackend: vi.fn().mockReturnValue('whisper-cpp'),
+    getTranscriptionBackendLabel: vi.fn().mockReturnValue('Whisper.cpp'),
     getModelName: vi.fn().mockReturnValue('distil-large-v3')
   } as const
 }

@@ -406,6 +406,35 @@ describe('Windows multilingual GPU snapshot and self-test cache', () => {
     }
   })
 
+  it('retests a failure from an earlier launch but keeps passes', () => {
+    const record = (result: 'passed' | 'failed', testedAt: string) => ({
+      key: `k-${result}`,
+      engine: 'canary-cuda' as const,
+      gpuName: 'RTX',
+      driverVersion: '1',
+      assetVersion: 'v',
+      result,
+      testedAt
+    })
+    const store = {
+      version: 1 as const,
+      records: {
+        'k-failed': record('failed', '2026-10-02T00:00:00.000Z'),
+        'k-passed': record('passed', '2026-10-02T00:00:00.000Z')
+      }
+    }
+    const launchedAfter = Date.parse('2026-10-03T00:00:00.000Z')
+    const launchedBefore = Date.parse('2026-10-01T00:00:00.000Z')
+
+    expect(lookupWindowsMultilingualSelfTest(store, 'k-failed', launchedAfter)).toBeNull()
+    expect(lookupWindowsMultilingualSelfTest(store, 'k-failed', launchedBefore)?.result).toBe(
+      'failed'
+    )
+    expect(lookupWindowsMultilingualSelfTest(store, 'k-passed', launchedAfter)?.result).toBe(
+      'passed'
+    )
+  })
+
   it('treats a version mismatch as an empty cache', async () => {
     const root = await mkdtemp(join(tmpdir(), 'autodoc-self-test-ver-'))
     const path = join(root, 'cache.json')

@@ -167,11 +167,21 @@ interface MacWhisperRuntimeAsset {
   expectedFiles: string[]
 }
 
+/** A newer meeting-language choice replaced this setup before it finished. */
+export class MeetingLanguageSetupSuperseded extends Error {
+  constructor() {
+    super('Meeting language changed during setup')
+    this.name = 'MeetingLanguageSetupSuperseded'
+  }
+}
+
 export class WhisperManager extends EventEmitter {
   private setupPromise: Promise<void> | null = null
   private languageSetupQueue: Promise<void> = Promise.resolve()
   private languageSetupRequests = new Map<MeetingLanguageCode, Promise<void>>()
   private activeSetupLanguage: MeetingLanguageCode | undefined
+  /** The newest language asked for; older setups stop instead of finishing. */
+  private latestRequestedSetupLanguage: MeetingLanguageCode | undefined
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private macLanguageSetupErrors = new Map<MeetingAsrRoute, string>()
   private runtimeValidated = false
@@ -1217,9 +1227,11 @@ export class WhisperManager extends EventEmitter {
 
   /** Non-English setup installs its route, without downloading the English model. */
   prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
+    this.latestRequestedSetupLanguage = language
     const pending = this.languageSetupRequests.get(language)
     if (pending) return pending
     const request = this.languageSetupQueue.then(async () => {
+      if (this.latestRequestedSetupLanguage !== language) throw new MeetingLanguageSetupSuperseded()
       this.activeSetupLanguage = language
       try {
         await this.runMeetingLanguageSetup(language)
@@ -1861,6 +1873,9 @@ export class WhisperManager extends EventEmitter {
     if (await this.fileExists(this.getFfmpegPath())) {
       return
     }
+    // Language setup can run before ensureReady on a fresh profile or after
+    // downloaded components were cleared, so the models folder may not exist.
+    await mkdir(this.getModelsDir(), { recursive: true })
 
     this.setupStatus = this.withBackendStatus({ phase: 'downloading-ffmpeg', percent: 0 })
     this.emit('setup-status', this.getSetupStatus())
@@ -3151,7 +3166,7 @@ export class WhisperManager extends EventEmitter {
         await fn()
         return
       } catch (err) {
-        if (i === attempts - 1) throw err
+        if (i === attempts - 1 || err instanceof MeetingLanguageSetupSuperseded) throw err
         const delay = Math.pow(2, i) * 1000
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
@@ -3303,6 +3318,14 @@ export class WhisperManager extends EventEmitter {
       // Unknown-size downloads stay indeterminate; callers signal completion by phase.
       if (totalBytes <= 0) reportProgress(0)
       while (true) {
+        if (
+          this.activeSetupLanguage &&
+          this.latestRequestedSetupLanguage !== this.activeSetupLanguage
+        ) {
+          // Keep the partial file: a verified download resumes if this language is picked again.
+          void reader.cancel().catch(() => {})
+          throw new MeetingLanguageSetupSuperseded()
+        }
         const { done, value } = await reader.read()
         if (done) break
         if (!fileStream.write(value)) {

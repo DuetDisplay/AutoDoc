@@ -120,15 +120,27 @@ export function windowsMultilingualAssetVersion(
     .join('|')
 }
 
+/**
+ * Failures can be transient (another app holding VRAM, a driver mid-update,
+ * CUDA briefly unavailable). A failure recorded before this launch is tested
+ * again on first use, so one bad moment does not lock a language or pin it to
+ * the CPU forever. Passes stay cached until the GPU, driver or assets change.
+ */
+const SELF_TEST_SESSION_STARTED_AT = Date.now()
+
 export function lookupWindowsMultilingualSelfTest(
   store: WindowsMultilingualSelfTestStore | null | undefined,
-  key: string
+  key: string,
+  sessionStartedAt: number = SELF_TEST_SESSION_STARTED_AT
 ): WindowsMultilingualSelfTestRecord | null {
   if (!store || store.version !== 1) {
     return null
   }
   const record = store.records[key]
   if (!record || record.key !== key) {
+    return null
+  }
+  if (record.result === 'failed' && !(Date.parse(record.testedAt) >= sessionStartedAt)) {
     return null
   }
   return record
@@ -163,14 +175,16 @@ export function invalidateWindowsMultilingualSelfTestsForEngine(
 
 export function selfTestMapFromStore(
   store: WindowsMultilingualSelfTestStore | null | undefined,
-  keys: Partial<Record<WindowsMultilingualEngineId, string>>
+  keys: Partial<Record<WindowsMultilingualEngineId, string>>,
+  sessionStartedAt?: number
 ): WindowsMultilingualSelfTestMap {
   const map: WindowsMultilingualSelfTestMap = {}
   for (const [engine, key] of Object.entries(keys) as Array<
     [WindowsMultilingualEngineId, string | undefined]
   >) {
     if (!key) continue
-    map[engine] = lookupWindowsMultilingualSelfTest(store, key)?.result ?? 'untested'
+    map[engine] =
+      lookupWindowsMultilingualSelfTest(store, key, sessionStartedAt)?.result ?? 'untested'
   }
   return map
 }

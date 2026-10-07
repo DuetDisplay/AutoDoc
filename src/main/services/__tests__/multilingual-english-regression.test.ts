@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OllamaProvider,
+  SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS,
   TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS,
   WINDOWS_TIGHT_MAX_OUTPUT_TOKENS,
   WRITER_EXAMPLE_VALUE_REPLACEMENTS
@@ -50,7 +51,10 @@ function streamedContent(content: string): Response {
   )
 }
 
-async function captureWriterBodies(platform: NodeJS.Platform): Promise<string[]> {
+async function captureWriterBodies(
+  platform: NodeJS.Platform,
+  model = 'qwen3:4b-instruct'
+): Promise<string[]> {
   setPlatform(platform)
   const bodies: string[] = []
   vi.stubGlobal(
@@ -60,7 +64,7 @@ async function captureWriterBodies(platform: NodeJS.Platform): Promise<string[]>
       return streamedContent(EMPTY_WRITER_RESPONSE)
     })
   )
-  const provider = new OllamaProvider('http://localhost:11434', 'qwen3:4b-instruct')
+  const provider = new OllamaProvider('http://localhost:11434', model)
   // Pin the context profile so the hash does not depend on this machine's memory.
   if (platform === 'win32') provider.setLowMemoryMode(true)
   await provider.summarize('meeting-english', TRANSCRIPT, undefined, 30)
@@ -174,6 +178,24 @@ describe('non-English notes requests', () => {
     ).toBe(true)
     expect(prompts.some((prompt) => prompt.includes('{"overview":""}'))).toBe(true)
     expect(prompts.join('\n')).not.toContain('concise meeting summary')
+  })
+
+  it('names example values for the small notes model off English only', async () => {
+    const [english, placeholder] = SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS[0]!
+    const [, blank] = WRITER_EXAMPLE_VALUE_REPLACEMENTS[0]!
+    const small = JSON.parse(
+      (await runWithMeetingLanguage('de', () => captureWriterBodies('darwin', 'llama3.2:3b')))[0]!
+    ).messages[0].content
+    const qwen = JSON.parse(
+      (await runWithMeetingLanguage('de', () => captureWriterBodies('darwin')))[0]!
+    ).messages[0].content
+    const smallEnglish = JSON.parse((await captureWriterBodies('darwin', 'llama3.2:3b'))[0]!)
+      .messages[0].content
+
+    expect(small).toContain(placeholder)
+    expect(qwen).toContain(blank)
+    expect(qwen).not.toContain(placeholder)
+    expect(smallEnglish).toContain(english)
   })
 
   it('matches every English example value it blanks', async () => {

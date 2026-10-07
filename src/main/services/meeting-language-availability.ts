@@ -24,6 +24,7 @@ export interface WindowsNotesModelProfile {
 type WindowsNotesModelSource = () => WindowsNotesModelProfile | null
 
 let windowsNotesModelSource: WindowsNotesModelSource | null = null
+let windowsNotesModelReady: (() => Promise<unknown>) | null = null
 
 export interface MeetingLanguagePreferenceStore {
   getMeetingLanguage(): MeetingLanguageCode
@@ -33,8 +34,26 @@ export interface MeetingLanguagePreferenceStore {
 let meetingLanguagePreferenceStore: MeetingLanguagePreferenceStore | null = null
 
 /** Lets Settings and recording read the same notes-model decision Whisper already made. */
-export function bindWindowsNotesModelSource(source: WindowsNotesModelSource): void {
+export function bindWindowsNotesModelSource(
+  source: WindowsNotesModelSource,
+  ready?: () => Promise<unknown>
+): void {
   windowsNotesModelSource = source
+  windowsNotesModelReady = ready ?? null
+}
+
+/**
+ * The Windows notes model is known only after hardware detection. Answering
+ * before it reads as "not small" and offers every language, so callers that
+ * show or save a language wait for it first.
+ */
+export async function waitForWindowsNotesModel(): Promise<void> {
+  if (process.platform !== 'win32' || !windowsNotesModelReady) return
+  try {
+    await windowsNotesModelReady()
+  } catch {
+    // Detection failures fall back to the existing source value.
+  }
 }
 
 export function bindMeetingLanguagePreferenceStore(

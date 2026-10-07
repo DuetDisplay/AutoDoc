@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
+import { LOW_SPEC_MAC_OLLAMA_MODEL, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import type {
   MeetingSegments,
@@ -1408,11 +1408,25 @@ export const TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS: ReadonlyArray<
   ]
 ]
 
-function withoutEnglishWriterExampleValues(prompt: string): string {
-  return [...TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS, ...WRITER_EXAMPLE_VALUE_REPLACEMENTS].reduce(
-    (current, [english, blank]) => current.replace(english, blank),
-    prompt
-  )
+/**
+ * Non-English, small notes model only. llama3.2:3b returns the blank example
+ * record itself (no title, no content) for every chunk, so its example names
+ * each value instead. Qwen keeps the blank example its baselines were built on.
+ */
+export const SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
+  readonly [english: string, placeholder: string]
+> = [
+  [
+    '{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}',
+    '{"t":"<topic>","h":"<title>","c":"<one sentence>","s":7,"e":9}'
+  ]
+]
+
+function withoutEnglishWriterExampleValues(prompt: string, smallModel: boolean): string {
+  return [
+    ...TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS,
+    ...(smallModel ? SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS : WRITER_EXAMPLE_VALUE_REPLACEMENTS)
+  ].reduce((current, [english, replacement]) => current.replace(english, replacement), prompt)
 }
 
 /** Non-English Windows tight prompts ask for keyed records instead of tuples. */
@@ -2331,7 +2345,9 @@ export class OllamaProvider implements LLMProvider {
 
   private getSystemPrompt(): string {
     const prompt = this.getEnglishSystemPrompt()
-    return isEnglishMeetingJob() ? prompt : withoutEnglishWriterExampleValues(prompt)
+    return isEnglishMeetingJob()
+      ? prompt
+      : withoutEnglishWriterExampleValues(prompt, this.model === LOW_SPEC_MAC_OLLAMA_MODEL)
   }
 
   private getEnglishSystemPrompt(): string {

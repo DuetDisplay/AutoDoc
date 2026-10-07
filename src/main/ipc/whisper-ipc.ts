@@ -94,6 +94,17 @@ export function registerWhisperIpc(
       }
     } catch (err) {
       console.error('Whisper retry failed:', err)
+      if (err instanceof Error && err.name === 'MeetingLanguageSetupSuperseded') return
+      // Every failed retry reports an error, so onboarding and Settings can
+      // stop auto-retrying and show Retry even when the engine emitted none.
+      const status = getWhisperSetupStatus()
+      const failed: WhisperSetupStatus =
+        status.phase === 'error'
+          ? status
+          : { phase: 'error', percent: 0, error: err instanceof Error ? err.message : String(err) }
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('whisper:setup-progress', failed)
+      }
     }
   })
 

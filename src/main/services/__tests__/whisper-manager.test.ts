@@ -155,13 +155,36 @@ describe('WhisperManager', () => {
       )
       const french = manager.prepareMeetingLanguage('fr')
       expect(manager.prepareMeetingLanguage('fr')).toBe(french)
-      const spanish = manager.prepareMeetingLanguage('es')
       await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      const spanish = manager.prepareMeetingLanguage('es')
       expect(manager.getSetupStatus().meetingLanguage).toBe('fr')
       finishDownload()
       await Promise.all([french, spanish])
       expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
       expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+    })
+
+    it('skips a queued language that a newer choice replaced before it started', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      let finishDownload!: () => void
+      vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishDownload = resolve
+          })
+      )
+      const french = manager.prepareMeetingLanguage('fr')
+      await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      const spanish = manager.prepareMeetingLanguage('es')
+      const german = manager.prepareMeetingLanguage('de')
+      finishDownload()
+      await french
+      await expect(spanish).rejects.toThrow('Meeting language changed during setup')
+      await german
+      expect(vi.mocked(downloadMacSpeechModels).mock.calls.map(([language]) => language)).toEqual([
+        'fr',
+        'de'
+      ])
     })
 
     it('downloads English on demand after non-English setup', async () => {

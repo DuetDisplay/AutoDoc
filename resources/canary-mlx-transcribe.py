@@ -34,7 +34,6 @@ def main() -> int:
 
     try:
         import tempfile
-        from pathlib import Path
 
         import numpy as np
         import onnx_asr
@@ -56,7 +55,9 @@ def main() -> int:
             next(vad.segment_batch(waveforms, lengths, rate, max_speech_duration_s=MAX_SPEECH_SEC))
         )
 
-        model = load(args.model)
+        # --model is a snapshot folder named by its revision, which hides the
+        # model family from mlx-audio's name-based detection.
+        model = load(args.model, model_type="canary")
         segments = []
         with tempfile.TemporaryDirectory() as scratch:
             span_path = str(Path(scratch) / "span.wav")

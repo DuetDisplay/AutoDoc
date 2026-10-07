@@ -2,19 +2,25 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
 import {
   isMeetingLanguageAvailable,
+  isMeetingLanguageCode,
   normalizeMeetingLanguage,
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
-import { currentMeetingLanguageAvailability } from '../services/meeting-language-availability'
+import {
+  currentMeetingLanguageAvailability,
+  waitForWindowsNotesModel
+} from '../services/meeting-language-availability'
 import { getWindowsMeetingLanguageAvailability } from '../services/windows-multilingual-readiness'
 
 export function meetingLanguageNeedsMemoryMessage(
   language: unknown,
   platform: NodeJS.Platform = process.platform
 ): string {
-  const machine = platform === 'win32' ? 'PC' : 'Mac'
-  return `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this ${machine}`
+  if (platform === 'win32') {
+    return `Meeting language ${normalizeMeetingLanguage(language)} needs a more powerful PC`
+  }
+  return `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this Mac`
 }
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
@@ -131,19 +137,31 @@ export function registerPrefsIpc(
 
   ipcMain.handle(
     'prefs:get-meeting-language-availability',
-    (): MeetingLanguageAvailability => getMeetingLanguageAvailability()
+    async (): Promise<MeetingLanguageAvailability> => {
+      await waitForWindowsNotesModel()
+      return getMeetingLanguageAvailability()
+    }
   )
 
+  // Saves can overlap while Windows availability is checked; only the newest
+  // request may write, so a slower earlier request cannot overwrite it.
+  let latestMeetingLanguageRequest = 0
   ipcMain.handle('prefs:set-meeting-language', async (_event, language: unknown): Promise<void> => {
+    const request = ++latestMeetingLanguageRequest
+    if (!isMeetingLanguageCode(language)) {
+      throw new Error('This meeting language is not supported.')
+    }
+    await waitForWindowsNotesModel()
     if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
       throw new Error(meetingLanguageNeedsMemoryMessage(language))
     }
     if (process.platform === 'win32') {
-      const engine = await getWindowsMeetingLanguageAvailability(String(language ?? ''))
+      const engine = await getWindowsMeetingLanguageAvailability(language)
       if (engine.availability === 'locked') {
         throw new Error(engine.reason ?? "This language isn't available on this PC.")
       }
     }
+    if (request !== latestMeetingLanguageRequest) return
     prefsStore.setMeetingLanguage(language)
   })
 

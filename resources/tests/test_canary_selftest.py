@@ -55,6 +55,20 @@ class CanarySelftest(unittest.TestCase):
         self.assertEqual(kwargs.get("target_language"), "de")
         vad.recognize.assert_not_called()
 
+    def test_cuda_load_rejects_cpu_provider_fallback(self):
+        asr = type("Asr", (), {})()
+        asr._encoder = Mock(get_providers=Mock(return_value=["CPUExecutionProvider"]))
+        asr._decoder = Mock(get_providers=Mock(return_value=["CPUExecutionProvider"]))
+        with self.assertRaises(RuntimeError):
+            self.mod._require_cuda_sessions(asr)
+
+    def test_cuda_load_accepts_cuda_sessions(self):
+        asr = type("Asr", (), {})()
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        asr._encoder = Mock(get_providers=Mock(return_value=providers))
+        asr._decoder = Mock(get_providers=Mock(return_value=providers))
+        self.mod._require_cuda_sessions(asr)
+
     def test_release_clears_raw_model(self):
         worker = self.mod.TranscriptionWorker()
         worker.asr_model = object()

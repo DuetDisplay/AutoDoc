@@ -175,7 +175,7 @@ describe('PrefsStore', () => {
       return registration[1] as unknown as (...args: unknown[]) => unknown
     }
 
-    expect(handler('prefs:get-meeting-language-availability')()).toMatchObject({
+    expect(await handler('prefs:get-meeting-language-availability')()).toMatchObject({
       restricted: true,
       availableLanguages: ['en', 'de', 'fr', 'it', 'pt', 'es']
     })
@@ -210,7 +210,7 @@ describe('PrefsStore', () => {
     platform.mockRestore()
   })
 
-  it('uses PC wording for the Windows notes-model memory error', async () => {
+  it('uses PC wording without a memory size for the Windows notes-model error', async () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     registerPrefsIpc(store, undefined, undefined, undefined, () =>
       meetingLanguageAvailability(true)
@@ -224,10 +224,10 @@ describe('PrefsStore', () => {
     }
 
     expect(meetingLanguageNeedsMemoryMessage('ja', 'win32')).toBe(
-      'Meeting language ja needs 16 GB of memory on this PC'
+      'Meeting language ja needs a more powerful PC'
     )
     await expect(handler('prefs:set-meeting-language')({}, 'ja')).rejects.toThrow(
-      'Meeting language ja needs 16 GB of memory on this PC'
+      'Meeting language ja needs a more powerful PC'
     )
     platform.mockRestore()
   })
@@ -254,6 +254,54 @@ describe('PrefsStore', () => {
     await expect(handler('prefs:set-meeting-language')({}, 'es')).rejects.toThrow(reason)
     expect(store.getMeetingLanguage()).toBe('en')
     expect(getWindowsMeetingLanguageAvailability).toHaveBeenCalledWith('es')
+    platform.mockRestore()
+  })
+
+  it('rejects held and unknown language codes without changing the saved language', async () => {
+    registerPrefsIpc(store)
+    const handler = (channel: string) => {
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(([registered]) => registered === channel)
+      if (!registration) throw new Error(`Expected ${channel} to be registered`)
+      return registration[1] as unknown as (...args: unknown[]) => unknown
+    }
+
+    await handler('prefs:set-meeting-language')({}, 'de')
+    await expect(handler('prefs:set-meeting-language')({}, 'mt')).rejects.toThrow()
+    await expect(handler('prefs:set-meeting-language')({}, 'xx')).rejects.toThrow()
+    expect(store.getMeetingLanguage()).toBe('de')
+  })
+
+  it('keeps the newest of overlapping Windows saves', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    let releaseFirst: (() => void) | null = null
+    getWindowsMeetingLanguageAvailability.mockImplementation(async (language: string) => {
+      if (language === 'fr') await new Promise<void>((resolve) => (releaseFirst = resolve))
+      return {
+        availability: 'available',
+        reason: null,
+        engineId: null,
+        firstUseDownloadBytes: 0,
+        needsSelfTest: false
+      }
+    })
+    registerPrefsIpc(store)
+    const handler = (channel: string) => {
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(([registered]) => registered === channel)
+      if (!registration) throw new Error(`Expected ${channel} to be registered`)
+      return registration[1] as unknown as (...args: unknown[]) => unknown
+    }
+
+    const first = handler('prefs:set-meeting-language')({}, 'fr') as Promise<void>
+    await vi.waitFor(() => expect(releaseFirst).not.toBeNull())
+    await handler('prefs:set-meeting-language')({}, 'ja')
+    releaseFirst!()
+    await first
+    expect(store.getMeetingLanguage()).toBe('ja')
+    getWindowsMeetingLanguageAvailability.mockReset()
     platform.mockRestore()
   })
 

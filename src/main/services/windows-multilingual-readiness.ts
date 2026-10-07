@@ -19,6 +19,7 @@ import {
   getWindowsRouteFirstUseDownloadBytes,
   isWindowsMultilingualGpuEngine,
   lockedNeedsSupportedGraphicsCardReason,
+  lookupWindowsMultilingualSelfTest,
   readWindowsMultilingualSelfTestStore,
   resolveWindowsMultilingualEngine,
   selectWindowsMultilingualGpuSnapshot,
@@ -242,6 +243,9 @@ export async function ensureWindowsMultilingualEngineReady(
           plan: context.plan
         }
       } catch (error) {
+        // A newer language choice stopped this setup; do not fall back to
+        // downloading another engine for the abandoned language.
+        if (error instanceof Error && error.name === 'MeetingLanguageSetupSuperseded') throw error
         lastError = error instanceof Error ? error : new Error(String(error))
         logAutodocFailure({
           area: 'whisper',
@@ -375,7 +379,7 @@ async function ensureWindowsMultilingualSelfTest(input: {
   })
   const cachePath = windowsMultilingualSelfTestCachePath(userDataDirOf(input.host))
   const current = await readWindowsMultilingualSelfTestStore(cachePath)
-  const cached = current?.records[key]
+  const cached = lookupWindowsMultilingualSelfTest(current, key)
   if (cached?.result === 'passed' || cached?.result === 'failed') {
     return cached.result
   }

@@ -18,6 +18,9 @@ interface MeetingLanguagePickerProps {
 }
 
 export const LOCKED_MEETING_LANGUAGES_HEADING = 'Needs 16 GB of memory'
+// Windows uses the smaller notes model on low processor counts too, so its
+// heading does not claim a memory size.
+export const WINDOWS_LOCKED_MEETING_LANGUAGES_HEADING = 'Needs a more powerful PC'
 
 function isNotesModelLocked(
   language: MeetingLanguageCode,
@@ -52,6 +55,12 @@ export function MeetingLanguagePicker({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [isOpen, setIsOpen] = useState(false)
+  // Fit the list in the window: open downward when there is room, otherwise
+  // toward the larger side, and cap the height to that side's space.
+  const [placement, setPlacement] = useState<{ above: boolean; maxHeight: number }>({
+    above: false,
+    maxHeight: 256
+  })
   const selected = getMeetingLanguageDefinition(value)
   const selectedIndex = Math.max(
     0,
@@ -78,6 +87,17 @@ export function MeetingLanguagePicker({
   }, [isOpen])
 
   const open = (index = selectedIndex) => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (rect) {
+      const margin = 12
+      const below = window.innerHeight - rect.bottom - margin
+      const above = rect.top - margin
+      const openAbove = below < 256 && above > below
+      setPlacement({
+        above: openAbove,
+        maxHeight: Math.max(96, Math.min(256, openAbove ? above : below))
+      })
+    }
     setActiveIndex(index)
     setIsOpen(true)
   }
@@ -203,7 +223,10 @@ export function MeetingLanguagePicker({
           id={listboxId}
           role="listbox"
           aria-label="Meeting language options"
-          className="absolute right-0 top-full z-50 mt-1.5 max-h-64 w-64 overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg"
+          style={{ maxHeight: placement.maxHeight }}
+          className={`absolute right-0 z-50 w-64 overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg ${
+            placement.above ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+          }`}
         >
           {options.map((definition, index) => {
             const isSelected = definition.code === selected.code
@@ -219,7 +242,9 @@ export function MeetingLanguagePicker({
                     role="presentation"
                     className="mx-1 mb-1 mt-1.5 border-t border-border-subtle px-2 pb-1 pt-2 text-[10px] font-medium text-ink-faint"
                   >
-                    {LOCKED_MEETING_LANGUAGES_HEADING}
+                    {navigator.userAgent.includes('Windows')
+                      ? WINDOWS_LOCKED_MEETING_LANGUAGES_HEADING
+                      : LOCKED_MEETING_LANGUAGES_HEADING}
                   </div>
                 )}
                 <button

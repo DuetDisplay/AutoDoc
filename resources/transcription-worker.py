@@ -163,6 +163,19 @@ def _read_full_audio(audio_path: str):
     return np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def _require_cuda_sessions(asr) -> None:
+    """ONNX Runtime silently retries on CPU when CUDA fails to initialise.
+    A CUDA load that ended up on CPU must fail, so the self-test records the
+    failure and the app moves to the int8 CPU engine instead of running fp32
+    on the processor under a CUDA label."""
+    sessions = [value for value in vars(asr).values() if hasattr(value, "get_providers")]
+    for session in sessions:
+        if "CUDAExecutionProvider" not in session.get_providers():
+            raise RuntimeError(
+                "CUDA is unavailable: ONNX Runtime fell back to CPUExecutionProvider"
+            )
+
+
 def _selftest_tone(sample_rate: int = 16000, seconds: float = 1.0):
     """440 Hz tone so the decoder path is exercised (silence can skip VAD / energy gate)."""
     import numpy as np
@@ -571,6 +584,8 @@ class TranscriptionWorker:
             providers=providers,
             sess_options=sess_options,
         )
+        if device == "cuda":
+            _require_cuda_sessions(model.asr)
         # Mac max_tokens=256; Canary prompt is 10 tokens → 266.
         model.asr.config["max_sequence_length"] = 266
         # Keep the pre-VAD adapter: Silero finds no speech on a tone, so

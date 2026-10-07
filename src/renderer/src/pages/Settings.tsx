@@ -554,8 +554,17 @@ export function Settings() {
                 </p>
                 {meetingLanguageAvailability.restricted && (
                   <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">
-                    This {machineNoun} has 8 GB of memory, so notes use a smaller model. It supports{' '}
-                    {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need 16 GB or more.
+                    {isWindows ? (
+                      <>
+                        This PC uses a smaller notes model, which supports{' '}
+                        {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need a more powerful PC.
+                      </>
+                    ) : (
+                      <>
+                        This Mac has 8 GB of memory, so notes use a smaller model. It supports{' '}
+                        {SMALL_NOTES_MODEL_LANGUAGE_LIST}. Other languages need 16 GB or more.
+                      </>
+                    )}
                   </p>
                 )}
                 {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (

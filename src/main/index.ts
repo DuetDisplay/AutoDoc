@@ -904,10 +904,13 @@ app.whenReady().then(async () => {
   const whisperManager = new WhisperManager()
   bindWindowsMultilingualReadiness({ whisperManager })
   bindMeetingLanguagePreferenceStore(prefsStore)
-  bindWindowsNotesModelSource(() => {
-    const profile = whisperManager.getWindowsProcessingProfile()
-    return profile ? { id: profile.id, hardware: profile.hardware } : null
-  })
+  bindWindowsNotesModelSource(
+    () => {
+      const profile = whisperManager.getWindowsProcessingProfile()
+      return profile ? { id: profile.id, hardware: profile.hardware } : null
+    },
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
+  )
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -2007,19 +2010,38 @@ app.whenReady().then(async () => {
     recordingService.getRecordingsBaseDir()
   )
   let preparedMeetingLanguage = 'en'
+  // A failed preparation must read as an error, not as "checking", so the
+  // setup screens can offer Retry instead of waiting forever.
+  let meetingLanguageSetupFailure: { language: string; error: string } | null = null
   registerWhisperIpc(
     whisperManager,
-    () =>
-      prefsStore.getMeetingLanguage() === preparedMeetingLanguage
-        ? getCombinedTranscriptionSetupStatus()
-        : { phase: 'checking', percent: 0 },
+    () => {
+      const language = prefsStore.getMeetingLanguage()
+      if (language === preparedMeetingLanguage) return getCombinedTranscriptionSetupStatus()
+      if (meetingLanguageSetupFailure?.language === language) {
+        return {
+          phase: 'error',
+          percent: 0,
+          error: meetingLanguageSetupFailure.error,
+          meetingLanguage: language
+        }
+      }
+      return { phase: 'checking', percent: 0 }
+    },
     async (language = prefsStore.getMeetingLanguage()) => {
       const results = await Promise.allSettled([
         whisperManager.prepareMeetingLanguage(language),
         startDiarizationSetup()
       ])
       const failure = results.find((result) => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
+      if (failure?.status === 'rejected') {
+        meetingLanguageSetupFailure = {
+          language,
+          error: failure.reason instanceof Error ? failure.reason.message : String(failure.reason)
+        }
+        throw failure.reason
+      }
+      meetingLanguageSetupFailure = null
       preparedMeetingLanguage = language
     }
   )
