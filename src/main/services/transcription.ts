@@ -763,8 +763,7 @@ export class TranscriptionService {
       const processingProfileId =
         (await this.getEffectiveWindowsProcessingProfileForJob())?.id ?? null
       const backend = this.whisperManager.getTranscriptionBackend()
-      const workerDevice = this.whisperManager.getWorkerDevice?.() ?? null
-      const workerComputeType = this.whisperManager.getWorkerComputeType?.() ?? null
+      const { device: workerDevice, computeType: workerComputeType } = this.jobWorkerSettings()
 
       logAutodocEvent({
         area: 'transcription',
@@ -2013,6 +2012,15 @@ export class TranscriptionService {
     }
   }
 
+  /** Device and precision of this job's engine; the manager describes English only. */
+  private jobWorkerSettings(): { device: string | null; computeType: string | null } {
+    const ready = this.windowsMultilingualReady
+    return {
+      device: ready?.device ?? this.whisperManager.getWorkerDevice?.() ?? null,
+      computeType: ready?.computeType ?? this.whisperManager.getWorkerComputeType?.() ?? null
+    }
+  }
+
   /**
    * Non-English never reaches an English-only model (Distil, small.en, base.en),
    * and each language reaches only its own engine family.
@@ -3056,7 +3064,7 @@ export class TranscriptionService {
       logQaGateWorkerPriority(meetingId, {
         pid,
         priorityLabel: label,
-        device: this.whisperManager.getWorkerDevice?.() ?? 'unknown',
+        device: this.jobWorkerSettings().device ?? 'unknown',
         backend: this.jobTranscriptionEngine().backend
       })
     } catch (err) {

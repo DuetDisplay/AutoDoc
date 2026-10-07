@@ -182,6 +182,8 @@ export class WhisperManager extends EventEmitter {
   private activeSetupLanguage: MeetingLanguageCode | undefined
   /** The newest language asked for; older setups stop instead of finishing. */
   private latestRequestedSetupLanguage: MeetingLanguageCode | undefined
+  /** Aborts the running language setup's in-flight download when the language changes. */
+  private activeSetupAbort: AbortController | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   private macLanguageSetupErrors = new Map<MeetingAsrRoute, string>()
   private runtimeValidated = false
@@ -1228,16 +1230,21 @@ export class WhisperManager extends EventEmitter {
   /** Non-English setup installs its route, without downloading the English model. */
   prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
     this.latestRequestedSetupLanguage = language
+    if (this.activeSetupLanguage && this.activeSetupLanguage !== language) {
+      this.activeSetupAbort?.abort()
+    }
     const pending = this.languageSetupRequests.get(language)
     if (pending) return pending
     const request = this.languageSetupQueue.then(async () => {
       if (this.latestRequestedSetupLanguage !== language) throw new MeetingLanguageSetupSuperseded()
       this.activeSetupLanguage = language
+      this.activeSetupAbort = new AbortController()
       try {
         await this.runMeetingLanguageSetup(language)
       } finally {
         this.setupStatus = { ...this.setupStatus, meetingLanguage: language }
         this.activeSetupLanguage = undefined
+        this.activeSetupAbort = null
         this.languageSetupRequests.delete(language)
       }
     })
@@ -3251,6 +3258,35 @@ export class WhisperManager extends EventEmitter {
   }
 
   private async downloadResumableFile(
+    url: string,
+    destPath: string,
+    label: string,
+    onProgress?: (percent: number) => void,
+    init?: RequestInit,
+    options?: { resume?: boolean }
+  ): Promise<void> {
+    // Only downloads that belong to a language setup can be superseded.
+    const setupSignal = this.activeSetupLanguage ? this.activeSetupAbort?.signal : undefined
+    if (!setupSignal) {
+      return this.downloadResumableFileOnce(url, destPath, label, onProgress, init, options)
+    }
+    const signal = init?.signal ? AbortSignal.any([init.signal, setupSignal]) : setupSignal
+    try {
+      return await this.downloadResumableFileOnce(
+        url,
+        destPath,
+        label,
+        onProgress,
+        { ...init, signal },
+        options
+      )
+    } catch (err) {
+      if (setupSignal.aborted) throw new MeetingLanguageSetupSuperseded()
+      throw err
+    }
+  }
+
+  private async downloadResumableFileOnce(
     url: string,
     destPath: string,
     label: string,

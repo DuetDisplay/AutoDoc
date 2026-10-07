@@ -113,29 +113,26 @@ export function TranscriptionStep({
             attempt_number: autoRetryAttempts.current + 1
           })
         }
-        const language = meetingLanguageRef.current
-        if (language && language !== 'en') {
-          try {
-            const availability = await window.electronAPI.invoke(
-              'whisper:get-windows-meeting-language-availability',
-              language
-            )
-            if (availability.availability === 'locked') {
-              clearRetryTimer()
-              setIsAutoRetrying(false)
-              setError(null)
-              setLockedReason(availability.reason ?? "This language isn't available on this PC.")
-              return
-            }
-          } catch {
-            /* ignore */
-          }
-        }
         setLockedReason(null)
         scheduleAutoRetry()
         if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
           setIsAutoRetrying(false)
           setError(status.error ?? 'Unknown error')
+        }
+        // The lock check must not hold up retrying: a slow availability answer
+        // used to leave the step with neither progress nor a Retry button.
+        const language = meetingLanguageRef.current
+        if (language && language !== 'en') {
+          void window.electronAPI
+            .invoke('whisper:get-windows-meeting-language-availability', language)
+            .then((availability) => {
+              if (availability.availability !== 'locked') return
+              clearRetryTimer()
+              setIsAutoRetrying(false)
+              setError(null)
+              setLockedReason(availability.reason ?? "This language isn't available on this PC.")
+            })
+            .catch(() => {})
         }
         return
       }

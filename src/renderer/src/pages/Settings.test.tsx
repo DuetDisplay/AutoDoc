@@ -629,10 +629,16 @@ describe('Settings Windows meeting languages', () => {
         },
         'whisper:get-windows-meeting-language-availability': (language: MeetingLanguageCode) =>
           languages[language] ?? windowsLanguageInfo(),
-        'whisper:ensure-windows-multilingual-engine': (language: MeetingLanguageCode) =>
-          options?.ensure
+        // Main runs the engine setup and throws the reason when it is locked.
+        'whisper:prepare-meeting-language': async (language: MeetingLanguageCode) => {
+          const ready = await (options?.ensure
             ? options.ensure(language)
-            : { engineId: 'canary-cpu', availability: 'available', reason: null },
+            : { engineId: 'canary-cpu', availability: 'available', reason: null })
+          if (ready.availability === 'locked' || !ready.engineId) {
+            throw new Error(ready.reason ?? 'Failed to download the speech model.')
+          }
+          return undefined
+        },
         'calendar:get-accounts': [],
         'calendar:get-events': []
       })
@@ -728,7 +734,7 @@ describe('Settings Windows meeting languages', () => {
     )
 
     await waitFor(() => {
-      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'de')
+      expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'de')
     })
     await waitFor(() => {
       expect(api.on).toHaveBeenCalledWith('whisper:setup-progress', expect.any(Function))
@@ -789,7 +795,7 @@ describe('Settings Windows meeting languages', () => {
       'whisper:get-windows-meeting-language-availability',
       (language: MeetingLanguageCode) => {
         const ensureCalls = api.invoke.mock.calls.filter(
-          ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
+          ([channel]) => channel === 'whisper:prepare-meeting-language'
         )
         if (language === 'de' && ensureCalls.length > 0) {
           return windowsLanguageInfo({ availability: 'slower', firstUseDownloadBytes: 0 })
@@ -839,7 +845,7 @@ describe('Settings Windows meeting languages', () => {
       'whisper:get-windows-meeting-language-availability',
       (language: MeetingLanguageCode) => {
         const ensureCalls = api.invoke.mock.calls.filter(
-          ([channel]) => channel === 'whisper:ensure-windows-multilingual-engine'
+          ([channel]) => channel === 'whisper:prepare-meeting-language'
         )
         if (language === 'es' && ensureCalls.length > 0) {
           return windowsLanguageInfo({
@@ -863,7 +869,7 @@ describe('Settings Windows meeting languages', () => {
     await user.click(await screen.findByRole('option', { name: 'Spanish' }))
 
     await waitFor(() => {
-      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'es')
+      expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'es')
     })
     expect(await screen.findByRole('alert')).toHaveTextContent(reason)
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
@@ -898,7 +904,7 @@ describe('Settings Windows meeting languages', () => {
     await user.click(await screen.findByRole('option', { name: 'Spanish' }))
 
     await waitFor(() => {
-      expect(api.invoke).toHaveBeenCalledWith('whisper:ensure-windows-multilingual-engine', 'es')
+      expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'es')
     })
     expect(
       await screen.findByRole('button', { name: 'Meeting language: Spanish' })

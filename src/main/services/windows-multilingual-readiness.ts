@@ -335,16 +335,33 @@ export async function resolveWindowsMultilingualJobContext(
   }
 }
 
+// Hardware detection runs PowerShell. The picker asks about every language at
+// once, so share one recent detection instead of starting 26 queries.
+const GPU_SNAPSHOT_TTL_MS = 60_000
+let detectedGpuSnapshot: {
+  at: number
+  promise: Promise<WindowsMultilingualGpuSnapshot>
+} | null = null
+
 async function resolveGpuSnapshot(
   host: WindowsMultilingualReadinessHost
 ): Promise<WindowsMultilingualGpuSnapshot> {
   if (host.gpu) {
     return host.gpu
   }
-  const gpus = host.detectGpus
-    ? await host.detectGpus()
-    : (await detectWindowsHardwareProfile()).gpus
-  return selectWindowsMultilingualGpuSnapshot(gpus)
+  if (host.detectGpus) {
+    return selectWindowsMultilingualGpuSnapshot(await host.detectGpus())
+  }
+  if (!detectedGpuSnapshot || Date.now() - detectedGpuSnapshot.at > GPU_SNAPSHOT_TTL_MS) {
+    const promise = detectWindowsHardwareProfile().then((profile) =>
+      selectWindowsMultilingualGpuSnapshot(profile.gpus)
+    )
+    detectedGpuSnapshot = { at: Date.now(), promise }
+    promise.catch(() => {
+      if (detectedGpuSnapshot?.promise === promise) detectedGpuSnapshot = null
+    })
+  }
+  return detectedGpuSnapshot.promise
 }
 
 async function listInstalledWindowsAssetFilenames(

@@ -187,6 +187,45 @@ describe('WhisperManager', () => {
       ])
     })
 
+    it('aborts a stalled setup download as soon as the language changes', async () => {
+      // Like fetch: an aborted signal rejects, and aborting errors a body that
+      // is waiting for data that never arrives.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError')
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener('abort', () =>
+                  controller.error(new DOMException('aborted', 'AbortError'))
+                )
+              }
+            }),
+            { status: 200, headers: { 'content-length': '1000' } }
+          )
+        })
+      )
+      const internals = manager as unknown as {
+        activeSetupLanguage: string
+        activeSetupAbort: AbortController
+        downloadResumableFile: (url: string, dest: string, label: string) => Promise<void>
+      }
+      internals.activeSetupLanguage = 'fr'
+      internals.activeSetupAbort = new AbortController()
+      const dest = join(
+        (await import('os')).tmpdir(),
+        `autodoc-abort-test-${process.pid}-${Date.now()}.bin`
+      )
+      const download = internals.downloadResumableFile('https://example.test/model', dest, 'model')
+      const rejected = expect(download).rejects.toThrow('Meeting language changed during setup')
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled())
+      internals.activeSetupAbort.abort()
+      await rejected
+      vi.unstubAllGlobals()
+      ;(await import('node:fs')).rmSync(`${dest}.tmp`, { force: true })
+    })
+
     it('downloads English on demand after non-English setup', async () => {
       vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
       const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()

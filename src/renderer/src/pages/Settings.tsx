@@ -341,13 +341,9 @@ export function Settings() {
         if (needsEnsure) {
           setPreparingMeetingLanguage(language)
           try {
-            const ready = await window.electronAPI.invoke(
-              'whisper:ensure-windows-multilingual-engine',
-              language
-            )
-            if (ready.availability === 'locked' || !ready.engineId) {
-              throw new Error(ready.reason ?? 'Failed to download the speech model.')
-            }
+            // Same path as onboarding, so setup status reports ready afterwards.
+            // It throws the lock reason when the engine turns out to be locked.
+            await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
           } finally {
             await refreshLanguageStates()
           }

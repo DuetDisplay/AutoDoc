@@ -15,7 +15,8 @@ import {
 import {
   currentMeetingLanguageAvailability,
   restorePreviousMeetingLanguageIfWindowsLocked,
-  restorePreviousMeetingLanguageOnLock
+  restorePreviousMeetingLanguageOnLock,
+  waitForWindowsNotesModel
 } from '../services/meeting-language-availability'
 import { getE2EWhisperStatus, retryE2EWhisperSetup } from '../services/e2e-fixtures'
 import {
@@ -60,6 +61,7 @@ export function registerWhisperIpc(
   ipcMain.handle(
     'whisper:prepare-meeting-language',
     async (_event, language: MeetingLanguageCode) => {
+      await waitForWindowsNotesModel()
       if (!isMeetingLanguageAvailable(language, currentMeetingLanguageAvailability())) {
         throw new Error('This meeting language needs 16 GB of memory.')
       }

@@ -29,6 +29,24 @@ function isNotesModelLocked(
   return !availability.availableLanguages.includes(language)
 }
 
+/**
+ * The area the list can use: the window, narrowed by any scrolling ancestor
+ * (such as the Settings page), whose overflow would clip the list.
+ */
+function visibleBounds(element: HTMLElement): { top: number; bottom: number } {
+  let top = 0
+  let bottom = window.innerHeight
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const overflowY = getComputedStyle(parent).overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'hidden') {
+      const rect = parent.getBoundingClientRect()
+      top = Math.max(top, rect.top)
+      bottom = Math.min(bottom, rect.bottom)
+    }
+  }
+  return { top, bottom }
+}
+
 export function MeetingLanguagePicker({
   value,
   onChange,
@@ -88,10 +106,11 @@ export function MeetingLanguagePicker({
 
   const open = (index = selectedIndex) => {
     const rect = triggerRef.current?.getBoundingClientRect()
-    if (rect) {
+    if (rect && triggerRef.current) {
       const margin = 12
-      const below = window.innerHeight - rect.bottom - margin
-      const above = rect.top - margin
+      const bounds = visibleBounds(triggerRef.current)
+      const below = bounds.bottom - rect.bottom - margin
+      const above = rect.top - bounds.top - margin
       const openAbove = below < 256 && above > below
       setPlacement({
         above: openAbove,
