@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
 import {
+  getMeetingLanguageDefinition,
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../../../shared/meeting-language'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
+import { isNetworkErrorMessage } from '../../services/network-errors'
 
 const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
@@ -217,6 +219,10 @@ export function TranscriptionStep({
     }
   }, [phase, meetingLanguage])
 
+  // A failed download because the machine is offline gets its own message.
+  const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
+  const languageLabel = getMeetingLanguageDefinition(meetingLanguage ?? 'en').label
+
   if (phase === 'ready') {
     return (
       <div className="text-center">
@@ -276,6 +282,7 @@ export function TranscriptionStep({
       </div>
       <div className="text-[12px] text-ink-faint mb-5">
         {lockedReason ??
+          (networkFailure ? 'No internet connection' : null) ??
           getWhisperSetupLabel(setupStatus) ??
           phaseLabels[phase]?.(percent) ??
           (error ? `Setup failed: ${error}` : 'Preparing...')}
@@ -332,11 +339,14 @@ export function TranscriptionStep({
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
-              Transcription setup is taking longer than expected
+              {networkFailure
+                ? "You're offline"
+                : 'Transcription setup is taking longer than expected'}
             </h3>
             <p className="text-[13px] text-ink-muted leading-relaxed">
-              You can continue and AutoDoc will keep working on this in the background, or retry
-              right now.
+              {networkFailure
+                ? `Connect to the internet to download the ${languageLabel} speech model, then press Retry.`
+                : 'You can continue and AutoDoc will keep working on this in the background, or retry right now.'}
             </p>
           </div>
           <button

@@ -9,8 +9,10 @@ import {
 import { MeetingLanguagePicker } from '../MeetingLanguagePicker'
 import { loadMeetingLanguageAvailability } from '../../services/meeting-language-setup'
 import { formatMeetingLanguageFirstUseDownload } from '../../services/format-bytes'
+import { useOnlineStatus } from '../../hooks/useOnlineStatus'
 
 export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
+  const online = useOnlineStatus()
   const [availability, setAvailability] = useState<MeetingLanguageAvailability | null>(null)
   const [language, setLanguage] = useState<MeetingLanguageCode>('en')
   const [saving, setSaving] = useState(false)
@@ -74,6 +76,7 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
             onChange={setLanguage}
             availability={availability}
             disabled={saving}
+            offline={!online}
           />
         </div>
       )}

@@ -1,7 +1,8 @@
 import type { MeetingLanguageEngineState } from '../../../shared/meeting-language'
-import { formatMeetingLanguageFirstUseDownload } from './format-bytes'
+import { formatBytes, formatMeetingLanguageFirstUseDownload } from './format-bytes'
 
 export const SLOWER_MEETING_LANGUAGE_NOTE = 'Slower on this PC'
+export const OFFLINE_DOWNLOAD_NOTE = 'Needs internet to download'
 
 export function meetingLanguageSelectableNote(
   engineState: MeetingLanguageEngineState | undefined
@@ -14,4 +15,17 @@ export function meetingLanguageSelectableNote(
   }
   if (slowerNote && sizeNote) return `${slowerNote} · ${sizeNote}`
   return slowerNote ?? sizeNote
+}
+
+/** Shown when a language's first-use download fails because the machine is offline. */
+export function offlineMeetingLanguageMessage(
+  languageLabel: string,
+  downloadBytes?: number | null,
+  currentLanguageLabel?: string | null
+): string {
+  const size = downloadBytes && downloadBytes > 0 ? ` (about ${formatBytes(downloadBytes)})` : ''
+  const current = currentLanguageLabel
+    ? ` Your meeting language is still ${currentLanguageLabel}.`
+    : ''
+  return `You're offline. Connect to the internet to download the ${languageLabel} speech model${size}.${current}`
 }

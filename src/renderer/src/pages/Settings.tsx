@@ -32,6 +32,9 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
+import { isNetworkErrorMessage } from '../services/network-errors'
+import { offlineMeetingLanguageMessage } from '../services/meeting-language-copy'
 
 const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
   ? lazy(() =>
@@ -62,6 +65,7 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
 }
 
 export function Settings() {
+  const online = useOnlineStatus()
   const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
     useCalendarStore()
   const [showSpeechLicenses, setShowSpeechLicenses] = useState(false)
@@ -357,18 +361,25 @@ export function Settings() {
         details: { language }
       })
     } catch (err) {
-      setMeetingLanguageError(
-        err instanceof Error ? err.message : 'Failed to save the meeting language.'
-      )
+      const message = err instanceof Error ? err.message : 'Failed to save the meeting language.'
+      let savedLanguage: MeetingLanguageCode | null = null
       try {
-        setMeetingLanguageState(
-          normalizeMeetingLanguage(
-            await window.electronAPI.invoke('prefs:get-meeting-language')
-          )
+        savedLanguage = normalizeMeetingLanguage(
+          await window.electronAPI.invoke('prefs:get-meeting-language')
         )
+        setMeetingLanguageState(savedLanguage)
       } catch {
         // Keep the last picker value if the saved preference cannot be read.
       }
+      setMeetingLanguageError(
+        isNetworkErrorMessage(message)
+          ? offlineMeetingLanguageMessage(
+              getMeetingLanguageDefinition(language).label,
+              languageStates[language]?.firstUseDownloadBytes,
+              savedLanguage ? getMeetingLanguageDefinition(savedLanguage).label : null
+            )
+          : message
+      )
     } finally {
       if (!isWindows) await refreshLanguageStates()
       setPreparingMeetingLanguage(null)
@@ -577,6 +588,7 @@ export function Settings() {
                 value={meetingLanguage}
                 disabled={isSavingMeetingLanguage || !runtimeInfo}
                 availability={pickerAvailability}
+                offline={!online}
                 onChange={(language) => void handleSetMeetingLanguage(language)}
               />
             </div>

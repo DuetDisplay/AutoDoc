@@ -7,7 +7,10 @@ import {
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../shared/meeting-language'
-import { meetingLanguageSelectableNote } from '../services/meeting-language-copy'
+import {
+  meetingLanguageSelectableNote,
+  OFFLINE_DOWNLOAD_NOTE
+} from '../services/meeting-language-copy'
 
 interface MeetingLanguagePickerProps {
   value: MeetingLanguageCode
@@ -15,6 +18,8 @@ interface MeetingLanguagePickerProps {
   disabled?: boolean
   /** Languages this machine's notes model can write; others are listed but locked. */
   availability?: MeetingLanguageAvailability
+  /** No connection: languages that still need a download say so. */
+  offline?: boolean
 }
 
 export const LOCKED_MEETING_LANGUAGES_HEADING = 'Needs 16 GB of memory'
@@ -51,7 +56,8 @@ export function MeetingLanguagePicker({
   value,
   onChange,
   disabled = false,
-  availability = UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY
+  availability = UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  offline = false
 }: MeetingLanguagePickerProps) {
   // Available languages first, then locked ones under their own heading.
   const options = [
@@ -251,7 +257,12 @@ export function MeetingLanguagePicker({
             const isSelected = definition.code === selected.code
             const isLocked = index >= firstLockedIndex && firstLockedIndex !== -1
             const engineState = availability.languageStates?.[definition.code]
-            const selectableNote = !isLocked ? meetingLanguageSelectableNote(engineState) : null
+            const needsDownload = (engineState?.firstUseDownloadBytes ?? 0) > 0
+            const selectableNote = isLocked
+              ? null
+              : offline && needsDownload
+                ? OFFLINE_DOWNLOAD_NOTE
+                : meetingLanguageSelectableNote(engineState)
             const lockedReason =
               isLocked && engineState?.availability === 'locked' ? engineState.reason : null
             return (

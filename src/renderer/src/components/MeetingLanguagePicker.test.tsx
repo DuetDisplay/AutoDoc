@@ -5,6 +5,7 @@ import { meetingLanguageAvailability } from '../../../shared/meeting-language'
 import { formatMeetingLanguageFirstUseDownload } from '../services/format-bytes'
 import {
   meetingLanguageSelectableNote,
+  OFFLINE_DOWNLOAD_NOTE,
   SLOWER_MEETING_LANGUAGE_NOTE
 } from '../services/meeting-language-copy'
 import { LOCKED_MEETING_LANGUAGES_HEADING, MeetingLanguagePicker } from './MeetingLanguagePicker'
@@ -84,6 +85,35 @@ describe('MeetingLanguagePicker on a Mac with the small notes model', () => {
     await user.click(screen.getByRole('option', { name: 'Japanese' }))
     await user.click(screen.getByRole('option', { name: 'German' }))
     expect(onChange).not.toHaveBeenCalled()
+  })
+})
+
+describe('MeetingLanguagePicker offline', () => {
+  it('marks languages that still need a download and keeps them selectable', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <MeetingLanguagePicker
+        value="en"
+        onChange={onChange}
+        offline
+        availability={{
+          ...meetingLanguageAvailability(false),
+          languageStates: {
+            de: { availability: 'available', reason: null, firstUseDownloadBytes: 1_200_000_000 },
+            fr: { availability: 'available', reason: null, firstUseDownloadBytes: 0 }
+          }
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
+    expect(
+      screen.getByRole('option', { name: new RegExp(`German\\s+${OFFLINE_DOWNLOAD_NOTE}`) })
+    ).not.toHaveAttribute('aria-disabled')
+    expect(screen.getByRole('option', { name: 'French' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: new RegExp('German') }))
+    expect(onChange).toHaveBeenCalledWith('de')
   })
 })
 

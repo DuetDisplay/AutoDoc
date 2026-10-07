@@ -294,6 +294,51 @@ describe('TranscriptionStep', () => {
     }
   }, 10000)
 
+  it('says the machine is offline when the download cannot reach the server', async () => {
+    vi.useFakeTimers()
+    let progress:
+      | ((status: { phase: string; percent: number; error?: string }) => Promise<void>)
+      | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('de')
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({ availability: 'available', reason: null })
+      }
+      return Promise.resolve({})
+    })
+    const offline = { phase: 'error', percent: 0, error: 'fetch failed' }
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await act(async () => {
+          await progress?.(offline)
+          await vi.advanceTimersByTimeAsync(1500)
+        })
+      }
+
+      expect(screen.getByText("You're offline")).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'Connect to the internet to download the German speech model, then press Retry.'
+        )
+      ).toBeInTheDocument()
+      expect(screen.getByText('No internet connection')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
   it('keeps the background-continue affordance for in-progress setup', async () => {
     vi.useFakeTimers()
     try {

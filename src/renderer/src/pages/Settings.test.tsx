@@ -761,6 +761,31 @@ describe('Settings Windows meeting languages', () => {
     expect(api.invoke).toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
   })
 
+  it('explains an offline first-use download and keeps the previous language', async () => {
+    const user = userEvent.setup()
+    const { state, api } = installWindowsSettingsApi({
+      languages: { de: windowsLanguageInfo({ firstUseDownloadBytes: FIRST_USE_DOWNLOAD_BYTES }) },
+      ensure: () =>
+        Promise.reject(
+          new Error(
+            "Error invoking remote method 'whisper:prepare-meeting-language': TypeError: fetch failed"
+          )
+        )
+    })
+    render(<Settings />)
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(
+      await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "You're offline. Connect to the internet to download the German speech model (about 5.6 GB). Your meeting language is still English."
+    )
+    expect(state.meetingLanguage).toBe('en')
+    expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
+  })
+
   it('keeps the previous language when the first-use download fails', async () => {
     const user = userEvent.setup()
     const { state, api } = installWindowsSettingsApi({
