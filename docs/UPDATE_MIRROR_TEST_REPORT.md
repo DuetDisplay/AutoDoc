@@ -27,19 +27,20 @@ unchanged.
 - Production Electron/Vite compilation using an isolated example feed setting;
   the feed URL is present in the compiled main bundle. The app was not launched
   and no analytics were emitted. Existing bundle-splitting warnings remain.
-- October 8 dashboard revision: seven saved insights execute successfully
+- October 8 dashboard revision: eight saved insights execute successfully
   against real data, with no warnings. All-time totals remain the same under
-  a seven-day dashboard override. No snapshot sums or baseline subtraction.
+  a seven-day dashboard override. No snapshot sums or baseline subtraction. Latest route cards reconcile as 108 GitHub + 0 observed mirror = 108 total.
   Every displayed version total matches the GitHub API: 108, 230, 100, 7, 89,
   and 46; total 580. The version table's platform sums match its totals.
 - Four opted-in 1.1.3 → 1.2.0 update reporters and two error reports from 1.1.3
   are verified against real records. Errors with unknown targets stay Unknown.
   Internal builds and unpublished/prerelease version reports are excluded.
-- Daily release-age comparison verified at UTC release day 17: 1.2.0 = 108,
-  1.1.3 = 53. This does not claim exact hourly counts or fleet installations.
+- GitHub milestone comparison verified for 1 day / 1 week / 2 weeks: 1.2.0 = 10 / 45 / 75 and 1.1.3 = 5 / 33 / 50. Snapshot timestamps are before the exact cutoffs; lag is recorded in the runbook. Version 1.1.0 has no first-day history and returns null, not zero. This does not claim exact hourly counts or fleet installations.
 - Existing GitHub snapshot workflow was run to refresh real public source
   counters: run 37789629179 succeeded. This is legitimate production data,
   not synthetic testing. No test events were uploaded or production counts reset.
+- Read-only inline calculation fixtures verified that a same-day Windows refresh retains an unchanged Mac count (22 + 86 = 108) and excludes a retired asset from an older day. Mirror fixtures verified latest-counter deduplication across repeated exports, platforms, and days; ranges, HEADs, and HTTP failures are excluded (expected total 15). No fixture events were captured.
+- Mirror query event/property names match the production importer contract. Taxonomy warnings from exploratory SQL are expected because hosted reporting has not launched; all eight saved dashboard queries return without query warnings. The first production mirror import still needs a D1 reconciliation.
 - Verbose notes and HTTP diagnostics were removed from this dashboard only.
   Underlying saved insights and source events remain available.
 

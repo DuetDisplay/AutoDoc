@@ -113,49 +113,76 @@ packages** are verified, so a split-version feed still refers to verified bytes.
 
 [Private release dashboard](https://us.posthog.com/project/218998/dashboard/2183745)
 is accessible in a browser on desktop, tablet, and phone with project access.
-It contains seven panels: all-time downloads, latest-version downloads,
-reported updates to latest, update error reports, downloads by version, a
-release-age comparison, and update results showing previous/target versions.
-Panel descriptions and explanatory text cards are intentionally empty. The
-short dashboard description labels the measurement limits. Definitions and
-layout IDs are saved in `scripts/release-download-dashboard.mjs` and
+It contains eight panels: all-time downloads, latest-version downloads,
+GitHub downloads to latest, updater downloads to latest, update error reports,
+downloads by version, GitHub release milestones, and opted-in update results.
+Descriptions and explanatory text cards are intentionally empty. Definitions
+and layout IDs are saved in `scripts/release-download-dashboard.mjs` and
 `docs/UPDATE_MIRROR_DASHBOARD.json`. No public sharing link is enabled.
 
-Download totals are lifetime GitHub Mac/Windows installer counters. The latest
-full snapshot batch for each published stable release supplies current asset
-membership; each asset is counted once, including its initial counter value.
-Daily cumulative snapshots must never be summed or have their first count
-subtracted from a lifetime total. The latest release is selected by numeric
-version order. Dashboard date overrides do not turn lifetime totals into a
-recent-period count. Version 1.2.0 was reconciled with GitHub on October 8:
-22 DMG + 86 EXE = 108 downloads; all six stable releases sum to 580.
+The latest version is selected by numeric version order from published stable
+GitHub releases. No release tag is hardcoded. The existing download-counts
+workflow refreshes the source daily (scheduled at 04:30 UTC, subject to GitHub
+Actions scheduling delay); the next snapshot picks up newly published versions.
+The mirrored route starts reporting once production hosting and its importer
+are enabled. All three latest-version cards then switch to the same release.
 
-GitHub installers include repeat downloads, manual upgrades, and legacy Windows
-auto-updates. Mac updater ZIPs, metadata, models, transcription runtimes, drafts,
-and prereleases are excluded from these installer totals. Downloads are not
-confirmed installs. Do not add app update reports to downloads to infer installs.
+**Latest downloads = GitHub installer downloads + mirrored updater downloads.**
+The all-time card uses the same two routes across versions. The version table
+shows platform sums, route counts, and their combined Total. Consented update
+reports overlap with downloads and are never added to these totals.
+
+GitHub counters are cumulative. Use each release's latest observed UTC day,
+then the latest value per asset, including initial counter values. Same-day
+imports deduplicate unchanged assets, so using only the newest timestamp would
+incorrectly drop an unchanged Mac or Windows count. Only assets observed on
+that latest release day participate; stale assets from older days are excluded.
+Do not sum daily cumulative snapshots or subtract the first count. Lifetime
+totals remain lifetime totals under dashboard date overrides. On October 8,
+1.2.0 reconciled with GitHub: 22 DMG + 86 EXE = 108 downloads. All six stable
+releases sum to 580 before production mirror reporting begins.
+
+GitHub installer downloads are a discovery proxy, not a count of new users.
+They include repeat downloads, manual upgrades, and legacy Windows updates.
+Legacy Mac updater ZIPs, metadata, models, runtimes, drafts, and prereleases
+are excluded from this installer metric. The mirror metric counts full-package
+HTTP 200 responses for published stable releases. Requests may include retries
+or interrupted transfers; range responses, HEADs, manifest polls, and error
+responses are excluded. The app disables differential updater downloads, so
+its ordinary updater path requests full packages. A manually fetched mirrored
+package still counts on the updater route. Neither route confirms installs.
+There is no exact new-user or fleet-adoption count.
+
+Mirrored counters use the latest snapshot per UTC request day, asset, version,
+and platform before summing. The importer re-exports the last 30 days with
+deterministic IDs, no person profiles, and no GeoIP enrichment. Repeated exports
+must not multiply counts. At this revision the repository has no mirror-enabled
+variable and no hosted production events. The requested card shows zero
+observed mirror downloads and is preconfigured to populate after rollout; this
+is not a retrospective zero for legacy updater traffic. The missing taxonomy
+fields are expected before the first production import, and match the validated
+`buildHostedEvents` contract. Reconcile that first real import against D1 before
+relying on the mirror portion of the combined totals.
+
+GitHub release comparisons have cumulative **1 day, 1 week, and 2 weeks**
+columns. Cutoffs are 24 hours, 7 days, and 14 days after publication. Use the
+last actual snapshot before each cutoff, with at most 24 hours of snapshot lag.
+These are observed daily counts, not exact hourly totals; for 1.2.0 the snapshots
+are about 18–19 hours before the cutoffs. Missing history and milestones that
+have not elapsed show a dash rather than zero. On October 8 the observed
+1.2.0 milestone counts were 10, 45, and 75, compared with 5, 33, and 50 for
+1.1.3. The comparison intentionally measures the GitHub installer route, rather
+than mixing future mirror updates into the discovery comparison.
 
 Update successes come from consented `app_updated` reports, deduplicated by
 person and previous/current version pair. Errors come from consented
 `update_download_failed` reports; that event also includes check errors and can
 be reported again after a Settings remount, so the metric is error **reports**,
-not unique failed attempts. Both queries require official production builds and
-published stable release versions. Unknown error targets remain Unknown and
-are never attributed to the latest version. These metrics do not measure
-everyone who declined analytics. There is no fleet install count.
-
-Release comparisons match UTC day since publication to the latest release's
-latest observation. They use cumulative snapshots including the first count,
-not daily changes. Only actual observations appear; missing history is not
-invented. Daily snapshots cannot reconstruct exact hourly adoption. On day 17,
-1.2.0 had 108 observed installer downloads versus 53 for 1.1.3.
-
-Hosted `hosted_update_request_count` snapshots remain available for operational
-diagnostics after rollout. They count HTTP requests, including retries and
-partial transfers, and are not installation or successful-update reports.
-They are intentionally absent from this business dashboard. The importer
-re-exports the last 30 days with deterministic IDs, no person profiles, and no
-GeoIP enrichment. It uses request day rather than ingestion time.
+not unique failed attempts. Queries require official production builds and
+published stable destination versions (or running versions for error reports).
+Unknown error targets remain Unknown and are never assigned to the latest
+version. Opted-in update results remain in their own table and do not measure
+people who declined analytics.
 
 Existing `app_updated` and `daily_active` events provide consented context only.
 They exclude internal/prerelease builds and cannot represent fleet adoption.

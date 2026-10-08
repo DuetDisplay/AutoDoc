@@ -2,10 +2,11 @@
 export const dashboardUrl = 'https://us.posthog.com/project/218998/dashboard/2183745'
 export const dashboardName = 'AutoDoc Releases'
 export const dashboardDescription =
-  'Lifetime downloads. Update reports are opt-in. Installs are not measured.'
+  'Downloads by route. Update errors are opt-in. Installs are not measured.'
 
-// Asset counters are cumulative. Use one latest release batch and one row per
-// asset, including the initial count. Never sum daily counter snapshots.
+// Asset counters are cumulative. Keep one value per asset on the latest
+// observed release day, including its initial count. Same-day refreshes can
+// deduplicate unchanged assets; never retain only the newest timestamp.
 const snapshots = `github_snapshots AS (
   SELECT toString(properties.app_version) AS version,
     toString(properties.asset_id) AS asset,
@@ -27,7 +28,7 @@ const snapshots = `github_snapshots AS (
     argMax(g.downloads, g.observed_at) AS downloads,
     max(g.published_at) AS published_at
   FROM github_snapshots g JOIN latest_batches b
-    ON g.version = b.version AND g.observed_at = b.batch_time
+    ON g.version = b.version AND toDate(g.observed_at) = toDate(b.batch_time)
   GROUP BY g.version, g.asset, g.platform
 ), releases AS (
   SELECT version, max(published_at) AS published_at FROM current_assets GROUP BY version
@@ -63,23 +64,58 @@ const errors = `reported_errors AS (
   GROUP BY previous_version, current_version
 )`
 
-// Match UTC release-day age using actual cumulative observations. This is a
-// daily comparison, not reconstructed counts at an exact elapsed second.
-const age = `release_age AS (
-  SELECT dateDiff('day', toDate(published_at),
-    toDate(toString((SELECT max(observed_at) FROM github_snapshots
-      WHERE version = (SELECT version FROM latest))))) AS days
-  FROM latest
-), same_age_assets AS (
-  SELECT version, asset, argMax(downloads, observed_at) AS downloads
-  FROM github_snapshots
-  WHERE dateDiff('day', toDate(published_at), toDate(toString(observed_at)))
-    <= (SELECT days FROM release_age)
-  GROUP BY version, asset
+// The production importer emits daily counters, not one event per download.
+// Keep only the latest value for a key so re-exports never multiply downloads.
+const hosted = `hosted AS (
+  SELECT toString(properties.app_version) AS version,
+    toString(properties.platform) AS platform,
+    toString(properties.asset_key) AS asset,
+    toString(properties.day) AS day,
+    argMax(toInt(properties.request_count), timestamp) AS downloads
+  FROM events
+  WHERE event = 'hosted_update_request_count'
+    AND timestamp >= toDateTime('2026-01-01')
+    AND properties.source = 'r2_update_mirror'
+    AND properties.environment = 'production'
+    AND properties.asset_kind = 'package' AND properties.request_kind = 'full'
+    AND toInt(properties.response_status) = 200
+    AND properties.platform IN ('macos', 'windows')
+    AND toString(properties.app_version) IN (SELECT version FROM releases)
+  GROUP BY version, platform, asset, day
+), downloads_by_route AS (
+  SELECT version, platform, downloads, 'github' AS route FROM current_assets
+  UNION ALL
+  SELECT version, platform, downloads, 'updater' AS route FROM hosted
+)`
+
+// Use actual observations before 24h / 7d / 14d since publication. Require a
+// snapshot within the preceding day and a completed milestone. A missing first
+// day is unknown, not zero. These daily observations are not exact-hour counts.
+const milestones = `periods AS (
+  SELECT 1 AS days UNION ALL SELECT 7 AS days UNION ALL SELECT 14 AS days
+), milestone_batches AS (
+  SELECT r.version AS version, p.days AS days,
+    max(g.observed_at) AS batch_time
+  FROM releases r CROSS JOIN periods p
+  JOIN github_snapshots g ON r.version = g.version
+  JOIN latest_batches b ON r.version = b.version
+  WHERE b.batch_time >= addDays(parseDateTimeBestEffort(r.published_at), p.days)
+    AND g.observed_at <= addDays(parseDateTimeBestEffort(r.published_at), p.days)
+    AND g.observed_at > addDays(parseDateTimeBestEffort(r.published_at), p.days - 1)
+  GROUP BY r.version, p.days
+), milestone_assets AS (
+  SELECT g.version AS version, m.days AS days, g.asset AS asset,
+    argMax(g.downloads, g.observed_at) AS downloads
+  FROM github_snapshots g JOIN milestone_batches m
+    ON g.version = m.version AND toDate(g.observed_at) = toDate(m.batch_time)
+      AND g.observed_at <= m.batch_time
+  GROUP BY g.version, m.days, g.asset
+), milestone_totals AS (
+  SELECT version, days, sum(downloads) AS downloads FROM milestone_assets GROUP BY version, days
 )`
 
 const context =
-  'Derived operational reporting. Data Catalog read scope is unavailable. Lifetime totals use the latest full release batch, de-duplicated per asset. Downloads are GitHub DMG/EXE files, including legacy Windows updates and repeat downloads. Update success is distinct consenting identities per previous/current version pair; errors are reports, not deduplicated attempts. Only published stable release versions are included. Same-age comparison uses UTC release days and actual snapshots, not exact-time reconstruction. Installs are not measured. Hosted HTTP request counts are not added to installs or updates.'
+  "Derived operational reporting. Data Catalog read scope is unavailable. Lifetime totals use each release's latest observed UTC day and latest value per asset, including unchanged assets deduplicated by same-day ingestion. Downloads are GitHub DMG/EXE files, including legacy Windows updates and repeat downloads. Update success is distinct consenting identities per previous/current version pair; errors are reports, not deduplicated attempts. Only published stable release versions are included. Milestones use the latest observed GitHub batch before 24 hours, 7 days, and 14 days, with at most one day of snapshot lag; missing history and unfinished milestones stay null. Installs are not measured. Route totals add GitHub installers and hosted full-package HTTP 200 responses. Hosted retries and interrupted transfers can count again; partial range responses, polls, and HEADs are excluded. The mirror has no production events before rollout; its observed count is zero. Neither route identifies new people. Opt-in update reports overlap with downloads and are never added to them."
 
 function sql(id, shortId, tile, name, query, display, layout) {
   return {
@@ -107,55 +143,64 @@ export const insights = [
     12634214,
     'AlIqq7GA',
     13264845,
-    'All-time downloads',
-    `WITH ${snapshots} SELECT sum(downloads) AS downloads FROM current_assets`,
+    'All-time',
+    `WITH ${snapshots}, ${hosted} SELECT coalesce(sum(downloads), 0) AS downloads FROM downloads_by_route`,
     'BoldNumber',
-    { x: 0, y: 0, w: 3, h: 2 }
+    { x: 0, y: 0, w: 2, h: 2 }
   ),
   sql(
     12634215,
     'ZLaMCgBq',
     13264846,
-    'Latest version downloads',
-    `WITH ${snapshots} SELECT sum(downloads) AS downloads FROM current_assets WHERE version = (SELECT version FROM latest)`,
+    'Latest total',
+    `WITH ${snapshots}, ${hosted} SELECT coalesce(sum(downloads), 0) AS downloads FROM downloads_by_route WHERE version = (SELECT version FROM latest)`,
     'BoldNumber',
-    { x: 3, y: 0, w: 3, h: 2 }
+    { x: 2, y: 0, w: 3, h: 2 }
   ),
   sql(
     12634261,
     'tYGZfi7B',
     13264950,
-    'Updates to latest (opt-in)',
-    `WITH ${snapshots}, ${updates} SELECT sum(updates) AS updates FROM reported_updates WHERE current_version = (SELECT version FROM latest)`,
+    'GitHub',
+    `WITH ${snapshots} SELECT coalesce(sum(downloads), 0) AS downloads FROM current_assets WHERE version = (SELECT version FROM latest)`,
     'BoldNumber',
-    { x: 6, y: 0, w: 3, h: 2 }
+    { x: 5, y: 0, w: 3, h: 2 }
+  ),
+  sql(
+    12657058,
+    'QR7PZEic',
+    13299028,
+    'Updater',
+    `WITH ${snapshots}, ${hosted} SELECT coalesce(sum(downloads), 0) AS downloads FROM hosted WHERE version = (SELECT version FROM latest)`,
+    'BoldNumber',
+    { x: 8, y: 0, w: 2, h: 2 }
   ),
   sql(
     12634259,
     'wzHaKj94',
     13264948,
-    'Update errors (opt-in)',
+    'Errors',
     `WITH ${snapshots}, ${errors} SELECT sum(errors) AS errors FROM reported_errors`,
     'BoldNumber',
-    { x: 9, y: 0, w: 3, h: 2 }
+    { x: 10, y: 0, w: 2, h: 2 }
   ),
   sql(
     12634227,
     'xaspEpUk',
     13264866,
     'Downloads by version',
-    `WITH ${snapshots}, ${updates}, version_totals AS (
+    `WITH ${snapshots}, ${hosted}, version_totals AS (
       SELECT version, sumIf(downloads, platform = 'macos') AS macos,
-        sumIf(downloads, platform = 'windows') AS windows, sum(downloads) AS downloads
-      FROM current_assets GROUP BY version
-    ), version_updates AS (
-      SELECT current_version, sum(updates) AS updates FROM reported_updates GROUP BY current_version
-    ) SELECT concat(v.version, if(v.version = (SELECT version FROM latest), ' (latest)', '')) AS Version,
-      v.macos AS macOS, v.windows AS Windows, v.downloads AS Downloads,
-      coalesce(u.updates, 0) AS \`Updates (opt-in)\`
-    FROM version_totals v LEFT JOIN version_updates u ON v.version = u.current_version
-    ORDER BY toInt(splitByChar('.', v.version)[1]) DESC,
-      toInt(splitByChar('.', v.version)[2]) DESC, toInt(splitByChar('.', v.version)[3]) DESC`,
+        sumIf(downloads, platform = 'windows') AS windows,
+        sumIf(downloads, route = 'github') AS github,
+        sumIf(downloads, route = 'updater') AS updater,
+        sum(downloads) AS downloads
+      FROM downloads_by_route GROUP BY version
+    ) SELECT concat(version, if(version = (SELECT version FROM latest), ' (latest)', '')) AS Version,
+      macos AS macOS, windows AS Windows, github AS GitHub, coalesce(updater, 0) AS Updater, downloads AS Total
+    FROM version_totals
+    ORDER BY toInt(splitByChar('.', version)[1]) DESC,
+      toInt(splitByChar('.', version)[2]) DESC, toInt(splitByChar('.', version)[3]) DESC`,
     'ActionsTable',
     { x: 0, y: 2, w: 12, h: 4 }
   ),
@@ -163,13 +208,16 @@ export const insights = [
     12634249,
     'Q9CTgSFd',
     13264930,
-    'Compare releases',
-    `WITH ${snapshots}, ${age}
-    SELECT concat(version, if(version = (SELECT version FROM latest), ' (latest)', '')) AS Version,
-      (SELECT days FROM release_age) AS \`Day after release\`, sum(downloads) AS Downloads
-    FROM same_age_assets GROUP BY version
-    ORDER BY toInt(splitByChar('.', version)[1]) DESC,
-      toInt(splitByChar('.', version)[2]) DESC, toInt(splitByChar('.', version)[3]) DESC`,
+    'GitHub downloads after release',
+    `WITH ${snapshots}, ${milestones}
+    SELECT concat(r.version, if(r.version = (SELECT version FROM latest), ' (latest)', '')) AS Version,
+      if(countIf(t.days = 1) > 0, maxIf(t.downloads, t.days = 1), NULL) AS \`1 day\`,
+      if(countIf(t.days = 7) > 0, maxIf(t.downloads, t.days = 7), NULL) AS \`1 week\`,
+      if(countIf(t.days = 14) > 0, maxIf(t.downloads, t.days = 14), NULL) AS \`2 weeks\`
+    FROM releases r LEFT JOIN milestone_totals t ON r.version = t.version
+    GROUP BY r.version
+    ORDER BY toInt(splitByChar('.', r.version)[1]) DESC,
+      toInt(splitByChar('.', r.version)[2]) DESC, toInt(splitByChar('.', r.version)[3]) DESC`,
     'ActionsTable',
     { x: 0, y: 6, w: 6, h: 4 }
   ),

@@ -10,45 +10,52 @@
       "id": 12634214,
       "short_id": "AlIqq7GA",
       "tile": 13264845,
-      "name": "All-time downloads"
+      "name": "All-time"
     },
     {
       "index": 1,
       "id": 12634215,
       "short_id": "ZLaMCgBq",
       "tile": 13264846,
-      "name": "Latest version downloads"
+      "name": "Latest total"
     },
     {
       "index": 2,
       "id": 12634261,
       "short_id": "tYGZfi7B",
       "tile": 13264950,
-      "name": "Updates to latest (opt-in)"
+      "name": "GitHub"
     },
     {
       "index": 3,
-      "id": 12634259,
-      "short_id": "wzHaKj94",
-      "tile": 13264948,
-      "name": "Update errors (opt-in)"
+      "id": 12657058,
+      "short_id": "QR7PZEic",
+      "tile": 13299028,
+      "name": "Updater"
     },
     {
       "index": 4,
+      "id": 12634259,
+      "short_id": "wzHaKj94",
+      "tile": 13264948,
+      "name": "Errors"
+    },
+    {
+      "index": 5,
       "id": 12634227,
       "short_id": "xaspEpUk",
       "tile": 13264866,
       "name": "Downloads by version"
     },
     {
-      "index": 5,
+      "index": 6,
       "id": 12634249,
       "short_id": "Q9CTgSFd",
       "tile": 13264930,
-      "name": "Compare releases"
+      "name": "GitHub downloads after release"
     },
     {
-      "index": 6,
+      "index": 7,
       "id": 12634262,
       "short_id": "Ws7QXZn4",
       "tile": 13264951,
@@ -63,7 +70,7 @@
         "sm": {
           "x": 0,
           "y": 0,
-          "w": 3,
+          "w": 2,
           "h": 2
         }
       }
@@ -72,7 +79,7 @@
       "id": 13264846,
       "layouts": {
         "sm": {
-          "x": 3,
+          "x": 2,
           "y": 0,
           "w": 3,
           "h": 2
@@ -83,9 +90,20 @@
       "id": 13264950,
       "layouts": {
         "sm": {
-          "x": 6,
+          "x": 5,
           "y": 0,
           "w": 3,
+          "h": 2
+        }
+      }
+    },
+    {
+      "id": 13299028,
+      "layouts": {
+        "sm": {
+          "x": 8,
+          "y": 0,
+          "w": 2,
           "h": 2
         }
       }
@@ -94,9 +112,9 @@
       "id": 13264948,
       "layouts": {
         "sm": {
-          "x": 9,
+          "x": 10,
           "y": 0,
-          "w": 3,
+          "w": 2,
           "h": 2
         }
       }
