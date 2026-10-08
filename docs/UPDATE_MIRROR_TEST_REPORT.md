@@ -27,9 +27,21 @@ unchanged.
 - Production Electron/Vite compilation using an isolated example feed setting;
   the feed URL is present in the compiled main bundle. The app was not launched
   and no analytics were emitted. Existing bundle-splitting warnings remain.
-- All 13 saved PostHog insights execute successfully against existing real data.
-  Native date/version/platform overrides work. The dashboard is private with
-  16 tiles; hosted cards return no rows before rollout, not fabricated zeroes.
+- October 8 dashboard revision: seven saved insights execute successfully
+  against real data, with no warnings. All-time totals remain the same under
+  a seven-day dashboard override. No snapshot sums or baseline subtraction.
+  Every displayed version total matches the GitHub API: 108, 230, 100, 7, 89,
+  and 46; total 580. The version table's platform sums match its totals.
+- Four opted-in 1.1.3 → 1.2.0 update reporters and two error reports from 1.1.3
+  are verified against real records. Errors with unknown targets stay Unknown.
+  Internal builds and unpublished/prerelease version reports are excluded.
+- Daily release-age comparison verified at UTC release day 17: 1.2.0 = 108,
+  1.1.3 = 53. This does not claim exact hourly counts or fleet installations.
+- Existing GitHub snapshot workflow was run to refresh real public source
+  counters: run 37789629179 succeeded. This is legitimate production data,
+  not synthetic testing. No test events were uploaded or production counts reset.
+- Verbose notes and HTTP diagnostics were removed from this dashboard only.
+  Underlying saved insights and source events remain available.
 
 ## Cleanup and reporting integrity
 

@@ -2,112 +2,69 @@
   "project_id": 218998,
   "dashboard_id": 2183745,
   "url": "https://us.posthog.com/project/218998/dashboard/2183745",
+  "name": "AutoDoc Releases",
   "private": true,
   "insights": [
-    {
-      "index": 4,
-      "id": 12634180,
-      "short_id": "4skNeAzp",
-      "tile": 13264779
-    },
     {
       "index": 0,
       "id": 12634214,
       "short_id": "AlIqq7GA",
-      "tile": 13264845
+      "tile": 13264845,
+      "name": "All-time downloads"
     },
     {
       "index": 1,
       "id": 12634215,
       "short_id": "ZLaMCgBq",
-      "tile": 13264846
+      "tile": 13264846,
+      "name": "Latest version downloads"
     },
     {
       "index": 2,
-      "id": 12634224,
-      "short_id": "tYSbfUHZ",
-      "tile": 13264863
+      "id": 12634261,
+      "short_id": "tYGZfi7B",
+      "tile": 13264950,
+      "name": "Updates to latest (opt-in)"
     },
     {
       "index": 3,
-      "id": 12634225,
-      "short_id": "hrj7x49n",
-      "tile": 13264864
+      "id": 12634259,
+      "short_id": "wzHaKj94",
+      "tile": 13264948,
+      "name": "Update errors (opt-in)"
+    },
+    {
+      "index": 4,
+      "id": 12634227,
+      "short_id": "xaspEpUk",
+      "tile": 13264866,
+      "name": "Downloads by version"
     },
     {
       "index": 5,
-      "id": 12634226,
-      "short_id": "ClJhGJtM",
-      "tile": 13264865
+      "id": 12634249,
+      "short_id": "Q9CTgSFd",
+      "tile": 13264930,
+      "name": "Compare releases"
     },
     {
       "index": 6,
-      "id": 12634227,
-      "short_id": "xaspEpUk",
-      "tile": 13264866
-    },
-    {
-      "index": 7,
-      "id": 12634249,
-      "short_id": "Q9CTgSFd",
-      "tile": 13264930
-    },
-    {
-      "index": 8,
-      "id": 12634258,
-      "short_id": "1eKV8abU",
-      "tile": 13264947
-    },
-    {
-      "index": 9,
-      "id": 12634259,
-      "short_id": "wzHaKj94",
-      "tile": 13264948
-    },
-    {
-      "index": 10,
-      "id": 12634260,
-      "short_id": "dvQxabSm",
-      "tile": 13264949
-    },
-    {
-      "index": 11,
-      "id": 12634261,
-      "short_id": "tYGZfi7B",
-      "tile": 13264950
-    },
-    {
-      "index": 12,
       "id": 12634262,
       "short_id": "Ws7QXZn4",
-      "tile": 13264951
+      "tile": 13264951,
+      "name": "Update results (opt-in)"
     }
   ],
-  "notes": [
-    13265050,
-    13265051,
-    13265052
-  ],
+  "notes": [],
   "tiles": [
-    {
-      "id": 13264779,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 7,
-          "w": 6,
-          "h": 6
-        }
-      }
-    },
     {
       "id": 13264845,
       "layouts": {
         "sm": {
           "x": 0,
-          "y": 3,
+          "y": 0,
           "w": 3,
-          "h": 4
+          "h": 2
         }
       }
     },
@@ -116,42 +73,31 @@
       "layouts": {
         "sm": {
           "x": 3,
-          "y": 3,
+          "y": 0,
           "w": 3,
-          "h": 4
+          "h": 2
         }
       }
     },
     {
-      "id": 13264863,
+      "id": 13264950,
       "layouts": {
         "sm": {
           "x": 6,
-          "y": 3,
+          "y": 0,
           "w": 3,
-          "h": 4
+          "h": 2
         }
       }
     },
     {
-      "id": 13264864,
+      "id": 13264948,
       "layouts": {
         "sm": {
           "x": 9,
-          "y": 3,
+          "y": 0,
           "w": 3,
-          "h": 4
-        }
-      }
-    },
-    {
-      "id": 13264865,
-      "layouts": {
-        "sm": {
-          "x": 6,
-          "y": 7,
-          "w": 6,
-          "h": 6
+          "h": 2
         }
       }
     },
@@ -160,9 +106,9 @@
       "layouts": {
         "sm": {
           "x": 0,
-          "y": 13,
+          "y": 2,
           "w": 12,
-          "h": 6
+          "h": 4
         }
       }
     },
@@ -171,53 +117,9 @@
       "layouts": {
         "sm": {
           "x": 0,
-          "y": 19,
-          "w": 12,
-          "h": 6
-        }
-      }
-    },
-    {
-      "id": 13264947,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 25,
+          "y": 6,
           "w": 6,
-          "h": 6
-        }
-      }
-    },
-    {
-      "id": 13264948,
-      "layouts": {
-        "sm": {
-          "x": 6,
-          "y": 25,
-          "w": 6,
-          "h": 6
-        }
-      }
-    },
-    {
-      "id": 13264949,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 31,
-          "w": 12,
-          "h": 3
-        }
-      }
-    },
-    {
-      "id": 13264950,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 36,
-          "w": 4,
-          "h": 6
+          "h": 4
         }
       }
     },
@@ -225,43 +127,10 @@
       "id": 13264951,
       "layouts": {
         "sm": {
-          "x": 4,
-          "y": 36,
-          "w": 8,
-          "h": 6
-        }
-      }
-    },
-    {
-      "id": 13265050,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 0,
-          "w": 12,
-          "h": 3
-        }
-      }
-    },
-    {
-      "id": 13265051,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 34,
-          "w": 12,
-          "h": 2
-        }
-      }
-    },
-    {
-      "id": 13265052,
-      "layouts": {
-        "sm": {
-          "x": 0,
-          "y": 42,
-          "w": 12,
-          "h": 3
+          "x": 6,
+          "y": 6,
+          "w": 6,
+          "h": 4
         }
       }
     }
