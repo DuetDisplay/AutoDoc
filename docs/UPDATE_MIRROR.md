@@ -88,13 +88,29 @@ hard-coded, to allow staged rollout and self-hosted distribution.
 ## Retention and rollback
 
 `node scripts/prune-update-mirror.mjs` previews deletion and reclaimable bytes;
-add `--apply` to delete. It keeps current manifests' versions, the preceding
-version, any manifest-referenced package, explicit `--keep=VERSION` versions,
-newer prefixes, and all packages uploaded within 30 days. This grace period
-protects pending downloads. Keep any additional supported rollback/pinned paths
-explicitly. There is no automatic deletion schedule. Old counters are small and
-remain independent of package retention. Account-wide allowances and Worker,
-D1 and R2 operations determine cost; pruning storage alone cannot promise $0.
+add `--apply` to delete. It keeps both manifests' active versions, the previous
+published version, manifest-referenced packages, and explicit `--keep=VERSION`
+versions. Other known releases become eligible **24 hours after replacement**,
+not 24 hours after upload. Successful publication saves replacement timestamps
+under `retention/superseded/`; unknown history and newer versions are retained.
+A failed manifest advancement never starts the old release's grace period.
+Incomplete multipart uploads older than 24 hours are aborted during cleanup.
+Publication cleans eligible files before its storage check and after success.
+The **Clean old update packages** workflow also runs daily, sharing the production
+publication concurrency group. Its manual mode defaults to preview.
+
+Before any package upload, CI checks all bucket objects, outstanding multipart
+parts, and incoming packages/manifests against `UPDATE_MIRROR_MAX_STORAGE_BYTES`
+(default **8,000,000,000 bytes** for production). Staging uses its separate
+`UPDATE_MIRROR_STAGING_MAX_STORAGE_BYTES` (default **2,000,000,000 bytes**).
+A retry reuses existing immutable packages. Exceeding the limit fails CI with
+current, incoming, projected, and limit bytes in an error annotation and the run
+summary; no new package is uploaded and the active feed remains unchanged.
+The check reserves room for temporary manifest/retention writes as well.
+Concurrent external writes are unsupported; keep publication and maintenance
+serialized. These are per-bucket limits, not Cloudflare billing caps or an
+account-wide free-tier guarantee. Counters are retained independently of files;
+Worker, D1, and request usage can still incur charges.
 
 For rollback, pause mirror publication and restore **both** archived manifests
 (`releases/vVERSION/latest*.yml`) to `stable/`, with the corresponding package
@@ -115,7 +131,7 @@ packages** are verified, so a split-version feed still refers to verified bytes.
 is accessible in a browser on desktop, tablet, and phone with project access.
 It contains eight panels: all-time downloads, latest-version downloads,
 GitHub downloads to latest, updater downloads to latest, update error reports,
-downloads by version, GitHub release milestones, and opted-in update results.
+downloads by platform, GitHub release milestones, and opted-in update results.
 Descriptions and explanatory text cards are intentionally empty. Definitions
 and layout IDs are saved in `scripts/release-download-dashboard.mjs` and
 `docs/UPDATE_MIRROR_DASHBOARD.json`. No public sharing link is enabled.
@@ -204,3 +220,51 @@ Temporary remote test resources use the suffix `ad158-test` and must be emptied
 and removed after hosted verification. They are never production resources and
 must never be configured in release CI. Record cleanup evidence in the test
 report. Production dashboard validation reads existing events only.
+
+
+## Staging end-to-end verification (no public release)
+
+The existing **Build & Release** workflow now accepts `staging_test_version`.
+Use manual dispatch with `release_platform=all`, no `release_tag`, and the exact
+test branch/ref. It builds the requested version from that commit, signs both
+platforms through the existing signing paths, disables Sentry/PostHog keys,
+and publishes CI artifacts to the staging bucket through the same mirror
+publisher. No GitHub release or public tag is created. The stable production
+mirror job is excluded. Existing release-account restrictions still apply.
+
+Configure `UPDATE_MIRROR_STAGING_ORIGIN` as a repository variable and provision
+staging R2/D1/Worker first. In GitHub environment `update-mirror-staging`, use
+bucket-scoped staging credentials under `UPDATE_MIRROR_R2_ACCESS_KEY_ID` and
+`UPDATE_MIRROR_R2_SECRET_ACCESS_KEY`; never reuse production bucket credentials.
+Set `CLOUDFLARE_ACCOUNT_ID` as the repository variable. Export access uses a
+separate staging `COUNTS_EXPORT_TOKEN` Worker secret. Production stays disabled.
+
+For example, dispatch version `1.3.0`, download both packages from staging,
+verify signatures/checksums, and launch using separate install locations and
+profiles on this Mac and DuetXPS. Then dispatch `1.3.1` and prove the running
+older clients discover, download, install, and relaunch into it. Preserve existing
+user installations and profiles. Check version and UI after relaunch, not just
+manifest parsing or a successful download. Record exact commits, CI run IDs,
+signed artifact hashes, staging URLs, startup/update logs, and screenshots.
+
+Reconcile both clients' requests with staging D1 and the authenticated export.
+Full package downloads must show the correct destination version and platform;
+polls/ranges/HEADs remain separate. Exercise the importer with `--dry-run` only
+(staging uploads to production PostHog are rejected). This establishes hosting
+and exporter counts; production dashboard ingestion still requires a real
+production import after rollout. Do not relabel staging exports as production.
+
+The mirror workflow's manual `staging_version` and `build_run_id` inputs can
+reuse artifacts from an already completed signed test build. Use the matching
+`release_tag=staging-vVERSION`. An optional `staging_storage_limit_bytes=1`
+with `apply=true` verifies the CI failure annotation and summary without
+advancing the working staging feed or uploading packages. The override applies
+only to staging. Afterwards rerun with the normal limit and verify recovery.
+
+Test retention with multiple small staging fixtures as well as the signed
+packages. Verify active/previous/recent replacements stay and eligible older
+files are removed. Once both platform checks and count reconciliation pass,
+remove all disposable staging packages, counters, caches/resources, and test
+profiles; retain the evidence report. No synthetic events enter the live
+PostHog project. Avoid fetching public GitHub release assets for this test so
+its replication downloads do not add to GitHub's production asset counts.

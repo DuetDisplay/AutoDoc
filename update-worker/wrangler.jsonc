@@ -19,6 +19,7 @@
     {
       "binding": "COUNTS",
       "database_name": "autodoc-update-counts-staging",
+      "database_id": "c560f975-7b33-4a42-96e2-8ec32e1a9dd5",
       "migrations_dir": "migrations"
     }
   ],

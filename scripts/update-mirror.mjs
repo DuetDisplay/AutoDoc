@@ -6,6 +6,15 @@ import { resolve, basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import yaml from 'js-yaml'
+import {
+  newer,
+  readStorage,
+  cleanupStorage,
+  capacityPlan,
+  capacityMessage,
+  storageLimit
+} from './update-mirror-storage.mjs'
+export { newer } from './update-mirror-storage.mjs'
 
 export const MANIFESTS = ['latest-mac.yml', 'latest.yml']
 const STABLE = /^\d+\.\d+\.\d+$/
@@ -30,13 +39,6 @@ export function mirrorOrigin(value) {
     throw new Error('UPDATE_MIRROR_ORIGIN must be an HTTPS origin without a path or credentials')
   }
   return url.origin
-}
-
-export function newer(left, right) {
-  const a = left.split('.').map(Number),
-    b = right.split('.').map(Number)
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]
-  return false
 }
 
 export async function planRelease(release, directory, origin) {
@@ -129,7 +131,18 @@ export function aws(args, { allowMissing = false, hash = false } = {}) {
       const error = Buffer.concat(errors).toString()
       if (code && allowMissing && /\b(404|NoSuchKey|Not Found)\b/.test(error))
         return resolvePromise(null)
-      if (code) return reject(new Error(`R2 operation failed (exit ${code})`))
+      if (code) {
+        const providerCode = /\(([A-Za-z][A-Za-z0-9]{0,63})\) when calling/.exec(error)?.[1]
+        const reason =
+          providerCode === 'AccessDenied'
+            ? 'Check the CI credential and bucket permissions.'
+            : providerCode === 'NoSuchBucket'
+              ? 'Check UPDATE_MIRROR_BUCKET and account configuration.'
+              : 'Check R2 availability, upload credentials, and the CI operation log.'
+        return reject(
+          new Error(`R2 ${args[1]} failed (${providerCode ?? `exit ${code}`}). ${reason}`)
+        )
+      }
       resolvePromise(digest ? digest.digest('base64') : Buffer.concat(chunks))
     })
   })
@@ -142,7 +155,10 @@ function bucketName() {
   return bucket
 }
 
-export async function publishPlan(plan, { run = aws, bucket = bucketName() } = {}) {
+export async function publishPlan(
+  plan,
+  { run = aws, bucket = bucketName(), maxStorageBytes = storageLimit() } = {}
+) {
   const previous = new Map()
   // CI serializes all publication paths with a single concurrency group.
   for (const m of plan.manifests) {
@@ -155,6 +171,23 @@ export async function publishPlan(plan, { run = aws, bucket = bucketName() } = {
       if (!STABLE.test(current) || newer(current, plan.version))
         throw new Error('Refusing to downgrade stable feed')
     }
+  }
+  let state = await readStorage(run, bucket)
+  const oldManifests = [...previous.values()]
+    .filter(Boolean)
+    .map((body) => yaml.load(body.toString()))
+  const cleanup = await cleanupStorage(run, bucket, state, oldManifests, { apply: true })
+  if (cleanup.deletions.length || cleanup.expiredUploads.length)
+    state = await readStorage(run, bucket)
+  const budget = capacityPlan(state, plan, maxStorageBytes)
+  console.log(
+    `Update mirror storage: current ${budget.currentBytes} bytes, incoming/reserved ${budget.incomingBytes} bytes, projected ${budget.projectedBytes} bytes, limit ${budget.maxBytes} bytes`
+  )
+  if (!budget.fits) {
+    const error = new Error(capacityMessage(budget))
+    error.code = 'MIRROR_STORAGE_BUDGET'
+    error.budget = budget
+    throw error
   }
   for (const item of plan.packages) {
     const head = await run(['s3api', 'head-object', '--bucket', bucket, '--key', item.key], {
@@ -245,6 +278,38 @@ export async function publishPlan(plan, { run = aws, bucket = bucketName() } = {
   } finally {
     await rm(temp, { recursive: true, force: true })
   }
+  const markers = await mkdtemp(join(tmpdir(), 'autodoc-mirror-retention-'))
+  try {
+    for (const version of new Set(oldManifests.map((m) => m.version))) {
+      if (version === plan.version || cleanup.superseded[version]) continue
+      const key = `retention/superseded/v${version}.json`,
+        file = join(markers, `${version}.json`)
+      await writeFile(file, JSON.stringify({ version, superseded_at: new Date().toISOString() }))
+      await run([
+        's3',
+        'cp',
+        file,
+        `s3://${bucket}/${key}`,
+        '--only-show-errors',
+        '--content-type',
+        'application/json'
+      ])
+    }
+    const publishedState = await readStorage(run, bucket)
+    await cleanupStorage(
+      run,
+      bucket,
+      publishedState,
+      plan.manifests.map((m) => yaml.load(m.body)),
+      { apply: true }
+    )
+  } catch {
+    throw new Error(
+      'Update packages and latest feed were published, but retention bookkeeping/cleanup failed. Check the feed and rerun cleanup; unknown replacement times are retained.'
+    )
+  } finally {
+    await rm(markers, { recursive: true, force: true })
+  }
 }
 
 async function main() {
@@ -263,8 +328,21 @@ async function main() {
   if (flags.includes('--apply')) await publishPlan(plan)
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch((error) => {
+  main().catch(async (error) => {
     console.error(error.message)
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const message = error.message
+        .replaceAll('%', '%25')
+        .replaceAll('\r', '%0D')
+        .replaceAll('\n', '%0A')
+      console.error(`::error title=Update mirror failed::${message}`)
+      if (process.env.GITHUB_STEP_SUMMARY)
+        await writeFile(
+          process.env.GITHUB_STEP_SUMMARY,
+          `## Update mirror failed\n\n${error.message}\n`,
+          { flag: 'a' }
+        )
+    }
     process.exitCode = 1
   })
 }

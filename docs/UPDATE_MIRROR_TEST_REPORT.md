@@ -7,7 +7,7 @@ unchanged.
 
 ## Passed
 
-- 14 mirror tests, including real Workers runtime with isolated R2, D1 and cache;
+- 19 mirror tests, including real Workers runtime with isolated R2, D1 and cache;
   full/range/suffix/open-ended responses, invalid/multiple ranges, conditional
   responses, HEAD, fresh manifests, cached downloads, auth/date export checks,
   and continued delivery during a counting failure.
@@ -44,6 +44,21 @@ unchanged.
 - Mirror query event/property names match the production importer contract. Taxonomy warnings from exploratory SQL are expected because hosted reporting has not launched; all eight saved dashboard queries return without query warnings. The first production mirror import still needs a D1 reconciliation.
 - Verbose notes and HTTP diagnostics were removed from this dashboard only.
   Underlying saved insights and source events remain available.
+
+## October 8 staging preparation
+
+- Storage budget includes incoming packages/manifests, current bucket objects,
+  and outstanding multipart parts. Insufficient budget blocks before package
+  writes or feed advancement. CI emits an error annotation and summary.
+- Retention now uses a 24-hour replacement grace, keeps active/previous/manual
+  versions, and retains unknown history. Successful cutover timestamps are
+  recorded once; retries do not extend the grace. Expired multipart cleanup is
+  covered. Publication and daily cleanup share a concurrency group per bucket.
+- Signed staging CI uses artifacts only: no public tag or release, a staging
+  feed baked into the app, and empty production analytics keys. Mac and DuetXPS
+  must still complete the real install/relaunch and hosted statistics checks.
+- Windows preflight is running in the separate AD-158 Windows update
+  verification chat on DuetXPS. Live CI/staging results are not yet recorded.
 
 ## Cleanup and reporting integrity
 

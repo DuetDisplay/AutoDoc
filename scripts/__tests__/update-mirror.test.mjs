@@ -8,6 +8,12 @@ import { createRequire } from 'node:module'
 import { planRelease, publishPlan, newer } from '../update-mirror.mjs'
 import { buildHostedEvents, main as ingestHosted } from '../ingest-hosted-update-counts.mjs'
 import { retentionPlan } from '../prune-update-mirror.mjs'
+import {
+  capacityPlan,
+  cleanupStorage,
+  storageLimit,
+  RETENTION_GRACE_MS
+} from '../update-mirror-storage.mjs'
 import yaml from 'js-yaml'
 const require = createRequire(import.meta.url)
 const github = require('../ingest-github-download-counts.js')
@@ -104,6 +110,17 @@ function fakeR2(failOn) {
   const run = async (args, options = {}) => {
     const flag = (name) => args[args.indexOf(name) + 1]
     if (args[0] === 's3api') {
+      if (args[1] === 'list-objects-v2')
+        return Buffer.from(
+          JSON.stringify({
+            Contents: [...objects.entries()].map(([Key, object]) => ({
+              Key,
+              Size: object.body.length,
+              LastModified: object.modified ?? new Date().toISOString()
+            }))
+          })
+        )
+      if (args[1] === 'list-multipart-uploads') return Buffer.from(JSON.stringify({ Uploads: [] }))
       const key = flag('--key'),
         object = objects.get(key)
       if (args[1] === 'delete-object') {
@@ -129,7 +146,10 @@ function fakeR2(failOn) {
       failed = true
       throw new Error('Injected storage failure')
     }
-    objects.set(key, { body: await readFile(source), metadata: JSON.parse(flag('--metadata')) })
+    objects.set(key, {
+      body: await readFile(source),
+      metadata: args.includes('--metadata') ? JSON.parse(flag('--metadata')) : {}
+    })
     return Buffer.from('')
   }
   return { objects, writes, run }
@@ -269,7 +289,7 @@ test('GitHub snapshots suppress person profiles and contain asset aggregate iden
   assert.equal(event.properties.asset_kind, 'installer')
   assert.equal(event.distinct_id, 'github-release-asset:DuetDisplay/AutoDoc:99')
 })
-test('retention protects current/previous/manual versions, recent files and manifest references', () => {
+test('retention protects current/previous/manual versions, replacement grace and manifest references', () => {
   const object = (v, date = '2026-01-01') => ({
     Key: `releases/v${v}/autodoc-${v}-setup.exe`,
     LastModified: date,
@@ -291,10 +311,151 @@ test('retention protects current/previous/manual versions, recent files and mani
     ],
     manifests,
     ['1.3.0'],
-    Date.parse('2026-10-07')
+    Date.parse('2026-10-07'),
+    {
+      '1.0.0': '2026-10-06T12:00:00Z',
+      '1.1.0': '2026-10-01',
+      '1.2.0': '2026-10-01',
+      '1.3.0': '2026-10-01',
+      '1.4.0': '2026-10-01'
+    }
   )
   assert.deepEqual(
     plan.deletions.map((o) => o.Key),
     ['releases/v1.2.0/autodoc-1.2.0-setup.exe']
   )
 })
+
+test('storage budget blocks before any upload and preserves both existing feeds', async () =>
+  fixture(async (root) => {
+    const plan = await planRelease(release, root, 'https://updates.example.com'),
+      store = fakeR2()
+    const body = Buffer.from(
+      yaml.dump({
+        version: '1.3.0',
+        files: [{ url: 'https://updates.example.com/releases/v1.3.0/old.zip' }]
+      })
+    )
+    for (const m of plan.manifests) store.objects.set(m.key, { body, metadata: {} })
+    await assert.rejects(
+      publishPlan(plan, { run: store.run, bucket: 'autodoc-updates-staging', maxStorageBytes: 1 }),
+      (error) => {
+        assert.equal(error.code, 'MIRROR_STORAGE_BUDGET')
+        assert.match(
+          error.message,
+          /Current .*incoming\/reserved .*projected .*limit .*latest feed is unchanged/
+        )
+        assert.ok(error.budget.projectedBytes > error.budget.maxBytes)
+        return true
+      }
+    )
+    assert.equal(store.writes.length, 0)
+    for (const m of plan.manifests) assert.equal(store.objects.get(m.key).body, body)
+  }))
+
+test('capacity accounts for outstanding multipart parts, incoming manifests and retry reuse', () => {
+  const plan = {
+    packages: [
+      { key: 'existing.zip', size: 100 },
+      { key: 'new.exe', size: 50 }
+    ],
+    manifests: [{ body: 'abc' }, { body: 'def' }]
+  }
+  const state = {
+    objects: [
+      { Key: 'existing.zip', Size: 100 },
+      { Key: 'other', Size: 10 }
+    ],
+    uploads: [{ bytes: 30 }]
+  }
+  const budget = capacityPlan(state, plan, 3000)
+  assert.equal(budget.currentBytes, 140)
+  assert.equal(budget.incomingBytes, 50 + 12 + 2048)
+  assert.equal(budget.projectedBytes, 2250)
+  assert.equal(capacityPlan(state, plan, 2249).fits, false)
+  assert.equal(capacityPlan(state, plan, 2250).fits, true)
+  assert.equal(storageLimit(''), 8_000_000_000)
+  for (const value of ['-1', 'garbage', '0', '1.5'])
+    assert.throws(() => storageLimit(value), /positive integer/)
+})
+
+test('old upload age never shortens the 24-hour replacement grace; unknown history is retained', () => {
+  const objects = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0'].map((version) => ({
+    Key: `releases/v${version}/autodoc-${version}-setup.exe`,
+    Size: 10,
+    LastModified: '2025-01-01'
+  }))
+  const manifests = ['latest.yml', 'latest-mac.yml'].map(() => ({
+    version: '1.3.0',
+    files: [{ url: 'https://updates.example.com/releases/v1.3.0/autodoc-1.3.0-setup.exe' }]
+  }))
+  const now = Date.parse('2026-10-08T12:00:00Z')
+  const replaced = {
+    '1.0.0': new Date(now - RETENTION_GRACE_MS + 1).toISOString(),
+    '1.2.0': '2026-10-01'
+  }
+  assert.equal(retentionPlan(objects, manifests, [], now, replaced).deletions.length, 0)
+  replaced['1.0.0'] = new Date(now - RETENTION_GRACE_MS).toISOString()
+  assert.deepEqual(
+    retentionPlan(objects, manifests, [], now, replaced).deletions.map((o) => o.Key),
+    [objects[0].Key]
+  )
+})
+
+test('cleanup aborts only multipart uploads older than 24 hours', async () => {
+  const calls = [],
+    now = Date.parse('2026-10-08T12:00:00Z')
+  const state = {
+    objects: [],
+    uploads: [
+      {
+        Key: 'old.exe',
+        UploadId: 'old',
+        bytes: 12,
+        Initiated: new Date(now - RETENTION_GRACE_MS).toISOString()
+      },
+      {
+        Key: 'active.exe',
+        UploadId: 'active',
+        bytes: 13,
+        Initiated: new Date(now - 1000).toISOString()
+      }
+    ]
+  }
+  const plan = await cleanupStorage(
+    async (args) => {
+      calls.push(args)
+      return Buffer.from('{}')
+    },
+    'autodoc-updates-staging',
+    state,
+    [],
+    { apply: true, now }
+  )
+  assert.equal(plan.expiredUploads.length, 1)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].slice(0, 2), ['s3api', 'abort-multipart-upload'])
+  assert.equal(calls[0].at(-1), 'old')
+})
+
+test('successful advancement records replacement time; retry does not reset it', async () =>
+  fixture(async (root) => {
+    const plan = await planRelease(release, root, 'https://updates.example.com'),
+      store = fakeR2()
+    const old = Buffer.from(
+      yaml.dump({
+        version: '1.3.0',
+        files: [{ url: 'https://updates.example.com/releases/v1.3.0/old.zip' }]
+      })
+    )
+    for (const m of plan.manifests) store.objects.set(m.key, { body: old, metadata: {} })
+    await publishPlan(plan, { run: store.run, bucket: 'autodoc-updates-staging' })
+    const markerKey = 'retention/superseded/v1.3.0.json',
+      marker = store.objects.get(markerKey).body.toString()
+    assert.equal(JSON.parse(marker).version, '1.3.0')
+    assert.ok(Number.isFinite(Date.parse(JSON.parse(marker).superseded_at)))
+    const writes = store.writes.filter((key) => key === markerKey).length
+    await publishPlan(plan, { run: store.run, bucket: 'autodoc-updates-staging' })
+    assert.equal(store.objects.get(markerKey).body.toString(), marker)
+    assert.equal(store.writes.filter((key) => key === markerKey).length, writes)
+  }))

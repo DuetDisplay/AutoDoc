@@ -24,6 +24,11 @@ on:
         required: false
         default: ''
         type: string
+      staging_test_version:
+        description: Signed staging-only version (all platforms, no release tag or GitHub release)
+        required: false
+        default: ''
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -36,7 +41,7 @@ jobs:
     if: >-
       ${{
         (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-        (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        (github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' || inputs.staging_test_version != ''))
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -55,7 +60,28 @@ jobs:
           EVENT_TAG: ${{ github.ref_name }}
           DISPATCH_TAG: ${{ inputs.release_tag }}
           RELEASE_PLATFORM: ${{ inputs.release_platform }}
+          STAGING_VERSION: ${{ inputs.staging_test_version }}
+          STAGING_ORIGIN: ${{ vars.UPDATE_MIRROR_STAGING_ORIGIN }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
+          if [ -n "$STAGING_VERSION" ]; then
+            if [ "$EVENT_NAME" != 'workflow_dispatch' ] || [ "$RELEASE_PLATFORM" != 'all' ] || [ -n "$DISPATCH_TAG" ]; then
+              echo '::error::Staging builds require manual dispatch, all platforms, and no release tag.'
+              exit 1
+            fi
+            if [ "$TRIGGERING_ACTOR" != 'blackjack130' ] && [ "$TRIGGERING_ACTOR" != 'duetCJackson' ]; then
+              echo '::error::Staging signing is limited to the existing release accounts.'
+              exit 1
+            fi
+            if [[ ! "$STAGING_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo '::error::Staging test version must be a stable numeric version.'
+              exit 1
+            fi
+            node -e "const u=new URL(process.env.STAGING_ORIGIN); if(u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash) throw Error('Configure an HTTPS UPDATE_MIRROR_STAGING_ORIGIN before staging builds')"
+            echo "release_tag=staging-v$STAGING_VERSION" >> "$GITHUB_OUTPUT"
+            echo "release_version=$STAGING_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ "$RELEASE_PLATFORM" != "all" ]; then
               echo "::error::Manual release recovery requires release_platform=all."
@@ -77,7 +103,7 @@ jobs:
       - name: Check out requested release tag
         uses: actions/checkout@v6.0.2
         with:
-          ref: refs/tags/${{ steps.release_meta.outputs.release_tag }}
+          ref: ${{ inputs.staging_test_version != '' && github.sha || format('refs/tags/{0}', steps.release_meta.outputs.release_tag) }}
           fetch-depth: 0
 
       - name: Verify tag target and package version
@@ -86,8 +112,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.release_meta.outputs.release_version }}
+          STAGING_VERSION: ${{ inputs.staging_test_version }}
         run: |
           release_sha="$(git rev-parse HEAD)"
+          if [ -n "$STAGING_VERSION" ]; then
+            echo "Validated staging-only source at $release_sha; no public release/tag will be created."
+            echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           tag_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
           package_version="$(node -p "require('./package.json').version")"
 
@@ -110,7 +142,7 @@ jobs:
         (github.event_name == 'push' && github.ref_type == 'branch') ||
         (
           github.event_name == 'workflow_dispatch' &&
-          inputs.release_tag == '' &&
+          inputs.release_tag == '' && inputs.staging_test_version == '' &&
           (inputs.release_platform == 'mac' || inputs.release_platform == 'all')
         )
       }}
@@ -118,14 +150,14 @@ jobs:
     permissions:
       contents: read
     env:
-      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
-      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
+      AUTODOC_SENTRY_DSN: ${{ inputs.staging_test_version == '' && secrets.AUTODOC_SENTRY_DSN || '' }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ inputs.staging_test_version != '' && format('{0}/stable/', vars.UPDATE_MIRROR_STAGING_ORIGIN) || vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
-      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      VITE_POSTHOG_KEY: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_KEY || '' }}
+      VITE_POSTHOG_HOST: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_HOST || '' }}
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
@@ -172,7 +204,7 @@ jobs:
           (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
           (
             github.event_name == 'workflow_dispatch' &&
-            inputs.release_tag != '' &&
+            (inputs.release_tag != '' || inputs.staging_test_version != '') &&
             inputs.release_platform == 'all' &&
             (github.triggering_actor == 'blackjack130' || github.triggering_actor == 'duetCJackson')
           )
@@ -184,14 +216,14 @@ jobs:
       contents: read
       actions: write
     env:
-      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
-      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
+      AUTODOC_SENTRY_DSN: ${{ inputs.staging_test_version == '' && secrets.AUTODOC_SENTRY_DSN || '' }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ inputs.staging_test_version != '' && format('{0}/stable/', vars.UPDATE_MIRROR_STAGING_ORIGIN) || vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
-      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      VITE_POSTHOG_KEY: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_KEY || '' }}
+      VITE_POSTHOG_HOST: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_HOST || '' }}
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
 
@@ -273,7 +305,7 @@ jobs:
               (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
               (
                 github.event_name == 'workflow_dispatch' &&
-                inputs.release_tag != '' &&
+                (inputs.release_tag != '' || inputs.staging_test_version != '') &&
                 inputs.release_platform == 'all' &&
                 (github.triggering_actor == 'blackjack130' || github.triggering_actor == 'duetCJackson')
               )
@@ -281,7 +313,7 @@ jobs:
           ) ||
           (
             github.event_name == 'workflow_dispatch' &&
-            inputs.release_tag == '' &&
+            inputs.release_tag == '' && inputs.staging_test_version == '' &&
             (inputs.release_platform == 'windows' || inputs.release_platform == 'all')
           )
         )
@@ -290,14 +322,14 @@ jobs:
     permissions:
       contents: read
     env:
-      AUTODOC_SENTRY_DSN: ${{ secrets.AUTODOC_SENTRY_DSN }}
-      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
+      AUTODOC_SENTRY_DSN: ${{ inputs.staging_test_version == '' && secrets.AUTODOC_SENTRY_DSN || '' }}
+      AUTODOC_PUBLIC_UPDATE_FEED_URL: ${{ inputs.staging_test_version != '' && format('{0}/stable/', vars.UPDATE_MIRROR_STAGING_ORIGIN) || vars.AUTODOC_PUBLIC_UPDATE_FEED_URL }}
       AUTODOC_OFFICIAL_BUILD: ${{ github.repository == 'DuetDisplay/AutoDoc' && '1' || '' }}
       AUTODOC_AUTH_WORKER_URL: ${{ vars.AUTODOC_AUTH_WORKER_URL }}
       AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL: ${{ vars.AUTODOC_MACOS_WHISPER_RUNTIME_ASSET_BASE_URL }}
       AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL: ${{ vars.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL }}
-      VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-      VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+      VITE_POSTHOG_KEY: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_KEY || '' }}
+      VITE_POSTHOG_HOST: ${{ inputs.staging_test_version == '' && secrets.VITE_POSTHOG_HOST || '' }}
       HF_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
       AUTODOC_SIGNED_RELEASE: ${{ needs.validate-release-request.result == 'success' && 'true' || 'false' }}
@@ -318,10 +350,11 @@ jobs:
         shell: bash
         env:
           RAW_TAG: ${{ needs.validate-release-request.outputs.release_tag }}
+          VALIDATED_VERSION: ${{ needs.validate-release-request.outputs.release_version }}
         run: |
           raw_tag="$RAW_TAG"
           release_tag="${raw_tag#refs/tags/}"
-          release_version="${release_tag#v}"
+          release_version="$VALIDATED_VERSION"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
@@ -652,12 +685,27 @@ jobs:
 
   publish-update-mirror:
     needs: [validate-release-request, publish-release]
-    if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true'
+    if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true' && inputs.staging_test_version == ''
     permissions:
       contents: read
+      actions: read
     uses: ./.github/workflows/update-mirror.yml
     with:
       release_tag: ${{ needs.validate-release-request.outputs.release_tag }}
       apply: true
       from_build_artifacts: true
+    secrets: inherit
+
+  publish-staging-update-mirror:
+    needs: [validate-release-request, build-mac-release, build-win]
+    if: github.repository == 'DuetDisplay/AutoDoc' && github.event_name == 'workflow_dispatch' && inputs.staging_test_version != ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/update-mirror.yml
+    with:
+      release_tag: ${{ needs.validate-release-request.outputs.release_tag }}
+      apply: true
+      from_build_artifacts: true
+      staging_version: ${{ inputs.staging_test_version }}
     secrets: inherit
