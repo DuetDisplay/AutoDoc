@@ -201,6 +201,45 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow.mock.calls[1][0].title).toBe('Zoom')
   })
 
+  it('prefers a timed auto-record event over an earlier all-day event', async () => {
+    setPlatform('win32')
+
+    const now = Date.now()
+    const allDay: CalendarEvent = {
+      ...makeEvent('all-day', -12 * 60 * 60_000),
+      title: 'Out of Office',
+      startTime: now - 12 * 60 * 60_000,
+      endTime: now + 12 * 60 * 60_000,
+      isAllDay: true,
+      autoRecord: 'off'
+    }
+    const timed = {
+      ...makeEvent('standup', -1 * 60_000),
+      title: 'Standup',
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      autoRecord: 'once' as const
+    }
+    const webContentsSend = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
+    mocks.isAutoRecordEnabled.mockImplementation(
+      (eventId: string) => eventId === timed.id
+    )
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [allDay, timed]
+    )
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
+      hasCalendarEvent: true,
+      providerId: 'google_meet'
+    })
+  })
+
   it('auto-records scheduled events without showing a prompt when enabled', async () => {
     setPlatform('win32')
 

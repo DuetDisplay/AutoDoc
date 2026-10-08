@@ -964,16 +964,17 @@ export class DetectionService {
 
   private findInProgressEvent(): CalendarEvent | null {
     const now = this.getNow()
-    const events = this.getCalendarEvents()
-
-    for (const event of events) {
-      const isDuring = event.startTime <= now && event.endTime >= now
-      if (isDuring) {
-        return event
-      }
+    const inProgress = this.getCalendarEvents().filter(
+      (event) => !event.isAllDay && event.startTime <= now && event.endTime >= now
+    )
+    if (inProgress.length === 0) {
+      return null
     }
 
-    return null
+    return (
+      inProgress.find((event) => isAutoRecordEnabled(event.id, event.recurringEventId)) ??
+      inProgress[0]
+    )
   }
 
   private hasUpcomingEventSoon(): boolean {

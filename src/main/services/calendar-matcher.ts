@@ -10,16 +10,32 @@ export function matchCalendarEvent(
 ): CalendarEvent | null {
   const buffer = 10 * 60 * 1000
   let best: CalendarEvent | null = null
-  let bestOverlap = 0
+  let bestOverlap = Number.POSITIVE_INFINITY
   for (const event of events) {
     const overlapStart = Math.max(event.startTime - buffer, recordingStartMs)
     const overlapEnd = Math.min(event.endTime + buffer, recordingStartMs + 1)
-    if (overlapStart <= overlapEnd) {
-      const closeness = Math.abs(event.startTime - recordingStartMs)
-      if (!best || closeness < bestOverlap) {
+    if (overlapStart > overlapEnd) {
+      continue
+    }
+
+    const closeness = Math.abs(event.startTime - recordingStartMs)
+    if (!best) {
+      best = event
+      bestOverlap = closeness
+      continue
+    }
+
+    if (Boolean(event.isAllDay) !== Boolean(best.isAllDay)) {
+      if (!event.isAllDay) {
         best = event
         bestOverlap = closeness
       }
+      continue
+    }
+
+    if (closeness < bestOverlap) {
+      best = event
+      bestOverlap = closeness
     }
   }
   return best
