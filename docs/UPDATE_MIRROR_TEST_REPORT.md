@@ -22,7 +22,13 @@ unchanged.
   internal/prerelease/QA/unofficial/Linux behavior, HTTPS validation and the
   existing download/install trigger behavior.
 - TypeScript checks for main/preload, renderer, and the new update Worker.
-- ESLint on changed application, Worker and script code.
+- ESLint on changed application, Worker, script and Settings test code.
+- PR mirror verification run `37818799815` passed on both macOS and Windows.
+  The existing PR Settings test assumed the simulated Mac had sufficient RAM;
+  on the Linux runner its host-memory dependency rejected Spanish. The focused
+  test now explicitly supplies unrestricted language availability through the
+  existing dependency hook; all 26 preferences tests passed locally. No app
+  behavior changed.
 - Actionlint on all changed workflows.
 - Production Electron/Vite compilation using an isolated example feed setting;
   the feed URL is present in the compiled main bundle. The app was not launched
@@ -178,6 +184,7 @@ requests never entered the production dashboard.
 Cloudflare OAuth identity still resolves correctly, but after token refresh the
 Worker/secrets APIs reject deployment with "No access to the specified resource"
 and staging R2 deletion returns HTTP 403 / code 10000 "Authentication error".
+Staging D1 access also rejects the account with code 7403.
 The production Worker was not deployed and no staging object was deleted. The browser
 reauthorization attempt timed out; a fresh CLI login is required. Complete staging
 package/counter/cache cleanup and production health/export checks after access
