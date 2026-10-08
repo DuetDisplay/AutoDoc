@@ -40,6 +40,7 @@ unchanged.
   counters: run 37789629179 succeeded. This is legitimate production data,
   not synthetic testing. No test events were uploaded or production counts reset.
 - Read-only inline calculation fixtures verified that a same-day Windows refresh retains an unchanged Mac count (22 + 86 = 108) and excludes a retired asset from an older day. Mirror fixtures verified latest-counter deduplication across repeated exports, platforms, and days; ranges, HEADs, and HTTP failures are excluded (expected total 15). No fixture events were captured.
+- Platform table revision: the saved Downloads by platform query returns six versions with separate macOS/Windows GitHub/updater columns. Each row's four counts sum to Total (null for the absent Windows 1.0.0 installer contributes zero); totals remain 108, 230, 100, 7, 89, and 46. Updater platform is read from package metadata and exported by the existing importer. Verification only read production data; no test events were captured.
 - Mirror query event/property names match the production importer contract. Taxonomy warnings from exploratory SQL are expected because hosted reporting has not launched; all eight saved dashboard queries return without query warnings. The first production mirror import still needs a D1 reconciliation.
 - Verbose notes and HTTP diagnostics were removed from this dashboard only.
   Underlying saved insights and source events remain available.

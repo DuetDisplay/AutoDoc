@@ -128,8 +128,9 @@ The mirrored route starts reporting once production hosting and its importer
 are enabled. All three latest-version cards then switch to the same release.
 
 **Latest downloads = GitHub installer downloads + mirrored updater downloads.**
-The all-time card uses the same two routes across versions. The version table
-shows platform sums, route counts, and their combined Total. Consented update
+The all-time card uses the same two routes across versions. The Downloads by
+platform table keeps one row per version and shows macOS via GitHub, Windows via GitHub, macOS via updater, Windows via updater, and Total.
+Updater platform comes from validated package metadata. Consented update
 reports overlap with downloads and are never added to these totals.
 
 GitHub counters are cumulative. Use each release's latest observed UTC day,

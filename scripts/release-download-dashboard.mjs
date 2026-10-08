@@ -188,16 +188,18 @@ export const insights = [
     12634227,
     'xaspEpUk',
     13264866,
-    'Downloads by version',
+    'Downloads by platform',
     `WITH ${snapshots}, ${hosted}, version_totals AS (
-      SELECT version, sumIf(downloads, platform = 'macos') AS macos,
-        sumIf(downloads, platform = 'windows') AS windows,
-        sumIf(downloads, route = 'github') AS github,
-        sumIf(downloads, route = 'updater') AS updater,
+      SELECT version, sumIf(downloads, platform = 'macos' AND route = 'github') AS macos_github,
+        sumIf(downloads, platform = 'windows' AND route = 'github') AS windows_github,
+        sumIf(downloads, platform = 'macos' AND route = 'updater') AS macos_updater,
+        sumIf(downloads, platform = 'windows' AND route = 'updater') AS windows_updater,
         sum(downloads) AS downloads
       FROM downloads_by_route GROUP BY version
     ) SELECT concat(version, if(version = (SELECT version FROM latest), ' (latest)', '')) AS Version,
-      macos AS macOS, windows AS Windows, github AS GitHub, coalesce(updater, 0) AS Updater, downloads AS Total
+      macos_github AS \`macOS via GitHub\`, windows_github AS \`Windows via GitHub\`,
+      coalesce(macos_updater, 0) AS \`macOS via updater\`,
+      coalesce(windows_updater, 0) AS \`Windows via updater\`, downloads AS Total
     FROM version_totals
     ORDER BY toInt(splitByChar('.', version)[1]) DESC,
       toInt(splitByChar('.', version)[2]) DESC, toInt(splitByChar('.', version)[3]) DESC`,
