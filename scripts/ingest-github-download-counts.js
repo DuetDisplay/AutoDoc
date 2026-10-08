@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
-
 const DEFAULT_POSTHOG_HOST = 'https://us.i.posthog.com'
 const DEFAULT_REPO = 'DuetDisplay/AutoDoc'
 const EVENT_NAME = 'github_release_download_count'
 const BATCH_SIZE = 50
+const { createHash } = require('node:crypto')
 
 function parseArgs(argv) {
   const options = {
@@ -185,6 +184,13 @@ function buildEvents(releases, repo, includeDrafts) {
         event: EVENT_NAME,
         timestamp: ingestedAt,
         properties: {
+          $process_person_profile: false,
+          $geoip_disable: true,
+          $insert_id: createHash('sha256')
+            .update(
+              `${repo}:${asset.id || asset.name}:${ingestedAt.slice(0, 10)}:${asset.download_count || 0}`
+            )
+            .digest('hex'),
           source: 'github_releases',
           repository: repo,
           app_version: versionFromTag(releaseTag),
@@ -254,6 +260,9 @@ function summarize(events) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
+  if (process.env.GITHUB_RELEASES_JSON && !options.dryRun) {
+    throw new Error('Fixture input requires --dry-run; no test upload allowed.')
+  }
   const posthog = getPostHogConfig()
   const releases = await fetchReleases(options.repo, options.releaseTag)
   const events = buildEvents(releases, options.repo, options.includeDrafts)
@@ -287,7 +296,10 @@ async function main() {
   console.log(`[download-counts] Sent ${events.length} ${EVENT_NAME} event(s) to ${posthog.host}.`)
 }
 
-main().catch((error) => {
-  console.error(`[download-counts] ${error.message}`)
-  process.exit(1)
-})
+module.exports = { buildEvents, classifyAsset, inferPlatform, main }
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[download-counts] ${error.message}`)
+    process.exitCode = 1
+  })
+}

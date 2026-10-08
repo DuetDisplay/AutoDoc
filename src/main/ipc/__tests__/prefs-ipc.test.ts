@@ -316,7 +316,9 @@ describe('PrefsStore', () => {
       firstUseDownloadBytes: 0,
       needsSelfTest: false
     })
-    registerPrefsIpc(store)
+    registerPrefsIpc(store, undefined, undefined, undefined, () =>
+      meetingLanguageAvailability(false)
+    )
     const handler = (channel: string) => {
       const registration = vi
         .mocked(ipcMain.handle)

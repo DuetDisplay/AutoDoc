@@ -2,6 +2,7 @@ import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { logAutodocFailure } from './autodoc-log'
+import { getConfiguredPublicUpdateFeedUrl } from './distribution-config'
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
@@ -53,7 +54,7 @@ function formatUpdaterError(err: Error): string {
     normalized.includes('not found') ||
     normalized.includes('unable to find latest version')
   ) {
-    return 'Auto-update feed is not accessible. GitHub-based updates only work if the published release feed is reachable by the installed app.'
+    return 'Auto-update feed is not accessible. The published update feed must be reachable by the installed app.'
   }
 
   return message
@@ -107,7 +108,9 @@ export function getUpdateStatus(): UpdateStatus {
 }
 
 function configureUpdateFeedOverride(): void {
-  const overrideUrl = process.env.AUTODOC_UPDATE_FEED_URL?.trim()
+  const overrideUrl =
+    process.env.AUTODOC_UPDATE_FEED_URL?.trim() ||
+    (app.getVersion().includes('-') ? null : getConfiguredPublicUpdateFeedUrl())
   if (!overrideUrl) {
     return
   }
