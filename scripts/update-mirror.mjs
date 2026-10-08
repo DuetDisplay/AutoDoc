@@ -112,12 +112,21 @@ export async function planRelease(release, directory, origin) {
 export function aws(args, { allowMissing = false, hash = false } = {}) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID
   if (!/^[a-f0-9]{32}$/.test(account ?? '')) throw new Error('Missing CLOUDFLARE_ACCOUNT_ID')
+  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY)
+    throw new Error(
+      'Missing R2 upload credentials: set UPDATE_MIRROR_R2_ACCESS_KEY_ID and UPDATE_MIRROR_R2_SECRET_ACCESS_KEY in the selected GitHub environment.'
+    )
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
       'aws',
       ['--endpoint-url', `https://${account}.r2.cloudflarestorage.com`, ...args],
       {
-        env: { ...process.env, AWS_DEFAULT_REGION: 'auto', AWS_PAGER: '' },
+        env: {
+          ...process.env,
+          AWS_DEFAULT_REGION: 'auto',
+          AWS_PAGER: '',
+          AWS_EC2_METADATA_DISABLED: 'true'
+        },
         stdio: ['ignore', 'pipe', 'pipe']
       }
     )

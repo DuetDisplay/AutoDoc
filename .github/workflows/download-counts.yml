@@ -56,8 +56,20 @@ jobs:
 
           node scripts/ingest-github-download-counts.js "${args[@]}"
 
+  hosted-updates:
+    name: Ingest hosted update download counts
+    if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: update-counts-production
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
       - name: Sync production update aggregates to PostHog
-        if: github.repository == 'DuetDisplay/AutoDoc' && vars.UPDATE_MIRROR_ENABLED == 'true'
         env:
           UPDATE_MIRROR_ORIGIN: ${{ vars.UPDATE_MIRROR_ORIGIN }}
           COUNTS_EXPORT_TOKEN: ${{ secrets.COUNTS_EXPORT_TOKEN }}

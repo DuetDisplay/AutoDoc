@@ -53,9 +53,11 @@ for this service. The R2 bucket must remain private so traffic uses the Worker.
    desired. Never put secrets in repository files.
 8. Set GitHub repository variables `CLOUDFLARE_ACCOUNT_ID`,
    `UPDATE_MIRROR_ORIGIN` (HTTPS origin, no path), and `UPDATE_MIRROR_ENABLED=true`.
-   Set secrets `UPDATE_MIRROR_R2_ACCESS_KEY_ID`,
-   `UPDATE_MIRROR_R2_SECRET_ACCESS_KEY`, and `COUNTS_EXPORT_TOKEN` (the production
-   export secret; scheduled counts workflow reads the repository secret).
+   In environment `update-mirror-production`, set
+   `UPDATE_MIRROR_R2_ACCESS_KEY_ID` and `UPDATE_MIRROR_R2_SECRET_ACCESS_KEY`.
+   Store the production `COUNTS_EXPORT_TOKEN` separately in environment
+   `update-counts-production`, restricted to the `main` branch. The hosted
+   counts job uses that environment and does not receive upload credentials.
    Existing PostHog ingestion key/host secrets are reused.
 9. Run **Publish stable update mirror** for an existing published stable release
    with `apply=false` first, then `apply=true`. CI downloads signed GitHub assets,
@@ -216,10 +218,12 @@ and retention. State lives in fresh OS temporary directories and is removed in
 `finally`. Fixtures never go to live PostHog. Run the updater tests and type checks
 as well; the verification workflow runs on Mac and Windows.
 
-Temporary remote test resources use the suffix `ad158-test` and must be emptied
-and removed after hosted verification. They are never production resources and
-must never be configured in release CI. Record cleanup evidence in the test
-report. Production dashboard validation reads existing events only.
+The permanent staging bucket, database, Worker, and CI credentials remain
+available for future tests. Remove staging test packages, counter rows, and
+local test profiles after verification. Earlier scratch resources with the
+suffix `ad158-test` have been removed. Never delete production counters for
+test cleanup. Record cleanup evidence in the test report. Production dashboard
+validation reads existing events only.
 
 
 ## Staging end-to-end verification (no public release)

@@ -26,6 +26,7 @@
   "env": {
     "production": {
       "name": "autodoc-updates",
+      "routes": [{ "pattern": "updates.getautodoc.com", "custom_domain": true }],
       "workers_dev": false,
       "preview_urls": false,
       "vars": { "ENVIRONMENT": "production" },
@@ -34,6 +35,7 @@
         {
           "binding": "COUNTS",
           "database_name": "autodoc-update-counts",
+          "database_id": "a1d469fa-c7aa-49c3-8bfd-06b446da19f4",
           "migrations_dir": "migrations"
         }
       ]

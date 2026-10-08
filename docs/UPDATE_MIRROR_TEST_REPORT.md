@@ -58,7 +58,7 @@ unchanged.
   feed baked into the app, and empty production analytics keys. Mac and DuetXPS
   must still complete the real install/relaunch and hosted statistics checks.
 - Windows preflight is running in the separate AD-158 Windows update
-  verification chat on DuetXPS. Live CI/staging results are not yet recorded.
+  verification chat on DuetXPS. The Mac and Windows signed CI builds passed. Device installation/update checks are still pending; DuetXPS is currently disconnected.
 
 ## Cleanup and reporting integrity
 
@@ -76,15 +76,41 @@ resources in the Duet account (`845df9423020aef6c50697467a04e353`):
 - D1: `autodoc-update-counts-ad158-test`, ID
   `4328a07b-e672-4f57-8106-31cc38d49048`
 
-The connector tools then disappeared; Wrangler 4.148.0 also reports an expired
-CLI token. No remote test Worker was deployed and no fixture packages, tables,
-or counter rows were written. Hosted smoke verification and removal of these
-empty resources remain pending restored access. After login, from `update-worker/`:
+Wrangler authentication was restored on October 8. Both empty scratch resources
+were deleted successfully; neither contained test downloads or counter rows.
+Permanent staging R2/D1 resources were provisioned separately and migrations
+applied. The staging Worker health check and authenticated empty export passed.
+Production R2/D1 resources are provisioned and empty; the production Worker
+and custom domain remain undeployed pending the device tests.
 
-```sh
-npx wrangler r2 bucket delete autodoc-updates-ad158-test
-npx wrangler d1 delete autodoc-update-counts-ad158-test --skip-confirmation
-```
+Both GitHub environments now contain the two bucket-scoped R2 upload secrets.
+The count export credential is stored separately in `update-counts-production`.
+Signed staging CI run `37806999215` built and verified both platforms; the Mac
+build passed signing/notarization and Windows signing verification. The initial
+upload failed before credentials were saved; only that upload job was rerun.
+No public GitHub release or tag was created.
+
+The upload retry succeeded through the permanent staging environment credentials.
+CI verified both remote package hashes before advancing either manifest. Initial
+storage was zero; incoming/reserved bytes were 541,140,369 under the 2 GB limit.
+The Mac package downloaded from the Worker is 414,112,381 bytes, matching SHA-512
+`3eKE/XoYyFdPr1p/QDeowaSJWtokcVjm9oMOl7sGVsanrUNFNzDjvzxjPldhpIQFp0w1tRR27nCj0HyGVqagPQ==`.
+`codesign --verify --deep --strict` passed; Gatekeeper accepted the extracted app
+as Notarized Developer ID. The exact signed bundle launched from a disposable
+path/profile, rendered onboarding, and checked the baked-in staging feed.
+It correctly found no update when running 1.3.0 against the 1.3.0 manifest.
+
+Live staging counters reconciled after two full Mac downloads, one HEAD and one
+32-byte range request: package full/200 = 2, head/200 = 1, range/206 = 1.
+The repeated full response matched the original package checksum, and range
+bytes matched the package prefix. Manifest polls appeared separately. The real
+hosted importer fetched four staging rows and refused production upload in
+`--dry-run` mode. None of these requests changed the production dashboard.
+
+Second signed build `37810508326` requests 1.3.1 from the same app commit. Its
+staging budget is temporarily one byte to verify a real CI capacity refusal
+before normal-limit recovery. Installation/relaunch into that version is still
+pending. Existing Mac updater state is backed up for restoration after the test.
 
 These names are isolated from production and staging rollout configuration.
 Do not reset production counters or delete legitimate PostHog events to clean
@@ -92,12 +118,9 @@ up a test.
 
 ## Not yet verified or enabled
 
-- Live hosted package delivery and real S3 multipart upload against R2.
-- Signed/notarized Mac installation and signed Windows installation. Local
-  manifest/provider tests do not establish installation success. The new CI
-  matrix runs automated tests on both operating systems after push; it has not
-  run during this local task.
-- Production custom domain, resources, CI credentials and feed cutover.
+- Mac native update installation/relaunch into the second version; Windows host delivery, installation, and update on DuetXPS.
+- Windows signed installer launch and native upgrade. CI signing and notarization are verified, but they do not establish native installation success.
+- Production Worker/custom-domain deployment and feed cutover. Resources and permanent CI credentials are prepared.
 - Publishing the privacy clarification to the separate website repository.
 
 See [rollout/runbook](UPDATE_MIRROR.md) and the
