@@ -1482,6 +1482,8 @@ export function isTransientOllamaRuntimeError(message: string): boolean {
     message === 'The operation was aborted' ||
     message.includes('llama-server process has terminated') ||
     message.includes('model runner has unexpectedly stopped') ||
+    message.includes('Ollama exited with code 1') ||
+    message.includes('exit status 1') ||
     message.includes('0xe06d7363')
   )
 }
@@ -1563,6 +1565,7 @@ interface OllamaProviderOptions {
    */
   maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
   recoverRuntimeOnce?: () => Promise<void>
+  ensureNotesModelOnce?: () => Promise<string | void>
   /** Dev/eval only. Must never throw. Used to record runner PID/RSS per writer call. */
   snapshotRunners?: () => Array<{ pid: number; rssMiB: number | null; numCtx: number | null }>
 }
@@ -1609,6 +1612,7 @@ export class OllamaProvider implements LLMProvider {
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
   private maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
   private recoverRuntimeOnce?: () => Promise<void>
+  private ensureNotesModelOnce?: () => Promise<string | void>
   private snapshotRunners?: () => Array<{
     pid: number
     rssMiB: number | null
@@ -1655,6 +1659,7 @@ export class OllamaProvider implements LLMProvider {
     this.onTelemetry = options.onTelemetry
     this.maybeRecycleRunner = options.maybeRecycleRunner
     this.recoverRuntimeOnce = options.recoverRuntimeOnce
+    this.ensureNotesModelOnce = options.ensureNotesModelOnce
     this.snapshotRunners = options.snapshotRunners
     this.setInitialContextProfile()
   }
@@ -1679,6 +1684,13 @@ export class OllamaProvider implements LLMProvider {
       return await this.generatePrompt(prompt, options)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (isMissingOllamaModelError(error) && this.ensureNotesModelOnce) {
+        const activeModel = await this.ensureNotesModelOnce()
+        if (typeof activeModel === 'string' && activeModel) {
+          this.setModel(activeModel)
+        }
+        return await this.generatePrompt(prompt, options)
+      }
       if (!this.recoverRuntimeOnce || !isTransientOllamaRuntimeError(message)) {
         throw error
       }
@@ -1988,6 +2000,7 @@ export class OllamaProvider implements LLMProvider {
     let avgTokensPerChunk = 2000
     let totalTokensSoFar = 0
     let recoveredRuntime = false
+    let pulledNotesModel = false
     this.lastWriterSkips = []
     this.writerEvalSamples = []
     this.lastWriterParseDrops = []
@@ -2139,7 +2152,17 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (process.platform === 'win32' && isMissingOllamaModelError(lastError)) throw lastError
+          if (isMissingOllamaModelError(lastError)) {
+            if (!pulledNotesModel && this.ensureNotesModelOnce) {
+              pulledNotesModel = true
+              const activeModel = await this.ensureNotesModelOnce()
+              if (typeof activeModel === 'string' && activeModel) {
+                this.setModel(activeModel)
+              }
+              continue
+            }
+            if (process.platform === 'win32') throw lastError
+          }
           if (
             isWriterParseError(lastError) &&
             isWindowsTopicWriterEnabled() &&

@@ -293,6 +293,63 @@ describe('OllamaProvider grounding', () => {
     )
   })
 
+  it.each(['win32', 'darwin'] as const)(
+    'pulls the configured notes model once after a 404 on %s, then retries the chunk',
+    async (platform) => {
+      setPlatform(platform)
+      const recover = vi.fn()
+      const ensureNotesModelOnce = vi.fn().mockResolvedValue('qwen3:4b-instruct')
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ error: "model 'qwen3:4b-instruct' not found" }, { status: 404 })
+        )
+        .mockResolvedValue(makeSuccessfulOllamaResponse())
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await new OllamaProvider('http://localhost:11435', 'qwen3:4b-instruct', {
+        recoverRuntimeOnce: recover,
+        ensureNotesModelOnce
+      }).summarize(
+        'missing-model-pull',
+        '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.'
+      )
+
+      expect(result.information).toHaveLength(1)
+      expect(ensureNotesModelOnce).toHaveBeenCalledOnce()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(recover).not.toHaveBeenCalled()
+    }
+  )
+
+  it('recovers the serve once after Ollama exits with code 1 and finishes the writer chunk', async () => {
+    setPlatform('win32')
+    const recoverRuntimeOnce = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: 'Ollama exited with code 1: llama runner died under load' },
+          { status: 500 }
+        )
+      )
+      .mockResolvedValue(makeSuccessfulOllamaResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new OllamaProvider('http://localhost:11434', 'test-model', {
+      recoverRuntimeOnce
+    }).summarize(
+      'meeting-exit-1',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(recoverRuntimeOnce).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('recovers the serve once after fetch failed and finishes the writer chunk', async () => {
     setPlatform('win32')
     const recoverRuntimeOnce = vi.fn().mockResolvedValue(undefined)
@@ -1767,6 +1824,11 @@ describe('OllamaProvider grounding', () => {
       )
     ).toBe(true)
     expect(isTransientOllamaRuntimeError('model runner has unexpectedly stopped')).toBe(true)
+    expect(
+      isTransientOllamaRuntimeError(
+        'Ollama returned 500: {"error":"Ollama exited with code 1: llama runner died under load"}'
+      )
+    ).toBe(true)
     expect(isTransientOllamaRuntimeError('fetch failed')).toBe(true)
     expect(isTransientOllamaRuntimeError('Invalid JSON from Ollama')).toBe(false)
     expect(isTransientOllamaRuntimeError('Unexpected token } in JSON at position 12')).toBe(false)

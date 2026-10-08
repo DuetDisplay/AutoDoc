@@ -1142,6 +1142,8 @@ app.whenReady().then(async () => {
         await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
       },
       recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
+      ensureNotesModelOnce: async () =>
+        (await managedOllamaManager.ensureNotesModelReady()).activeModel,
       snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
     })
   const ollamaProvider = createOllamaProvider()
