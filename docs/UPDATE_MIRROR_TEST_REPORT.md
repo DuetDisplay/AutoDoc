@@ -1,6 +1,6 @@
 # AD-158 implementation verification
 
-Date: 2026-10-07. Branch: `codex/ad-158-update-mirror`.
+Date: 2026-10-08. Branch: `codex/ad-158-update-mirror`.
 Base: `origin/1.3.0`, commit `0878672e047b19a6dc0b74fa107aa04b5e2acaa0`.
 Implementation is in its own managed worktree; the original dirty checkout is
 unchanged.
@@ -56,9 +56,10 @@ unchanged.
   covered. Publication and daily cleanup share a concurrency group per bucket.
 - Signed staging CI uses artifacts only: no public tag or release, a staging
   feed baked into the app, and empty production analytics keys. Mac and DuetXPS
-  must still complete the real install/relaunch and hosted statistics checks.
-- Windows preflight is running in the separate AD-158 Windows update
-  verification chat on DuetXPS. The Mac and Windows signed CI builds passed. Device installation/update checks are still pending; DuetXPS is currently disconnected.
+  completed the real install, native update, relaunch and hosted statistics checks.
+- Both signed CI builds and the native Mac/DuetXPS installation/update tests
+  passed. Each original installation and host state was restored. No Windows
+  Sandbox feature change or restart was required.
 
 ## Cleanup and reporting integrity
 
@@ -134,7 +135,53 @@ verification and Gatekeeper assessment passed (Notarized Developer ID). The
 exporter recorded exactly one Mac 1.3.1 full/200 package request. Test launch
 variables were restored, only the test app processes stopped, the original Mac
 ShipIt cache restored, and the test app/profile/home/cache removed. Screenshots
-and safe logs remain as evidence. Windows native install/update remains pending.
+and safe logs remain as evidence. The Windows native update also passed, as
+described below.
+
+Windows host testing on DuetXPS passed with the exact signed CI binaries. The
+1.3.0 EXE downloaded from staging matched its manifest and had a valid Duet,
+Inc. Authenticode signature. It installed into `C:\ad158-e2e\installed` and
+launched as packaged 1.3.0 with a disposable profile. The real updater found
+1.3.1, downloaded its 127,023,992-byte EXE, and the SHA-512 matched the manifest:
+`7IGqBvKdJAEZ4zQ8roGwUwjDjT00EHiWuzlnToIlz5NW1jZueMPidRl/E/2/lyIc7WqfIjjwIRvZHIvxDxF1ag==`.
+The app's normal install command invoked NSIS and automatically relaunched
+1.3.1 as a new process with `--updated`. Its signature remained valid, the
+disposable profile marker survived, and a separate launch without either runtime
+feed override used the baked staging URL and found no newer update. The signed
+compiled app contains the staging generic feed and no initialized production
+PostHog/Sentry keys. The original install, installer registry, shortcuts, updater
+cache and environment were restored and verified. All 96 original app files
+and the original updater cache file matched SHA-256; four shortcuts and affected
+registry entries matched their backups. All 5,282 original profile files retained
+their sizes and timestamps; their contents were not hash-verified. The separate
+Internal app was not targeted, but no separate hash baseline was captured. Test
+processes and disposable files were removed. The initial profile comparison treated JSON date
+values inconsistently; comparison with preserved string timestamps confirmed
+zero changes. Windows evidence remains in `C:\ad158-e2e\AD-158-WINDOWS-E2E.md`
+and a copy in the user's Downloads folder.
+
+Final staging package counters reconcile as follows:
+
+| Version | macOS full downloads | Windows full downloads | Total |
+| --- | ---: | ---: | ---: |
+| 1.3.0 | 2 | 2 | 4 |
+| 1.3.1 | 1 | 1 | 2 |
+
+The two 1.3.1 downloads were the actual native device upgrades. The two Windows
+1.3.0 downloads were the Mac checksum fetch and XPS installer fetch; the two Mac
+1.3.0 downloads were initial and repeat integrity checks. One Mac HEAD and one
+Mac range request remain separate. Manifest polls remain separate (six Mac and
+six Windows at final capture). The final export contained ten counter rows and
+the importer dry run reported staging upload disabled. These six test package
+requests never entered the production dashboard.
+
+Cloudflare OAuth identity still resolves correctly, but after token refresh the
+Worker/secrets APIs reject deployment with "No access to the specified resource"
+and staging R2 deletion returns HTTP 403 / code 10000 "Authentication error".
+The production Worker was not deployed and no staging object was deleted. The browser
+reauthorization attempt timed out; a fresh CLI login is required. Complete staging
+package/counter/cache cleanup and production health/export checks after access
+is restored; retain permanent staging resources and CI credentials.
 
 These names are isolated from production and staging rollout configuration.
 Do not reset production counters or delete legitimate PostHog events to clean
@@ -142,9 +189,12 @@ up a test.
 
 ## Not yet verified or enabled
 
-- Windows native installation/update on DuetXPS and final staging cleanup. XPS downloaded 1.3.0 from staging and verified its checksum and valid Duet Authenticode signature; moving/restoring its registered install is in progress.
-- Windows signed installer launch and native upgrade. CI signing and notarization are verified, but they do not establish native installation success.
-- Production Worker/custom-domain deployment and feed cutover. Resources and permanent CI credentials are prepared.
+- Final staging package, counter and edge-cache cleanup; blocked by the
+  current Cloudflare CLI resource access error. Local device cleanup passed.
+- Production Worker/custom-domain deployment, health/export checks and feed
+  cutover. Resources and permanent CI credentials are prepared; deployment is
+  blocked by the same access error. No public release/tag was created.
+- First real production mirror import reconciled against D1 after rollout.
 - Publishing the privacy clarification to the separate website repository.
 
 See [rollout/runbook](UPDATE_MIRROR.md) and the
