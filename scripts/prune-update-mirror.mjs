@@ -12,15 +12,20 @@ async function main() {
   const bucket = process.env.UPDATE_MIRROR_BUCKET
   if (!['autodoc-updates', 'autodoc-updates-staging'].includes(bucket))
     throw new Error('Explicit mirror bucket required')
-  const manifests = []
+  const bodies = []
   for (const name of MANIFESTS)
-    manifests.push(
-      yaml.load(
-        (
-          await aws(['s3', 'cp', `s3://${bucket}/stable/${name}`, '-', '--only-show-errors'])
-        ).toString()
-      )
+    bodies.push(
+      await aws(['s3', 'cp', `s3://${bucket}/stable/${name}`, '-', '--only-show-errors'], {
+        allowMissing: true
+      })
     )
+  if (bodies.every((body) => body === null)) {
+    console.log('No stable release published yet; nothing to clean up.')
+    return
+  }
+  if (bodies.some((body) => body === null))
+    throw new Error('Both stable manifests required; refusing cleanup of an incomplete feed')
+  const manifests = bodies.map((body) => yaml.load(body.toString()))
   const state = await readStorage(aws, bucket)
   const plan = await cleanupStorage(aws, bucket, state, manifests, {
     apply: args.includes('--apply'),

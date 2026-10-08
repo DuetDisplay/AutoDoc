@@ -99,7 +99,9 @@ A failed manifest advancement never starts the old release's grace period.
 Incomplete multipart uploads older than 24 hours are aborted during cleanup.
 Publication cleans eligible files before its storage check and after success.
 The **Clean old update packages** workflow also runs daily, sharing the production
-publication concurrency group. Its manual mode defaults to preview.
+publication concurrency group. Its manual mode defaults to preview. Before the
+first release, two absent stable manifests produce a successful no-op; a single
+missing manifest still blocks cleanup as an incomplete feed.
 
 Before any package upload, CI checks all bucket objects, outstanding multipart
 parts, and incoming packages/manifests against `UPDATE_MIRROR_MAX_STORAGE_BYTES`

@@ -105,12 +105,36 @@ Live staging counters reconciled after two full Mac downloads, one HEAD and one
 The repeated full response matched the original package checksum, and range
 bytes matched the package prefix. Manifest polls appeared separately. The real
 hosted importer fetched four staging rows and refused production upload in
-`--dry-run` mode. None of these requests changed the production dashboard.
+`--dry-run` mode. None of these requests changed the production dashboard. The hosted Windows
+1.3.0 EXE also matched its 127,023,976-byte manifest size and SHA-512, and the
+exporter recorded it under platform Windows. That fetch ran on this Mac; it is
+not a substitute for Windows installation/launch on DuetXPS. The extracted Mac
+app contains the staging feed and no baked PostHog project key or Sentry DSN.
 
-Second signed build `37810508326` requests 1.3.1 from the same app commit. Its
-staging budget is temporarily one byte to verify a real CI capacity refusal
-before normal-limit recovery. Installation/relaunch into that version is still
-pending. Existing Mac updater state is backed up for restoration after the test.
+Second signed build `37810508326` built and verified 1.3.1 from the same app
+commit `9bf589d69c3205aca2dbd22f375cd22193572d4d`. Both signing paths passed.
+The one-byte staging budget caused the upload to fail before package writes:
+current 541,138,321 bytes; incoming/reserved 541,139,949 bytes; projected
+1,082,278,270 bytes; limit 1 byte. CI reported these values in an error annotation.
+Both stable manifest bodies remained byte-for-byte unchanged, and the new
+Windows package was absent (HEAD 404). The staging budget was restored to
+2,000,000,000 bytes and only the failed upload was rerun. Normal-limit recovery
+passed using the same signed artifacts. CI advanced both staging manifests only
+after remote checksum verification. The temporary feature-branch signing
+allowance was removed after both signed builds finished. Two local CLI checks
+verified retention skips a not-yet-published feed and refuses cleanup when only
+one stable manifest exists. These used a temporary AWS stub, no live writes.
+
+The Mac native update from 1.3.0 to 1.3.1 passed through `quitAndInstall` and
+Squirrel.Mac. The updater fetched the staging ZIP (414,111,945 bytes), and its
+SHA-512 matched the manifest. The bundle changed to 1.3.1 and relaunched as PID
+62104 from the disposable install path; its About dialog visibly showed 1.3.1.
+A disposable profile marker survived the update. Post-update strict/deep signature
+verification and Gatekeeper assessment passed (Notarized Developer ID). The
+exporter recorded exactly one Mac 1.3.1 full/200 package request. Test launch
+variables were restored, only the test app processes stopped, the original Mac
+ShipIt cache restored, and the test app/profile/home/cache removed. Screenshots
+and safe logs remain as evidence. Windows native install/update remains pending.
 
 These names are isolated from production and staging rollout configuration.
 Do not reset production counters or delete legitimate PostHog events to clean
@@ -118,7 +142,7 @@ up a test.
 
 ## Not yet verified or enabled
 
-- Mac native update installation/relaunch into the second version; Windows host delivery, installation, and update on DuetXPS.
+- Windows native installation/update on DuetXPS and final staging cleanup. XPS downloaded 1.3.0 from staging and verified its checksum and valid Duet Authenticode signature; moving/restoring its registered install is in progress.
 - Windows signed installer launch and native upgrade. CI signing and notarization are verified, but they do not establish native installation success.
 - Production Worker/custom-domain deployment and feed cutover. Resources and permanent CI credentials are prepared.
 - Publishing the privacy clarification to the separate website repository.
