@@ -7,8 +7,7 @@ let consecutiveWakeFailures = 0
 let backgroundRestartsPaused = false
 let pauseLogged = false
 
-function clearPause(): void {
-  consecutiveStartFailures = 0
+function clearWakePause(): void {
   consecutiveWakeFailures = 0
   backgroundRestartsPaused = false
   pauseLogged = false
@@ -25,7 +24,7 @@ function pauseAfterRepeatedWakeFailures(): void {
 }
 
 export function recordOllamaStartSuccess(): void {
-  clearPause()
+  consecutiveStartFailures = 0
 }
 
 export function recordOllamaStartFailure(): void {
@@ -33,7 +32,11 @@ export function recordOllamaStartFailure(): void {
 }
 
 export function recordOllamaPostWakeCheckSucceeded(): void {
-  clearPause()
+  clearWakePause()
+}
+
+export function recordOllamaServeStable(): void {
+  clearWakePause()
 }
 
 export function recordOllamaPostWakeCheckFailed(): void {
@@ -51,5 +54,6 @@ export function getOllamaStartFailureStreak(): number {
 }
 
 export function resetOllamaStartFailureStreak(): void {
-  clearPause()
+  consecutiveStartFailures = 0
+  clearWakePause()
 }

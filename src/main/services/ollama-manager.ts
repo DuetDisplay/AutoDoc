@@ -23,6 +23,7 @@ import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 import { getMsSinceLastResume } from './ollama-resume'
 import {
+  recordOllamaServeStable,
   recordOllamaStartFailure,
   recordOllamaStartSuccess
 } from './ollama-start-failures'
@@ -324,6 +325,7 @@ export class OllamaManager extends EventEmitter {
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
   private readyAtMs: number | null = null
+  private serveStableTimer: ReturnType<typeof setTimeout> | null = null
   private adoptedSystemRuntime = false
   private testServerRunning = false
   private didReapAdoptedRunners = false
@@ -1205,6 +1207,7 @@ export class OllamaManager extends EventEmitter {
         finish(() => {
           this.readyServeProcess = proc
           this.readyAtMs = Date.now()
+          this.scheduleServeStableCheck(proc)
           logAutodocEvent({
             area: 'ollama',
             message: 'ollama server became ready',
@@ -1279,6 +1282,7 @@ export class OllamaManager extends EventEmitter {
         }
         if (wasReadyProc) {
           this.readyAtMs = null
+          this.clearServeStableTimer()
         }
         if (earlyExitAfterReady && !this.stopped) {
           recordOllamaStartFailure()
@@ -1339,6 +1343,7 @@ export class OllamaManager extends EventEmitter {
     const proc = this.process
     this.readyServeProcess = null
     this.readyAtMs = null
+    this.clearServeStableTimer()
     if (proc) {
       void this.killProcessAndWait(proc).then((killed) => {
         if (killed && this.process === proc) {
@@ -1369,6 +1374,21 @@ export class OllamaManager extends EventEmitter {
     this.readyPromise = null
     this.readyServeProcess = null
     this.testServerRunning = false
+  }
+
+  private clearServeStableTimer(): void {
+    if (this.serveStableTimer == null) return
+    clearTimeout(this.serveStableTimer)
+    this.serveStableTimer = null
+  }
+
+  private scheduleServeStableCheck(proc: ChildProcess): void {
+    this.clearServeStableTimer()
+    this.serveStableTimer = setTimeout(() => {
+      this.serveStableTimer = null
+      if (this.stopped || this.readyServeProcess !== proc) return
+      recordOllamaServeStable()
+    }, EARLY_EXIT_AFTER_READY_MS)
   }
 
   private isCurrentLiveChild(proc: ChildProcess): boolean {

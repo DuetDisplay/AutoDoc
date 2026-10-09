@@ -21,6 +21,7 @@ interface LoadedOllamaManager {
   resetOllamaResumeClock: typeof import('../ollama-resume').resetOllamaResumeClock
   areBackgroundOllamaRestartsPaused: typeof import('../ollama-start-failures').areBackgroundOllamaRestartsPaused
   getOllamaStartFailureStreak: typeof import('../ollama-start-failures').getOllamaStartFailureStreak
+  recordOllamaPostWakeCheckFailed: typeof import('../ollama-start-failures').recordOllamaPostWakeCheckFailed
 }
 
 function createFakeProcess(pid: number): EventEmitter & {
@@ -89,7 +90,8 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
     markOllamaResumed: resume.markOllamaResumed,
     resetOllamaResumeClock: resume.resetOllamaResumeClock,
     areBackgroundOllamaRestartsPaused: startFailures.areBackgroundOllamaRestartsPaused,
-    getOllamaStartFailureStreak: startFailures.getOllamaStartFailureStreak
+    getOllamaStartFailureStreak: startFailures.getOllamaStartFailureStreak,
+    recordOllamaPostWakeCheckFailed: startFailures.recordOllamaPostWakeCheckFailed
   }
 }
 
@@ -1231,6 +1233,41 @@ describe('OllamaManager start lifecycle', () => {
       expect(failure.context.earlyExitAfterReady).toBe(false)
       expect(failure.context.msSinceReady).toBe(120_000)
       expect(getOllamaStartFailureStreak()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears the wake pause only after a serve stays ready for 60s', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-serve-stable-'))
+    try {
+      const {
+        OllamaManager,
+        spawnMock,
+        areBackgroundOllamaRestartsPaused,
+        recordOllamaPostWakeCheckFailed
+      } = await loadOllamaManager(rootDir)
+      for (let i = 0; i < 3; i++) {
+        recordOllamaPostWakeCheckFailed()
+      }
+      expect(areBackgroundOllamaRestartsPaused()).toBe(true)
+
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      expect(areBackgroundOllamaRestartsPaused()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(areBackgroundOllamaRestartsPaused()).toBe(false)
     } finally {
       vi.useRealTimers()
       await rm(rootDir, { recursive: true, force: true })
