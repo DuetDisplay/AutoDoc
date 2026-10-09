@@ -66,13 +66,18 @@ import { getSystemMemorySnapshot } from './windows-transcription-runtime'
 import { meetingSegmentsFromDisk, withoutNextStepCandidates } from './writer-catalog'
 import type { WindowsProcessingProfile } from './windows-processing-profile'
 import { isWindowsTopicWriterEnabled } from './windows-notes-experiment'
-import { isMissingOllamaModelError, notesModelSetupError } from './notes-model-errors'
+import {
+  isMissingOllamaModelError,
+  isOllamaConnectionError,
+  notesModelSetupError
+} from './notes-model-errors'
 
 type EnqueueSource = 'direct' | 'recovery-scan'
 type PersistedSegmentationStatus = Extract<SegmentationStatus, 'failed' | 'no-notes' | 'complete'>
 interface OllamaReadiness {
   waitUntilReady(): Promise<void>
   isReadyForGeneration?(model?: string): Promise<boolean>
+  isServerRunning?(): Promise<boolean>
   prepareModelForGeneration?(preferredModel?: string): Promise<string>
   beginNotesGeneration?(): void
   endNotesGeneration?(): Promise<void>
@@ -1165,7 +1170,39 @@ export class SegmentationService {
       try {
         await this.ollamaManager.waitUntilReady()
         if (this.ollamaManager.prepareModelForGeneration) {
-          const activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
+          // waitUntilReady() returns a cached promise that survives an unexpected serve exit,
+          // so a dead serve must be restarted here instead of failing model preparation.
+          // Recovery runs at most once per call.
+          let recovered = false
+          const recoverRuntime = this.ollamaManager.recoverUnhealthyRuntime?.bind(
+            this.ollamaManager
+          )
+          if (
+            recoverRuntime &&
+            this.ollamaManager.isServerRunning &&
+            !(await this.ollamaManager.isServerRunning())
+          ) {
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes generation starting stopped Ollama before model preparation',
+              meetingId
+            })
+            recovered = true
+            await recoverRuntime()
+          }
+          let activeModel: string
+          try {
+            activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
+          } catch (error) {
+            if (recovered || !recoverRuntime || !isOllamaConnectionError(error)) throw error
+            logAutodocEvent({
+              area: 'segmentation',
+              message: 'notes model preparation lost connection to Ollama; recovering and retrying',
+              meetingId
+            })
+            await recoverRuntime()
+            activeModel = await this.ollamaManager.prepareModelForGeneration(preferredModel)
+          }
           this.llmProvider.setModel?.(activeModel)
           if (activeModel === LOW_SPEC_MAC_OLLAMA_MODEL) this.llmProvider.setLowMemoryMode?.(true)
           logAutodocEvent({

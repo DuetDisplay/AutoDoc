@@ -1313,6 +1313,7 @@ app.whenReady().then(async () => {
             (await managedOllamaManager.ensureNotesModelReady(preferredModel)).activeModel
         }
       : {}),
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
     isReadyForGeneration: async (model?: string) =>
       (await managedOllamaManager.isServerRunning()) &&
       (await (process.platform === 'win32'
