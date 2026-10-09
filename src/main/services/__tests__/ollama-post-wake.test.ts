@@ -4,11 +4,27 @@ import {
   OLLAMA_POST_WAKE_READY_HOLD_MS,
   OLLAMA_POST_WAKE_RETRY_DELAYS_MS,
   createOllamaPostWakeScheduler,
-  getOllamaPostWakePolicy
+  getOllamaPostWakePolicy,
+  runOllamaWakeCheck
 } from '../ollama-post-wake'
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('ollama wake check', () => {
+  it('marks a running server ready while background restarts are paused', async () => {
+    const onAlreadyRunning = vi.fn()
+    const startIfNeeded = vi.fn()
+    await runOllamaWakeCheck({
+      isBackgroundRestartPaused: () => true,
+      isServerRunning: async () => true,
+      onAlreadyRunning,
+      startIfNeeded
+    })
+    expect(onAlreadyRunning).toHaveBeenCalledTimes(1)
+    expect(startIfNeeded).not.toHaveBeenCalled()
+  })
 })
 
 describe('ollama post-wake scheduler', () => {

@@ -43,6 +43,23 @@ export interface OllamaPostWakeSchedulerOptions {
   clearTimeoutFn?: typeof clearTimeout
 }
 
+export interface OllamaWakeCheckOptions {
+  isBackgroundRestartPaused: () => boolean
+  isServerRunning: () => Promise<boolean>
+  onAlreadyRunning: () => void | Promise<void>
+  startIfNeeded: () => Promise<void>
+}
+
+export async function runOllamaWakeCheck(options: OllamaWakeCheckOptions): Promise<void> {
+  const running = await options.isServerRunning()
+  if (running) {
+    await options.onAlreadyRunning()
+    return
+  }
+  if (options.isBackgroundRestartPaused()) return
+  await options.startIfNeeded()
+}
+
 export interface OllamaPostWakeScheduler {
   scheduleAfterWake(): void
   clearPending(): void

@@ -117,7 +117,8 @@ import {
 } from './services/diagnostic-trail'
 import {
   createOllamaPostWakeScheduler,
-  getOllamaPostWakePolicy
+  getOllamaPostWakePolicy,
+  runOllamaWakeCheck
 } from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
 import {
@@ -1237,7 +1238,6 @@ app.whenReady().then(async () => {
   }
   const postWakePolicy = getOllamaPostWakePolicy()
   const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
-    if (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused()) return
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
     try {
       managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
@@ -1245,27 +1245,33 @@ app.whenReady().then(async () => {
       return
     }
     try {
-      const running = await managedOllamaManager.isServerRunning()
-      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
-      if (running) {
-        if (windowsOllamaSetupCoordinator) {
-          ensureOllamaRunning()
-        } else {
-          markOllamaSetupReady()
-        }
-        return
-      }
-    } catch (error) {
-      if (isOllamaStartCancelledError(error)) return
-      logAutodocFailure({
-        area: 'ollama',
-        message: 'Failed to check Ollama after system resume',
-        error
+      await runOllamaWakeCheck({
+        isBackgroundRestartPaused: () =>
+          postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused(),
+        isServerRunning: async () => {
+          try {
+            const running = await managedOllamaManager.isServerRunning()
+            managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+            return running
+          } catch (error) {
+            if (isOllamaStartCancelledError(error)) throw error
+            logAutodocFailure({
+              area: 'ollama',
+              message: 'Failed to check Ollama after system resume',
+              error
+            })
+            throw error
+          }
+        },
+        onAlreadyRunning: () => {
+          if (windowsOllamaSetupCoordinator) {
+            ensureOllamaRunning()
+          } else {
+            markOllamaSetupReady()
+          }
+        },
+        startIfNeeded: () => startOllama({ force: true })
       })
-      throw error
-    }
-    try {
-      await startOllama({ force: true })
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
       throw error
