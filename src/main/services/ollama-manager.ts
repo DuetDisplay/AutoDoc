@@ -21,6 +21,7 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import { getMsSinceLastResume } from './ollama-resume'
 import {
   selectOllamaAccelerator,
   shouldRecycleRunnerBetweenWriterChunks,
@@ -1259,7 +1260,8 @@ export class OllamaManager extends EventEmitter {
         const exitContext = {
           exitCode: code,
           signal: signal ?? null,
-          pid: proc.pid ?? null
+          pid: proc.pid ?? null,
+          msSinceLastResume: getMsSinceLastResume()
         }
         const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()

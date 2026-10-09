@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { mkdtemp, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
-
 const originalPlatform = process.platform
 
 function setPlatform(platform: NodeJS.Platform): void {
@@ -17,6 +16,8 @@ interface LoadedOllamaManager {
   OllamaManager: typeof import('../ollama-manager').OllamaManager
   spawnMock: Mock
   logAutodocFailure: Mock
+  markOllamaResumed: typeof import('../ollama-resume').markOllamaResumed
+  resetOllamaResumeClock: typeof import('../ollama-resume').resetOllamaResumeClock
 }
 
 function createFakeProcess(pid: number): EventEmitter & {
@@ -74,7 +75,14 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
     logAutodocFailure
   }))
   const mod = await import('../ollama-manager')
-  return { OllamaManager: mod.OllamaManager, spawnMock, logAutodocFailure }
+  const resume = await import('../ollama-resume')
+  return {
+    OllamaManager: mod.OllamaManager,
+    spawnMock,
+    logAutodocFailure,
+    markOllamaResumed: resume.markOllamaResumed,
+    resetOllamaResumeClock: resume.resetOllamaResumeClock
+  }
 }
 
 afterEach(() => {
@@ -1102,5 +1110,51 @@ describe('OllamaManager start lifecycle', () => {
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
+  })
+
+  it('records msSinceLastResume on exit after a resume, and null without one', async () => {
+    const runExit = async (recordResume: boolean): Promise<number | null> => {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-resume-clock-'))
+      try {
+        const {
+          OllamaManager,
+          spawnMock,
+          logAutodocFailure,
+          markOllamaResumed,
+          resetOllamaResumeClock
+        } = await loadOllamaManager(rootDir)
+        resetOllamaResumeClock()
+        const serveProc = createFakeProcess(4242)
+        spawnMock.mockReturnValue(serveProc)
+
+        const manager = new OllamaManager()
+        manager.latchCpuAccelerator('test')
+        stubStartLifecycle(manager)
+
+        vi.useFakeTimers()
+        const started = manager.start({ forceRespawn: true })
+        const rejected = expect(started).rejects.toThrow(/code 1, signal null/)
+        await vi.advanceTimersByTimeAsync(1000)
+        if (recordResume) {
+          markOllamaResumed()
+          await vi.advanceTimersByTimeAsync(2_500)
+        }
+        serveProc.stderr.emit('data', Buffer.from('ggml_cuda_init: failed during GPU discovery\n'))
+        serveProc.exitCode = 1
+        serveProc.emit('exit', 1, null)
+        await rejected
+
+        const failure = logAutodocFailure.mock.calls[0]?.[0] as {
+          context: { msSinceLastResume: number | null }
+        }
+        return failure.context.msSinceLastResume
+      } finally {
+        vi.useRealTimers()
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    }
+
+    expect(await runExit(false)).toBeNull()
+    expect(await runExit(true)).toBe(2_500)
   })
 })

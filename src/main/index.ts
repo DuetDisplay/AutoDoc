@@ -115,6 +115,7 @@ import {
   recordMainDiagnosticAction,
   recordRendererDiagnosticAction
 } from './services/diagnostic-trail'
+import { markOllamaResumed } from './services/ollama-resume'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import {
   buildSingleInstanceLaunchData,
@@ -2186,12 +2187,19 @@ app.whenReady().then(async () => {
     }
 
     if (!isRealSetupTest) {
+      powerMonitor.on('suspend', () => {
+        recordMainDiagnosticAction({ category: 'system', action: 'suspend' })
+      })
+
       powerMonitor.on('resume', () => {
+        recordMainDiagnosticAction({ category: 'system', action: 'resume' })
+        markOllamaResumed()
         ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
 
       powerMonitor.on('unlock-screen', () => {
+        recordMainDiagnosticAction({ category: 'system', action: 'unlock-screen' })
         ensureOllamaRunningIfNeeded()
         recoverPendingWork()
       })
