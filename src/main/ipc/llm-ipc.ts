@@ -26,7 +26,8 @@ export function registerLlmIpc(
   ensureOllamaRunning: (options?: { force?: boolean }) => void,
   startSetupFromStatusCheck = true,
   onManualSegmentationRetry?: (meetingId: string) => void,
-  recordingsBaseDir?: string
+  recordingsBaseDir?: string,
+  shouldDeferForcedRestart?: () => boolean
 ): void {
   consecutiveOllamaHealthFailures = 0
   ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
@@ -69,7 +70,10 @@ export function registerLlmIpc(
       // Coordinated Windows setup already finished. Status checks stay passive
       // during the first download so they do not abort an in-flight pull, but
       // a later dead serve will never recover from the cached ready promise.
-      ensureOllamaRunning({ force: true })
+      // A post-wake chain or 3-wake pause owns that restart schedule.
+      if (shouldDeferForcedRestart?.() !== true) {
+        ensureOllamaRunning({ force: true })
+      }
     }
     return false
   })

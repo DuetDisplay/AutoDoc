@@ -163,4 +163,57 @@ describe('ollama post-wake scheduler', () => {
 
     expect(checkOllama).not.toHaveBeenCalled()
   })
+
+  it('is active during delay, hold, and retry backoff, and idle after success, give-up, clear, or cancel', async () => {
+    vi.useFakeTimers()
+    const successfulCheck = vi.fn().mockResolvedValue(undefined)
+    const stillRunning = vi.fn().mockResolvedValue(true)
+    const successScheduler = createOllamaPostWakeScheduler({
+      checkOllama: successfulCheck,
+      isServerRunning: stillRunning
+    })
+    expect(successScheduler.isActive()).toBe(false)
+    successScheduler.scheduleAfterWake()
+    expect(successScheduler.isActive()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(successfulCheck).toHaveBeenCalledTimes(1)
+    expect(successScheduler.isActive()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_READY_HOLD_MS)
+    expect(stillRunning).toHaveBeenCalledTimes(1)
+    expect(successScheduler.isActive()).toBe(false)
+
+    const failedCheck = vi.fn().mockRejectedValue(new Error('serve failed to start'))
+    const failedScheduler = createOllamaPostWakeScheduler({ checkOllama: failedCheck })
+    failedScheduler.scheduleAfterWake()
+    expect(failedScheduler.isActive()).toBe(true)
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(failedCheck).toHaveBeenCalledTimes(1)
+    expect(failedScheduler.isActive()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[0])
+    expect(failedCheck).toHaveBeenCalledTimes(2)
+    expect(failedScheduler.isActive()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[1])
+    expect(failedCheck).toHaveBeenCalledTimes(3)
+    expect(failedScheduler.isActive()).toBe(false)
+
+    const pendingScheduler = createOllamaPostWakeScheduler({
+      checkOllama: vi.fn().mockResolvedValue(undefined)
+    })
+    pendingScheduler.scheduleAfterWake()
+    expect(pendingScheduler.isActive()).toBe(true)
+    pendingScheduler.clearPending()
+    expect(pendingScheduler.isActive()).toBe(false)
+
+    const cancelledScheduler = createOllamaPostWakeScheduler({
+      checkOllama: vi.fn().mockResolvedValue(undefined)
+    })
+    cancelledScheduler.scheduleAfterWake()
+    expect(cancelledScheduler.isActive()).toBe(true)
+    cancelledScheduler.cancel()
+    expect(cancelledScheduler.isActive()).toBe(false)
+  })
 })

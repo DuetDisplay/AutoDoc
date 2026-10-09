@@ -64,6 +64,13 @@ export interface OllamaPostWakeScheduler {
   scheduleAfterWake(): void
   clearPending(): void
   cancel(): void
+  isActive(): boolean
+}
+
+export function isOllamaPostWakeSchedulerActive(
+  scheduler: OllamaPostWakeScheduler | null | undefined
+): boolean {
+  return scheduler?.isActive() === true
 }
 
 export function createOllamaPostWakeScheduler(
@@ -75,9 +82,16 @@ export function createOllamaPostWakeScheduler(
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let cancelled = false
+  let chainActive = false
   let wakeGeneration = 0
   let retryIndex = 0
   let scheduledEpoch: number | null = null
+
+  const endChain = (generation: number): void => {
+    if (generation === wakeGeneration) {
+      chainActive = false
+    }
+  }
 
   const clearTimer = (): void => {
     if (timer == null) return
@@ -86,11 +100,15 @@ export function createOllamaPostWakeScheduler(
     timer = null
   }
 
-  const schedule = (delayMs: number, action: () => void): void => {
+  const schedule = (delayMs: number, generation: number, action: () => void): void => {
     clearTimer()
     const setTimeoutFn = options.setTimeoutFn ?? setTimeout
     timer = setTimeoutFn(() => {
       timer = null
+      if (isStale(generation)) {
+        endChain(generation)
+        return
+      }
       action()
     }, delayMs)
   }
@@ -104,35 +122,48 @@ export function createOllamaPostWakeScheduler(
   }
 
   const finishWakeFailure = (generation: number): void => {
-    if (isStale(generation)) return
-    options.onWakeFailed?.()
+    if (!isStale(generation)) {
+      options.onWakeFailed?.()
+    }
+    endChain(generation)
   }
 
   const scheduleRetry = (generation: number): void => {
-    if (isStale(generation)) return
+    if (isStale(generation)) {
+      endChain(generation)
+      return
+    }
     if (retryIndex >= retryDelaysMs.length) {
       finishWakeFailure(generation)
       return
     }
     const retryDelayMs = retryDelaysMs[retryIndex]
     retryIndex += 1
-    schedule(retryDelayMs, () => {
+    schedule(retryDelayMs, generation, () => {
       void runCheck(generation)
     })
   }
 
   const confirmStillRunning = async (generation: number): Promise<void> => {
-    if (isStale(generation)) return
-    if (readyHoldMs <= 0 || !options.isServerRunning) {
-      options.onWakeSucceeded?.()
+    if (isStale(generation)) {
+      endChain(generation)
       return
     }
-    schedule(readyHoldMs, () => {
+    if (readyHoldMs <= 0 || !options.isServerRunning) {
+      options.onWakeSucceeded?.()
+      endChain(generation)
+      return
+    }
+    schedule(readyHoldMs, generation, () => {
       void (async () => {
-        if (isStale(generation)) return
+        if (isStale(generation)) {
+          endChain(generation)
+          return
+        }
         const running = await options.isServerRunning?.()
         if (running) {
           options.onWakeSucceeded?.()
+          endChain(generation)
           return
         }
         scheduleRetry(generation)
@@ -141,7 +172,10 @@ export function createOllamaPostWakeScheduler(
   }
 
   const runCheck = async (generation: number): Promise<void> => {
-    if (isStale(generation)) return
+    if (isStale(generation)) {
+      endChain(generation)
+      return
+    }
     try {
       await options.checkOllama()
     } catch {
@@ -157,12 +191,13 @@ export function createOllamaPostWakeScheduler(
       wakeGeneration += 1
       retryIndex = 0
       scheduledEpoch = options.captureEpoch?.() ?? null
+      chainActive = true
       const generation = wakeGeneration
       if (delayMs <= 0) {
         void runCheck(generation)
         return
       }
-      schedule(delayMs, () => {
+      schedule(delayMs, generation, () => {
         void runCheck(generation)
       })
     },
@@ -170,11 +205,16 @@ export function createOllamaPostWakeScheduler(
       wakeGeneration += 1
       retryIndex = 0
       scheduledEpoch = null
+      chainActive = false
       clearTimer()
     },
     cancel(): void {
       cancelled = true
+      chainActive = false
       clearTimer()
+    },
+    isActive(): boolean {
+      return !cancelled && chainActive
     }
   }
 }

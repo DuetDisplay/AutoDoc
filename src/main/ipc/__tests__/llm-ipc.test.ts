@@ -18,13 +18,11 @@ function registerWith(
   startSetupFromStatusCheck?: boolean,
   onManualSegmentationRetry?: (meetingId: string) => void,
   setupPhase: 'starting' | 'ready' = 'starting',
-  lifecycle: {
+  lifecycle?: {
     captureLifecycleEpoch: () => number
     assertLifecycleEpoch: (epoch: number) => void
-  } = {
-    captureLifecycleEpoch: () => 0,
-    assertLifecycleEpoch: () => {}
-  }
+  },
+  shouldDeferForcedRestart?: () => boolean
 ) {
   const retry = vi.fn()
   const getActivity = vi.fn((): 'waiting-for-local-ai' | null => null)
@@ -35,7 +33,8 @@ function registerWith(
     } as never,
     {
       isServerRunning,
-      ...lifecycle
+      captureLifecycleEpoch: lifecycle?.captureLifecycleEpoch ?? (() => 0),
+      assertLifecycleEpoch: lifecycle?.assertLifecycleEpoch ?? (() => {})
     } as never,
     {
       getModel: () => 'llama3.1'
@@ -43,7 +42,9 @@ function registerWith(
     () => ({ phase: setupPhase, percent: setupPhase === 'ready' ? 100 : 0 }),
     ensureOllamaRunning,
     startSetupFromStatusCheck,
-    onManualSegmentationRetry
+    onManualSegmentationRetry,
+    undefined,
+    shouldDeferForcedRestart
   )
   return { retry, getActivity }
 }
@@ -72,6 +73,63 @@ describe('registerLlmIpc', () => {
 
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
     expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('does not force-replace a dead serve while post-wake work is deferring restarts', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      false,
+      undefined,
+      'ready',
+      undefined,
+      () => true
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+  })
+
+  it('force-replaces a dead serve when the deferral predicate is false', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      false,
+      undefined,
+      'ready',
+      undefined,
+      () => false
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('still force-restarts from Mac status checks while a deferral predicate is true', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      true,
+      undefined,
+      'ready',
+      undefined,
+      () => true
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
   })
 
   it('preserves the existing active status-check behavior by default', async () => {

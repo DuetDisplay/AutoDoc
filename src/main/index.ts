@@ -118,6 +118,7 @@ import {
 import {
   createOllamaPostWakeScheduler,
   getOllamaPostWakePolicy,
+  isOllamaPostWakeSchedulerActive,
   runOllamaWakeCheck
 } from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
@@ -2059,7 +2060,10 @@ app.whenReady().then(async () => {
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
     markReprocessNotificationPending,
-    recordingService.getRecordingsBaseDir()
+    recordingService.getRecordingsBaseDir(),
+    () =>
+      isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
+      (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
   )
   let preparedMeetingLanguage = 'en'
   // A failed preparation must read as an error, not as "checking", so the
