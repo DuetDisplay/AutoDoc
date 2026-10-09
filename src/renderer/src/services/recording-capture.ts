@@ -389,6 +389,13 @@ async function disableVideoCapture(
   )
 
   await waitForRecorderStop(capture.videoRecorder, 'video')
+  trackSegmentEnd(
+    capture.pendingChunkWrites,
+    capture.meetingId,
+    'video',
+    capture.segmentIndex,
+    Math.max(0, Date.now() - capture.timelineOriginMs)
+  )
   capture.videoStream.getTracks().forEach((track) => track.stop())
 
   capture.cleanupMonitoring?.()
@@ -627,6 +634,25 @@ function trackSegmentTiming(
     .invoke('recording:save-segment-timing', meetingId, type, segmentIndex, offsetMs)
     .catch((err) => {
       console.error(`Failed to persist ${type} segment timing:`, err)
+    })
+    .finally(() => {
+      pendingChunkWrites.delete(savePromise)
+    })
+
+  pendingChunkWrites.add(savePromise)
+}
+
+function trackSegmentEnd(
+  pendingChunkWrites: Set<Promise<void>>,
+  meetingId: string,
+  type: 'video' | 'mic' | 'system',
+  segmentIndex: number,
+  endOffsetMs: number
+): void {
+  const savePromise: Promise<void> = window.electronAPI
+    .invoke('recording:save-segment-end', meetingId, type, segmentIndex, endOffsetMs)
+    .catch((err) => {
+      console.error(`Failed to persist ${type} segment end:`, err)
     })
     .finally(() => {
       pendingChunkWrites.delete(savePromise)
@@ -1255,6 +1281,13 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
         waitForRecorderStop(capture.micRecorder, 'mic'),
         waitForRecorderStop(capture.systemRecorder, 'system')
       ])
+      trackSegmentEnd(
+        capture.pendingChunkWrites,
+        capture.meetingId,
+        'video',
+        capture.segmentIndex,
+        Math.max(0, Date.now() - capture.timelineOriginMs)
+      )
       await waitForPendingChunkWrites(capture.pendingChunkWrites)
     } finally {
       capture.videoStream.getTracks().forEach((t) => t.stop())
@@ -1650,6 +1683,13 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
     })
 
     await waitForRecorderStop(capture.videoRecorder, 'video')
+    trackSegmentEnd(
+      capture.pendingChunkWrites,
+      capture.meetingId,
+      'video',
+      capture.segmentIndex,
+      Math.max(0, Date.now() - capture.timelineOriginMs)
+    )
     capture.videoStream.getTracks().forEach((track) => track.stop())
 
     for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {

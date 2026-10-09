@@ -127,6 +127,21 @@ function segmentTimingCalls(): Array<{
     }))
 }
 
+function segmentEndCalls(): Array<{
+  type: 'video' | 'mic' | 'system'
+  segmentIndex: number
+  endOffsetMs: number
+}> {
+  return vi
+    .mocked(window.electronAPI.invoke)
+    .mock.calls.filter(([channel]) => channel === 'recording:save-segment-end')
+    .map(([, , type, segmentIndex, endOffsetMs]) => ({
+      type: type as 'video' | 'mic' | 'system',
+      segmentIndex: segmentIndex as number,
+      endOffsetMs: endOffsetMs as number
+    }))
+}
+
 function createMockStreamForConstraints(
   constraints: MediaStreamConstraints | undefined
 ): MockMediaStream {
@@ -1150,6 +1165,11 @@ describe('recording-capture', () => {
       (entry) => entry.type === 'video' && entry.segmentIndex > 0
     )
     expect(recoveredVideo?.offsetMs).toBeGreaterThanOrEqual(50_000)
+    const endedOriginal = segmentEndCalls().find(
+      (entry) => entry.type === 'video' && entry.segmentIndex === 0
+    )
+    expect(endedOriginal?.endOffsetMs).toBeGreaterThanOrEqual(50_000)
+    expect(endedOriginal?.endOffsetMs).toBeLessThanOrEqual(recoveredVideo?.offsetMs ?? -1)
 
     await stopCapture()
   }, 30_000)
@@ -1211,6 +1231,9 @@ describe('recording-capture', () => {
       })
     )
     expect(videoDisabledHandler).toHaveBeenCalledWith('meeting-zombie')
+    expect(segmentEndCalls()).toContainEqual(
+      expect.objectContaining({ type: 'video', segmentIndex: 0 })
+    )
     expect(isCapturing()).toBe(true)
     expect(segmentTimingCalls().filter((entry) => entry.type !== 'video')).toEqual([
       { type: 'mic', segmentIndex: 0, offsetMs: 0 },

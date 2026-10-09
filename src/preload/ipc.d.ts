@@ -180,6 +180,12 @@ export interface IpcInvokeEvents {
     segmentIndex: number,
     offsetMs: number
   ]
+  'recording:save-segment-end': [
+    meetingId: string,
+    type: 'video' | 'mic' | 'system',
+    segmentIndex: number,
+    endOffsetMs: number
+  ]
   'recording:video-capture-ended-early': [meetingId: string]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
@@ -337,6 +343,7 @@ export interface IpcInvokeReturns {
   'recording:get-state': RecordingState
   'recording:save-chunk': void
   'recording:save-segment-timing': void
+  'recording:save-segment-end': void
   'recording:video-capture-ended-early': void
   'recording:update-title': void
   'recording:delete': void

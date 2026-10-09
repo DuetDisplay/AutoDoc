@@ -104,7 +104,8 @@ export function serializeRecordingSource(
 interface SegmentTimingEntry {
   type: 'video' | 'mic' | 'system'
   segmentIndex: number
-  offsetMs: number
+  offsetMs?: number
+  endOffsetMs?: number
 }
 
 function getSegmentBaseName(type: 'video' | 'mic' | 'system'): string {
@@ -119,8 +120,6 @@ function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: numb
   return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
 }
 
-const MIN_VIDEO_TIMELINE_GAP_MS = 250
-
 function concatFileLine(segmentPath: string): string {
   return `file '${segmentPath.replace(/'/g, "'\\''")}'`
 }
@@ -131,10 +130,23 @@ function joinConcatList(lines: string[]): string {
 
 export function buildVideoConcatList(
   segmentPaths: string[],
-  offsetsMs: Array<number | undefined>
-): { listFile: string; appliedTimelineGaps: boolean; totalGapMs: number } {
+  offsetsMs: Array<number | undefined>,
+  endOffsetsMs?: Array<number | undefined>
+): {
+  listFile: string
+  appliedTimelineGaps: boolean
+  totalGapMs: number | null
+  gapsMs: number[] | null
+  timelineSpanMs: number | null
+} {
   const fileOnlyList = joinConcatList(segmentPaths.map((segmentPath) => concatFileLine(segmentPath)))
-  const noGaps = { listFile: fileOnlyList, appliedTimelineGaps: false, totalGapMs: 0 }
+  const noGaps = {
+    listFile: fileOnlyList,
+    appliedTimelineGaps: false,
+    totalGapMs: null,
+    gapsMs: null,
+    timelineSpanMs: null
+  }
 
   if (
     segmentPaths.length < 2 ||
@@ -154,10 +166,6 @@ export function buildVideoConcatList(
     durationsMs.push(durationMs)
   }
 
-  if (durationsMs.every((durationMs) => durationMs < MIN_VIDEO_TIMELINE_GAP_MS)) {
-    return noGaps
-  }
-
   const lines: string[] = []
   for (let i = 0; i < segmentPaths.length; i += 1) {
     lines.push(concatFileLine(segmentPaths[i]))
@@ -166,10 +174,25 @@ export function buildVideoConcatList(
     }
   }
 
+  const nonLastEnds = endOffsetsMs?.slice(0, offsets.length - 1)
+  const hasCompleteEnds =
+    Boolean(nonLastEnds) &&
+    nonLastEnds!.length === offsets.length - 1 &&
+    nonLastEnds!.every((end) => typeof end === 'number')
+
+  let gapsMs: number[] | null = null
+  let totalGapMs: number | null = null
+  if (hasCompleteEnds && nonLastEnds) {
+    gapsMs = nonLastEnds.map((end, index) => Math.max(0, offsets[index + 1] - (end as number)))
+    totalGapMs = gapsMs.reduce((sum, gap) => sum + gap, 0)
+  }
+
   return {
     listFile: joinConcatList(lines),
     appliedTimelineGaps: true,
-    totalGapMs: offsets[offsets.length - 1] - offsets[0]
+    totalGapMs,
+    gapsMs,
+    timelineSpanMs: offsets[offsets.length - 1] - offsets[0]
   }
 }
 
@@ -618,19 +641,42 @@ async function assembleSegmentedCaptureFile(
   const segmentPaths = segmentNames.map((name) => join(meetingDir, name))
   let listFile = joinConcatList(segmentPaths.map((segmentPath) => concatFileLine(segmentPath)))
   let appliedTimelineGaps = false
-  let totalGapMs = 0
+  let totalGapMs: number | null = null
+  let gapsMs: number[] | null = null
+  let timelineSpanMs: number | null = null
 
   if (type === 'video') {
     const timingOffsets = await readSegmentTimings(meetingDir, 'video')
-    const segmentOffsets = segmentNames.map((name) => {
+    const timingEnds = await readSegmentEnds(meetingDir, 'video')
+    const segmentIndexes = segmentNames.map((name) => {
       const match = name.match(/-(\d+)\.webm$/)
-      const segmentIndex = match ? Number.parseInt(match[1], 10) : Number.NaN
-      return timingOffsets.get(segmentIndex) ?? (segmentIndex === 0 ? 0 : undefined)
+      return match ? Number.parseInt(match[1], 10) : Number.NaN
     })
-    const videoList = buildVideoConcatList(segmentPaths, segmentOffsets)
+    const segmentOffsets = segmentIndexes.map(
+      (segmentIndex) => timingOffsets.get(segmentIndex) ?? (segmentIndex === 0 ? 0 : undefined)
+    )
+    const segmentEnds = segmentIndexes.map((segmentIndex) => timingEnds.get(segmentIndex))
+    for (let i = 0; i < segmentIndexes.length - 1; i += 1) {
+      const endOffsetMs = segmentEnds[i]
+      const nextStartMs = segmentOffsets[i + 1]
+      if (
+        typeof endOffsetMs === 'number' &&
+        typeof nextStartMs === 'number' &&
+        endOffsetMs > nextStartMs
+      ) {
+        logRecordingDebug('video segment end overlaps next start', meetingId, {
+          segmentIndex: segmentIndexes[i],
+          endOffsetMs,
+          nextStartMs
+        })
+      }
+    }
+    const videoList = buildVideoConcatList(segmentPaths, segmentOffsets, segmentEnds)
     listFile = videoList.listFile
     appliedTimelineGaps = videoList.appliedTimelineGaps
     totalGapMs = videoList.totalGapMs
+    gapsMs = videoList.gapsMs
+    timelineSpanMs = videoList.timelineSpanMs
   }
 
   await writeFile(listPath, listFile, 'utf-8')
@@ -652,7 +698,9 @@ async function assembleSegmentedCaptureFile(
           finalFilename,
           elapsedMs: Date.now() - copyStartedAt,
           appliedTimelineGaps,
-          totalGapMs
+          totalGapMs,
+          gapsMs,
+          timelineSpanMs
         })
       } catch (copyErr) {
         logRecordingDebug(
@@ -662,7 +710,9 @@ async function assembleSegmentedCaptureFile(
             error: copyErr instanceof Error ? copyErr.message : String(copyErr),
             segmentCount: segmentNames.length,
             appliedTimelineGaps,
-            totalGapMs
+            totalGapMs,
+            gapsMs,
+            timelineSpanMs
           }
         )
         const reencodeStartedAt = Date.now()
@@ -673,7 +723,9 @@ async function assembleSegmentedCaptureFile(
           elapsedMs: Date.now() - reencodeStartedAt,
           copyAttempted: !usedCopyPath,
           appliedTimelineGaps,
-          totalGapMs
+          totalGapMs,
+          gapsMs,
+          timelineSpanMs
         })
       }
     } else {
@@ -716,26 +768,67 @@ function normalizeCaptureSourceError(err: unknown): Error {
   return err instanceof Error ? err : new Error(message)
 }
 
+async function readSegmentTimingEntries(
+  meetingDir: string
+): Promise<SegmentTimingEntry[]> {
+  const timingPath = join(meetingDir, 'segment-timings.json')
+  const raw = await readFile(timingPath, 'utf-8').catch(() => null)
+  if (!raw) {
+    return []
+  }
+
+  try {
+    return JSON.parse(raw) as SegmentTimingEntry[]
+  } catch {
+    return []
+  }
+}
+
 async function readSegmentTimings(
   meetingDir: string,
   type: 'video' | 'mic' | 'system'
 ): Promise<Map<number, number>> {
-  const timingPath = join(meetingDir, 'segment-timings.json')
-  const raw = await readFile(timingPath, 'utf-8').catch(() => null)
-  if (!raw) {
-    return new Map()
-  }
+  const parsed = await readSegmentTimingEntries(meetingDir)
+  return new Map(
+    parsed
+      .filter((entry) => entry.type === type && Number.isFinite(entry.offsetMs))
+      .map((entry) => [entry.segmentIndex, Math.max(0, entry.offsetMs as number)])
+  )
+}
 
-  try {
-    const parsed = JSON.parse(raw) as SegmentTimingEntry[]
-    return new Map(
-      parsed
-        .filter((entry) => entry.type === type && Number.isFinite(entry.offsetMs))
-        .map((entry) => [entry.segmentIndex, Math.max(0, entry.offsetMs)])
-    )
-  } catch {
-    return new Map()
-  }
+async function readSegmentEnds(
+  meetingDir: string,
+  type: 'video' | 'mic' | 'system'
+): Promise<Map<number, number>> {
+  const parsed = await readSegmentTimingEntries(meetingDir)
+  return new Map(
+    parsed
+      .filter((entry) => entry.type === type && Number.isFinite(entry.endOffsetMs))
+      .map((entry) => [entry.segmentIndex, Math.max(0, entry.endOffsetMs as number)])
+  )
+}
+
+function enqueueSegmentTimingWrite(
+  timingPath: string,
+  mutate: (existing: SegmentTimingEntry[]) => SegmentTimingEntry[]
+): Promise<void> {
+  const previousWrite = segmentTimingWriteQueues.get(timingPath) ?? Promise.resolve()
+  const nextWrite = previousWrite
+    .catch(() => {})
+    .then(async () => {
+      const existing = await readFile(timingPath, 'utf-8')
+        .then((raw) => JSON.parse(raw) as SegmentTimingEntry[])
+        .catch(() => [] as SegmentTimingEntry[])
+      await writeFile(timingPath, JSON.stringify(mutate(existing), null, 2))
+    })
+    .finally(() => {
+      if (segmentTimingWriteQueues.get(timingPath) === nextWrite) {
+        segmentTimingWriteQueues.delete(timingPath)
+      }
+    })
+
+  segmentTimingWriteQueues.set(timingPath, nextWrite)
+  return nextWrite
 }
 
 async function assembleRecordingAudioSegments(
@@ -2138,31 +2231,59 @@ export function registerRecordingIpc(
 
       const baseDir = recordingService.getRecordingsBaseDir()
       const timingPath = join(baseDir, meetingId, 'segment-timings.json')
-      const nextEntry: SegmentTimingEntry = {
-        type,
-        segmentIndex,
-        offsetMs: Math.max(0, Math.round(offsetMs))
-      }
-      const previousWrite = segmentTimingWriteQueues.get(timingPath) ?? Promise.resolve()
-      const nextWrite = previousWrite
-        .catch(() => {})
-        .then(async () => {
-          const existing = await readFile(timingPath, 'utf-8')
-            .then((raw) => JSON.parse(raw) as SegmentTimingEntry[])
-            .catch(() => [] as SegmentTimingEntry[])
-          const withoutDuplicate = existing.filter(
-            (entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)
-          )
-          await writeFile(timingPath, JSON.stringify([...withoutDuplicate, nextEntry], null, 2))
-        })
-        .finally(() => {
-          if (segmentTimingWriteQueues.get(timingPath) === nextWrite) {
-            segmentTimingWriteQueues.delete(timingPath)
-          }
-        })
+      await enqueueSegmentTimingWrite(timingPath, (existing) => {
+        const previous = existing.find(
+          (entry) => entry.type === type && entry.segmentIndex === segmentIndex
+        )
+        const nextEntry: SegmentTimingEntry = {
+          type,
+          segmentIndex,
+          offsetMs: Math.max(0, Math.round(offsetMs)),
+          ...(previous?.endOffsetMs !== undefined ? { endOffsetMs: previous.endOffsetMs } : {})
+        }
+        return [
+          ...existing.filter((entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)),
+          nextEntry
+        ]
+      })
+    }
+  )
 
-      segmentTimingWriteQueues.set(timingPath, nextWrite)
-      await nextWrite
+  ipcMain.handle(
+    'recording:save-segment-end',
+    async (
+      _event,
+      meetingId: string,
+      type: 'video' | 'mic' | 'system',
+      segmentIndex: number,
+      endOffsetMs: number
+    ) => {
+      const currentState = recordingService.getState()
+      const allowFinalizingWrite = isWindows && windowsPendingFinalization.has(meetingId)
+      if (
+        (!currentState.isRecording || currentState.meetingId !== meetingId) &&
+        !allowFinalizingWrite
+      ) {
+        return
+      }
+
+      const baseDir = recordingService.getRecordingsBaseDir()
+      const timingPath = join(baseDir, meetingId, 'segment-timings.json')
+      await enqueueSegmentTimingWrite(timingPath, (existing) => {
+        const previous = existing.find(
+          (entry) => entry.type === type && entry.segmentIndex === segmentIndex
+        )
+        const nextEntry: SegmentTimingEntry = {
+          type,
+          segmentIndex,
+          ...(previous?.offsetMs !== undefined ? { offsetMs: previous.offsetMs } : {}),
+          endOffsetMs: Math.max(0, Math.round(endOffsetMs))
+        }
+        return [
+          ...existing.filter((entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)),
+          nextEntry
+        ]
+      })
     }
   )
 

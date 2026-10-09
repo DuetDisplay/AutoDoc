@@ -668,6 +668,80 @@ describe('recording IPC source handling', () => {
     }
   })
 
+  it('merges video segment ends without dropping start offsets', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingDir = path.join(recordingsDir, 'meeting-timing')
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        { getStatus: vi.fn(), enqueue: vi.fn() } as any,
+        { ensureReady: vi.fn(), getFfmpegPath: vi.fn(() => '/mock/ffmpeg') } as any,
+        { isConnected: vi.fn(() => false), fetchAllRecentEvents: vi.fn().mockResolvedValue([]) } as any
+      )
+
+      const saveStart = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-segment-timing'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            type: 'video' | 'mic' | 'system',
+            segmentIndex: number,
+            offsetMs: number
+          ) => Promise<void>)
+        | undefined
+      const saveEnd = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-segment-end'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            type: 'video' | 'mic' | 'system',
+            segmentIndex: number,
+            endOffsetMs: number
+          ) => Promise<void>)
+        | undefined
+
+      expect(saveStart).toBeTypeOf('function')
+      expect(saveEnd).toBeTypeOf('function')
+
+      await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
+      await saveEnd?.(null, 'meeting-timing', 'video', 0, 3000)
+
+      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
+        [{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }]
+      )
+
+      await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
+      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
+        [{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }]
+      )
+
+      await Promise.all([
+        saveStart?.(null, 'meeting-timing', 'video', 1, 8000),
+        saveEnd?.(null, 'meeting-timing', 'video', 1, 12000)
+      ])
+
+      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
+        expect.arrayContaining([
+          { type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 },
+          { type: 'video', segmentIndex: 1, offsetMs: 8000, endOffsetMs: 12000 }
+        ])
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
   it('lists imported meetings that have a transcript but no audio or video', async () => {
     const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
     const recordingsDir = path.join(userDataDir, 'recordings')
@@ -1599,11 +1673,13 @@ describe('recording IPC meeting language', () => {
 describe('buildVideoConcatList', () => {
   const segments = ['C:/meetings/screen-0000.webm', 'C:/meetings/screen-0001.webm']
 
-  it('writes duration lines when every segment has a timeline offset', () => {
-    const result = buildVideoConcatList(segments, [0, 8000])
+  it('computes real gaps from start and end offsets', () => {
+    const result = buildVideoConcatList(segments, [0, 8000], [3000])
 
     expect(result.appliedTimelineGaps).toBe(true)
-    expect(result.totalGapMs).toBe(8000)
+    expect(result.gapsMs).toEqual([5000])
+    expect(result.totalGapMs).toBe(5000)
+    expect(result.timelineSpanMs).toBe(8000)
     expect(result.listFile).toBe(
       [
         "file 'C:/meetings/screen-0000.webm'",
@@ -1614,11 +1690,29 @@ describe('buildVideoConcatList', () => {
     )
   })
 
-  it('omits duration lines when any offset is missing', () => {
+  it('writes duration lines when starts are present but ends are missing', () => {
+    const result = buildVideoConcatList(segments, [0, 8000])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
+    expect(result.timelineSpanMs).toBe(8000)
+    expect(result.listFile).toContain('duration 8.000')
+  })
+
+  it('still writes duration lines for small positive spacing', () => {
+    const result = buildVideoConcatList(segments, [0, 100])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.listFile).toContain('duration 0.100')
+  })
+
+  it('omits duration lines when any start offset is missing', () => {
     const result = buildVideoConcatList(segments, [0, undefined])
 
     expect(result.appliedTimelineGaps).toBe(false)
-    expect(result.totalGapMs).toBe(0)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
     expect(result.listFile).toBe(
       ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
     )
@@ -1628,7 +1722,8 @@ describe('buildVideoConcatList', () => {
     const result = buildVideoConcatList(segments, [8000, 8000])
 
     expect(result.appliedTimelineGaps).toBe(false)
-    expect(result.totalGapMs).toBe(0)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
     expect(result.listFile).toBe(
       ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
     )
