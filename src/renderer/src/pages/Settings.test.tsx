@@ -381,6 +381,36 @@ describe('Settings', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows Google-specific reconnect guidance when a Google account needs to be reconnected', async () => {
+    installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'calendar:get-accounts': [
+        createCalendarAccount({
+          id: 'acct-google',
+          provider: 'google',
+          email: 'person@gmail.com',
+          syncIssue: 'reconnect-required'
+        })
+      ],
+      'calendar:get-events': []
+    })
+
+    render(<Settings />)
+
+    expect(await screen.findByText('person@gmail.com')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Google Calendar needs to be reconnected to resume calendar sync. Disconnect it, then connect again and allow calendar access.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Microsoft Outlook needs to be reconnected/)).not.toBeInTheDocument()
+  })
+
   it('removes downloaded AI components from settings', async () => {
     let storageInfo = createStorageInfo()
 

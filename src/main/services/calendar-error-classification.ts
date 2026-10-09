@@ -21,10 +21,17 @@ export class UnsupportedCalendarAccountError extends Error {
 export class ReconnectRequiredCalendarAuthError extends Error {
   readonly reason: 'reconnect-required'
 
-  constructor(message: string, reason: 'reconnect-required' = 'reconnect-required') {
+  constructor(
+    message: string,
+    reason: 'reconnect-required' = 'reconnect-required',
+    options?: { cause?: unknown }
+  ) {
     super(message)
     this.name = 'ReconnectRequiredCalendarAuthError'
     this.reason = reason
+    if (options && 'cause' in options) {
+      ;(this as Error & { cause?: unknown }).cause = options.cause
+    }
   }
 }
 
@@ -82,6 +89,66 @@ export function isReconnectRequiredMicrosoftAuthError(error: unknown): boolean {
     'invalidauthenticationtoken',
     'error_access_denied'
   ].some((pattern) => message.includes(pattern))
+}
+
+type GoogleApiErrorShape = {
+  status?: unknown
+  code?: unknown
+  message?: unknown
+  errors?: unknown
+  response?: { status?: unknown; data?: { error?: { details?: unknown } } }
+}
+
+function hasStringField(value: unknown, field: string, expected: string): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<string, unknown>)[field] === expected
+  )
+}
+
+/**
+ * A Google Calendar failure the user can only fix by reconnecting: a 403 caused by
+ * missing OAuth scopes (e.g. the calendar permission box was unticked), or a refresh
+ * token that Google rejected with invalid_grant. Rate limits, quota, API-disabled,
+ * not-found and bare 401s are deliberately not reconnect-required.
+ */
+export function isReconnectRequiredGoogleAuthError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+
+  if (message.includes('invalid_grant')) {
+    return true
+  }
+
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+
+  const candidate = error as GoogleApiErrorShape
+  const is403 =
+    Number(candidate.status) === 403 ||
+    Number(candidate.code) === 403 ||
+    Number(candidate.response?.status) === 403
+  if (!is403) {
+    return false
+  }
+
+  if (message.includes('insufficient authentication scopes')) {
+    return true
+  }
+
+  if (
+    Array.isArray(candidate.errors) &&
+    candidate.errors.some((entry) => hasStringField(entry, 'reason', 'insufficientPermissions'))
+  ) {
+    return true
+  }
+
+  const details = candidate.response?.data?.error?.details
+  return (
+    Array.isArray(details) &&
+    details.some((entry) => hasStringField(entry, 'reason', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'))
+  )
 }
 
 export function isUnsupportedCalendarAccountError(

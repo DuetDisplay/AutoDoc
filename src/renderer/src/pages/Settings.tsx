@@ -58,7 +58,9 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
     return 'Calendar sync is unavailable for this Microsoft mailbox type.'
   }
   if (account.syncIssue === 'reconnect-required') {
-    return 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+    return account.provider === 'google'
+      ? 'Google Calendar needs to be reconnected to resume calendar sync. Disconnect it, then connect again and allow calendar access.'
+      : 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
   }
 
   return null
