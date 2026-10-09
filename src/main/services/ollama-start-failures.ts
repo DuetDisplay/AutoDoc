@@ -1,20 +1,20 @@
 import { logAutodocEvent } from './autodoc-log'
 
-export const OLLAMA_START_FAILURE_PAUSE_THRESHOLD = 5
+export const OLLAMA_POST_WAKE_FAILURE_PAUSE_THRESHOLD = 3
 
-let consecutiveFailures = 0
+let consecutiveStartFailures = 0
+let consecutiveWakeFailures = 0
 let backgroundRestartsPaused = false
 let pauseLogged = false
 
-export function recordOllamaStartSuccess(): void {
-  consecutiveFailures = 0
+function clearPause(): void {
+  consecutiveStartFailures = 0
+  consecutiveWakeFailures = 0
   backgroundRestartsPaused = false
   pauseLogged = false
 }
 
-export function recordOllamaStartFailure(): void {
-  consecutiveFailures += 1
-  if (consecutiveFailures < OLLAMA_START_FAILURE_PAUSE_THRESHOLD) return
+function pauseAfterRepeatedWakeFailures(): void {
   backgroundRestartsPaused = true
   if (pauseLogged) return
   pauseLogged = true
@@ -24,16 +24,32 @@ export function recordOllamaStartFailure(): void {
   })
 }
 
+export function recordOllamaStartSuccess(): void {
+  clearPause()
+}
+
+export function recordOllamaStartFailure(): void {
+  consecutiveStartFailures += 1
+}
+
+export function recordOllamaPostWakeCheckSucceeded(): void {
+  clearPause()
+}
+
+export function recordOllamaPostWakeCheckFailed(): void {
+  consecutiveWakeFailures += 1
+  if (consecutiveWakeFailures < OLLAMA_POST_WAKE_FAILURE_PAUSE_THRESHOLD) return
+  pauseAfterRepeatedWakeFailures()
+}
+
 export function areBackgroundOllamaRestartsPaused(): boolean {
   return backgroundRestartsPaused
 }
 
 export function getOllamaStartFailureStreak(): number {
-  return consecutiveFailures
+  return consecutiveStartFailures
 }
 
 export function resetOllamaStartFailureStreak(): void {
-  consecutiveFailures = 0
-  backgroundRestartsPaused = false
-  pauseLogged = false
+  clearPause()
 }

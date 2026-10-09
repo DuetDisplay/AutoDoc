@@ -1025,9 +1025,6 @@ export class OllamaManager extends EventEmitter {
       })
       .catch((error) => {
         this.assertStartEpoch(epoch)
-        if (!isOllamaStartCancelledError(error)) {
-          recordOllamaStartFailure()
-        }
         throw error
       })
     const promise = run.finally(() => {

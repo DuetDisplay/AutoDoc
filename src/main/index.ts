@@ -117,7 +117,11 @@ import {
 } from './services/diagnostic-trail'
 import { createOllamaPostWakeScheduler } from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
-import { areBackgroundOllamaRestartsPaused } from './services/ollama-start-failures'
+import {
+  areBackgroundOllamaRestartsPaused,
+  recordOllamaPostWakeCheckFailed,
+  recordOllamaPostWakeCheckSucceeded
+} from './services/ollama-start-failures'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import {
   buildSingleInstanceLaunchData,
@@ -1266,7 +1270,9 @@ app.whenReady().then(async () => {
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
-    isPaused: areBackgroundOllamaRestartsPaused
+    isPaused: areBackgroundOllamaRestartsPaused,
+    onWakeSucceeded: recordOllamaPostWakeCheckSucceeded,
+    onWakeFailed: recordOllamaPostWakeCheckFailed
   })
   const scheduleOllamaCheckAfterWake = (): void => {
     if (isQuitting) return

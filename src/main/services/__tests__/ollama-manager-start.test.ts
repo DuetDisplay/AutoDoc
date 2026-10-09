@@ -1237,15 +1237,11 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
-  it('pauses background restarts after five consecutive start failures', async () => {
+  it('does not pause background restarts after five consecutive start() failures', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-cap-'))
     try {
-      const {
-        OllamaManager,
-        spawnMock,
-        logAutodocEvent,
-        areBackgroundOllamaRestartsPaused
-      } = await loadOllamaManager(rootDir)
+      const { OllamaManager, spawnMock, logAutodocEvent, areBackgroundOllamaRestartsPaused } =
+        await loadOllamaManager(rootDir)
       const manager = new OllamaManager()
       manager.latchCpuAccelerator('test')
       stubStartLifecycle(manager)
@@ -1264,8 +1260,8 @@ describe('OllamaManager start lifecycle', () => {
         vi.useRealTimers()
       }
 
-      expect(areBackgroundOllamaRestartsPaused()).toBe(true)
-      expect(logAutodocEvent).toHaveBeenCalledWith({
+      expect(areBackgroundOllamaRestartsPaused()).toBe(false)
+      expect(logAutodocEvent).not.toHaveBeenCalledWith({
         area: 'ollama',
         message: 'ollama restarts paused after repeated start failures'
       })

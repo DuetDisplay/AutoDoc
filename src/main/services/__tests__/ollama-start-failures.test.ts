@@ -11,6 +11,8 @@ vi.mock('../autodoc-log', () => ({
 
 import {
   areBackgroundOllamaRestartsPaused,
+  recordOllamaPostWakeCheckFailed,
+  recordOllamaPostWakeCheckSucceeded,
   recordOllamaStartFailure,
   recordOllamaStartSuccess,
   resetOllamaStartFailureStreak
@@ -21,15 +23,14 @@ afterEach(() => {
   logAutodocEvent.mockClear()
 })
 
-describe('ollama start-failure cap', () => {
-  it('pauses background restarts after five failures and logs once', () => {
-    for (let i = 0; i < 4; i++) {
-      recordOllamaStartFailure()
-    }
+describe('ollama post-wake failure cap', () => {
+  it('pauses background restarts after three failed wakes and logs once', () => {
+    recordOllamaPostWakeCheckFailed()
+    recordOllamaPostWakeCheckFailed()
     expect(areBackgroundOllamaRestartsPaused()).toBe(false)
     expect(logAutodocEvent).not.toHaveBeenCalled()
 
-    recordOllamaStartFailure()
+    recordOllamaPostWakeCheckFailed()
     expect(areBackgroundOllamaRestartsPaused()).toBe(true)
     expect(logAutodocEvent).toHaveBeenCalledTimes(1)
     expect(logAutodocEvent).toHaveBeenCalledWith({
@@ -37,19 +38,32 @@ describe('ollama start-failure cap', () => {
       message: 'ollama restarts paused after repeated start failures'
     })
 
-    recordOllamaStartFailure()
+    recordOllamaPostWakeCheckFailed()
     expect(logAutodocEvent).toHaveBeenCalledTimes(1)
   })
 
-  it('clears the pause after a successful start', () => {
+  it('does not pause after individual start() failures', () => {
     for (let i = 0; i < 5; i++) {
       recordOllamaStartFailure()
     }
+    expect(areBackgroundOllamaRestartsPaused()).toBe(false)
+    expect(logAutodocEvent).not.toHaveBeenCalled()
+  })
+
+  it('clears the pause after a successful start or post-wake check', () => {
+    for (let i = 0; i < 3; i++) {
+      recordOllamaPostWakeCheckFailed()
+    }
+    expect(areBackgroundOllamaRestartsPaused()).toBe(true)
+
     recordOllamaStartSuccess()
     expect(areBackgroundOllamaRestartsPaused()).toBe(false)
 
-    recordOllamaStartFailure()
+    for (let i = 0; i < 3; i++) {
+      recordOllamaPostWakeCheckFailed()
+    }
+    recordOllamaPostWakeCheckSucceeded()
     expect(areBackgroundOllamaRestartsPaused()).toBe(false)
-    expect(logAutodocEvent).toHaveBeenCalledTimes(1)
+    expect(logAutodocEvent).toHaveBeenCalledTimes(2)
   })
 })

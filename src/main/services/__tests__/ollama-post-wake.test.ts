@@ -29,10 +29,16 @@ describe('ollama post-wake scheduler', () => {
     expect(checkOllama).toHaveBeenCalledTimes(1)
   })
 
-  it('retries a failed post-wake start at 60s and 180s, then stops', async () => {
+  it('retries a failed post-wake start at 60s and 180s, then records one failed wake', async () => {
     const checkOllama = vi.fn().mockRejectedValue(new Error('serve failed to start'))
+    const onWakeFailed = vi.fn()
+    const onWakeSucceeded = vi.fn()
     vi.useFakeTimers()
-    const scheduler = createOllamaPostWakeScheduler({ checkOllama })
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      onWakeFailed,
+      onWakeSucceeded
+    })
     scheduler.scheduleAfterWake()
     await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
     expect(checkOllama).toHaveBeenCalledTimes(1)
@@ -42,9 +48,12 @@ describe('ollama post-wake scheduler', () => {
 
     await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[1])
     expect(checkOllama).toHaveBeenCalledTimes(3)
+    expect(onWakeFailed).toHaveBeenCalledTimes(1)
+    expect(onWakeSucceeded).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[1])
     expect(checkOllama).toHaveBeenCalledTimes(3)
+    expect(onWakeFailed).toHaveBeenCalledTimes(1)
   })
 
   it('retries when the serve disappears 20s after a successful start', async () => {
