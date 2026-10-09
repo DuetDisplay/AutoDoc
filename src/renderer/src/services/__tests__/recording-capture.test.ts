@@ -1227,6 +1227,80 @@ describe('recording-capture', () => {
     ).toHaveLength(1)
   }, 30_000)
 
+  it('records the video end from the recorder stop event when the track ends before recovery runs', async () => {
+    const recorders: MockMediaRecorder[] = []
+    class TrackingMediaRecorder extends MockMediaRecorder {
+      constructor(stream: MockMediaStream, options?: MediaRecorderOptions) {
+        super(stream, options)
+        recorders.push(this)
+      }
+    }
+    vi.stubGlobal('MediaRecorder', TrackingMediaRecorder)
+
+    let currentVideoTrack: MockTrack | null = null
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) {
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+      }
+      return Promise.resolve(stream)
+    })
+
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-auto-stop', 'Slack')
+    await vi.advanceTimersByTimeAsync(40_000)
+
+    // Chromium stops the video recorder by itself when its only track ends.
+    const videoRecorder = recorders[0]
+    videoRecorder.state = 'inactive'
+    videoRecorder.dispatchEvent(new Event('stop'))
+    currentVideoTrack?.stop()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await Promise.resolve()
+
+    const videoEnds = segmentEndCalls().filter((entry) => entry.type === 'video')
+    const firstEnds = videoEnds.filter((entry) => entry.segmentIndex === 0)
+    expect(firstEnds).toHaveLength(1)
+    expect(firstEnds[0]?.endOffsetMs).toBeGreaterThanOrEqual(40_000)
+    expect(firstEnds[0]?.endOffsetMs).toBeLessThan(40_500)
+    expect(segmentTimingCalls()).toContainEqual(
+      expect.objectContaining({ type: 'video', segmentIndex: 1 })
+    )
+
+    await stopCapture()
+
+    // Exactly one end per video segment after the final stop as well.
+    const finalEnds = segmentEndCalls().filter((entry) => entry.type === 'video')
+    expect(finalEnds.map((entry) => entry.segmentIndex).sort()).toEqual([0, 1])
+  }, 30_000)
+
+  it('writes exactly one end per video segment across recovery and a normal stop', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) {
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+      }
+      return Promise.resolve(stream)
+    })
+
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-one-end-each', 'Slack')
+    await vi.advanceTimersByTimeAsync(10_000)
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(15_000)
+    await stopCapture()
+
+    const indices = segmentEndCalls()
+      .filter((entry) => entry.type === 'video')
+      .map((entry) => entry.segmentIndex)
+      .sort()
+    expect(indices).toEqual([0, 1])
+  }, 30_000)
+
   it('records the video end from when the recorder stopped, not after failed retry delays', async () => {
     let currentVideoTrack: MockTrack | null = null
     let started = false

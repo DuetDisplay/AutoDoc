@@ -68,6 +68,7 @@ interface CaptureHandles {
   micWatchdog: AudioWatchdog | null
   systemWatchdog: AudioWatchdog | null
   pendingChunkWrites: Set<Promise<void>>
+  videoSegmentEndsRecorded: Set<number>
   cleanupMonitoring: (() => void) | null
   recoveryTimer: ReturnType<typeof setTimeout> | null
   monitorLoopPromise: Promise<void> | null
@@ -388,17 +389,14 @@ async function disableVideoCapture(
     }
   )
 
-  const videoWasActive = capture.videoRecorder?.state !== 'inactive'
   await waitForRecorderStop(capture.videoRecorder, 'video')
-  if (videoWasActive) {
-    trackSegmentEnd(
-      capture.pendingChunkWrites,
-      capture.meetingId,
-      'video',
-      capture.segmentIndex,
-      Math.max(0, Date.now() - capture.timelineOriginMs)
-    )
-  }
+  recordVideoSegmentEnd(
+    capture.pendingChunkWrites,
+    capture.videoSegmentEndsRecorded,
+    capture.meetingId,
+    capture.segmentIndex,
+    capture.timelineOriginMs
+  )
   capture.videoStream.getTracks().forEach((track) => track.stop())
 
   capture.cleanupMonitoring?.()
@@ -662,6 +660,53 @@ function trackSegmentEnd(
     })
 
   pendingChunkWrites.add(savePromise)
+}
+
+/**
+ * Writes a video segment's end at most once. Chromium can stop the video recorder on its own when
+ * its only track ends, so the recorder's own `stop` event is the primary source; the explicit
+ * calls in finalize/recovery/audio-only fallback are idempotent fallbacks.
+ */
+function recordVideoSegmentEnd(
+  pendingChunkWrites: Set<Promise<void>>,
+  endedSegments: Set<number>,
+  meetingId: string,
+  segmentIndex: number,
+  timelineOriginMs: number
+): void {
+  if (endedSegments.has(segmentIndex)) return
+  endedSegments.add(segmentIndex)
+  trackSegmentEnd(
+    pendingChunkWrites,
+    meetingId,
+    'video',
+    segmentIndex,
+    Math.max(0, Date.now() - timelineOriginMs)
+  )
+}
+
+// Registered right after the recorder is created so it fires before any waitForRecorderStop
+// listener; the end-save promise is therefore in pendingChunkWrites before finalize drains it.
+function watchVideoSegmentEnd(
+  recorder: MediaRecorder,
+  pendingChunkWrites: Set<Promise<void>>,
+  endedSegments: Set<number>,
+  meetingId: string,
+  segmentIndex: number,
+  timelineOriginMs: number
+): void {
+  recorder.addEventListener(
+    'stop',
+    () =>
+      recordVideoSegmentEnd(
+        pendingChunkWrites,
+        endedSegments,
+        meetingId,
+        segmentIndex,
+        timelineOriginMs
+      ),
+    { once: true }
+  )
 }
 
 function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Promise<void> {
@@ -1153,6 +1198,15 @@ function buildCaptureHandles(
       }
     }
   )
+  const videoSegmentEndsRecorded = new Set<number>()
+  watchVideoSegmentEnd(
+    videoRecorder,
+    pendingChunkWrites,
+    videoSegmentEndsRecorded,
+    meetingId,
+    segmentIndex,
+    timelineOriginMs
+  )
   trackSegmentTiming(pendingChunkWrites, meetingId, 'video', segmentIndex, audioOffsetMs)
 
   let micRecorder: MediaRecorder | null = null
@@ -1213,6 +1267,7 @@ function buildCaptureHandles(
     micWatchdog: null,
     systemWatchdog: null,
     pendingChunkWrites,
+    videoSegmentEndsRecorded,
     cleanupMonitoring: null,
     recoveryTimer: null,
     monitorLoopPromise: null,
@@ -1279,21 +1334,18 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
     capture.cleanupMonitoring = null
 
     try {
-      const videoWasActive = capture.videoRecorder?.state !== 'inactive'
       await Promise.all([
         waitForRecorderStop(capture.videoRecorder, 'video'),
         waitForRecorderStop(capture.micRecorder, 'mic'),
         waitForRecorderStop(capture.systemRecorder, 'system')
       ])
-      if (videoWasActive) {
-        trackSegmentEnd(
-          capture.pendingChunkWrites,
-          capture.meetingId,
-          'video',
-          capture.segmentIndex,
-          Math.max(0, Date.now() - capture.timelineOriginMs)
-        )
-      }
+      recordVideoSegmentEnd(
+        capture.pendingChunkWrites,
+        capture.videoSegmentEndsRecorded,
+        capture.meetingId,
+        capture.segmentIndex,
+        capture.timelineOriginMs
+      )
       await waitForPendingChunkWrites(capture.pendingChunkWrites)
     } finally {
       capture.videoStream.getTracks().forEach((t) => t.stop())
@@ -1688,17 +1740,14 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
       expectedAudio
     })
 
-    const videoWasActive = capture.videoRecorder?.state !== 'inactive'
     await waitForRecorderStop(capture.videoRecorder, 'video')
-    if (videoWasActive) {
-      trackSegmentEnd(
-        capture.pendingChunkWrites,
-        capture.meetingId,
-        'video',
-        capture.segmentIndex,
-        Math.max(0, Date.now() - capture.timelineOriginMs)
-      )
-    }
+    recordVideoSegmentEnd(
+      capture.pendingChunkWrites,
+      capture.videoSegmentEndsRecorded,
+      capture.meetingId,
+      capture.segmentIndex,
+      capture.timelineOriginMs
+    )
     capture.videoStream.getTracks().forEach((track) => track.stop())
 
     for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
@@ -1738,6 +1787,15 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
               )
             }
           }
+        )
+
+        watchVideoSegmentEnd(
+          videoRecorder,
+          capture.pendingChunkWrites,
+          capture.videoSegmentEndsRecorded,
+          capture.meetingId,
+          segmentIndex,
+          capture.timelineOriginMs
         )
 
         capture.cleanupMonitoring?.()
