@@ -114,6 +114,27 @@ describe('ollama post-wake scheduler', () => {
     expect(checkOllama).not.toHaveBeenCalled()
   })
 
+  it('skips a scheduled check after stop() changes the lifecycle epoch', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    let epoch = 1
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      captureEpoch: () => epoch,
+      isEpochCurrent: (scheduled) => scheduled === epoch
+    })
+    scheduler.scheduleAfterWake()
+    epoch += 1
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).not.toHaveBeenCalled()
+
+    epoch = 1
+    scheduler.scheduleAfterWake()
+    scheduler.clearPending()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).not.toHaveBeenCalled()
+  })
+
   it('clears a pending check on cancel so quit does not restart Ollama', async () => {
     const checkOllama = vi.fn().mockResolvedValue(undefined)
     vi.useFakeTimers()

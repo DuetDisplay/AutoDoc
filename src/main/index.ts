@@ -1274,6 +1274,15 @@ app.whenReady().then(async () => {
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
+    captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
+    isEpochCurrent: (epoch) => {
+      try {
+        managedOllamaManager.assertLifecycleEpoch(epoch)
+        return true
+      } catch {
+        return false
+      }
+    },
     isPaused: postWakePolicy.pauseEnabled ? areBackgroundOllamaRestartsPaused : undefined,
     delayMs: postWakePolicy.delayMs,
     retryDelaysMs: postWakePolicy.retryDelaysMs,
@@ -1362,6 +1371,7 @@ app.whenReady().then(async () => {
       }
     })
     managedOllamaManager.stop()
+    ollamaPostWakeScheduler?.clearPending()
     managedOllamaManager.resetReady()
     await clearDownloadedComponents()
     logAutodocEvent({
@@ -1383,6 +1393,7 @@ app.whenReady().then(async () => {
     }
 
     managedOllamaManager.stop()
+    ollamaPostWakeScheduler?.clearPending()
     managedOllamaManager.resetReady()
 
     void getStorageDiagnostics({

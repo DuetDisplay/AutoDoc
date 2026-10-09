@@ -32,6 +32,8 @@ export interface OllamaPostWakeSchedulerOptions {
   checkOllama: () => Promise<void>
   isServerRunning?: () => Promise<boolean>
   isPaused?: () => boolean
+  captureEpoch?: () => number
+  isEpochCurrent?: (epoch: number) => boolean
   delayMs?: number
   retryDelaysMs?: readonly number[]
   readyHoldMs?: number
@@ -43,6 +45,7 @@ export interface OllamaPostWakeSchedulerOptions {
 
 export interface OllamaPostWakeScheduler {
   scheduleAfterWake(): void
+  clearPending(): void
   cancel(): void
 }
 
@@ -57,6 +60,7 @@ export function createOllamaPostWakeScheduler(
   let cancelled = false
   let wakeGeneration = 0
   let retryIndex = 0
+  let scheduledEpoch: number | null = null
 
   const clearTimer = (): void => {
     if (timer == null) return
@@ -76,13 +80,19 @@ export function createOllamaPostWakeScheduler(
 
   const isPaused = (): boolean => options.isPaused?.() === true
 
+  const isStale = (generation: number): boolean => {
+    if (cancelled || generation !== wakeGeneration || isPaused()) return true
+    if (scheduledEpoch == null || !options.isEpochCurrent) return false
+    return !options.isEpochCurrent(scheduledEpoch)
+  }
+
   const finishWakeFailure = (generation: number): void => {
-    if (cancelled || generation !== wakeGeneration) return
+    if (isStale(generation)) return
     options.onWakeFailed?.()
   }
 
   const scheduleRetry = (generation: number): void => {
-    if (cancelled || generation !== wakeGeneration || isPaused()) return
+    if (isStale(generation)) return
     if (retryIndex >= retryDelaysMs.length) {
       finishWakeFailure(generation)
       return
@@ -95,14 +105,14 @@ export function createOllamaPostWakeScheduler(
   }
 
   const confirmStillRunning = async (generation: number): Promise<void> => {
-    if (cancelled || generation !== wakeGeneration || isPaused()) return
+    if (isStale(generation)) return
     if (readyHoldMs <= 0 || !options.isServerRunning) {
       options.onWakeSucceeded?.()
       return
     }
     schedule(readyHoldMs, () => {
       void (async () => {
-        if (cancelled || generation !== wakeGeneration || isPaused()) return
+        if (isStale(generation)) return
         const running = await options.isServerRunning?.()
         if (running) {
           options.onWakeSucceeded?.()
@@ -114,7 +124,7 @@ export function createOllamaPostWakeScheduler(
   }
 
   const runCheck = async (generation: number): Promise<void> => {
-    if (cancelled || generation !== wakeGeneration || isPaused()) return
+    if (isStale(generation)) return
     try {
       await options.checkOllama()
     } catch {
@@ -129,6 +139,7 @@ export function createOllamaPostWakeScheduler(
       if (cancelled || isPaused()) return
       wakeGeneration += 1
       retryIndex = 0
+      scheduledEpoch = options.captureEpoch?.() ?? null
       const generation = wakeGeneration
       if (delayMs <= 0) {
         void runCheck(generation)
@@ -137,6 +148,12 @@ export function createOllamaPostWakeScheduler(
       schedule(delayMs, () => {
         void runCheck(generation)
       })
+    },
+    clearPending(): void {
+      wakeGeneration += 1
+      retryIndex = 0
+      scheduledEpoch = null
+      clearTimer()
     },
     cancel(): void {
       cancelled = true
