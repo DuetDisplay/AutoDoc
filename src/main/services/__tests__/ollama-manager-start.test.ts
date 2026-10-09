@@ -16,6 +16,7 @@ function setPlatform(platform: NodeJS.Platform): void {
 interface LoadedOllamaManager {
   OllamaManager: typeof import('../ollama-manager').OllamaManager
   spawnMock: Mock
+  logAutodocFailure: Mock
 }
 
 function createFakeProcess(pid: number): EventEmitter & {
@@ -54,6 +55,7 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
   setPlatform('win32')
   vi.resetModules()
   const spawnMock = vi.fn()
+  const logAutodocFailure = vi.fn()
   vi.doMock('electron', () => ({
     app: {
       getPath: vi.fn((name: string) => (name === 'appData' ? join(rootDir, 'app-data') : rootDir)),
@@ -67,8 +69,12 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
       throw new Error('execSync should not run in start lifecycle tests')
     })
   }))
+  vi.doMock('../autodoc-log', () => ({
+    logAutodocEvent: vi.fn(),
+    logAutodocFailure
+  }))
   const mod = await import('../ollama-manager')
-  return { OllamaManager: mod.OllamaManager, spawnMock }
+  return { OllamaManager: mod.OllamaManager, spawnMock, logAutodocFailure }
 }
 
 afterEach(() => {
@@ -77,6 +83,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.doUnmock('electron')
   vi.doUnmock('child_process')
+  vi.doUnmock('../autodoc-log')
   vi.resetModules()
   setPlatform(originalPlatform)
 })
@@ -1053,6 +1060,45 @@ describe('OllamaManager start lifecycle', () => {
       serveProc.signalCode = 'SIGTERM'
       serveProc.emit('exit', null, 'SIGTERM')
       await rejected
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('sends a short Sentry message and the full sanitized stderr tail on exit 1', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-stderr-tail-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocFailure } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      const rejected = expect(started).rejects.toThrow(/code 1, signal null/)
+      await vi.advanceTimersByTimeAsync(1000)
+      const padding = 'gpu listing line\n'.repeat(600)
+      const crashLine = 'CUDA error: out of memory during GPU discovery'
+      serveProc.stderr.emit('data', Buffer.from(`${padding}${crashLine}\n`))
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+      await rejected
+
+      expect(logAutodocFailure).toHaveBeenCalledTimes(1)
+      const failure = logAutodocFailure.mock.calls[0]?.[0] as {
+        error: Error
+        context: { stderrTail: string; exitCode: number }
+        fingerprint: string[]
+      }
+      expect(failure.error.message).toBe('Ollama exited with code 1')
+      expect(failure.error.message).not.toContain('CUDA error')
+      expect(failure.context.exitCode).toBe(1)
+      expect(failure.context.stderrTail).toContain(crashLine)
+      expect(failure.context.stderrTail.length).toBeLessThanOrEqual(8000)
+      expect(failure.fingerprint).toEqual(['ollama-server-exited', '1'])
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }

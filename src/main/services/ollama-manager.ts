@@ -1261,19 +1261,23 @@ export class OllamaManager extends EventEmitter {
           signal: signal ?? null,
           pid: proc.pid ?? null
         }
-        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
+        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
+        const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
         const exitError =
           code !== null && code !== 0
             ? new Error(
-                `Ollama exited with code ${code}${sanitizedStderrTail ? `: ${sanitizedStderrTail}` : ''}`
+                `Ollama exited with code ${code}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
               )
             : null
         if (exitError) {
           logAutodocFailure({
             area: 'ollama',
             message: 'ollama server process exited',
-            error: exitError,
-            context: exitContext,
+            error: new Error(`Ollama exited with code ${code}`),
+            context: {
+              ...exitContext,
+              stderrTail: sanitizedStderrTail || null
+            },
             fingerprint: ['ollama-server-exited', String(code)]
           })
         } else {
@@ -1288,7 +1292,9 @@ export class OllamaManager extends EventEmitter {
           finish(() => {
             reject(
               exitError ??
-                new Error(`Ollama exited with code ${code}, signal ${signal}: ${sanitizedStderrTail}`)
+                new Error(
+                  `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
+                )
             )
           })
         }
