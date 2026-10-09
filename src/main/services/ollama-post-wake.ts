@@ -2,10 +2,38 @@ export const OLLAMA_POST_WAKE_DELAY_MS = 30_000
 export const OLLAMA_POST_WAKE_RETRY_DELAYS_MS = [60_000, 180_000] as const
 export const OLLAMA_POST_WAKE_READY_HOLD_MS = 20_000
 
+export interface OllamaPostWakePolicy {
+  delayMs: number
+  retryDelaysMs: readonly number[]
+  readyHoldMs: number
+  pauseEnabled: boolean
+}
+
+export function getOllamaPostWakePolicy(
+  platform: NodeJS.Platform = process.platform
+): OllamaPostWakePolicy {
+  if (platform !== 'win32') {
+    return {
+      delayMs: 0,
+      retryDelaysMs: [],
+      readyHoldMs: 0,
+      pauseEnabled: false
+    }
+  }
+  return {
+    delayMs: OLLAMA_POST_WAKE_DELAY_MS,
+    retryDelaysMs: OLLAMA_POST_WAKE_RETRY_DELAYS_MS,
+    readyHoldMs: OLLAMA_POST_WAKE_READY_HOLD_MS,
+    pauseEnabled: true
+  }
+}
+
 export interface OllamaPostWakeSchedulerOptions {
   checkOllama: () => Promise<void>
   isServerRunning?: () => Promise<boolean>
   isPaused?: () => boolean
+  delayMs?: number
+  retryDelaysMs?: readonly number[]
   readyHoldMs?: number
   onWakeSucceeded?: () => void
   onWakeFailed?: () => void
@@ -21,6 +49,10 @@ export interface OllamaPostWakeScheduler {
 export function createOllamaPostWakeScheduler(
   options: OllamaPostWakeSchedulerOptions
 ): OllamaPostWakeScheduler {
+  const delayMs = options.delayMs ?? OLLAMA_POST_WAKE_DELAY_MS
+  const retryDelaysMs = options.retryDelaysMs ?? OLLAMA_POST_WAKE_RETRY_DELAYS_MS
+  const readyHoldMs = options.readyHoldMs ?? OLLAMA_POST_WAKE_READY_HOLD_MS
+
   let timer: ReturnType<typeof setTimeout> | null = null
   let cancelled = false
   let wakeGeneration = 0
@@ -51,25 +83,24 @@ export function createOllamaPostWakeScheduler(
 
   const scheduleRetry = (generation: number): void => {
     if (cancelled || generation !== wakeGeneration || isPaused()) return
-    if (retryIndex >= OLLAMA_POST_WAKE_RETRY_DELAYS_MS.length) {
+    if (retryIndex >= retryDelaysMs.length) {
       finishWakeFailure(generation)
       return
     }
-    const delayMs = OLLAMA_POST_WAKE_RETRY_DELAYS_MS[retryIndex]
+    const retryDelayMs = retryDelaysMs[retryIndex]
     retryIndex += 1
-    schedule(delayMs, () => {
+    schedule(retryDelayMs, () => {
       void runCheck(generation)
     })
   }
 
   const confirmStillRunning = async (generation: number): Promise<void> => {
     if (cancelled || generation !== wakeGeneration || isPaused()) return
-    const holdMs = options.readyHoldMs ?? OLLAMA_POST_WAKE_READY_HOLD_MS
-    if (holdMs <= 0 || !options.isServerRunning) {
+    if (readyHoldMs <= 0 || !options.isServerRunning) {
       options.onWakeSucceeded?.()
       return
     }
-    schedule(holdMs, () => {
+    schedule(readyHoldMs, () => {
       void (async () => {
         if (cancelled || generation !== wakeGeneration || isPaused()) return
         const running = await options.isServerRunning?.()
@@ -99,7 +130,11 @@ export function createOllamaPostWakeScheduler(
       wakeGeneration += 1
       retryIndex = 0
       const generation = wakeGeneration
-      schedule(OLLAMA_POST_WAKE_DELAY_MS, () => {
+      if (delayMs <= 0) {
+        void runCheck(generation)
+        return
+      }
+      schedule(delayMs, () => {
         void runCheck(generation)
       })
     },

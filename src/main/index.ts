@@ -115,7 +115,10 @@ import {
   recordMainDiagnosticAction,
   recordRendererDiagnosticAction
 } from './services/diagnostic-trail'
-import { createOllamaPostWakeScheduler } from './services/ollama-post-wake'
+import {
+  createOllamaPostWakeScheduler,
+  getOllamaPostWakePolicy
+} from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
 import {
   areBackgroundOllamaRestartsPaused,
@@ -1232,8 +1235,9 @@ app.whenReady().then(async () => {
     markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
     throw lastError ?? new Error('Ollama recovery failed')
   }
+  const postWakePolicy = getOllamaPostWakePolicy()
   const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
-    if (areBackgroundOllamaRestartsPaused()) return
+    if (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused()) return
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
     try {
       managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
@@ -1270,9 +1274,14 @@ app.whenReady().then(async () => {
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
-    isPaused: areBackgroundOllamaRestartsPaused,
-    onWakeSucceeded: recordOllamaPostWakeCheckSucceeded,
-    onWakeFailed: recordOllamaPostWakeCheckFailed
+    isPaused: postWakePolicy.pauseEnabled ? areBackgroundOllamaRestartsPaused : undefined,
+    delayMs: postWakePolicy.delayMs,
+    retryDelaysMs: postWakePolicy.retryDelaysMs,
+    readyHoldMs: postWakePolicy.readyHoldMs,
+    onWakeSucceeded: postWakePolicy.pauseEnabled
+      ? recordOllamaPostWakeCheckSucceeded
+      : undefined,
+    onWakeFailed: postWakePolicy.pauseEnabled ? recordOllamaPostWakeCheckFailed : undefined
   })
   const scheduleOllamaCheckAfterWake = (): void => {
     if (isQuitting) return

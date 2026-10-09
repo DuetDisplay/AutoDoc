@@ -3,7 +3,8 @@ import {
   OLLAMA_POST_WAKE_DELAY_MS,
   OLLAMA_POST_WAKE_READY_HOLD_MS,
   OLLAMA_POST_WAKE_RETRY_DELAYS_MS,
-  createOllamaPostWakeScheduler
+  createOllamaPostWakeScheduler,
+  getOllamaPostWakePolicy
 } from '../ollama-post-wake'
 
 afterEach(() => {
@@ -11,6 +12,19 @@ afterEach(() => {
 })
 
 describe('ollama post-wake scheduler', () => {
+  it('runs a Mac resume check immediately with no retries', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      ...getOllamaPostWakePolicy('darwin')
+    })
+    scheduler.scheduleAfterWake()
+    await Promise.resolve()
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+  })
+
   it('merges resume and unlock-screen into one check after the wake delay', async () => {
     const checkOllama = vi.fn().mockResolvedValue(undefined)
     const notesStart = vi.fn().mockResolvedValue(undefined)
