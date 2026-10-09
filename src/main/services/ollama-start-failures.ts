@@ -28,6 +28,10 @@ export function areBackgroundOllamaRestartsPaused(): boolean {
   return backgroundRestartsPaused
 }
 
+export function getOllamaStartFailureStreak(): number {
+  return consecutiveFailures
+}
+
 export function resetOllamaStartFailureStreak(): void {
   consecutiveFailures = 0
   backgroundRestartsPaused = false

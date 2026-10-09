@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OLLAMA_POST_WAKE_DELAY_MS,
+  OLLAMA_POST_WAKE_READY_HOLD_MS,
   OLLAMA_POST_WAKE_RETRY_DELAYS_MS,
   createOllamaPostWakeScheduler
 } from '../ollama-post-wake'
@@ -44,6 +45,40 @@ describe('ollama post-wake scheduler', () => {
 
     await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[1])
     expect(checkOllama).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries when the serve disappears 20s after a successful start', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    const isServerRunning = vi.fn().mockResolvedValue(false)
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({ checkOllama, isServerRunning })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_READY_HOLD_MS)
+    expect(isServerRunning).toHaveBeenCalledTimes(1)
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[0])
+    expect(checkOllama).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts a fresh 30s check when a new wake lands during retry', async () => {
+    const checkOllama = vi.fn().mockRejectedValue(new Error('serve failed to start'))
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({ checkOllama })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[0] - 10_000)
+    expect(checkOllama).toHaveBeenCalledTimes(2)
   })
 
   it('skips post-wake checks once background restarts are paused', async () => {

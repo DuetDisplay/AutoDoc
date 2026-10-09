@@ -266,6 +266,8 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // 18.5 tok/s over 8 varied prompts while RSS went 3.8 → 5.9 GiB). Recycling the
 // runner costs one model reload (~5-10s) and restores full speed, which pays for
 // itself within the next chunk once decode has degraded.
+export const EARLY_EXIT_AFTER_READY_MS = 60_000
+
 const RUNNER_RECYCLE_RSS_MIB_LARGE_HOST = 4864 // ~4.75 GiB on hosts with >= 20 GiB RAM
 const RUNNER_RECYCLE_RSS_MIB_SMALL_HOST = 4352 // ~4.25 GiB — low-RAM hosts hit swap sooner
 const RUNNER_RECYCLE_RSS_MIB_WIN_16G = 3584 // ~3.5 GiB — 16 GB boxes share RAM with GPU drivers
@@ -321,6 +323,7 @@ export class OllamaManager extends EventEmitter {
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
+  private readyAtMs: number | null = null
   private adoptedSystemRuntime = false
   private testServerRunning = false
   private didReapAdoptedRunners = false
@@ -1204,6 +1207,7 @@ export class OllamaManager extends EventEmitter {
         if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
         finish(() => {
           this.readyServeProcess = proc
+          this.readyAtMs = Date.now()
           logAutodocEvent({
             area: 'ollama',
             message: 'ollama server became ready',
@@ -1262,17 +1266,33 @@ export class OllamaManager extends EventEmitter {
       })
 
       proc.on('exit', (code, signal) => {
+        const wasReadyProc = this.readyServeProcess === proc
+        const msSinceReady =
+          wasReadyProc && this.readyAtMs != null ? Math.max(0, Date.now() - this.readyAtMs) : null
+        const earlyExitAfterReady =
+          code !== null &&
+          code !== 0 &&
+          msSinceReady != null &&
+          msSinceReady < EARLY_EXIT_AFTER_READY_MS
         if (this.process === proc) {
           this.process = null
         }
         if (this.readyServeProcess === proc) {
           this.readyServeProcess = null
         }
+        if (wasReadyProc) {
+          this.readyAtMs = null
+        }
+        if (earlyExitAfterReady && !this.stopped) {
+          recordOllamaStartFailure()
+        }
         const exitContext = {
           exitCode: code,
           signal: signal ?? null,
           pid: proc.pid ?? null,
-          msSinceLastResume: getMsSinceLastResume()
+          msSinceLastResume: getMsSinceLastResume(),
+          earlyExitAfterReady,
+          msSinceReady
         }
         const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
@@ -1321,6 +1341,7 @@ export class OllamaManager extends EventEmitter {
     this.startEpoch += 1
     const proc = this.process
     this.readyServeProcess = null
+    this.readyAtMs = null
     if (proc) {
       void this.killProcessAndWait(proc).then((killed) => {
         if (killed && this.process === proc) {

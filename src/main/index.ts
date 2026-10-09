@@ -1265,6 +1265,7 @@ app.whenReady().then(async () => {
   }
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
     isPaused: areBackgroundOllamaRestartsPaused
   })
   const scheduleOllamaCheckAfterWake = (): void => {

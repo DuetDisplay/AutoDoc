@@ -20,6 +20,7 @@ interface LoadedOllamaManager {
   markOllamaResumed: typeof import('../ollama-resume').markOllamaResumed
   resetOllamaResumeClock: typeof import('../ollama-resume').resetOllamaResumeClock
   areBackgroundOllamaRestartsPaused: typeof import('../ollama-start-failures').areBackgroundOllamaRestartsPaused
+  getOllamaStartFailureStreak: typeof import('../ollama-start-failures').getOllamaStartFailureStreak
 }
 
 function createFakeProcess(pid: number): EventEmitter & {
@@ -87,7 +88,8 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
     logAutodocFailure,
     markOllamaResumed: resume.markOllamaResumed,
     resetOllamaResumeClock: resume.resetOllamaResumeClock,
-    areBackgroundOllamaRestartsPaused: startFailures.areBackgroundOllamaRestartsPaused
+    areBackgroundOllamaRestartsPaused: startFailures.areBackgroundOllamaRestartsPaused,
+    getOllamaStartFailureStreak: startFailures.getOllamaStartFailureStreak
   }
 }
 
@@ -1162,6 +1164,77 @@ describe('OllamaManager start lifecycle', () => {
 
     expect(await runExit(false)).toBeNull()
     expect(await runExit(true)).toBe(2_500)
+  })
+
+  it('counts a non-zero exit within 60s of ready as a start failure', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-early-exit-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocFailure, getOllamaStartFailureStreak } =
+        await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      expect(getOllamaStartFailureStreak()).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+
+      const failure = logAutodocFailure.mock.calls.at(-1)?.[0] as {
+        context: { earlyExitAfterReady: boolean; msSinceReady: number | null }
+        fingerprint: string[]
+      }
+      expect(failure.context.earlyExitAfterReady).toBe(true)
+      expect(failure.context.msSinceReady).toBe(10_000)
+      expect(failure.fingerprint).toEqual(['ollama-server-exited', '1'])
+      expect(getOllamaStartFailureStreak()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not count a non-zero exit 2 minutes after ready as a start failure', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-late-exit-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocFailure, getOllamaStartFailureStreak } =
+        await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+
+      await vi.advanceTimersByTimeAsync(120_000)
+      serveProc.exitCode = 1
+      serveProc.emit('exit', 1, null)
+
+      const failure = logAutodocFailure.mock.calls.at(-1)?.[0] as {
+        context: { earlyExitAfterReady: boolean; msSinceReady: number | null }
+      }
+      expect(failure.context.earlyExitAfterReady).toBe(false)
+      expect(failure.context.msSinceReady).toBe(120_000)
+      expect(getOllamaStartFailureStreak()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
   })
 
   it('pauses background restarts after five consecutive start failures', async () => {
