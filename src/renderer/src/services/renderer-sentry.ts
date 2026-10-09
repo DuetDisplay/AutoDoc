@@ -28,6 +28,7 @@ interface RecordingRecoveryFailureContext {
   }
   missingSources?: Array<'mic' | 'system'>
   failureKind: 'failed' | 'degraded'
+  degradationPath?: 'retries-exhausted' | 'consecutive-recoveries'
 }
 
 function getErrorName(error: unknown): string {
@@ -158,6 +159,7 @@ export function captureRecordingRecoveryFailure(
       recoveryActualAudio: context.actualAudio ?? null,
       recoveryMissingSources: context.missingSources ?? [],
       recoveryFailureKind: context.failureKind,
+      recoveryDegradationPath: context.degradationPath ?? null,
       recoveryErrorName: getErrorName(error),
       recoveryErrorMessage: getErrorMessage(error)
     })

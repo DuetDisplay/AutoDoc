@@ -340,7 +340,15 @@ function scheduleVideoRecoveryStabilityReset(capture: CaptureHandles): void {
   }, VIDEO_RECOVERY_STABILITY_MS)
 }
 
-async function disableVideoCapture(capture: CaptureHandles, reason: string): Promise<void> {
+async function disableVideoCapture(
+  capture: CaptureHandles,
+  reason: string,
+  options: {
+    error?: unknown
+    attemptCount?: number
+    degradationPath: 'retries-exhausted' | 'consecutive-recoveries'
+  }
+): Promise<void> {
   if (capture.videoDisabled || activeCapture !== capture || capture.stopping || capture.finalized) {
     return
   }
@@ -364,16 +372,19 @@ async function disableVideoCapture(capture: CaptureHandles, reason: string): Pro
   }
 
   captureRecordingRecoveryFailure(
-    new Error('Recording continued in audio-only mode after repeated video capture failures'),
+    new Error('Recording continued in audio-only mode after repeated video capture failures', {
+      cause: options.error
+    }),
     {
       meetingId: capture.meetingId,
       sourceType: getSourceType(capture.sourceId),
       segmentIndex: capture.segmentIndex,
       reason,
-      attemptCount: capture.consecutiveVideoRecoveries,
+      attemptCount: options.attemptCount ?? capture.consecutiveVideoRecoveries,
       expectedAudio: capture.expectedAudio,
       actualAudio: getCaptureAudioAvailability(capture),
-      failureKind: 'degraded'
+      failureKind: 'degraded',
+      degradationPath: options.degradationPath
     }
   )
 
@@ -416,14 +427,35 @@ async function abandonCapture(capture: CaptureHandles, reason: string): Promise<
 
 async function handleCaptureRecoveryTerminalFailure(
   capture: CaptureHandles,
-  reason: string
+  reason: string,
+  options: { error?: unknown; attemptCount?: number } = {}
 ): Promise<void> {
   const actualAudio = getCaptureAudioAvailability(capture)
   const hasHealthyAudio = actualAudio.hasMic || actualAudio.hasSystemAudio
 
   if (hasHealthyAudio && !capture.videoDisabled && reason.startsWith('video:')) {
-    await disableVideoCapture(capture, reason)
+    await disableVideoCapture(capture, reason, {
+      error: options.error,
+      attemptCount: options.attemptCount,
+      degradationPath: 'retries-exhausted'
+    })
     return
+  }
+
+  if (reason.startsWith('video:')) {
+    captureRecordingRecoveryFailure(
+      options.error ?? new Error('Failed to recover video capture'),
+      {
+        meetingId: capture.meetingId,
+        sourceType: getSourceType(capture.sourceId),
+        segmentIndex: capture.segmentIndex,
+        reason,
+        attemptCount: options.attemptCount ?? capture.consecutiveVideoRecoveries,
+        expectedAudio: capture.expectedAudio,
+        actualAudio,
+        failureKind: 'failed'
+      }
+    )
   }
 
   await abandonCapture(capture, reason)
@@ -1599,7 +1631,10 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
   }
 
   if (capture.consecutiveVideoRecoveries >= MAX_CONSECUTIVE_VIDEO_RECOVERIES) {
-    await disableVideoCapture(capture, reason)
+    await disableVideoCapture(capture, reason, {
+      attemptCount: capture.consecutiveVideoRecoveries,
+      degradationPath: 'consecutive-recoveries'
+    })
     return
   }
 
@@ -1705,17 +1740,11 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
             expectedAudio,
             error: serializeErrorForDiagnostics(err)
           })
-          captureRecordingRecoveryFailure(err, {
-            meetingId: capture.meetingId,
-            sourceType: getSourceType(capture.sourceId),
-            segmentIndex: capture.segmentIndex,
-            reason,
-            attemptCount: attempt,
-            expectedAudio,
-            failureKind: 'failed'
-          })
           console.error('Failed to recover video capture:', err)
-          await handleCaptureRecoveryTerminalFailure(capture, reason)
+          await handleCaptureRecoveryTerminalFailure(capture, reason, {
+            error: err,
+            attemptCount: attempt
+          })
           return
         }
 

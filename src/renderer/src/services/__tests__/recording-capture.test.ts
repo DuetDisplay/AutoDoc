@@ -331,13 +331,15 @@ describe('recording-capture', () => {
     await vi.advanceTimersByTimeAsync(20_000)
     await Promise.resolve()
 
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledTimes(1)
     expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
         meetingId: 'meeting-1',
         sourceType: 'window',
         attemptCount: 4,
-        failureKind: 'failed'
+        failureKind: 'degraded',
+        degradationPath: 'retries-exhausted'
       })
     )
     expect(recordPersistentDiagnosticAction).toHaveBeenCalledWith(
@@ -853,13 +855,16 @@ describe('recording-capture', () => {
     )
     expect(videoDisabledHandler).toHaveBeenCalledOnce()
     expect(videoDisabledHandler).toHaveBeenCalledWith('meeting-spiral')
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledTimes(1)
     expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.stringMatching(/audio-only/i)
       }),
       expect.objectContaining({
         meetingId: 'meeting-spiral',
-        failureKind: 'degraded'
+        failureKind: 'degraded',
+        attemptCount: 3,
+        degradationPath: 'consecutive-recoveries'
       })
     )
     expect(isCapturing()).toBe(true)
@@ -1190,13 +1195,19 @@ describe('recording-capture', () => {
         action: 'capture_video_disabled_after_repeated_recovery'
       })
     )
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledTimes(1)
     expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringMatching(/audio-only/i)
+        message: expect.stringMatching(/audio-only/i),
+        cause: expect.objectContaining({
+          message: 'NotReadableError: Could not start video source'
+        })
       }),
       expect.objectContaining({
         meetingId: 'meeting-zombie',
-        failureKind: 'degraded'
+        failureKind: 'degraded',
+        attemptCount: 4,
+        degradationPath: 'retries-exhausted'
       })
     )
     expect(videoDisabledHandler).toHaveBeenCalledWith('meeting-zombie')
@@ -1208,6 +1219,49 @@ describe('recording-capture', () => {
 
     setVideoDisabledHandler(null)
     await stopCapture()
+  }, 30_000)
+
+  it('sends one failed Sentry event when video recovery is abandoned without live audio', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    const audioTracks: MockTrack[] = []
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) {
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        if (getUserMediaMock.mock.calls.length > 3) {
+          return Promise.reject(new Error('NotReadableError: Could not start video source'))
+        }
+        return Promise.resolve(stream)
+      }
+
+      audioTracks.push(...stream.getAudioTracks())
+      return Promise.resolve(stream)
+    })
+
+    const { isCapturing, startCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-abandon', 'Zoom Meeting')
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(800)
+    await Promise.resolve()
+    audioTracks.forEach((track) => track.stop())
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    await Promise.resolve()
+
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledTimes(1)
+    expect(captureRecordingRecoveryFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'NotReadableError: Could not start video source'
+      }),
+      expect.objectContaining({
+        meetingId: 'meeting-abandon',
+        failureKind: 'failed',
+        attemptCount: 4
+      })
+    )
+    expect(isCapturing()).toBe(false)
   }, 30_000)
 
   it('skips full recovery for devicechange when audio routes are unchanged and video is healthy', async () => {
