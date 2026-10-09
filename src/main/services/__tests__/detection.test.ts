@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   getSources: vi.fn(async () => []),
   logAutodocEvent: vi.fn(),
   logAutodocFailure: vi.fn(),
-  isAutoRecordEnabled: vi.fn(() => false),
+  isAutoRecordEnabled: vi.fn((_eventId: string, _recurringEventId?: string) => false),
   getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
   focusMainWindow: vi.fn(() => true),
@@ -238,6 +238,36 @@ describe('DetectionService', () => {
       hasCalendarEvent: true,
       providerId: 'google_meet'
     })
+  })
+
+  it('prefers the later-starting timed meeting over a long working-hours block', async () => {
+    setPlatform('win32')
+
+    const now = Date.now()
+    const workingHours: CalendarEvent = {
+      ...makeEvent('hours', -3 * 60 * 60_000),
+      title: 'Working hours',
+      startTime: now - 3 * 60 * 60_000,
+      endTime: now + 5 * 60 * 60_000,
+      autoRecord: 'off'
+    }
+    const standup = {
+      ...makeEvent('standup', -10 * 60_000),
+      title: 'Standup',
+      meetingUrl: 'https://meet.google.com/abc-defg-hij'
+    }
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
+
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [workingHours, standup]
+    )
+
+    await (service as any).poll()
+
+    expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Standup' })
+    )
   })
 
   it('auto-records scheduled events without showing a prompt when enabled', async () => {

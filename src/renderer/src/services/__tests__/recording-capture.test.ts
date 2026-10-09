@@ -989,6 +989,56 @@ describe('recording-capture', () => {
     await stopCapture()
   }, 30_000)
 
+  it('recovers a mic that dies during video recovery retries', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let currentMicTrack: MockTrack | null = null
+    let recoveryPhase: 'idle' | 'recovering' = 'idle'
+    let recoveryVideoAttempt = 0
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) {
+        if (recoveryPhase === 'recovering') {
+          recoveryVideoAttempt += 1
+          if (recoveryVideoAttempt <= 1) {
+            return Promise.reject(new Error('AbortError: Timeout starting video source'))
+          }
+        }
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        return Promise.resolve(stream)
+      }
+
+      if (!(constraints.audio && constraints.video)) {
+        currentMicTrack = stream.getAudioTracks()[0] ?? null
+      }
+      return Promise.resolve(stream)
+    })
+
+    const { isCapturing, startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-mic-during-video', 'Zoom Meeting')
+    expect(
+      getUserMediaMock.mock.calls.filter(([{ audio, video }]) => audio !== false && !video)
+    ).toHaveLength(1)
+
+    recoveryPhase = 'recovering'
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(800)
+    await Promise.resolve()
+    currentMicTrack?.stop()
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    await Promise.resolve()
+
+    expect(
+      getUserMediaMock.mock.calls.filter(([{ audio, video }]) => audio !== false && !video)
+    ).toHaveLength(2)
+    expect(currentMicTrack?.readyState).toBe('live')
+    expect(isCapturing()).toBe(true)
+
+    await stopCapture()
+  }, 30_000)
+
   it('anchors later audio recovery offsets to the original meeting start after video recovery', async () => {
     let currentVideoTrack: MockTrack | null = null
     let currentMicGroupId = 'mic-default'

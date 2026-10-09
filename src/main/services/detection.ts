@@ -971,9 +971,12 @@ export class DetectionService {
       return null
     }
 
-    return (
-      inProgress.find((event) => isAutoRecordEnabled(event.id, event.recurringEventId)) ??
-      inProgress[0]
+    const autoRecord = inProgress.filter((event) =>
+      isAutoRecordEnabled(event.id, event.recurringEventId)
+    )
+    const candidates = autoRecord.length > 0 ? autoRecord : inProgress
+    return candidates.reduce((latest, event) =>
+      event.startTime >= latest.startTime ? event : latest
     )
   }
 

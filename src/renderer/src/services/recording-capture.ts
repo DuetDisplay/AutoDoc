@@ -72,6 +72,7 @@ interface CaptureHandles {
   recoveryTimer: ReturnType<typeof setTimeout> | null
   monitorLoopPromise: Promise<void> | null
   recoveryPromise: Promise<void> | null
+  deferredRecoveryReason: string | null
   recoveryValidation: RecoveryValidationState | null
   finalizePromise: Promise<void> | null
   finalized: boolean
@@ -381,7 +382,9 @@ async function disableVideoCapture(capture: CaptureHandles, reason: string): Pro
 
   capture.cleanupMonitoring?.()
   installCaptureMonitoring(capture)
-  queueMissingAudioRecovery(capture)
+  if (!capture.recoveryPromise) {
+    queueMissingAudioRecovery(capture)
+  }
 }
 
 async function abandonCapture(capture: CaptureHandles, reason: string): Promise<void> {
@@ -822,13 +825,14 @@ function queueMissingAudioRecovery(capture: CaptureHandles): void {
 }
 
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
-  if (
-    activeCapture !== capture ||
-    capture.stopping ||
-    capture.finalized ||
-    capture.finalizePromise ||
-    capture.recoveryPromise
-  ) {
+  if (activeCapture !== capture || capture.stopping || capture.finalized || capture.finalizePromise) {
+    return
+  }
+
+  if (capture.recoveryPromise) {
+    if (!reason.startsWith('video:')) {
+      capture.deferredRecoveryReason = reason
+    }
     return
   }
 
@@ -1151,6 +1155,7 @@ function buildCaptureHandles(
     recoveryTimer: null,
     monitorLoopPromise: null,
     recoveryPromise: null,
+    deferredRecoveryReason: null,
     recoveryValidation: null,
     finalizePromise: null,
     finalized: false
@@ -1624,6 +1629,11 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
         }
 
         replacementStream = await createVideoStream(resolvedSourceId, 'recovery')
+        if (activeCapture !== capture || capture.stopping || capture.finalized) {
+          replacementStream.getTracks().forEach((track) => track.stop())
+          return
+        }
+
         const segmentIndex = capture.nextSegmentIndex
         const videoRecorder = createStartedRecorder(
           new MediaStream(replacementStream.getVideoTracks()),
@@ -1670,7 +1680,6 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
           reason,
           attempt
         })
-        queueMissingAudioRecovery(capture)
         return
       } catch (err) {
         replacementStream?.getTracks().forEach((track) => track.stop())
@@ -1718,10 +1727,20 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
           error: describeError(err)
         })
         await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+        if (activeCapture !== capture || capture.stopping || capture.finalized) {
+          return
+        }
       }
     }
   })().finally(() => {
     capture.recoveryPromise = null
+    const deferredReason = capture.deferredRecoveryReason
+    capture.deferredRecoveryReason = null
+    if (deferredReason === 'devicechange') {
+      queueCaptureRecovery(capture, 'devicechange')
+      return
+    }
+    queueMissingAudioRecovery(capture)
   })
 
   return capture.recoveryPromise
