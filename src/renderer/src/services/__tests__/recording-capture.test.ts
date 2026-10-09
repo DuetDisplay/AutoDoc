@@ -113,7 +113,7 @@ class MockAudioContext {
 }
 
 function segmentTimingCalls(): Array<{
-  type: 'mic' | 'system'
+  type: 'video' | 'mic' | 'system'
   segmentIndex: number
   offsetMs: number
 }> {
@@ -121,7 +121,7 @@ function segmentTimingCalls(): Array<{
     .mocked(window.electronAPI.invoke)
     .mock.calls.filter(([channel]) => channel === 'recording:save-segment-timing')
     .map(([, , type, segmentIndex, offsetMs]) => ({
-      type: type as 'mic' | 'system',
+      type: type as 'video' | 'mic' | 'system',
       segmentIndex: segmentIndex as number,
       offsetMs: offsetMs as number
     }))
@@ -966,7 +966,7 @@ describe('recording-capture', () => {
     const audioCallsAfterStart = getUserMediaMock.mock.calls.filter(([{ audio, video }]) => {
       return audio !== false && Boolean(audio || video)
     }).length
-    expect(segmentTimingCalls()).toEqual([
+    expect(segmentTimingCalls().filter((entry) => entry.type !== 'video')).toEqual([
       { type: 'mic', segmentIndex: 0, offsetMs: 0 },
       { type: 'system', segmentIndex: 0, offsetMs: 0 }
     ])
@@ -980,7 +980,7 @@ describe('recording-capture', () => {
       return audio !== false && Boolean(audio || video)
     }).length
     expect(audioCallsAfterRecovery).toBe(audioCallsAfterStart)
-    expect(segmentTimingCalls()).toEqual([
+    expect(segmentTimingCalls().filter((entry) => entry.type !== 'video')).toEqual([
       { type: 'mic', segmentIndex: 0, offsetMs: 0 },
       { type: 'system', segmentIndex: 0, offsetMs: 0 }
     ])
@@ -1115,6 +1115,40 @@ describe('recording-capture', () => {
     await stopCapture()
   }, 30_000)
 
+  it('saves video segment timings for the initial segment and after video recovery', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let recoveryPhase: 'idle' | 'recovering' = 'idle'
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      const stream = createMockStreamForConstraints(constraints)
+      if (constraints.audio === false) {
+        currentVideoTrack = stream.getVideoTracks()[0] ?? null
+      }
+      if (recoveryPhase === 'recovering' && constraints.audio === false) {
+        recoveryPhase = 'idle'
+      }
+      return Promise.resolve(stream)
+    })
+
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-video-timing', 'Slack')
+    expect(segmentTimingCalls()).toContainEqual({ type: 'video', segmentIndex: 0, offsetMs: 0 })
+
+    await vi.advanceTimersByTimeAsync(50_000)
+    recoveryPhase = 'recovering'
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(15_000)
+    await Promise.resolve()
+
+    const recoveredVideo = segmentTimingCalls().find(
+      (entry) => entry.type === 'video' && entry.segmentIndex > 0
+    )
+    expect(recoveredVideo?.offsetMs).toBeGreaterThanOrEqual(50_000)
+
+    await stopCapture()
+  }, 30_000)
+
   it('falls back to audio-only after terminal video recovery failure instead of leaving a zombie', async () => {
     let currentVideoTrack: MockTrack | null = null
 
@@ -1167,7 +1201,7 @@ describe('recording-capture', () => {
     )
     expect(videoDisabledHandler).toHaveBeenCalledWith('meeting-zombie')
     expect(isCapturing()).toBe(true)
-    expect(segmentTimingCalls()).toEqual([
+    expect(segmentTimingCalls().filter((entry) => entry.type !== 'video')).toEqual([
       { type: 'mic', segmentIndex: 0, offsetMs: 0 },
       { type: 'system', segmentIndex: 0, offsetMs: 0 }
     ])

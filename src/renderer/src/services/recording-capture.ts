@@ -587,7 +587,7 @@ function trackChunkWrite(
 function trackSegmentTiming(
   pendingChunkWrites: Set<Promise<void>>,
   meetingId: string,
-  type: 'mic' | 'system',
+  type: 'video' | 'mic' | 'system',
   segmentIndex: number,
   offsetMs: number
 ): void {
@@ -1092,6 +1092,7 @@ function buildCaptureHandles(
       }
     }
   )
+  trackSegmentTiming(pendingChunkWrites, meetingId, 'video', segmentIndex, audioOffsetMs)
 
   let micRecorder: MediaRecorder | null = null
   if (hasMic) {
@@ -1662,6 +1663,13 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
         capture.segmentIndex = segmentIndex
         capture.nextSegmentIndex = segmentIndex + 1
         capture.consecutiveVideoRecoveries += 1
+        trackSegmentTiming(
+          capture.pendingChunkWrites,
+          capture.meetingId,
+          'video',
+          segmentIndex,
+          Math.max(0, Date.now() - capture.timelineOriginMs)
+        )
         scheduleVideoRecoveryStabilityReset(capture)
         installCaptureMonitoring(capture)
 

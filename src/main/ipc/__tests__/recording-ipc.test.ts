@@ -7,6 +7,7 @@ import * as path from 'path'
 import { spawn } from 'child_process'
 import { BrowserWindow } from 'electron'
 import {
+  buildVideoConcatList,
   getRecordingSourceCaptureOptions,
   registerRecordingIpc,
   serializeRecordingSource,
@@ -1592,5 +1593,44 @@ describe('recording IPC meeting language', () => {
     )
 
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+  })
+})
+
+describe('buildVideoConcatList', () => {
+  const segments = ['C:/meetings/screen-0000.webm', 'C:/meetings/screen-0001.webm']
+
+  it('writes duration lines when every segment has a timeline offset', () => {
+    const result = buildVideoConcatList(segments, [0, 8000])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.totalGapMs).toBe(8000)
+    expect(result.listFile).toBe(
+      [
+        "file 'C:/meetings/screen-0000.webm'",
+        'duration 8.000',
+        "file 'C:/meetings/screen-0001.webm'",
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('omits duration lines when any offset is missing', () => {
+    const result = buildVideoConcatList(segments, [0, undefined])
+
+    expect(result.appliedTimelineGaps).toBe(false)
+    expect(result.totalGapMs).toBe(0)
+    expect(result.listFile).toBe(
+      ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
+    )
+  })
+
+  it('omits duration lines when a computed duration is not positive', () => {
+    const result = buildVideoConcatList(segments, [8000, 8000])
+
+    expect(result.appliedTimelineGaps).toBe(false)
+    expect(result.totalGapMs).toBe(0)
+    expect(result.listFile).toBe(
+      ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
+    )
   })
 })

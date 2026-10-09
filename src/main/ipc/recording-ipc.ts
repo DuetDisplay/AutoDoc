@@ -119,6 +119,60 @@ function getSegmentFilename(type: 'video' | 'mic' | 'system', segmentIndex: numb
   return `${getSegmentBaseName(type)}-${String(segmentIndex).padStart(SEGMENT_PAD_WIDTH, '0')}.webm`
 }
 
+const MIN_VIDEO_TIMELINE_GAP_MS = 250
+
+function concatFileLine(segmentPath: string): string {
+  return `file '${segmentPath.replace(/'/g, "'\\''")}'`
+}
+
+function joinConcatList(lines: string[]): string {
+  return `${lines.join('\n')}\n`
+}
+
+export function buildVideoConcatList(
+  segmentPaths: string[],
+  offsetsMs: Array<number | undefined>
+): { listFile: string; appliedTimelineGaps: boolean; totalGapMs: number } {
+  const fileOnlyList = joinConcatList(segmentPaths.map((segmentPath) => concatFileLine(segmentPath)))
+  const noGaps = { listFile: fileOnlyList, appliedTimelineGaps: false, totalGapMs: 0 }
+
+  if (
+    segmentPaths.length < 2 ||
+    offsetsMs.length !== segmentPaths.length ||
+    offsetsMs.some((offset) => typeof offset !== 'number')
+  ) {
+    return noGaps
+  }
+
+  const offsets = offsetsMs as number[]
+  const durationsMs: number[] = []
+  for (let i = 0; i < offsets.length - 1; i += 1) {
+    const durationMs = offsets[i + 1] - offsets[i]
+    if (!(durationMs > 0)) {
+      return noGaps
+    }
+    durationsMs.push(durationMs)
+  }
+
+  if (durationsMs.every((durationMs) => durationMs < MIN_VIDEO_TIMELINE_GAP_MS)) {
+    return noGaps
+  }
+
+  const lines: string[] = []
+  for (let i = 0; i < segmentPaths.length; i += 1) {
+    lines.push(concatFileLine(segmentPaths[i]))
+    if (i < durationsMs.length) {
+      lines.push(`duration ${(durationsMs[i] / 1000).toFixed(3)}`)
+    }
+  }
+
+  return {
+    listFile: joinConcatList(lines),
+    appliedTimelineGaps: true,
+    totalGapMs: offsets[offsets.length - 1] - offsets[0]
+  }
+}
+
 function logRecordingDebug(
   message: string,
   meetingId?: string,
@@ -562,9 +616,22 @@ async function assembleSegmentedCaptureFile(
 
   const listPath = join(meetingDir, `${segmentPrefix}concat.txt`)
   const segmentPaths = segmentNames.map((name) => join(meetingDir, name))
-  const listFile = `${segmentPaths
-    .map((segmentPath) => `file '${segmentPath.replace(/'/g, "'\\''")}'`)
-    .join('\n')}\n`
+  let listFile = joinConcatList(segmentPaths.map((segmentPath) => concatFileLine(segmentPath)))
+  let appliedTimelineGaps = false
+  let totalGapMs = 0
+
+  if (type === 'video') {
+    const timingOffsets = await readSegmentTimings(meetingDir, 'video')
+    const segmentOffsets = segmentNames.map((name) => {
+      const match = name.match(/-(\d+)\.webm$/)
+      const segmentIndex = match ? Number.parseInt(match[1], 10) : Number.NaN
+      return timingOffsets.get(segmentIndex) ?? (segmentIndex === 0 ? 0 : undefined)
+    })
+    const videoList = buildVideoConcatList(segmentPaths, segmentOffsets)
+    listFile = videoList.listFile
+    appliedTimelineGaps = videoList.appliedTimelineGaps
+    totalGapMs = videoList.totalGapMs
+  }
 
   await writeFile(listPath, listFile, 'utf-8')
 
@@ -583,7 +650,9 @@ async function assembleSegmentedCaptureFile(
         logRecordingDebug('assembled segmented video with stream-copy concat', meetingId, {
           segmentCount: segmentNames.length,
           finalFilename,
-          elapsedMs: Date.now() - copyStartedAt
+          elapsedMs: Date.now() - copyStartedAt,
+          appliedTimelineGaps,
+          totalGapMs
         })
       } catch (copyErr) {
         logRecordingDebug(
@@ -591,7 +660,9 @@ async function assembleSegmentedCaptureFile(
           meetingId,
           {
             error: copyErr instanceof Error ? copyErr.message : String(copyErr),
-            segmentCount: segmentNames.length
+            segmentCount: segmentNames.length,
+            appliedTimelineGaps,
+            totalGapMs
           }
         )
         const reencodeStartedAt = Date.now()
@@ -600,7 +671,9 @@ async function assembleSegmentedCaptureFile(
           segmentCount: segmentNames.length,
           finalFilename,
           elapsedMs: Date.now() - reencodeStartedAt,
-          copyAttempted: !usedCopyPath
+          copyAttempted: !usedCopyPath,
+          appliedTimelineGaps,
+          totalGapMs
         })
       }
     } else {
