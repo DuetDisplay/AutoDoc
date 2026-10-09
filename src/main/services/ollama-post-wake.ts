@@ -31,6 +31,9 @@ export function getOllamaPostWakePolicy(
 export interface OllamaPostWakeSchedulerOptions {
   checkOllama: () => Promise<void>
   isServerRunning?: () => Promise<boolean>
+  /** True while an app-started serve is still discovering GPUs and not answering yet. */
+  isServeStarting?: () => boolean
+  waitForStartingServe?: () => Promise<boolean>
   isPaused?: () => boolean
   captureEpoch?: () => number
   isEpochCurrent?: (epoch: number) => boolean
@@ -160,7 +163,16 @@ export function createOllamaPostWakeScheduler(
           endChain(generation)
           return
         }
-        const running = await options.isServerRunning?.()
+        let running = await options.isServerRunning?.()
+        if (!running && options.isServeStarting?.() === true && options.waitForStartingServe) {
+          // The serve is alive but still starting; let it finish rather than
+          // counting a slow GPU discovery as a failed wake.
+          running = await options.waitForStartingServe()
+          if (isStale(generation)) {
+            endChain(generation)
+            return
+          }
+        }
         if (running) {
           options.onWakeSucceeded?.()
           endChain(generation)

@@ -52,6 +52,13 @@ export function registerLlmIpc(
       return true
     }
 
+    if (ollamaManager.isServeStarting()) {
+      // A serve we just started can spend 10+ s discovering GPUs without
+      // answering. Report not connected but do not count it as unhealthy or
+      // trigger a restart that would kill it.
+      return false
+    }
+
     consecutiveOllamaHealthFailures += 1
     const setupAlreadyFinished = getOllamaSetupStatus().phase === 'ready'
     if (startSetupFromStatusCheck) {

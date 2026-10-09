@@ -1214,6 +1214,17 @@ app.whenReady().then(async () => {
         let hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
         managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
 
+        // A fresh serve can spend 10+ s discovering GPUs without answering.
+        // Wait for it so the next attempt does not kill a healthy server.
+        if (!(serverRunning && hasNotesModel) && managedOllamaManager.isServeStarting()) {
+          await managedOllamaManager.waitForStartingServe()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          serverRunning = await managedOllamaManager.isServerRunning()
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
+          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
+        }
+
         if (serverRunning && !hasNotesModel) {
           await managedOllamaManager.startAndPull()
           managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
@@ -1265,6 +1276,13 @@ app.whenReady().then(async () => {
     } catch {
       return
     }
+    const onAlreadyRunningAfterWake = (): void => {
+      if (windowsOllamaSetupCoordinator) {
+        ensureOllamaRunning()
+      } else {
+        markOllamaSetupReady()
+      }
+    }
     try {
       await runOllamaWakeCheck({
         isBackgroundRestartPaused: () =>
@@ -1284,14 +1302,18 @@ app.whenReady().then(async () => {
             throw error
           }
         },
-        onAlreadyRunning: () => {
-          if (windowsOllamaSetupCoordinator) {
-            ensureOllamaRunning()
-          } else {
-            markOllamaSetupReady()
+        onAlreadyRunning: onAlreadyRunningAfterWake,
+        startIfNeeded: async () => {
+          // A serve still discovering GPUs is healthy; wait for it instead of replacing it.
+          if (
+            managedOllamaManager.isServeStarting() &&
+            (await managedOllamaManager.waitForStartingServe())
+          ) {
+            onAlreadyRunningAfterWake()
+            return
           }
-        },
-        startIfNeeded: () => startOllama({ force: true })
+          await startOllama({ force: true })
+        }
       })
     } catch (error) {
       if (isOllamaStartCancelledError(error)) return
@@ -1301,6 +1323,8 @@ app.whenReady().then(async () => {
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
     checkOllama: ensureOllamaRunningIfNeeded,
     isServerRunning: () => managedOllamaManager.isServerRunning(),
+    isServeStarting: () => managedOllamaManager.isServeStarting(),
+    waitForStartingServe: () => managedOllamaManager.waitForStartingServe(),
     captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
     isEpochCurrent: (epoch) => {
       try {

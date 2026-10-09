@@ -229,6 +229,281 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
+  describe('starting serve grace', () => {
+    async function startReadyManager(): Promise<{
+      manager: InstanceType<LoadedOllamaManager['OllamaManager']>
+      loaded: LoadedOllamaManager
+      serveProc: ReturnType<typeof createFakeProcess>
+      health: { up: boolean }
+      rootDir: string
+    }> {
+      const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-starting-'))
+      const loaded = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      mockServeOrTaskkill(loaded.spawnMock, () => serveProc)
+      const manager = new loaded.OllamaManager()
+      manager.latchCpuAccelerator('test')
+      const health = { up: false }
+      vi.spyOn(manager, 'isServerRunning').mockImplementation(async () => health.up)
+      vi.spyOn(manager, 'ensureReady').mockResolvedValue(undefined)
+      vi.spyOn(manager as never, 'killProcessOnPort').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'reapManagedLlamaServersOnce').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'killManagedLlamaServers').mockReturnValue(undefined)
+      vi.spyOn(manager as never, 'getListeningPidsOnOllamaPort').mockReturnValue([4242])
+      vi.useFakeTimers()
+      const first = manager.start()
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await first
+      return { manager, loaded, serveProc, health, rootDir }
+    }
+
+    /** taskkill kills the old serve (exits it) and later spawns return the replacement. */
+    function replaceServeOnKill(
+      loaded: LoadedOllamaManager,
+      oldProc: ReturnType<typeof createFakeProcess>,
+      replacement: ReturnType<typeof createFakeProcess>
+    ): void {
+      loaded.spawnMock.mockImplementation((cmd: string) => {
+        if (cmd === 'taskkill') {
+          const killer = createFakeProcess(1)
+          queueMicrotask(() => {
+            oldProc.exitCode = 1
+            oldProc.emit('exit', 1, null)
+            killer.exitCode = 0
+            killer.emit('exit', 0, null)
+          })
+          return killer
+        }
+        return replacement
+      })
+    }
+
+    function eventMessages(logAutodocEvent: Mock): string[] {
+      return logAutodocEvent.mock.calls.map((call) => String(call[0]?.message))
+    }
+
+    it('adopts a ready serve that starts answering within the wait window', async () => {
+      const { manager, loaded, health, rootDir } = await startReadyManager()
+      try {
+        loaded.logAutodocEvent.mockClear()
+        expect(manager.isServeStarting()).toBe(true)
+
+        const second = manager.start()
+        await vi.advanceTimersByTimeAsync(10_000)
+        health.up = true
+        await vi.advanceTimersByTimeAsync(2_000)
+        await second
+
+        expect(serveSpawnCalls(loaded.spawnMock)).toHaveLength(1)
+        expect(taskkillPids(loaded.spawnMock)).not.toContain('4242')
+        const messages = eventMessages(loaded.logAutodocEvent)
+        expect(messages).toContain('ollama server still starting; waiting before replacing')
+        expect(messages).not.toContain('ollama server not adopted; replacing')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('replaces a ready serve that never answers within the wait window', async () => {
+      const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+      try {
+        loaded.logAutodocEvent.mockClear()
+        const replacement = createFakeProcess(5252)
+        replaceServeOnKill(loaded, serveProc, replacement)
+
+        const second = manager.start()
+        await vi.advanceTimersByTimeAsync(31_000)
+        // replacement spawn waits for its own Listening line
+        await vi.advanceTimersByTimeAsync(2_000)
+        replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+        await second
+
+        expect(taskkillPids(loaded.spawnMock)).toContain('4242')
+        const notAdopted = loaded.logAutodocEvent.mock.calls.find(
+          (call) => call[0]?.message === 'ollama server not adopted; replacing'
+        )
+        expect(notAdopted?.[0].context).toMatchObject({
+          running: false,
+          waitedForStart: true
+        })
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('replaces a serve that became ready more than 60s ago without waiting', async () => {
+      const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+      try {
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(manager.isServeStarting()).toBe(false)
+        loaded.logAutodocEvent.mockClear()
+        const replacement = createFakeProcess(5252)
+        replaceServeOnKill(loaded, serveProc, replacement)
+
+        const second = manager.start()
+        await vi.advanceTimersByTimeAsync(1_500)
+        replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+        await second
+
+        const messages = eventMessages(loaded.logAutodocEvent)
+        expect(messages).not.toContain('ollama server still starting; waiting before replacing')
+        const notAdopted = loaded.logAutodocEvent.mock.calls.find(
+          (call) => call[0]?.message === 'ollama server not adopted; replacing'
+        )
+        expect(notAdopted?.[0].context).toMatchObject({ waitedForStart: false })
+        expect(taskkillPids(loaded.spawnMock)).toContain('4242')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('does not treat a serve as starting when another process owns the port', async () => {
+      const { manager, rootDir } = await startReadyManager()
+      try {
+        vi.spyOn(manager as never, 'getListeningPidsOnOllamaPort').mockReturnValue([9999])
+        expect(manager.isServeStarting()).toBe(false)
+        await expect(manager.waitForStartingServe()).resolves.toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('stops reporting a starting serve once the process has exited', async () => {
+      const { manager, serveProc, rootDir } = await startReadyManager()
+      try {
+        expect(manager.isServeStarting()).toBe(true)
+        serveProc.emit('exit', 1, null)
+        expect(manager.isServeStarting()).toBe(false)
+        await expect(manager.waitForStartingServe()).resolves.toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    it('waitForStartingServe returns false when the process exits mid-wait', async () => {
+      const { manager, serveProc, rootDir } = await startReadyManager()
+      try {
+        const waiting = manager.waitForStartingServe()
+        await vi.advanceTimersByTimeAsync(1_000)
+        serveProc.emit('exit', 1, null)
+        await vi.advanceTimersByTimeAsync(2_000)
+        await expect(waiting).resolves.toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+
+    describe('recoverUnhealthyRuntime', () => {
+      const STILL_STARTING = 'ollama server still starting; waiting before replacing'
+
+      function stoppedByAppReasons(logAutodocEvent: Mock): unknown[] {
+        return logAutodocEvent.mock.calls
+          .filter((call) => call[0]?.message === 'ollama server process stopped by app')
+          .map((call) => call[0].context?.reason)
+      }
+
+      it('keeps a starting serve that answers after about 10s', async () => {
+        const { manager, loaded, health, rootDir } = await startReadyManager()
+        try {
+          loaded.logAutodocEvent.mockClear()
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(10_000)
+          health.up = true
+          await vi.advanceTimersByTimeAsync(2_000)
+          await expect(recovery).resolves.toBeUndefined()
+
+          expect(taskkillPids(loaded.spawnMock)).not.toContain('4242')
+          expect(serveSpawnCalls(loaded.spawnMock)).toHaveLength(1)
+          expect(eventMessages(loaded.logAutodocEvent)).toContain(STILL_STARTING)
+          expect(stoppedByAppReasons(loaded.logAutodocEvent)).toEqual([])
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('kills and respawns a starting serve that never answers within 30s', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          loaded.logAutodocEvent.mockClear()
+          const replacement = createFakeProcess(5252)
+          replaceServeOnKill(loaded, serveProc, replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(31_000)
+          await vi.advanceTimersByTimeAsync(2_000)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(eventMessages(loaded.logAutodocEvent)).toContain(STILL_STARTING)
+          expect(taskkillPids(loaded.spawnMock)).toContain('4242')
+          expect(serveSpawnCalls(loaded.spawnMock)).toHaveLength(2)
+          expect(stoppedByAppReasons(loaded.logAutodocEvent)).toContain('recover-unhealthy-runtime')
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('still replaces a recently ready serve that answers without waiting', async () => {
+        const { manager, loaded, serveProc, health, rootDir } = await startReadyManager()
+        try {
+          health.up = true
+          expect(manager.isServeStarting()).toBe(true)
+          loaded.logAutodocEvent.mockClear()
+          const replacement = createFakeProcess(5252)
+          replaceServeOnKill(loaded, serveProc, replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(1_500)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(eventMessages(loaded.logAutodocEvent)).not.toContain(STILL_STARTING)
+          expect(taskkillPids(loaded.spawnMock)).toContain('4242')
+          expect(serveSpawnCalls(loaded.spawnMock)).toHaveLength(2)
+          expect(stoppedByAppReasons(loaded.logAutodocEvent)).toContain('recover-unhealthy-runtime')
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+
+      it('replaces a non-answering serve that became ready more than 60s ago without waiting', async () => {
+        const { manager, loaded, serveProc, rootDir } = await startReadyManager()
+        try {
+          await vi.advanceTimersByTimeAsync(61_000)
+          expect(manager.isServeStarting()).toBe(false)
+          loaded.logAutodocEvent.mockClear()
+          const replacement = createFakeProcess(5252)
+          replaceServeOnKill(loaded, serveProc, replacement)
+
+          const recovery = manager.recoverUnhealthyRuntime()
+          await vi.advanceTimersByTimeAsync(1_500)
+          replacement.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+          await recovery
+
+          expect(eventMessages(loaded.logAutodocEvent)).not.toContain(STILL_STARTING)
+          expect(taskkillPids(loaded.spawnMock)).toContain('4242')
+          expect(stoppedByAppReasons(loaded.logAutodocEvent)).toContain('recover-unhealthy-runtime')
+        } finally {
+          await rm(rootDir, { recursive: true, force: true })
+        }
+      })
+    })
+
+    it('waitForStartingServe returns false when stop() lands mid-wait', async () => {
+      const { manager, rootDir } = await startReadyManager()
+      try {
+        const waiting = manager.waitForStartingServe()
+        await vi.advanceTimersByTimeAsync(1_000)
+        manager.stop()
+        await vi.advanceTimersByTimeAsync(2_000)
+        await expect(waiting).resolves.toBe(false)
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('kills the spawned PID when serve start times out', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-timeout-'))
     try {
@@ -1396,7 +1671,8 @@ describe('OllamaManager start lifecycle', () => {
           forceRespawn: false,
           isReadyServeProcess: true,
           running: false,
-          ownsPort: expect.any(Boolean)
+          ownsPort: expect.any(Boolean),
+          waitedForStart: false
         }
       })
       const spawnEvent = logAutodocEvent.mock.calls

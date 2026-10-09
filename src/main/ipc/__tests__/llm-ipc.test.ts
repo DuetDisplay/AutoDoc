@@ -21,6 +21,7 @@ function registerWith(
   lifecycle?: {
     captureLifecycleEpoch: () => number
     assertLifecycleEpoch: (epoch: number) => void
+    isServeStarting?: () => boolean
   },
   shouldDeferForcedRestart?: () => boolean
 ) {
@@ -33,6 +34,7 @@ function registerWith(
     } as never,
     {
       isServerRunning,
+      isServeStarting: lifecycle?.isServeStarting ?? (() => false),
       captureLifecycleEpoch: lifecycle?.captureLifecycleEpoch ?? (() => 0),
       assertLifecycleEpoch: lifecycle?.assertLifecycleEpoch ?? (() => {})
     } as never,
@@ -169,6 +171,43 @@ describe('registerLlmIpc', () => {
     expect(ensureOllamaRunning).toHaveBeenCalledTimes(2)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, undefined)
+  })
+
+  it('does not count or restart while a freshly started serve is still starting', async () => {
+    const ensureOllamaRunning = vi.fn()
+    let starting = true
+    const isServerRunning = vi.fn().mockResolvedValue(false)
+    registerWith(isServerRunning, ensureOllamaRunning, true, undefined, 'ready', {
+      captureLifecycleEpoch: () => 0,
+      assertLifecycleEpoch: () => {},
+      isServeStarting: () => starting
+    })
+
+    for (let i = 0; i < 4; i++) {
+      await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    }
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+
+    // Once the grace period ends, failed polls count from zero as usual.
+    starting = false
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+  })
+
+  it('does not force-restart a starting serve in the passive coordinated branch', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(vi.fn().mockResolvedValue(false), ensureOllamaRunning, false, undefined, 'ready', {
+      captureLifecycleEpoch: () => 0,
+      assertLifecycleEpoch: () => {},
+      isServeStarting: () => true
+    })
+
+    for (let i = 0; i < 3; i++) {
+      await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    }
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
   })
 
   it('does not restart from a stale status check after the manager is stopped', async () => {

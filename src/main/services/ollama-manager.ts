@@ -277,6 +277,14 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // itself within the next chunk once decode has degraded.
 export const EARLY_EXIT_AFTER_READY_MS = 60_000
 
+// A freshly started Ollama 0.30 serve prints "Listening on" and then spends
+// ~10 s (longer on slow GPUs or right after wake) discovering GPUs. /api/tags
+// does not answer meanwhile, so a healthy server looks dead. Give a serve the
+// app started itself time to finish before replacing it.
+export const STARTING_SERVE_GRACE_MS = 60_000
+export const STARTING_SERVE_WAIT_MS = 30_000
+export const STARTING_SERVE_POLL_MS = 2_000
+
 const RUNNER_RECYCLE_RSS_MIB_LARGE_HOST = 4864 // ~4.75 GiB on hosts with >= 20 GiB RAM
 const RUNNER_RECYCLE_RSS_MIB_SMALL_HOST = 4352 // ~4.25 GiB — low-RAM hosts hit swap sooner
 const RUNNER_RECYCLE_RSS_MIB_WIN_16G = 3584 // ~3.5 GiB — 16 GB boxes share RAM with GPU drivers
@@ -485,6 +493,13 @@ export class OllamaManager extends EventEmitter {
   private async runUnhealthyRecovery(): Promise<void> {
     const epoch = this.startEpoch
     this.assertStartEpoch(epoch)
+    // A serve that is not answering only because it is still discovering GPUs is healthy.
+    // A serve that answers is still recovered as before (for example a dead runner).
+    if (this.isServeStarting() && !(await this.isServerRunning())) {
+      const started = await this.waitForStartingServe()
+      this.assertStartEpoch(epoch)
+      if (started) return
+    }
     if (this.acceleratorDecision?.accelerator === 'vulkan') {
       this.latchCpuAccelerator('vulkan runner died; latched CPU for process lifetime')
     }
@@ -645,6 +660,55 @@ export class OllamaManager extends EventEmitter {
       return true
     } catch {
       return false
+    }
+  }
+
+  /**
+   * True while a serve this app started is alive, owns the port and became
+   * ready recently, so a failed health probe may only mean it is still
+   * discovering GPUs rather than being hung.
+   */
+  isServeStarting(): boolean {
+    const proc = this.process
+    if (!proc || proc.exitCode != null || proc.signalCode != null) return false
+    if (this.readyServeProcess !== proc) return false
+    if (this.readyAtMs == null || Date.now() - this.readyAtMs >= STARTING_SERVE_GRACE_MS) {
+      return false
+    }
+    return !IS_WIN || (proc.pid != null && this.getListeningPidsOnOllamaPort().includes(proc.pid))
+  }
+
+  /**
+   * Wait for a still-starting serve to start answering. Returns true once the
+   * server responds. Returns false immediately when no serve is starting, and
+   * after the timeout, when the process exits or stops being the ready serve,
+   * or when the lifecycle epoch changes.
+   */
+  async waitForStartingServe(timeoutMs = STARTING_SERVE_WAIT_MS): Promise<boolean> {
+    if (!this.isServeStarting()) return false
+    const proc = this.process
+    if (!proc) return false
+    const epoch = this.startEpoch
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama server still starting; waiting before replacing',
+      context: {
+        pid: proc.pid ?? null,
+        msSinceReady: this.readyAtMs != null ? Math.max(0, Date.now() - this.readyAtMs) : null
+      }
+    })
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return false
+      await new Promise((r) => setTimeout(r, Math.min(STARTING_SERVE_POLL_MS, remaining)))
+      if (!this.isStartEpochCurrent(epoch)) return false
+      if (!this.isCurrentLiveChild(proc) || this.readyServeProcess !== proc) return false
+      if (await this.isServerRunning()) {
+        if (!this.isStartEpochCurrent(epoch)) return false
+        if (!this.isCurrentLiveChild(proc) || this.readyServeProcess !== proc) return false
+        return true
+      }
     }
   }
 
@@ -1063,6 +1127,7 @@ export class OllamaManager extends EventEmitter {
       const isReadyServeProcess = this.readyServeProcess === tracked
       let running: boolean | null = null
       let ownsPort: boolean | null = null
+      let waitedForStart = false
       if (!options.forceRespawn && isReadyServeProcess) {
         running = await this.isServerRunning()
         this.assertStartEpoch(epoch)
@@ -1073,6 +1138,15 @@ export class OllamaManager extends EventEmitter {
           this.reapManagedLlamaServersOnce('adopt-existing-server')
           return
         }
+        if (!running && this.isServeStarting()) {
+          waitedForStart = true
+          const started = await this.waitForStartingServe()
+          this.assertStartEpoch(epoch)
+          if (started) {
+            this.reapManagedLlamaServersOnce('adopt-existing-server')
+            return
+          }
+        }
       }
       logAutodocEvent({
         area: 'ollama',
@@ -1082,7 +1156,8 @@ export class OllamaManager extends EventEmitter {
           forceRespawn: options.forceRespawn === true,
           isReadyServeProcess,
           running,
-          ownsPort
+          ownsPort,
+          waitedForStart
         }
       })
       const killed = await this.killProcessAndWait(tracked, 'replace-unadopted-server')

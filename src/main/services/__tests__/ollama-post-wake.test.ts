@@ -103,6 +103,97 @@ describe('ollama post-wake scheduler', () => {
     expect(checkOllama).toHaveBeenCalledTimes(2)
   })
 
+  it('succeeds without retry when the hold check finds a starting serve that then answers', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    const isServerRunning = vi.fn().mockResolvedValue(false)
+    const isServeStarting = vi.fn().mockReturnValue(true)
+    const waitForStartingServe = vi.fn().mockResolvedValue(true)
+    const onWakeSucceeded = vi.fn()
+    const onWakeFailed = vi.fn()
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      isServerRunning,
+      isServeStarting,
+      waitForStartingServe,
+      onWakeSucceeded,
+      onWakeFailed
+    })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS + OLLAMA_POST_WAKE_READY_HOLD_MS)
+
+    expect(waitForStartingServe).toHaveBeenCalledTimes(1)
+    expect(onWakeSucceeded).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[0])
+    expect(checkOllama).toHaveBeenCalledTimes(1)
+    expect(onWakeFailed).not.toHaveBeenCalled()
+    expect(scheduler.isActive()).toBe(false)
+  })
+
+  it('runs the normal retry path when the starting serve never answers', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    const waitForStartingServe = vi.fn().mockResolvedValue(false)
+    const onWakeSucceeded = vi.fn()
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      isServerRunning: vi.fn().mockResolvedValue(false),
+      isServeStarting: () => true,
+      waitForStartingServe,
+      onWakeSucceeded
+    })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS + OLLAMA_POST_WAKE_READY_HOLD_MS)
+    expect(waitForStartingServe).toHaveBeenCalledTimes(1)
+    expect(onWakeSucceeded).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_RETRY_DELAYS_MS[0])
+    expect(checkOllama).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not wait for a serve that is not starting', async () => {
+    const waitForStartingServe = vi.fn().mockResolvedValue(true)
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama: vi.fn().mockResolvedValue(undefined),
+      isServerRunning: vi.fn().mockResolvedValue(false),
+      isServeStarting: () => false,
+      waitForStartingServe
+    })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS + OLLAMA_POST_WAKE_READY_HOLD_MS)
+    expect(waitForStartingServe).not.toHaveBeenCalled()
+  })
+
+  it('lets a newer wake cancel a hold check that is waiting on a starting serve', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    let releaseWait!: (started: boolean) => void
+    const waitForStartingServe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseWait = resolve
+        })
+    )
+    const onWakeSucceeded = vi.fn()
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({
+      checkOllama,
+      isServerRunning: vi.fn().mockResolvedValue(false),
+      isServeStarting: () => true,
+      waitForStartingServe,
+      onWakeSucceeded
+    })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS + OLLAMA_POST_WAKE_READY_HOLD_MS)
+    expect(waitForStartingServe).toHaveBeenCalledTimes(1)
+
+    scheduler.scheduleAfterWake()
+    releaseWait(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(onWakeSucceeded).not.toHaveBeenCalled()
+  })
+
   it('starts a fresh 30s check when a new wake lands during retry', async () => {
     const checkOllama = vi.fn().mockRejectedValue(new Error('serve failed to start'))
     vi.useFakeTimers()
