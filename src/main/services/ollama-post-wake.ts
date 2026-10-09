@@ -3,6 +3,7 @@ export const OLLAMA_POST_WAKE_RETRY_DELAYS_MS = [60_000, 180_000] as const
 
 export interface OllamaPostWakeSchedulerOptions {
   checkOllama: () => Promise<void>
+  isPaused?: () => boolean
   setTimeoutFn?: typeof setTimeout
   clearTimeoutFn?: typeof clearTimeout
 }
@@ -36,12 +37,14 @@ export function createOllamaPostWakeScheduler(
     }, delayMs)
   }
 
+  const isPaused = (): boolean => options.isPaused?.() === true
+
   const runCheck = async (generation: number): Promise<void> => {
-    if (cancelled || generation !== wakeGeneration) return
+    if (cancelled || generation !== wakeGeneration || isPaused()) return
     try {
       await options.checkOllama()
     } catch {
-      if (cancelled || generation !== wakeGeneration) return
+      if (cancelled || generation !== wakeGeneration || isPaused()) return
       if (retryIndex >= OLLAMA_POST_WAKE_RETRY_DELAYS_MS.length) return
       const delayMs = OLLAMA_POST_WAKE_RETRY_DELAYS_MS[retryIndex]
       retryIndex += 1
@@ -51,7 +54,7 @@ export function createOllamaPostWakeScheduler(
 
   return {
     scheduleAfterWake(): void {
-      if (cancelled) return
+      if (cancelled || isPaused()) return
       wakeGeneration += 1
       retryIndex = 0
       schedule(OLLAMA_POST_WAKE_DELAY_MS, wakeGeneration)

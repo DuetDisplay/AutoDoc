@@ -46,6 +46,16 @@ describe('ollama post-wake scheduler', () => {
     expect(checkOllama).toHaveBeenCalledTimes(3)
   })
 
+  it('skips post-wake checks once background restarts are paused', async () => {
+    const checkOllama = vi.fn().mockResolvedValue(undefined)
+    const isPaused = vi.fn().mockReturnValue(true)
+    vi.useFakeTimers()
+    const scheduler = createOllamaPostWakeScheduler({ checkOllama, isPaused })
+    scheduler.scheduleAfterWake()
+    await vi.advanceTimersByTimeAsync(OLLAMA_POST_WAKE_DELAY_MS)
+    expect(checkOllama).not.toHaveBeenCalled()
+  })
+
   it('clears a pending check on cancel so quit does not restart Ollama', async () => {
     const checkOllama = vi.fn().mockResolvedValue(undefined)
     vi.useFakeTimers()

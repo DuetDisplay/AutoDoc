@@ -23,6 +23,10 @@ import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 import { getMsSinceLastResume } from './ollama-resume'
 import {
+  recordOllamaStartFailure,
+  recordOllamaStartSuccess
+} from './ollama-start-failures'
+import {
   selectOllamaAccelerator,
   shouldRecycleRunnerBetweenWriterChunks,
   type OllamaAccelerator,
@@ -1012,10 +1016,17 @@ export class OllamaManager extends EventEmitter {
     if (this.startPromise) {
       return this.startPromise
     }
-    const run = this.startServe(options, epoch).catch((error) => {
-      this.assertStartEpoch(epoch)
-      throw error
-    })
+    const run = this.startServe(options, epoch)
+      .then(() => {
+        recordOllamaStartSuccess()
+      })
+      .catch((error) => {
+        this.assertStartEpoch(epoch)
+        if (!isOllamaStartCancelledError(error)) {
+          recordOllamaStartFailure()
+        }
+        throw error
+      })
     const promise = run.finally(() => {
       if (this.startPromise === promise) {
         this.startPromise = null

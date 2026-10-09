@@ -15,9 +15,11 @@ function setPlatform(platform: NodeJS.Platform): void {
 interface LoadedOllamaManager {
   OllamaManager: typeof import('../ollama-manager').OllamaManager
   spawnMock: Mock
+  logAutodocEvent: Mock
   logAutodocFailure: Mock
   markOllamaResumed: typeof import('../ollama-resume').markOllamaResumed
   resetOllamaResumeClock: typeof import('../ollama-resume').resetOllamaResumeClock
+  areBackgroundOllamaRestartsPaused: typeof import('../ollama-start-failures').areBackgroundOllamaRestartsPaused
 }
 
 function createFakeProcess(pid: number): EventEmitter & {
@@ -56,6 +58,7 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
   setPlatform('win32')
   vi.resetModules()
   const spawnMock = vi.fn()
+  const logAutodocEvent = vi.fn()
   const logAutodocFailure = vi.fn()
   vi.doMock('electron', () => ({
     app: {
@@ -71,17 +74,20 @@ async function loadOllamaManager(rootDir: string): Promise<LoadedOllamaManager> 
     })
   }))
   vi.doMock('../autodoc-log', () => ({
-    logAutodocEvent: vi.fn(),
+    logAutodocEvent,
     logAutodocFailure
   }))
   const mod = await import('../ollama-manager')
   const resume = await import('../ollama-resume')
+  const startFailures = await import('../ollama-start-failures')
   return {
     OllamaManager: mod.OllamaManager,
     spawnMock,
+    logAutodocEvent,
     logAutodocFailure,
     markOllamaResumed: resume.markOllamaResumed,
-    resetOllamaResumeClock: resume.resetOllamaResumeClock
+    resetOllamaResumeClock: resume.resetOllamaResumeClock,
+    areBackgroundOllamaRestartsPaused: startFailures.areBackgroundOllamaRestartsPaused
   }
 }
 
@@ -1156,5 +1162,43 @@ describe('OllamaManager start lifecycle', () => {
 
     expect(await runExit(false)).toBeNull()
     expect(await runExit(true)).toBe(2_500)
+  })
+
+  it('pauses background restarts after five consecutive start failures', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-cap-'))
+    try {
+      const {
+        OllamaManager,
+        spawnMock,
+        logAutodocEvent,
+        areBackgroundOllamaRestartsPaused
+      } = await loadOllamaManager(rootDir)
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      for (let i = 0; i < 5; i++) {
+        const serveProc = createFakeProcess(4300 + i)
+        spawnMock.mockReturnValue(serveProc)
+        vi.useFakeTimers()
+        const started = manager.start({ forceRespawn: true })
+        const rejected = expect(started).rejects.toThrow(/code 1, signal null/)
+        await vi.advanceTimersByTimeAsync(1000)
+        serveProc.stderr.emit('data', Buffer.from('ggml_cuda_init: failed during GPU discovery\n'))
+        serveProc.exitCode = 1
+        serveProc.emit('exit', 1, null)
+        await rejected
+        vi.useRealTimers()
+      }
+
+      expect(areBackgroundOllamaRestartsPaused()).toBe(true)
+      expect(logAutodocEvent).toHaveBeenCalledWith({
+        area: 'ollama',
+        message: 'ollama restarts paused after repeated start failures'
+      })
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
   })
 })

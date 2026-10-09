@@ -117,6 +117,7 @@ import {
 } from './services/diagnostic-trail'
 import { createOllamaPostWakeScheduler } from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
+import { areBackgroundOllamaRestartsPaused } from './services/ollama-start-failures'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import {
   buildSingleInstanceLaunchData,
@@ -1228,6 +1229,7 @@ app.whenReady().then(async () => {
     throw lastError ?? new Error('Ollama recovery failed')
   }
   const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
+    if (areBackgroundOllamaRestartsPaused()) return
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
     try {
       managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
@@ -1262,7 +1264,8 @@ app.whenReady().then(async () => {
     }
   }
   ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
-    checkOllama: ensureOllamaRunningIfNeeded
+    checkOllama: ensureOllamaRunningIfNeeded,
+    isPaused: areBackgroundOllamaRestartsPaused
   })
   const scheduleOllamaCheckAfterWake = (): void => {
     if (isQuitting) return
