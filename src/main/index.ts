@@ -115,6 +115,7 @@ import {
   recordMainDiagnosticAction,
   recordRendererDiagnosticAction
 } from './services/diagnostic-trail'
+import { createOllamaPostWakeScheduler } from './services/ollama-post-wake'
 import { markOllamaResumed } from './services/ollama-resume'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
 import {
@@ -282,6 +283,7 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 }
 
 let ollamaManager: OllamaManager | null = null
+let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
 let isQuitting = false
 let mainSentry: MainSentryRuntimeModule | null = null
@@ -1100,18 +1102,14 @@ app.whenReady().then(async () => {
 
   // `force` is honored only by the Windows setup coordinator; the non-Windows
   // path keeps its existing single recovery flow unchanged.
-  const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
+  const startOllama = (options: { force?: boolean } = {}): Promise<void> => {
     if (windowsOllamaSetupCoordinator) {
-      void windowsOllamaSetupCoordinator
-        .ensureRunning(options)
-        .then(() => {
-          markOllamaSetupReady()
-        })
-        .catch(() => {})
-      return
+      return windowsOllamaSetupCoordinator.ensureRunning(options).then(() => {
+        markOllamaSetupReady()
+      })
     }
 
-    if (ollamaRecoveryPromise) return
+    if (ollamaRecoveryPromise) return ollamaRecoveryPromise
 
     managedOllamaManager.resetReady()
     markOllamaSetupStarting()
@@ -1123,10 +1121,16 @@ app.whenReady().then(async () => {
       })
       .catch((err) => {
         markOllamaSetupFailed(err)
+        throw err
       })
       .finally(() => {
         ollamaRecoveryPromise = null
       })
+    return ollamaRecoveryPromise
+  }
+
+  const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
+    void startOllama(options).catch(() => {})
   }
 
   const broadcastSegmentationDiagnostic = (payload: SegmentationDiagnosticPayload): void => {
@@ -1223,35 +1227,46 @@ app.whenReady().then(async () => {
     markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
     throw lastError ?? new Error('Ollama recovery failed')
   }
-  const ensureOllamaRunningIfNeeded = (): void => {
+  const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
     try {
       managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
     } catch {
       return
     }
-    void managedOllamaManager
-      .isServerRunning()
-      .then((running) => {
-        managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
-        if (running) {
-          if (windowsOllamaSetupCoordinator) {
-            ensureOllamaRunning()
-          } else {
-            markOllamaSetupReady()
-          }
-          return
+    try {
+      const running = await managedOllamaManager.isServerRunning()
+      managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+      if (running) {
+        if (windowsOllamaSetupCoordinator) {
+          ensureOllamaRunning()
+        } else {
+          markOllamaSetupReady()
         }
-        ensureOllamaRunning({ force: true })
+        return
+      }
+    } catch (error) {
+      if (isOllamaStartCancelledError(error)) return
+      logAutodocFailure({
+        area: 'ollama',
+        message: 'Failed to check Ollama after system resume',
+        error
       })
-      .catch((error) => {
-        if (isOllamaStartCancelledError(error)) return
-        logAutodocFailure({
-          area: 'ollama',
-          message: 'Failed to check Ollama after system resume',
-          error
-        })
-      })
+      throw error
+    }
+    try {
+      await startOllama({ force: true })
+    } catch (error) {
+      if (isOllamaStartCancelledError(error)) return
+      throw error
+    }
+  }
+  ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
+    checkOllama: ensureOllamaRunningIfNeeded
+  })
+  const scheduleOllamaCheckAfterWake = (): void => {
+    if (isQuitting) return
+    ollamaPostWakeScheduler?.scheduleAfterWake()
   }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
@@ -2194,13 +2209,13 @@ app.whenReady().then(async () => {
       powerMonitor.on('resume', () => {
         recordMainDiagnosticAction({ category: 'system', action: 'resume' })
         markOllamaResumed()
-        ensureOllamaRunningIfNeeded()
+        scheduleOllamaCheckAfterWake()
         recoverPendingWork()
       })
 
       powerMonitor.on('unlock-screen', () => {
         recordMainDiagnosticAction({ category: 'system', action: 'unlock-screen' })
-        ensureOllamaRunningIfNeeded()
+        scheduleOllamaCheckAfterWake()
         recoverPendingWork()
       })
 
@@ -2225,6 +2240,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  ollamaPostWakeScheduler?.cancel()
   ollamaManager?.stop()
   shutdownTranscriptionWorker?.()
   stopRecordingMediaHttpServer()
@@ -2233,6 +2249,7 @@ app.on('before-quit', () => {
   'before-quit-for-update',
   () => {
     isQuitting = true
+    ollamaPostWakeScheduler?.cancel()
   }
 )
 
