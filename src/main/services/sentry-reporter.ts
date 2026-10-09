@@ -8,6 +8,7 @@ export interface ErrorContext {
   tags?: Record<string, string>
   extra?: Record<string, unknown>
   diagnosticLogAttachment?: DiagnosticLogAttachment | null
+  fingerprint?: string[]
 }
 
 export interface MessageContext extends ErrorContext {
@@ -50,6 +51,7 @@ export function captureError(error: unknown, context: ErrorContext): void {
   currentSentry.withScope((scope) => {
     const attachmentAwareScope = scope as typeof scope & {
       addAttachment?: (attachment: { filename: string; contentType?: string; data: string }) => void
+      setFingerprint?: (fingerprint: string[]) => void
     }
     scope.setTag('area', context.area)
     if (context.meetingId) scope.setTag('meetingId', context.meetingId)
@@ -68,6 +70,9 @@ export function captureError(error: unknown, context: ErrorContext): void {
     }
     if (context.diagnosticLogAttachment) {
       attachmentAwareScope.addAttachment?.(context.diagnosticLogAttachment)
+    }
+    if (context.fingerprint) {
+      attachmentAwareScope.setFingerprint?.(context.fingerprint)
     }
 
     currentSentry.captureException(error instanceof Error ? error : new Error(String(error)))

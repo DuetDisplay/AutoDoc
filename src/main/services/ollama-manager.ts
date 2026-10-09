@@ -1273,7 +1273,8 @@ export class OllamaManager extends EventEmitter {
             area: 'ollama',
             message: 'ollama server process exited',
             error: exitError,
-            context: exitContext
+            context: exitContext,
+            fingerprint: ['ollama-server-exited', String(code)]
           })
         } else {
           logAutodocEvent({

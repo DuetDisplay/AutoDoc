@@ -28,6 +28,7 @@ interface LogEntryInput {
   error?: unknown
   meetingId?: string
   context?: Record<string, unknown>
+  fingerprint?: string[]
 }
 
 interface SerializedError {
@@ -69,7 +70,8 @@ export function logAutodocFailure(entry: LogEntryInput): void {
           error: serializedError,
           context: entry.context ?? null
         },
-        diagnosticLogAttachment
+        diagnosticLogAttachment,
+        fingerprint: entry.fingerprint
       })
     })
     .catch(() => {
@@ -80,7 +82,8 @@ export function logAutodocFailure(entry: LogEntryInput): void {
           message: entry.message,
           error: serializedError,
           context: entry.context ?? null
-        }
+        },
+        fingerprint: entry.fingerprint
       })
     })
 }
