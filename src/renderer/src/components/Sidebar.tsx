@@ -45,6 +45,8 @@ export function Sidebar() {
     'idle' | 'copying' | 'copied' | 'failed'
   >('idle')
   const supportRequestPendingRef = useRef(false)
+  const setupPhaseRef = useRef<string | null>(null)
+  setupPhaseRef.current = setupPhase
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
@@ -95,10 +97,24 @@ export function Sidebar() {
     const check = () => {
       window.electronAPI.invoke('ollama:check-status').then((connected) => {
         setOllamaConnected(connected)
-        if (connected) {
+        if (!connected) return
+        const forceReady = () => {
           setSetupPhase('ready')
           setSetupPercent(100)
         }
+        const phase = setupPhaseRef.current
+        if (phase === 'downloading' || phase === 'pulling') {
+          // The server is up during a model pull; defer to the authoritative setup state.
+          window.electronAPI
+            .invoke('ollama:get-setup-status')
+            .then((status) => {
+              setSetupPhase(status.phase)
+              setSetupPercent(status.percent)
+            })
+            .catch(forceReady)
+          return
+        }
+        forceReady()
       })
     }
     check()

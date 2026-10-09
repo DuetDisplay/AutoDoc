@@ -275,6 +275,64 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Starting Ollama runtime...')).not.toBeInTheDocument()
   })
 
+  describe('Ollama poll during setup', () => {
+    async function renderWithPoll(
+      setupStatusAfterPush: { phase: string; percent: number },
+      pushed: { phase: string; percent: number } | null
+    ) {
+      let resolveCheck: (v: boolean) => void = () => {}
+      const checkPromise = new Promise<boolean>((resolve) => {
+        resolveCheck = resolve
+      })
+      let setupCalls = 0
+      const api = createElectronApiMock({})
+      api.invoke.mockImplementation((channel: string) => {
+        if (channel === 'ollama:check-status') return checkPromise
+        if (channel === 'ollama:get-setup-status') {
+          setupCalls += 1
+          return Promise.resolve(setupCalls === 1 ? defaultSetupStatus : setupStatusAfterPush)
+        }
+        if (channel === 'whisper:get-setup-status') return Promise.resolve(defaultSetupStatus)
+        return Promise.resolve(undefined)
+      })
+      window.electronAPI = api as any
+      await renderSidebar()
+      if (pushed) {
+        await act(async () => {
+          api.emit('ollama:setup-progress', pushed)
+          await Promise.resolve()
+        })
+      }
+      await act(async () => {
+        resolveCheck(true)
+        await checkPromise
+        await Promise.resolve()
+      })
+    }
+
+    it('does not flash connected while the notes model is still pulling', async () => {
+      await renderWithPoll({ phase: 'pulling', percent: 41 }, { phase: 'pulling', percent: 40 })
+      await waitFor(() => {
+        expect(screen.getByText('Downloading notes model... 41%')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Ollama connected')).not.toBeInTheDocument()
+    })
+
+    it('shows connected when the authoritative status is ready after a pull', async () => {
+      await renderWithPoll({ phase: 'ready', percent: 100 }, { phase: 'pulling', percent: 40 })
+      await waitFor(() => {
+        expect(screen.getByText('Ollama connected')).toBeInTheDocument()
+      })
+    })
+
+    it('still forces connected from the poll during the starting phase', async () => {
+      await renderWithPoll({ phase: 'starting', percent: 0 }, { phase: 'starting', percent: 0 })
+      await waitFor(() => {
+        expect(screen.getByText('Ollama connected')).toBeInTheDocument()
+      })
+    })
+  })
+
   it('shows whisper download progress when downloading speech model', async () => {
     window.electronAPI = {
       send: vi.fn(),
