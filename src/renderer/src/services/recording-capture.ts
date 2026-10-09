@@ -388,14 +388,17 @@ async function disableVideoCapture(
     }
   )
 
+  const videoWasActive = capture.videoRecorder?.state !== 'inactive'
   await waitForRecorderStop(capture.videoRecorder, 'video')
-  trackSegmentEnd(
-    capture.pendingChunkWrites,
-    capture.meetingId,
-    'video',
-    capture.segmentIndex,
-    Math.max(0, Date.now() - capture.timelineOriginMs)
-  )
+  if (videoWasActive) {
+    trackSegmentEnd(
+      capture.pendingChunkWrites,
+      capture.meetingId,
+      'video',
+      capture.segmentIndex,
+      Math.max(0, Date.now() - capture.timelineOriginMs)
+    )
+  }
   capture.videoStream.getTracks().forEach((track) => track.stop())
 
   capture.cleanupMonitoring?.()
@@ -1276,18 +1279,21 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
     capture.cleanupMonitoring = null
 
     try {
+      const videoWasActive = capture.videoRecorder?.state !== 'inactive'
       await Promise.all([
         waitForRecorderStop(capture.videoRecorder, 'video'),
         waitForRecorderStop(capture.micRecorder, 'mic'),
         waitForRecorderStop(capture.systemRecorder, 'system')
       ])
-      trackSegmentEnd(
-        capture.pendingChunkWrites,
-        capture.meetingId,
-        'video',
-        capture.segmentIndex,
-        Math.max(0, Date.now() - capture.timelineOriginMs)
-      )
+      if (videoWasActive) {
+        trackSegmentEnd(
+          capture.pendingChunkWrites,
+          capture.meetingId,
+          'video',
+          capture.segmentIndex,
+          Math.max(0, Date.now() - capture.timelineOriginMs)
+        )
+      }
       await waitForPendingChunkWrites(capture.pendingChunkWrites)
     } finally {
       capture.videoStream.getTracks().forEach((t) => t.stop())
@@ -1682,14 +1688,17 @@ async function recoverVideoCapture(capture: CaptureHandles, reason: string): Pro
       expectedAudio
     })
 
+    const videoWasActive = capture.videoRecorder?.state !== 'inactive'
     await waitForRecorderStop(capture.videoRecorder, 'video')
-    trackSegmentEnd(
-      capture.pendingChunkWrites,
-      capture.meetingId,
-      'video',
-      capture.segmentIndex,
-      Math.max(0, Date.now() - capture.timelineOriginMs)
-    )
+    if (videoWasActive) {
+      trackSegmentEnd(
+        capture.pendingChunkWrites,
+        capture.meetingId,
+        'video',
+        capture.segmentIndex,
+        Math.max(0, Date.now() - capture.timelineOriginMs)
+      )
+    }
     capture.videoStream.getTracks().forEach((track) => track.stop())
 
     for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {

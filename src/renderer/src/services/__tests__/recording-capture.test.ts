@@ -1174,6 +1174,98 @@ describe('recording-capture', () => {
     await stopCapture()
   }, 30_000)
 
+  it('writes one video segment end when a normal recording stops', async () => {
+    const { startCapture, stopCapture } = await import('../recording-capture')
+
+    await startCapture('window:1', 'meeting-normal-end', 'Slack')
+    await vi.advanceTimersByTimeAsync(10_000)
+    await stopCapture()
+
+    expect(segmentEndCalls().filter((entry) => entry.type === 'video')).toEqual([
+      expect.objectContaining({ type: 'video', segmentIndex: 0, endOffsetMs: expect.any(Number) })
+    ])
+    expect(segmentEndCalls()[0]?.endOffsetMs).toBeGreaterThanOrEqual(10_000)
+  }, 30_000)
+
+  it('writes the disabled video end once and does not rewrite it on later stop', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let started = false
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      if (!started) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      return Promise.reject(new Error('NotReadableError: Could not start video source'))
+    })
+
+    const { setVideoDisabledHandler, startCapture, stopCapture } = await import(
+      '../recording-capture'
+    )
+    setVideoDisabledHandler(vi.fn().mockResolvedValue(undefined))
+
+    await startCapture('window:1', 'meeting-end-once', 'Zoom Meeting')
+    started = true
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(20_000)
+    await Promise.resolve()
+
+    const endsAfterFallback = segmentEndCalls().filter(
+      (entry) => entry.type === 'video' && entry.segmentIndex === 0
+    )
+    expect(endsAfterFallback).toHaveLength(1)
+
+    setVideoDisabledHandler(null)
+    await stopCapture()
+
+    expect(
+      segmentEndCalls().filter((entry) => entry.type === 'video' && entry.segmentIndex === 0)
+    ).toHaveLength(1)
+  }, 30_000)
+
+  it('records the video end from when the recorder stopped, not after failed retry delays', async () => {
+    let currentVideoTrack: MockTrack | null = null
+    let started = false
+
+    getUserMediaMock.mockImplementation((constraints: MediaStreamConstraints) => {
+      if (!started) {
+        const stream = createMockStreamForConstraints(constraints)
+        if (constraints.audio === false) {
+          currentVideoTrack = stream.getVideoTracks()[0] ?? null
+        }
+        return Promise.resolve(stream)
+      }
+
+      return Promise.reject(new Error('NotReadableError: Could not start video source'))
+    })
+
+    const { setVideoDisabledHandler, startCapture, stopCapture } = await import(
+      '../recording-capture'
+    )
+    setVideoDisabledHandler(vi.fn().mockResolvedValue(undefined))
+
+    await startCapture('window:1', 'meeting-end-time', 'Zoom Meeting')
+    started = true
+    await vi.advanceTimersByTimeAsync(50_000)
+    currentVideoTrack?.stop()
+    await vi.advanceTimersByTimeAsync(20_000)
+    await Promise.resolve()
+
+    const videoEnds = segmentEndCalls().filter(
+      (entry) => entry.type === 'video' && entry.segmentIndex === 0
+    )
+    expect(videoEnds).toHaveLength(1)
+    expect(videoEnds[0]?.endOffsetMs).toBeGreaterThanOrEqual(50_000)
+    expect(videoEnds[0]?.endOffsetMs).toBeLessThan(55_000)
+
+    setVideoDisabledHandler(null)
+    await stopCapture()
+  }, 30_000)
+
   it('falls back to audio-only after terminal video recovery failure instead of leaving a zombie', async () => {
     let currentVideoTrack: MockTrack | null = null
 
