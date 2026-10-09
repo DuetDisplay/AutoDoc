@@ -1205,6 +1205,211 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
+  it('logs a recovery kill of a fresh serve as stopped by app, not as a crash', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-kill-recover-'))
+    try {
+      const {
+        OllamaManager,
+        spawnMock,
+        logAutodocEvent,
+        logAutodocFailure,
+        getOllamaStartFailureStreak
+      } = await loadOllamaManager(rootDir)
+      const oldProc = createFakeProcess(4242)
+      const newProc = createFakeProcess(4343)
+      const serves = [oldProc, newProc]
+      spawnMock.mockImplementation((cmd: string) => {
+        if (cmd === 'taskkill') {
+          const killer = createFakeProcess(1)
+          queueMicrotask(() => {
+            // Windows taskkill /f /t makes the killed serve exit with code 1.
+            oldProc.exitCode = 1
+            oldProc.emit('exit', 1, null)
+            killer.exitCode = 0
+            killer.emit('exit', 0, null)
+          })
+          return killer
+        }
+        return serves.shift()
+      })
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      vi.spyOn(manager, 'reapLeftoverRunners').mockReturnValue(undefined)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      oldProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      const recovered = manager.recoverUnhealthyRuntime()
+      await vi.advanceTimersByTimeAsync(1000)
+      newProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await recovered
+
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+      expect(getOllamaStartFailureStreak()).toBe(0)
+      const stopped = logAutodocEvent.mock.calls
+        .map((call) => call[0] as { message: string; context: Record<string, unknown> })
+        .filter((event) => event.message === 'ollama server process stopped by app')
+      expect(stopped).toHaveLength(1)
+      expect(stopped[0].context).toMatchObject({
+        reason: 'recover-unhealthy-runtime',
+        exitCode: 1,
+        pid: 4242,
+        earlyExitAfterReady: false,
+        msSinceReady: 10_000
+      })
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('logs stop() of a ready serve as stopped by app with reason stop', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-kill-stop-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocEvent, logAutodocFailure } =
+        await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockImplementation((cmd: string) => {
+        if (cmd === 'taskkill') {
+          const killer = createFakeProcess(1)
+          queueMicrotask(() => {
+            serveProc.exitCode = 1
+            serveProc.emit('exit', 1, null)
+            killer.exitCode = 0
+            killer.emit('exit', 0, null)
+          })
+          return killer
+        }
+        return serveProc
+      })
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      manager.stop()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+      expect(logAutodocEvent).toHaveBeenCalledWith({
+        area: 'ollama',
+        message: 'ollama server process stopped by app',
+        context: expect.objectContaining({ reason: 'stop', exitCode: 1, pid: 4242 })
+      })
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks the tracked serve as app-killed before killProcessOnPort can take it out', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-kill-port-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocEvent, logAutodocFailure } =
+        await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+
+      // Isolate the port sweep: the direct kill does nothing, and the sweep (which finds the
+      // tracked PID listening on the port) is what makes the serve exit with code 1.
+      vi.spyOn(manager as never, 'killProcessAndWait').mockResolvedValue(true as never)
+      vi.spyOn(manager as never, 'killProcessOnPort').mockImplementation(() => {
+        serveProc.exitCode = 1
+        serveProc.emit('exit', 1, null)
+      })
+      manager.stop()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(logAutodocFailure).not.toHaveBeenCalled()
+      expect(logAutodocEvent).toHaveBeenCalledWith({
+        area: 'ollama',
+        message: 'ollama server process stopped by app',
+        context: expect.objectContaining({ reason: 'stop', exitCode: 1 })
+      })
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('logs a tracked serve that is not adopted before replacing it', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-not-adopted-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocEvent } = await loadOllamaManager(rootDir)
+      const oldProc = createFakeProcess(4242)
+      const newProc = createFakeProcess(4343)
+      spawnMock.mockImplementation((cmd: string) => {
+        if (cmd === 'taskkill') {
+          const killer = createFakeProcess(1)
+          queueMicrotask(() => {
+            oldProc.exitCode = 1
+            oldProc.emit('exit', 1, null)
+            killer.exitCode = 0
+            killer.emit('exit', 0, null)
+          })
+          return killer
+        }
+        return newProc
+      })
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+      ;(manager as unknown as { process: typeof oldProc }).process = oldProc
+      ;(manager as unknown as { readyServeProcess: typeof oldProc }).readyServeProcess = oldProc
+
+      vi.useFakeTimers()
+      // Ready tracked serve, but the server does not answer: running=false, ownsPort=true.
+      const started = manager.start()
+      await vi.advanceTimersByTimeAsync(1000)
+      newProc.stderr.emit('data', Buffer.from('Listening on 127.0.0.1:11435\n'))
+      await started
+
+      expect(logAutodocEvent).toHaveBeenCalledWith({
+        area: 'ollama',
+        message: 'ollama server not adopted; replacing',
+        context: {
+          pid: 4242,
+          forceRespawn: false,
+          isReadyServeProcess: true,
+          running: false,
+          ownsPort: expect.any(Boolean)
+        }
+      })
+      const spawnEvent = logAutodocEvent.mock.calls
+        .map((call) => call[0] as { message: string; context: Record<string, unknown> })
+        .find((event) => event.message === 'ollama server spawn attempt')
+      expect(spawnEvent?.context).toMatchObject({ pid: 4343 })
+      expect(typeof spawnEvent?.context.modelsDir).toBe('string')
+    } finally {
+      vi.useRealTimers()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('does not count a non-zero exit 2 minutes after ready as a start failure', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-late-exit-'))
     try {

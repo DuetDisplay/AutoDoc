@@ -1227,11 +1227,31 @@ app.whenReady().then(async () => {
           return
         }
         lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
+        logAutodocEvent({
+          area: 'ollama',
+          message: 'ollama recovery attempt not ready',
+          context: {
+            attempt: attemptIndex + 1,
+            serverRunning,
+            hasNotesModel,
+            error: null
+          }
+        })
       } catch (error) {
         if (isOllamaStartCancelledError(error)) {
           throw error
         }
         lastError = error instanceof Error ? error : new Error(String(error))
+        logAutodocEvent({
+          area: 'ollama',
+          message: 'ollama recovery attempt not ready',
+          context: {
+            attempt: attemptIndex + 1,
+            serverRunning: null,
+            hasNotesModel: null,
+            error: lastError.message
+          }
+        })
       }
     }
     markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))

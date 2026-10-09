@@ -53,6 +53,14 @@ const TEST_OLLAMA_SETUP_SEQUENCE =
         .filter(Boolean)
     : []
 
+/** Why the app itself killed an Ollama serve process (as opposed to it crashing). */
+type OllamaKillReason =
+  | 'stop'
+  | 'recover-unhealthy-runtime'
+  | 'replace-unadopted-server'
+  | 'start-cancelled'
+  | 'start-timeout'
+
 type PreferredModelResolver = () => string | null | undefined | Promise<string | null | undefined>
 
 export interface OllamaManagerOptions {
@@ -308,6 +316,9 @@ export function parseWindowsNetstatListeningPids(output: string): number[] {
 
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
+  // Serve processes the app deliberately killed. On Windows `taskkill /f /t` always makes
+  // the process exit with code 1, so the exit handler uses this to tell those apart from crashes.
+  private intentionalKillReasons = new WeakMap<ChildProcess, OllamaKillReason>()
   private model: string
   private preferredModel: string
   private resolveModel: PreferredModelResolver | null
@@ -497,7 +508,7 @@ export class OllamaManager extends EventEmitter {
   ): Promise<void> {
     this.assertStartEpoch(epoch)
     if (previousProc) {
-      const killed = await this.killProcessAndWait(previousProc)
+      const killed = await this.killProcessAndWait(previousProc, 'recover-unhealthy-runtime')
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -512,6 +523,7 @@ export class OllamaManager extends EventEmitter {
       }
     }
     this.assertStartEpoch(epoch)
+    this.markTrackedProcessKilledByApp('recover-unhealthy-runtime')
     this.killProcessOnPort()
     this.killManagedLlamaServers()
     this.didReapAdoptedRunners = false
@@ -1048,10 +1060,13 @@ export class OllamaManager extends EventEmitter {
 
     const tracked = this.process
     if (tracked && tracked.exitCode == null && tracked.signalCode == null) {
-      if (!options.forceRespawn && this.readyServeProcess === tracked) {
-        const running = await this.isServerRunning()
+      const isReadyServeProcess = this.readyServeProcess === tracked
+      let running: boolean | null = null
+      let ownsPort: boolean | null = null
+      if (!options.forceRespawn && isReadyServeProcess) {
+        running = await this.isServerRunning()
         this.assertStartEpoch(epoch)
-        const ownsPort =
+        ownsPort =
           !IS_WIN ||
           (tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid))
         if (running && ownsPort) {
@@ -1059,7 +1074,18 @@ export class OllamaManager extends EventEmitter {
           return
         }
       }
-      const killed = await this.killProcessAndWait(tracked)
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama server not adopted; replacing',
+        context: {
+          pid: tracked.pid ?? null,
+          forceRespawn: options.forceRespawn === true,
+          isReadyServeProcess,
+          running,
+          ownsPort
+        }
+      })
+      const killed = await this.killProcessAndWait(tracked, 'replace-unadopted-server')
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -1091,6 +1117,15 @@ export class OllamaManager extends EventEmitter {
     }
 
     // Kill any orphaned process holding our port from a previous app session
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama server clearing port before spawn',
+      context: {
+        reason: options.forceRespawn ? 'force-respawn' : 'no-responsive-server',
+        forceRespawn: options.forceRespawn === true
+      }
+    })
+    this.markTrackedProcessKilledByApp('replace-unadopted-server')
     this.killProcessOnPort()
     this.reapManagedLlamaServersOnce('replace-orphaned-server')
     await new Promise((r) => setTimeout(r, 1000))
@@ -1111,11 +1146,12 @@ export class OllamaManager extends EventEmitter {
 
     this.assertStartEpoch(epoch)
 
+    const modelsDir = this.getOllamaDataDir()
     const proc = spawn(binary, ['serve'], {
       env: {
         ...process.env,
         OLLAMA_HOST: OLLAMA_HOST,
-        OLLAMA_MODELS: this.getOllamaDataDir(),
+        OLLAMA_MODELS: modelsDir,
         ...decision.env
       },
       stdio: ['ignore', 'pipe', 'pipe']
@@ -1125,11 +1161,11 @@ export class OllamaManager extends EventEmitter {
     logAutodocEvent({
       area: 'ollama',
       message: 'ollama server spawn attempt',
-      context: { binaryPath: binary, pid: proc.pid ?? null }
+      context: { binaryPath: binary, pid: proc.pid ?? null, modelsDir }
     })
 
     if (this.startEpoch !== epoch) {
-      const killed = await this.killProcessAndWait(proc)
+      const killed = await this.killProcessAndWait(proc, 'start-cancelled')
       if (killed && this.process === proc) {
         this.process = null
       }
@@ -1180,7 +1216,7 @@ export class OllamaManager extends EventEmitter {
           error: new Error('Ollama server failed to start within 30 seconds'),
           context: { timeoutMs: 30_000, binaryPath: binary, pid: proc.pid ?? null }
         })
-        void this.killProcessAndWait(proc).then((killed) => {
+        void this.killProcessAndWait(proc, 'start-timeout').then((killed) => {
           if (killed) {
             if (this.process === proc) {
               this.process = null
@@ -1269,7 +1305,9 @@ export class OllamaManager extends EventEmitter {
         const wasReadyProc = this.readyServeProcess === proc
         const msSinceReady =
           wasReadyProc && this.readyAtMs != null ? Math.max(0, Date.now() - this.readyAtMs) : null
+        const intentionalKillReason = this.intentionalKillReasons.get(proc) ?? null
         const earlyExitAfterReady =
+          intentionalKillReason == null &&
           code !== null &&
           code !== 0 &&
           msSinceReady != null &&
@@ -1303,7 +1341,15 @@ export class OllamaManager extends EventEmitter {
                 `Ollama exited with code ${code}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
               )
             : null
-        if (exitError) {
+        if (intentionalKillReason != null) {
+          // The app killed this serve itself (Windows taskkill always exits with code 1), so it
+          // is not a crash and must not reach the AUTODOC-8 failure stream.
+          logAutodocEvent({
+            area: 'ollama',
+            message: 'ollama server process stopped by app',
+            context: { ...exitContext, reason: intentionalKillReason }
+          })
+        } else if (exitError) {
           logAutodocFailure({
             area: 'ollama',
             message: 'ollama server process exited',
@@ -1345,7 +1391,7 @@ export class OllamaManager extends EventEmitter {
     this.readyAtMs = null
     this.clearServeStableTimer()
     if (proc) {
-      void this.killProcessAndWait(proc).then((killed) => {
+      void this.killProcessAndWait(proc, 'stop').then((killed) => {
         if (killed && this.process === proc) {
           this.process = null
         }
@@ -1360,6 +1406,7 @@ export class OllamaManager extends EventEmitter {
       })
     }
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
+    this.markTrackedProcessKilledByApp('stop')
     this.killProcessOnPort()
     this.killManagedLlamaServers()
     this.didReapAdoptedRunners = false
@@ -1463,7 +1510,26 @@ export class OllamaManager extends EventEmitter {
     })
   }
 
-  private async killProcessAndWait(proc: ChildProcess): Promise<boolean> {
+  private markIntentionalKill(proc: ChildProcess, reason: OllamaKillReason): void {
+    if (!this.intentionalKillReasons.has(proc)) {
+      this.intentionalKillReasons.set(proc, reason)
+    }
+  }
+
+  /**
+   * killProcessOnPort() and killProcessByPid can take out our tracked serve too, since its PID
+   * listens on the port. Mark it first so its exit is not reported as a crash.
+   */
+  private markTrackedProcessKilledByApp(reason: OllamaKillReason): void {
+    const tracked = this.process
+    if (tracked && tracked.exitCode == null && tracked.signalCode == null) {
+      this.markIntentionalKill(tracked, reason)
+    }
+  }
+
+  private async killProcessAndWait(proc: ChildProcess, reason: OllamaKillReason): Promise<boolean> {
+    // Record before killing so the exit handler can read it regardless of event ordering.
+    this.markIntentionalKill(proc, reason)
     if (proc.pid != null) {
       await this.killProcessByPid(proc.pid)
     } else if (!IS_WIN) {
