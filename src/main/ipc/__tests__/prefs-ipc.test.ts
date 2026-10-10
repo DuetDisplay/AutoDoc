@@ -36,6 +36,11 @@ import { PrefsStore } from '../../services/prefs-store'
 import { meetingLanguageNeedsMemoryMessage, registerPrefsIpc } from '../prefs-ipc'
 import { BrowserWindow, ipcMain } from 'electron'
 import { meetingLanguageAvailability } from '../../../shared/meeting-language'
+import {
+  bindWindowsNotesModelSource,
+  currentMeetingLanguageAvailability,
+  type WindowsNotesModelProfile
+} from '../../services/meeting-language-availability'
 
 describe('PrefsStore', () => {
   let store: PrefsStore
@@ -70,6 +75,61 @@ describe('PrefsStore', () => {
     persisted.set('meetingLanguageAnnouncementDismissed', false)
     store.confirmOnboardingLanguage()
     expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
+  })
+
+  it.each([true, false])(
+    'gates the language announcement when restricted=%s',
+    async (restricted) => {
+      vi.mocked(Store).mock.results.at(-1)!.value.set('onboardingComplete', true)
+      registerPrefsIpc(store, undefined, undefined, undefined, () =>
+        meetingLanguageAvailability(restricted)
+      )
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(
+          ([channel]) => channel === 'prefs:get-meeting-language-announcement-pending'
+        )!
+      const pending = registration[1] as unknown as () => Promise<boolean>
+
+      await expect(pending()).resolves.toBe(!restricted)
+      expect(store.isMeetingLanguageAnnouncementPending()).toBe(true)
+    }
+  )
+
+  it('waits for Windows hardware detection before deciding to announce languages', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    let profile: WindowsNotesModelProfile | null = null
+    let finishDetection!: () => void
+    const ready = new Promise<void>((resolve) => {
+      finishDetection = resolve
+    })
+    bindWindowsNotesModelSource(
+      () => profile,
+      () => ready
+    )
+    try {
+      vi.mocked(Store).mock.results.at(-1)!.value.set('onboardingComplete', true)
+      const availability = vi.fn(() => currentMeetingLanguageAvailability())
+      registerPrefsIpc(store, undefined, undefined, undefined, availability)
+      const registration = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.findLast(
+          ([channel]) => channel === 'prefs:get-meeting-language-announcement-pending'
+        )!
+      const pending = (registration[1] as unknown as () => Promise<boolean>)()
+
+      expect(availability).not.toHaveBeenCalled()
+      profile = {
+        id: 'win-low-spec',
+        hardware: { logicalProcessors: 4, totalMemoryGiB: 8, freeMemoryGiB: 2 }
+      }
+      finishDetection()
+      await expect(pending).resolves.toBe(false)
+    } finally {
+      finishDetection()
+      bindWindowsNotesModelSource(() => null)
+      platform.mockRestore()
+    }
   })
 
   it('tracks language-step confirmation separately from the shared language preference', () => {

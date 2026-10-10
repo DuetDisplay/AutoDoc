@@ -62,12 +62,13 @@ export function registerPrefsIpc(
     prefsStore.getOnboardingLanguageConfirmed()
   )
   ipcMain.handle('prefs:confirm-onboarding-language', () => prefsStore.confirmOnboardingLanguage())
-  ipcMain.handle(
-    'prefs:get-meeting-language-announcement-pending',
-    () =>
+  ipcMain.handle('prefs:get-meeting-language-announcement-pending', async (): Promise<boolean> => {
+    await waitForWindowsNotesModel()
+    return (
       prefsStore.isMeetingLanguageAnnouncementPending() &&
       !getMeetingLanguageAvailability().restricted
-  )
+    )
+  })
   ipcMain.handle('prefs:dismiss-meeting-language-announcement', () =>
     prefsStore.dismissMeetingLanguageAnnouncement()
   )
