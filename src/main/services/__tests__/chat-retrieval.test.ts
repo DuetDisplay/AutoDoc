@@ -816,6 +816,32 @@ describe('ChatRecordingIndex', () => {
     expect(result.diagnostics.selectedMeetingIds).toEqual(['newer-huddle', 'older-huddle'])
   })
 
+  it.each(['Moncloa', '予算'])('keeps strong single-topic matches focused on %s', async (topic) => {
+    const baseDir = await createTempRecordingsDir()
+    await createRecording(baseDir, 'topic', {
+      startedAt: Date.now(),
+      sourceName: 'Recorded speech',
+      segments: createSegmentsFromItems({
+        discussion: Array.from({ length: 5 }, (_, index) => ({
+          title: `${topic} ${index}`,
+          content: `${topic}: detail ${index}`
+        }))
+      })
+    })
+    await createRecording(baseDir, 'other', {
+      startedAt: Date.now(),
+      sourceName: 'Unrelated recording',
+      notes: '公园占地19500平方公里。'
+    })
+    const embeddings = new FakeEmbeddingProvider()
+    const index = new ChatRecordingIndex(baseDir, { embeddingProvider: embeddings })
+    const result = await index.buildContext(`Tell me about ${topic}`, [])
+
+    expect(result.diagnostics.selectedMeetingIds).toEqual(['topic'])
+    expect(embeddings.embedCalls).toEqual([])
+    expect(result.context).not.toContain('Unrelated recording')
+  })
+
   it('uses semantic embeddings to retrieve paraphrased meeting questions', async () => {
     const baseDir = await createTempRecordingsDir()
     const startedAt = new Date(2026, 4, 27, 10, 0).getTime()

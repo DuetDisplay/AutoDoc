@@ -2491,10 +2491,8 @@ function hasStrongLexicalRetrievalSignal(
   if (!top || top.lexicalScore < 18) return false
 
   const subject = stripQuestionScaffolding(normalizeRecordingSearchText(question))
-  const terms = subject
-    .split(' ')
-    .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term))
-  if (terms.length < 2) return false
+  const terms = extractQuestionTerms(subject)
+  if (terms.length === 0) return false
 
   const topText = `${top.meeting.title} ${top.summary.searchText}`
   if (subjectTermCoverage(topText, subject) < 0.6) return false

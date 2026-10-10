@@ -267,9 +267,9 @@ describe('chat meeting retrieval helpers', () => {
   })
 
   it.each([
-    ['es', 'Spanish', 'Tienes 0 grabaciones.'],
-    ['de', 'German', 'Du hast 0 Aufnahmen.'],
-    ['ja', 'Japanese', '録音は0件です。']
+    ['es', 'Spanish', '¡Hola!'],
+    ['de', 'German', 'Hallo!'],
+    ['ja', 'Japanese', 'こんにちは！']
   ])(
     'localizes deterministic answers in the current %s preference',
     async (code, label, answer) => {
@@ -293,16 +293,15 @@ describe('chat meeting retrieval helpers', () => {
       const send = vi
         .mocked(ipcMain.handle)
         .mock.calls.find(([channel]) => channel === 'chat:send')![1]
-      expect(await send({} as never, 'How many recordings do I have?')).toBe(
-        'You have 0 recordings.'
-      )
+      const english = await send({} as never, 'Hello')
+      expect(english).toContain('Hi!')
       expect(fetchMock).not.toHaveBeenCalled()
       language = code
-      expect(await send({} as never, 'How many recordings do I have?')).toBe(answer)
+      expect(await send({} as never, 'Hello')).toBe(answer)
       const request = JSON.parse(fetchMock.mock.calls[0][1].body)
       expect(request.messages[0].content).toContain(`entire answer in ${label}`)
-      expect(request.messages[1].content).toContain('You have 0 recordings.')
-      expect(request.messages[1].content).toContain('Preserve every fact, number')
+      expect(request.messages[1].content).toBe(english)
+      expect(request.messages[0].content).toContain('Preserve every fact, number')
     }
   )
 
@@ -341,13 +340,40 @@ describe('chat meeting retrieval helpers', () => {
     await send({ sender } as never, 'req-es', '¿Cuántas grabaciones tengo?')
     expect(sender.send).toHaveBeenCalledWith('chat:done', {
       requestId: 'req-es',
-      content: 'Tienes 0 grabaciones.',
+      content: 'Grabaciones: 0',
       clarificationOptions: undefined
     })
-    const answer = JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))
-    expect(answer.messages[1].content).toContain('You have 0 recordings.')
-    expect(answer.messages[0].content).toContain('entire answer in Spanish')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it.each([
+    ['da', 'Optagelser: 0'],
+    ['et', 'Salvestused: 0'],
+    ['el', 'Ηχογραφήσεις: 0'],
+    ['lv', 'Ieraksti: 0']
+  ])(
+    'returns a reliable %s recording count without model translation',
+    async (language, answer) => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      registerChatIpc(
+        await createTempRecordingsDir(),
+        {
+          waitUntilReady: vi.fn(),
+          isServerRunning: vi.fn(),
+          getBaseUrl: () => 'http://localhost:11434'
+        },
+        { getModel: () => 'fake-model' } as never,
+        { fetchAllRecentEvents: vi.fn(), fetchAllUpcomingEvents: vi.fn() } as never,
+        () => language
+      )
+      const send = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.find(([channel]) => channel === 'chat:send')![1]
+      expect(await send({} as never, 'How many recordings do I have?')).toBe(answer)
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps Japanese and accented search terms and ranks matching notes', () => {
     expect(extractQuestionTerms('予算について教えて')).toContain('予算')
@@ -361,76 +387,83 @@ describe('chat meeting retrieval helpers', () => {
     ).toBeGreaterThan(scoreMeetingRelevance('設計会議', '予算について教えて', '色を変更する'))
   })
 
-  it('uses the selected language for streaming answers after a Japanese search', async () => {
-    const baseDir = await createTempRecordingsDir()
-    await createRecording(baseDir, 'budget', {
-      startedAt: Date.now(),
-      sourceName: '予算会議',
-      notes: '来月の予算は500万円です。'
-    })
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body))
-      if (!body.stream)
+  it.each([false, true])(
+    'streams Japanese answers with oversized context=%s',
+    async (oversized) => {
+      const baseDir = await createTempRecordingsDir()
+      await createRecording(baseDir, 'budget', {
+        startedAt: Date.now(),
+        sourceName: '予算会議',
+        notes: '来月の予算は500万円です。' + (oversized ? '予算の詳細な説明。'.repeat(2000) : '')
+      })
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        if (!body.stream)
+          return {
+            ok: true,
+            json: async () => ({
+              message: {
+                content: JSON.stringify({
+                  retrievalQuestion: 'What was said about 予算?',
+                  needsCalendar: false,
+                  needsRecordings: true,
+                  timeRange: 'none',
+                  recordingSearchQuery: '予算',
+                  evidenceMode: 'notes',
+                  reason: 'content'
+                })
+              }
+            })
+          } as Response
         return {
           ok: true,
-          json: async () => ({
-            message: {
-              content: JSON.stringify({
-                retrievalQuestion: 'Tell me about 予算',
-                needsCalendar: false,
-                needsRecordings: true,
-                timeRange: 'none',
-                recordingSearchQuery: '予算',
-                evidenceMode: 'notes',
-                reason: 'content'
-              })
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({ message: { content: '予算は500万円です。' } }) + '\n'
+                )
+              )
+              controller.close()
             }
           })
         } as Response
-      return {
-        ok: true,
-        body: new ReadableStream({
-          start(controller) {
-            controller.enqueue(
-              new TextEncoder().encode(
-                JSON.stringify({ message: { content: '予算は500万円です。' } }) + '\n'
-              )
-            )
-            controller.close()
-          }
-        })
-      } as Response
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    registerChatIpc(
-      baseDir,
-      {
-        waitUntilReady: vi.fn(),
-        isServerRunning: vi.fn(),
-        getBaseUrl: () => 'http://localhost:11434'
-      },
-      { getModel: () => 'fake-model' } as never,
-      {
-        fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
-        fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
-      } as never,
-      () => 'ja'
-    )
-    const send = vi
-      .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'chat:send-stream')![1]
-    const sender = { id: 501, send: vi.fn() }
-    await send({ sender } as never, 'req-ja', '予算について教えて')
-    const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
-    const answer = requests.find((request) => request.stream)
-    expect(answer).toBeDefined()
-    expect(answer.messages[0].content).toContain('entire answer in Japanese')
-    expect(answer.messages[1].content).toContain('500万円')
-    expect(sender.send).toHaveBeenCalledWith('chat:done', {
-      requestId: 'req-ja',
-      content: '予算は500万円です。'
-    })
-  })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      registerChatIpc(
+        baseDir,
+        {
+          waitUntilReady: vi.fn(),
+          isServerRunning: vi.fn(),
+          getBaseUrl: () => 'http://localhost:11434'
+        },
+        { getModel: () => 'fake-model' } as never,
+        {
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([]),
+          fetchAllUpcomingEvents: vi.fn().mockResolvedValue([])
+        } as never,
+        () => 'ja'
+      )
+      const send = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.find(([channel]) => channel === 'chat:send-stream')![1]
+      const sender = { id: 501, send: vi.fn() }
+      await send({ sender } as never, 'req-ja', '予算について教えて')
+      const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+      const answer = requests.find((request) => request.stream)
+      expect(answer).toBeDefined()
+      expect(answer.messages[0].content).toContain('entire answer in Japanese')
+      expect(answer.messages[1].content).toContain('500万円')
+      if (oversized) {
+        expect(answer.messages[1].content).toContain('[Context truncated.')
+        expect(answer.messages[1].content.length).toBeLessThan(3000)
+      }
+      expect(sender.send).toHaveBeenCalledWith('chat:done', {
+        requestId: 'req-ja',
+        content: '予算は500万円です。'
+      })
+    }
+  )
 
   it('answers direct inventory questions without waiting on Ollama or calendar', async () => {
     const waitUntilReady = vi.fn()
