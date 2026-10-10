@@ -62,6 +62,15 @@ export function registerPrefsIpc(
     prefsStore.getOnboardingLanguageConfirmed()
   )
   ipcMain.handle('prefs:confirm-onboarding-language', () => prefsStore.confirmOnboardingLanguage())
+  ipcMain.handle(
+    'prefs:get-meeting-language-announcement-pending',
+    () =>
+      prefsStore.isMeetingLanguageAnnouncementPending() &&
+      !getMeetingLanguageAvailability().restricted
+  )
+  ipcMain.handle('prefs:dismiss-meeting-language-announcement', () =>
+    prefsStore.dismissMeetingLanguageAnnouncement()
+  )
   ipcMain.handle('app:get-locale', () => app.getLocale())
 
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {

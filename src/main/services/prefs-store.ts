@@ -12,6 +12,7 @@ const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 interface PrefsSchema {
   onboardingComplete: boolean
   onboardingLanguageConfirmed: boolean
+  meetingLanguageAnnouncementDismissed: boolean
   onboardingStep: number
   onboardingMicSettingsOpened: boolean
   onboardingScreenSettingsOpened: boolean
@@ -32,6 +33,7 @@ function createPrefsStore(): Store<PrefsSchema> {
     defaults: {
       onboardingComplete: false,
       onboardingLanguageConfirmed: false,
+      meetingLanguageAnnouncementDismissed: false,
       onboardingStep: 0,
       onboardingMicSettingsOpened: false,
       onboardingScreenSettingsOpened: false,
@@ -73,6 +75,7 @@ export class PrefsStore {
 
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
+    this.dismissMeetingLanguageAnnouncement()
     this.store.set('onboardingStep', 0)
     this.store.set('onboardingMicSettingsOpened', false)
     this.store.set('onboardingScreenSettingsOpened', false)
@@ -86,6 +89,18 @@ export class PrefsStore {
 
   confirmOnboardingLanguage(): void {
     this.store.set('onboardingLanguageConfirmed', true)
+  }
+
+  isMeetingLanguageAnnouncementPending(): boolean {
+    return (
+      this.isOnboardingComplete() &&
+      !this.getOnboardingLanguageConfirmed() &&
+      !this.store.get('meetingLanguageAnnouncementDismissed')
+    )
+  }
+
+  dismissMeetingLanguageAnnouncement(): void {
+    this.store.set('meetingLanguageAnnouncementDismissed', true)
   }
 
   getOnboardingStep(): number {

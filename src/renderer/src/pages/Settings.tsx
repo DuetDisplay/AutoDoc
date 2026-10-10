@@ -65,6 +65,19 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
 }
 
 export function Settings() {
+  const meetingLanguageSection = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const focusLanguage = () => {
+      const query = new URLSearchParams(window.location.hash.split('?')[1])
+      if (query.get('section') === 'meeting-language') {
+        meetingLanguageSection.current?.scrollIntoView({ block: 'center' })
+        meetingLanguageSection.current?.focus({ preventScroll: true })
+      }
+    }
+    focusLanguage()
+    window.addEventListener('hashchange', focusLanguage)
+    return () => window.removeEventListener('hashchange', focusLanguage)
+  }, [])
   const online = useOnlineStatus()
   const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
     useCalendarStore()
@@ -547,7 +560,7 @@ export function Settings() {
               </button>
             </div>
           </div>
-          <div>
+          <div ref={meetingLanguageSection} tabIndex={-1} aria-label="Meeting language settings">
             <h3 className="text-[13px] font-semibold text-ink mb-2">Meeting language</h3>
             <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
               <div>

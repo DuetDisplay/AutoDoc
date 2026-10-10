@@ -31,6 +31,7 @@ vi.mock('electron-store', () => {
   }
 })
 
+import Store from 'electron-store'
 import { PrefsStore } from '../../services/prefs-store'
 import { meetingLanguageNeedsMemoryMessage, registerPrefsIpc } from '../prefs-ipc'
 import { BrowserWindow, ipcMain } from 'electron'
@@ -49,6 +50,26 @@ describe('PrefsStore', () => {
       firstUseDownloadBytes: 0,
       needsSelfTest: false
     })
+  })
+
+  it('shows the language announcement only for existing users and remembers dismissal', () => {
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
+    // Simulate preferences written by a version before language onboarding existed.
+    const persisted = vi.mocked(Store).mock.results.at(-1)!.value
+    persisted.set('onboardingComplete', true)
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(true)
+    store.dismissMeetingLanguageAnnouncement()
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
+    expect(store.getOnboardingLanguageConfirmed()).toBe(false)
+  })
+
+  it('does not announce languages after new-user onboarding or language confirmation', () => {
+    store.setOnboardingComplete()
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
+    const persisted = vi.mocked(Store).mock.results.at(-1)!.value
+    persisted.set('meetingLanguageAnnouncementDismissed', false)
+    store.confirmOnboardingLanguage()
+    expect(store.isMeetingLanguageAnnouncementPending()).toBe(false)
   })
 
   it('tracks language-step confirmation separately from the shared language preference', () => {

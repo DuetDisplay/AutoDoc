@@ -114,6 +114,8 @@ export interface IpcInvokeEvents {
   'app:get-version': []
   'app:get-speech-runtime-licenses': []
   'app:get-locale': []
+  'prefs:get-meeting-language-announcement-pending': []
+  'prefs:dismiss-meeting-language-announcement': []
   'prefs:get-onboarding-language-confirmed': []
   'prefs:confirm-onboarding-language': []
   'whisper:get-meeting-language-states': []
@@ -285,6 +287,8 @@ export interface IpcInvokeReturns {
   'app:get-version': string
   'app:get-speech-runtime-licenses': SpeechLicenseNotice[]
   'app:get-locale': string
+  'prefs:get-meeting-language-announcement-pending': boolean
+  'prefs:dismiss-meeting-language-announcement': void
   'prefs:get-onboarding-language-confirmed': boolean
   'prefs:confirm-onboarding-language': void
   'whisper:get-meeting-language-states': Partial<
