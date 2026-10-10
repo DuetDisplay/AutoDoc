@@ -2050,7 +2050,8 @@ app.whenReady().then(async () => {
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
-    calendarManager
+    calendarManager,
+    () => prefsStore.getMeetingLanguage()
   )
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 

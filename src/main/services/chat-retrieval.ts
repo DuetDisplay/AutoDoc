@@ -1,3 +1,4 @@
+import { unicodeContentTokens } from './unicode-text'
 import { watch, type FSWatcher } from 'fs'
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
@@ -3456,9 +3457,7 @@ export function extractQuestionTerms(question: string): string[] {
 
   return [
     ...new Set(
-      normalizedQuestion
-        .split(' ')
-        .filter((term) => term.length >= 3 && !QUESTION_STOP_WORDS.has(term))
+      unicodeContentTokens(normalizedQuestion, 3).filter((term) => !QUESTION_STOP_WORDS.has(term))
     )
   ]
 }

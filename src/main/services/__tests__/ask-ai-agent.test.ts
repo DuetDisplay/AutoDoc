@@ -207,6 +207,32 @@ describe('Ask AI agent (v2)', () => {
       vi.unstubAllGlobals()
     })
 
+    it('passes the selected language to the agent without changing tool definitions', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ message: { content: 'Hola.' } })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const result = await runAskAiAgent({
+          baseUrl: 'http://localhost:11434',
+          model: 'fake',
+          question: 'hola',
+          history: [],
+          language: 'es',
+          session: newSession(),
+          deps: makeDeps(index),
+          onChunk: () => {}
+        })
+        expect(result.answer).toBe('Hola.')
+        const request = JSON.parse(fetchMock.mock.calls[0][1].body)
+        expect(request.messages[0].content).toContain('entire answer in Spanish')
+        expect(request.tools[0].function.name).toBe('get_recording_count')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
     it('answers a greeting directly without calling a tool', async () => {
       vi.stubGlobal('fetch', scriptedModel())
       const result = await runAskAiAgent({
