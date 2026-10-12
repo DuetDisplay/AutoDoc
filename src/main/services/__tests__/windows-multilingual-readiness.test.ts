@@ -115,9 +115,7 @@ describe('windows-multilingual-readiness', () => {
   })
 
   it('builds Vulkan --device-name args and never emits --device', async () => {
-    const { windowsVulkanBridgeDeviceNameArgs } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { windowsVulkanBridgeDeviceNameArgs } = await import('../windows-multilingual-readiness')
     expect(windowsVulkanBridgeDeviceNameArgs('NVIDIA GeForce RTX 4060 Laptop GPU')).toEqual([
       '--device-name',
       'NVIDIA GeForce RTX 4060 Laptop GPU'
@@ -127,9 +125,8 @@ describe('windows-multilingual-readiness', () => {
   })
 
   it('reports first-use Canary CUDA download bytes and leaves English unchanged', async () => {
-    const { getWindowsMeetingLanguageAvailability } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { getWindowsMeetingLanguageAvailability } =
+      await import('../windows-multilingual-readiness')
     const german = await getWindowsMeetingLanguageAvailability('de', host)
     const english = await getWindowsMeetingLanguageAvailability('en', host)
 
@@ -151,9 +148,8 @@ describe('windows-multilingual-readiness', () => {
   it('marks an installed GPU engine as needing a self-test until one has run', async () => {
     installed.add('canary-cuda-runtime-win-x64.zip')
     installed.add('canary-1b-v2-fp32.zip')
-    const { getWindowsMeetingLanguageAvailability } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { getWindowsMeetingLanguageAvailability } =
+      await import('../windows-multilingual-readiness')
     const german = await getWindowsMeetingLanguageAvailability('de', host)
     expect(german).toMatchObject({
       availability: 'available',
@@ -164,9 +160,8 @@ describe('windows-multilingual-readiness', () => {
   })
 
   it('locks turbo on low-spec when no GPU path is available', async () => {
-    const { getWindowsMeetingLanguageAvailability } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { getWindowsMeetingLanguageAvailability } =
+      await import('../windows-multilingual-readiness')
     const result = await getWindowsMeetingLanguageAvailability('es', {
       ...host,
       profileId: 'win-low-spec',
@@ -181,9 +176,8 @@ describe('windows-multilingual-readiness', () => {
   })
 
   it('falls back to Canary CPU and records the downgrade when CUDA setup fails', async () => {
-    const { ensureWindowsMultilingualEngineReady } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { ensureWindowsMultilingualEngineReady } =
+      await import('../windows-multilingual-readiness')
     vi.mocked(host.whisperManager.ensureWindowsEngineAssets).mockImplementation(
       async (engineId: WindowsMultilingualEngineId) => {
         ensureCalls.push(engineId)
@@ -198,13 +192,21 @@ describe('windows-multilingual-readiness', () => {
     expect(ready.engineId).toBe('canary-cpu')
     expect(ready.fallbackFrom).toBe('canary-cuda')
     expect(downgrades).toContain('canary-cuda→canary-cpu')
+    // A download failure never ran a GPU self-test, so retry GPU immediately.
+    const { resolveWindowsMultilingualJobContext } =
+      await import('../windows-multilingual-readiness')
+    expect((await resolveWindowsMultilingualJobContext('de', host)).selfTests['canary-cuda']).toBe(
+      'untested'
+    )
+    vi.mocked(host.whisperManager.ensureWindowsEngineAssets).mockResolvedValue(undefined)
+    const retried = await ensureWindowsMultilingualEngineReady('de', undefined, host)
+    expect(retried.engineId).toBe('canary-cuda')
+    expect(workerSelftest).toHaveBeenCalledTimes(1)
   })
 
   it('skips a GPU engine after a cached failed self-test', async () => {
-    const {
-      ensureWindowsMultilingualEngineReady,
-      resolveWindowsMultilingualJobContext
-    } = await import('../windows-multilingual-readiness')
+    const { ensureWindowsMultilingualEngineReady, resolveWindowsMultilingualJobContext } =
+      await import('../windows-multilingual-readiness')
     workerSelftest.mockRejectedValueOnce(new Error('cuda self-test crashed'))
 
     const first = await ensureWindowsMultilingualEngineReady('de', undefined, host)
@@ -221,12 +223,20 @@ describe('windows-multilingual-readiness', () => {
     expect(second.engineId).toBe('canary-cpu')
     expect(workerSelftest).not.toHaveBeenCalled()
     expect(ensureCalls).toEqual(['canary-cpu'])
+
+    // A fresh module session models a new app launch with the same on-disk cache.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    vi.resetModules()
+    workerSelftest.mockResolvedValue({ ok: true })
+    const relaunched = await import('../windows-multilingual-readiness')
+    const nextLaunch = await relaunched.ensureWindowsMultilingualEngineReady('de', undefined, host)
+    expect(nextLaunch.engineId).toBe('canary-cuda')
+    expect(workerSelftest).toHaveBeenCalledTimes(1)
   })
 
   it('does not self-test CPU engines', async () => {
-    const { ensureWindowsMultilingualEngineReady } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { ensureWindowsMultilingualEngineReady } =
+      await import('../windows-multilingual-readiness')
     const ready = await ensureWindowsMultilingualEngineReady('de', undefined, {
       ...host,
       gpu: { vendor: 'none', name: '', vramGiB: null, discrete: false, driverVersion: null }
@@ -249,25 +259,22 @@ describe('windows-multilingual-readiness', () => {
         driverVersion: '581.95'
       }
     }
-    spawnClose.mockImplementation(
-      (proc: EventEmitter & { stdout: EventEmitter }) => {
-        proc.stdout.emit(
-          'data',
-          Buffer.from(
-            JSON.stringify({
-              ok: true,
-              device: 1,
-              deviceName: 'NVIDIA GeForce RTX 4060 Laptop GPU'
-            })
-          )
+    spawnClose.mockImplementation((proc: EventEmitter & { stdout: EventEmitter }) => {
+      proc.stdout.emit(
+        'data',
+        Buffer.from(
+          JSON.stringify({
+            ok: true,
+            device: 1,
+            deviceName: 'NVIDIA GeForce RTX 4060 Laptop GPU'
+          })
         )
-        proc.emit('close', 0)
-      }
-    )
+      )
+      proc.emit('close', 0)
+    })
 
-    const { ensureWindowsMultilingualEngineReady } = await import(
-      '../windows-multilingual-readiness'
-    )
+    const { ensureWindowsMultilingualEngineReady } =
+      await import('../windows-multilingual-readiness')
     const ready = await ensureWindowsMultilingualEngineReady('ja', undefined, amdHost)
 
     expect(ready.engineId).toBe('whisper-turbo-vulkan')

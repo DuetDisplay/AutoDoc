@@ -19,6 +19,11 @@ vi.mock('../windows-transcription-runtime', async (importOriginal) => {
 })
 import { WhisperManager } from '../whisper-manager'
 import {
+  currentMeetingLanguageAvailability,
+  recordingMeetingLanguage
+} from '../meeting-language-availability'
+import { meetingLanguageAvailability } from '../../../shared/meeting-language'
+import {
   detectWindowsHardwareProfile,
   loadWindowsTranscriptionProfiles,
   type WindowsHardwareProfile
@@ -27,6 +32,7 @@ const hardware: WindowsHardwareProfile = {
   platform: 'win32',
   arch: 'x64',
   logicalProcessors: 16,
+  installedMemoryGiB: 16,
   totalMemoryGiB: 15.3,
   freeMemoryGiB: 6,
   gpus: [{ name: 'NVIDIA RTX 4050', vendor: 'nvidia', adapterRamGiB: 6 }]
@@ -45,6 +51,28 @@ it('resolves the GPU backend before returning the first notes profile on Victor 
     'qwen3:4b-instruct'
   )
   expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
+})
+
+it('keeps multilingual notes available after GPU fallback on 16 GiB installed / 15.3 usable', async () => {
+  const manager = new WhisperManager()
+  await manager.resolveWindowsTranscriptionBackend()
+  manager.downgradeParakeetGpuToCpuForSession()
+  const profile = await manager.getEffectiveWindowsProcessingProfile()
+  expect(profile?.id).toBe('win-cpu-normal')
+  expect(profile?.notesModel).toBe('qwen3:4b-instruct')
+  const availability = currentMeetingLanguageAvailability({
+    platform: 'win32',
+    windowsProfile: profile
+  })
+  expect(availability).toEqual(meetingLanguageAvailability(false))
+  expect(recordingMeetingLanguage('de', availability)).toBe('de')
+})
+
+it('uses the normal CPU notes model on capable AMD-only hardware', async () => {
+  vi.mocked(detectWindowsHardwareProfile).mockResolvedValue({ ...hardware, gpus: [] })
+  const profile = await new WhisperManager().getEffectiveWindowsProcessingProfile()
+  expect(profile?.id).toBe('win-cpu-normal')
+  expect(profile?.notesModel).toBe('qwen3:4b-instruct')
 })
 
 it('joins concurrent startup and profile requests', async () => {
@@ -71,7 +99,7 @@ it('awaits the in-flight CPU downgrade refresh before approving the next profile
   manager.downgradeParakeetGpuToCpuForSession()
   const profile = manager.getEffectiveWindowsProcessingProfile()
   release()
-  expect((await profile)?.notesModel).toBe('llama3.2:3b')
+  expect((await profile)?.notesModel).toBe('qwen3:4b-instruct')
 })
 
 it('does not let a late backend resolution overwrite a session CPU downgrade', async () => {
@@ -94,7 +122,7 @@ it('does not let a late backend resolution overwrite a session CPU downgrade', a
   const effective = manager.getEffectiveWindowsProcessingProfile()
   release()
   await resolving
-  expect((await effective)?.notesModel).toBe('llama3.2:3b')
+  expect((await effective)?.notesModel).toBe('qwen3:4b-instruct')
   expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
 })
 
@@ -113,7 +141,7 @@ it('keeps the GPU disabled across fresh selections, but allows it in a fresh man
   for (let attempt = 0; attempt < 3; attempt++) {
     await (manager as unknown as { selectWindowsProfile(): Promise<void> }).selectWindowsProfile()
     expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
-    expect((await manager.getEffectiveWindowsProcessingProfile())?.id).toBe('win-low-spec')
+    expect((await manager.getEffectiveWindowsProcessingProfile())?.id).toBe('win-cpu-normal')
   }
   const restarted = new WhisperManager()
   await restarted.resolveWindowsTranscriptionBackend()
@@ -175,6 +203,11 @@ it('also keeps CPU selected after setup-time GPU failure', async () => {
   await internal.selectWindowsProfile()
   expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
   expect(manager.getDowngradesTaken()).toEqual(['parakeet-gpu→parakeet-cpu'])
+  expect((await manager.getEffectiveWindowsProcessingProfile())?.id).toBe('win-cpu-normal')
+  await manager.prepareWindowsRecording(true)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-cpu')
+  await manager.prepareWindowsRecording(false)
+  expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
 })
 
 it('invalidates an in-flight selection when setup falls back from GPU', async () => {

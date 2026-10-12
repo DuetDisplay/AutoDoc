@@ -837,12 +837,17 @@ export class WhisperManager extends EventEmitter {
         message: 'Windows profile hardware detection failed; using system memory and CPU count',
         error
       })
-      return { logicalProcessors: availableParallelism(), ...getSystemMemorySnapshot() }
+      return {
+        logicalProcessors: availableParallelism(),
+        installedMemoryGiB: null,
+        ...getSystemMemorySnapshot()
+      }
     })
     const device = this.getSelectedWindowsProfile().device
     this.selectedWindowsProcessingProfile = selectWindowsProcessingProfile(
       {
         logicalProcessors: hardware.logicalProcessors,
+        installedMemoryGiB: hardware.installedMemoryGiB ?? null,
         totalMemoryGiB: hardware.totalMemoryGiB,
         freeMemoryGiB: hardware.freeMemoryGiB
       },
@@ -1431,6 +1436,7 @@ export class WhisperManager extends EventEmitter {
       totalDownloadedBytes,
       hardware: {
         logicalProcessors: hardware.logicalProcessors,
+        installedMemoryGiB: hardware.installedMemoryGiB ?? null,
         totalMemoryGiB: hardware.totalMemoryGiB,
         freeMemoryGiB: hardware.freeMemoryGiB,
         gpus: hardware.gpus.map((gpu) => ({

@@ -68,7 +68,10 @@ export interface WindowsHardwareProfile {
   arch: NodeJS.Architecture
   logicalProcessors: number
   freeMemoryGiB: number | null
+  /** OS-visible (usable) RAM, used for runtime safety rather than hardware tier. */
   totalMemoryGiB: number | null
+  /** Physical RAM module capacity; absent/null means detection is unavailable. */
+  installedMemoryGiB?: number | null
   gpus: WindowsGpuInfo[]
 }
 
@@ -759,8 +762,53 @@ export async function detectWindowsHardwareProfile(): Promise<WindowsHardwarePro
     arch: process.arch,
     logicalProcessors: getUsableLogicalProcessorCount(),
     ...getSystemMemorySnapshot(),
+    installedMemoryGiB: await getWindowsInstalledMemoryGiB(),
     gpus: process.platform === 'win32' ? await queryWindowsGpus() : []
   }
+}
+
+// Installed RAM is stable for this app launch. Do not run CIM for every status poll
+// or substitute OS-visible memory when CIM is unavailable.
+let installedMemoryPromise: Promise<number | null> | null = null
+
+export function getWindowsInstalledMemoryGiB(): Promise<number | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null)
+  installedMemoryPromise ??= queryWindowsInstalledMemoryGiB()
+  return installedMemoryPromise
+}
+
+async function queryWindowsInstalledMemoryGiB(): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        'Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Capacity | ConvertTo-Json -Compress'
+      ],
+      { timeout: 5000, windowsHide: true }
+    )
+    return parseWindowsInstalledMemoryGiB(JSON.parse(stdout.trim()))
+  } catch {
+    return null
+  }
+}
+
+export function parseWindowsInstalledMemoryGiB(value: unknown): number | null {
+  const rows = Array.isArray(value) ? value : value ? [value] : []
+  if (rows.length === 0) return null
+  let bytes = 0
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') return null
+    const capacity = (row as { Capacity?: unknown }).Capacity
+    if (typeof capacity !== 'number' || !Number.isSafeInteger(capacity) || capacity <= 0) {
+      return null
+    }
+    bytes += capacity
+    if (!Number.isSafeInteger(bytes)) return null
+  }
+  // Preserve the eligibility boundary; do not round a below-16-GiB result up.
+  return bytes / 1024 ** 3
 }
 
 /**
