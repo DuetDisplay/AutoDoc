@@ -1,0 +1,31 @@
+{
+  "title": "A favor for future you",
+  "renderer": "Remotion 4.0.535",
+  "durationSeconds": 32,
+  "dimensions": [1920, 1080],
+  "fps": 30,
+  "source": {
+    "path": "../assets/shared-native-capture.mp4",
+    "sha256": "51ac845dd14df9c7d924f268a7c7851def52de4bc24eae25900e99928d4a8090",
+    "description": "Real native Windows AutoDoc recording using the original seeded fictional meeting",
+    "trimStartSeconds": 26.7814,
+    "trimDurationSeconds": 21,
+    "playbackRate": 1,
+    "timelineStartSeconds": 4,
+    "actualClickTimelineSecondsApprox": 8
+  },
+  "excerpt": {
+    "path": "public/native-recall.mp4",
+    "sha256": "fb882f4cc5bec60f49bc11ad3fb48aa18b393d7fc5ea43fda00fbd30eb7c113c"
+  },
+  "audio": {
+    "path": "public/sound-design.wav",
+    "provenance": "Original locally synthesized tonal accents; see prepare-assets.cjs",
+    "voiceover": false,
+    "thirdPartySamples": false
+  },
+  "output": {
+    "path": "autodoc-future-you.mp4",
+    "sha256": "d94dfbda907816828f1686064e35138f12eee4d0ce471672aa0a8189611c7ae5"
+  }
+}

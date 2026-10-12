@@ -1,0 +1,13 @@
+**/node_modules/
+**/.cache/
+**/dist/
+**/build/
+research/openscreen-unpacked/
+research/*.exe
+research/bin/
+research/remotion-skills/
+openvidstudio/
+test-profile*/
+native-app.log
+openvid-project/output/
+remotion/build/
