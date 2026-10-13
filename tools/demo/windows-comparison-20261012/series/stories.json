@@ -1,0 +1,29 @@
+[
+  {
+    "key": "clicks",
+    "id": "b2000000-12ab-4567-89ab-123456789abc",
+    "title": "Workspace walkthrough",
+    "note": "Set notifications to mentions only",
+    "quote": "Settings, notifications, then only mentions. Save it there.",
+    "topic": "Workspace preferences",
+    "speaker": "Alex Lane"
+  },
+  {
+    "key": "section",
+    "id": "b3000000-12ab-4567-89ab-123456789abc",
+    "title": "Draft review",
+    "note": "Change this section",
+    "quote": "Change this section. Lead with the outcome, not the features.",
+    "topic": "Document edits",
+    "speaker": "Mira Reed"
+  },
+  {
+    "key": "scroll",
+    "id": "b5000000-12ab-4567-89ab-123456789abc",
+    "title": "Launch check-in",
+    "note": "Launch timing confirmed",
+    "quote": "Can you scroll back up? There—the launch date is Friday, October 16.",
+    "topic": "Launch schedule",
+    "speaker": "Jules Tran"
+  }
+]

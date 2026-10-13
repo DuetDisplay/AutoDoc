@@ -1,0 +1,74 @@
+{
+  "method": "Real native AutoDoc captures with original fictional meeting recordings and seeded notes; no AI generation or transcription pipeline demonstrated.",
+  "stories": [
+    {
+      "key": "clicks",
+      "lead": 2.5,
+      "native": 9.7,
+      "intro": 3,
+      "pull": 6.8,
+      "duration": 16.5,
+      "raw": "assets\\clicks-native-raw.mp4",
+      "rawSha256": "6036a4f99ed999812c4244a5b38020feb27bdef840ae3e0df67a8ac5c99d394c",
+      "captureStartedAtMs": 1791837534297,
+      "action": {
+        "beforeMs": 1791837552579,
+        "afterMs": 1791837552683
+      },
+      "firstPlaybackFrame": 555,
+      "firstPlaybackSeconds": 18.5,
+      "trimStartSeconds": 16,
+      "asset": "../future-you/public/series/clicks-native.mp4",
+      "assetSha256": "004c0add58bec185f7e92a6672e8b336e695b2398ba06e38314eb9c9b263c9bb",
+      "speed": 1,
+      "fixture": "assets/clicks-meeting.mp4",
+      "seededNotes": true
+    },
+    {
+      "key": "section",
+      "lead": 1.7,
+      "native": 8.4,
+      "intro": 3.5,
+      "pull": 5.3,
+      "duration": 15.5,
+      "raw": "assets\\section-native-raw.mp4",
+      "rawSha256": "973f02c29a39dc237956f5e768d4058ba9316a719dd74ed2c5fe8f68bb30c09e",
+      "captureStartedAtMs": 1791837622579,
+      "action": {
+        "beforeMs": 1791837636685,
+        "afterMs": 1791837636806
+      },
+      "firstPlaybackFrame": 428,
+      "firstPlaybackSeconds": 14.266666666666667,
+      "trimStartSeconds": 12.566666666666668,
+      "asset": "../future-you/public/series/section-native.mp4",
+      "assetSha256": "894a0df24a9e99254692ed8f46f27ef46051e4ab69518808f9c876e710ab0c83",
+      "speed": 1,
+      "fixture": "assets/section-meeting.mp4",
+      "seededNotes": true
+    },
+    {
+      "key": "scroll",
+      "lead": 1.7,
+      "native": 7,
+      "intro": 3.5,
+      "pull": 4.8,
+      "duration": 14,
+      "raw": "assets\\scroll-native-raw.mp4",
+      "rawSha256": "8e2b08607bbaf2379e429e3930b51417a7b6ec5e77e60f47e6ffac4a5763a203",
+      "captureStartedAtMs": 1791837758978,
+      "action": {
+        "beforeMs": 1791837770298,
+        "afterMs": 1791837770398
+      },
+      "firstPlaybackFrame": 345,
+      "firstPlaybackSeconds": 11.5,
+      "trimStartSeconds": 9.8,
+      "asset": "../future-you/public/series/scroll-native.mp4",
+      "assetSha256": "c1248ae1e37cb83b412ca03c374aee3ad60212da27a85f2ea2db52af54749be8",
+      "speed": 1,
+      "fixture": "assets/scroll-meeting.mp4",
+      "seededNotes": true
+    }
+  ]
+}

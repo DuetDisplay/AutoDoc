@@ -1,0 +1,4 @@
+test-profile-series/
+node_modules/
+native-app.log
+*.openscreen
