@@ -132,6 +132,127 @@ afterEach(async () => {
 })
 
 describe('Whisper onboarding dependency installation', () => {
+  it('joins concurrent English/multilingual installs of the shared Parakeet runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'autodoc-shared-runtime-'))
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', root, {
+        windowsBackend: 'parakeet-cpu'
+      })
+      const manager = new WhisperManager()
+      const profile = manager.getWindowsTranscriptionProfiles()['parakeet-cpu']
+      const asset = {
+        ...profile.assets[0],
+        expectedFiles: ['python.exe'],
+        sha256: createHash('sha256').update('verified archive').digest('hex')
+      }
+      const download = vi
+        .spyOn(manager as any, 'downloadFile')
+        .mockImplementation(async (...args: unknown[]) => {
+          await mkdir(dirname(String(args[1])), { recursive: true })
+          await writeFile(String(args[1]), 'verified archive')
+          return asset.sha256
+        })
+      const extract = vi
+        .spyOn(manager as any, 'extractWindowsTranscriptionAsset')
+        .mockImplementation(async (...args: unknown[]) => {
+          await writeFile(join(String(args[1]), 'python.exe'), 'verified runtime')
+        })
+      await Promise.all([
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(profile, asset),
+        (manager as any).downloadAndExtractWindowsTranscriptionAsset(
+          manager.getWindowsTranscriptionProfiles()['canary-cpu'],
+          asset
+        )
+      ])
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(extract).toHaveBeenCalledTimes(1)
+      await expect(readFile(manager.getParakeetPythonPath(), 'utf8')).resolves.toBe(
+        'verified runtime'
+      )
+      // Already-installed assets must be reused, including when files are in use.
+      await (manager as any).downloadAndExtractWindowsTranscriptionAsset(profile, asset)
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(extract).toHaveBeenCalledTimes(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retries blocked installation from verified staging without downloading or extracting again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'autodoc-install-resume-'))
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', root, {
+        windowsBackend: 'parakeet-cpu'
+      })
+      const { WindowsAssetInstallError } = await import('../windows-transcription-asset-install')
+      const manager = new WhisperManager()
+      const profile = manager.getWindowsTranscriptionProfiles()['parakeet-cpu']
+      const asset = {
+        ...profile.assets[0],
+        expectedFiles: ['python.exe'],
+        sha256: createHash('sha256').update('verified archive').digest('hex')
+      }
+      const download = vi
+        .spyOn(manager as any, 'downloadFile')
+        .mockImplementation(async (...args: unknown[]) => {
+          await mkdir(dirname(String(args[1])), { recursive: true })
+          await writeFile(String(args[1]), 'verified archive')
+          return asset.sha256
+        })
+      const extract = vi
+        .spyOn(manager as any, 'extractWindowsTranscriptionAsset')
+        .mockImplementation(async (...args: unknown[]) => {
+          await writeFile(join(String(args[1]), 'python.exe'), 'verified runtime')
+        })
+      const publish = vi
+        .spyOn(manager as any, 'publishPreparedWindowsAsset')
+        .mockRejectedValueOnce(new WindowsAssetInstallError(asset.filename, new Error('locked')))
+      const run = () =>
+        (manager as any).downloadWithRetry(
+          () => (manager as any).downloadAndExtractWindowsTranscriptionAsset(profile, asset),
+          'runtime'
+        )
+      await expect(run()).rejects.toThrow(/verified download is saved/i)
+      expect(publish).toHaveBeenCalledTimes(1)
+      await run()
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(extract).toHaveBeenCalledTimes(1)
+      await expect(readFile(manager.getParakeetPythonPath(), 'utf8')).resolves.toBe(
+        'verified runtime'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not accept expected files from an incomplete installation, including after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'autodoc-incomplete-runtime-'))
+    try {
+      const { WhisperManager } = await loadWhisperManager('win32', root, {
+        windowsBackend: 'parakeet-cpu'
+      })
+      const { WINDOWS_ASSET_INSTALL_MARKER } =
+        await import('../windows-transcription-asset-install')
+      const manager = new WhisperManager()
+      const asset = manager.getWindowsTranscriptionProfiles()['parakeet-cpu'].assets[0]
+      const runtime = dirname(manager.getParakeetPythonPath())
+      for (const file of asset.expectedFiles) {
+        const destination = join(runtime, ...file.split('/'))
+        await mkdir(dirname(destination), { recursive: true })
+        await writeFile(destination, 'partial runtime')
+      }
+      await expect(manager.isWindowsTranscriptionAssetPresent(asset.filename)).resolves.toBe(true)
+      await writeFile(join(runtime, WINDOWS_ASSET_INSTALL_MARKER), '')
+      await expect(manager.isWindowsTranscriptionAssetPresent(asset.filename)).resolves.toBe(false)
+      const restarted = new WhisperManager()
+      await expect(restarted.isWindowsTranscriptionAssetPresent(asset.filename)).resolves.toBe(
+        false
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   for (const platform of ['darwin', 'win32'] as const) {
     for (const failAfterBytes of [false, true]) {
       it(`${platform}: model download ${failAfterBytes ? 'fails after 100% without becoming ready' : 'with unknown size reaches ready after file completion'}`, async () => {

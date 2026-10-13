@@ -77,6 +77,12 @@ import {
   macSpeechModelPath
 } from './mac-speech-models'
 import { resolveMacCanaryTranscriber } from './mac-canary-transcription'
+import {
+  installWindowsTranscriptionAsset,
+  isWindowsAssetInstallIncomplete,
+  WINDOWS_ASSET_INSTALL_MARKER,
+  WindowsAssetInstallError
+} from './windows-transcription-asset-install'
 
 const IS_WIN = process.platform === 'win32'
 const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
@@ -176,6 +182,8 @@ export class MeetingLanguageSetupSuperseded extends Error {
 }
 
 export class WhisperManager extends EventEmitter {
+  private windowsAssetInstalls = new Map<string, Promise<void>>()
+  private preparedWindowsAssets = new Map<string, { sha256: string; directory: string }>()
   private setupPromise: Promise<void> | null = null
   private languageSetupQueue: Promise<void> = Promise.resolve()
   private languageSetupRequests = new Map<MeetingLanguageCode, Promise<void>>()
@@ -1927,9 +1935,43 @@ export class WhisperManager extends EventEmitter {
     profile: WindowsTranscriptionProfile,
     asset: WindowsTranscriptionProfile['assets'][number]
   ): Promise<void> {
+    // English and multilingual engines share runtimes. Join an in-flight install
+    // before checking presence or touching the shared archive/destination.
+    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+    const existing = this.windowsAssetInstalls.get(targetDir)
+    if (existing) return existing
+    const install = this.installWindowsTranscriptionAsset(profile, asset)
+    this.windowsAssetInstalls.set(targetDir, install)
+    try {
+      await install
+    } finally {
+      if (this.windowsAssetInstalls.get(targetDir) === install) {
+        this.windowsAssetInstalls.delete(targetDir)
+      }
+    }
+  }
+
+  private async installWindowsTranscriptionAsset(
+    profile: WindowsTranscriptionProfile,
+    asset: WindowsTranscriptionAsset
+  ): Promise<void> {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
     const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+    if ((await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)).length === 0) return
+    const prepared = this.preparedWindowsAssets.get(targetDir)
+    if (prepared?.sha256 === asset.sha256) {
+      if (
+        (await this.getMissingExpectedFiles(prepared.directory, asset.expectedFiles)).length === 0
+      ) {
+        await this.publishPreparedWindowsAsset(prepared.directory, targetDir, asset)
+        this.preparedWindowsAssets.delete(targetDir)
+        await rm(prepared.directory, { recursive: true, force: true }).catch(() => {})
+        await rm(archivePath, { force: true }).catch(() => {})
+        return
+      }
+      this.preparedWindowsAssets.delete(targetDir)
+    }
     let extractDir: string | null = null
     const partPaths: string[] = []
 
@@ -2068,8 +2110,10 @@ export class WhisperManager extends EventEmitter {
         )
       }
 
-      await rm(targetDir, { recursive: true, force: true })
-      await rename(extractDir, targetDir)
+      this.preparedWindowsAssets.set(targetDir, { sha256: asset.sha256, directory: extractDir })
+      await this.publishPreparedWindowsAsset(extractDir, targetDir, asset)
+      this.preparedWindowsAssets.delete(targetDir)
+      await rm(extractDir, { recursive: true, force: true }).catch(() => {})
       extractDir = null
       succeeded = true
     } finally {
@@ -2079,9 +2123,39 @@ export class WhisperManager extends EventEmitter {
           await rm(partPath, { force: true })
         }
       }
-      if (extractDir) {
+      if (extractDir && this.preparedWindowsAssets.get(targetDir)?.directory !== extractDir) {
         await rm(extractDir, { recursive: true, force: true })
       }
+    }
+  }
+
+  private async publishPreparedWindowsAsset(
+    stagedDir: string,
+    targetDir: string,
+    asset: WindowsTranscriptionAsset
+  ): Promise<void> {
+    try {
+      await installWindowsTranscriptionAsset(stagedDir, targetDir, (retry) => {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset installation retry',
+          context: { filename: asset.filename, ...retry }
+        })
+      })
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset installation completed',
+        context: { filename: asset.filename, targetDir }
+      })
+    } catch (error) {
+      logAutodocFailure({
+        area: 'whisper',
+        message:
+          'Windows transcription asset installation blocked; retaining verified files for retry',
+        error,
+        context: { filename: asset.filename, stagedDir, targetDir }
+      })
+      throw new WindowsAssetInstallError(asset.filename, error)
     }
   }
 
@@ -2102,6 +2176,9 @@ export class WhisperManager extends EventEmitter {
     rootDir: string,
     expectedFiles: string[]
   ): Promise<string[]> {
+    if (IS_WIN && (await isWindowsAssetInstallIncomplete(rootDir))) {
+      return [WINDOWS_ASSET_INSTALL_MARKER]
+    }
     const missingExpectedFiles: string[] = []
     for (const expectedFile of expectedFiles) {
       if (!(await this.fileExists(join(rootDir, ...expectedFile.split('/'))))) {
@@ -3207,7 +3284,12 @@ export class WhisperManager extends EventEmitter {
         await fn()
         return
       } catch (err) {
-        if (i === attempts - 1 || err instanceof MeetingLanguageSetupSuperseded) throw err
+        if (
+          i === attempts - 1 ||
+          err instanceof MeetingLanguageSetupSuperseded ||
+          err instanceof WindowsAssetInstallError
+        )
+          throw err
         const delay = Math.pow(2, i) * 1000
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
