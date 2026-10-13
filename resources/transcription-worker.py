@@ -189,7 +189,12 @@ def _selftest_audio(engine: str | None):
     """Canary must fill one max VAD window; other engines only need a short decode."""
     if engine == "canary":
         return _selftest_tone(seconds=MAX_SPEECH_SEC)
-    return _selftest_tone()
+    audio = _selftest_tone()
+    if engine == "whisper-turbo":
+        # Give the production energy gate a quiet baseline so the tone reaches
+        # the decoder instead of being classified as constant background noise.
+        audio[-len(audio) // 4 :] = 0
+    return audio
 
 
 def _word_field(word, name):
@@ -368,6 +373,16 @@ class TranscriptionWorker:
         language: str,
         window: dict | None,
     ) -> None:
+        if window:
+            audio = _read_window_audio(audio_path, window)
+        else:
+            audio = _read_full_audio(audio_path)
+        transcription = self._transcribe_whisper_turbo(audio, language, request_id)
+        _respond(request_id, True, {"transcription": transcription})
+
+    def _transcribe_whisper_turbo(
+        self, audio, language: str, request_id: int | None = None
+    ) -> list[dict]:
         import numpy as np
         from whisper_turbo_contract import (
             HALLUCINATION_SILENCE_SEC,
@@ -376,10 +391,6 @@ class TranscriptionWorker:
             pause_split,
         )
 
-        if window:
-            audio = _read_window_audio(audio_path, window)
-        else:
-            audio = _read_full_audio(audio_path)
         audio = np.asarray(audio, dtype=np.float32)
         clips, has_speech = pause_split(audio, np)
         transcription = []
@@ -421,16 +432,17 @@ class TranscriptionWorker:
             added, emitted_until = collect_clip_segments(
                 start, end, normalized, has_speech, emitted_until
             )
-            for item in added:
-                _emit_segment(
-                    request_id,
-                    item["offsets"]["from"],
-                    item["offsets"]["to"],
-                    item["text"],
-                )
+            if request_id is not None:
+                for item in added:
+                    _emit_segment(
+                        request_id,
+                        item["offsets"]["from"],
+                        item["offsets"]["to"],
+                        item["text"],
+                    )
             transcription.extend(added)
 
-        _respond(request_id, True, {"transcription": transcription})
+        return transcription
 
     def handle_unload(self, request_id: int) -> None:
         self._release_loaded()
@@ -604,6 +616,8 @@ class TranscriptionWorker:
         )
 
     def _selftest_decode(self, audio, language: str) -> int:
+        if self.engine == "whisper-turbo":
+            return len(self._transcribe_whisper_turbo(audio, language))
         if self.engine == "parakeet":
             segments = list(self.model.recognize(audio, language=language))
             return len(segments)

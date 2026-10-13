@@ -12,6 +12,8 @@ files:
   - 'resources/trayRecording.png'
   - 'resources/trayRecording@2x.png'
   - 'resources/transcription-worker.py'
+  - 'resources/whisper_turbo_contract.py'
+  - 'resources/whisper-cpp-turbo-transcribe.py'
   - 'resources/windows-transcription-manifest.json'
   - 'native/**/bin/**/*'
   - '!**/__tests__/**'

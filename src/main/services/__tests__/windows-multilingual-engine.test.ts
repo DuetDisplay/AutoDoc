@@ -354,6 +354,30 @@ describe('Windows multilingual GPU snapshot and self-test cache', () => {
     ).toEqual(nvidia)
   })
 
+  it('invalidates turbo passes from the self-test that bypassed the production contract', () => {
+    const input = {
+      engine: 'whisper-turbo-cuda' as const,
+      gpuName: nvidia.name,
+      driverVersion: '581.95',
+      assetVersion: windowsMultilingualAssetVersion('whisper-turbo-cuda')
+    }
+    const legacyKey = [input.engine, input.gpuName, input.driverVersion, input.assetVersion].join(
+      '\u001f'
+    )
+    const record: WindowsMultilingualSelfTestRecord = {
+      ...input,
+      key: legacyKey,
+      result: 'passed',
+      testedAt: '2026-10-13T00:00:00.000Z'
+    }
+    expect(
+      lookupWindowsMultilingualSelfTest(
+        { version: 1, records: { [legacyKey]: record } },
+        buildWindowsMultilingualSelfTestKey(input)
+      )
+    ).toBeNull()
+  })
+
   it('stores and invalidates self-test results when the cache key changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'autodoc-self-test-'))
     const path = windowsMultilingualSelfTestCachePath(root)

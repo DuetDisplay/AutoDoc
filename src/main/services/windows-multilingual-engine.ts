@@ -105,7 +105,11 @@ export function buildWindowsMultilingualSelfTestKey(input: {
   driverVersion: string
   assetVersion: string
 }): string {
-  return [input.engine, input.gpuName, input.driverVersion, input.assetVersion].join('\u001f')
+  const parts = [input.engine, input.gpuName, input.driverVersion, input.assetVersion]
+  // Older turbo self-tests bypassed the production contract import and decode.
+  // Recheck existing installs with the full path after the packaging fix.
+  if (input.engine.startsWith('whisper-turbo')) parts.push('turbo-contract-v2')
+  return parts.join('\u001f')
 }
 
 export function windowsMultilingualAssetVersion(
@@ -124,7 +128,7 @@ export function windowsMultilingualAssetVersion(
  * Failures can be transient (another app holding VRAM, a driver mid-update,
  * CUDA briefly unavailable). A failure recorded before this launch is tested
  * again on first use, so one bad moment does not lock a language or pin it to
- * the CPU forever. Passes stay cached until the GPU, driver or assets change.
+ * the CPU forever. Passes stay cached until the GPU, driver, assets or test revision changes.
  */
 const SELF_TEST_SESSION_STARTED_AT = Date.now()
 
