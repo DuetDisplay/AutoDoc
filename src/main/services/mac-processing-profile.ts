@@ -104,7 +104,25 @@ export function isMemoryHealthyForConcurrentProcessing(
   return true
 }
 
-function getLowSpecHardwareReason(hardware: MacHardwareSnapshot): string | null {
+/**
+ * Whether this Mac's hardware tier writes notes with the small notes model.
+ * Matches `getLowSpecHardwareReason`; runtime memory pressure on a larger Mac
+ * keeps its notes model, so it does not count.
+ */
+export function macUsesSmallNotesModel(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  totalMemoryGiB: number = bytesToGiB(totalmem())
+): boolean {
+  return (
+    platform === 'darwin' &&
+    getLowSpecHardwareReason({ isAppleSilicon: arch === 'arm64', totalMemoryGiB }) !== null
+  )
+}
+
+function getLowSpecHardwareReason(
+  hardware: Pick<MacHardwareSnapshot, 'isAppleSilicon' | 'totalMemoryGiB'>
+): string | null {
   if (!hardware.isAppleSilicon) {
     return 'unsupported non-Apple-Silicon Mac profile'
   }

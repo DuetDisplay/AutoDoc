@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
+import { LOW_SPEC_MAC_OLLAMA_MODEL, NOTES_WRITER_PROGRESS_END } from '../../shared/constants'
 import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import type {
   MeetingSegments,
@@ -42,6 +42,14 @@ import { OllamaEmbeddingProvider } from './ollama-embedding'
 import { WINDOWS_OUTLINE_PROMPT, countCompleteOutlineBullets, outlineToWriterJson } from './windows-notes-outline'
 import { windowsNotesModelExperiment } from './windows-notes-model-experiment'
 import { isWindowsEvidenceWriterEnabled, WINDOWS_EVIDENCE_WRITER_PROMPT, WINDOWS_EVIDENCE_WRITER_FORMAT, evidenceToWriterJson } from './windows-notes-evidence'
+import { isDenseScriptMeetingLanguage } from '../../shared/meeting-language'
+import {
+  activeMeetingLanguage,
+  appendMeetingLanguageDirective,
+  isEnglishMeetingJob,
+  meetingOutputTokenCap
+} from './notes-language'
+import { unicodeContentTokens } from './unicode-text'
 
 export interface LLMProvider {
   embedNotes?(texts: string[]): Promise<number[][]>
@@ -92,6 +100,11 @@ export const LOW_MEMORY_CONTEXT_TOKENS = 4096
 export const MAC_CONTEXT_TOKENS = LOW_MEMORY_CONTEXT_TOKENS
 const CHUNK_CHARS = 4000 // ~1K tokens per chunk — keeps output quality high with 8B models
 export const WINDOWS_CHUNK_CHARS = 8000
+/**
+ * Chunk sizes above assume Latin text at ~4 characters per model token. Japanese,
+ * Chinese, and Korean run near 1-1.5, so their chunks shrink to stay near ~1K tokens.
+ */
+export const DENSE_SCRIPT_CHUNK_CHARS_DIVISOR = 3
 const STREAM_TIMEOUT_MS = 120_000 // Abort if no token is received for 2 minutes
 const SLOW_STREAM_ACTIVITY_DELAY_MS = 60_000
 const REQUEST_TIMEOUT_MS = 1_200_000 // Last-resort runaway guard; stream inactivity is already bounded by STREAM_TIMEOUT_MS and output length by num_predict.
@@ -797,11 +810,12 @@ function matchJsonBrace(raw: string, openIdx: number): number {
   return -1
 }
 
-/** Count finished tight tuples in a possibly truncated writer payload. */
+/** Count finished tight tuples or keyed records in a possibly truncated writer payload. */
 export function countCompleteTightWriterItems(raw: string): number {
+  const countRecords = isWindowsCatalogWriterEnabled() || usesKeyedTightWriterRecords()
   let count = 0
   for (let i = 0; i < raw.length; i++) {
-    if (isWindowsCatalogWriterEnabled() && raw[i] === '{') {
+    if (countRecords && raw[i] === '{') {
       const end = matchJsonBrace(raw, i)
       if (end >= 0) {
         try {
@@ -1101,18 +1115,22 @@ export function extractWriterCategoryObject(
 
       // Stay inside this category occurrence. Never walk through an invalid
       // child or a closing brace to borrow a tuple from the next category.
+      const recoverRecords = usesKeyedTightWriterRecords()
       let cursor = i + 1
       while (cursor < raw.length) {
         while (/\s/.test(raw[cursor] ?? '') && cursor < raw.length) cursor++
-        if (raw[cursor] !== '[') break
-        const childEnd = matchJsonBracket(raw, cursor)
+        const isRecord = recoverRecords && raw[cursor] === '{'
+        if (raw[cursor] !== '[' && !isRecord) break
+        const childEnd = isRecord ? matchJsonBrace(raw, cursor) : matchJsonBracket(raw, cursor)
         if (childEnd < 0) break
         try {
           const child = JSON.parse(
             repairJsonLeadingZeroIntegers(raw.slice(cursor, childEnd + 1)).json
           )
-          if (!Array.isArray(child) || typeof child[0] !== 'string' || typeof child[1] !== 'string')
-            break
+          const usable = isRecord
+            ? child != null && typeof child === 'object' && typeof child.c === 'string'
+            : Array.isArray(child) && typeof child[0] === 'string' && typeof child[1] === 'string'
+          if (!usable) break
           found = true
           ;(merged[key] ??= []).push(child)
         } catch {
@@ -1354,6 +1372,67 @@ Return compact JSON to leave room for complete notes:
 - Record keys: t=topic, h=title, c=content, o=assignee, l=deadline, s=sourceStartMs, e=sourceEndMs.
 - Every array element must be an object with t,h,c,s,e, never a bare string. Omit o/l unless explicit. Use [] for empty categories.
 {"decisions":[],"action_items":[],"information":[{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}],"discussion":[],"status_updates":[]}`
+
+/**
+ * Non-English only. Small models copy English example values back verbatim, so
+ * the production writer examples keep their shape with blank strings.
+ */
+export const WRITER_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
+  readonly [english: string, blank: string]
+> = [
+  [
+    '{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}',
+    '{"t":"","h":"","c":"","s":7,"e":9}'
+  ]
+]
+
+/**
+ * Non-English only. A blank positional tuple names none of its fields, and the
+ * notes model left every content slot empty. Keyed records keep each field's
+ * name when its example value is blank, as the Mac writer example does.
+ */
+export const TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS: ReadonlyArray<
+  readonly [tuple: string, keyed: string]
+> = [
+  [
+    'You extract meeting notes as compact JSON tuples.',
+    'You extract meeting notes as compact JSON records.'
+  ],
+  [
+    'Each item is [title, content, s, e] or [title, content, s, e, owner, deadline].',
+    'Each item is {"h":title,"c":content,"s":s,"e":e}. Add "o":owner and "l":deadline only when explicit.'
+  ],
+  [
+    '{"i":[["specific title","One sentence from this section.",s,e]],"a":[["specific task","One sentence saying who does what.",s,e,"Name"]]}',
+    '{"i":[{"h":"","c":"","s":s,"e":e}],"a":[{"h":"","c":"","s":s,"e":e,"o":""}]}'
+  ]
+]
+
+/**
+ * Non-English, small notes model only. llama3.2:3b returns the blank example
+ * record itself (no title, no content) for every chunk, so its example names
+ * each value instead. Qwen keeps the blank example its baselines were built on.
+ */
+export const SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS: ReadonlyArray<
+  readonly [english: string, placeholder: string]
+> = [
+  [
+    '{"t":"broad theme","h":"specific result","c":"one grounded claim","s":7,"e":9}',
+    '{"t":"<topic>","h":"<title>","c":"<one sentence>","s":7,"e":9}'
+  ]
+]
+
+function withoutEnglishWriterExampleValues(prompt: string, smallModel: boolean): string {
+  return [
+    ...TIGHT_WRITER_KEYED_RECORD_REPLACEMENTS,
+    ...(smallModel ? SMALL_MODEL_WRITER_EXAMPLE_VALUE_REPLACEMENTS : WRITER_EXAMPLE_VALUE_REPLACEMENTS)
+  ].reduce((current, [english, replacement]) => current.replace(english, replacement), prompt)
+}
+
+/** Non-English Windows tight prompts ask for keyed records instead of tuples. */
+function usesKeyedTightWriterRecords(): boolean {
+  return isTightWriterEnabled() && !isEnglishMeetingJob()
+}
 
 const MAC_NOTES_PRIORITY_LABEL =
   'HARD LIMIT 6 NEW records; never emit a seventh. Keep cited requests/commitments before lower-value information; never infer them.'
@@ -2242,9 +2321,14 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getChunkChars(): number {
-    if (this.windowsWholeMeeting) return 60000
-    if (this.windowsWideChunks) return 12000
-    return getDevNotesChunkCharsOverride() ?? CHUNK_CHARS
+    const chars = this.windowsWholeMeeting
+      ? 60000
+      : this.windowsWideChunks
+        ? 12000
+        : (getDevNotesChunkCharsOverride() ?? CHUNK_CHARS)
+    return isDenseScriptMeetingLanguage(activeMeetingLanguage())
+      ? Math.round(chars / DENSE_SCRIPT_CHUNK_CHARS_DIVISOR)
+      : chars
   }
 
   private safeSnapshotRunners(): Array<{
@@ -2260,6 +2344,13 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private getSystemPrompt(): string {
+    const prompt = this.getEnglishSystemPrompt()
+    return isEnglishMeetingJob()
+      ? prompt
+      : withoutEnglishWriterExampleValues(prompt, this.model === LOW_SPEC_MAC_OLLAMA_MODEL)
+  }
+
+  private getEnglishSystemPrompt(): string {
     if (isWindowsEvidenceWriterEnabled()) return WINDOWS_EVIDENCE_WRITER_PROMPT
     if (isWindowsOutlineWriterEnabled() && isTightWriterEnabled()) return WINDOWS_OUTLINE_PROMPT
     if (this.windowsWholeMeeting && isWindowsWholeWriterEnabled()) return WINDOWS_WHOLE_WRITER_PROMPT
@@ -2503,7 +2594,10 @@ export class OllamaProvider implements LLMProvider {
     const requestStartedAt = Date.now()
     this.lastOllamaCallMetrics = null
     const systemPrompt = this.getSystemPrompt()
-    const userContent = `Here is the meeting transcript:\n\n${transcript}`
+    const userContent = appendMeetingLanguageDirective(
+      `Here is the meeting transcript:\n\n${transcript}`,
+      activeMeetingLanguage()
+    )
     const requestOptions = this.mergeOllamaRequestOptions({
       num_ctx: contextTokens,
       num_predict: this.getMaxOutputTokens(),
@@ -2791,7 +2885,7 @@ export class OllamaProvider implements LLMProvider {
     if (this.windowsWideChunks && isWindowsWideWriterEnabled()) return 1536
     if (process.platform === 'darwin') return MAC_MAX_OUTPUT_TOKENS
     if (process.platform !== 'win32') return MAX_OUTPUT_TOKENS
-    if (isTightWriterEnabled()) return WINDOWS_TIGHT_MAX_OUTPUT_TOKENS
+    if (isTightWriterEnabled()) return meetingOutputTokenCap(WINDOWS_TIGHT_MAX_OUTPUT_TOKENS)
     return WINDOWS_MAX_OUTPUT_TOKENS
   }
 
@@ -3645,6 +3739,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private tokenizeTopic(text: string): string[] {
+    if (!isEnglishMeetingJob()) return unicodeContentTokens(text, 3)
     return text
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
@@ -3887,6 +3982,7 @@ export class OllamaProvider implements LLMProvider {
   }
 
   private extractEvidenceTokens(text: string): Set<string> {
+    if (!isEnglishMeetingJob()) return new Set(unicodeContentTokens(text))
     return new Set(
       text
         .toLowerCase()

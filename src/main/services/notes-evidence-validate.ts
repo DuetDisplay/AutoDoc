@@ -1,6 +1,8 @@
 import { createHash } from 'crypto'
 import type { MeetingNotesContent, NoteItem, NoteSection } from '../../shared/types'
 import { isPlausiblePersonOwner } from './notes-scan-markdown'
+import { isEnglishMeetingJob } from './notes-language'
+import { unicodeContentTokens } from './unicode-text'
 
 export const LEDGER_CHUNK_CHAR_LIMIT = 6000
 export const EVIDENCE_WINDOW_ROWS = 8
@@ -146,6 +148,7 @@ export function formatTranscriptRows(rows: readonly TranscriptRow[]): string {
 }
 
 export function contentTokens(text: string): string[] {
+  if (!isEnglishMeetingJob()) return unicodeContentTokens(text)
   return text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []
 }
 

@@ -40,6 +40,7 @@ import {
   WRITER_PARSE_ERROR_CODE,
   writerProgressPercent
 } from '../llm'
+import { runWithMeetingLanguage } from '../notes-language'
 
 const originalPlatform = process.platform
 
@@ -2129,6 +2130,26 @@ describe('Windows tight writer stream cap', () => {
     expect(shouldStopWindowsTightWriterStream(runaway, 'win32')).toBe(true)
   })
 
+  it.each([
+    ['ja', 6],
+    ['en', 0]
+  ] as const)('counts complete keyed records on Windows for %s meetings: %i', (language, expected) => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      const records = Array.from(
+        { length: 6 },
+        (_, index) => `{"h":"見出し${index}","c":"内容${index}","s":${index * 1000},"e":${index * 1000 + 500}}`
+      )
+      const partial = `{"i":[${records.join(',')},{"h":"七"`
+      expect(runWithMeetingLanguage(language, () => countCompleteTightWriterItems(partial))).toBe(
+        expected
+      )
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: original })
+    }
+  })
+
   it('stops only on Windows tight once six items are complete', () => {
     const six =
       '{"i":[["a","b",1,2],["c","d",3,4],["e","f",5,6],["g","h",7,8],["i","j",9,10],["k","l",11,12]]}'
@@ -2691,6 +2712,34 @@ describe('compact writer inspect and weighted decode', () => {
       123_000, 1_061_000
     ])
   })
+
+  it.each([
+    ['zh-Hans', 2],
+    ['en', 0]
+  ] as const)(
+    'recovers complete keyed records from a cut-off Windows %s category: %i',
+    (language, expected) => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const raw =
+          '{"i":[{"h":"公园面积","c":"公园占地19500平方公里。","s":33000,"e":46000},{"h":"生态区","c":"公园分为14个生态区。","s":46000,"e":56000},{"h":"戴维营","c":"1978年签署'
+        const extracted = runWithMeetingLanguage(language, () => extractWriterCategoryObject(raw))
+        expect(extracted?.i ?? []).toHaveLength(expected)
+        if (expected > 0) {
+          const result = inspectCompactWriterPayload(extracted as Record<string, unknown>)
+          expect(result.expanded.information?.[1]).toMatchObject({
+            title: '生态区',
+            content: '公园分为14个生态区。',
+            sourceStartMs: 46_000,
+            sourceEndMs: 56_000
+          })
+        }
+      } finally {
+        Object.defineProperty(process, 'platform', { configurable: true, value: original })
+      }
+    }
+  )
 
   it('recovers tight items when category keys use commas instead of colons', () => {
     const raw =

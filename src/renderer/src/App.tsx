@@ -21,6 +21,7 @@ import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
 import { PermissionToast } from './components/PermissionToast'
 import { LowSpecMacProcessingBanner } from './components/LowSpecMacProcessingBanner'
+import { MeetingLanguageAnnouncement } from './components/MeetingLanguageAnnouncement'
 import { NotesEngineUpgradeBanner } from './components/NotesEngineUpgradeBanner'
 import { Onboarding } from './pages/Onboarding'
 import type { UpdateStatus } from '../../preload/ipc.d'
@@ -268,6 +269,7 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
   const [notesEngineBannerVisible, setNotesEngineBannerVisible] = useState(false)
+  const [languageAnnouncementVisible, setLanguageAnnouncementVisible] = useState(false)
   const [updatePromptVisible, setUpdatePromptVisible] = useState(false)
   const [notificationPromptVisible, setNotificationPromptVisible] = useState(false)
   const [calendarStateReady, setCalendarStateReady] = useState(false)
@@ -823,12 +825,25 @@ export default function App() {
     notesEngineBannerVisible ||
     updatePromptVisible ||
     notificationPromptVisible ||
+    languageAnnouncementVisible ||
     !calendarStateReady ||
     hasCurrentOrImminentMeeting(events, feedbackClock)
 
   return (
     <HashRouter>
       <RouteDiagnosticTracker />
+      <MeetingLanguageAnnouncement
+        suppressed={
+          isRecording ||
+          recordingPickerOpen ||
+          permissionToastVisible ||
+          updatePromptVisible ||
+          notificationPromptVisible ||
+          !calendarStateReady ||
+          hasCurrentOrImminentMeeting(events, feedbackClock)
+        }
+        onVisibilityChange={setLanguageAnnouncementVisible}
+      />
       <div className="flex h-screen bg-bg-primary relative">
         {/* Top drag region for moving the window */}
         <div

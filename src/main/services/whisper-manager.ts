@@ -34,13 +34,21 @@ import {
 } from './runtime-policy'
 import {
   detectWindowsHardwareProfile,
+  FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+  FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
   getSystemMemorySnapshot,
   loadWindowsTranscriptionProfiles,
+  PARAKEET_RUNTIME_FILENAME,
   selectWindowsTranscriptionProfile,
   WINDOWS_TRANSCRIPTION_PROFILES,
+  type WindowsTranscriptionAsset,
   type WindowsTranscriptionBackendId,
   type WindowsTranscriptionProfile
 } from './windows-transcription-runtime'
+import {
+  listWindowsMultilingualEngineAssets,
+  type WindowsMultilingualEngineId
+} from './windows-multilingual-engine'
 import {
   selectEffectiveWindowsProcessingProfile,
   selectWindowsProcessingProfile,
@@ -55,6 +63,26 @@ import {
 } from './mac-processing-profile'
 import { getManagedPythonTarget } from './managed-python'
 import { classifyWindowsTranscriptionTier, logQaGateFirstRunSetup } from './qa-gate-log'
+import {
+  getMeetingAsrRoute,
+  type MeetingLanguageCode,
+  type MeetingAsrRoute,
+  type MeetingLanguageEngineState
+} from '../../shared/meeting-language'
+import {
+  downloadMacSpeechModels,
+  getMacRouteFirstUseDownloadBytes,
+  MAC_SPEECH_MODELS,
+  macSpeechModelCacheDir,
+  macSpeechModelPath
+} from './mac-speech-models'
+import { resolveMacCanaryTranscriber } from './mac-canary-transcription'
+import {
+  installWindowsTranscriptionAsset,
+  isWindowsAssetInstallIncomplete,
+  WINDOWS_ASSET_INSTALL_MARKER,
+  WindowsAssetInstallError
+} from './windows-transcription-asset-install'
 
 const IS_WIN = process.platform === 'win32'
 const IS_MAC_ARM = process.platform === 'darwin' && process.arch === 'arm64'
@@ -83,6 +111,18 @@ const MAC_WHISPER_RUNTIME_REQUIRED_FILE_PATTERNS = [
   { label: 'libggml backend plugin', pattern: /^libggml.*\.so$/i }
 ]
 
+function isSha256Hex(value: string | undefined): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
+}
+
+function parseHttpContentRangeTotal(value: string | null): number | null {
+  if (!value) return null
+  const match = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(value.trim())
+  if (!match) return null
+  const total = Number(match[1])
+  return Number.isFinite(total) && total > 0 ? total : null
+}
+
 type WhisperUsabilityResult =
   | 'ready'
   | 'missing-assets'
@@ -107,6 +147,17 @@ export interface WhisperModelInfo {
 
 export type TranscriptionBackendId = WindowsTranscriptionBackendId | 'mlx-whisper'
 
+export interface WindowsEngineRuntime {
+  pythonPath: string
+  modelPath: string
+  processEnv: NodeJS.ProcessEnv
+  device: WindowsTranscriptionProfile['device']
+  computeType: WindowsTranscriptionProfile['computeType']
+  workerEngine: 'canary' | 'whisper-turbo' | null
+  cliPath: string | null
+  scriptPath: string | null
+}
+
 export interface DownloadProgress {
   file: string
   percent: number
@@ -122,9 +173,27 @@ interface MacWhisperRuntimeAsset {
   expectedFiles: string[]
 }
 
+/** A newer meeting-language choice replaced this setup before it finished. */
+export class MeetingLanguageSetupSuperseded extends Error {
+  constructor() {
+    super('Meeting language changed during setup')
+    this.name = 'MeetingLanguageSetupSuperseded'
+  }
+}
+
 export class WhisperManager extends EventEmitter {
+  private windowsAssetInstalls = new Map<string, Promise<void>>()
+  private preparedWindowsAssets = new Map<string, { sha256: string; directory: string }>()
   private setupPromise: Promise<void> | null = null
+  private languageSetupQueue: Promise<void> = Promise.resolve()
+  private languageSetupRequests = new Map<MeetingLanguageCode, Promise<void>>()
+  private activeSetupLanguage: MeetingLanguageCode | undefined
+  /** The newest language asked for; older setups stop instead of finishing. */
+  private latestRequestedSetupLanguage: MeetingLanguageCode | undefined
+  /** Aborts the running language setup's in-flight download when the language changes. */
+  private activeSetupAbort: AbortController | null = null
   private setupStatus: WhisperSetupStatus = { phase: 'checking', percent: 0 }
+  private macLanguageSetupErrors = new Map<MeetingAsrRoute, string>()
   private runtimeValidated = false
   private validatedWorkerFingerprint: string | null = null
   private selectedWindowsProfile: WindowsTranscriptionProfile | null = null
@@ -334,6 +403,40 @@ export class WhisperManager extends EventEmitter {
     return this.getDevelopmentResourcePath('mlx-whisper-transcribe.py')
   }
 
+  getMlxWhisperTurboScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('mlx-whisper-turbo-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('mlx-whisper-turbo-transcribe.py')
+  }
+
+  getWhisperCppTurboScriptPath(): string {
+    if (app.isPackaged) {
+      return this.getPackagedResourcePath('whisper-cpp-turbo-transcribe.py')
+    }
+    return this.getDevelopmentResourcePath('whisper-cpp-turbo-transcribe.py')
+  }
+
+  getMlxWhisperTurboModelRef(): string {
+    return macSpeechModelPath(
+      MAC_SPEECH_MODELS['whisper-turbo'],
+      macSpeechModelCacheDir('whisper-turbo')
+    )
+  }
+
+  /** Same runtime as Distil, separate weights cache, so a turbo download never touches Distil. */
+  getMlxWhisperTurboProcessEnv(): NodeJS.ProcessEnv {
+    const cacheDir = macSpeechModelCacheDir('whisper-turbo')
+    return {
+      ...this.getMlxWhisperProcessEnv(),
+      HF_HOME: cacheDir,
+      HF_HUB_CACHE: join(cacheDir, 'hub'),
+      TRANSFORMERS_CACHE: join(cacheDir, 'transformers'),
+      HF_HUB_OFFLINE: '1',
+      TRANSFORMERS_OFFLINE: '1'
+    }
+  }
+
   getMlxWhisperProcessEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
@@ -345,8 +448,8 @@ export class WhisperManager extends EventEmitter {
     }
   }
 
-  getFasterWhisperPythonPath(): string {
-    return join(this.getFasterWhisperRuntimeDir(), 'python.exe')
+  getFasterWhisperPythonPath(profile = this.getSelectedWindowsProfile()): string {
+    return join(this.getFasterWhisperRuntimeDir(profile), 'python.exe')
   }
 
   getFasterWhisperModelPath(): string {
@@ -412,8 +515,8 @@ export class WhisperManager extends EventEmitter {
     await this.selectWindowsProfile()
   }
 
-  getFasterWhisperProcessEnv(): NodeJS.ProcessEnv {
-    const runtimeDir = this.getFasterWhisperRuntimeDir()
+  getFasterWhisperProcessEnv(profile = this.getSelectedWindowsProfile()): NodeJS.ProcessEnv {
+    const runtimeDir = this.getFasterWhisperRuntimeDir(profile)
     const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
     const pathAdditions = [
       runtimeDir,
@@ -464,7 +567,194 @@ export class WhisperManager extends EventEmitter {
   }
 
   getSetupStatus(): WhisperSetupStatus {
-    return { ...this.setupStatus }
+    return {
+      ...this.setupStatus,
+      meetingLanguage: this.activeSetupLanguage ?? this.setupStatus.meetingLanguage
+    }
+  }
+
+  getWindowsTranscriptionProfiles(): Record<
+    WindowsTranscriptionBackendId,
+    WindowsTranscriptionProfile
+  > {
+    return this.windowsTranscriptionProfiles
+  }
+
+  recordWindowsTranscriptionDowngrade(
+    fromBackend: WindowsTranscriptionBackendId,
+    toBackend: WindowsTranscriptionBackendId
+  ): void {
+    this.recordDowngrade(fromBackend, toBackend)
+  }
+
+  /**
+   * Presence checks only need the asset manifest. Re-selecting the profile
+   * reruns hardware detection (PowerShell), and availability checks ~16 assets
+   * for each of 26 languages, which made the picker take ~20 s to open.
+   */
+  private async ensureWindowsProfilesLoaded(): Promise<void> {
+    if (this.windowsProfileResolutionPromise) await this.windowsProfileResolutionPromise
+    else if (!this.selectedWindowsProfile) await this.selectWindowsProfile()
+  }
+
+  async areWindowsEngineAssetsPresent(engineId: WindowsMultilingualEngineId): Promise<boolean> {
+    await this.ensureWindowsProfilesLoaded()
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const assets = listWindowsMultilingualEngineAssets(engineId, this.windowsTranscriptionProfiles)
+    for (const asset of assets) {
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length > 0) {
+        return false
+      }
+    }
+    return assets.length > 0
+  }
+
+  async isWindowsTranscriptionAssetPresent(filename: string): Promise<boolean> {
+    await this.ensureWindowsProfilesLoaded()
+    for (const profile of Object.values(this.windowsTranscriptionProfiles)) {
+      for (const asset of profile.assets) {
+        if (asset.filename !== filename) continue
+        const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+        const missingExpectedFiles = await this.getMissingExpectedFiles(
+          assetRoot,
+          asset.expectedFiles
+        )
+        return missingExpectedFiles.length === 0
+      }
+    }
+    return false
+  }
+
+  async ensureWindowsEngineAssets(engineId: WindowsMultilingualEngineId): Promise<void> {
+    await this.selectWindowsProfile()
+    await this.ensureFfmpegForSelectedRuntime()
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const assets = listWindowsMultilingualEngineAssets(engineId, this.windowsTranscriptionProfiles)
+    if (assets.some((asset) => !asset.url)) {
+      throw new Error(
+        'Managed Windows transcription assets are not configured for this build. Set AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL or use an official AutoDoc build.'
+      )
+    }
+
+    for (const asset of assets) {
+      const ownerProfile = this.profileOwningWindowsAsset(asset, profile)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(
+        ownerProfile,
+        asset.id,
+        asset.filename
+      )
+      const missingExpectedFiles = await this.getMissingExpectedFiles(
+        assetRoot,
+        asset.expectedFiles
+      )
+      if (missingExpectedFiles.length === 0) {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset already present',
+          context: {
+            backend: engineId,
+            assetId: asset.id,
+            filename: asset.filename,
+            targetDir: assetRoot
+          }
+        })
+        continue
+      }
+
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset missing expected files before download',
+        context: {
+          backend: engineId,
+          assetId: asset.id,
+          filename: asset.filename,
+          targetDir: assetRoot,
+          missingExpectedFiles
+        }
+      })
+      this.setupStatus = this.withBackendStatus({
+        phase: asset.id === 'runtime' ? 'downloading-whisper' : 'downloading-model',
+        percent: 0
+      })
+      this.emit('setup-status', this.getSetupStatus())
+      await this.downloadWithRetry(
+        () => this.downloadAndExtractWindowsTranscriptionAsset(ownerProfile, asset),
+        asset.id
+      )
+    }
+  }
+
+  getWindowsEngineRuntime(engineId: WindowsMultilingualEngineId): WindowsEngineRuntime {
+    const profile = this.windowsTranscriptionProfiles[engineId]
+    const modelRoot = this.getWindowsTranscriptionAssetRoot(profile, 'model')
+    if (engineId === 'canary-cpu') {
+      return {
+        pythonPath: this.getParakeetPythonPath(),
+        modelPath: modelRoot,
+        processEnv: this.getParakeetProcessEnv(),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'canary',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'canary-cuda') {
+      const runtimeDir = this.getWindowsTranscriptionAssetRoot(profile, 'runtime')
+      return {
+        pythonPath: join(runtimeDir, 'python.exe'),
+        modelPath: modelRoot,
+        processEnv: this.getOnnxRuntimeProcessEnv(runtimeDir),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'canary',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'whisper-turbo-cuda') {
+      const cudaProfile = this.windowsTranscriptionProfiles['faster-whisper-cuda']
+      return {
+        pythonPath: this.getFasterWhisperPythonPath(cudaProfile),
+        modelPath: modelRoot,
+        processEnv: this.getFasterWhisperProcessEnv(cudaProfile),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'whisper-turbo',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+    if (engineId === 'whisper-turbo-cpu') {
+      const cpuProfile = this.windowsTranscriptionProfiles['faster-whisper-cpu']
+      return {
+        pythonPath: this.getFasterWhisperPythonPath(cpuProfile),
+        modelPath: modelRoot,
+        processEnv: this.getFasterWhisperProcessEnv(cpuProfile),
+        device: profile.device,
+        computeType: profile.computeType,
+        workerEngine: 'whisper-turbo',
+        cliPath: null,
+        scriptPath: null
+      }
+    }
+
+    const runtimeDir = this.getWindowsTranscriptionAssetRoot(profile, 'runtime')
+    return {
+      pythonPath: this.getParakeetPythonPath(),
+      modelPath: join(modelRoot, 'ggml-large-v3-turbo.bin'),
+      processEnv: this.getParakeetProcessEnv(),
+      device: profile.device,
+      computeType: profile.computeType,
+      workerEngine: null,
+      cliPath: join(runtimeDir, 'whisper-cli.exe'),
+      scriptPath: this.getWhisperCppTurboScriptPath()
+    }
   }
 
   async installBundledMacWhisperRuntimeOnly(): Promise<void> {
@@ -514,7 +804,7 @@ export class WhisperManager extends EventEmitter {
 
     const profile = this.getSelectedWindowsProfile()
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -555,12 +845,17 @@ export class WhisperManager extends EventEmitter {
         message: 'Windows profile hardware detection failed; using system memory and CPU count',
         error
       })
-      return { logicalProcessors: availableParallelism(), ...getSystemMemorySnapshot() }
+      return {
+        logicalProcessors: availableParallelism(),
+        installedMemoryGiB: null,
+        ...getSystemMemorySnapshot()
+      }
     })
     const device = this.getSelectedWindowsProfile().device
     this.selectedWindowsProcessingProfile = selectWindowsProcessingProfile(
       {
         logicalProcessors: hardware.logicalProcessors,
+        installedMemoryGiB: hardware.installedMemoryGiB ?? null,
         totalMemoryGiB: hardware.totalMemoryGiB,
         freeMemoryGiB: hardware.freeMemoryGiB
       },
@@ -636,8 +931,41 @@ export class WhisperManager extends EventEmitter {
 
   private getWindowsTranscriptionAssetRoot(
     profile: WindowsTranscriptionProfile,
-    assetId: 'runtime' | 'model'
+    assetId: 'runtime' | 'model',
+    filename?: string
   ): string {
+    if (filename === PARAKEET_RUNTIME_FILENAME) {
+      return this.getParakeetRuntimeDir()
+    }
+    if (filename === FASTER_WHISPER_CUDA_RUNTIME_FILENAME) {
+      return this.getFasterWhisperRuntimeDir(
+        this.windowsTranscriptionProfiles['faster-whisper-cuda']
+      )
+    }
+    if (filename === FASTER_WHISPER_CPU_RUNTIME_FILENAME) {
+      return this.getFasterWhisperRuntimeDir(
+        this.windowsTranscriptionProfiles['faster-whisper-cpu']
+      )
+    }
+    if (filename === 'canary-cuda-runtime-win-x64.zip') {
+      return join(this.getModelsDir(), 'transcription-runtimes', 'canary-cuda')
+    }
+    if (filename === 'whisper-cpp-vulkan-runtime-win-x64.zip') {
+      return join(this.getModelsDir(), 'transcription-runtimes', 'whisper-turbo-vulkan')
+    }
+    if (filename === 'canary-1b-v2-int8.zip') {
+      return join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-int8')
+    }
+    if (filename === 'canary-1b-v2-fp32.zip') {
+      return join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-fp32')
+    }
+    if (filename === 'faster-whisper-large-v3-turbo-ct2.zip') {
+      return join(this.getModelsDir(), 'faster-whisper-models', 'large-v3-turbo')
+    }
+    if (filename === 'ggml-large-v3-turbo.zip') {
+      return join(this.getModelsDir(), 'whisper-cpp-models', 'ggml-large-v3-turbo')
+    }
+
     if (profile.engine === 'parakeet') {
       return assetId === 'runtime'
         ? this.getParakeetRuntimeDir()
@@ -648,17 +976,84 @@ export class WhisperManager extends EventEmitter {
           )
     }
 
+    if (profile.id === 'canary-cpu') {
+      return assetId === 'runtime'
+        ? this.getParakeetRuntimeDir()
+        : join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-int8')
+    }
+    if (profile.id === 'canary-cuda') {
+      return assetId === 'runtime'
+        ? join(this.getModelsDir(), 'transcription-runtimes', 'canary-cuda')
+        : join(this.getModelsDir(), 'canary-models', 'canary-1b-v2-fp32')
+    }
+    if (profile.id === 'whisper-turbo-cuda' || profile.id === 'whisper-turbo-cpu') {
+      return assetId === 'runtime'
+        ? this.getFasterWhisperRuntimeDir(
+            this.windowsTranscriptionProfiles[
+              profile.id === 'whisper-turbo-cuda' ? 'faster-whisper-cuda' : 'faster-whisper-cpu'
+            ]
+          )
+        : join(this.getModelsDir(), 'faster-whisper-models', 'large-v3-turbo')
+    }
+    if (profile.id === 'whisper-turbo-vulkan') {
+      return assetId === 'runtime'
+        ? join(this.getModelsDir(), 'transcription-runtimes', 'whisper-turbo-vulkan')
+        : join(this.getModelsDir(), 'whisper-cpp-models', 'ggml-large-v3-turbo')
+    }
+
     return assetId === 'runtime'
       ? this.getFasterWhisperRuntimeDir(profile)
       : join(this.getModelsDir(), 'faster-whisper-models', profile.modelName)
   }
 
+  private profileOwningWindowsAsset(
+    asset: WindowsTranscriptionAsset,
+    fallback: WindowsTranscriptionProfile
+  ): WindowsTranscriptionProfile {
+    if (asset.filename === PARAKEET_RUNTIME_FILENAME) {
+      return this.windowsTranscriptionProfiles['parakeet-cpu']
+    }
+    if (asset.filename === FASTER_WHISPER_CUDA_RUNTIME_FILENAME) {
+      return this.windowsTranscriptionProfiles['faster-whisper-cuda']
+    }
+    if (asset.filename === FASTER_WHISPER_CPU_RUNTIME_FILENAME) {
+      return this.windowsTranscriptionProfiles['faster-whisper-cpu']
+    }
+    return fallback
+  }
+
+  private getOnnxRuntimeProcessEnv(runtimeDir: string): NodeJS.ProcessEnv {
+    const sitePackagesDir = join(runtimeDir, 'Lib', 'site-packages')
+    const pathAdditions = [
+      runtimeDir,
+      join(runtimeDir, 'DLLs'),
+      join(sitePackagesDir, 'onnxruntime', 'capi')
+    ].filter((candidate) => existsSync(candidate))
+
+    return {
+      ...process.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+      PATH: [...pathAdditions, process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+    }
+  }
+
+  /** A non-English setup names its own engine, not the English one. */
+  private setupLanguageLabel(): string | null {
+    if (!this.activeSetupLanguage) return null
+    const route = getMeetingAsrRoute(this.activeSetupLanguage)
+    if (route === 'canary') return 'Canary'
+    if (route === 'whisper-turbo') return 'Whisper turbo'
+    return null
+  }
+
   private withBackendStatus(status: WhisperSetupStatus): WhisperSetupStatus {
+    const languageLabel = this.setupLanguageLabel()
     if (this.isMlxWhisperSelected()) {
       return {
         ...status,
         backend: 'mlx-whisper',
-        backendLabel: MLX_WHISPER_LABEL,
+        backendLabel: languageLabel ?? MLX_WHISPER_LABEL,
         macProcessingProfileId: this.selectedMacProfile?.id,
         macProcessingProfileReason: this.selectedMacProfile?.reason,
         notesModel: this.selectedMacProfile?.notesModel
@@ -673,7 +1068,7 @@ export class WhisperManager extends EventEmitter {
     return {
       ...status,
       backend: profile.id,
-      backendLabel: profile.label,
+      backendLabel: languageLabel ?? profile.label,
       windowsProcessingProfileId: this.selectedWindowsProcessingProfile?.id,
       windowsProcessingProfileReason: this.selectedWindowsProcessingProfile?.reason,
       notesModel: this.selectedWindowsProcessingProfile?.notesModel
@@ -865,6 +1260,144 @@ export class WhisperManager extends EventEmitter {
     return this.setupPromise
   }
 
+  /** Non-English setup installs its route, without downloading the English model. */
+  prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
+    this.latestRequestedSetupLanguage = language
+    if (this.activeSetupLanguage && this.activeSetupLanguage !== language) {
+      this.activeSetupAbort?.abort()
+    }
+    const pending = this.languageSetupRequests.get(language)
+    if (pending) return pending
+    const request = this.languageSetupQueue.then(async () => {
+      if (this.latestRequestedSetupLanguage !== language) throw new MeetingLanguageSetupSuperseded()
+      this.activeSetupLanguage = language
+      this.activeSetupAbort = new AbortController()
+      try {
+        await this.runMeetingLanguageSetup(language)
+      } finally {
+        this.setupStatus = { ...this.setupStatus, meetingLanguage: language }
+        this.activeSetupLanguage = undefined
+        this.activeSetupAbort = null
+        this.languageSetupRequests.delete(language)
+      }
+    })
+    this.languageSetupRequests.set(language, request)
+    this.languageSetupQueue = request.catch(() => {})
+    return request
+  }
+
+  private async runMeetingLanguageSetup(language: MeetingLanguageCode): Promise<void> {
+    if (getMeetingAsrRoute(language) === 'english') return this.startSetup()
+    try {
+      if (IS_WIN) {
+        const { ensureWindowsMultilingualEngineReady } =
+          await import('./windows-multilingual-readiness')
+        const {
+          restorePreviousMeetingLanguageIfWindowsLocked,
+          restorePreviousMeetingLanguageOnLock
+        } = await import('./meeting-language-availability')
+        let ready
+        try {
+          ready = await ensureWindowsMultilingualEngineReady(language)
+        } catch (error) {
+          await restorePreviousMeetingLanguageIfWindowsLocked(language)
+          throw error
+        }
+        if (ready.availability === 'locked' || !ready.engineId) {
+          restorePreviousMeetingLanguageOnLock(language)
+          throw new Error(ready.reason ?? 'This meeting language is unavailable on this PC.')
+        }
+      } else if (IS_MAC_ARM) {
+        await this.selectMacProfile()
+        const canary = getMeetingAsrRoute(language) === 'canary'
+        if (
+          canary
+            ? !resolveMacCanaryTranscriber()
+            : !(await this.fileExists(this.getMlxWhisperPythonPath()))
+        ) {
+          throw new Error('The bundled speech runtime is missing. Reinstall AutoDoc.')
+        }
+        await this.ensureFfmpegForSelectedRuntime()
+        this.setupStatus = {
+          phase: 'downloading-model',
+          percent: 0,
+          backendLabel: canary ? 'Canary' : 'Whisper turbo'
+        }
+        this.emit('setup-status', this.getSetupStatus())
+        await downloadMacSpeechModels(
+          language,
+          async (url, path, sha256, progress) => {
+            await this.downloadWithRetry(async () => {
+              await this.downloadFile(url, path, 'speech model', progress, undefined, {
+                expectedSha256: sha256
+              })
+            }, 'model')
+          },
+          (percent) => {
+            this.setupStatus = { ...this.setupStatus, percent }
+            this.emit('setup-status', this.getSetupStatus())
+          }
+        )
+      } else {
+        throw new Error(
+          'This meeting language needs an Apple Silicon Mac or a supported Windows PC.'
+        )
+      }
+      this.macLanguageSetupErrors.delete(getMeetingAsrRoute(language))
+      this.setupStatus = { ...this.setupStatus, phase: 'ready', percent: 100, error: undefined }
+      this.emit('setup-status', this.getSetupStatus())
+    } catch (error) {
+      if (IS_MAC_ARM)
+        this.macLanguageSetupErrors.set(
+          getMeetingAsrRoute(language),
+          error instanceof Error ? error.message : String(error)
+        )
+      this.setupStatus = {
+        phase: 'error',
+        percent: 0,
+        failedStep: 'downloading-model',
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.emit('setup-status', this.getSetupStatus())
+      throw error
+    }
+  }
+
+  async getMacMeetingLanguageState(
+    language: MeetingLanguageCode
+  ): Promise<MeetingLanguageEngineState> {
+    const route = getMeetingAsrRoute(language)
+    if (route !== 'english') {
+      const hasRuntime =
+        IS_MAC_ARM &&
+        (route === 'canary'
+          ? !!resolveMacCanaryTranscriber()
+          : this.isMlxWhisperSelected() &&
+            (await this.fileExists(this.getMlxWhisperPythonPath())) &&
+            (await this.fileExists(this.getMlxWhisperTurboScriptPath())))
+      if (!hasRuntime)
+        return {
+          availability: 'locked',
+          reason: 'The speech runtime is missing from this build. Reinstall AutoDoc.',
+          firstUseDownloadBytes: 0
+        }
+    }
+    return {
+      availability: 'available' as const,
+      reason: this.macLanguageSetupErrors.get(route) ?? null,
+      firstUseDownloadBytes: await getMacRouteFirstUseDownloadBytes(language)
+    }
+  }
+
+  /** Recording jobs check local assets only; first-use downloads belong to setup. */
+  async assertMacMeetingLanguageReady(language: MeetingLanguageCode): Promise<void> {
+    if ((await getMacRouteFirstUseDownloadBytes(language)) > 0) {
+      throw new Error(
+        'The speech model is missing or incomplete. Select the meeting language in Settings to download it.'
+      )
+    }
+  }
+
   private async runSetup(): Promise<void> {
     this.inFirstRunSetup = true
     this.firstRunSetupStartedAt = Date.now()
@@ -911,6 +1444,7 @@ export class WhisperManager extends EventEmitter {
       totalDownloadedBytes,
       hardware: {
         logicalProcessors: hardware.logicalProcessors,
+        installedMemoryGiB: hardware.installedMemoryGiB ?? null,
         totalMemoryGiB: hardware.totalMemoryGiB,
         freeMemoryGiB: hardware.freeMemoryGiB,
         gpus: hardware.gpus.map((gpu) => ({
@@ -1191,7 +1725,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1245,7 +1779,7 @@ export class WhisperManager extends EventEmitter {
     profile: WindowsTranscriptionProfile
   ): Promise<boolean> {
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1275,7 +1809,7 @@ export class WhisperManager extends EventEmitter {
     }
 
     for (const asset of profile.assets) {
-      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+      const assetRoot = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
       const missingExpectedFiles = await this.getMissingExpectedFiles(
         assetRoot,
         asset.expectedFiles
@@ -1376,10 +1910,21 @@ export class WhisperManager extends EventEmitter {
     )
   }
 
+  /**
+   * Recording post-processing needs ffmpeg only. Non-English recordings use it
+   * so Stop never starts the English model setup they skipped in onboarding.
+   */
+  async ensureFfmpeg(): Promise<void> {
+    await this.ensureFfmpegForSelectedRuntime()
+  }
+
   private async ensureFfmpegForSelectedRuntime(): Promise<void> {
     if (await this.fileExists(this.getFfmpegPath())) {
       return
     }
+    // Language setup can run before ensureReady on a fresh profile or after
+    // downloaded components were cleared, so the models folder may not exist.
+    await mkdir(this.getModelsDir(), { recursive: true })
 
     this.setupStatus = this.withBackendStatus({ phase: 'downloading-ffmpeg', percent: 0 })
     this.emit('setup-status', this.getSetupStatus())
@@ -1390,9 +1935,43 @@ export class WhisperManager extends EventEmitter {
     profile: WindowsTranscriptionProfile,
     asset: WindowsTranscriptionProfile['assets'][number]
   ): Promise<void> {
+    // English and multilingual engines share runtimes. Join an in-flight install
+    // before checking presence or touching the shared archive/destination.
+    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+    const existing = this.windowsAssetInstalls.get(targetDir)
+    if (existing) return existing
+    const install = this.installWindowsTranscriptionAsset(profile, asset)
+    this.windowsAssetInstalls.set(targetDir, install)
+    try {
+      await install
+    } finally {
+      if (this.windowsAssetInstalls.get(targetDir) === install) {
+        this.windowsAssetInstalls.delete(targetDir)
+      }
+    }
+  }
+
+  private async installWindowsTranscriptionAsset(
+    profile: WindowsTranscriptionProfile,
+    asset: WindowsTranscriptionAsset
+  ): Promise<void> {
     const modelsDir = this.getModelsDir()
     const archivePath = join(modelsDir, asset.filename)
-    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id)
+    const targetDir = this.getWindowsTranscriptionAssetRoot(profile, asset.id, asset.filename)
+    if ((await this.getMissingExpectedFiles(targetDir, asset.expectedFiles)).length === 0) return
+    const prepared = this.preparedWindowsAssets.get(targetDir)
+    if (prepared?.sha256 === asset.sha256) {
+      if (
+        (await this.getMissingExpectedFiles(prepared.directory, asset.expectedFiles)).length === 0
+      ) {
+        await this.publishPreparedWindowsAsset(prepared.directory, targetDir, asset)
+        this.preparedWindowsAssets.delete(targetDir)
+        await rm(prepared.directory, { recursive: true, force: true }).catch(() => {})
+        await rm(archivePath, { force: true }).catch(() => {})
+        return
+      }
+      this.preparedWindowsAssets.delete(targetDir)
+    }
     let extractDir: string | null = null
     const partPaths: string[] = []
 
@@ -1421,6 +2000,8 @@ export class WhisperManager extends EventEmitter {
       this.emit('setup-status', this.getSetupStatus())
     }
 
+    let succeeded = false
+    let verifiedArchiveSha256: string | null = null
     try {
       if (asset.parts?.length) {
         const totalBytes = asset.parts.reduce((sum, part) => sum + part.bytes, 0)
@@ -1431,7 +2012,7 @@ export class WhisperManager extends EventEmitter {
           const partPath = `${archivePath}.part${index + 1}`
           partPaths.push(partPath)
 
-          await this.downloadFile(
+          const partSha256 = await this.downloadFile(
             part.url,
             partPath,
             `${asset.filename} (part ${index + 1})`,
@@ -1441,9 +2022,13 @@ export class WhisperManager extends EventEmitter {
                 ((completedBytes + partProgressBytes) / totalBytes) * 100
               )
               reportDownloadProgress(overallPercent)
-            }
+            },
+            undefined,
+            { expectedSha256: part.sha256 }
           )
-          await this.verifyFileSha256(partPath, part.sha256, part.filename)
+          if (!partSha256) {
+            await this.verifyFileSha256(partPath, part.sha256, part.filename)
+          }
           completedBytes += part.bytes
         }
 
@@ -1465,10 +2050,22 @@ export class WhisperManager extends EventEmitter {
         }
         partPaths.length = 0
       } else {
-        await this.downloadFile(asset.url, archivePath, asset.filename, reportDownloadProgress)
+        const downloadedSha256 = await this.downloadFile(
+          asset.url,
+          archivePath,
+          asset.filename,
+          reportDownloadProgress,
+          undefined,
+          { expectedSha256: asset.sha256 }
+        )
+        if (downloadedSha256) {
+          verifiedArchiveSha256 = downloadedSha256
+        }
       }
 
-      const actualSha256 = await this.verifyFileSha256(archivePath, asset.sha256, asset.filename)
+      const actualSha256 =
+        verifiedArchiveSha256 ??
+        (await this.verifyFileSha256(archivePath, asset.sha256, asset.filename))
       const archiveStats = await stat(archivePath)
       if (this.inFirstRunSetup) {
         this.firstRunDownloadedBytes += archiveStats.size
@@ -1513,17 +2110,52 @@ export class WhisperManager extends EventEmitter {
         )
       }
 
-      await rm(targetDir, { recursive: true, force: true })
-      await rename(extractDir, targetDir)
+      this.preparedWindowsAssets.set(targetDir, { sha256: asset.sha256, directory: extractDir })
+      await this.publishPreparedWindowsAsset(extractDir, targetDir, asset)
+      this.preparedWindowsAssets.delete(targetDir)
+      await rm(extractDir, { recursive: true, force: true }).catch(() => {})
       extractDir = null
+      succeeded = true
     } finally {
-      await rm(archivePath, { force: true })
-      for (const partPath of partPaths) {
-        await rm(partPath, { force: true })
+      if (succeeded) {
+        await rm(archivePath, { force: true })
+        for (const partPath of partPaths) {
+          await rm(partPath, { force: true })
+        }
       }
-      if (extractDir) {
+      if (extractDir && this.preparedWindowsAssets.get(targetDir)?.directory !== extractDir) {
         await rm(extractDir, { recursive: true, force: true })
       }
+    }
+  }
+
+  private async publishPreparedWindowsAsset(
+    stagedDir: string,
+    targetDir: string,
+    asset: WindowsTranscriptionAsset
+  ): Promise<void> {
+    try {
+      await installWindowsTranscriptionAsset(stagedDir, targetDir, (retry) => {
+        logAutodocEvent({
+          area: 'whisper',
+          message: 'Windows transcription asset installation retry',
+          context: { filename: asset.filename, ...retry }
+        })
+      })
+      logAutodocEvent({
+        area: 'whisper',
+        message: 'Windows transcription asset installation completed',
+        context: { filename: asset.filename, targetDir }
+      })
+    } catch (error) {
+      logAutodocFailure({
+        area: 'whisper',
+        message:
+          'Windows transcription asset installation blocked; retaining verified files for retry',
+        error,
+        context: { filename: asset.filename, stagedDir, targetDir }
+      })
+      throw new WindowsAssetInstallError(asset.filename, error)
     }
   }
 
@@ -1544,6 +2176,9 @@ export class WhisperManager extends EventEmitter {
     rootDir: string,
     expectedFiles: string[]
   ): Promise<string[]> {
+    if (IS_WIN && (await isWindowsAssetInstallIncomplete(rootDir))) {
+      return [WINDOWS_ASSET_INSTALL_MARKER]
+    }
     const missingExpectedFiles: string[] = []
     for (const expectedFile of expectedFiles) {
       if (!(await this.fileExists(join(rootDir, ...expectedFile.split('/'))))) {
@@ -2649,7 +3284,12 @@ export class WhisperManager extends EventEmitter {
         await fn()
         return
       } catch (err) {
-        if (i === attempts - 1) throw err
+        if (
+          i === attempts - 1 ||
+          err instanceof MeetingLanguageSetupSuperseded ||
+          err instanceof WindowsAssetInstallError
+        )
+          throw err
         const delay = Math.pow(2, i) * 1000
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
@@ -2705,14 +3345,115 @@ export class WhisperManager extends EventEmitter {
     destPath: string,
     label: string,
     onProgress?: (percent: number) => void,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: { expectedSha256?: string }
+  ): Promise<string | null> {
+    const expectedSha256 = options?.expectedSha256
+    if (isSha256Hex(expectedSha256) && (await this.fileExists(destPath))) {
+      try {
+        return await this.verifyFileSha256(destPath, expectedSha256, label)
+      } catch {
+        // Mismatch deletes destPath; fetch a replacement once below.
+      }
+    }
+
+    const canResume = isSha256Hex(expectedSha256)
+    await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: canResume })
+
+    if (!canResume) {
+      return null
+    }
+
+    try {
+      return await this.verifyFileSha256(destPath, expectedSha256, label)
+    } catch {
+      await rm(`${destPath}.tmp`, { force: true })
+      await this.downloadResumableFile(url, destPath, label, onProgress, init, { resume: true })
+      return await this.verifyFileSha256(destPath, expectedSha256, label)
+    }
+  }
+
+  private async downloadResumableFile(
+    url: string,
+    destPath: string,
+    label: string,
+    onProgress?: (percent: number) => void,
+    init?: RequestInit,
+    options?: { resume?: boolean }
   ): Promise<void> {
-    const response = await fetch(url, { redirect: 'follow', ...init })
+    // Only downloads that belong to a language setup can be superseded.
+    const setupSignal = this.activeSetupLanguage ? this.activeSetupAbort?.signal : undefined
+    if (!setupSignal) {
+      return this.downloadResumableFileOnce(url, destPath, label, onProgress, init, options)
+    }
+    const signal = init?.signal ? AbortSignal.any([init.signal, setupSignal]) : setupSignal
+    try {
+      return await this.downloadResumableFileOnce(
+        url,
+        destPath,
+        label,
+        onProgress,
+        { ...init, signal },
+        options
+      )
+    } catch (err) {
+      if (setupSignal.aborted) throw new MeetingLanguageSetupSuperseded()
+      throw err
+    }
+  }
+
+  private async downloadResumableFileOnce(
+    url: string,
+    destPath: string,
+    label: string,
+    onProgress?: (percent: number) => void,
+    init?: RequestInit,
+    options?: { resume?: boolean }
+  ): Promise<void> {
+    const tempPath = `${destPath}.tmp`
+    const resume = options?.resume === true
+    let existingBytes = 0
+    if (resume) {
+      try {
+        const info = await stat(tempPath)
+        if (info.size > 0) {
+          existingBytes = info.size
+        }
+      } catch {
+        existingBytes = 0
+      }
+    } else {
+      await rm(tempPath, { force: true })
+    }
+
+    const headers = new Headers(init?.headers)
+    if (existingBytes > 0) {
+      headers.set('Range', `bytes=${existingBytes}-`)
+    }
+
+    let response = await fetch(url, { redirect: 'follow', ...init, headers })
+
+    if (existingBytes > 0 && response.status === 416) {
+      await rm(tempPath, { force: true })
+      existingBytes = 0
+      headers.delete('Range')
+      response = await fetch(url, { redirect: 'follow', ...init, headers })
+    }
+
+    if (existingBytes > 0 && response.status !== 206) {
+      await rm(tempPath, { force: true })
+      existingBytes = 0
+    }
+
     if (!response.ok) {
       throw new Error(`Failed to download ${label}: ${response.status} ${response.statusText}`)
     }
 
-    const totalBytes = Number(response.headers.get('content-length') ?? 0)
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    const rangeTotal = parseHttpContentRangeTotal(response.headers.get('content-range'))
+    const totalBytes =
+      rangeTotal ??
+      (existingBytes > 0 && contentLength > 0 ? existingBytes + contentLength : contentLength)
     let downloadedBytes = 0
     let lastReportedPercent: number | undefined
     const reportProgress = (percent: number): void => {
@@ -2720,10 +3461,8 @@ export class WhisperManager extends EventEmitter {
       lastReportedPercent = percent
       onProgress?.(percent)
     }
-    const tempPath = `${destPath}.tmp`
 
-    await rm(tempPath, { force: true })
-    const fileStream = createWriteStream(tempPath)
+    const fileStream = createWriteStream(tempPath, { flags: existingBytes > 0 ? 'a' : 'w' })
     const reader = response.body?.getReader()
     if (!reader) throw new Error(`No response body for ${label}`)
 
@@ -2731,18 +3470,27 @@ export class WhisperManager extends EventEmitter {
       // Unknown-size downloads stay indeterminate; callers signal completion by phase.
       if (totalBytes <= 0) reportProgress(0)
       while (true) {
+        if (
+          this.activeSetupLanguage &&
+          this.latestRequestedSetupLanguage !== this.activeSetupLanguage
+        ) {
+          // Keep the partial file: a verified download resumes if this language is picked again.
+          void reader.cancel().catch(() => {})
+          throw new MeetingLanguageSetupSuperseded()
+        }
         const { done, value } = await reader.read()
         if (done) break
         if (!fileStream.write(value)) {
           await once(fileStream, 'drain')
         }
         downloadedBytes += value.length
-        const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0
+        const completedBytes = existingBytes + downloadedBytes
+        const percent = totalBytes > 0 ? Math.round((completedBytes / totalBytes) * 100) : 0
         reportProgress(percent)
         this.emit('download-progress', {
           file: label,
           percent,
-          bytesDownloaded: downloadedBytes,
+          bytesDownloaded: completedBytes,
           bytesTotal: totalBytes
         } as DownloadProgress)
       }
@@ -2754,9 +3502,9 @@ export class WhisperManager extends EventEmitter {
         fileStream.on('error', reject)
       })
 
-      if (totalBytes > 0 && downloadedBytes !== totalBytes) {
+      if (contentLength > 0 && downloadedBytes !== contentLength) {
         throw new Error(
-          `Downloaded ${label} was incomplete: expected ${totalBytes} bytes, received ${downloadedBytes}.`
+          `Downloaded ${label} was incomplete: expected ${contentLength} bytes, received ${downloadedBytes}.`
         )
       }
 
@@ -2764,7 +3512,9 @@ export class WhisperManager extends EventEmitter {
       await rename(tempPath, destPath)
     } catch (err) {
       await this.closeFileStream(fileStream)
-      await rm(tempPath, { force: true })
+      if (!resume) {
+        await rm(tempPath, { force: true })
+      }
       throw err
     }
   }

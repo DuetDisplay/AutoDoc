@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TranscriptionService } from '../transcription'
 import type { WhisperManager } from '../whisper-manager'
 import type { AudioConverter } from '../audio-converter'
@@ -7,6 +7,7 @@ import { TranscriptionWorkerClient } from '../transcription-worker-client'
 import { EventEmitter } from 'events'
 import path from 'path'
 import { classifyError } from '../error-classification'
+import { runWithMeetingLanguage } from '../notes-language'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/mock/home') },
@@ -56,6 +57,7 @@ const workerClientMock = vi.hoisted(() => ({
   load: vi.fn(),
   transcribe: vi.fn(),
   unload: vi.fn(),
+  selftest: vi.fn(),
   ping: vi.fn(),
   dispose: vi.fn(),
   disposeAndWait: vi.fn(),
@@ -68,6 +70,28 @@ vi.mock('../transcription-worker-client', () => ({
     return workerClientMock
   })
 }))
+
+const multilingualReadyMock = vi.hoisted(() => ({
+  ensureWindowsMultilingualEngineReady: vi.fn(),
+  windowsMultilingualTranscribeLanguage: vi.fn((language: string) =>
+    language === 'zh-Hans' ? 'zh' : language
+  )
+}))
+
+vi.mock('../windows-multilingual-readiness', () => ({
+  ensureWindowsMultilingualEngineReady: multilingualReadyMock.ensureWindowsMultilingualEngineReady,
+  windowsMultilingualTranscribeLanguage:
+    multilingualReadyMock.windowsMultilingualTranscribeLanguage,
+  windowsVulkanBridgeDeviceNameArgs: (gpuName?: string | null) =>
+    gpuName?.trim() ? ['--device-name', gpuName.trim()] : [],
+  bindWindowsMultilingualReadiness: vi.fn()
+}))
+
+vi.mock('../mac-canary-transcription', () => ({
+  MAC_CANARY_MODEL: 'Mediform/canary-1b-v2-mlx-q8',
+  resolveMacCanaryTranscriber: vi.fn(() => null)
+}))
+const macCanaryMock = vi.mocked(await import('../mac-canary-transcription'))
 
 vi.mock('../crypto', () => ({
   isEncrypted: vi.fn().mockResolvedValue(false),
@@ -87,6 +111,34 @@ class MockChildProcess extends EventEmitter {
   pid = 1234
   stderr = new EventEmitter()
   stdout = new EventEmitter()
+}
+
+function readyWindowsEngine(language: string) {
+  const turbo = ['el', 'ru', 'es', 'ja', 'zh-Hans', 'ko'].includes(language)
+  const engineId = turbo ? 'whisper-turbo-cuda' : 'canary-cpu'
+  return {
+    engineId,
+    availability: 'available' as const,
+    reason: null,
+    selfTest: turbo ? ('passed' as const) : null,
+    pythonPath: '/mock/python.exe',
+    modelPath: '/mock/model',
+    processEnv: { PATH: '/mock/path' },
+    device: turbo ? ('cuda' as const) : ('cpu' as const),
+    computeType: turbo ? 'float16' : 'int8',
+    workerEngine: turbo ? ('whisper-turbo' as const) : ('canary' as const),
+    cliPath: null,
+    scriptPath: null,
+    gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+    plan: {
+      route: turbo ? 'whisper-turbo' : 'canary',
+      kind: 'resolved',
+      primary: { engine: engineId, availability: 'available', reason: null },
+      fallbacks: [],
+      availability: 'available',
+      reason: null
+    }
+  }
 }
 
 function createMockWhisperManager(ready = true): WhisperManager {
@@ -166,7 +218,11 @@ describe('TranscriptionService', () => {
     })
     workerClientMock.transcribe.mockResolvedValue({ transcription: [] })
     workerClientMock.unload.mockResolvedValue(undefined)
+    workerClientMock.selftest.mockResolvedValue({ ok: true })
     workerClientMock.ping.mockResolvedValue(undefined)
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
+      async (language: string) => readyWindowsEngine(language)
+    )
     workerClientMock.dispose.mockImplementation(() => {
       workerClientMock.isLoaded = false
     })
@@ -177,6 +233,7 @@ describe('TranscriptionService', () => {
     fsMock.unlink.mockResolvedValue(undefined as any)
     fsMock.writeFile.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
+    mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
     service = new TranscriptionService(
@@ -340,6 +397,45 @@ describe('TranscriptionService', () => {
 
     const result = await service.getTranscript('meeting-1')
     expect(result).toEqual(transcriptData)
+  })
+
+  it('waits for both Mac sources before releasing resources after a source failure', async () => {
+    setPlatform('darwin')
+    fsMock.access.mockImplementation(async (file) => {
+      if (/\/(mic|system)\.webm$/.test(String(file))) return undefined
+      throw new Error('ENOENT')
+    })
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (value: []) => void
+    const first = new Promise<[]>((_, reject) => {
+      rejectFirst = reject
+    })
+    const second = new Promise<[]>((resolve) => {
+      resolveSecond = resolve
+    })
+    const transcribeSource = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second)
+    ;(service as any).transcribeAudioSource = transcribeSource
+    ;(service as any).getDualSourceMode = vi.fn().mockResolvedValue('concurrent')
+    const released = vi.fn().mockResolvedValue(undefined)
+    ;(service as any).logMacResourceSnapshot = released
+    let jobSettled = false
+    const running = (service as any).processJob('failed-mac-source').catch((error: Error) => {
+      jobSettled = true
+      return error
+    })
+    await vi.waitFor(() => expect(transcribeSource).toHaveBeenCalledTimes(2))
+    const failure = new Error('Metal out of memory')
+    rejectFirst(failure)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(jobSettled).toBe(false)
+    expect(released).not.toHaveBeenCalled()
+    resolveSecond([])
+    expect(await running).toBe(failure)
+    expect(released).toHaveBeenCalledWith(
+      'transcription resources released',
+      'failed-mac-source',
+      expect.anything()
+    )
   })
 
   it('getTranscript returns empty array when file missing', async () => {
@@ -1093,6 +1189,97 @@ describe('TranscriptionService', () => {
 
     expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
     ;(service as any).lowerWhisperPriority(1234, 'meeting-123')
+    expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+  })
+
+  it.each([
+    ['canary-cuda', 'cuda', 'fp32', 'canary', 'passed' as const],
+    ['whisper-turbo-cuda', 'cuda', 'float16', 'whisper-turbo', 'passed' as const],
+    ['canary-cpu', 'cpu', 'int8', 'canary', null],
+    ['whisper-turbo-cpu', 'cpu', 'int8', 'whisper-turbo', null]
+  ] as const)(
+    'disables EcoQoS and uses below-normal priority for the %s worker',
+    async (engineId, device, computeType, workerEngine, selfTest) => {
+      setPlatform('win32')
+      const local = new TranscriptionService(
+        mockWhisper,
+        mockConverter,
+        '/mock/home/AutoDoc/recordings',
+        mockCalendar,
+        () => false
+      )
+      ;(local as any).windowsMultilingualReady = {
+        engineId,
+        availability: 'available',
+        reason: null,
+        selfTest,
+        pythonPath: '/mock/python.exe',
+        modelPath: '/mock/model',
+        processEnv: { PATH: '/mock/path' },
+        device,
+        computeType,
+        workerEngine,
+        cliPath: null,
+        scriptPath: null,
+        gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+        plan: {
+          route: workerEngine === 'canary' ? 'canary' : 'whisper-turbo',
+          kind: 'resolved',
+          primary: { engine: engineId, availability: 'available', reason: null },
+          fallbacks: [],
+          availability: 'available',
+          reason: null
+        }
+      }
+      await (local as any).ensureWindowsMultilingualWorkerLoaded(1)
+      expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+      osMock.setPriority.mockClear()
+      ;(workerClientMock.lastOptions?.applyPriority as (pid: number) => void)(1234)
+      expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
+    }
+  )
+
+  it('disables EcoQoS for multilingual CPU even when English DML is selected', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getWorkerDevice: vi.fn().mockReturnValue('dml'),
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu')
+    } as unknown as WhisperManager
+    const local = new TranscriptionService(
+      mockWhisper,
+      mockConverter,
+      '/mock/home/AutoDoc/recordings',
+      mockCalendar,
+      () => false
+    )
+    ;(local as any).windowsMultilingualReady = {
+      engineId: 'canary-cpu',
+      availability: 'available',
+      reason: null,
+      selfTest: null,
+      pythonPath: '/mock/python.exe',
+      modelPath: '/mock/model',
+      processEnv: { PATH: '/mock/path' },
+      device: 'cpu',
+      computeType: 'int8',
+      workerEngine: 'canary',
+      cliPath: null,
+      scriptPath: null,
+      gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU',
+      plan: {
+        route: 'canary',
+        kind: 'resolved',
+        primary: { engine: 'canary-cpu', availability: 'available', reason: null },
+        fallbacks: [],
+        availability: 'available',
+        reason: null
+      }
+    }
+    await (local as any).ensureWindowsMultilingualWorkerLoaded(1)
+    expect(workerClientMock.lastOptions?.extraArgs).toEqual(['--no-eco'])
+    osMock.setPriority.mockClear()
+    ;(workerClientMock.lastOptions?.applyPriority as (pid: number) => void)(1234)
     expect(osMock.setPriority).toHaveBeenCalledWith(1234, 10)
   })
 
@@ -2276,57 +2463,594 @@ describe('TranscriptionService', () => {
     )
   })
 
-  it('uses sequential dual-source transcription on low-spec Apple Silicon Macs', async () => {
-    setPlatform('darwin')
-    ;(mockWhisper as any).isMlxWhisperSelected = vi.fn().mockReturnValue(true)
-    ;(mockWhisper as any).getMacProcessingProfile = vi.fn().mockReturnValue({
-      id: 'mac-low-spec',
-      reason: 'totalMemoryGiB <= 8.5',
-      hardware: {
-        platform: 'darwin',
-        arch: 'arm64',
-        isAppleSilicon: true,
-        chip: 'Apple M1',
-        logicalProcessors: 8,
-        totalMemoryGiB: 8,
-        freeMemoryGiB: 2.5,
-        memoryPressure: 'green',
-        swapUsedGiB: 0
-      },
-      transcriptionBackend: 'mlx-whisper',
-      transcriptionModel: 'distil-large-v3',
-      notesModel: 'llama3.2:3b',
-      dualSourceMode: 'sequential',
-      notesAfterTranscriptionOnly: true,
-      serializeLocalProcessing: true
-    })
-    fsMock.access.mockImplementation(async (path) => {
-      if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) {
-        return undefined
-      }
+  it.each(['en', 'de', 'ja'])(
+    'uses sequential dual-source transcription on low-spec Apple Silicon Macs (%s meeting)',
+    async (meetingLanguage) => {
+      setPlatform('darwin')
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/mock/canary/python3',
+        scriptPath: '/mock/canary-mlx-transcribe.py',
+        modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        vadPath: '/mock/vad',
+        env: { HF_HOME: '/mock/canary-cache' }
+      })
+      const readFileImpl = fsMock.readFile.getMockImplementation()
+      fsMock.readFile.mockImplementation(async (file, ...rest) =>
+        String(file).endsWith('metadata.json')
+          ? JSON.stringify({ sourceName: 'Zoom', startedAt: 0, stoppedAt: 60_000, meetingLanguage })
+          : ((readFileImpl as any)?.(file, ...rest) ?? '')
+      )
+      ;(mockWhisper as any).isMlxWhisperSelected = vi.fn().mockReturnValue(true)
+      ;(mockWhisper as any).getMlxWhisperTurboModelRef = vi
+        .fn()
+        .mockReturnValue('mlx-community/whisper-large-v3-turbo')
+      ;(mockWhisper as any).getMacProcessingProfile = vi.fn().mockReturnValue({
+        id: 'mac-low-spec',
+        reason: 'totalMemoryGiB <= 8.5',
+        hardware: {
+          platform: 'darwin',
+          arch: 'arm64',
+          isAppleSilicon: true,
+          chip: 'Apple M1',
+          logicalProcessors: 8,
+          totalMemoryGiB: 8,
+          freeMemoryGiB: 2.5,
+          memoryPressure: 'green',
+          swapUsedGiB: 0
+        },
+        transcriptionBackend: 'mlx-whisper',
+        transcriptionModel: 'distil-large-v3',
+        notesModel: 'llama3.2:3b',
+        dualSourceMode: 'sequential',
+        notesAfterTranscriptionOnly: true,
+        serializeLocalProcessing: true
+      })
+      fsMock.access.mockImplementation(async (path) => {
+        if (String(path).endsWith('mic.webm') || String(path).endsWith('system.webm')) {
+          return undefined
+        }
+        throw new Error('ENOENT')
+      })
+      ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
+      const order: string[] = []
+      ;(service as any).transcribeWithFallback = vi.fn(async (_wav: string, _meeting: string) => {
+        order.push(order.length === 0 ? 'first-complete' : 'second-complete')
+        return { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'words' }] }
+      })
+      ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
+        {
+          id: 'meeting-low-spec-0',
+          meetingId: 'meeting-low-spec',
+          speaker: 'Speaker',
+          text: 'words',
+          startMs: 0,
+          endMs: 1000,
+          confidence: -1
+        }
+      ])
+
+      await expect((service as any).processJob('meeting-low-spec')).resolves.toBeUndefined()
+
+      expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
+      expect(order).toEqual(['first-complete', 'second-complete'])
+    }
+  )
+})
+
+describe('TranscriptionService meeting-language routing', () => {
+  const originalPlatform = process.platform
+  const setPlatform = (platform: NodeJS.Platform) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  }
+
+  let mockWhisper: WhisperManager
+
+  function createService(): TranscriptionService {
+    return new TranscriptionService(
+      mockWhisper,
+      createMockAudioConverter(),
+      '/mock/home/AutoDoc/recordings',
+      createMockCalendarManager(),
+      () => false
+    )
+  }
+
+  function recordMeeting(meetingLanguage?: string): void {
+    fsMock.access.mockImplementation(async (file) => {
+      if (String(file).endsWith('mic.webm')) return undefined
       throw new Error('ENOENT')
     })
+    fsMock.readFile.mockImplementation(async (file) =>
+      String(file).endsWith('metadata.json')
+        ? JSON.stringify({
+            sourceName: 'Zoom',
+            startedAt: 0,
+            stoppedAt: 60_000,
+            durationSeconds: 60,
+            meetingLanguage
+          })
+        : JSON.stringify({ transcription: [] })
+    )
+  }
+
+  function stubTranscribe(service: TranscriptionService): ReturnType<typeof vi.fn> {
+    const transcribe = vi.fn().mockResolvedValue({ transcription: [] })
     ;(service as any).detectAudioActivity = vi.fn().mockResolvedValue([{ start: 0, end: 2 }])
-    const order: string[] = []
-    ;(service as any).transcribeWithFallback = vi.fn(async (_wav: string, _meeting: string) => {
-      order.push(order.length === 0 ? 'first-complete' : 'second-complete')
-      return { transcription: [{ offsets: { from: 0, to: 1000 }, text: 'words' }] }
-    })
-    ;(service as any).mapToTranscripts = vi.fn().mockReturnValue([
-      {
-        id: 'meeting-low-spec-0',
-        meetingId: 'meeting-low-spec',
-        speaker: 'Speaker',
-        text: 'words',
-        startMs: 0,
-        endMs: 1000,
-        confidence: -1
-      }
-    ])
+    ;(service as any).transcribeWithFallback = transcribe
+    return transcribe
+  }
 
-    await expect((service as any).processJob('meeting-low-spec')).resolves.toBeUndefined()
-
-    expect((service as any).transcribeWithFallback).toHaveBeenCalledTimes(2)
-    expect(order).toEqual(['first-complete', 'second-complete'])
+  beforeEach(() => {
+    vi.clearAllMocks()
+    macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue(null)
+    fsMock.writeFile.mockResolvedValue(undefined as any)
+    fsMock.unlink.mockResolvedValue(undefined as any)
+    mockWhisper = createMockWhisperManager()
+    mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
+      async (language: string) => readyWindowsEngine(language)
+    )
   })
+
+  afterEach(() => setPlatform(originalPlatform))
+
+  it('installs Canary for a German Windows meeting instead of using an English-only model', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(false)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await (service as any).processJob('german')
+
+    expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith(
+      'de',
+      expect.any(Function),
+      expect.objectContaining({ whisperManager: mockWhisper })
+    )
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
+  })
+
+  it('transcribes a German Windows meeting on the Canary route', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-cpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await (service as any).processJob('german-canary')
+
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
+  })
+
+  it.each([undefined, 'en', 'unsupported'])(
+    'keeps English Windows readiness unchanged for language %s',
+    async (meetingLanguage) => {
+      setPlatform('win32')
+      mockWhisper = {
+        ...mockWhisper,
+        isReady: vi.fn().mockResolvedValue(false),
+        getTranscriptionBackend: vi.fn().mockReturnValue('faster-whisper-cpu'),
+        isParakeetSelected: vi.fn().mockReturnValue(false)
+      } as unknown as WhisperManager
+      const service = createService()
+      const transcribe = stubTranscribe(service)
+      recordMeeting(meetingLanguage)
+
+      await (service as any).processJob('english')
+
+      expect(mockWhisper.ensureReady).toHaveBeenCalledWith()
+      expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
+      expect(transcribe).toHaveBeenCalled()
+    }
+  )
+
+  it.each(['de', 'es'])(
+    'checks local Mac assets for %s without English setup',
+    async (language) => {
+      setPlatform('darwin')
+      vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+      vi.mocked(mockWhisper.assertMacMeetingLanguageReady).mockRejectedValue(
+        new Error('Select the meeting language in Settings to download it.')
+      )
+      const service = createService()
+      const transcribe = stubTranscribe(service)
+      recordMeeting(language)
+      mockWhisper.getMlxWhisperTurboModelRef = vi.fn().mockReturnValue('/local/turbo')
+      await expect((service as any).processJob('missing-model')).rejects.toThrow('Settings')
+      expect(mockWhisper.assertMacMeetingLanguageReady).toHaveBeenCalledWith(language)
+      expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+      expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
+      expect(transcribe).not.toHaveBeenCalled()
+    }
+  )
+
+  it('fails a German macOS meeting clearly when the Canary runtime is unavailable', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+
+    await expect((service as any).processJob('german-mac')).rejects.toThrow(
+      'German transcription on macOS needs the Canary runtime'
+    )
+    expect(transcribe).not.toHaveBeenCalled()
+  })
+
+  it('sends macOS EU-language passes to Canary and English passes to Distil', async () => {
+    setPlatform('darwin')
+    mockWhisper = {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+      getMlxWhisperPythonPath: vi.fn().mockReturnValue('/mock/mlx/python3'),
+      getMlxWhisperScriptPath: vi.fn().mockReturnValue('/mock/mlx-whisper-transcribe.py'),
+      getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
+      getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' })
+    } as unknown as WhisperManager
+    macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+      pythonPath: '/mock/canary/python3',
+      scriptPath: '/mock/canary-mlx-transcribe.py',
+      modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+      vadPath: '/mock/vad',
+      env: { HF_HOME: '/mock/canary-cache' }
+    })
+    const service = createService()
+    const runPass = async (): Promise<void> => {
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValueOnce(child as any)
+      const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+      child.emit('close', 0)
+      await pass
+    }
+
+    await runWithMeetingLanguage('bg', runPass)
+    await runPass()
+
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      1,
+      '/mock/canary/python3',
+      [
+        '/mock/canary-mlx-transcribe.py',
+        '--model',
+        'Mediform/canary-1b-v2-mlx-q8',
+        '--audio',
+        '/mock/tmp/audio.wav',
+        '--output',
+        '/mock/tmp/audio.wav.json',
+        '--language',
+        'bg',
+        '--vad',
+        '/mock/vad'
+      ],
+      { env: { HF_HOME: '/mock/canary-cache' } }
+    )
+    expect(childProcessMock.spawn).toHaveBeenNthCalledWith(
+      2,
+      '/mock/mlx/python3',
+      [
+        '/mock/mlx-whisper-transcribe.py',
+        '--model',
+        'mlx-community/distil-whisper-large-v3',
+        '--audio',
+        '/mock/tmp/audio.wav',
+        '--output',
+        '/mock/tmp/audio.wav.json',
+        '--language',
+        'en'
+      ],
+      { env: { PATH: '/mock/mlx' } }
+    )
+  })
+
+  function createMacTurboWhisperManager(): WhisperManager {
+    return {
+      ...mockWhisper,
+      isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+      getMlxWhisperPythonPath: vi.fn().mockReturnValue('/mock/mlx/python3'),
+      getMlxWhisperScriptPath: vi.fn().mockReturnValue('/mock/mlx-whisper-transcribe.py'),
+      getMlxWhisperModelRef: vi.fn().mockReturnValue('mlx-community/distil-whisper-large-v3'),
+      getMlxWhisperProcessEnv: vi.fn().mockReturnValue({ PATH: '/mock/mlx' }),
+      getMlxWhisperTurboScriptPath: vi
+        .fn()
+        .mockReturnValue('/mock/mlx-whisper-turbo-transcribe.py'),
+      getMlxWhisperTurboModelRef: vi.fn().mockReturnValue('mlx-community/whisper-large-v3-turbo'),
+      getMlxWhisperTurboProcessEnv: vi
+        .fn()
+        .mockReturnValue({ PATH: '/mock/mlx', HF_HOME: '/mock/turbo-cache' })
+    } as unknown as WhisperManager
+  }
+
+  it.each([
+    ['ja', 'ja'],
+    ['zh-Hans', 'zh'],
+    ['ko', 'ko']
+  ])(
+    'sends macOS %s passes to Whisper turbo with the %s decoder pin, never Parakeet',
+    async (meetingLanguage, decoderLanguage) => {
+      setPlatform('darwin')
+      mockWhisper = createMacTurboWhisperManager()
+      const service = createService()
+      const child = new MockChildProcess()
+      childProcessMock.spawn.mockReturnValueOnce(child as any)
+
+      await runWithMeetingLanguage(meetingLanguage, async () => {
+        const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+        child.emit('close', 0)
+        await pass
+      })
+
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        '/mock/mlx/python3',
+        [
+          '/mock/mlx-whisper-turbo-transcribe.py',
+          '--model',
+          'mlx-community/whisper-large-v3-turbo',
+          '--audio',
+          '/mock/tmp/audio.wav',
+          '--output',
+          '/mock/tmp/audio.wav.json',
+          '--language',
+          decoderLanguage
+        ],
+        { env: { PATH: '/mock/mlx', HF_HOME: '/mock/turbo-cache' } }
+      )
+      expect(macCanaryMock.resolveMacCanaryTranscriber).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['ja', 'de'])(
+    'never pre-cuts long %s macOS recordings into 90-second windows',
+    async (meetingLanguage) => {
+      setPlatform('darwin')
+      mockWhisper = createMacTurboWhisperManager()
+      const service = createService()
+      const chunked = vi.fn()
+      ;(service as any).runWhisperChunked = chunked
+      ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
+
+      await runWithMeetingLanguage(meetingLanguage, () =>
+        (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
+      )
+
+      expect(chunked).not.toHaveBeenCalled()
+      expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('runs a Japanese Windows meeting on Whisper turbo instead of Parakeet', async () => {
+    setPlatform('win32')
+    mockWhisper = {
+      ...mockWhisper,
+      getTranscriptionBackend: vi.fn().mockReturnValue('parakeet-gpu'),
+      isParakeetSelected: vi.fn().mockReturnValue(true)
+    } as unknown as WhisperManager
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('ja')
+
+    await (service as any).processJob('japanese-windows')
+
+    expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith(
+      'ja',
+      expect.any(Function),
+      expect.objectContaining({ whisperManager: mockWhisper })
+    )
+    expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
+    expect(transcribe).toHaveBeenCalled()
+  })
+
+  it('fails a locked low-spec Windows turbo language with the plan reason', async () => {
+    setPlatform('win32')
+    multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockResolvedValue({
+      ...readyWindowsEngine('es'),
+      engineId: null,
+      availability: 'locked',
+      reason: 'Spanish needs a supported graphics card on this PC.',
+      workerEngine: null
+    })
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('es')
+
+    await expect((service as any).processJob('spanish-locked')).rejects.toThrow(
+      'Spanish needs a supported graphics card on this PC.'
+    )
+    expect(transcribe).not.toHaveBeenCalled()
+  })
+
+  it('passes --cli and --device-name to the Vulkan turbo bridge', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const child = new MockChildProcess()
+    childProcessMock.spawn.mockReturnValueOnce(child as any)
+
+    await runWithMeetingLanguage('ja', async () => {
+      ;(service as any).windowsMultilingualReady = {
+        ...readyWindowsEngine('ja'),
+        engineId: 'whisper-turbo-vulkan',
+        workerEngine: null,
+        device: 'cpu',
+        pythonPath: '/mock/parakeet/python.exe',
+        modelPath: '/mock/ggml-large-v3-turbo.bin',
+        cliPath: '/mock/whisper-cli.exe',
+        scriptPath: '/mock/whisper-cpp-turbo-transcribe.py',
+        gpuName: 'NVIDIA GeForce RTX 4060 Laptop GPU'
+      }
+      const pass = (service as any).runWhisperPass('/mock/tmp/audio.wav', 'meeting', 60)
+      child.emit('close', 0)
+      await pass
+    })
+
+    const argv = childProcessMock.spawn.mock.calls[0]?.[1] as string[]
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '/mock/whisper-cpp-turbo-transcribe.py',
+        '--model',
+        '/mock/ggml-large-v3-turbo.bin',
+        '--cli',
+        '/mock/whisper-cli.exe',
+        '--language',
+        'ja',
+        '--device-name',
+        'NVIDIA GeForce RTX 4060 Laptop GPU'
+      ])
+    )
+    expect(argv).not.toContain('--device')
+  })
+
+  it('never pre-cuts long Windows multilingual recordings into 90-second windows', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const chunked = vi.fn()
+    ;(service as any).runWhisperChunked = chunked
+    ;(service as any).runWhisperPassAndRead = vi.fn().mockResolvedValue({ transcription: [] })
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('de')
+
+    await runWithMeetingLanguage('de', () =>
+      (service as any).transcribeWithFallback('/mock/tmp/audio.wav', 'meeting', 60 * 60, 'p', [])
+    )
+
+    expect(chunked).not.toHaveBeenCalled()
+    expect((service as any).runWhisperPassAndRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('restarts the worker process when switching Windows multilingual engines', async () => {
+    setPlatform('win32')
+    const service = createService()
+    workerClientMock.disposeAndWait.mockResolvedValue(undefined)
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('de')
+    await (service as any).ensureWindowsMultilingualWorkerLoaded(1)
+    expect(workerClientMock.load).toHaveBeenLastCalledWith(
+      expect.objectContaining({ engine: 'canary' })
+    )
+    ;(service as any).windowsMultilingualReady = readyWindowsEngine('ja')
+    await (service as any).ensureWindowsMultilingualWorkerLoaded(1)
+
+    expect(workerClientMock.disposeAndWait).toHaveBeenCalled()
+    expect(TranscriptionWorkerClient).toHaveBeenCalledTimes(2)
+    expect(workerClientMock.load).toHaveBeenLastCalledWith(
+      expect.objectContaining({ engine: 'whisper-turbo' })
+    )
+  })
+
+  it('releases the Windows multilingual worker before notes start', async () => {
+    setPlatform('win32')
+    const service = createService()
+    const transcribe = stubTranscribe(service)
+    recordMeeting('de')
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+    workerClientMock.disposeAndWait.mockResolvedValue(undefined)
+    ;(service as any).transcriptionWorkerClient = workerClientMock
+
+    await (service as any).processJob('german-release')
+
+    expect(transcribe).toHaveBeenCalled()
+    expect(workerClientMock.disposeAndWait).toHaveBeenCalled()
+    expect(onComplete).toHaveBeenCalledWith('german-release')
+    const disposeOrder = workerClientMock.disposeAndWait.mock.invocationCallOrder[0]
+    const completeOrder = onComplete.mock.invocationCallOrder[0]
+    expect(disposeOrder).toBeLessThan(completeOrder)
+  })
+
+  it.each([
+    [
+      'ja',
+      '令和8年度予算は強い経済を実現する予算であり、複数年度の取り組みを推進しております。',
+      '令和8年度予算は強い経済を実現する予算であり 複数年度の取り組みを推進しております',
+      '次に主要な経費について申し述べます。'
+    ],
+    [
+      'de',
+      'Wir verschieben den Start des Abrechnungsportals auf Freitag, sagte Frau Körner.',
+      'wir verschieben den Start des Abrechnungsportals auf Freitag sagte Frau Körner',
+      'Über die Datenbankmigration entscheiden wir nächste Woche.'
+    ],
+    [
+      'uk',
+      'Ми переносимо запуск платіжного порталу на пʼятницю.',
+      'ми переносимо запуск платіжного порталу на пʼятницю',
+      'Рішення про міграцію бази даних ухвалимо наступного тижня.'
+    ]
+  ])(
+    'suppresses the mic echo of %s system audio and keeps distinct mic speech',
+    (language, systemText, echoedText, distinctText) => {
+      const service = createService()
+      const row = (id: string, speaker: string, text: string, startMs: number, endMs: number) => ({
+        id,
+        meetingId: 'meeting-echo',
+        speaker,
+        text,
+        startMs,
+        endMs,
+        confidence: -1
+      })
+
+      const kept = runWithMeetingLanguage(language, () =>
+        (service as any).suppressAcousticEchoes(
+          [
+            row('me-1', 'me', echoedText, 300, 5_200),
+            row('me-2', 'me', distinctText, 20_000, 23_000)
+          ],
+          [row('them-1', 'them', systemText, 0, 5_000)]
+        )
+      )
+
+      expect(kept.map((segment: { id: string }) => segment.id)).toEqual(['me-2'])
+    }
+  )
+
+  it.each([
+    ['de', 'canary-mlx', 'Mediform/canary-1b-v2-mlx-q8'],
+    ['en', 'mlx-whisper', 'distil-large-v3']
+  ])(
+    'logs the engine a %s macOS job actually runs',
+    async (meetingLanguage, backend, modelName) => {
+      setPlatform('darwin')
+      mockWhisper = {
+        ...mockWhisper,
+        isMlxWhisperSelected: vi.fn().mockReturnValue(true),
+        getTranscriptionBackend: vi.fn().mockReturnValue('mlx-whisper')
+      } as unknown as WhisperManager
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/mock/canary/python3',
+        scriptPath: '/mock/canary-mlx-transcribe.py',
+        modelRef: 'Mediform/canary-1b-v2-mlx-q8',
+        vadPath: '/mock/vad',
+        env: {}
+      })
+      const service = createService()
+      stubTranscribe(service)
+      recordMeeting(meetingLanguage)
+
+      await (service as any).processJob('engine-log')
+
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'transcription started',
+          context: expect.objectContaining({ backend, modelName })
+        })
+      )
+      expect(autodocLogMock.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'transcription source started',
+          context: expect.objectContaining({ backend, model: modelName })
+        })
+      )
+    }
+  )
 })

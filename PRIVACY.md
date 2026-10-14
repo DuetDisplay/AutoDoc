@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: 2026-07-24**
+**Last updated: 2026-10-07**
 
 AutoDoc is built so your meetings stay yours. This document explains exactly
 what happens to your data — and, just as importantly, what does *not* happen.
@@ -66,6 +66,25 @@ If you connect Google or Microsoft Calendar:
 
 Self-hosters can run their own OAuth worker so no Duet-operated service is
 involved at all — see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+
+## Software updates and aggregate download counts
+
+Official releases may fetch update manifests and packages from Duet's
+Cloudflare-hosted update service. Direct installer downloads remain on GitHub.
+As with ordinary downloads, these providers receive connection information
+needed to serve the files, including your IP address. Their infrastructure and
+security processing is subject to their own policies.
+
+Duet's update service keeps daily totals by requested release asset, version,
+platform, request category, and response status. It does not store individual
+request records, IP addresses, user agents, cookies, or device/install identifiers
+in those counters. Duet sends only these aggregate totals to its private
+PostHog reporting dashboard. They describe download activity, including retries;
+they do not establish unique users or successful installations.
+
+This does not enable product analytics on your device. Reporting app usage,
+installed versions, or successful updates remains subject to your analytics
+choice below.
 
 ## Analytics (opt-in)
 

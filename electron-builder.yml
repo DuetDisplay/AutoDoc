@@ -12,6 +12,8 @@ files:
   - 'resources/trayRecording.png'
   - 'resources/trayRecording@2x.png'
   - 'resources/transcription-worker.py'
+  - 'resources/whisper_turbo_contract.py'
+  - 'resources/whisper-cpp-turbo-transcribe.py'
   - 'resources/windows-transcription-manifest.json'
   - 'native/**/bin/**/*'
   - '!**/__tests__/**'
@@ -24,6 +26,9 @@ asarUnpack:
 win:
   target:
     - nsis
+  extraResources:
+    - from: resources/windows-speech-runtime-licenses.json
+      to: speech-runtime-licenses/win32-x64.json
   executableName: autodoc
   icon: build/icon.ico
   forceCodeSigning: true
@@ -53,8 +58,19 @@ mac:
       filter:
         - '**/*'
         - '!**/._*'
+    - from: vendor/canary-mlx-runtime
+      to: canary-mlx-runtime
+      filter:
+        - '**/*'
+        - '!**/._*'
+    - from: vendor/speech-runtime-licenses/darwin-arm64.json
+      to: speech-runtime-licenses/darwin-arm64.json
+    - from: resources/canary-mlx-transcribe.py
+      to: canary-mlx-transcribe.py
     - from: resources/mlx-whisper-transcribe.py
       to: mlx-whisper-transcribe.py
+    - from: resources/mlx-whisper-turbo-transcribe.py
+      to: mlx-whisper-turbo-transcribe.py
   notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}

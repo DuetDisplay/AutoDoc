@@ -47,6 +47,13 @@ describe('memory failure evidence', () => {
     expect(memoryFailureFromError(raw)).toBeUndefined()
   })
 
+  it('treats an Apple Silicon Metal out-of-memory abort as a RAM shortage without inventing amounts', () => {
+    // Saved verbatim by the AD-100 Mac eval (German Parakeet, run 1).
+    const saved =
+      'parakeet-mlx exited with code null (signal SIGABRT): Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nlibc++abi: terminating due to uncaught exception of type std::runtime_error: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)'
+    expect(memoryFailureFromError(saved)).toEqual({})
+  })
+
   it('omits missing or invalid amounts', () => {
     expect(memoryFailureDetails({})).toBeUndefined()
     expect(memoryFailureDetails({ available: { value: 1.9, unit: 'GB' } })).toBeUndefined()

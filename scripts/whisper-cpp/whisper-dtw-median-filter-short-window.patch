@@ -1,0 +1,45 @@
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+index 66130cf..bf30598 100644
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -9073,11 +9073,30 @@ static void median_filter(struct ggml_tensor * dst , const struct ggml_tensor *
+         return;
+     }
+     int filter_width = ((median_filter_user_data *) userdata)->filter_width;
+-    WHISPER_ASSERT(filter_width < a->ne[2]);
+     WHISPER_ASSERT(filter_width % 2);
+     WHISPER_ASSERT(ggml_n_dims(a) == 3);
+     WHISPER_ASSERT(a->type == GGML_TYPE_F32);
+ 
++    // openai-whisper timing.py median_filter:
++    //   pad_width = filter_width // 2
++    //   if x.shape[-1] <= pad_width: return x
++    //   # F.pad(reflect) requires the pad width to be smaller than the input dim
++    // The leftover Whisper seek window can be shorter than medfilt_width (7),
++    // which used to trip WHISPER_ASSERT(filter_width < a->ne[2]).
++    const int64_t n = a->ne[2];
++    if (n <= filter_width / 2) {
++        WHISPER_LOG_WARN("%s: skip median filter (n=%lld <= pad_width=%d)\n",
++                __func__, (long long) n, filter_width / 2);
++        for (int64_t i = 0; i < a->ne[0]; ++i) {
++            for (int64_t j = 0; j < a->ne[1]; ++j) {
++                for (int64_t k = 0; k < n; ++k) {
++                    whisper_set_f32_nd(dst, i, j, k, 0, whisper_get_f32_nd(a, i, j, k, 0));
++                }
++            }
++        }
++        return;
++    }
++
+     std::vector<float> filter;
+     filter.reserve(filter_width);
+     for (int64_t i = 0; i < a->ne[0]; ++i) {
+@@ -9117,6 +9136,8 @@ static void whisper_exp_compute_token_level_timestamps_dtw(
+     const int n_audio_ctx = state->exp_n_audio_ctx > 0 ? state->exp_n_audio_ctx : ctx->model.hparams.n_audio_ctx;
+     WHISPER_ASSERT(medfilt_width % 2);
+     WHISPER_ASSERT(n_frames <= n_audio_ctx * 2);
++    WHISPER_LOG_INFO("%s: i_segment=%d n_segments=%zu seek=%d n_frames=%d n_audio_tokens=%d medfilt=%d\n",
++            __func__, i_segment, n_segments, seek, n_frames, n_frames / 2, medfilt_width);
+     WHISPER_ASSERT(ctx->params.dtw_aheads_preset != WHISPER_AHEADS_NONE);
+ 
+     // FIXME: Allocating mem everytime we call this func

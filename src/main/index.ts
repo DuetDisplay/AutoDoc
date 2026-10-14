@@ -56,8 +56,15 @@ import {
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
+import {
+  bindMeetingLanguagePreferenceStore,
+  bindWindowsNotesModelSource,
+  resolveRecordingMeetingLanguage
+} from './services/meeting-language-availability'
+import { bindWindowsMultilingualReadiness } from './services/windows-multilingual-readiness'
 import { AnalyticsStateStore } from './services/analytics-state-store'
 import { registerAnalyticsIpc } from './ipc/analytics-ipc'
+import { speechRuntimeLicenseNotices } from './services/speech-runtime-licenses'
 import { registerWhisperIpc } from './ipc/whisper-ipc'
 import { registerSupportIpc } from './ipc/support-ipc'
 import { registerNotesFeedbackIpc } from './ipc/notes-feedback-ipc'
@@ -561,6 +568,8 @@ app.whenReady().then(async () => {
     })
   }
 
+  ipcMain.handle('app:get-speech-runtime-licenses', () => speechRuntimeLicenseNotices())
+
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
     recordRendererDiagnosticAction(payload)
@@ -893,6 +902,15 @@ app.whenReady().then(async () => {
   )
 
   const whisperManager = new WhisperManager()
+  bindWindowsMultilingualReadiness({ whisperManager })
+  bindMeetingLanguagePreferenceStore(prefsStore)
+  bindWindowsNotesModelSource(
+    () => {
+      const profile = whisperManager.getWindowsProcessingProfile()
+      return profile ? { id: profile.id, hardware: profile.hardware } : null
+    },
+    () => whisperManager.getEffectiveWindowsProcessingProfile()
+  )
   const localProcessingCoordinator = new LocalProcessingCoordinator(async () => {
     if (process.platform === 'darwin') {
       return (
@@ -1548,6 +1566,7 @@ app.whenReady().then(async () => {
     phase: status.phase,
     percent: status.percent,
     error: status.error,
+    meetingLanguage: whisperStatus.meetingLanguage,
     backend: whisperStatus.backend,
     backendLabel: whisperStatus.backendLabel,
     failedStep: status.failedStep
@@ -1632,6 +1651,7 @@ app.whenReady().then(async () => {
     if (status.phase !== 'error') {
       lastSuccessfulWhisperPhase = status.phase
     }
+    whisperEngineSetupState.meetingLanguage = status.meetingLanguage
     whisperEngineSetupState.phase = status.phase
     whisperEngineSetupState.percent = status.percent
     whisperEngineSetupState.error = status.error
@@ -1821,7 +1841,13 @@ app.whenReady().then(async () => {
     stopActiveRecording,
     recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
     hasPostProcessingWork
-  } = registerRecordingIpc(recordingService, transcriptionService, whisperManager, calendarManager)
+  } = registerRecordingIpc(
+    recordingService,
+    transcriptionService,
+    whisperManager,
+    calendarManager,
+    () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
+  )
   recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
 
   const feedbackPromptStore = new FeedbackPromptStore()
@@ -1983,11 +2009,40 @@ app.whenReady().then(async () => {
     markReprocessNotificationPending,
     recordingService.getRecordingsBaseDir()
   )
+  let preparedMeetingLanguage = 'en'
+  // A failed preparation must read as an error, not as "checking", so the
+  // setup screens can offer Retry instead of waiting forever.
+  let meetingLanguageSetupFailure: { language: string; error: string } | null = null
   registerWhisperIpc(
     whisperManager,
-    () => getCombinedTranscriptionSetupStatus(),
-    async () => {
-      await Promise.allSettled([whisperManager.startSetup(), startDiarizationSetup()])
+    () => {
+      const language = prefsStore.getMeetingLanguage()
+      if (language === preparedMeetingLanguage) return getCombinedTranscriptionSetupStatus()
+      if (meetingLanguageSetupFailure?.language === language) {
+        return {
+          phase: 'error',
+          percent: 0,
+          error: meetingLanguageSetupFailure.error,
+          meetingLanguage: language
+        }
+      }
+      return { phase: 'checking', percent: 0 }
+    },
+    async (language = prefsStore.getMeetingLanguage()) => {
+      const results = await Promise.allSettled([
+        whisperManager.prepareMeetingLanguage(language),
+        startDiarizationSetup()
+      ])
+      const failure = results.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') {
+        meetingLanguageSetupFailure = {
+          language,
+          error: failure.reason instanceof Error ? failure.reason.message : String(failure.reason)
+        }
+        throw failure.reason
+      }
+      meetingLanguageSetupFailure = null
+      preparedMeetingLanguage = language
     }
   )
   registerSearchIpc(recordingService.getRecordingsBaseDir())
@@ -1995,7 +2050,8 @@ app.whenReady().then(async () => {
     recordingService.getRecordingsBaseDir(),
     ollamaRuntime,
     ollamaProvider,
-    calendarManager
+    calendarManager,
+    () => prefsStore.getMeetingLanguage()
   )
   registerSpeakersIpc(recordingService.getRecordingsBaseDir())
 

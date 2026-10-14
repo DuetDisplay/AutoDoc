@@ -72,6 +72,7 @@ function createMockProvider(): LLMProvider {
     checkConnection: vi.fn().mockResolvedValue(true),
     abortActiveRequests: vi.fn(),
     setModel: vi.fn(),
+    getModel: vi.fn().mockReturnValue(DEFAULT_OLLAMA_MODEL),
     setLowMemoryMode: vi.fn(),
     releaseResources: vi.fn().mockResolvedValue(undefined),
     getLastWriterSkips: vi.fn().mockReturnValue([])
@@ -144,6 +145,145 @@ describe('SegmentationService', () => {
     }
   )
 
+  describe('overview claim verification', () => {
+    const judge = () => vi.fn(async () => JSON.stringify({ verdict: 'supported' }))
+
+    it.each([
+      ['darwin', true],
+      ['win32', true]
+    ] as const)('is available on %s: %s', (platform, available) => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+      provider.completePrompt = judge()
+      try {
+        expect((service as any).claimVerificationComplete() !== null).toBe(available)
+        expect((service as any).takeawaySelector('meeting') !== undefined).toBe(available)
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    })
+
+    it.each([
+      ['darwin', DEFAULT_OLLAMA_MODEL, true],
+      ['darwin', LOW_SPEC_MAC_OLLAMA_MODEL, false],
+      ['darwin', 'qwen3:8b', true],
+      ['win32', DEFAULT_OLLAMA_MODEL, true],
+      ['win32', LOW_SPEC_MAC_OLLAMA_MODEL, false],
+      ['win32', 'qwen3:8b', true]
+    ] as const)(
+      'overview check and takeaway selection for %s %s: %s',
+      (platform, model, enabled) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = judge()
+        provider.getModel = () => model
+        try {
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(enabled)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(enabled)
+          if (!enabled) {
+            expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                message: 'notes overview claim verification completed',
+                context: expect.objectContaining({
+                  status: 'skipped',
+                  reason: 'unsupported-model',
+                  model
+                })
+              })
+            )
+            expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                message: 'notes takeaway selection completed',
+                context: expect.objectContaining({
+                  status: 'skipped',
+                  reason: 'unsupported-model',
+                  model
+                })
+              })
+            )
+          }
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
+
+    it.each(['darwin', 'win32'] as const)(
+      'keeps overview check and takeaway selection enabled on %s when getModel is missing or undefined',
+      (platform) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = judge()
+        try {
+          delete (provider as { getModel?: LLMProvider['getModel'] }).getModel
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(true)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(true)
+
+          provider.getModel = () => undefined as unknown as string
+          expect((service as any).claimVerificationComplete('meeting') !== null).toBe(true)
+          expect((service as any).takeawaySelector('meeting') !== undefined).toBe(true)
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
+
+    it('can be switched off for evaluation', () => {
+      const original = process.platform
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      process.env.AUTODOC_TEST_NOTES_SKIP_CLAIM_VERIFICATION = '1'
+      provider.completePrompt = judge()
+      try {
+        expect((service as any).claimVerificationComplete()).toBeNull()
+      } finally {
+        delete process.env.AUTODOC_TEST_NOTES_SKIP_CLAIM_VERIFICATION
+        Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      }
+    })
+
+    it.each(['darwin', 'win32'] as const)(
+      'logs takeaway selection and overview verification on %s',
+      async (platform) => {
+        const original = process.platform
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+        provider.completePrompt = vi.fn(async () => '{"picks":[2,1]}')
+        try {
+          const selector = (service as any).takeawaySelector('meeting')
+          expect(selector).toBeTypeOf('function')
+          await expect(
+            selector(
+              [
+                { id: 'a', title: '', content: 'First displayed note about rollout.' },
+                { id: 'b', title: '', content: 'Second displayed note about billing.' },
+                { id: 'c', title: '', content: 'Third displayed note about mobile.' }
+              ],
+              2
+            )
+          ).resolves.toEqual(['b', 'a'])
+          expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              message: 'notes takeaway selection completed',
+              meetingId: 'meeting',
+              context: expect.objectContaining({ status: 'selected', takeawayCount: 2 })
+            })
+          )
+        } finally {
+          Object.defineProperty(process, 'platform', { value: original, configurable: true })
+        }
+      }
+    )
+
+    it('keeps the generated overview when the check throws', async () => {
+      const overview = { text: 'The team reviewed the launch.' }
+      const failing = vi.fn(async () => {
+        throw new Error('ollama down')
+      })
+      await expect(
+        (service as any).verifyOverviewClaimsForJob('meeting', '- note', overview, failing)
+      ).resolves.toEqual(overview)
+    })
+  })
+
   it.each(['win32', 'darwin'] as const)(
     'keeps notes memory evidence across a restart on %s',
     async (platform) => {
@@ -173,6 +313,38 @@ describe('SegmentationService', () => {
       }
     }
   )
+
+  it('reports a transcript with no usable speech as no notes, without a notes-ready callback', async () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } }] as any)
+    const onComplete = vi.fn()
+    service.onComplete(onComplete)
+    const writes = new Map<string, string>()
+    fsMock.access.mockResolvedValue(undefined)
+    fsMock.readFile.mockImplementation(async (path) =>
+      String(path).endsWith('segments.error') ? (writes.get(String(path)) ?? '') : '[]'
+    )
+    fsMock.writeFile.mockImplementation(async (path, data) => {
+      writes.set(String(path), String(data))
+    })
+    fsMock.stat.mockResolvedValue({ mtimeMs: 1000 } as any)
+    vi.spyOn(service as any, 'persistSegments').mockResolvedValue(undefined)
+    try {
+      await (service as any).processJob('silent')
+
+      expect(provider.summarize).not.toHaveBeenCalled()
+      expect(onComplete).not.toHaveBeenCalled()
+      expect(send).toHaveBeenCalledWith(
+        'segmentation:status-changed',
+        expect.objectContaining({ status: 'no-notes', errorCode: 'no_notes_detected' })
+      )
+      // Empty segments and the outcome can share a timestamp; the outcome still wins.
+      expect(await service.getStatus('silent')).toBe('no-notes')
+      expect(await service.getErrorCode('silent')).toBe('no_notes_detected')
+    } finally {
+      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([])
+    }
+  })
 
   describe('Windows model readiness', () => {
     const originalPlatform = process.platform

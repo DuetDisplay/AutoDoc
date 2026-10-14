@@ -1,3 +1,6 @@
+import { isEnglishMeetingJob } from './notes-language'
+import { segmentUnicodeWords } from './unicode-text'
+
 // Terminal object pronouns ("resolved it") are grammatical and stay allowed.
 const INCOMPLETE_END =
   /\b(?:a|an|and|as|at|because|but|by|for|from|he|if|in|of|on|or|she|that|the|their|them|then|this|to|we|when|where|which|with|you)\s*[.!?]*$/iu
@@ -49,6 +52,9 @@ const NUMBER_OR_PERCENT = /(?:\b\d+(?:[.,]\d+)?\b|%)/u
 export function noteTextLooksCoherent(text: string): boolean {
   const compact = text.replace(/\s+/gu, ' ').trim()
   if (!compact) return false
+  // `WORD` counts an unspaced Japanese or Chinese sentence as one word, and the
+  // fragment checks below are English grammar with ASCII-only `\b` patterns.
+  if (!isEnglishMeetingJob()) return segmentUnicodeWords(compact).length >= 2
   const words = compact.match(WORD) ?? []
   if (words.length < 2) return false
   if (INCOMPLETE_END.test(compact)) return false
@@ -68,13 +74,16 @@ export function noteTextLooksCoherent(text: string): boolean {
 export function noteTextLooksCorrupted(text: string): boolean {
   const compact = text.replace(/\s+/gu, ' ').trim()
   if (!compact) return false
-  return REPLACEMENT_CHAR.test(compact) || INWORD_MOJIBAKE.test(compact)
+  if (REPLACEMENT_CHAR.test(compact)) return true
+  // Accented and non-Latin letters are ordinary text outside English meetings.
+  return isEnglishMeetingJob() && INWORD_MOJIBAKE.test(compact)
 }
 
 export function noteRecordNeedsReview(text: string): boolean {
   const compact = text.replace(/\s+/gu, ' ').trim()
   if (noteTextLooksCorrupted(compact)) return true
   if (!noteTextLooksCoherent(compact)) return true
+  if (!isEnglishMeetingJob()) return false
   if (EMPTY_TASK.test(compact)) return true
   return LEADING_DISFLUENCY.test(compact)
 }
@@ -88,6 +97,7 @@ export function noteSubjectIsResolved(
   const heading = title?.trim() ?? ''
   const chapter = topic?.trim() ?? ''
   if (noteRecordNeedsReview(compact)) return false
+  if (!isEnglishMeetingJob()) return true
   if (UNRESOLVED_COMPARISON.test(compact) && !chapter && !NUMBER_OR_PERCENT.test(compact)) {
     return false
   }

@@ -1,0 +1,128 @@
+name: Publish stable update mirror
+
+on:
+  release:
+    types: [published, released]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published stable release tag to mirror
+        required: true
+        type: string
+      staging_version:
+        description: Staging-only version from a signed test build; requires build_run_id
+        required: false
+        default: ''
+        type: string
+      build_run_id:
+        description: CI artifact run ID (staging-only)
+        required: false
+        default: ''
+        type: string
+      staging_storage_limit_bytes:
+        description: Optional staging-only limit override for capacity failure testing
+        required: false
+        default: ''
+        type: string
+      apply:
+        description: Upload verified packages and advance stable manifests
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      apply:
+        default: true
+        type: boolean
+      staging_version:
+        default: ''
+        type: string
+      from_build_artifacts:
+        default: false
+        type: boolean
+
+concurrency:
+  # Shared across tag builds, manually published drafts, and recovery runs.
+  group: ${{ inputs.staging_version != '' && 'autodoc-staging-update-mirror' || 'autodoc-public-update-mirror' }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'DuetDisplay/AutoDoc' && (vars.UPDATE_MIRROR_ENABLED == 'true' || (inputs.staging_version != '' && (github.triggering_actor == 'blackjack130' || github.triggering_actor == 'duetCJackson')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.staging_version != '' && 'update-mirror-staging' || 'update-mirror-production' }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Fetch the published release and its signed update assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+          FROM_BUILD_ARTIFACTS: ${{ inputs.from_build_artifacts || inputs.staging_version != '' }}
+          STAGING_VERSION: ${{ inputs.staging_version }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          FROM_THIS_BUILD: ${{ inputs.from_build_artifacts || false }}
+        run: |
+          mkdir -p mirror-assets
+          if [ -n "$STAGING_VERSION" ]; then
+            if [[ ! "$STAGING_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$RELEASE_TAG" != "staging-v$STAGING_VERSION" ]; then
+              echo '::error::Invalid staging version/artifact tag.'
+              exit 1
+            fi
+            if [ "$FROM_THIS_BUILD" != 'true' ] && [[ ! "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]; then
+              echo '::error::A signed staging build run ID is required.'
+              exit 1
+            fi
+            # Local staging metadata only: no GitHub release is created or fetched.
+            jq -n --arg tag "v$STAGING_VERSION" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{tag_name:$tag,published_at:$at,draft:false,prerelease:false}' > release.json
+          else
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release.json
+          fi
+          if jq -e '.draft or .prerelease' release.json >/dev/null; then
+            echo 'Draft/prerelease: skipping stable mirror.'
+            exit 0
+          fi
+          if [ "$FROM_BUILD_ARTIFACTS" != 'true' ]; then
+            gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" -D mirror-assets \
+              -p 'latest*.yml' -p '*.zip' -p '*.exe'
+          fi
+      - name: Reuse verified macOS build artifacts
+        if: inputs.from_build_artifacts == true || inputs.staging_version != ''
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-macos-${{ inputs.release_tag }}
+          path: mirror-assets
+          run-id: ${{ inputs.build_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Reuse verified Windows build artifacts
+        if: inputs.from_build_artifacts == true || inputs.staging_version != ''
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-windows-${{ inputs.release_tag }}
+          path: mirror-assets
+          run-id: ${{ inputs.build_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate checksums and publish packages before manifests
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          UPDATE_MIRROR_ORIGIN: ${{ inputs.staging_version != '' && vars.UPDATE_MIRROR_STAGING_ORIGIN || vars.UPDATE_MIRROR_ORIGIN }}
+          UPDATE_MIRROR_BUCKET: ${{ inputs.staging_version != '' && 'autodoc-updates-staging' || 'autodoc-updates' }}
+          UPDATE_MIRROR_MAX_STORAGE_BYTES: ${{ inputs.staging_version != '' && (inputs.staging_storage_limit_bytes || vars.UPDATE_MIRROR_STAGING_MAX_STORAGE_BYTES || '2000000000') || vars.UPDATE_MIRROR_MAX_STORAGE_BYTES || '8000000000' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.UPDATE_MIRROR_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.UPDATE_MIRROR_R2_SECRET_ACCESS_KEY }}
+          APPLY: ${{ github.event_name != 'workflow_dispatch' || inputs.apply }}
+        run: |
+          args=()
+          if [ "$APPLY" = 'true' ]; then args+=(--apply); fi
+          node scripts/update-mirror.mjs release.json mirror-assets "${args[@]}"

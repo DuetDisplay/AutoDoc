@@ -1,3 +1,4 @@
+import type { SpeechLicenseNotice } from '../shared/speech-licenses'
 import type { MemoryFailure } from '../shared/memory-failure'
 import type {
   NotesFeedbackRequest,
@@ -57,6 +58,13 @@ import type {
   VideoStatus
 } from '../shared/types'
 import type {
+  MeetingLanguageAvailability,
+  MeetingLanguageCode,
+  MeetingLanguageEngineState,
+  WindowsMeetingLanguageAvailabilityInfo,
+  WindowsMultilingualEngineReadyInfo
+} from '../shared/meeting-language'
+import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
   E2EFeedbackPromptFixture,
@@ -104,6 +112,14 @@ export interface IpcSendEvents {
 
 export interface IpcInvokeEvents {
   'app:get-version': []
+  'app:get-speech-runtime-licenses': []
+  'app:get-locale': []
+  'prefs:get-meeting-language-announcement-pending': []
+  'prefs:dismiss-meeting-language-announcement': []
+  'prefs:get-onboarding-language-confirmed': []
+  'prefs:confirm-onboarding-language': []
+  'whisper:get-meeting-language-states': []
+  'whisper:prepare-meeting-language': [language: MeetingLanguageCode]
   'app:get-runtime-info': []
   'app:get-storage-info': []
   'app:clear-downloaded-components': []
@@ -229,6 +245,9 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-video-watermark-visible': []
   'prefs:set-video-watermark-visible': [visible: boolean]
+  'prefs:get-meeting-language': []
+  'prefs:get-meeting-language-availability': []
+  'prefs:set-meeting-language': [language: MeetingLanguageCode]
   'prefs:get-experimental-speaker-diarization': []
   'prefs:set-experimental-speaker-diarization': [enabled: boolean]
   'prefs:get-low-spec-mac-processing-banner-dismissed': []
@@ -240,6 +259,8 @@ export interface IpcInvokeEvents {
   'ollama:retry-setup': []
   'whisper:get-setup-status': []
   'whisper:retry-setup': []
+  'whisper:get-windows-meeting-language-availability': [language: MeetingLanguageCode]
+  'whisper:ensure-windows-multilingual-engine': [language: MeetingLanguageCode]
   'e2e:set-whisper-status': [status: WhisperSetupStatus]
   'e2e:set-ollama-status': [status: OllamaSetupStatus]
   'e2e:get-detection-state': []
@@ -264,6 +285,16 @@ export interface IpcInvokeEvents {
 
 export interface IpcInvokeReturns {
   'app:get-version': string
+  'app:get-speech-runtime-licenses': SpeechLicenseNotice[]
+  'app:get-locale': string
+  'prefs:get-meeting-language-announcement-pending': boolean
+  'prefs:dismiss-meeting-language-announcement': void
+  'prefs:get-onboarding-language-confirmed': boolean
+  'prefs:confirm-onboarding-language': void
+  'whisper:get-meeting-language-states': Partial<
+    Record<MeetingLanguageCode, MeetingLanguageEngineState>
+  >
+  'whisper:prepare-meeting-language': void
   'app:get-runtime-info': AppRuntimeInfo
   'app:get-storage-info': AppStorageInfo
   'app:clear-downloaded-components': AppStorageInfo
@@ -374,6 +405,9 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-video-watermark-visible': boolean
   'prefs:set-video-watermark-visible': void
+  'prefs:get-meeting-language': MeetingLanguageCode
+  'prefs:get-meeting-language-availability': MeetingLanguageAvailability
+  'prefs:set-meeting-language': void
   'prefs:get-experimental-speaker-diarization': boolean
   'prefs:set-experimental-speaker-diarization': void
   'prefs:get-low-spec-mac-processing-banner-dismissed': boolean
@@ -385,6 +419,8 @@ export interface IpcInvokeReturns {
   'ollama:retry-setup': void
   'whisper:get-setup-status': WhisperSetupStatus
   'whisper:retry-setup': void
+  'whisper:get-windows-meeting-language-availability': WindowsMeetingLanguageAvailabilityInfo
+  'whisper:ensure-windows-multilingual-engine': WindowsMultilingualEngineReadyInfo
   'e2e:set-whisper-status': void
   'e2e:set-ollama-status': void
   'e2e:get-detection-state': E2EDetectionState

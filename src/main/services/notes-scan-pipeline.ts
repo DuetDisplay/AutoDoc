@@ -37,7 +37,7 @@ import {
   type TopicGroup
 } from '../../../scripts/notes-writer-probe/groups.ts'
 import { sanitizeMarkdown } from '../../../scripts/notes-writer-probe/sanitize.ts'
-import { NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
+import { isNeedsReviewTopic, NOTES_NEXT_STEPS_VISIBLE } from '../../shared/notes-presentation'
 import { nestFlatPeerKeyPoints } from '../../shared/notes-section-display'
 import type { MeetingNotesContent, MeetingSegments, MeetingSegmentsWithCandidates, Transcript } from '../../shared/types'
 import { attachNotesTimestamps } from './notes-attach-timestamps'
@@ -62,6 +62,7 @@ import {
 } from './windows-notes-experiment'
 import { organizeWindowsNotes } from './windows-notes-organization'
 import { isWindowsEvidenceWriterEnabled } from './windows-notes-evidence'
+import { isEnglishMeetingJob } from './notes-language'
 import { resolveSpeakerAwareOwner } from './notes-owner-attribution'
 import { generateNotesOverview, notesCatalogMarkdown } from './notes-overview'
 import { fallbackMeetingOverviewFromNotes } from '../../shared/notes-overview-text'
@@ -124,6 +125,20 @@ export interface RunNotesScanOptions {
   temperature?: AllowedTemperature
   onProgress?: (update: { stage: string; fraction: number }) => void
   rewritePolicy?: NotesRewritePolicy
+  /**
+   * Lossless mode: chooses `k` Key Takeaways among the presented notes,
+   * most important first, returning their ids, or null to keep the ranking.
+   * Must not throw.
+   */
+  selectTakeaways?: (
+    notes: readonly { id: string; title: string; content: string }[],
+    k: number
+  ) => Promise<string[] | null>
+  /**
+   * Lossless mode: returns the generated overview without sentences the notes
+   * catalog does not state, or null when none remain. Must not throw.
+   */
+  verifyOverview?: <T extends { text: string }>(catalog: string, overview: T) => Promise<T | null>
 }
 
 export function scanLayerProgress(fraction: number): number {
@@ -301,6 +316,39 @@ async function generateFromPlan(
   })
 }
 
+function losslessTakeawayCandidates(
+  content: MeetingNotesContent
+): Array<{ id: string; title: string; content: string }> {
+  const items = [
+    ...content.sections.flatMap((section) => {
+      if (isWindowsNotesQualityEnabled() && isNeedsReviewTopic(section.title)) return []
+      return [...section.keyPoints, ...section.supportingDetails]
+    }),
+    ...content.decisions,
+    ...content.nextSteps
+  ]
+  const visible = isWindowsNotesQualityEnabled()
+    ? items.filter((item) => !isNeedsReviewTopic(item.topic))
+    : items
+  return visible.map((item) => ({
+    id: item.id,
+    title: item.title ?? '',
+    content: item.text
+  }))
+}
+
+function acceptedTakeawayIds(
+  takeawayIds: string[] | null,
+  candidates: readonly { id: string }[],
+  k: number
+): string[] | null {
+  if (!takeawayIds) return null
+  if (!isWindowsNotesQualityEnabled()) return takeawayIds
+  if (takeawayIds.length !== k || new Set(takeawayIds).size !== takeawayIds.length) return null
+  const allowed = new Set(candidates.map((item) => item.id))
+  return takeawayIds.every((id) => allowed.has(id)) ? takeawayIds : null
+}
+
 export async function runNotesScanPipeline(
   segments: MeetingSegmentsWithCandidates,
   options: RunNotesScanOptions
@@ -324,9 +372,16 @@ export async function runNotesScanPipeline(
     if (!attributionTranscript) {
       throw new Error('Lossless notes presentation requires attribution evidence')
     }
-    const decisionRecovery = isWindowsEvidenceWriterEnabled()
-      ? { segments, recoveredDecisionCount: 0, promotedDecisionCount: 0, dedupedRecoveredDecisionCount: 0 }
-      : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
+    // Transcript decision recovery matches English phrasing only.
+    const decisionRecovery =
+      isWindowsEvidenceWriterEnabled() || !isEnglishMeetingJob()
+        ? {
+            segments,
+            recoveredDecisionCount: 0,
+            promotedDecisionCount: 0,
+            dedupedRecoveredDecisionCount: 0
+          }
+        : recoverExplicitTranscriptDecisions(segments, attributionTranscript)
     const recovery =
       !NOTES_NEXT_STEPS_VISIBLE || isWindowsEvidenceWriterEnabled()
         ? {
@@ -372,6 +427,27 @@ export async function runNotesScanPipeline(
     let content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
       summarySegments
     })
+    // The overview is written from the ranking's layout, so choosing different
+    // Key Takeaways cannot change the overview's input.
+    const overviewCatalogSource = content
+    if (
+      options.selectTakeaways &&
+      (process.platform === 'darwin' || process.platform === 'win32') &&
+      !organization
+    ) {
+      const notes = losslessTakeawayCandidates(content)
+      const takeawayIds = acceptedTakeawayIds(
+        await options.selectTakeaways(notes, content.keyTakeaways.length),
+        notes,
+        content.keyTakeaways.length
+      )
+      if (takeawayIds) {
+        content = presentMeetingSegmentsLosslessly(options.meetingId, presentedSegments, {
+          summarySegments,
+          takeawayIds
+        })
+      }
+    }
     if (organization?.overview) content.overview = organization.overview
     // An overview must add a grounded synthesis; copying selected body records
     // into another area adds repetition without adding meaning.
@@ -383,7 +459,7 @@ export async function runNotesScanPipeline(
       !isWindowsTopicWriterEnabled() &&
       !organization?.overview
     ) {
-      const catalog = notesCatalogMarkdown(content)
+      const catalog = notesCatalogMarkdown(overviewCatalogSource)
       if (catalog) {
         reportProgress('overview', 0.95)
         try {
@@ -401,7 +477,11 @@ export async function runNotesScanPipeline(
           overviewFailed = !overview.usedModel
           overviewFailureReasons = overview.failureReasons
           if (overview.usedModel && overview.overview?.text.trim()) {
-            content = { ...content, overview: overview.overview }
+            // With no supported sentence left, the lossless overview stays.
+            const verified = options.verifyOverview
+              ? await options.verifyOverview(catalog, overview.overview)
+              : overview.overview
+            if (verified?.text.trim()) content = { ...content, overview: verified }
           }
         } catch (error) {
           overviewFailed = true

@@ -684,4 +684,37 @@ describe('lossless notes presenter on macOS', () => {
       content.sections.map((section) => section.title)
     )
   })
+
+  it('uses chosen takeaway ids only when they name as many distinct records as the ranking', () => {
+    const segments = fixture()
+    const ranked = presentMeetingSegmentsLosslessly(MEETING_ID, segments)
+    const k = ranked.keyTakeaways.length
+    expect(k).toBeGreaterThan(1)
+
+    const allIds = allItems(ranked).map((item) => item.id)
+    const rankedIds = new Set(ranked.keyTakeaways.map((item) => item.text))
+    const chosenIds = allItems(ranked)
+      .filter((item) => !rankedIds.has(item.text))
+      .slice(0, k)
+      .map((item) => item.id)
+    expect(chosenIds).toHaveLength(k)
+
+    const chosen = presentMeetingSegmentsLosslessly(MEETING_ID, segments, { takeawayIds: chosenIds })
+    const byId = new Map(allItems(ranked).map((item) => [item.id, item.text]))
+    expect(chosen.keyTakeaways.map((item) => item.text)).toEqual(chosenIds.map((id) => byId.get(id)))
+    // The body, the overview seed and coverage are unchanged.
+    expect(chosen.sections).toEqual(ranked.sections)
+    expect(chosen.overview).toEqual(ranked.overview)
+    expect(hasExactLosslessCoverage(segments, chosen, { takeawayIds: chosenIds })).toBe(true)
+
+    for (const invalid of [
+      chosenIds.slice(1),
+      [...chosenIds.slice(1), chosenIds[1]!],
+      [...chosenIds.slice(1), 'missing-id'],
+      [...allIds.slice(0, k + 1)]
+    ]) {
+      const kept = presentMeetingSegmentsLosslessly(MEETING_ID, segments, { takeawayIds: invalid })
+      expect(kept.keyTakeaways).toEqual(ranked.keyTakeaways)
+    }
+  })
 })

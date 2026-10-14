@@ -1,0 +1,33 @@
+name: Update mirror verification
+on:
+  pull_request:
+    paths:
+      - 'update-worker/**'
+      - 'scripts/*update*'
+      - 'scripts/ingest-github-download-counts.js'
+      - 'scripts/__tests__/update-mirror*'
+      - 'src/main/services/auto-updater.ts'
+      - 'src/main/services/distribution-config.ts'
+      - 'src/main/services/__tests__/auto-updater.test.ts'
+      - '.github/workflows/*mirror*'
+  workflow_dispatch:
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --prefix update-worker
+      - run: npm run typecheck:update-worker
+      - run: npm run test:update-mirror
+      - run: npm run test:main:run -- src/main/services/__tests__/auto-updater.test.ts

@@ -23,6 +23,8 @@ import {
   noteTextLooksCoherent
 } from './notes-coherence'
 import { assignPresentationTopics } from './notes-topic-grouper'
+import { isEnglishMeetingJob } from './notes-language'
+import { segmentUnicodeWords } from './unicode-text'
 import {
   assignWindowsPresentationTopics,
   isWindowsNotesQualityEnabled,
@@ -104,10 +106,19 @@ export interface LosslessPresentationStats {
 export interface LosslessPresentationOptions {
   /** Same records and factual fields, used so body regrouping cannot reshuffle highlights. */
   summarySegments?: MeetingSegments
+  /**
+   * Record ids chosen as Key Takeaways, most important first. Used only when it
+   * names exactly as many distinct catalog records as the ranking would show;
+   * otherwise the ranking's takeaways stay.
+   */
+  takeawayIds?: readonly string[]
 }
 
 function standaloneCompletenessScore(text: string): number {
-  const wordCount = text.match(SUMMARY_WORD)?.length ?? 0
+  // `SUMMARY_WORD` counts an unspaced Japanese or Chinese sentence as one word.
+  const wordCount = isEnglishMeetingJob()
+    ? (text.match(SUMMARY_WORD)?.length ?? 0)
+    : segmentUnicodeWords(text).length
   if (wordCount >= 12) return 8
   if (wordCount >= 8) return 4
   return 0
@@ -376,13 +387,31 @@ function takeawayId(meetingId: string, segment: Segment, index: number): string 
     .slice(0, 16)}`
 }
 
+function rankedTakeaways(selected: Segment[]): Segment[] {
+  return isWindowsNotesQualityEnabled() ? selected : selected.slice(1)
+}
+
+function summaryTakeaways(
+  segments: MeetingSegments,
+  selected: Segment[],
+  takeawayIds: readonly string[] | undefined
+): Segment[] {
+  const ranked = rankedTakeaways(selected)
+  if (!takeawayIds || takeawayIds.length !== ranked.length) return ranked
+  if (new Set(takeawayIds).size !== takeawayIds.length) return ranked
+  const byId = new Map(Object.values(segments).flat().map((segment) => [segment.id, segment]))
+  const chosen = takeawayIds.map((id) => byId.get(id))
+  return chosen.every((segment): segment is Segment => segment !== undefined) ? chosen : ranked
+}
+
 function withSummaryHierarchy(
   meetingId: string,
   segments: MeetingSegments,
-  content: MeetingNotesContent
+  content: MeetingNotesContent,
+  takeawayIds?: readonly string[]
 ): MeetingNotesContent {
   const selected = summarySegments(segments)
-  const takeaways = isWindowsNotesQualityEnabled() ? selected : selected.slice(1)
+  const takeaways = summaryTakeaways(segments, selected, takeawayIds)
   return {
     ...content,
     overview: composeOverview(overviewSegments(segments, selected)),
@@ -562,13 +591,18 @@ function buildDirectFallback(
       )
     )
 
-  return withSummaryHierarchy(meetingId, options.summarySegments ?? segments, {
-    overview: null,
-    keyTakeaways: [],
-    sections,
-    decisions: stableSortSegments(segments.decisions).map(toNoteItem),
-    nextSteps: stableSortSegments(segments.actionItems).map(toNoteItem)
-  })
+  return withSummaryHierarchy(
+    meetingId,
+    options.summarySegments ?? segments,
+    {
+      overview: null,
+      keyTakeaways: [],
+      sections,
+      decisions: stableSortSegments(segments.decisions).map(toNoteItem),
+      nextSteps: stableSortSegments(segments.actionItems).map(toNoteItem)
+    },
+    options.takeawayIds
+  )
 }
 
 function buildGroupedCandidate(
@@ -576,14 +610,19 @@ function buildGroupedCandidate(
   segments: MeetingSegments,
   options: LosslessPresentationOptions
 ): MeetingNotesContent {
-  return withSummaryHierarchy(meetingId, options.summarySegments ?? segments, {
-    overview: null,
-    keyTakeaways: [],
-    sections: buildGroupedSections(meetingId, segments),
-    decisions:
-      process.platform === 'darwin' ? [] : stableSortSegments(segments.decisions).map(toNoteItem),
-    nextSteps: stableSortSegments(segments.actionItems).map(toNoteItem)
-  })
+  return withSummaryHierarchy(
+    meetingId,
+    options.summarySegments ?? segments,
+    {
+      overview: null,
+      keyTakeaways: [],
+      sections: buildGroupedSections(meetingId, segments),
+      decisions:
+        process.platform === 'darwin' ? [] : stableSortSegments(segments.decisions).map(toNoteItem),
+      nextSteps: stableSortSegments(segments.actionItems).map(toNoteItem)
+    },
+    options.takeawayIds
+  )
 }
 
 function presentedItems(content: MeetingNotesContent): PresentedItem[] {
@@ -635,7 +674,8 @@ function presentedTopicMatches(
 
 function hasSourceBackedSummaryHierarchy(
   segments: MeetingSegments,
-  content: MeetingNotesContent
+  content: MeetingNotesContent,
+  takeawayIds?: readonly string[]
 ): boolean {
   const expected = summarySegments(segments)
   const overviewExpected = overviewSegments(segments, expected)
@@ -651,7 +691,7 @@ function hasSourceBackedSummaryHierarchy(
     return false
   }
 
-  const expectedTakeaways = isWindowsNotesQualityEnabled() ? expected : expected.slice(1)
+  const expectedTakeaways = summaryTakeaways(segments, expected, takeawayIds)
   if (content.keyTakeaways.length !== expectedTakeaways.length) return false
   return content.keyTakeaways.every((item, index) => {
     const segment = expectedTakeaways[index]
@@ -772,7 +812,15 @@ export function hasExactLosslessCoverage(
   if (options.summarySegments && !hasCompatibleSummaryCatalog(segments, options.summarySegments)) {
     return false
   }
-  if (!hasSourceBackedSummaryHierarchy(options.summarySegments ?? segments, content)) return false
+  if (
+    !hasSourceBackedSummaryHierarchy(
+      options.summarySegments ?? segments,
+      content,
+      options.takeawayIds
+    )
+  ) {
+    return false
+  }
   if (
     content.sections.some(
       (section) =>

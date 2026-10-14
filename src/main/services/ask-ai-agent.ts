@@ -24,6 +24,7 @@
  * Gated behind `AUTODOC_ASK_AI_AGENT=1`; the v1 path remains the default until a
  * head-to-head benchmark on real Ollama justifies the swap.
  */
+import { chatLanguageInstruction } from './chat-language'
 import type { CalendarEvent } from '../../shared/types'
 import type {
   ChatRetrievalResult,
@@ -74,6 +75,7 @@ export interface RunAskAiAgentParams {
   model: string
   question: string
   history: AgentHistoryMessage[]
+  language?: unknown
   session: AgentSession
   deps: AgentToolDeps
   signal?: AbortSignal
@@ -611,9 +613,12 @@ async function ollamaChatOnce(params: {
 
 function buildInitialMessages(
   question: string,
-  history: AgentHistoryMessage[]
+  history: AgentHistoryMessage[],
+  language: unknown
 ): OllamaChatMessage[] {
-  const messages: OllamaChatMessage[] = [{ role: 'system', content: AGENT_SYSTEM_PROMPT }]
+  const messages: OllamaChatMessage[] = [
+    { role: 'system', content: `${AGENT_SYSTEM_PROMPT}\n\n${chatLanguageInstruction(language)}` }
+  ]
   for (const turn of history) {
     messages.push({ role: turn.role, content: turn.content })
   }
@@ -622,7 +627,7 @@ function buildInitialMessages(
 }
 
 export async function runAskAiAgent(params: RunAskAiAgentParams): Promise<AskAiAgentResult> {
-  const messages = buildInitialMessages(params.question, params.history)
+  const messages = buildInitialMessages(params.question, params.history, params.language)
   const toolCalls: AgentToolEvent[] = []
   let clarificationOptions: ChatClarificationOption[] | undefined
 

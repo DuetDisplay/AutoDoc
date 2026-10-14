@@ -1,5 +1,27 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import type { PrefsStore } from '../services/prefs-store'
+import {
+  isMeetingLanguageAvailable,
+  isMeetingLanguageCode,
+  normalizeMeetingLanguage,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
+import {
+  currentMeetingLanguageAvailability,
+  waitForWindowsNotesModel
+} from '../services/meeting-language-availability'
+import { getWindowsMeetingLanguageAvailability } from '../services/windows-multilingual-readiness'
+
+export function meetingLanguageNeedsMemoryMessage(
+  language: unknown,
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (platform === 'win32') {
+    return `Meeting language ${normalizeMeetingLanguage(language)} needs a more powerful PC`
+  }
+  return `Meeting language ${normalizeMeetingLanguage(language)} needs 16 GB of memory on this Mac`
+}
 
 function broadcastAnalyticsConsent(enabled: boolean): void {
   const windows = BrowserWindow.getAllWindows()
@@ -33,8 +55,25 @@ export function registerPrefsIpc(
   prefsStore: PrefsStore,
   onAnalyticsConsentChanged?: (enabled: boolean) => void,
   onDiagnosticLogUploadConsentChanged?: (enabled: boolean) => void,
-  onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void
+  onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void,
+  getMeetingLanguageAvailability: () => MeetingLanguageAvailability = currentMeetingLanguageAvailability
 ): void {
+  ipcMain.handle('prefs:get-onboarding-language-confirmed', () =>
+    prefsStore.getOnboardingLanguageConfirmed()
+  )
+  ipcMain.handle('prefs:confirm-onboarding-language', () => prefsStore.confirmOnboardingLanguage())
+  ipcMain.handle('prefs:get-meeting-language-announcement-pending', async (): Promise<boolean> => {
+    await waitForWindowsNotesModel()
+    return (
+      prefsStore.isMeetingLanguageAnnouncementPending() &&
+      !getMeetingLanguageAvailability().restricted
+    )
+  })
+  ipcMain.handle('prefs:dismiss-meeting-language-announcement', () =>
+    prefsStore.dismissMeetingLanguageAnnouncement()
+  )
+  ipcMain.handle('app:get-locale', () => app.getLocale())
+
   ipcMain.handle('prefs:get-onboarding-complete', (): boolean => {
     return prefsStore.isOnboardingComplete()
   })
@@ -100,6 +139,40 @@ export function registerPrefsIpc(
   ipcMain.handle('prefs:set-video-watermark-visible', (_event, visible: boolean): void => {
     prefsStore.setVideoWatermarkVisible(visible)
     broadcastVideoWatermarkVisible(visible)
+  })
+
+  ipcMain.handle('prefs:get-meeting-language', (): MeetingLanguageCode => {
+    return prefsStore.getMeetingLanguage()
+  })
+
+  ipcMain.handle(
+    'prefs:get-meeting-language-availability',
+    async (): Promise<MeetingLanguageAvailability> => {
+      await waitForWindowsNotesModel()
+      return getMeetingLanguageAvailability()
+    }
+  )
+
+  // Saves can overlap while Windows availability is checked; only the newest
+  // request may write, so a slower earlier request cannot overwrite it.
+  let latestMeetingLanguageRequest = 0
+  ipcMain.handle('prefs:set-meeting-language', async (_event, language: unknown): Promise<void> => {
+    const request = ++latestMeetingLanguageRequest
+    if (!isMeetingLanguageCode(language)) {
+      throw new Error('This meeting language is not supported.')
+    }
+    await waitForWindowsNotesModel()
+    if (!isMeetingLanguageAvailable(language, getMeetingLanguageAvailability())) {
+      throw new Error(meetingLanguageNeedsMemoryMessage(language))
+    }
+    if (process.platform === 'win32') {
+      const engine = await getWindowsMeetingLanguageAvailability(language)
+      if (engine.availability === 'locked') {
+        throw new Error(engine.reason ?? "This language isn't available on this PC.")
+      }
+    }
+    if (request !== latestMeetingLanguageRequest) return
+    prefsStore.setMeetingLanguage(language)
   })
 
   ipcMain.handle('prefs:get-experimental-speaker-diarization', (): boolean => {

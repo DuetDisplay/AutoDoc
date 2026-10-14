@@ -1,9 +1,26 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader } from '../components/PageHeader'
+import { SpeechLicenses } from '../components/SpeechLicenses'
+import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
 import { useCalendarStore } from '../stores/calendar'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  getMeetingLanguageDefinition,
+  isMeetingLanguageAvailable,
+  normalizeMeetingLanguage,
+  UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
+  type MeetingLanguageAvailability,
+  type MeetingLanguageCode,
+  type MeetingLanguageEngineState
+} from '../../../shared/meeting-language'
+import type { WhisperSetupStatus } from '../../../shared/types'
+import { formatBytes, formatMeetingLanguageFirstUseDownload } from '../services/format-bytes'
+import { loadMeetingLanguageStates } from '../services/meeting-language-setup'
+import { getWhisperSetupLabel } from '../services/setup-status-labels'
+
 import {
   identifyConsentedInstall,
   setAnalyticsConsent,
@@ -15,6 +32,9 @@ import {
 } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
+import { isNetworkErrorMessage } from '../services/network-errors'
+import { offlineMeetingLanguageMessage } from '../services/meeting-language-copy'
 
 const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
   ? lazy(() =>
@@ -44,26 +64,24 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
   return null
 }
 
-function formatBytes(bytes: number | null | undefined): string {
-  if (bytes == null) return 'Loading...'
-  if (bytes <= 0) return '0 B'
-
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unitIndex = 0
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-
-  const digits = value >= 10 || unitIndex === 0 ? 0 : 1
-  return `${value.toFixed(digits)} ${units[unitIndex]}`
-}
-
 export function Settings() {
+  const meetingLanguageSection = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const focusLanguage = () => {
+      const query = new URLSearchParams(window.location.hash.split('?')[1])
+      if (query.get('section') === 'meeting-language') {
+        meetingLanguageSection.current?.scrollIntoView({ block: 'center' })
+        meetingLanguageSection.current?.focus({ preventScroll: true })
+      }
+    }
+    focusLanguage()
+    window.addEventListener('hashchange', focusLanguage)
+    return () => window.removeEventListener('hashchange', focusLanguage)
+  }, [])
+  const online = useOnlineStatus()
   const { accounts, setAccounts, addAccount, removeAccount, setConnecting, setEvents } =
     useCalendarStore()
+  const [showSpeechLicenses, setShowSpeechLicenses] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
@@ -71,6 +89,19 @@ export function Settings() {
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
   const [diagnosticLogUploadConsent, setDiagnosticLogUploadConsentState] = useState(false)
   const [videoWatermarkVisible, setVideoWatermarkVisibleState] = useState(true)
+  const [meetingLanguage, setMeetingLanguageState] =
+    useState<MeetingLanguageCode>(DEFAULT_MEETING_LANGUAGE)
+  const [isSavingMeetingLanguage, setIsSavingMeetingLanguage] = useState(false)
+  const [meetingLanguageError, setMeetingLanguageError] = useState<string | null>(null)
+  const [meetingLanguageAvailability, setMeetingLanguageAvailability] =
+    useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
+  const [languageStates, setLanguageStates] = useState<
+    Partial<Record<MeetingLanguageCode, MeetingLanguageEngineState>>
+  >({})
+  const [preparingMeetingLanguage, setPreparingMeetingLanguage] =
+    useState<MeetingLanguageCode | null>(null)
+  const [meetingLanguageSetupStatus, setMeetingLanguageSetupStatus] =
+    useState<WhisperSetupStatus | null>(null)
   const [storageNotice, setStorageNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
@@ -100,6 +131,16 @@ export function Settings() {
       },
       () => undefined
     )
+    void window.electronAPI.invoke('prefs:get-meeting-language').then(
+      (language) => setMeetingLanguageState(normalizeMeetingLanguage(language)),
+      () => undefined
+    )
+    void window.electronAPI.invoke('prefs:get-meeting-language-availability').then(
+      (availability) => {
+        if (availability) setMeetingLanguageAvailability(availability)
+      },
+      () => undefined
+    )
     const unsub = window.electronAPI.on('updater:status', setUpdateStatus)
     const unsubConsent = window.electronAPI.on(
       'prefs:analytics-consent-changed',
@@ -120,6 +161,34 @@ export function Settings() {
       unsubVideoWatermarkVisible()
     }
   }, [refreshStorageInfo])
+
+  const isWindows = runtimeInfo?.platform === 'win32'
+
+  const refreshLanguageStates = useCallback(async () => {
+    if (!runtimeInfo?.platform) return
+    try {
+      setLanguageStates(await loadMeetingLanguageStates(runtimeInfo.platform))
+    } catch {
+      // Keep the last known engine states if a refresh fails.
+    }
+  }, [runtimeInfo?.platform])
+
+  useEffect(() => {
+    void refreshLanguageStates()
+  }, [refreshLanguageStates])
+
+  useEffect(() => {
+    if (!preparingMeetingLanguage) {
+      setMeetingLanguageSetupStatus(null)
+      return
+    }
+    const unsub = window.electronAPI.on('whisper:setup-progress', (status) => {
+      if (!status.meetingLanguage || status.meetingLanguage === preparingMeetingLanguage) {
+        setMeetingLanguageSetupStatus(status)
+      }
+    })
+    return unsub
+  }, [preparingMeetingLanguage])
 
   useEffect(() => {
     const previousState = previousUpdateState.current
@@ -260,6 +329,78 @@ export function Settings() {
     setVideoWatermarkVisibleState(nextValue)
   }
 
+  const handleSetMeetingLanguage = async (language: MeetingLanguageCode): Promise<void> => {
+    setMeetingLanguageError(null)
+    setIsSavingMeetingLanguage(true)
+    try {
+      if (isWindows && language !== DEFAULT_MEETING_LANGUAGE) {
+        let engineState = languageStates[language]
+        if (!engineState) {
+          const fetched = await window.electronAPI.invoke(
+            'whisper:get-windows-meeting-language-availability',
+            language
+          )
+          if (fetched) {
+            engineState = fetched
+            setLanguageStates((current) => ({ ...current, [language]: fetched }))
+          }
+        }
+        if (engineState?.availability === 'locked') {
+          setMeetingLanguageError(engineState.reason ?? "This language isn't available on this PC.")
+          return
+        }
+        const needsEnsure =
+          (engineState?.firstUseDownloadBytes ?? 0) > 0 || engineState?.needsSelfTest === true
+        if (needsEnsure) {
+          setPreparingMeetingLanguage(language)
+          try {
+            // Same path as onboarding, so setup status reports ready afterwards.
+            // It throws the lock reason when the engine turns out to be locked.
+            await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
+          } finally {
+            await refreshLanguageStates()
+          }
+        }
+      } else if (runtimeInfo?.platform === 'darwin' || language === DEFAULT_MEETING_LANGUAGE) {
+        setPreparingMeetingLanguage(language)
+        setMeetingLanguageSetupStatus({ phase: 'checking', percent: 0 })
+        await window.electronAPI.invoke('whisper:prepare-meeting-language', language)
+      }
+      await window.electronAPI.invoke('prefs:set-meeting-language', language)
+      setMeetingLanguageState(language)
+      recordDiagnosticAction({
+        category: 'settings',
+        action: 'meeting_language_changed',
+        details: { language }
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save the meeting language.'
+      let savedLanguage: MeetingLanguageCode | null = null
+      try {
+        savedLanguage = normalizeMeetingLanguage(
+          await window.electronAPI.invoke('prefs:get-meeting-language')
+        )
+        setMeetingLanguageState(savedLanguage)
+      } catch {
+        // Keep the last picker value if the saved preference cannot be read.
+      }
+      setMeetingLanguageError(
+        isNetworkErrorMessage(message)
+          ? offlineMeetingLanguageMessage(
+              getMeetingLanguageDefinition(language).label,
+              languageStates[language]?.firstUseDownloadBytes,
+              savedLanguage ? getMeetingLanguageDefinition(savedLanguage).label : null
+            )
+          : message
+      )
+    } finally {
+      if (!isWindows) await refreshLanguageStates()
+      setPreparingMeetingLanguage(null)
+      setMeetingLanguageSetupStatus(null)
+      setIsSavingMeetingLanguage(false)
+    }
+  }
+
   const handleRemoveDownloadedComponents = async () => {
     const confirmed = window.confirm(
       'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.'
@@ -306,6 +447,17 @@ export function Settings() {
     runtimeInfo?.platform === 'win32'
       ? 'Windows uninstall can optionally remove AutoDoc local data. Use the controls here any time you want to reclaim space without uninstalling.'
       : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
+
+  const machineNoun = isWindows ? 'PC' : 'Mac'
+  const pickerAvailability: MeetingLanguageAvailability = {
+    ...meetingLanguageAvailability,
+    languageStates
+  }
+  const sizeLanguage = preparingMeetingLanguage ?? meetingLanguage
+  const firstUseDownloadLabel = formatMeetingLanguageFirstUseDownload(
+    languageStates[sizeLanguage]?.firstUseDownloadBytes ?? 0
+  )
+  const meetingLanguageSetupLabel = getWhisperSetupLabel(meetingLanguageSetupStatus)
 
   return (
     <div className="flex flex-col h-full">
@@ -406,6 +558,52 @@ export function Settings() {
                 </svg>
                 {connectingProvider === 'microsoft' ? 'Connecting...' : 'Add Microsoft Outlook'}
               </button>
+            </div>
+          </div>
+          <div ref={meetingLanguageSection} tabIndex={-1} aria-label="Meeting language settings">
+            <h3 className="text-[13px] font-semibold text-ink mb-2">Meeting language</h3>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div>
+                <p className="text-[12px] text-ink-muted leading-relaxed">
+                  The language spoken in new recordings, including auto-record. Transcripts and
+                  notes are written in this language.
+                </p>
+                {meetingLanguageAvailability.restricted && (
+                  <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">
+                    {isWindows
+                      ? 'Languages other than English need larger AI models than this PC has the memory and processing power to run, so meetings here are in English.'
+                      : 'Languages other than English need larger AI models than this Mac’s 8 GB of memory can run, so meetings here are in English. They need 16 GB or more.'}
+                  </p>
+                )}
+                {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (
+                  <p role="status" className="mt-1 text-[11px] text-clay-dark">
+                    {getMeetingLanguageDefinition(meetingLanguage).label} isn&apos;t available on
+                    this {machineNoun}. New recordings use English.
+                  </p>
+                )}
+                {firstUseDownloadLabel && (
+                  <p className="mt-1 text-[11px] text-ink-muted leading-relaxed">
+                    {firstUseDownloadLabel}
+                  </p>
+                )}
+                {meetingLanguageSetupLabel && (
+                  <p role="status" className="mt-1 text-[11px] text-ink-muted leading-relaxed">
+                    {meetingLanguageSetupLabel}
+                  </p>
+                )}
+                {meetingLanguageError && (
+                  <p role="alert" className="mt-1 text-[11px] text-clay-dark">
+                    {meetingLanguageError}
+                  </p>
+                )}
+              </div>
+              <MeetingLanguagePicker
+                value={meetingLanguage}
+                disabled={isSavingMeetingLanguage || !runtimeInfo}
+                availability={pickerAvailability}
+                offline={!online}
+                onChange={(language) => void handleSetMeetingLanguage(language)}
+              />
             </div>
           </div>
           <div>
@@ -560,6 +758,20 @@ export function Settings() {
           )}
           <div>
             <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
+            <button
+              type="button"
+              aria-expanded={showSpeechLicenses}
+              aria-controls="speech-licenses"
+              onClick={() => setShowSpeechLicenses((open) => !open)}
+              className="mb-3 text-[12px] font-medium text-sage-dark underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
+            >
+              Open-source and model licenses
+            </button>
+            {showSpeechLicenses && runtimeInfo && (
+              <div id="speech-licenses">
+                <SpeechLicenses platform={runtimeInfo.platform} />
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
               {updateStatus.state === 'idle' && !__AUTODOC_QA_BUILD__ && (

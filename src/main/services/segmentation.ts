@@ -21,6 +21,11 @@ import {
 import { encryptJSON, decryptJSON, isEncrypted } from './crypto'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { readMetadata } from './calendar-matcher'
+import {
+  activeMeetingLanguage,
+  appendMeetingLanguageDirective,
+  runWithMeetingLanguage
+} from './notes-language'
 import { logQaGateStopToNotes } from './qa-gate-log'
 import { captureMessage } from './sentry-reporter'
 import { classifyError } from './error-classification'
@@ -39,6 +44,12 @@ import {
 import { enqueueMeetingNotesWrite } from './meeting-notes-write-queue'
 import { NotesRepository } from './notes-repository'
 import { removeExactDuplicateSegments } from './notes-exact-duplicates'
+import { selectKeyTakeaways } from './notes-takeaway-selection'
+import {
+  isClaimVerificationSkipped,
+  verifyOverviewClaims,
+  type ClaimCompleteFn
+} from './notes-claim-verification'
 import {
   computeLegacyNotesRevision,
   computeNotesAttributionRevision,
@@ -47,7 +58,8 @@ import {
 import {
   runNotesScanPipeline,
   scanLayerProgress,
-  type NotesRewritePolicy
+  type NotesRewritePolicy,
+  type RunNotesScanOptions
 } from './notes-scan-pipeline'
 import type { OllamaAccelerator } from './ollama-accelerator'
 import { getSystemMemorySnapshot } from './windows-transcription-runtime'
@@ -126,6 +138,8 @@ function parseDevNotesScanPolicy(raw: string | undefined): 'cpu-constrained' | '
   return null
 }
 
+const NO_USABLE_TRANSCRIPT_ERROR = 'Transcript has no usable speech'
+const NO_NOTES_DETECTED_CODE = 'no_notes_detected'
 const LEGACY_EMPTY_SEGMENTATION_ERROR =
   'LLM returned empty segments for non-trivial transcript — likely context overflow or model issue'
 const OLLAMA_UNAVAILABLE_ERROR =
@@ -255,7 +269,14 @@ export class SegmentationService {
         stat(segmentsPath).catch(() => null),
         stat(errorPath).catch(() => null)
       ])
-      if (segmentsStat && errorStat && errorStat.mtimeMs > segmentsStat.mtimeMs) {
+      // A no-notes outcome is written right after its empty segments, so the two
+      // can share a timestamp.
+      const outcomeIsCurrent =
+        segmentsStat &&
+        errorStat &&
+        (errorStat.mtimeMs > segmentsStat.mtimeMs ||
+          (errorData?.status === 'no-notes' && errorStat.mtimeMs === segmentsStat.mtimeMs))
+      if (outcomeIsCurrent) {
         return this.getPersistedStatus(errorData)
       }
     }
@@ -427,7 +448,15 @@ export class SegmentationService {
     return await this.processJobExclusive(meetingId)
   }
 
+  /** Scopes the whole notes job to the language stored on the recording (legacy: English). */
   private async processJobExclusive(meetingId: string): Promise<void> {
+    const metadata = await readMetadata(join(this.recordingsBaseDir, meetingId))
+    return runWithMeetingLanguage(metadata?.meetingLanguage, () =>
+      this.processJobInMeetingLanguage(meetingId)
+    )
+  }
+
+  private async processJobInMeetingLanguage(meetingId: string): Promise<void> {
     const jobStartedAt = Date.now()
     const meetingDir = join(this.recordingsBaseDir, meetingId)
     const transcriptPath = join(meetingDir, 'transcript.json')
@@ -452,10 +481,21 @@ export class SegmentationService {
         },
         { overwriteWhenV2Exists: true }
       )
-      await unlink(join(meetingDir, 'segments.error')).catch(() => {})
-      this.activeStatus = 'complete'
-      this.broadcastStatus(meetingId, 'complete')
-      this.safeInvokeOnComplete(meetingId)
+      // Nothing was said, so nothing is ready: report "No notes generated", not
+      // "Notes ready", and send no notes-ready notification.
+      const copy = notesUserCopy('empty')
+      const userReason = `${copy.title}. ${copy.body}`
+      await this.writeOutcomeFile(meetingId, {
+        error: NO_USABLE_TRANSCRIPT_ERROR,
+        retries: 0,
+        status: 'no-notes',
+        errorCode: NO_NOTES_DETECTED_CODE,
+        userReason
+      })
+      this.activeStatus = 'no-notes'
+      this.broadcastStatus(meetingId, 'no-notes', undefined, NO_NOTES_DETECTED_CODE, {
+        userReason
+      })
       return
     }
 
@@ -553,6 +593,7 @@ export class SegmentationService {
       message: 'notes generation started',
       meetingId,
       context: {
+        meetingLanguage: activeMeetingLanguage(),
         transcriptCount: transcripts.length,
         waitForModelMs: t0 - jobStartedAt,
         processingProfile: this.getProcessingProfileLogContext(macProcessingProfile ?? undefined)
@@ -716,6 +757,130 @@ export class SegmentationService {
     }
   }
 
+  /**
+   * Reversible safety restriction: disable overview check and takeaway
+   * selection only for the small notes model (llama3.2:3b) pending an
+   * evaluation of that model. Missing `getModel` (or an undefined result)
+   * keeps the pre-rule-4 behavior — the features run whenever the platform
+   * allows.
+   */
+  private notesModelAllowsOverviewCheckAndTakeawaySelection(): boolean {
+    return this.llmProvider.getModel?.() !== LOW_SPEC_MAC_OLLAMA_MODEL
+  }
+
+  private notesOverviewAndTakeawayPlatformEnabled(): boolean {
+    return process.platform === 'darwin' || process.platform === 'win32'
+  }
+
+  /**
+   * The notes model checks each overview sentence against the notes.
+   * The request bypasses the meeting-language directive; the answer is an enum.
+   */
+  private claimVerificationComplete(meetingId?: string): ClaimCompleteFn | null {
+    const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
+    if (
+      !this.notesOverviewAndTakeawayPlatformEnabled() ||
+      !completePrompt ||
+      isClaimVerificationSkipped()
+    ) {
+      return null
+    }
+    if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes overview claim verification completed',
+        meetingId,
+        context: {
+          status: 'skipped',
+          reason: 'unsupported-model',
+          model: this.llmProvider.getModel?.() ?? null,
+          checked: 0,
+          removed: 0
+        }
+      })
+      return null
+    }
+    return (prompt, options) => completePrompt(prompt, options)
+  }
+
+  /**
+   * The notes model picks Key Takeaways among the presented notes.
+   * The request bypasses the meeting-language directive; the answer is note
+   * numbers, and anything invalid keeps the ranking's takeaways.
+   */
+  private takeawaySelector(meetingId: string): RunNotesScanOptions['selectTakeaways'] {
+    const completePrompt = this.llmProvider.completePrompt?.bind(this.llmProvider)
+    if (!this.notesOverviewAndTakeawayPlatformEnabled() || !completePrompt) return undefined
+    if (!this.notesModelAllowsOverviewCheckAndTakeawaySelection()) {
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes takeaway selection completed',
+        meetingId,
+        context: {
+          status: 'skipped',
+          reason: 'unsupported-model',
+          model: this.llmProvider.getModel?.() ?? null,
+          noteCount: null,
+          takeawayCount: null,
+          picks: null
+        }
+      })
+      return undefined
+    }
+    return async (notes, k) => {
+      const startedAt = Date.now()
+      const outcome = await selectKeyTakeaways(notes, k, (prompt, options) =>
+        completePrompt(prompt, options)
+      )
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes takeaway selection completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          status: outcome.status,
+          reason: outcome.status === 'selected' ? null : outcome.reason,
+          noteCount: notes.length,
+          takeawayCount: k,
+          // Positions in the presented order (1-based), never note text.
+          picks:
+            outcome.status === 'selected'
+              ? outcome.ids.map((id) => notes.findIndex((note) => note.id === id) + 1)
+              : null
+        }
+      })
+      return outcome.status === 'selected' ? outcome.ids : null
+    }
+  }
+
+  private async verifyOverviewClaimsForJob<T extends { text: string }>(
+    meetingId: string,
+    catalog: string,
+    overview: T,
+    complete: ClaimCompleteFn
+  ): Promise<T | null> {
+    const startedAt = Date.now()
+    try {
+      const result = await verifyOverviewClaims(overview, catalog, complete)
+      logAutodocEvent({
+        area: 'segmentation',
+        message: 'notes overview claim verification completed',
+        meetingId,
+        context: {
+          elapsedMs: Date.now() - startedAt,
+          checked: result.checked,
+          removed: result.removed,
+          droppedSentences: result.dropped,
+          errors: result.errors,
+          keptModelOverview: result.overview !== null
+        }
+      })
+      return result.overview
+    } catch {
+      return overview
+    }
+  }
+
   private async persistScanLayerNotes(
     meetingId: string,
     segments: MeetingSegments,
@@ -760,6 +925,7 @@ export class SegmentationService {
             ? CPU_CONSTRAINED_REWRITE_POLICY
             : undefined
       let missingModelError: unknown
+      const claimComplete = presentationMode ? this.claimVerificationComplete(meetingId) : null
       const result = await runNotesScanPipeline(segments, {
         embed: this.llmProvider.embedNotes ? texts => this.llmProvider.embedNotes!(texts) : undefined,
         title,
@@ -789,7 +955,8 @@ export class SegmentationService {
               }
             })
           }
-          const result = this.llmProvider.completePrompt!(request.prompt, {
+          const prompt = appendMeetingLanguageDirective(request.prompt, activeMeetingLanguage())
+          const result = this.llmProvider.completePrompt!(prompt, {
             num_ctx: request.num_ctx,
             num_predict: request.num_predict,
             temperature: request.temperature,
@@ -803,6 +970,11 @@ export class SegmentationService {
             throw error
           })
         },
+        selectTakeaways: presentationMode ? this.takeawaySelector(meetingId) : undefined,
+        verifyOverview: claimComplete
+          ? (catalog, overview) =>
+              this.verifyOverviewClaimsForJob(meetingId, catalog, overview, claimComplete)
+          : undefined,
         onProgress: (update) => onProgress?.(update.fraction, update.stage)
       })
       // Optional scan passes may catch generation errors. A missing model must

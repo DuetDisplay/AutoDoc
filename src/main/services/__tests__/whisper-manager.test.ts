@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as childProcess from 'child_process'
 import * as fsPromises from 'fs/promises'
 import { join } from 'path'
+import { downloadMacSpeechModels } from '../mac-speech-models'
 import { WhisperManager } from '../whisper-manager'
-import { WINDOWS_TRANSCRIPTION_PROFILES } from '../windows-transcription-runtime'
+import {
+  PARAKEET_RUNTIME_FILENAME,
+  WINDOWS_TRANSCRIPTION_PROFILES
+} from '../windows-transcription-runtime'
 vi.mock('../windows-dml-restriction', () => ({
   readDmlRestriction: vi.fn().mockResolvedValue(null),
   writeDmlRestriction: vi.fn().mockResolvedValue(undefined),
@@ -19,6 +23,35 @@ vi.mock('electron', () => ({
       return isPackaged
     }
   }
+}))
+
+vi.mock('../mac-speech-models', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../mac-speech-models')>()),
+  downloadMacSpeechModels: vi.fn().mockResolvedValue(undefined),
+  getMacRouteFirstUseDownloadBytes: vi.fn().mockResolvedValue(100)
+}))
+vi.mock('../mac-canary-transcription', () => ({
+  resolveMacCanaryTranscriber: vi.fn(() => ({ pythonPath: '/canary/python3' }))
+}))
+
+const ensureWindowsMultilingualEngineReady = vi.fn().mockResolvedValue({
+  engineId: 'whisper-turbo-cuda',
+  availability: 'available',
+  reason: null
+})
+const getWindowsMeetingLanguageAvailability = vi.fn().mockResolvedValue({
+  availability: 'available',
+  reason: null,
+  engineId: 'whisper-turbo-cuda',
+  firstUseDownloadBytes: 0,
+  needsSelfTest: false
+})
+
+vi.mock('../windows-multilingual-readiness', () => ({
+  ensureWindowsMultilingualEngineReady: (...args: unknown[]) =>
+    ensureWindowsMultilingualEngineReady(...args),
+  getWindowsMeetingLanguageAvailability: (...args: unknown[]) =>
+    getWindowsMeetingLanguageAvailability(...args)
 }))
 
 vi.mock('ffmpeg-static', () => ({
@@ -68,6 +101,285 @@ describe('WhisperManager', () => {
       const callback = args[args.length - 1]
       callback(null)
       return {} as never
+    })
+  })
+
+  describe('meeting language setup on Apple Silicon', () => {
+    beforeEach(async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      const arch = Object.getOwnPropertyDescriptor(process, 'arch')!
+      try {
+        Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+        Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' })
+        vi.resetModules()
+        const { WhisperManager: MacManager } = await import('../whisper-manager')
+        manager = new MacManager()
+        vi.spyOn(manager as never, 'selectMacProfile').mockResolvedValue(undefined)
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+        Object.defineProperty(process, 'arch', arch)
+      }
+    })
+
+    it('keeps English on the existing setup path', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+      expect(downloadMacSpeechModels).not.toHaveBeenCalled()
+    })
+
+    it.each(['fr', 'es'] as const)(
+      'prepares %s without the Distil setup or model',
+      async (language) => {
+        vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+        const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+        await manager.prepareMeetingLanguage(language)
+        expect(downloadMacSpeechModels).toHaveBeenCalledWith(
+          language,
+          expect.any(Function),
+          expect.any(Function)
+        )
+        expect(english).not.toHaveBeenCalled()
+        expect(manager.getSetupStatus().phase).toBe('ready')
+      }
+    )
+
+    it('deduplicates setup and queues language changes until the current download finishes', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      let finishDownload!: () => void
+      vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishDownload = resolve
+          })
+      )
+      const french = manager.prepareMeetingLanguage('fr')
+      expect(manager.prepareMeetingLanguage('fr')).toBe(french)
+      await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      const spanish = manager.prepareMeetingLanguage('es')
+      expect(manager.getSetupStatus().meetingLanguage).toBe('fr')
+      finishDownload()
+      await Promise.all([french, spanish])
+      expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
+      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+    })
+
+    it('skips a queued language that a newer choice replaced before it started', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      let finishDownload!: () => void
+      vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishDownload = resolve
+          })
+      )
+      const french = manager.prepareMeetingLanguage('fr')
+      await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      const spanish = manager.prepareMeetingLanguage('es')
+      const german = manager.prepareMeetingLanguage('de')
+      finishDownload()
+      await french
+      await expect(spanish).rejects.toThrow('Meeting language changed during setup')
+      await german
+      expect(vi.mocked(downloadMacSpeechModels).mock.calls.map(([language]) => language)).toEqual([
+        'fr',
+        'de'
+      ])
+    })
+
+    it('aborts a stalled setup download as soon as the language changes', async () => {
+      // Like fetch: an aborted signal rejects, and aborting errors a body that
+      // is waiting for data that never arrives.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError')
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener('abort', () =>
+                  controller.error(new DOMException('aborted', 'AbortError'))
+                )
+              }
+            }),
+            { status: 200, headers: { 'content-length': '1000' } }
+          )
+        })
+      )
+      const internals = manager as unknown as {
+        activeSetupLanguage: string
+        activeSetupAbort: AbortController
+        downloadResumableFile: (url: string, dest: string, label: string) => Promise<void>
+      }
+      internals.activeSetupLanguage = 'fr'
+      internals.activeSetupAbort = new AbortController()
+      const dest = join(
+        (await import('os')).tmpdir(),
+        `autodoc-abort-test-${process.pid}-${Date.now()}.bin`
+      )
+      const download = internals.downloadResumableFile('https://example.test/model', dest, 'model')
+      const rejected = expect(download).rejects.toThrow('Meeting language changed during setup')
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled())
+      internals.activeSetupAbort.abort()
+      await rejected
+      vi.unstubAllGlobals()
+      ;(await import('node:fs')).rmSync(`${dest}.tmp`, { force: true })
+    })
+
+    it('downloads English on demand after non-English setup', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('fr')
+      expect(english).not.toHaveBeenCalled()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+    })
+
+    it('retains a Mac download failure in picker state and clears it after retry', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      vi.mocked(downloadMacSpeechModels).mockRejectedValueOnce(new Error('offline'))
+      await expect(manager.prepareMeetingLanguage('fr')).rejects.toThrow('offline')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({
+        availability: 'available',
+        reason: 'offline',
+        firstUseDownloadBytes: 100
+      })
+      await manager.prepareMeetingLanguage('fr')
+      expect(await manager.getMacMeetingLanguageState('fr')).toMatchObject({ reason: null })
+    })
+  })
+
+  it('locks a missing Mac turbo runtime with a reason', async () => {
+    expect(await manager.getMacMeetingLanguageState('es')).toMatchObject({
+      availability: 'locked',
+      reason: expect.stringContaining('runtime')
+    })
+  })
+
+  describe('meeting language setup on Windows', () => {
+    beforeEach(async () => {
+      ensureWindowsMultilingualEngineReady.mockReset()
+      getWindowsMeetingLanguageAvailability.mockReset()
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: 'whisper-turbo-cuda',
+        availability: 'available',
+        reason: null
+      })
+      getWindowsMeetingLanguageAvailability.mockResolvedValue({
+        availability: 'available',
+        reason: null,
+        engineId: 'whisper-turbo-cuda',
+        firstUseDownloadBytes: 0,
+        needsSelfTest: false
+      })
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      try {
+        Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+        vi.resetModules()
+        const { WhisperManager: WindowsManager } = await import('../whisper-manager')
+        manager = new WindowsManager()
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    })
+
+    it('names the language engine, not the English one, during non-English setup', () => {
+      const internals = manager as unknown as {
+        activeSetupLanguage: string | undefined
+        withBackendStatus: (status: { phase: string; percent: number }) => {
+          backendLabel?: string
+        }
+      }
+      const status = { phase: 'downloading-ffmpeg', percent: 0 }
+      internals.activeSetupLanguage = 'de'
+      expect(internals.withBackendStatus(status).backendLabel).toBe('Canary')
+      internals.activeSetupLanguage = 'ja'
+      expect(internals.withBackendStatus(status).backendLabel).toBe('Whisper turbo')
+      internals.activeSetupLanguage = undefined
+      expect(internals.withBackendStatus(status).backendLabel).not.toMatch(/Canary|turbo/)
+    })
+
+    it('keeps English on the existing setup path', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('en')
+      expect(english).toHaveBeenCalledOnce()
+      expect(ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
+    })
+
+    it('installs only the Windows multilingual route and skips English Distil setup', async () => {
+      const english = vi.spyOn(manager, 'startSetup').mockResolvedValue()
+      await manager.prepareMeetingLanguage('es')
+      expect(ensureWindowsMultilingualEngineReady).toHaveBeenCalledWith('es')
+      expect(english).not.toHaveBeenCalled()
+      expect(downloadMacSpeechModels).not.toHaveBeenCalled()
+      expect(manager.getSetupStatus()).toMatchObject({ phase: 'ready', meetingLanguage: 'es' })
+    })
+
+    it('locks the language when Windows ensure reports a failed self-test with no fallback', async () => {
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: null,
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.'
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Spanish needs a supported graphics card on this PC.'
+      )
+      expect(manager.getSetupStatus()).toMatchObject({
+        phase: 'error',
+        error: 'Spanish needs a supported graphics card on this PC.',
+        meetingLanguage: 'es'
+      })
+    })
+
+    it('restores the previous saved language when Windows ensure reports a lock', async () => {
+      ensureWindowsMultilingualEngineReady.mockResolvedValue({
+        engineId: null,
+        availability: 'locked',
+        reason: 'Spanish needs a supported graphics card on this PC.'
+      })
+      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      let current: 'en' | 'es' = 'es'
+      bindMeetingLanguagePreferenceStore({
+        getMeetingLanguage: () => current,
+        restorePreviousMeetingLanguageIfCurrent(locked) {
+          if (current !== locked) return current
+          current = 'en'
+          return current
+        }
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Spanish needs a supported graphics card on this PC.'
+      )
+      expect(current).toBe('en')
+      bindMeetingLanguagePreferenceStore(null)
+    })
+
+    it('does not restore when Windows ensure throws a download error', async () => {
+      ensureWindowsMultilingualEngineReady.mockRejectedValue(
+        new Error('Failed to download the speech model.')
+      )
+      getWindowsMeetingLanguageAvailability.mockResolvedValue({
+        availability: 'available',
+        reason: null,
+        engineId: 'whisper-turbo-cuda',
+        firstUseDownloadBytes: 100,
+        needsSelfTest: true
+      })
+      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      let current: 'en' | 'es' = 'es'
+      bindMeetingLanguagePreferenceStore({
+        getMeetingLanguage: () => current,
+        restorePreviousMeetingLanguageIfCurrent(locked) {
+          if (current !== locked) return current
+          current = 'en'
+          return current
+        }
+      })
+      await expect(manager.prepareMeetingLanguage('es')).rejects.toThrow(
+        'Failed to download the speech model.'
+      )
+      expect(current).toBe('es')
+      bindMeetingLanguagePreferenceStore(null)
     })
   })
 
@@ -343,5 +655,57 @@ describe('WhisperManager', () => {
     expect(manager.getTranscriptionBackend()).toBe('parakeet-gpu')
     expect(setupStatuses.some((status) => status.backend === 'parakeet-gpu')).toBe(true)
     expect(ensureReadySpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps English Windows backend assets identical after multilingual profiles were added', () => {
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets.map((asset) => asset.filename)
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'parakeet-tdt-0.6b-v3-fp32.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu'].assets.map((asset) => asset.filename)
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'parakeet-tdt-0.6b-v3-int8.zip'])
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].modelName).toBe('distil-large-v3')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].computeType).toBe('int8_float32')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].modelName).toBe('small.en')
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-cpp'].assets).toEqual([])
+  })
+
+  it('keeps English Windows asset install directories unchanged', () => {
+    const modelsDir = manager.getModelsDir()
+    const expectedRoot = (
+      profile: (typeof WINDOWS_TRANSCRIPTION_PROFILES)[keyof typeof WINDOWS_TRANSCRIPTION_PROFILES],
+      assetId: 'runtime' | 'model'
+    ): string => {
+      if (profile.engine === 'parakeet') {
+        return assetId === 'runtime'
+          ? join(modelsDir, 'transcription-runtimes', 'parakeet')
+          : join(modelsDir, 'parakeet-models', `${profile.modelName}-${profile.computeType}`)
+      }
+      return assetId === 'runtime'
+        ? join(modelsDir, 'transcription-runtimes', profile.id)
+        : join(modelsDir, 'faster-whisper-models', profile.modelName)
+    }
+
+    for (const id of [
+      'faster-whisper-cuda',
+      'faster-whisper-cpu',
+      'parakeet-gpu',
+      'parakeet-cpu'
+    ] as const) {
+      const profile = WINDOWS_TRANSCRIPTION_PROFILES[id]
+      expect(profile.assets.length).toBeGreaterThan(0)
+      for (const asset of profile.assets) {
+        const actual = (manager as any).getWindowsTranscriptionAssetRoot(
+          profile,
+          asset.id,
+          asset.filename
+        )
+        expect({ id, asset: asset.filename, dir: actual }).toEqual({
+          id,
+          asset: asset.filename,
+          dir: expectedRoot(profile, asset.id)
+        })
+      }
+    }
   })
 })

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
+import {
+  getMeetingLanguageDefinition,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../../../shared/meeting-language'
 import { getWhisperSetupLabel } from '../../services/setup-status-labels'
 import { toDurationBucket, trackEvent, trackFirstEventOnce } from '../../services/analytics'
+import { isNetworkErrorMessage } from '../../services/network-errors'
 
 const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
@@ -14,10 +20,19 @@ const phaseLabels: Record<string, (percent: number) => string> = {
   'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`
 }
 
-export function TranscriptionStep({ onNext }: { onNext: () => void }) {
+export function TranscriptionStep({
+  onNext,
+  onChooseLanguage
+}: {
+  onNext: () => void
+  onChooseLanguage?: () => void
+}) {
   const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [lockedReason, setLockedReason] = useState<string | null>(null)
+  const [cpuSlower, setCpuSlower] = useState(false)
+  const [meetingLanguage, setMeetingLanguage] = useState<MeetingLanguageCode | null>(null)
   const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus>({
     phase: 'checking',
     percent: 0
@@ -29,6 +44,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   const hasSeenMeaningfulSetupProgress = useRef(false)
   const setupStartedAt = useRef<number | null>(null)
   const lastFailureKey = useRef<string | null>(null)
+  const meetingLanguageRef = useRef<MeetingLanguageCode | null>(null)
   const isLowSpecMac = setupStatus.macProcessingProfileId === 'mac-low-spec'
   const isLowSpecWindows = setupStatus.windowsProcessingProfileId === 'win-low-spec'
   const isLowSpecHost = isLowSpecMac || isLowSpecWindows
@@ -45,6 +61,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     setPercent(100)
     setSetupStatus({ phase: 'ready', percent: 100 })
     setError(null)
+    setLockedReason(null)
     setIsAutoRetrying(false)
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
@@ -98,10 +115,26 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
             attempt_number: autoRetryAttempts.current + 1
           })
         }
+        setLockedReason(null)
         scheduleAutoRetry()
         if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
           setIsAutoRetrying(false)
           setError(status.error ?? 'Unknown error')
+        }
+        // The lock check must not hold up retrying: a slow availability answer
+        // used to leave the step with neither progress nor a Retry button.
+        const language = meetingLanguageRef.current
+        if (language && language !== 'en') {
+          void window.electronAPI
+            .invoke('whisper:get-windows-meeting-language-availability', language)
+            .then((availability) => {
+              if (availability.availability !== 'locked') return
+              clearRetryTimer()
+              setIsAutoRetrying(false)
+              setError(null)
+              setLockedReason(availability.reason ?? "This language isn't available on this PC.")
+            })
+            .catch(() => {})
         }
         return
       }
@@ -111,6 +144,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
       }
 
       setError(null)
+      setLockedReason(null)
       setIsAutoRetrying(false)
       if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
         autoRetryAttempts.current = 0
@@ -128,15 +162,35 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
   useEffect(() => {
     setupStartedAt.current ??= performance.now()
     trackEvent('setup_component_started', { component: 'whisper', phase: 'checking' })
+    let mounted = true
+    const selectedLanguage = window.electronAPI
+      .invoke('prefs:get-meeting-language')
+      .then((value) => {
+        const language = normalizeMeetingLanguage(value)
+        meetingLanguageRef.current = language
+        if (mounted) setMeetingLanguage(language)
+        return language
+      })
     window.electronAPI.invoke('whisper:get-setup-status').then(async (status) => {
-      await applyStatus(status, true)
+      const language = await selectedLanguage
+      if (!mounted) return
+      await applyStatus(
+        status.meetingLanguage && status.meetingLanguage !== language
+          ? { phase: 'checking', percent: 0 }
+          : status,
+        true
+      )
     })
 
     const unsub = window.electronAPI.on('whisper:setup-progress', async (status) => {
-      await applyStatus(status)
+      const language = await selectedLanguage
+      if (mounted && (!status.meetingLanguage || status.meetingLanguage === language)) {
+        await applyStatus(status)
+      }
     })
 
     return () => {
+      mounted = false
       unsub()
       clearRetryTimer()
     }
@@ -146,6 +200,28 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
     const timer = setTimeout(() => setShowSkip(true), SHOW_SKIP_DELAY_MS)
     return () => clearTimeout(timer)
   }, [])
+
+  useEffect(() => {
+    if (phase !== 'ready' || !meetingLanguage || meetingLanguage === 'en') {
+      return
+    }
+    let cancelled = false
+    void window.electronAPI
+      .invoke('whisper:get-windows-meeting-language-availability', meetingLanguage)
+      .then((info) => {
+        if (!cancelled && info.availability === 'slower') {
+          setCpuSlower(true)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [phase, meetingLanguage])
+
+  // A failed download because the machine is offline gets its own message.
+  const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
+  const languageLabel = getMeetingLanguageDefinition(meetingLanguage ?? 'en').label
 
   if (phase === 'ready') {
     return (
@@ -167,9 +243,14 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
           Transcription Ready
         </h2>
-        <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
+        <p className={`text-[14px] text-ink-muted leading-relaxed ${cpuSlower ? 'mb-2' : 'mb-7'}`}>
           Your local transcription engine is installed and ready to go.
         </p>
+        {cpuSlower && (
+          <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
+            This PC will transcribe this language on the processor, so it will be slower.
+          </p>
+        )}
         <button
           onClick={onNext}
           className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
@@ -200,7 +281,9 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         />
       </div>
       <div className="text-[12px] text-ink-faint mb-5">
-        {getWhisperSetupLabel(setupStatus) ??
+        {lockedReason ??
+          (networkFailure ? 'No internet connection' : null) ??
+          getWhisperSetupLabel(setupStatus) ??
           phaseLabels[phase]?.(percent) ??
           (error ? `Setup failed: ${error}` : 'Preparing...')}
       </div>
@@ -233,15 +316,37 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
         </div>
       )}
 
+      {lockedReason && (
+        <div className="flex flex-col items-center gap-3">
+          <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
+            <h3 className="text-[14px] font-semibold text-ink mb-2">
+              {"This language isn't available on this PC"}
+            </h3>
+            <p className="text-[13px] text-ink-muted leading-relaxed">{lockedReason}</p>
+          </div>
+          {onChooseLanguage && (
+            <button
+              onClick={onChooseLanguage}
+              className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+            >
+              Choose another language
+            </button>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
-              Transcription setup is taking longer than expected
+              {networkFailure
+                ? "You're offline"
+                : 'Transcription setup is taking longer than expected'}
             </h3>
             <p className="text-[13px] text-ink-muted leading-relaxed">
-              You can continue and AutoDoc will keep working on this in the background, or retry
-              right now.
+              {networkFailure
+                ? `Connect to the internet to download the ${languageLabel} speech model, then press Retry.`
+                : 'You can continue and AutoDoc will keep working on this in the background, or retry right now.'}
             </p>
           </div>
           <button
@@ -250,6 +355,7 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
               autoRetryAttempts.current = 0
               hasSeenMeaningfulSetupProgress.current = false
               setError(null)
+              setLockedReason(null)
               setIsAutoRetrying(false)
               setPhase('checking')
               setPercent(0)
@@ -260,10 +366,18 @@ export function TranscriptionStep({ onNext }: { onNext: () => void }) {
           >
             Retry
           </button>
+          {onChooseLanguage && meetingLanguage && meetingLanguage !== 'en' && (
+            <button
+              onClick={onChooseLanguage}
+              className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
+            >
+              Choose another language
+            </button>
+          )}
         </div>
       )}
 
-      {showSkip && (
+      {showSkip && !lockedReason && (
         <button
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"

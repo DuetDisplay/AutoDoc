@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
   applyNvidiaSmiMemory,
   applyRegistryGpuMemory,
+  CANARY_CUDA_MIN_VRAM_GIB,
   classifyWindowsGpuVendor,
   electronMemoryKbToGiB,
+  ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS,
+  FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+  FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
   getUsableLogicalProcessorCount,
   isLikelyDiscreteGpuName,
+  PARAKEET_RUNTIME_FILENAME,
   loadWindowsTranscriptionProfiles,
   normalizeImplausibleDiscreteVram,
   parseNvidiaSmiGpuRows,
@@ -17,7 +22,8 @@ import {
   shouldSerializeWindowsLocalProcessing,
   WINDOWS_TRANSCRIPTION_PROFILES,
   type WindowsHardwareProfile,
-  type WindowsGpuInfo
+  type WindowsGpuInfo,
+  type WindowsTranscriptionBackendId
 } from '../windows-transcription-runtime'
 
 const baseHardware: WindowsHardwareProfile = {
@@ -67,10 +73,10 @@ describe('Windows transcription runtime selection', () => {
 
   it('uses the public asset-only repository for fallback asset URLs', () => {
     expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip'
+      `https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/${FASTER_WHISPER_CPU_RUNTIME_FILENAME}`
     )
     expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu'].assets[0].url).toBe(
-      'https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip'
+      `https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/${PARAKEET_RUNTIME_FILENAME}`
     )
   })
 
@@ -353,6 +359,178 @@ describe('Windows transcription runtime selection', () => {
     expect(classifyWindowsGpuVendor('Microsoft Basic Display Adapter')).toBe('unknown')
   })
 
+  it('keeps English backend selection identical on every Windows hardware profile', () => {
+    const cases: Array<{
+      hardware: WindowsHardwareProfile
+      backend: WindowsTranscriptionBackendId
+    }> = [
+      {
+        hardware: {
+          ...baseHardware,
+          gpus: [{ name: 'NVIDIA GeForce RTX 4060 Laptop GPU', vendor: 'nvidia', adapterRamGiB: 8 }]
+        },
+        backend: 'parakeet-gpu'
+      },
+      {
+        hardware: {
+          ...baseHardware,
+          gpus: [{ name: 'AMD Radeon RX 6800', vendor: 'amd', adapterRamGiB: 8 }]
+        },
+        backend: 'parakeet-gpu'
+      },
+      {
+        hardware: {
+          ...baseHardware,
+          totalMemoryGiB: 16,
+          gpus: [{ name: 'Intel(R) Iris(R) Xe Graphics', vendor: 'intel', adapterRamGiB: null }]
+        },
+        backend: 'parakeet-gpu'
+      },
+      {
+        hardware: {
+          ...baseHardware,
+          gpus: []
+        },
+        backend: 'parakeet-cpu'
+      },
+      {
+        hardware: {
+          ...baseHardware,
+          logicalProcessors: 4,
+          totalMemoryGiB: 8,
+          freeMemoryGiB: 3,
+          gpus: []
+        },
+        backend: 'parakeet-cpu'
+      }
+    ]
+
+    for (const { hardware, backend } of cases) {
+      const profile = selectWindowsTranscriptionProfile(hardware)
+      expect(profile.id).toBe(backend)
+      expect(ENGLISH_WINDOWS_TRANSCRIPTION_BACKEND_IDS).toContain(profile.id)
+      expect(profile).toBe(WINDOWS_TRANSCRIPTION_PROFILES[backend])
+    }
+  })
+
+  it('keeps English profile assets, devices and readiness floors unchanged', () => {
+    expect(CANARY_CUDA_MIN_VRAM_GIB).toBe(6)
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda']).toMatchObject({
+      engine: 'faster-whisper',
+      device: 'cuda',
+      computeType: 'int8_float32',
+      minVramGiB: 6,
+      modelName: 'distil-large-v3',
+      assets: [
+        {
+          filename: FASTER_WHISPER_CUDA_RUNTIME_FILENAME,
+          sha256: '79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad',
+          bytes: 1411259196
+        },
+        {
+          filename: 'faster-whisper-distil-large-v3-ct2.zip',
+          sha256: '81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064',
+          bytes: 1397218990
+        }
+      ]
+    })
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cpu']).toMatchObject({
+      engine: 'faster-whisper',
+      device: 'cpu',
+      computeType: 'int8',
+      modelName: 'small.en',
+      assets: [
+        {
+          filename: FASTER_WHISPER_CPU_RUNTIME_FILENAME,
+          sha256: 'dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c',
+          bytes: 94738531
+        },
+        {
+          filename: 'faster-whisper-small-en-ct2-int8.zip',
+          sha256: '1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8',
+          bytes: 445198952
+        }
+      ]
+    })
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-gpu']).toMatchObject({
+      engine: 'parakeet',
+      device: 'dml',
+      computeType: 'fp32',
+      minVramGiB: 4,
+      modelName: 'parakeet-tdt-0.6b-v3',
+      assets: [
+        {
+          filename: PARAKEET_RUNTIME_FILENAME,
+          sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+          bytes: 81685779
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-fp32.zip',
+          sha256: 'ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23',
+          bytes: 2370811633
+        }
+      ]
+    })
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['parakeet-cpu']).toMatchObject({
+      engine: 'parakeet',
+      device: 'cpu',
+      computeType: 'int8',
+      modelName: 'parakeet-tdt-0.6b-v3',
+      assets: [
+        {
+          filename: PARAKEET_RUNTIME_FILENAME,
+          sha256: 'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded',
+          bytes: 81685779
+        },
+        {
+          filename: 'parakeet-tdt-0.6b-v3-int8.zip',
+          sha256: '656335b7d7a4e1c6ecb3d78f2ac2ad342ae7865e34ec9d21905ea8c1a5e65733',
+          bytes: 480454890
+        }
+      ]
+    })
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-cpp'].assets).toEqual([])
+  })
+
+  it('adds multilingual profiles without changing English filenames or checksums', () => {
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cuda'].minVramGiB).toBe(CANARY_CUDA_MIN_VRAM_GIB)
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['canary-cuda'].assets.map((asset) => asset.filename)
+    ).toEqual(['canary-cuda-runtime-win-x64.zip', 'canary-1b-v2-fp32.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['canary-cpu'].assets.map((asset) => asset.filename)
+    ).toEqual([PARAKEET_RUNTIME_FILENAME, 'canary-1b-v2-int8.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cuda'].assets.map((asset) => asset.filename)
+    ).toEqual([FASTER_WHISPER_CUDA_RUNTIME_FILENAME, 'faster-whisper-large-v3-turbo-ct2.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cpu'].assets.map((asset) => asset.filename)
+    ).toEqual([FASTER_WHISPER_CPU_RUNTIME_FILENAME, 'faster-whisper-large-v3-turbo-ct2.zip'])
+    expect(
+      WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-vulkan'].assets.map((asset) => asset.filename)
+    ).toEqual(['whisper-cpp-vulkan-runtime-win-x64.zip', 'ggml-large-v3-turbo.zip'])
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cuda'].assets[0].sha256).toBe(
+      '9a29f788a0d530439ae6c2c48265f43875dd0aaf7c1dd6261dba96391b10de16'
+    )
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cpu'].assets[1].bytes).toBe(727296090)
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cuda'].assets[1].bytes).toBe(1492333094)
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['canary-cuda'].assets[1].expectedFiles).toContain(
+      'encoder-model.onnx.data'
+    )
+    expect(WINDOWS_TRANSCRIPTION_PROFILES['whisper-turbo-cuda'].minVramGiB).toBe(
+      WINDOWS_TRANSCRIPTION_PROFILES['faster-whisper-cuda'].minVramGiB
+    )
+  })
+
+  it('copies nvidia-smi driver versions onto the matched GPU', () => {
+    const gpus = applyNvidiaSmiMemory(
+      [{ name: 'NVIDIA GeForce RTX 4060 Laptop GPU', vendor: 'nvidia', adapterRamGiB: 4 }],
+      parseNvidiaSmiGpuRows('NVIDIA GeForce RTX 4060 Laptop GPU, 8188 MiB, 581.95')
+    )
+
+    expect(gpus[0].driverVersion).toBe('581.95')
+  })
+
   it('loads profile asset metadata from the public manifest', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-win-manifest-'))
     const manifestPath = join(rootDir, 'manifest.json')
@@ -570,5 +748,75 @@ describe('Windows transcription runtime selection', () => {
       delete process.env.AUTODOC_WINDOWS_TRANSCRIPTION_ASSET_BASE_URL
       await rm(rootDir, { recursive: true, force: true })
     }
+  })
+
+  it('keeps fallback profile assets aligned with the shipped manifest', async () => {
+    const raw = await readFile(
+      join(process.cwd(), 'resources', 'windows-transcription-manifest.json'),
+      'utf-8'
+    )
+    const manifest = JSON.parse(raw) as {
+      profiles: Array<{
+        id: keyof typeof WINDOWS_TRANSCRIPTION_PROFILES
+        assets: Array<{
+          filename: string
+          sha256: string
+          bytes?: number
+          parts?: Array<{ filename: string; sha256: string; bytes: number }>
+        }>
+      }>
+    }
+
+    for (const profile of manifest.profiles) {
+      const fallback = WINDOWS_TRANSCRIPTION_PROFILES[profile.id]
+      expect(fallback.assets).toHaveLength(profile.assets.length)
+      for (const [index, shipped] of profile.assets.entries()) {
+        const asset = fallback.assets[index]
+        expect(asset.filename).toBe(shipped.filename)
+        expect(asset.sha256).toBe(shipped.sha256)
+        expect(asset.bytes).toBe(shipped.bytes)
+        expect(
+          asset.parts?.map((part) => ({
+            filename: part.filename,
+            sha256: part.sha256,
+            bytes: part.bytes
+          }))
+        ).toEqual(
+          shipped.parts?.map((part) => ({
+            filename: part.filename,
+            sha256: part.sha256,
+            bytes: part.bytes
+          }))
+        )
+      }
+    }
+  })
+
+  it('keeps English checksums when loading the shipped manifest', async () => {
+    const profiles = await loadWindowsTranscriptionProfiles(
+      join(process.cwd(), 'resources', 'windows-transcription-manifest.json')
+    )
+
+    expect(selectWindowsTranscriptionProfile(baseHardware, profiles).id).toBe('parakeet-cpu')
+    expect(
+      selectWindowsTranscriptionProfile(
+        {
+          ...baseHardware,
+          gpus: [{ name: 'NVIDIA GeForce RTX 4060 Laptop GPU', vendor: 'nvidia', adapterRamGiB: 8 }]
+        },
+        profiles
+      ).id
+    ).toBe('parakeet-gpu')
+    expect(profiles['parakeet-gpu'].assets[0].sha256).toBe(
+      'dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded'
+    )
+    expect(profiles['parakeet-gpu'].assets[1].sha256).toBe(
+      'ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23'
+    )
+    expect(profiles['faster-whisper-cuda'].assets[0].filename).toBe(
+      FASTER_WHISPER_CUDA_RUNTIME_FILENAME
+    )
+    expect(profiles['canary-cuda'].assets[0].filename).toBe('canary-cuda-runtime-win-x64.zip')
+    expect(profiles['canary-cuda'].minVramGiB).toBe(6)
   })
 })

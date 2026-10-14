@@ -56,8 +56,9 @@ export function buildRecordingTitle(
 
 export function normalizeRecordingSearchText(text: string): string {
   return text
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }

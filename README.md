@@ -255,7 +255,7 @@ Meeting content stays in the local pipeline and encrypted store. Optional calend
   Duet's stateless OAuth worker only exchanges tokens and never receives meeting
   recordings, transcripts, or notes.
 
-Model downloads, app updates, and opt-in analytics or crash reporting also use the network when those paths are active. Full details in [`PRODUCT.md`](PRODUCT.md) and [`PRIVACY.md`](PRIVACY.md).
+Model downloads, app updates, and opt-in analytics or crash reporting also use the network when those paths are active. Full details in [`PRODUCT.md`](PRODUCT.md) and [`PRIVACY.md`](PRIVACY.md). Official public updates can use a Cloudflare mirror with daily aggregate request totals; installation and usage reporting stays opt-in. Deployment and reporting details are in [`docs/UPDATE_MIRROR.md`](docs/UPDATE_MIRROR.md).
 
 ## Privacy
 

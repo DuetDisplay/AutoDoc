@@ -1,6 +1,7 @@
 import type { MeetingSegments, Segment } from '../../shared/types'
 import { NEEDS_REVIEW_TOPIC, OTHER_NOTES_TOPIC } from '../../shared/notes-presentation'
 import { noteTextLooksCoherent } from './notes-coherence'
+import { isEnglishMeetingJob } from './notes-language'
 
 /**
  * Default Windows notes quality path added after internal-v1.2.0.6.
@@ -160,6 +161,7 @@ Return ONLY valid JSON with numeric timestamps, for example:
 export function windowsNoteNeedsReview(segment: Segment): boolean {
   const text = segment.content.trim()
   if (!noteTextLooksCoherent(text) || /\uFFFD/u.test(text)) return true
+  if (!isEnglishMeetingJob()) return false
   // A real subject must be present in the sentence; a heading cannot resolve a pronoun.
   if (
     /^(?:it|they)\b|^(?:this|that|those|these)\s+(?:is|are|was|were|will|would|can|could|has|have)\b/iu.test(

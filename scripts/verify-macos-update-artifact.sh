@@ -85,6 +85,19 @@ verify_app_runtime() {
   echo "[verify-macos-update] Runtime import probe OK (${python_bin})"
 }
 
+verify_canary_runtime() {
+  local app_path="$1"
+  [[ "$RUNTIME_PROBE" == "1" ]] || return 0
+  local python_bin="${app_path}/Contents/Resources/canary-mlx-runtime/darwin-arm64/python/bin/python3"
+  [[ -e "$python_bin" ]] || die "Bundled Canary python missing: ${python_bin}"
+  [[ -f "${app_path}/Contents/Resources/canary-mlx-transcribe.py" ]] || die "Canary bridge script missing"
+  local entitlements
+  entitlements="$(codesign -d --entitlements - "$python_bin" 2>/dev/null || true)"
+  grep -q 'com.apple.security.cs.allow-jit' <<<"$entitlements" || die "Canary Python is missing allow-jit"
+  codesign --verify --strict --verbose=4 "$python_bin"
+  PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 "$python_bin" -c 'from mlx_audio.stt import load; from mlx_audio.stt.models.canary import Model; import onnx_asr; print("Canary imports OK")' || die "Bundled Canary import probe failed"
+}
+
 verify_app_entitlements() {
   local app_path="$1"
   local output
@@ -137,6 +150,7 @@ extracted_app="${tmp_dir}/${APP_NAME}"
 verify_app_entitlements "$extracted_app"
 verify_app_signature "$extracted_app"
 verify_app_runtime "$extracted_app"
+verify_canary_runtime "$extracted_app"
 
 detached_signature_count="$(
   xattr -lr "$extracted_app" 2>/dev/null | grep -c 'com.apple.cs.CodeSignature' || true
@@ -163,6 +177,7 @@ if [[ -n "$dmg_path" ]]; then
     verify_app_entitlements "$dmg_app"
     verify_app_signature "$dmg_app"
     verify_app_runtime "$dmg_app"
+    verify_canary_runtime "$dmg_app"
   ) || dmg_rc=$?
 
   detach_dmg

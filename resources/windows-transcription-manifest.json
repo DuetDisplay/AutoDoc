@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "releaseTag": "windows-transcription-v2",
-  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2",
+  "version": 3,
+  "releaseTag": "windows-transcription-v3",
+  "artifactBaseUrl": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3",
   "profiles": [
     {
       "id": "faster-whisper-cuda",
@@ -16,9 +16,9 @@
       "assets": [
         {
           "id": "runtime",
-          "filename": "faster-whisper-runtime-cuda-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cuda-win-x64.zip",
-          "sha256": "785d572be18d058882fd3256b8aec4bd249ddf77f3f392659372ddf08c85bf1a",
+          "filename": "faster-whisper-runtime-cuda-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cuda-win-x64-v3.zip",
+          "sha256": "79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/faster_whisper",
@@ -30,12 +30,12 @@
             "CTranslate2 CUDA runtime"
           ],
           "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
-          "bytes": 1439431425
+          "bytes": 1411259196
         },
         {
           "id": "model",
           "filename": "faster-whisper-distil-large-v3-ct2.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-distil-large-v3-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-distil-large-v3-ct2.zip",
           "sha256": "81ae0a2cc4dfe70370cb33129c191365e0c090dddb4924b077ee0ffad42b5064",
           "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
           "sources": ["distil-whisper/distil-large-v3 converted to CTranslate2"],
@@ -56,9 +56,9 @@
       "assets": [
         {
           "id": "runtime",
-          "filename": "faster-whisper-runtime-cpu-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-runtime-cpu-win-x64.zip",
-          "sha256": "63cc6240161372f9f45c2b218664a5cf3f7349530a7bdd9ed129849a90ff2ca9",
+          "filename": "faster-whisper-runtime-cpu-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cpu-win-x64-v3.zip",
+          "sha256": "dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/faster_whisper",
@@ -70,12 +70,12 @@
             "CTranslate2 CPU runtime"
           ],
           "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
-          "bytes": 122910760
+          "bytes": 94738531
         },
         {
           "id": "model",
           "filename": "faster-whisper-small-en-ct2-int8.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/faster-whisper-small-en-ct2-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-small-en-ct2-int8.zip",
           "sha256": "1347c7e02d8d70be7d5c7ed88729c29c9abc716f39322d62d6342b9a741bcaa8",
           "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
           "sources": ["openai/whisper-small.en converted to CTranslate2 int8"],
@@ -97,9 +97,9 @@
       "assets": [
         {
           "id": "runtime",
-          "filename": "parakeet-runtime-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip",
-          "sha256": "e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3",
+          "filename": "parakeet-runtime-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-runtime-win-x64-v3.zip",
+          "sha256": "dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/onnx_asr",
@@ -111,12 +111,12 @@
             "onnxruntime-directml 1.24.4"
           ],
           "licenses": ["MIT", "Apache-2.0"],
-          "bytes": 87511283
+          "bytes": 81685779
         },
         {
           "id": "model",
           "filename": "parakeet-tdt-0.6b-v3-fp32.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-tdt-0.6b-v3-fp32.zip",
           "sha256": "ea8bef61d8a6b47204b8062e450343547e393a8c70b696387c74eb4f3160ec23",
           "expectedFiles": [
             "encoder-model.onnx",
@@ -128,18 +128,18 @@
             "silero_vad.onnx"
           ],
           "sources": ["istupakov/parakeet-tdt-0.6b-v3-onnx fp32", "istupakov/silero-vad-onnx"],
-          "licenses": ["MIT", "Apache-2.0"],
+          "licenses": ["CC-BY-4.0", "MIT"],
           "bytes": 2370811633,
           "parts": [
             {
               "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part1",
-              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part1",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-tdt-0.6b-v3-fp32.zip.part1",
               "sha256": "e0f7ef1d42db37c3d2866d13bd68d251697e50ba877a3c39375ee1df005f0bf1",
               "bytes": 1185405817
             },
             {
               "filename": "parakeet-tdt-0.6b-v3-fp32.zip.part2",
-              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-fp32.zip.part2",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-tdt-0.6b-v3-fp32.zip.part2",
               "sha256": "b2e1f79ab9e2467617dae80709646621b470a3e0343f63b332a2c6addfe2a298",
               "bytes": 1185405816
             }
@@ -159,9 +159,9 @@
       "assets": [
         {
           "id": "runtime",
-          "filename": "parakeet-runtime-win-x64.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-runtime-win-x64.zip",
-          "sha256": "e9a7e85dd29f6803a7ae976406c5cd33a49acb8296e1ec104d5aecd60cbcace3",
+          "filename": "parakeet-runtime-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-runtime-win-x64-v3.zip",
+          "sha256": "dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded",
           "expectedFiles": [
             "python.exe",
             "Lib/site-packages/onnx_asr",
@@ -173,12 +173,12 @@
             "onnxruntime-directml 1.24.4"
           ],
           "licenses": ["MIT", "Apache-2.0"],
-          "bytes": 87511283
+          "bytes": 81685779
         },
         {
           "id": "model",
           "filename": "parakeet-tdt-0.6b-v3-int8.zip",
-          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v2/parakeet-tdt-0.6b-v3-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-tdt-0.6b-v3-int8.zip",
           "sha256": "656335b7d7a4e1c6ecb3d78f2ac2ad342ae7865e34ec9d21905ea8c1a5e65733",
           "expectedFiles": [
             "encoder-model.int8.onnx",
@@ -189,7 +189,7 @@
             "silero_vad.onnx"
           ],
           "sources": ["istupakov/parakeet-tdt-0.6b-v3-onnx int8", "istupakov/silero-vad-onnx"],
-          "licenses": ["MIT", "Apache-2.0"],
+          "licenses": ["CC-BY-4.0", "MIT"],
           "bytes": 480454890
         }
       ]
@@ -204,6 +204,224 @@
       "minSystemMemoryGiB": 8,
       "estimatedMemoryGiB": 2.5,
       "assets": []
+    },
+    {
+      "id": "canary-cpu",
+      "label": "Canary CPU transcription",
+      "modelName": "canary-1b-v2",
+      "engine": "canary",
+      "device": "cpu",
+      "computeType": "int8",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 1.5,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "parakeet-runtime-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/parakeet-runtime-win-x64-v3.zip",
+          "sha256": "dfacce0689358e3938a3d501e34a3ee8578afacfeb8b373ef89d371f5a5f7ded",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/onnx_asr",
+            "Lib/site-packages/onnxruntime"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "onnx-asr 0.11.0",
+            "onnxruntime-directml 1.24.4"
+          ],
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 81685779
+        },
+        {
+          "id": "model",
+          "filename": "canary-1b-v2-int8.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-int8.zip",
+          "sha256": "a6e3615c7dc59c0f8e89b2e1b80058e0bbd4ec2ecb6c668862c6c1e4a26b7192",
+          "expectedFiles": [
+            "encoder-model.int8.onnx",
+            "decoder-model.int8.onnx",
+            "vocab.txt",
+            "config.json",
+            "silero_vad.onnx"
+          ],
+          "sources": ["istupakov/canary-1b-v2-onnx int8", "istupakov/silero-vad-onnx"],
+          "licenses": ["CC-BY-4.0", "MIT"],
+          "bytes": 727296090
+        }
+      ]
+    },
+    {
+      "id": "canary-cuda",
+      "label": "Canary NVIDIA transcription",
+      "modelName": "canary-1b-v2",
+      "engine": "canary",
+      "device": "cuda",
+      "computeType": "fp32",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 5.5,
+      "minVramGiB": 6,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "canary-cuda-runtime-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-cuda-runtime-win-x64.zip",
+          "sha256": "9a29f788a0d530439ae6c2c48265f43875dd0aaf7c1dd6261dba96391b10de16",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/sitecustomize.py",
+            "Lib/site-packages/onnx_asr",
+            "Lib/site-packages/onnxruntime"
+          ],
+          "sources": ["Python 3.11 standalone runtime", "onnx-asr 0.11.0", "onnxruntime-gpu"],
+          "licenses": ["MIT", "Apache-2.0"],
+          "bytes": 1897898949
+        },
+        {
+          "id": "model",
+          "filename": "canary-1b-v2-fp32.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip",
+          "sha256": "9f4136f1b1a0078169bfa76ad3d2c2f81121d8f478ad0371fe1bdf67d5e731c6",
+          "expectedFiles": [
+            "encoder-model.onnx",
+            "encoder-model.onnx.data",
+            "decoder-model.onnx",
+            "vocab.txt",
+            "config.json",
+            "silero_vad.onnx"
+          ],
+          "sources": ["istupakov/canary-1b-v2-onnx fp32", "istupakov/silero-vad-onnx"],
+          "licenses": ["CC-BY-4.0", "MIT"],
+          "bytes": 3680120548,
+          "parts": [
+            {
+              "filename": "canary-1b-v2-fp32.zip.part1",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip.part1",
+              "sha256": "d0cfa53d7885be419885ff0c06fdd8cebcbe088156793600df35c35f82d45b88",
+              "bytes": 1840060274
+            },
+            {
+              "filename": "canary-1b-v2-fp32.zip.part2",
+              "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/canary-1b-v2-fp32.zip.part2",
+              "sha256": "91eee69be49ca664e694909f804aa860879e8ea97f944c56f32c39c233a3672f",
+              "bytes": 1840060274
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whisper-turbo-cuda",
+      "label": "Whisper turbo NVIDIA transcription",
+      "modelName": "large-v3-turbo",
+      "engine": "faster-whisper",
+      "device": "cuda",
+      "computeType": "float16",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 1.5,
+      "minVramGiB": 6,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "faster-whisper-runtime-cuda-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cuda-win-x64-v3.zip",
+          "sha256": "79b415d1569addf8d6a1145e6ac88da017f1093257ad585cfd7fba5b33c652ad",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/faster_whisper",
+            "Lib/site-packages/ctranslate2"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "faster-whisper",
+            "CTranslate2 CUDA runtime"
+          ],
+          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
+          "bytes": 1411259196
+        },
+        {
+          "id": "model",
+          "filename": "faster-whisper-large-v3-turbo-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-large-v3-turbo-ct2.zip",
+          "sha256": "44945f5ed2497a861ce3083d0554e7da09891951c5f42f80040ff632a3582711",
+          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
+          "sources": ["mobiuslabsgmbh/faster-whisper-large-v3-turbo"],
+          "licenses": ["MIT"],
+          "bytes": 1492333094
+        }
+      ]
+    },
+    {
+      "id": "whisper-turbo-cpu",
+      "label": "Whisper turbo CPU transcription",
+      "modelName": "large-v3-turbo",
+      "engine": "faster-whisper",
+      "device": "cpu",
+      "computeType": "int8",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 1.6,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "faster-whisper-runtime-cpu-win-x64-v3.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-runtime-cpu-win-x64-v3.zip",
+          "sha256": "dca614fdb27aba17a0ebedccb34c8af15d84f45a045dfbb632523ba9800df56c",
+          "expectedFiles": [
+            "python.exe",
+            "Lib/site-packages/faster_whisper",
+            "Lib/site-packages/ctranslate2"
+          ],
+          "sources": [
+            "Python 3.11 standalone runtime",
+            "faster-whisper",
+            "CTranslate2 CPU runtime"
+          ],
+          "licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"],
+          "bytes": 94738531
+        },
+        {
+          "id": "model",
+          "filename": "faster-whisper-large-v3-turbo-ct2.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/faster-whisper-large-v3-turbo-ct2.zip",
+          "sha256": "44945f5ed2497a861ce3083d0554e7da09891951c5f42f80040ff632a3582711",
+          "expectedFiles": ["config.json", "model.bin", "tokenizer.json"],
+          "sources": ["mobiuslabsgmbh/faster-whisper-large-v3-turbo"],
+          "licenses": ["MIT"],
+          "bytes": 1492333094
+        }
+      ]
+    },
+    {
+      "id": "whisper-turbo-vulkan",
+      "label": "Whisper turbo Vulkan transcription",
+      "modelName": "large-v3-turbo",
+      "engine": "whisper-cpp",
+      "device": "cpu",
+      "computeType": "float16",
+      "minSystemMemoryGiB": 8,
+      "estimatedMemoryGiB": 2.5,
+      "assets": [
+        {
+          "id": "runtime",
+          "filename": "whisper-cpp-vulkan-runtime-win-x64.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/whisper-cpp-vulkan-runtime-win-x64.zip",
+          "sha256": "0491afcda8d5da6a319edb374dab35ef290a143110df1c8db46194d5877648f9",
+          "expectedFiles": ["whisper-cli.exe"],
+          "sources": ["whisper.cpp Vulkan Windows runtime"],
+          "licenses": ["MIT"],
+          "bytes": 17870689
+        },
+        {
+          "id": "model",
+          "filename": "ggml-large-v3-turbo.zip",
+          "url": "https://github.com/DuetDisplay/AutoDoc/releases/download/windows-transcription-v3/ggml-large-v3-turbo.zip",
+          "sha256": "4a9b9f450a5d2cf505fcf3b2e0a86c824f4c46a5a8fdafe3f2e80976921edaa9",
+          "expectedFiles": ["ggml-large-v3-turbo.bin"],
+          "sources": ["ggerganov/whisper.cpp ggml-large-v3-turbo"],
+          "licenses": ["MIT"],
+          "bytes": 1493368050
+        }
+      ]
     }
   ]
 }

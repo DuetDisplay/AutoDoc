@@ -13,11 +13,16 @@ const OUTPUT_DIR = join(process.cwd(), 'vendor', 'mlx-python-runtime', TARGET_KE
 const PYTHON_PATH = join(OUTPUT_DIR, 'python', 'bin', 'python3')
 const WHEELHOUSE_DIR = join(OUTPUT_DIR, '_wheelhouse')
 const READY_MARKER = join(OUTPUT_DIR, 'AUTODOC_MLX_WHISPER_READY.txt')
-const BUNDLE_FORMAT = 'mlx-whisper-runtime-v2'
+const BUNDLE_FORMAT = 'mlx-whisper-runtime-v3'
 const WHEEL_PLATFORM = 'macosx_14_0_arm64'
 // Keep MLX pinned so release builds do not silently move to wheels with a newer
 // macOS deployment target than our QA/prod machines support.
 const PACKAGES = ['mlx-whisper==0.4.3', 'mlx==0.29.3', 'mlx-metal==0.29.3']
+// mlx-whisper declares torch, but only its model-conversion helper
+// (torch_whisper.py) imports it; transcription never does. Removing torch and
+// the packages only torch needs saves ~450 MB (~100 MB in the DMG), and
+// English and turbo transcripts are byte-identical without them.
+const UNUSED_PACKAGES = ['torch', 'sympy', 'mpmath', 'networkx', 'jinja2', 'markupsafe']
 
 async function fileExists(filePath) {
   try {
@@ -143,11 +148,23 @@ async function main() {
     ...PACKAGES
   ])
   await rm(WHEELHOUSE_DIR, { recursive: true, force: true })
+  await run(PYTHON_PATH, ['-m', 'pip', 'uninstall', '--yes', ...UNUSED_PACKAGES])
   await walkAndPrune(OUTPUT_DIR)
-  await run(PYTHON_PATH, ['-c', 'import mlx_whisper; print("ok")'], {
-    ...process.env,
-    PYTHONDONTWRITEBYTECODE: '1'
-  })
+  // Import what transcription imports, with torch absent, so a future
+  // mlx-whisper that needs it fails the build instead of the app.
+  await run(
+    PYTHON_PATH,
+    [
+      '-c',
+      'import importlib.util, mlx_whisper; from mlx_whisper.audio import load_audio; ' +
+        'from mlx_whisper.transcribe import transcribe; ' +
+        'assert importlib.util.find_spec("torch") is None; print("ok")'
+    ],
+    {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: '1'
+    }
+  )
 
   const runtimeInfo = await stat(OUTPUT_DIR)
   if (!runtimeInfo.isDirectory()) {

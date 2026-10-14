@@ -1,0 +1,18 @@
+{
+  "name": "autodoc-update-worker",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:staging": "wrangler deploy",
+    "deploy:production": "wrangler deploy --env production",
+    "types": "wrangler types worker-configuration.d.ts --include-runtime false --strict-vars false"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261007.1",
+    "miniflare": "5.20261006.0-alpha",
+    "wrangler": "4.148.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  }
+}

@@ -350,4 +350,68 @@ describe('TranscriptionWorkerClient', () => {
     expect(() => mockProcess.stdin.emit('error', pipeError)).not.toThrow()
     await expect(pingPromise).rejects.toThrow(/Transcription worker process error/)
   })
+
+  it('does not fail a finished transcribe when Windows native crash happens after the result', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const client = createClient()
+    const transcribe = client.transcribe({
+      audio: '/mock/audio.wav',
+      language: 'ja',
+      window: null
+    })
+    await waitForRequestCount(1)
+    const requestId = parseLastRequest().id as number
+    mockProcess.stdout.emit(
+      'data',
+      Buffer.from(`${JSON.stringify({ id: requestId, ok: true, result: { transcription: [] } })}`)
+    )
+    mockProcess.emit('close', 3221226505)
+    await expect(transcribe).resolves.toEqual({ transcription: [] })
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+  })
+
+  it('fails a transcribe when Windows native crash happens before the result', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const client = createClient()
+    const transcribe = client.transcribe({
+      audio: '/mock/audio.wav',
+      language: 'ja',
+      window: null
+    })
+    await waitForRequestCount(1)
+    mockProcess.emit('close', 3221226505)
+    await expect(transcribe).rejects.toThrow(/exited with code 3221226505/)
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+  })
+
+  it.each(['load', 'selftest'] as const)(
+    'fails a %s when Windows native crash happens before the result',
+    async (op) => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      const client = createClient()
+      const pending =
+        op === 'load'
+          ? client.load({
+              engine: 'whisper-turbo',
+              model: '/mock/model',
+              device: 'cuda',
+              computeType: 'float16',
+              threads: null
+            })
+          : client.selftest({
+              engine: 'whisper-turbo',
+              model: '/mock/model',
+              device: 'cuda',
+              computeType: 'float16',
+              language: 'ja'
+            })
+      await waitForRequestCount(1)
+      mockProcess.emit('close', 3221226505)
+      await expect(pending).rejects.toThrow(/exited with code 3221226505/)
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  )
 })

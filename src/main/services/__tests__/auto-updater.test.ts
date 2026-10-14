@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initAutoUpdater, installUpdate } from '../auto-updater'
 
 const {
@@ -73,8 +73,11 @@ vi.mock('../autodoc-log', () => ({
   logAutodocFailure
 }))
 
+const originalPlatform = process.platform
+
 describe('Auto-updater validity characterization', () => {
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     vi.clearAllMocks()
     vi.useFakeTimers()
     setThrowOnConfigure(false)
@@ -83,7 +86,75 @@ describe('Auto-updater validity characterization', () => {
     autoUpdater.channel = null
     delete process.env.AUTODOC_TEST_MODE
     delete process.env.AUTODOC_UPDATE_FEED_URL
+    delete process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL
+    delete process.env.AUTODOC_OFFICIAL_BUILD
+    vi.stubGlobal('__AUTODOC_QA_BUILD__', false)
     delete process.env.AUTODOC_UPDATE_QUIT_AND_INSTALL_ON_DOWNLOAD
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform })
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    delete process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL
+    delete process.env.AUTODOC_OFFICIAL_BUILD
+  })
+
+  it('keeps Linux on its existing distribution feed', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+    process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL = 'https://updates.example.com/stable/'
+    initAutoUpdater()
+    expect(setFeedURL).not.toHaveBeenCalled()
+  })
+
+  it('routes official stable builds to the configured mirror without consent or identifiers', () => {
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+    process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL = 'https://updates.example.com/stable'
+    setAppVersion('1.3.1')
+    initAutoUpdater()
+    expect(setFeedURL).toHaveBeenCalledWith({
+      provider: 'generic',
+      url: 'https://updates.example.com/stable/'
+    })
+    expect(autoUpdater.disableDifferentialDownload).toBe(true)
+  })
+
+  it.each(['1.3.1-internal.1', '1.3.1-beta.1'])(
+    'keeps prerelease %s on its existing feed',
+    (version) => {
+      process.env.AUTODOC_OFFICIAL_BUILD = '1'
+      process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL = 'https://updates.example.com/stable/'
+      setAppVersion(version)
+      initAutoUpdater()
+      expect(setFeedURL).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['unofficial', 'qa', 'disabled'])(
+    'preserves the existing feed for %s builds',
+    (flavor) => {
+      process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL = 'https://updates.example.com/stable/'
+      if (flavor !== 'unofficial') process.env.AUTODOC_OFFICIAL_BUILD = '1'
+      if (flavor === 'qa') vi.stubGlobal('__AUTODOC_QA_BUILD__', true)
+      if (flavor === 'disabled') delete process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL
+      initAutoUpdater()
+      expect(setFeedURL).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    'http://updates.example.com/stable/',
+    'https://user:password@updates.example.com/stable/',
+    'https://updates.example.com/stable/?client=123'
+  ])('rejects an unsafe configured mirror %s', (url) => {
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+    process.env.AUTODOC_PUBLIC_UPDATE_FEED_URL = url
+    initAutoUpdater()
+    expect(setFeedURL).not.toHaveBeenCalled()
+    expect(logAutodocFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Auto-updater failed to initialize' })
+    )
   })
 
   it('still reports inaccessible update feeds as application failures', () => {

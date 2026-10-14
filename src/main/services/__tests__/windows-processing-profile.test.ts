@@ -10,6 +10,7 @@ import {
 function hardware(overrides: Partial<WindowsHardwareSnapshot> = {}): WindowsHardwareSnapshot {
   return {
     logicalProcessors: 16,
+    installedMemoryGiB: 32,
     totalMemoryGiB: 32,
     freeMemoryGiB: 16,
     ...overrides
@@ -17,6 +18,19 @@ function hardware(overrides: Partial<WindowsHardwareSnapshot> = {}): WindowsHard
 }
 
 describe('windows processing profile selection', () => {
+  it('accepts 16 GiB installed RAM with 15.3 GiB usable after hardware reservations', () => {
+    const reservedHardware = {
+      ...hardware(),
+      installedMemoryGiB: 16,
+      totalMemoryGiB: 15.3,
+      freeMemoryGiB: 6
+    }
+    const profile = selectWindowsProcessingProfile(reservedHardware, 'cpu')
+
+    expect(profile.id).toBe('win-cpu-normal')
+    expect(profile.notesModel).toBe(DEFAULT_OLLAMA_MODEL)
+  })
+
   it('selects GPU mode for DML backends', () => {
     const profile = selectWindowsProcessingProfile(hardware(), 'dml')
 
@@ -70,9 +84,32 @@ describe('windows processing profile selection', () => {
     expect(profile.threadPolicy).toBe('min')
   })
 
+  it.each([
+    { installedMemoryGiB: 8, totalMemoryGiB: 7.3, logicalProcessors: 16 },
+    { installedMemoryGiB: 16, totalMemoryGiB: 15.3, logicalProcessors: 7 }
+  ])('keeps insufficient installed RAM or processors low-spec: %j', (limits) => {
+    const profile = selectWindowsProcessingProfile(hardware(limits), 'cpu')
+    expect(profile.id).toBe('win-low-spec')
+    expect(profile.notesModel).toBe(LOW_SPEC_MAC_OLLAMA_MODEL)
+  })
+
+  it.each([null, undefined, NaN, Infinity, 0])(
+    'conservatively handles unknown/invalid installed RAM (%s) without reusing usable RAM',
+    (installedMemoryGiB) => {
+      const profile = selectWindowsProcessingProfile(hardware({ installedMemoryGiB }), 'cpu')
+      expect(profile.id).toBe('win-low-spec')
+      expect(profile.reason).toContain('installed physical RAM is unknown')
+    }
+  )
+
   it('keeps the 3B notes model on 8 GB GPU boxes so Qwen does not raise min spec', () => {
     const profile = selectWindowsProcessingProfile(
-      hardware({ logicalProcessors: 8, totalMemoryGiB: 8, freeMemoryGiB: 3 }),
+      hardware({
+        logicalProcessors: 8,
+        installedMemoryGiB: 8,
+        totalMemoryGiB: 7.3,
+        freeMemoryGiB: 3
+      }),
       'dml'
     )
 
@@ -82,7 +119,12 @@ describe('windows processing profile selection', () => {
 
   it('temporarily applies low-spec behavior to CPU normal hardware under runtime memory pressure', () => {
     const stableProfile = selectWindowsProcessingProfile(
-      hardware({ logicalProcessors: 16, totalMemoryGiB: 32, freeMemoryGiB: 12 }),
+      hardware({
+        logicalProcessors: 16,
+        installedMemoryGiB: 16,
+        totalMemoryGiB: 15.3,
+        freeMemoryGiB: 12
+      }),
       'cpu'
     )
     const pressuredProfile = selectEffectiveWindowsProcessingProfile(stableProfile, {

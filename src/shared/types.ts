@@ -1,4 +1,5 @@
 import type { MemoryFailure } from './memory-failure'
+import type { MeetingLanguageCode } from './meeting-language'
 
 export type MeetingStatus = 'recording' | 'processing' | 'complete' | 'failed'
 
@@ -304,6 +305,8 @@ export interface MeetingMetadata {
   startedAt: number
   stoppedAt: number
   durationSeconds: number
+  /** Drives transcription routing and notes language. Missing legacy values resolve to English. */
+  meetingLanguage?: MeetingLanguageCode
   isFinalizing?: boolean
   calendarTitle?: string
   customTitle?: string
@@ -335,6 +338,8 @@ export interface RecordingState {
   startedAt: number | null
   sourceId: string | null
   sourceName: string | null
+  /** Snapshotted for the active recording; null while idle. */
+  meetingLanguage?: MeetingLanguageCode | null
   recordingIntent?: RecordingIntent | null
   trackedMeetingSourceId?: string | null
   trackedMeetingSourceName?: string | null
@@ -479,6 +484,7 @@ export interface OllamaSetupStatus {
 }
 
 export interface WhisperSetupStatus {
+  meetingLanguage?: MeetingLanguageCode
   phase:
     | 'checking'
     | 'downloading-whisper'
@@ -498,6 +504,11 @@ export interface WhisperSetupStatus {
     | 'parakeet-gpu'
     | 'parakeet-cpu'
     | 'whisper-cpp'
+    | 'canary-cpu'
+    | 'canary-cuda'
+    | 'whisper-turbo-cuda'
+    | 'whisper-turbo-cpu'
+    | 'whisper-turbo-vulkan'
   backendLabel?: string
   macProcessingProfileId?: 'mac-normal' | 'mac-low-spec'
   macProcessingProfileReason?: string

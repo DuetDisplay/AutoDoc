@@ -1,11 +1,18 @@
 import Store from 'electron-store'
 import { app } from 'electron'
+import {
+  DEFAULT_MEETING_LANGUAGE,
+  normalizeMeetingLanguage,
+  type MeetingLanguageCode
+} from '../../shared/meeting-language'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
 
 interface PrefsSchema {
   onboardingComplete: boolean
+  onboardingLanguageConfirmed: boolean
+  meetingLanguageAnnouncementDismissed: boolean
   onboardingStep: number
   onboardingMicSettingsOpened: boolean
   onboardingScreenSettingsOpened: boolean
@@ -13,6 +20,7 @@ interface PrefsSchema {
   analyticsConsent: boolean | null // null = not yet asked
   diagnosticLogUploadConsent: boolean
   videoWatermarkVisible: boolean
+  meetingLanguage: MeetingLanguageCode
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -24,6 +32,8 @@ function createPrefsStore(): Store<PrefsSchema> {
     name: 'autodoc-prefs',
     defaults: {
       onboardingComplete: false,
+      onboardingLanguageConfirmed: false,
+      meetingLanguageAnnouncementDismissed: false,
       onboardingStep: 0,
       onboardingMicSettingsOpened: false,
       onboardingScreenSettingsOpened: false,
@@ -31,6 +41,7 @@ function createPrefsStore(): Store<PrefsSchema> {
       analyticsConsent: null,
       diagnosticLogUploadConsent: false,
       videoWatermarkVisible: true,
+      meetingLanguage: DEFAULT_MEETING_LANGUAGE,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
@@ -49,6 +60,7 @@ export function readInitialDiagnosticLogUploadConsent(): boolean {
 
 export class PrefsStore {
   private store: Store<PrefsSchema>
+  private previousMeetingLanguage: MeetingLanguageCode | null = null
 
   constructor() {
     this.store = createPrefsStore()
@@ -63,11 +75,32 @@ export class PrefsStore {
 
   setOnboardingComplete(): void {
     this.store.set('onboardingComplete', true)
+    this.dismissMeetingLanguageAnnouncement()
     this.store.set('onboardingStep', 0)
     this.store.set('onboardingMicSettingsOpened', false)
     this.store.set('onboardingScreenSettingsOpened', false)
     // Enable launch at login when onboarding finishes
     this.setLaunchAtLogin(true)
+  }
+
+  getOnboardingLanguageConfirmed(): boolean {
+    return this.store.get('onboardingLanguageConfirmed')
+  }
+
+  confirmOnboardingLanguage(): void {
+    this.store.set('onboardingLanguageConfirmed', true)
+  }
+
+  isMeetingLanguageAnnouncementPending(): boolean {
+    return (
+      this.isOnboardingComplete() &&
+      !this.getOnboardingLanguageConfirmed() &&
+      !this.store.get('meetingLanguageAnnouncementDismissed')
+    )
+  }
+
+  dismissMeetingLanguageAnnouncement(): void {
+    this.store.set('meetingLanguageAnnouncementDismissed', true)
   }
 
   getOnboardingStep(): number {
@@ -126,6 +159,30 @@ export class PrefsStore {
 
   setVideoWatermarkVisible(visible: boolean): void {
     this.store.set('videoWatermarkVisible', visible)
+  }
+
+  getMeetingLanguage(): MeetingLanguageCode {
+    return normalizeMeetingLanguage(this.store.get('meetingLanguage'))
+  }
+
+  setMeetingLanguage(language: unknown): void {
+    const next = normalizeMeetingLanguage(language)
+    const current = this.getMeetingLanguage()
+    if (next !== current) {
+      this.previousMeetingLanguage = current
+    }
+    this.store.set('meetingLanguage', next)
+  }
+
+  /** Undo a tentative pick when first-use setup locks that language. */
+  restorePreviousMeetingLanguageIfCurrent(lockedLanguage: unknown): MeetingLanguageCode {
+    const locked = normalizeMeetingLanguage(lockedLanguage)
+    if (this.getMeetingLanguage() !== locked) {
+      return this.getMeetingLanguage()
+    }
+    const previous = this.previousMeetingLanguage ?? DEFAULT_MEETING_LANGUAGE
+    this.store.set('meetingLanguage', previous)
+    return previous
   }
 
   getExperimentalSpeakerDiarization(): boolean {

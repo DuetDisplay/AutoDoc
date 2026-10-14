@@ -138,6 +138,37 @@ describe('TranscriptionStep', () => {
     }
   })
 
+  it('ignores progress from the previous language after returning to the picker', async () => {
+    let progress!: (status: unknown) => Promise<void>
+    vi.mocked(window.electronAPI.on).mockImplementation((_channel, callback) => {
+      progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) =>
+      Promise.resolve(
+        channel === 'prefs:get-meeting-language'
+          ? 'es'
+          : {
+              phase: 'ready',
+              percent: 100,
+              meetingLanguage: 'fr'
+            }
+      )
+    )
+    render(<TranscriptionStep onNext={vi.fn()} />)
+    await waitFor(() =>
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith('whisper:retry-setup')
+    )
+    await act(async () => {
+      await progress({ phase: 'ready', percent: 100, meetingLanguage: 'fr' })
+    })
+    expect(screen.queryByText('Transcription Ready')).not.toBeInTheDocument()
+    await act(async () => {
+      await progress({ phase: 'ready', percent: 100, meetingLanguage: 'es' })
+    })
+    expect(screen.getByText('Transcription Ready')).toBeInTheDocument()
+  })
+
   it('auto-retries managed setup failures before surfacing a manual retry', async () => {
     vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
       if (channel === 'whisper:get-setup-status') {
@@ -263,6 +294,51 @@ describe('TranscriptionStep', () => {
     }
   }, 10000)
 
+  it('says the machine is offline when the download cannot reach the server', async () => {
+    vi.useFakeTimers()
+    let progress:
+      | ((status: { phase: string; percent: number; error?: string }) => Promise<void>)
+      | null = null
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') progress = callback as typeof progress
+      return vi.fn()
+    })
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status')
+        return Promise.resolve({ phase: 'checking', percent: 0 })
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('de')
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({ availability: 'available', reason: null })
+      }
+      return Promise.resolve({})
+    })
+    const offline = { phase: 'error', percent: 0, error: 'fetch failed' }
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await act(async () => {
+          await progress?.(offline)
+          await vi.advanceTimersByTimeAsync(1500)
+        })
+      }
+
+      expect(screen.getByText("You're offline")).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'Connect to the internet to download the German speech model, then press Retry.'
+        )
+      ).toBeInTheDocument()
+      expect(screen.getByText('No internet connection')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 10000)
+
   it('keeps the background-continue affordance for in-progress setup', async () => {
     vi.useFakeTimers()
     try {
@@ -291,5 +367,235 @@ describe('TranscriptionStep', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('stops setup and offers another language when a non-English route is locked', async () => {
+    vi.useFakeTimers()
+    const onChooseLanguage = vi.fn()
+    let whisperProgressHandler:
+      | ((status: { phase: string; percent: number; error?: string | null }) => Promise<void>)
+      | null = null
+
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') {
+        whisperProgressHandler = callback as typeof whisperProgressHandler
+      }
+      return vi.fn()
+    })
+
+    let retrySetupCalls = 0
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'checking',
+          percent: 0
+        })
+      }
+      if (channel === 'whisper:retry-setup') {
+        retrySetupCalls += 1
+        return Promise.resolve({})
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({
+          availability: 'locked',
+          reason: 'This PC cannot run Spanish transcription.',
+          engineId: null,
+          firstUseDownloadBytes: 0
+        })
+      }
+      return Promise.resolve({})
+    })
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} onChooseLanguage={onChooseLanguage} />)
+        await Promise.resolve()
+      })
+
+      expect(retrySetupCalls).toBe(1)
+      expect(whisperProgressHandler).not.toBeNull()
+
+      await act(async () => {
+        await whisperProgressHandler?.({
+          phase: 'error',
+          percent: 0,
+          error: 'whisper-turbo-cuda self-test failed'
+        })
+      })
+
+      expect(
+        screen.getByRole('heading', { name: "This language isn't available on this PC" })
+      ).toBeInTheDocument()
+      expect(
+        screen.getAllByText('This PC cannot run Spanish transcription.').length
+      ).toBeGreaterThan(0)
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+      expect(retrySetupCalls).toBe(1)
+      expect(
+        screen.queryByText(/continue - this will finish in the background/i)
+      ).not.toBeInTheDocument()
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'Choose another language' }).click()
+      })
+      expect(onChooseLanguage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still auto-retries a non-English setup failure when the language is available', async () => {
+    vi.useFakeTimers()
+    let whisperProgressHandler:
+      | ((status: { phase: string; percent: number; error?: string | null }) => Promise<void>)
+      | null = null
+
+    vi.mocked(window.electronAPI.on).mockImplementation((channel: string, callback) => {
+      if (channel === 'whisper:setup-progress') {
+        whisperProgressHandler = callback as typeof whisperProgressHandler
+      }
+      return vi.fn()
+    })
+
+    let retrySetupCalls = 0
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'checking',
+          percent: 0
+        })
+      }
+      if (channel === 'whisper:retry-setup') {
+        retrySetupCalls += 1
+        return Promise.resolve({})
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({
+          availability: 'available',
+          reason: null,
+          engineId: 'whisper-turbo-cuda',
+          firstUseDownloadBytes: 0
+        })
+      }
+      return Promise.resolve({})
+    })
+
+    try {
+      await act(async () => {
+        render(<TranscriptionStep onNext={vi.fn()} />)
+        await Promise.resolve()
+      })
+
+      expect(retrySetupCalls).toBe(1)
+
+      await act(async () => {
+        await whisperProgressHandler?.({
+          phase: 'error',
+          percent: 0,
+          error: 'whisper-turbo-cuda self-test failed'
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+      expect(retrySetupCalls).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a slower-CPU note when a non-English language is ready on the processor', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'ready',
+          percent: 100
+        })
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({
+          availability: 'slower',
+          reason: null,
+          engineId: 'whisper-turbo-cpu',
+          firstUseDownloadBytes: 0
+        })
+      }
+      return Promise.resolve({})
+    })
+
+    render(<TranscriptionStep onNext={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: 'Transcription Ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByText(
+        'This PC will transcribe this language on the processor, so it will be slower.'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('does not show a slower-CPU note when a non-English language is available', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'prefs:get-meeting-language') return Promise.resolve('es')
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'ready',
+          percent: 100
+        })
+      }
+      if (channel === 'whisper:get-windows-meeting-language-availability') {
+        return Promise.resolve({
+          availability: 'available',
+          reason: null,
+          engineId: 'whisper-turbo-cuda',
+          firstUseDownloadBytes: 0
+        })
+      }
+      return Promise.resolve({})
+    })
+
+    render(<TranscriptionStep onNext={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: 'Transcription Ready' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'whisper:get-windows-meeting-language-availability',
+        'es'
+      )
+    })
+    expect(
+      screen.queryByText(/this PC will transcribe this language on the processor/i)
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not query Windows language availability for English setup failures', async () => {
+    vi.mocked(window.electronAPI.invoke).mockImplementation((channel: string) => {
+      if (channel === 'whisper:get-setup-status') {
+        return Promise.resolve({
+          phase: 'error',
+          percent: 0,
+          error: 'Download request failed'
+        })
+      }
+      if (channel === 'whisper:retry-setup') {
+        return Promise.resolve()
+      }
+      return Promise.resolve({})
+    })
+
+    render(<TranscriptionStep onNext={vi.fn()} />)
+
+    expect(await screen.findByText('Still finishing transcription setup')).toBeInTheDocument()
+    expect(window.electronAPI.invoke).not.toHaveBeenCalledWith(
+      'whisper:get-windows-meeting-language-availability',
+      expect.anything()
+    )
   })
 })

@@ -7,6 +7,9 @@ export type WindowsThreadPolicy = 'default' | 'min'
 
 export interface WindowsHardwareSnapshot {
   logicalProcessors: number
+  /** Installed physical RAM, independent of OS-visible total/free memory. */
+  installedMemoryGiB?: number | null
+  /** OS-usable RAM; keep using this for memory safety limits. */
   totalMemoryGiB: number | null
   freeMemoryGiB: number | null
 }
@@ -28,7 +31,7 @@ export interface WindowsProcessingProfile {
 }
 
 const CPU_NORMAL_MIN_LOGICAL_PROCESSORS = 8
-const CPU_NORMAL_MIN_TOTAL_MEMORY_GIB = 16
+const CPU_NORMAL_MIN_INSTALLED_MEMORY_GIB = 16
 const RUNTIME_DUAL_SOURCE_MIN_FREE_MEMORY_GIB = 4
 const LOW_SPEC_NOTES_TOTAL_MEMORY_GIB = 8.5
 
@@ -37,7 +40,10 @@ export function notesModelForWindowsProfile(
   hardware: WindowsHardwareSnapshot
 ): string {
   if (profileId === 'win-low-spec') return LOW_SPEC_MAC_OLLAMA_MODEL
-  if (hardware.totalMemoryGiB != null && hardware.totalMemoryGiB <= LOW_SPEC_NOTES_TOTAL_MEMORY_GIB) {
+  if (
+    hardware.totalMemoryGiB != null &&
+    hardware.totalMemoryGiB <= LOW_SPEC_NOTES_TOTAL_MEMORY_GIB
+  ) {
     return LOW_SPEC_MAC_OLLAMA_MODEL
   }
   return DEFAULT_OLLAMA_MODEL
@@ -54,20 +60,25 @@ export function selectWindowsProcessingProfile(
     )
   }
 
-  const totalMemoryGiB = hardware.totalMemoryGiB ?? 0
+  const installedMemoryGiB = hardware.installedMemoryGiB
+  const installedMemoryKnown =
+    installedMemoryGiB != null && Number.isFinite(installedMemoryGiB) && installedMemoryGiB > 0
   if (
     hardware.logicalProcessors >= CPU_NORMAL_MIN_LOGICAL_PROCESSORS &&
-    totalMemoryGiB >= CPU_NORMAL_MIN_TOTAL_MEMORY_GIB
+    installedMemoryKnown &&
+    installedMemoryGiB >= CPU_NORMAL_MIN_INSTALLED_MEMORY_GIB
   ) {
     return createCpuNormalProfile(
       hardware,
-      `hardware has >= ${CPU_NORMAL_MIN_LOGICAL_PROCESSORS} logical processors and >= ${CPU_NORMAL_MIN_TOTAL_MEMORY_GIB} GiB RAM`
+      `hardware has >= ${CPU_NORMAL_MIN_LOGICAL_PROCESSORS} logical processors and >= ${CPU_NORMAL_MIN_INSTALLED_MEMORY_GIB} GiB installed physical RAM`
     )
   }
 
   return createLowSpecProfile(
     hardware,
-    `hardware has < ${CPU_NORMAL_MIN_LOGICAL_PROCESSORS} logical processors or < ${CPU_NORMAL_MIN_TOTAL_MEMORY_GIB} GiB RAM`
+    !installedMemoryKnown
+      ? 'installed physical RAM is unknown; conservatively using low-spec CPU processing'
+      : `hardware has < ${CPU_NORMAL_MIN_LOGICAL_PROCESSORS} logical processors or < ${CPU_NORMAL_MIN_INSTALLED_MEMORY_GIB} GiB installed physical RAM`
   )
 }
 

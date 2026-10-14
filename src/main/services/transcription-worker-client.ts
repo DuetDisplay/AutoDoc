@@ -6,8 +6,9 @@ import { logQaGateWorkerLifecycle } from './qa-gate-log'
  * JSON-lines-over-stdio protocol for the persistent transcription worker.
  *
  * Requests (one JSON object per line on stdin):
- * - load: {"id", "op": "load", "engine": "faster-whisper"|"parakeet", "model", "device": "cuda"|"cpu"|"dml", "computeType", "threads": number|null}
+ * - load: {"id", "op": "load", "engine": "faster-whisper"|"parakeet"|"canary"|"whisper-turbo", "model", "device": "cuda"|"cpu"|"dml", "computeType", "threads": number|null}
  * - transcribe: {"id", "op": "transcribe", "audio", "language", "window": {"startSec", "endSec"} | null}
+ * - selftest: {"id", "op": "selftest", "engine", "model", "device", "computeType", "threads", "language"}
  * - unload: {"id", "op": "unload"}
  * - ping: {"id", "op": "ping"}
  *
@@ -26,7 +27,7 @@ import { logQaGateWorkerLifecycle } from './qa-gate-log'
  * Emitted as each segment decodes. Window-relative when windowed.
  */
 
-export type TranscriptionWorkerEngine = 'faster-whisper' | 'parakeet'
+export type TranscriptionWorkerEngine = 'faster-whisper' | 'parakeet' | 'canary' | 'whisper-turbo'
 
 export type TranscriptionWorkerDevice = 'cuda' | 'cpu' | 'dml'
 
@@ -65,6 +66,25 @@ export interface TranscriptionWorkerSegmentEvent {
   text: string
 }
 
+export interface TranscriptionWorkerSelftestParams {
+  engine?: TranscriptionWorkerEngine
+  model?: string
+  device?: TranscriptionWorkerDevice
+  computeType?: string
+  threads?: number | null
+  language?: string
+}
+
+export interface TranscriptionWorkerSelftestResult {
+  ok: boolean
+  engine?: string
+  device?: string
+  elapsedMs?: number
+  loadMs?: number
+  transcribeMs?: number
+  segments?: number
+}
+
 type TranscriptionWorkerSpawnFn = (
   command: string,
   args: string[],
@@ -85,6 +105,7 @@ export interface TranscriptionWorkerClientOptions {
 }
 
 interface PendingRequest {
+  op: string
   resolve: (result: unknown) => void
   reject: (error: Error) => void
   onSegment?: (event: TranscriptionWorkerSegmentEvent) => void
@@ -106,6 +127,7 @@ export class TranscriptionWorkerClient {
   private idleUnloadTimer: ReturnType<typeof setTimeout> | null = null
   private idleKillTimer: ReturnType<typeof setTimeout> | null = null
   private inFlightRequests = 0
+  private receivedSuccessfulResult = false
   private disposed = false
   private idleKilled = false
   private idleLifecycleActive = false
@@ -144,6 +166,10 @@ export class TranscriptionWorkerClient {
   async unload(): Promise<void> {
     await this.request('unload', {})
     this.loaded = false
+  }
+
+  async selftest(params: TranscriptionWorkerSelftestParams): Promise<TranscriptionWorkerSelftestResult> {
+    return (await this.request('selftest', { ...params })) as TranscriptionWorkerSelftestResult
   }
 
   async ping(): Promise<void> {
@@ -213,7 +239,7 @@ export class TranscriptionWorkerClient {
     this.inFlightRequests += 1
 
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject, onSegment })
+      this.pendingRequests.set(id, { op, resolve, reject, onSegment })
       try {
         this.writeRequest({ id, op, ...payload })
       } catch (error) {
@@ -265,6 +291,7 @@ export class TranscriptionWorkerClient {
     this.process = proc
     this.recoveryProcess = proc
     this.stdoutBuffer = ''
+    this.receivedSuccessfulResult = false
     this.attachProcessHandlers(proc)
     this.options.applyPriority?.(proc.pid)
   }
@@ -359,6 +386,9 @@ export class TranscriptionWorkerClient {
 
     if (parsed.ok === true) {
       this.respawnAllowed = true
+      if (pending.op === 'transcribe' || pending.op === 'load' || pending.op === 'selftest') {
+        this.receivedSuccessfulResult = true
+      }
       pending.resolve(parsed.result)
       return
     }
@@ -400,15 +430,37 @@ export class TranscriptionWorkerClient {
   }
 
   private handleProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.stdoutBuffer.trim().length > 0) {
+      this.handleStdoutLine(this.stdoutBuffer.trim())
+      this.stdoutBuffer = ''
+    }
+
     const hadPending = this.pendingRequests.size > 0
     const stderrTail = this.stderrTail
     const exitSuffix =
       code != null ? `code ${code}` : signal != null ? `signal ${signal}` : 'unknown exit'
+    const hasInFlightWork = [...this.pendingRequests.values()].some(
+      (pending) => pending.op === 'transcribe' || pending.op === 'load' || pending.op === 'selftest'
+    )
+    const nativeCrashCode =
+      process.platform === 'win32' &&
+      code != null &&
+      WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES.has(code)
+    // CTranslate2 CUDA teardown (0xC0000409) is benign only after a
+    // transcribe/load/selftest result has already arrived. A crash before
+    // any of those results is a real failure. unload may then resolve;
+    // ping is benign only in that same after-result window.
+    const benignNativeCrash =
+      nativeCrashCode && this.receivedSuccessfulResult && !hasInFlightWork
 
     this.process = null
     this.loaded = false
 
     if (hadPending) {
+      if (benignNativeCrash) {
+        this.resolveBenignNativeCrashPending(code, signal, exitSuffix, stderrTail)
+        return
+      }
       this.rejectAllPending(
         new Error(`Transcription worker exited with ${exitSuffix}: ${stderrTail.slice(-500)}`)
       )
@@ -421,11 +473,7 @@ export class TranscriptionWorkerClient {
       return
     }
 
-    if (
-      process.platform === 'win32' &&
-      code != null &&
-      WINDOWS_FAST_WHISPER_NATIVE_CRASH_CODES.has(code)
-    ) {
+    if (benignNativeCrash) {
       logAutodocEvent({
         area: 'transcription',
         message: 'Transcription worker exited with a benign Windows native crash code after idle',
@@ -437,6 +485,31 @@ export class TranscriptionWorkerClient {
     if (code != null && code !== 0) {
       console.warn(`[transcription-worker] Process exited with ${exitSuffix}`)
     }
+  }
+
+  private resolveBenignNativeCrashPending(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    exitSuffix: string,
+    stderrTail: string
+  ): void {
+    logAutodocEvent({
+      area: 'transcription',
+      message: 'Transcription worker exited with a benign Windows native crash code after a result',
+      context: { exitCode: code, signal }
+    })
+
+    const error = new Error(
+      `Transcription worker exited with ${exitSuffix}: ${stderrTail.slice(-500)}`
+    )
+    for (const pending of this.pendingRequests.values()) {
+      if (pending.op === 'unload' || pending.op === 'ping') {
+        pending.resolve(undefined)
+        continue
+      }
+      pending.reject(error)
+    }
+    this.pendingRequests.clear()
   }
 
   private rejectAllPending(error: Error): void {
