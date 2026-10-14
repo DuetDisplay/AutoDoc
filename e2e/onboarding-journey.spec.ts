@@ -103,7 +103,7 @@ async function finishOnboardingIntoApp(page: Page): Promise<void> {
 
   await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
-  await expect(page.getByText('AutoDoc')).toBeVisible()
+  await expect(page.getByText('AutoDoc', { exact: true })).toBeVisible()
 }
 
 async function finishAnalyticsAndOpenApp(page: Page): Promise<void> {
