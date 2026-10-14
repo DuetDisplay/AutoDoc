@@ -366,7 +366,11 @@ it('hashes a downloaded Windows archive once on the success path', async () => {
   vi.spyOn(manager, 'getModelsDir').mockReturnValue(root)
   const hashSpy = vi.spyOn(manager as any, 'hashFileSha256')
   vi.spyOn(manager as any, 'extractWindowsTranscriptionAsset').mockResolvedValue(undefined)
-  vi.spyOn(manager as any, 'getMissingExpectedFiles').mockResolvedValue([])
+  // Not installed yet, so the install proceeds; the extracted files are then complete.
+  vi.spyOn(manager as any, 'getMissingExpectedFiles')
+    .mockResolvedValueOnce(['python.exe'])
+    .mockResolvedValue([])
+  vi.spyOn(manager as any, 'publishPreparedWindowsAsset').mockResolvedValue(undefined)
 
   await (manager as any).downloadAndExtractWindowsTranscriptionAsset(windowsAssetProfile(), {
     id: 'runtime',
@@ -390,7 +394,11 @@ it('hashes an already-present Windows archive once when skipping the download', 
   vi.spyOn(manager, 'getModelsDir').mockReturnValue(root)
   const hashSpy = vi.spyOn(manager as any, 'hashFileSha256')
   vi.spyOn(manager as any, 'extractWindowsTranscriptionAsset').mockResolvedValue(undefined)
-  vi.spyOn(manager as any, 'getMissingExpectedFiles').mockResolvedValue([])
+  // Not installed yet, so the install proceeds; the extracted files are then complete.
+  vi.spyOn(manager as any, 'getMissingExpectedFiles')
+    .mockResolvedValueOnce(['python.exe'])
+    .mockResolvedValue([])
+  vi.spyOn(manager as any, 'publishPreparedWindowsAsset').mockResolvedValue(undefined)
 
   await (manager as any).downloadAndExtractWindowsTranscriptionAsset(windowsAssetProfile(), {
     id: 'runtime',
