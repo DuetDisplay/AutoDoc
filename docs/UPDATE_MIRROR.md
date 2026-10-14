@@ -153,12 +153,13 @@ platform table keeps one row per version and shows macOS via GitHub, Windows via
 Updater platform comes from validated package metadata. Consented update
 reports overlap with downloads and are never added to these totals.
 
-GitHub counters are cumulative. Use each release's latest observed UTC day,
-then the latest value per asset, including initial counter values. Same-day
-imports deduplicate unchanged assets, so using only the newest timestamp would
-incorrectly drop an unchanged Mac or Windows count. Only assets observed on
-that latest release day participate; stale assets from older days are excluded.
-Do not sum daily cumulative snapshots or subtract the first count. Lifetime
+GitHub counters are cumulative. Keep the latest observed value per asset ID,
+including initial counts and retired assets. Replacing an installer creates a
+new asset ID with a fresh counter; retaining the old ID preserves downloads
+from before the replacement. Repeated snapshots do not multiply downloads.
+Release comparisons retain each asset's latest observation at or before the
+comparison snapshot, including retired assets. Do not sum daily cumulative
+snapshots or subtract the first count. Lifetime
 totals remain lifetime totals under dashboard date overrides. On October 8,
 1.2.0 reconciled with GitHub: 22 DMG + 86 EXE = 108 downloads. All six stable
 releases sum to 580 before production mirror reporting begins.
