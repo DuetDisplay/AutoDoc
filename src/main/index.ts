@@ -1532,6 +1532,7 @@ app.whenReady().then(async () => {
 
     pendingRecoveryPromise = (async () => {
       await recoverInterruptedRecordings()
+      if (isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1') return
       await Promise.all([
         transcriptionService.scanAndEnqueuePending(),
         segmentationService.scanAndEnqueuePending()

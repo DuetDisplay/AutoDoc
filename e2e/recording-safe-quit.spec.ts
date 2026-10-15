@@ -1,4 +1,5 @@
-import { mkdtempSync, readdirSync, existsSync } from 'node:fs'
+import { mkdtempSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -53,6 +54,15 @@ test('quitting before the first capture chunk saves audio and survives relaunch'
       existsSync(path.join(base, meeting, 'mic.webm')) ||
         existsSync(path.join(base, meeting, 'system.webm'))
     ).toBe(true)
+    const audio = path.join(
+      base,
+      meeting,
+      existsSync(path.join(base, meeting, 'mic.webm')) ? 'mic.webm' : 'system.webm'
+    )
+    expect(statSync(audio).size).toBeGreaterThan(0)
+    execFileSync(env.AUTODOC_E2E_FFMPEG_PATH, ['-v', 'error', '-i', audio, '-f', 'null', '-'], {
+      stdio: 'pipe'
+    })
     second = await relaunchIsolatedE2EApp(profile, scenario, env)
     const reopened = await second.electronApp.firstWindow()
     const recordings = await reopened.evaluate(() => window.electronAPI.invoke('recording:list'))

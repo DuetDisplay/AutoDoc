@@ -228,6 +228,7 @@ test.describe('real managed setup downloads', () => {
 
       await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
+      await page.evaluate(() => window.electronAPI.invoke('prefs:confirm-onboarding-language'))
       await jumpToOnboardingStep(page, 7)
       await expectAnyHeading(
         page,
