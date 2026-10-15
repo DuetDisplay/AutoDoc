@@ -11,12 +11,14 @@ const RUN_LOCAL_WINDOWS_TRANSCRIPTION_ASSET_TEST =
   process.env.AUTODOC_RUN_LOCAL_WINDOWS_TRANSCRIPTION_ASSET_TEST === '1'
 const REAL_DOWNLOAD_TIMEOUT_MS = 45 * 60 * 1000
 const POLL_INTERVAL_MS = 5000
-const LOCAL_WINDOWS_TRANSCRIPTION_ASSET_DIR = path.join(
-  process.cwd(),
-  '.benchmarks',
-  'windows-transcription-assets',
-  'windows-transcription-v1'
-)
+const LOCAL_WINDOWS_TRANSCRIPTION_ASSET_DIR =
+  process.env.AUTODOC_LOCAL_WINDOWS_TRANSCRIPTION_ASSET_DIR ??
+  path.join(
+    process.cwd(),
+    '.benchmarks',
+    'windows-transcription-assets',
+    'windows-transcription-v1'
+  )
 
 async function waitForSetupReady(
   page: Page,
@@ -434,6 +436,7 @@ test.describe('real managed setup downloads', () => {
 
       await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
+      await page.evaluate(() => window.electronAPI.invoke('prefs:confirm-onboarding-language'))
       await jumpToOnboardingStep(page, 7)
       await expectAnyHeading(
         page,

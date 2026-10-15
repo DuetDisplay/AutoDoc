@@ -525,7 +525,12 @@ export class TranscriptionService {
       this.jobIdentity.set(meetingId, {
         meetingLanguage: activeMeetingLanguage(),
         asrRoute: activeMeetingAsrRoute(),
-        ...(process.platform === 'darwin' ? this.jobTranscriptionEngine() : {})
+        ...(process.platform === 'darwin' ? this.jobTranscriptionEngine() : {}),
+        // Windows chooses its multilingual engine during readiness. Until then,
+        // do not identify a setup failure with the unrelated English backend.
+        ...(process.platform === 'win32' && activeMeetingAsrRoute() !== 'english'
+          ? { backend: null, modelName: null }
+          : {})
       })
       return this.processJobInMeetingLanguage(meetingId)
     })

@@ -31,7 +31,7 @@ const command = [
   'cl.exe /nologo /std:c++17 /EHsc /utf-8 /O2 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ' +
     `/Fo"${path.join(outputDir, 'win-meeting-detector.obj')}" ` +
     `/Fe"${outputPath}" ` +
-    `"${sourcePath}" ole32.lib uuid.lib`
+    `"${sourcePath}" ole32.lib uuid.lib crypt32.lib`
 ].join('\r\n')
 
 fs.writeFileSync(scriptPath, command)

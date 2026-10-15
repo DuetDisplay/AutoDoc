@@ -14,6 +14,11 @@ import {
 
 let mockPaths = { appData: '', userData: '' }
 
+vi.mock('../windows-key-protection', () => ({
+  protectWindowsRecordingKey: (key: Buffer) => Buffer.concat([Buffer.from('test-dpapi:'), key]),
+  unprotectWindowsRecordingKey: (value: Buffer) => value.subarray(11)
+}))
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
   app: {

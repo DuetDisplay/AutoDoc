@@ -403,7 +403,7 @@ describe('TranscriptionService', () => {
   it('waits for both Mac sources before releasing resources after a source failure', async () => {
     setPlatform('darwin')
     fsMock.access.mockImplementation(async (file) => {
-      if (/\/(mic|system)\.webm$/.test(String(file))) return undefined
+      if (/[\\/](mic|system)\.webm$/.test(String(file))) return undefined
       throw new Error('ENOENT')
     })
     let rejectFirst!: (error: Error) => void
@@ -2621,6 +2621,39 @@ describe('TranscriptionService meeting-language routing', () => {
       )
     )
   })
+
+  it.each(['en', 'de'] as const)(
+    'does not spend Windows processing retries when %s speech setup fails',
+    async (language) => {
+      setPlatform('win32')
+      recordMeeting(language)
+      if (language === 'en') {
+        vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+        vi.mocked(mockWhisper.ensureReady).mockRejectedValue(new Error('offline'))
+      } else {
+        multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockRejectedValue(
+          new Error('offline')
+        )
+      }
+      const service = createService()
+      service.enqueue(`windows-setup-${language}`)
+      await vi.waitFor(() =>
+        expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Transcription failed',
+            meetingId: `windows-setup-${language}`,
+            context: expect.objectContaining({
+              meetingLanguage: language,
+              asrRoute: language === 'en' ? 'english' : 'canary',
+              ...(language === 'de' ? { backend: null, modelName: null } : {}),
+              errorCode: 'speech-model-setup',
+              retries: 0
+            })
+          })
+        )
+      )
+    }
+  )
 
   it('applies a cooldown to completed fast manual failures without capping future retries', async () => {
     const service = createService()

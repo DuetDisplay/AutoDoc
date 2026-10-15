@@ -1088,6 +1088,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
         } as any,
         {
           ensureReady: vi.fn(),
+          ensureFfmpeg: vi.fn(),
           getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
         } as any,
         {
@@ -1197,6 +1198,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
       } as any,
       {
         ensureReady: vi.fn(),
+        ensureFfmpeg: vi.fn(),
         getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
       } as any,
       {

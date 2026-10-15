@@ -12,6 +12,11 @@ let mockPaths = {
 }
 let mockIsPackaged = true
 
+vi.mock('../windows-key-protection', () => ({
+  protectWindowsRecordingKey: (key: Buffer) => Buffer.concat([Buffer.from('test-dpapi:'), key]),
+  unprotectWindowsRecordingKey: (value: Buffer) => value.subarray(11)
+}))
+
 vi.mock('electron', () => ({
   app: {
     get isPackaged() {
@@ -120,15 +125,18 @@ describe('crypto module', () => {
       expect(stableStoreRaw).toContain('enc:')
     })
 
-    it('falls back to plaintext when safeStorage unavailable', async () => {
+    it('only permits the existing plaintext fallback outside Windows', async () => {
       vi.mocked(electron.safeStorage.isEncryptionAvailable).mockReturnValue(false)
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       const { getKey } = await freshImport()
-      const key = getKey()
-
-      expect(key.length).toBe(32)
-      expect(warnSpy).toHaveBeenCalled()
+      if (process.platform === 'win32') {
+        expect(() => getKey()).toThrow('Windows secure key storage is unavailable')
+        expect(warnSpy).not.toHaveBeenCalled()
+      } else {
+        expect(getKey().length).toBe(32)
+        expect(warnSpy).toHaveBeenCalled()
+      }
       warnSpy.mockRestore()
     })
 

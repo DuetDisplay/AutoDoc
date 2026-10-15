@@ -37,18 +37,20 @@ describe('Canary runtime resolution', () => {
     expect(resolveMacCanaryTranscriber()?.pythonPath).toBe(python)
     expect(resolveMacCanaryTranscriber()?.env.HF_HUB_OFFLINE).toBe('1')
     expect(resolveMacCanaryTranscriber()?.modelRef).toContain(
-      'snapshots/0b6b32ee10f30c89e3ead7249bb636445e3019ee'
+      join('snapshots', '0b6b32ee10f30c89e3ead7249bb636445e3019ee')
     )
     expect(resolveMacCanaryTranscriber()?.vadPath).toContain(
-      'snapshots/b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6'
+      join('snapshots', 'b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6')
     )
-    expect(resolveMacCanaryTranscriber()?.env.HF_HOME).toBe('/user/models/canary-mlx-cache')
+    expect(resolveMacCanaryTranscriber()?.env.HF_HOME).toBe(
+      join('/user', 'models', 'canary-mlx-cache')
+    )
   })
   it('keeps development Python and cache overrides', () => {
     vi.stubEnv('AUTODOC_MAC_CANARY_PYTHON', '/custom/python3')
     vi.stubEnv('AUTODOC_MAC_CANARY_CACHE_DIR', '/custom/cache')
     state.files.add('/custom/python3')
-    state.files.add('/repo/resources/canary-mlx-transcribe.py')
+    state.files.add(join('/repo', 'resources', 'canary-mlx-transcribe.py'))
     expect(resolveMacCanaryTranscriber()?.pythonPath).toBe('/custom/python3')
     expect(resolveMacCanaryTranscriber()?.env.HF_HOME).toBe('/custom/cache')
   })

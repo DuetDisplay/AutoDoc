@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, existsSync, statSync, readFileSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -91,6 +91,31 @@ test('relaunch recovers an interrupted recording from numbered capture files', a
     platform: process.platform === 'win32' ? ('win32' as const) : ('darwin' as const),
     permissions: { microphone: true, screen: true }
   }
+  const keyState = () => {
+    const localStatePath = path.join(profile, 'Local State')
+    let localStateHasOsCryptKey = false
+    let dpapiBackupExists = false
+    try {
+      localStateHasOsCryptKey = Boolean(
+        JSON.parse(readFileSync(localStatePath, 'utf8'))?.os_crypt?.encrypted_key
+      )
+    } catch {
+      // Missing Local State is the cold-profile failure being exercised.
+    }
+    try {
+      dpapiBackupExists =
+        typeof JSON.parse(readFileSync(path.join(profile, 'autodoc-encryption.json'), 'utf8'))
+          ?.encryption_key_dpapi === 'string'
+    } catch {
+      // Report only backup presence; never expose the protected value.
+    }
+    return {
+      appKeyStoreExists: existsSync(path.join(profile, 'autodoc-encryption.json')),
+      localStateExists: existsSync(localStatePath),
+      localStateHasOsCryptKey,
+      dpapiBackupExists
+    }
+  }
   const first = await relaunchIsolatedE2EApp(profile, scenario, env)
   let second: Awaited<ReturnType<typeof relaunchIsolatedE2EApp>> | undefined
   try {
@@ -104,24 +129,47 @@ test('relaunch recovers an interrupted recording from numbered capture files', a
     await expect
       .poll(
         () =>
-          readdirSync(path.join(base, readdirSync(base)[0])).some((name) =>
-            /^mic-\d+\.webm$/.test(name)
+          readdirSync(path.join(base, readdirSync(base)[0])).some(
+            (name) =>
+              /^mic-\d+\.webm$/.test(name) &&
+              statSync(path.join(base, readdirSync(base)[0], name)).size > 0
           ),
         { timeout: 15_000 }
       )
       .toBe(true)
     const proc = first.electronApp.process()
-    proc.kill('SIGKILL')
+    const mainPid = await first.electronApp.evaluate(() => process.pid)
+    if (process.platform === 'win32') expect(keyState().dpapiBackupExists).toBe(true)
+    console.log('key-durability-before-termination', keyState())
+    if (process.platform === 'win32') {
+      execFileSync('taskkill.exe', ['/pid', String(mainPid), '/t', '/f'], { windowsHide: true })
+    } else {
+      proc.kill('SIGKILL')
+    }
     await expect.poll(() => proc.exitCode !== null || proc.signalCode !== null).toBe(true)
+    if (process.platform === 'win32') {
+      // Make the verified loss of Chromium's master key deterministic, even if
+      // this host persisted Local State before the abrupt termination.
+      rmSync(path.join(profile, 'Local State'), { force: true })
+    }
+    console.log('key-durability-after-termination', keyState())
     second = await relaunchIsolatedE2EApp(profile, scenario, env)
     const reopened = await second.electronApp.firstWindow()
+    console.log('key-durability-after-relaunch', keyState())
     await expect
       .poll(
         async () => {
           const recordings = await reopened.evaluate(() =>
             window.electronAPI.invoke('recording:list')
           )
-          return recordings.length === 1 && recordings[0].hasAudio && !recordings[0].isFinalizing
+          const audio = path.join(base, recordings[0]?.meetingId ?? '', 'mic.webm')
+          return (
+            recordings.length === 1 &&
+            recordings[0].hasAudio &&
+            !recordings[0].isFinalizing &&
+            existsSync(audio) &&
+            statSync(audio).size > 0
+          )
         },
         { timeout: 60_000 }
       )
