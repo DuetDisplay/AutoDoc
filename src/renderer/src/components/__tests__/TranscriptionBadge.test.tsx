@@ -10,6 +10,15 @@ beforeEach(() => {
 })
 
 describe('TranscriptionBadge', () => {
+  it('disables Retry immediately to prevent repeated fast failures', () => {
+    const onRetry = vi.fn()
+    render(<TranscriptionBadge status="failed" onRetry={onRetry} />)
+    const retry = screen.getByRole('button', { name: 'Failed — Retry' })
+    fireEvent.click(retry)
+    fireEvent.click(retry)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(retry).toBeDisabled()
+  })
   it('shows "Awaiting transcription" for pending status', () => {
     render(<TranscriptionBadge status="pending" />)
     expect(screen.getByText('Awaiting transcription')).toBeInTheDocument()

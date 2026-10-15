@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TranscriptionStatus, TranscriptionStatusPayload } from '../../../shared/types'
 import { getWhisperSetupLabel } from '../services/setup-status-labels'
 import { formatTranscriptionStatusText } from '../services/transcription-status-labels'
@@ -50,6 +50,14 @@ export function TranscriptionBadge({
 }: TranscriptionBadgeProps) {
   const config = STATUS_CONFIG[status]
   const isMemoryFailure = status === 'failed' && hasMemoryFailure
+  const [retryPending, setRetryPending] = useState(false)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    },
+    []
+  )
   const [setupStatus, setSetupStatus] = useState<
     import('../../../shared/types').WhisperSetupStatus | null
   >(null)
@@ -75,10 +83,24 @@ export function TranscriptionBadge({
         } satisfies Pick<TranscriptionStatusPayload, 'status' | 'progress'>)
       : null
 
+  const Tag = status === 'failed' && !isMemoryFailure && onRetry ? 'button' : 'span'
   return (
-    <span
+    <Tag
+      {...(Tag === 'button' ? { type: 'button' as const, disabled: retryPending } : {})}
       className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${isMemoryFailure ? 'cursor-default hover:bg-red-50' : ''}`}
-      onClick={status === 'failed' && !isMemoryFailure ? onRetry : undefined}
+      onClick={
+        Tag === 'button'
+          ? () => {
+              if (retryTimer.current) return
+              setRetryPending(true)
+              retryTimer.current = setTimeout(() => {
+                retryTimer.current = null
+                setRetryPending(false)
+              }, 1500)
+              onRetry?.()
+            }
+          : undefined
+      }
     >
       {showProgress && (
         <span
@@ -92,6 +114,6 @@ export function TranscriptionBadge({
           : (transcribingLabel ??
             (showProgress ? `Transcribing ${progress}%` : (setupLabel ?? config.label)))}
       </span>
-    </span>
+    </Tag>
   )
 }

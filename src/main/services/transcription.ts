@@ -156,6 +156,8 @@ interface DiarizationWindowMapping {
 }
 
 export class TranscriptionService {
+  private readonly lastManualRetry = new Map<string, number>()
+  private readonly jobIdentity = new Map<string, Record<string, unknown>>()
   private queue: string[] = []
   private activeJobId: string | null = null
   private activeStatus: TranscriptionStatus | null = null
@@ -225,6 +227,17 @@ export class TranscriptionService {
   }
 
   retry(meetingId: string, source: EnqueueSource = 'direct'): void {
+    if (source === 'direct') {
+      if (this.activeJobId === meetingId || this.queue.includes(meetingId)) return
+      const now = Date.now()
+      if (now - (this.lastManualRetry.get(meetingId) ?? -Infinity) < 1500) return
+      this.lastManualRetry.set(meetingId, now)
+      logAutodocEvent({
+        area: 'transcription',
+        message: 'Manual transcription retry requested',
+        meetingId
+      })
+    }
     this.enqueue(meetingId, source)
   }
 
@@ -364,7 +377,9 @@ export class TranscriptionService {
           const allowsRecoveryScanRetry = this.allowsRecoveryScanRetry(errorCode)
           if (
             errorData &&
-            errorData.retries < 3 &&
+            (errorData.retries < 3 ||
+              errorCode === 'speech-model-missing' ||
+              errorCode === 'speech-model-setup') &&
             !isPermanentFailure &&
             allowsRecoveryScanRetry
           ) {
@@ -405,6 +420,7 @@ export class TranscriptionService {
       this.activeProgress = undefined
       this.processing = false
       this.enqueueSource.delete(meetingId)
+      this.jobIdentity.delete(meetingId)
       this.processNext()
     }
   }
@@ -505,9 +521,14 @@ export class TranscriptionService {
   /** Scopes the whole transcription job to the language stored on the recording (legacy: English). */
   private async processJobExclusive(meetingId: string): Promise<void> {
     const metadata = await readMetadata(join(this.recordingsBaseDir, meetingId))
-    return runWithMeetingLanguage(metadata?.meetingLanguage, () =>
-      this.processJobInMeetingLanguage(meetingId)
-    )
+    return runWithMeetingLanguage(metadata?.meetingLanguage, () => {
+      this.jobIdentity.set(meetingId, {
+        meetingLanguage: activeMeetingLanguage(),
+        asrRoute: activeMeetingAsrRoute(),
+        ...(process.platform === 'darwin' ? this.jobTranscriptionEngine() : {})
+      })
+      return this.processJobInMeetingLanguage(meetingId)
+    })
   }
 
   private async processJobInMeetingLanguage(meetingId: string): Promise<void> {
@@ -547,7 +568,13 @@ export class TranscriptionService {
       if (process.platform === 'win32' && activeMeetingAsrRoute() !== 'english') {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        await this.prepareWindowsMultilingualRoute(meetingId)
+        try {
+          await this.prepareWindowsMultilingualRoute(meetingId)
+        } catch (error) {
+          throw new Error(
+            `Speech model setup failed: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
       }
 
       const source = this.enqueueSource.get(meetingId) ?? 'direct'
@@ -573,15 +600,26 @@ export class TranscriptionService {
       await this.logWindowsResourceSnapshot('transcription-start', meetingId)
 
       if (process.platform === 'darwin' && activeMeetingAsrRoute() !== 'english') {
-        await this.whisperManager.assertMacMeetingLanguageReady(activeMeetingLanguage())
+        this.broadcastStatus(meetingId, 'downloading')
+        await this.whisperManager.ensureMacMeetingLanguageReady(activeMeetingLanguage())
       } else if (
         !(process.platform === 'win32' && activeMeetingAsrRoute() !== 'english') &&
         !(await this.whisperManager.isReady())
       ) {
         this.activeStatus = 'downloading'
         this.broadcastStatus(meetingId, 'downloading')
-        await this.whisperManager.ensureReady()
+        try {
+          await this.whisperManager.ensureReady()
+        } catch (error) {
+          throw new Error(
+            `Speech model setup failed: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
       }
+      this.jobIdentity.set(meetingId, {
+        ...this.jobIdentity.get(meetingId),
+        ...this.jobTranscriptionEngine()
+      })
       this.assertMeetingLanguageRoute()
       if (
         process.platform === 'win32' &&
@@ -3280,7 +3318,9 @@ export class TranscriptionService {
     const errorCode = classifyError(errorMsg)
     const isPermanentFailure =
       errorCode === 'key-mismatch' || errorCode === 'encryption-key-unavailable'
-    const retries = isPermanentFailure ? 3 : (existing?.retries ?? 0) + 1
+    const prerequisiteFailure =
+      errorCode === 'speech-model-missing' || errorCode === 'speech-model-setup'
+    const retries = prerequisiteFailure ? 0 : isPermanentFailure ? 3 : (existing?.retries ?? 0) + 1
     try {
       await writeFile(errorPath, JSON.stringify({ error: errorMsg, retries }))
     } catch (err) {
@@ -3302,6 +3342,7 @@ export class TranscriptionService {
         filesCapturedAt: 'job-start',
         backend: this.windowsAttempt?.backend ?? this.jobTranscriptionEngine().backend,
         modelName: this.windowsAttempt?.modelName ?? this.jobTranscriptionEngine().modelName,
+        ...this.jobIdentity.get(meetingId),
         processingProfile:
           this.windowsAttempt?.processingProfile ?? (await this.getProcessingProfileLogContext())
       }

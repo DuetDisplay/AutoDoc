@@ -10,6 +10,7 @@ import { Settings } from './pages/Settings'
 import { ROUTES } from '../../shared/constants'
 import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
 import { useRecording } from './hooks/useRecording'
+import { useRecordingStore } from './stores/recording'
 import {
   buildRecordingSelectionContext,
   buildRecordingTrackingContext,
@@ -74,6 +75,7 @@ function UpdateReadyPrompt({
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }) {
+  const isRecording = useRecordingStore((state) => state.isRecording)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
@@ -215,20 +217,29 @@ function UpdateReadyPrompt({
 
   const version = updateStatus.version ?? 'unknown'
   const isInstalling = updateStatus.state === 'installing'
+  const installBlockedReason = isRecording
+    ? 'Finish your recording before restarting.'
+    : updateStatus.installBlockedReason
 
   if (!isInstalling && dismissedVersion === version) {
     return null
   }
 
   const handleRestart = () => {
+    if (installBlockedReason || isInstalling) return
     setUpdateStatus({ state: 'installing', version: updateStatus.version })
     trackEvent('update_install_requested', {
       available_version: updateStatus.version ?? 'unknown',
       surface: location.pathname === ROUTES.settings ? 'settings' : 'update_prompt'
     })
-    window.setTimeout(() => {
-      void window.electronAPI.invoke('updater:install')
-    }, 300)
+    void window.electronAPI.invoke('updater:install').then((result) => {
+      if (result?.blockedReason)
+        setUpdateStatus({
+          state: 'downloaded',
+          version: updateStatus.version,
+          installBlockedReason: result.blockedReason
+        })
+    })
   }
 
   return (
@@ -241,7 +252,7 @@ function UpdateReadyPrompt({
         <p className="text-[11px] text-ink-muted">
           {isInstalling
             ? 'AutoDoc will reopen after the update installs.'
-            : `Restart AutoDoc to install v${version}.`}
+            : (installBlockedReason ?? `Restart AutoDoc to install v${version}.`)}
         </p>
       </div>
       {!isInstalling && (
@@ -256,7 +267,7 @@ function UpdateReadyPrompt({
       <button
         type="button"
         onClick={handleRestart}
-        disabled={isInstalling}
+        disabled={isInstalling || Boolean(installBlockedReason)}
         className="text-[12px] font-semibold text-white bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
       >
         {isInstalling ? 'Restarting...' : 'Restart'}

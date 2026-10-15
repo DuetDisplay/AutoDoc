@@ -129,6 +129,43 @@ describe('recording IPC source handling', () => {
     })
   })
 
+  it('recovers numbered audio segments and retains the recorded language', async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-interrupted-'))
+    const meetingDir = path.join(baseDir, 'interrupted')
+    await fsp.mkdir(meetingDir)
+    await fsp.writeFile(path.join(meetingDir, 'mic-00000.webm'), 'saved audio')
+    const metadata: MeetingMetadata = {
+      sourceName: 'Meeting',
+      startedAt: Date.now() - 10_000,
+      stoppedAt: Date.now() - 10_000,
+      durationSeconds: 0,
+      meetingLanguage: 'fr',
+      isFinalizing: true
+    }
+    vi.mocked(readMetadata).mockResolvedValue(metadata)
+    const enqueue = vi.fn()
+    const recording = registerRecordingIpc(
+      {
+        getState: () => ({ isRecording: false }),
+        getRecordingsBaseDir: () => baseDir
+      } as any,
+      { enqueue } as any,
+      {
+        ensureFfmpeg: vi.fn().mockResolvedValue(undefined),
+        getFfmpegPath: () => '/mock/ffmpeg'
+      } as any,
+      { isConnected: () => false } as any
+    )
+    await recording.recoverInterruptedRecordings()
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledWith('interrupted'))
+    expect(await fsp.readFile(path.join(meetingDir, 'mic.webm'), 'utf8')).toBe('saved audio')
+    expect(encryptJSON).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingLanguage: 'fr' }),
+      path.join(meetingDir, 'metadata.json')
+    )
+    await fsp.rm(baseDir, { recursive: true, force: true })
+  })
+
   it('disables Windows picker thumbnails while requesting app icons', () => {
     expect(getRecordingSourceCaptureOptions('win32')).toEqual({
       types: ['window', 'screen'],
@@ -1552,7 +1589,12 @@ describe('recording IPC meeting language', () => {
       stopRecording: vi.fn(() => options.stopResult),
       getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
-      startRecording: vi.fn().mockResolvedValue({ meetingId: 'meeting-new' })
+      startRecording: vi
+        .fn()
+        .mockResolvedValue({
+          meetingId: 'meeting-new',
+          dir: options.recordingsDir + '/meeting-new'
+        })
     }
     const whisperManager = {
       ensureReady: vi.fn(),

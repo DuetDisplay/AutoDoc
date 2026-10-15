@@ -6,6 +6,7 @@ import {
   systemPreferences,
   powerMonitor,
   Notification,
+  dialog,
   type WebContents
 } from 'electron'
 import { join } from 'path'
@@ -28,6 +29,7 @@ import { is } from '@electron-toolkit/utils'
 import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
+import { SafeQuitCoordinator } from './services/safe-quit'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
@@ -296,6 +298,27 @@ let ollamaManager: OllamaManager | null = null
 let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
 let isQuitting = false
+let prepareRecordingQuit: () => Promise<void> = async () => {}
+let getUpdateInstallBlockReason: () => string | undefined = () =>
+  'AutoDoc is starting. Try again shortly.'
+let prepareIdleUpdateInstall: () => void = () => {}
+let cancelIdleUpdateInstall: () => void = () => {}
+const safeQuit = new SafeQuitCoordinator({
+  prepare: () => prepareRecordingQuit(),
+  quit: () => app.quit(),
+  onError: (error) => {
+    isQuitting = false
+    logAutodocFailure({
+      area: 'recording',
+      message: 'Could not finish recording before quit',
+      error
+    })
+    dialog.showErrorBox(
+      'AutoDoc is still saving your recording',
+      'AutoDoc stayed open to protect your recording. Wait for it to finish, then quit again.'
+    )
+  }
+})
 let mainSentry: MainSentryRuntimeModule | null = null
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
@@ -711,8 +734,16 @@ app.whenReady().then(async () => {
   // Auto-updater
   if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
+      getInstallBlockReason: () => getUpdateInstallBlockReason(),
+      onInstallFailed: () => {
+        cancelIdleUpdateInstall()
+        isQuitting = false
+        safeQuit.cancelPreparedQuit()
+      },
       prepareForInstall: () => {
+        prepareIdleUpdateInstall()
         isQuitting = true
+        safeQuit.allowQuit()
       },
       onUpdateDownloaded: notifyUpdateReadyIfHidden
     })
@@ -724,9 +755,12 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('updater:install', () => {
+    const blockedReason = getUpdateInstallBlockReason()
+    if (blockedReason) return { blockedReason }
     if (!isE2E && !__AUTODOC_QA_BUILD__) {
       installUpdate()
     }
+    return {}
   })
 
   ipcMain.handle('permissions:check', async () => {
@@ -1491,16 +1525,18 @@ app.whenReady().then(async () => {
     setTimeout(() => app.exit(0), 100)
   })
   let pendingRecoveryPromise: Promise<unknown> | null = null
-  let recoverWindowsFinalizingMeetings: () => Promise<void> = async () => {}
+  let recoverInterruptedRecordings: () => Promise<void> = async () => {}
 
   const recoverPendingWork = (): void => {
-    if (pendingRecoveryPromise) return
+    if (pendingRecoveryPromise || isQuitting) return
 
-    pendingRecoveryPromise = Promise.all([
-      transcriptionService.scanAndEnqueuePending(),
-      segmentationService.scanAndEnqueuePending(),
-      recoverWindowsFinalizingMeetings()
-    ])
+    pendingRecoveryPromise = (async () => {
+      await recoverInterruptedRecordings()
+      await Promise.all([
+        transcriptionService.scanAndEnqueuePending(),
+        segmentationService.scanAndEnqueuePending()
+      ])
+    })()
       .catch((err) => {
         logAutodocFailure({
           area: 'app',
@@ -1936,8 +1972,7 @@ app.whenReady().then(async () => {
   }
 
   const {
-    stopActiveRecording,
-    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
+    recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
     hasPostProcessingWork
   } = registerRecordingIpc(
     recordingService,
@@ -1946,7 +1981,100 @@ app.whenReady().then(async () => {
     calendarManager,
     () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
   )
-  recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
+  recoverInterruptedRecordings = recoverInterruptedRecordingsImpl
+  getUpdateInstallBlockReason = () => {
+    if (recordingService.hasActiveCapture()) return 'Finish your recording before restarting.'
+    if (
+      pendingRecoveryPromise !== null ||
+      hasPostProcessingWork() ||
+      transcriptionService.hasActiveOrQueuedWork() ||
+      segmentationService.hasActiveOrQueuedWork()
+    ) {
+      return 'AutoDoc is processing your meeting. Restart when it finishes.'
+    }
+    const phase = whisperManager.getSetupStatus().phase
+    if (phase !== 'ready' && phase !== 'checking' && phase !== 'error')
+      return 'Wait for the model download to finish before restarting.'
+    if (isQuitting) return 'AutoDoc is saving your recording.'
+    return undefined
+  }
+  prepareIdleUpdateInstall = () => recordingService.setShutdownPending(true)
+  cancelIdleUpdateInstall = () => recordingService.setShutdownPending(false)
+  whisperManager.on('setup-status', (status) => {
+    if (status.phase === 'ready' && !isQuitting) recoverPendingWork()
+  })
+
+  let pendingQuitStop: {
+    requestId: string
+    resolve: () => void
+    reject: (error: Error) => void
+  } | null = null
+  ipcMain.on('recording:quit-ready', (event, requestId: string, error?: string) => {
+    if (event.sender !== getMainWindow()?.webContents || pendingQuitStop?.requestId !== requestId)
+      return
+    if (error) pendingQuitStop.reject(new Error(error))
+    else pendingQuitStop.resolve()
+  })
+  const requestRendererRecordingStop = async (): Promise<void> => {
+    const mainWindow = getMainWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (recordingService.hasActiveCapture()) throw new Error('Recording window is unavailable')
+      return
+    }
+    const requestId = `quit-${Date.now()}`
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingQuitStop = null
+        reject(new Error('Timed out waiting for recording capture to flush'))
+      }, 20_000)
+      pendingQuitStop = {
+        requestId,
+        resolve: () => {
+          clearTimeout(timer)
+          pendingQuitStop = null
+          resolve()
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          pendingQuitStop = null
+          reject(error)
+        }
+      }
+      mainWindow.webContents.send('recording:prepare-to-quit', requestId)
+    })
+  }
+  let pendingRecordingFlush: Promise<void> | null = null
+  const flushRecordingForQuit = (): Promise<void> => {
+    if (pendingRecordingFlush) return pendingRecordingFlush
+    const pending = requestRendererRecordingStop()
+    pendingRecordingFlush = pending
+    void pending.then(
+      () => {
+        pendingRecordingFlush = null
+      },
+      () => {
+        pendingRecordingFlush = null
+      }
+    )
+    return pending
+  }
+  prepareRecordingQuit = async () => {
+    isQuitting = true
+    recordingService.setShutdownPending(true)
+    try {
+      if (recordingService.hasActiveCapture() || hasPostProcessingWork())
+        await flushRecordingForQuit()
+      if (pendingRecoveryPromise) await pendingRecoveryPromise
+      const deadline = Date.now() + 60_000
+      while (recordingService.hasActiveCapture() || hasPostProcessingWork()) {
+        if (Date.now() >= deadline) throw new Error('Recording finalization has not finished')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    } catch (error) {
+      recordingService.setShutdownPending(false)
+      throw error
+    }
+  }
 
   const feedbackPromptStore = new FeedbackPromptStore()
   const feedbackPromptService = new FeedbackPromptService({
@@ -2254,6 +2382,10 @@ app.whenReady().then(async () => {
 
   createWindow()
 
+  if (isE2E && process.env.AUTODOC_E2E_RECOVER_INTERRUPTED_RECORDINGS === '1') {
+    recoverPendingWork()
+  }
+
   // System tray — show upcoming meetings, open app, quit
   if (!isE2E) {
     const showWindow = () => {
@@ -2267,7 +2399,13 @@ app.whenReady().then(async () => {
         stopRecording: () => {
           if (!recordingService.getState().isRecording) return
           try {
-            stopActiveRecording()
+            void flushRecordingForQuit().catch((error) => {
+              logAutodocFailure({
+                area: 'recording',
+                message: 'Could not stop recording from tray',
+                error
+              })
+            })
           } catch {
             // Failure already logged in recording IPC
           }
@@ -2323,7 +2461,8 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!safeQuit.beforeQuit(event)) return
   isQuitting = true
   ollamaPostWakeScheduler?.cancel()
   ollamaManager?.stop()

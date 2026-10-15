@@ -76,6 +76,23 @@ vi.mock('../autodoc-log', () => ({
 const originalPlatform = process.platform
 
 describe('Auto-updater validity characterization', () => {
+  it('keeps a downloaded update available when active work blocks installation', () => {
+    const prepareForInstall = vi.fn()
+    initAutoUpdater({
+      prepareForInstall,
+      getInstallBlockReason: () => 'Finish your recording first.'
+    })
+    installUpdate()
+    expect(quitAndInstall).not.toHaveBeenCalled()
+    expect(prepareForInstall).not.toHaveBeenCalled()
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({
+        state: 'downloaded',
+        installBlockedReason: 'Finish your recording first.'
+      })
+    )
+  })
   beforeEach(() => {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     vi.clearAllMocks()
@@ -322,5 +339,19 @@ describe('Auto-updater validity characterization', () => {
     vi.advanceTimersByTime(1_000)
 
     expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('releases the recording shutdown lock if native installation fails', () => {
+    const onInstallFailed = vi.fn()
+    initAutoUpdater({ onInstallFailed })
+    quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('installer failed')
+    })
+    installUpdate()
+    expect(onInstallFailed).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenLastCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'error' })
+    )
   })
 })

@@ -197,6 +197,29 @@ describe('App', () => {
     })
   })
 
+  it('keeps Restart disabled until the main process clears its recording or processing block', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'updater:get-status': createUpdateStatus({
+        state: 'downloaded',
+        version: '1.3.1',
+        installBlockedReason: 'Finish your recording before restarting.'
+      })
+    })
+    render(<App />)
+    const restart = await screen.findByRole('button', { name: 'Restart' })
+    expect(restart).toBeDisabled()
+    await userEvent.click(restart)
+    expect(api.invoke).not.toHaveBeenCalledWith('updater:install')
+    act(() =>
+      api.emit('updater:status', createUpdateStatus({ state: 'downloaded', version: '1.3.1' }))
+    )
+    expect(restart).toBeEnabled()
+  })
+
   it('shows the up to date banner in the app banner stack after a manual update check finds no updates', async () => {
     window.location.hash = '#/settings'
     const api = installMockElectronApi({

@@ -30,6 +30,30 @@ describe('startup scan', () => {
     baseDir = await mkdtemp(join(tmpdir(), 'autodoc-startup-scan-'))
   })
 
+  it('recovers old missing-model failures even after their retry budget was exhausted', async () => {
+    const meetingDir = join(baseDir, 'model-not-ready')
+    await mkdir(meetingDir)
+    await writeFile(join(meetingDir, 'mic.webm'), 'audio')
+    await writeFile(
+      join(meetingDir, 'transcript.error'),
+      JSON.stringify({
+        error:
+          'The speech model is missing or incomplete. Select the meeting language in Settings to download it.',
+        retries: 22
+      })
+    )
+    const service = new TranscriptionService(
+      createMockWhisperManager() as any,
+      {} as any,
+      baseDir,
+      {} as any,
+      () => false
+    )
+    const enqueue = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+    await service.scanAndEnqueuePending()
+    expect(enqueue).toHaveBeenCalledWith('model-not-ready', 'recovery-scan')
+  })
+
   it('auto-retries failed segmentation jobs on startup when retries remain', async () => {
     const meetingId = 'meeting-seg-failed'
     const meetingDir = join(baseDir, meetingId)

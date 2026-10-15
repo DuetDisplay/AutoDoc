@@ -77,6 +77,7 @@ export interface UpdateStatus {
   version?: string
   percent?: number
   error?: string
+  installBlockedReason?: string
 }
 
 export interface SearchResult {
@@ -105,6 +106,7 @@ export interface ChatClarificationOption {
 }
 
 export interface IpcSendEvents {
+  'recording:quit-ready': [requestId: string, error?: string]
   'window:minimize': []
   'window:maximize': []
   'window:close': []
@@ -440,10 +442,11 @@ export interface IpcInvokeReturns {
   'e2e:trigger-notes-ready-notification': string
   'updater:get-status': UpdateStatus
   'updater:check': void
-  'updater:install': void
+  'updater:install': { blockedReason?: string }
 }
 
 export interface IpcOnEvents {
+  'recording:prepare-to-quit': [requestId: string]
   'recording:status-changed': [state: RecordingState]
   'recording:entry-updated': [payload: { meetingId: string }]
   'calendar:events-updated': [events: CalendarEvent[]]
