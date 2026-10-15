@@ -172,6 +172,7 @@ function decodeStoredKey(storedValue: string): Buffer | null {
 function loadKeyFromKnownStores(): Buffer | null {
   for (const storePath of getLegacyStorePaths()) {
     const store = readStoreFile(storePath)
+    if (!store) continue
     const backup = store?.[DPAPI_STORE_KEY]
     if (process.platform === 'win32' && typeof backup === 'string') {
       try {
