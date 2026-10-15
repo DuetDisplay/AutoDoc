@@ -3502,10 +3502,7 @@ export class WhisperManager extends EventEmitter {
       // Unknown-size downloads stay indeterminate; callers signal completion by phase.
       if (totalBytes <= 0) reportProgress(0)
       while (true) {
-        if (
-          this.activeSetupLanguage &&
-          this.latestRequestedSetupLanguage !== this.activeSetupLanguage
-        ) {
+        if (this.activeSetupLanguage && this.activeSetupAbort?.signal.aborted) {
           // Keep the partial file: a verified download resumes if this language is picked again.
           void reader.cancel().catch(() => {})
           throw new MeetingLanguageSetupSuperseded()

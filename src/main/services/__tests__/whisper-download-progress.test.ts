@@ -69,6 +69,20 @@ it('reports unknown size once and still finishes writing the asset', async () =>
   expect(progress.mock.calls).toEqual([[0]])
   expect((await readFile(join(root, 'a'))).length).toBe(5000)
 })
+
+it('allows background language downloads when the selected language differs but no cancellation was requested', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(true)))
+  const manager = new WhisperManager() as any
+  manager.activeSetupLanguage = 'fr'
+  manager.latestRequestedSetupLanguage = 'es'
+  manager.activeSetupAbort = new AbortController()
+  await manager.downloadFile(
+    'https://test.invalid/background',
+    join(root, 'background'),
+    'speech model'
+  )
+  expect(await readFile(join(root, 'background'))).toEqual(Buffer.alloc(5000, 42))
+})
 it.each([500, 5000])(
   'retries after a stream error at chunk %i with fresh progress',
   async (failAtChunk) => {

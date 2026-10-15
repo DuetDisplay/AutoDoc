@@ -2247,7 +2247,8 @@ app.whenReady().then(async () => {
     whisperManager,
     () => {
       const language = prefsStore.getMeetingLanguage()
-      if (language === preparedMeetingLanguage) return getCombinedTranscriptionSetupStatus()
+      const status = getCombinedTranscriptionSetupStatus()
+      if (language === preparedMeetingLanguage || status.meetingLanguage === language) return status
       if (meetingLanguageSetupFailure?.language === language) {
         return {
           phase: 'error',
