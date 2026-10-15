@@ -166,6 +166,35 @@ describe('recording IPC source handling', () => {
     await fsp.rm(baseDir, { recursive: true, force: true })
   })
 
+  it('does not label an active recording as wrapping up because of its recovery metadata', async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-active-metadata-'))
+    const meetingDir = path.join(baseDir, 'active')
+    await fsp.mkdir(meetingDir)
+    await fsp.writeFile(path.join(meetingDir, 'mic-00000.webm'), 'audio')
+    vi.mocked(readMetadata).mockResolvedValue({
+      sourceName: 'Meeting',
+      startedAt: Date.now(),
+      stoppedAt: Date.now(),
+      durationSeconds: 0,
+      meetingLanguage: 'fr',
+      isFinalizing: true
+    })
+    registerRecordingIpc(
+      {
+        getState: () => ({ isRecording: true, meetingId: 'active' }),
+        getRecordingsBaseDir: () => baseDir
+      } as any,
+      { getStatus: async () => 'pending' } as any,
+      {} as any,
+      { isConnected: () => false } as any
+    )
+    const list = handle.mock.calls.findLast(([channel]) => channel === 'recording:list')?.[1]
+    const entries = await list()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].isFinalizing).toBe(false)
+    await fsp.rm(baseDir, { recursive: true, force: true })
+  })
+
   it('disables Windows picker thumbnails while requesting app icons', () => {
     expect(getRecordingSourceCaptureOptions('win32')).toEqual({
       types: ['window', 'screen'],
@@ -1589,12 +1618,10 @@ describe('recording IPC meeting language', () => {
       stopRecording: vi.fn(() => options.stopResult),
       getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
-      startRecording: vi
-        .fn()
-        .mockResolvedValue({
-          meetingId: 'meeting-new',
-          dir: options.recordingsDir + '/meeting-new'
-        })
+      startRecording: vi.fn().mockResolvedValue({
+        meetingId: 'meeting-new',
+        dir: options.recordingsDir + '/meeting-new'
+      })
     }
     const whisperManager = {
       ensureReady: vi.fn(),

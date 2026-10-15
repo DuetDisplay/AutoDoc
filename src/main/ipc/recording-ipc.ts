@@ -1590,7 +1590,10 @@ export function registerRecordingIpc(
         segmentedPresence.hasSegmentedAudio
       const hasVideo = videoStat !== null || segmentedPresence.hasSegmentedVideo
       const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
-      const isFinalizing = metadata?.isFinalizing === true
+      const captureState = recordingService.getState()
+      const isFinalizing =
+        metadata?.isFinalizing === true &&
+        !(captureState.isRecording && captureState.meetingId === meetingId)
       const videoStatus = metadata?.videoStatus
       if (
         !hasAudio &&
@@ -2048,7 +2051,10 @@ export function registerRecordingIpc(
     const metadata = (await readMetadata(meetingDir)) ?? pendingMetadata
     const dirStat = await stat(meetingDir).catch(() => null)
     const startedAt = metadata?.startedAt ?? dirStat?.birthtime.getTime() ?? Date.now()
-    const isFinalizing = metadata?.isFinalizing === true
+    const captureState = recordingService.getState()
+    const isFinalizing =
+      metadata?.isFinalizing === true &&
+      !(captureState.isRecording && captureState.meetingId === meetingId)
     // Fallback duration from directory timestamps
     let durationSeconds = metadata?.durationSeconds ?? null
     if (durationSeconds == null && dirStat) {
