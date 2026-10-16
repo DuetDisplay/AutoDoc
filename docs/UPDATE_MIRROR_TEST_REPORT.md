@@ -186,7 +186,8 @@ Worker/secrets APIs reject deployment with "No access to the specified resource"
 and staging R2 deletion returns HTTP 403 / code 10000 "Authentication error".
 Staging D1 access also rejects the account with code 7403.
 The production Worker was not deployed and no staging object was deleted. The browser
-reauthorization attempt timed out; a fresh CLI login is required. Complete staging
+reauthorization attempt timed out. Subsequent inspection established that the
+member had domain-only access; account-level permissions were required. Complete staging
 package/counter/cache cleanup and production health/export checks after access
 is restored; retain permanent staging resources and CI credentials.
 
@@ -194,14 +195,69 @@ These names are isolated from production and staging rollout configuration.
 Do not reset production counters or delete legitimate PostHog events to clean
 up a test.
 
-## Not yet verified or enabled
+## October 14 production preparation and test cleanup
 
-- Final staging package, counter and edge-cache cleanup; blocked by the
-  current Cloudflare CLI resource access error. Local device cleanup passed.
-- Production Worker/custom-domain deployment, health/export checks and feed
-  cutover. Resources and permanent CI credentials are prepared; deployment is
-  blocked by the same access error. No public release/tag was created.
-- First real production mirror import reconciled against D1 after rollout.
+Cloudflare account access is restored. The production Worker deployment from
+October 12 was inspected: its production R2/D1 bindings and export secret are
+present. Health returns HTTP 200; unauthenticated count exports return 401.
+The production database was empty before rollout. GitHub workflow 38610847230
+successfully verified the authenticated production export and importer with
+`dry_run=true`. Production mirror CI was enabled, followed by the build-time
+feed `https://updates.getautodoc.com/stable/`.
+
+All eleven known staging test package/manifest/retention objects were deleted.
+GETs to all four test packages and both stable manifests returned 404 from the
+checking location. The ten October 8 staging counter rows were deleted; a
+subsequent query returned zero rows. Permanent staging resources and credentials
+were retained. No production counter was deleted.
+
+Before replacing the public 1.3.0 assets, workflow 38611115927 saved their genuine
+GitHub counts to PostHog. Existing dashboard queries now retain the latest
+counter per asset ID across snapshot days, including replaced assets. SQL
+fixtures verified six retired plus three replacement downloads total nine;
+repeated snapshots count once, day one totals seven, and unfinished milestones
+stay null. A final genuine GitHub API observation captured eight EXE downloads
+and four legacy Mac updater ZIP downloads before replacement; these snapshots
+were preserved without uploading fixtures or staging events. The installer
+dashboard retained all eight EXE downloads. Legacy Mac ZIPs remain excluded
+from the installer metric.
+
+## October 14 production rebuild completed
+
+The user authorized replacing the published 1.3.0 installers rather than
+publishing another version. Build & Release run 38599709898, attempt 2,
+succeeded at the unchanged tag commit
+`3cacb4faba0103f74bb4a23414f6031908adb367`. Both signed builds passed their
+existing signature checks; macOS notarization passed. Both compiled main
+processes were independently inspected: version 1.3.0, production feed present,
+staging feed absent. All five replacement GitHub assets matched the verified CI
+artifacts by SHA-256 and byte size.
+
+The same CI run reused its signed artifacts for the production mirror, without
+fetching public packages. Its storage plan was 541,201,382 bytes under the
+8,000,000,000-byte cap. Full remote package checksum verification passed before
+both stable manifests advanced. Public manifests returned version 1.3.0 with
+the correct production URLs, SHA-512 values, and sizes:
+
+| Platform | Package bytes | SHA-512 (base64) |
+| --- | ---: | --- |
+| macOS | 414157074 | `t6HOb/LmSzR1EXaIii/x/grtYn2s05WJ/1NVf8XAblCSV5vpV1U5v4bGNqpIb8baj/jZQwEsvFU8kgbjPRAl0g==` |
+| Windows | 127040496 | `jIgT20KsQLOI3QX2NR62CN0gIhjMFdGbbwn/Q2GH/RRDOJLf7/JZrV2m9yu9+eubEWXW2vI6AaRoMchNK9h+2Q==` |
+
+Production reporting run 38613930933 succeeded. Its two manifest snapshots
+matched D1 (one per platform); there were zero package downloads. These
+manifest checks do not enter the download totals. Read-back of the private
+dashboard returned 621 all-time installer/updater downloads, latest total 8,
+GitHub 8, updater 0. Production cleanup dry-run 38612880235 also passed with
+the permanent bucket-scoped credentials. No production counter was deleted.
+
+The rebuilt packages were not installed again during this configuration-only
+rebuild. The prior native Mac/XPS tests remain the installation/update proof.
+Already installed copies of the first 1.3.0 build keep their GitHub feed until
+they install a later version. New downloads use the production hosted feed.
+
+## Remaining follow-up
+- Reconcile the first genuine production updater-package traffic after the next release; manifest/reporting reconciliation is complete.
 - Publishing the privacy clarification to the separate website repository.
 
 See [rollout/runbook](UPDATE_MIRROR.md) and the

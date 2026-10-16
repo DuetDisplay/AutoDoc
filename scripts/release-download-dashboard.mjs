@@ -4,9 +4,9 @@ export const dashboardName = 'AutoDoc Releases'
 export const dashboardDescription =
   'Downloads by route. Update errors are opt-in. Installs are not measured.'
 
-// Asset counters are cumulative. Keep one value per asset on the latest
-// observed release day, including its initial count. Same-day refreshes can
-// deduplicate unchanged assets; never retain only the newest timestamp.
+// Asset counters are cumulative. Keep the latest value for every observed
+// asset ID, including replaced assets: GitHub gives replacement uploads new IDs
+// and resets their counters. Repeated snapshots must never multiply downloads.
 const snapshots = `github_snapshots AS (
   SELECT toString(properties.app_version) AS version,
     toString(properties.asset_id) AS asset,
@@ -27,8 +27,7 @@ const snapshots = `github_snapshots AS (
   SELECT g.version AS version, g.asset AS asset, g.platform AS platform,
     argMax(g.downloads, g.observed_at) AS downloads,
     max(g.published_at) AS published_at
-  FROM github_snapshots g JOIN latest_batches b
-    ON g.version = b.version AND toDate(g.observed_at) = toDate(b.batch_time)
+  FROM github_snapshots g
   GROUP BY g.version, g.asset, g.platform
 ), releases AS (
   SELECT version, max(published_at) AS published_at FROM current_assets GROUP BY version
@@ -107,15 +106,14 @@ const milestones = `periods AS (
   SELECT g.version AS version, m.days AS days, g.asset AS asset,
     argMax(g.downloads, g.observed_at) AS downloads
   FROM github_snapshots g JOIN milestone_batches m
-    ON g.version = m.version AND toDate(g.observed_at) = toDate(m.batch_time)
-      AND g.observed_at <= m.batch_time
+    ON g.version = m.version AND g.observed_at <= m.batch_time
   GROUP BY g.version, m.days, g.asset
 ), milestone_totals AS (
   SELECT version, days, sum(downloads) AS downloads FROM milestone_assets GROUP BY version, days
 )`
 
 const context =
-  "Derived operational reporting. Data Catalog read scope is unavailable. Lifetime totals use each release's latest observed UTC day and latest value per asset, including unchanged assets deduplicated by same-day ingestion. Downloads are GitHub DMG/EXE files, including legacy Windows updates and repeat downloads. Update success is distinct consenting identities per previous/current version pair; errors are reports, not deduplicated attempts. Only published stable release versions are included. Milestones use the latest observed GitHub batch before 24 hours, 7 days, and 14 days, with at most one day of snapshot lag; missing history and unfinished milestones stay null. Installs are not measured. Route totals add GitHub installers and hosted full-package HTTP 200 responses. Hosted retries and interrupted transfers can count again; partial range responses, polls, and HEADs are excluded. The mirror has no production events before rollout; its observed count is zero. Neither route identifies new people. Opt-in update reports overlap with downloads and are never added to them."
+  "Derived operational reporting. Data Catalog read scope is unavailable. Lifetime totals retain the latest counter per asset ID, including replaced assets; repeated snapshots do not multiply downloads. Downloads are GitHub DMG/EXE files, including legacy Windows updates and repeat downloads. Update success is distinct consenting identities per previous/current version pair; errors are reports, not deduplicated attempts. Only published stable release versions are included. Milestones use the latest observed GitHub batch before 24 hours, 7 days, and 14 days, with at most one day of snapshot lag; missing history and unfinished milestones stay null. Installs are not measured. Route totals add GitHub installers and hosted full-package HTTP 200 responses. Hosted retries and interrupted transfers can count again; partial range responses, polls, and HEADs are excluded. The mirror has no production events before rollout; its observed count is zero. Neither route identifies new people. Opt-in update reports overlap with downloads and are never added to them."
 
 function sql(id, shortId, tile, name, query, display, layout) {
   return {
