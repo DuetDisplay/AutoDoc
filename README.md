@@ -26,7 +26,13 @@ Ready-to-use installers are available for Mac and Windows. You do not need to bu
 
 Notes and timestamp playback (short excerpt). [Watch the full 34-second product demo](docs/assets/demo-v1.2/autodoc-demo.mp4).
 
-**New in v1.2.0:** topic-based notes, timestamped playback, PDF/Word/Markdown export, and reliability fixes. [Read the release notes](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.2.0).
+<!-- latest-release:start -->
+
+**New in v1.3.0:** 27 meeting languages and improved meeting notes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
+
+<!-- latest-release:end -->
+
+Language availability depends on your hardware; 8 GB Macs and lower-spec Windows PCs remain English-only. See [meeting language support](https://getautodoc.com/faq#languages).
 
 </div>
 
@@ -55,7 +61,7 @@ AutoDoc is for people who want AI meeting notes without sending meeting content 
 
 Looking for a Granola alternative with local processing and replayable recordings? See [how AutoDoc compares](https://getautodoc.com/granola-alternative).
 
-- **Truly local.** Transcription runs on-device with [NVIDIA NeMo Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) on Windows and Apple [MLX](https://github.com/ml-explore/mlx) Whisper on Apple Silicon. Summaries run through a local [Ollama](https://ollama.com) instance AutoDoc manages on both platforms. No API keys, inference bills, or network round-trips for your audio.
+- **Truly local.** Transcription runs on-device with models selected for your meeting language and hardware. Summaries run through a local [Ollama](https://ollama.com) instance AutoDoc manages on both platforms. No API keys, inference bills, or network round-trips for your audio.
 - **Everything included.** Video playback with timestamp links, Google **and** Microsoft calendar integration, automatic meeting detection, per-event auto-record, and chat-with-your-meetings are all part of the app — not a paid upgrade.
 - **Encrypted at rest.** Recordings and transcripts use AES-256-GCM. When Electron `safeStorage` is available, the encryption key is protected by macOS Keychain or Windows DPAPI; otherwise, it is stored locally without operating-system protection.
 - **Desktop-native.** Lives in your macOS menu bar or Windows system tray, detects meetings as they start, and gets out of your way.
@@ -63,14 +69,15 @@ Looking for a Granola alternative with local processing and replayable recording
 ## What you get
 
 - End-to-end local workflow: detect → record → transcribe → notes → replay key moments → Ask AI
-- Platform-specific transcription: MLX Whisper on Apple Silicon, Parakeet on Windows
+- On-device transcription selected for your meeting language and hardware
 - Optional Google and Microsoft calendars
 - Encrypted local storage, AGPL-3.0 source, no AutoDoc account or AI API keys
 
 ## Features
 
 - **🎙️ Multi-track capture** — records screen, your microphone, and system audio as separate streams.
-- **📝 On-device transcription** — Parakeet TDT 0.6B v3 on Windows; MLX Whisper with `distil-large-v3` on Apple Silicon.
+- **📝 On-device transcription** — English uses Parakeet on Windows and MLX Distil Whisper on Apple Silicon. Other supported languages use Canary or Whisper large-v3-turbo.
+- **Meeting languages** — transcripts, notes, and Ask AI in your selected meeting language, with 27 languages on supported hardware. 8 GB Macs and lower-spec Windows PCs remain English-only.
 - **▶️ Replay key moments** — view the recording in the Transcript tab, or click an available note timestamp to jump to that moment in the video.
 - **Audio source labels** — microphone audio is labeled Me and combined system audio is labeled Them. AutoDoc does not identify individual remote participants.
 - **Editable meeting notes** — get a summary and conversation topics with supporting details. Edit notes and click available timestamps to replay the corresponding moment in the recording.
@@ -132,6 +139,8 @@ Local-first meeting apps need real hardware headroom for on-device transcription
 | **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen Recording**, **Microphone**, and **System Audio Capture** (for remote participant audio) |
 
+**Meeting languages:** 8 GB Macs remain English-only. Settings shows available languages and required model downloads.
+
 **What to expect on 8 GB:** AutoDoc still runs, but it switches to a lower-impact profile — smaller notes model (`llama3.2:3b`), sequential audio processing, and notes after transcription. Expect a longer wait after the meeting. **16 GB+ is recommended for the best experience.**
 
 Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires Apple Silicon — there is no Intel or Rosetta fallback.
@@ -147,6 +156,8 @@ Transcription is built on [MLX](https://github.com/ml-explore/mlx) and requires 
 | **Storage** | **~10 GB free** for first-run model downloads, plus additional space for encrypted recordings |
 | **Network** | Required for the first-run model download. After setup, recording, transcription, and notes work offline. Optional network use later: app/model updates, calendar sync, and opt-in diagnostics. |
 | **Permissions** | **Screen capture**, **Microphone**, and **System Audio** |
+
+**Meeting languages:** 8 GB Windows PCs remain English-only, including machines with a GPU. CPU-only machines with fewer than eight logical processors or less than 16 GB RAM are also English-only. Settings shows availability on your computer.
 
 **What to expect on 8 GB:** AutoDoc still runs, but it uses the smaller notes model (`llama3.2:3b`) and a lower-impact path. Audio sources may be processed sequentially and notes wait until transcription finishes, so expect a longer post-meeting wait. **16 GB+ is recommended for the best experience.** A compatible DirectML GPU can accelerate transcription, but it does not replace the RAM headroom.
 
@@ -184,7 +195,7 @@ Then:
 
 1. On the [latest release](https://github.com/DuetDisplay/AutoDoc/releases/latest), download the Windows `.exe` installer asset.
 2. **Open** the installer and follow the setup prompts.
-3. **Launch** AutoDoc. On first run it walks you through capture permissions and downloads the local Parakeet and Ollama models.
+3. **Launch** AutoDoc. On first run it walks you through capture permissions and downloads the local transcription and Ollama models for your selected meeting language.
 
 ## Build from source
 
@@ -287,7 +298,13 @@ After setup, recording, transcription, and notes work offline.
 No. AutoDoc runs summaries on a local Ollama instance it manages for you. There are no API keys and no per-meeting costs.
 
 **Which models does it use?**
-On Windows, AutoDoc uses Parakeet TDT 0.6B v3 and automatically selects DirectML GPU acceleration or a CPU-optimized model. On Apple Silicon, it uses `distil-large-v3` through MLX Whisper. Notes run on a local Ollama instance. The default notes model is `qwen3:4b-instruct`. Macs with 8 GB of RAM use `llama3.2:3b`. Windows PCs with 8 GB of RAM use it too, including ones with a GPU. Windows CPU machines with fewer than 8 logical processors, or under 16 GB of RAM, also use `llama3.2:3b`. Ask AI answers use that same notes model. Ask AI search uses `qwen3-embedding:0.6b`. After an app update on a machine that uses `qwen3:4b-instruct`, leftover `llama3.1` keeps working until the new notes model is on disk.
+For English, Windows uses Parakeet TDT 0.6B v3 with DirectML GPU acceleration or a CPU-optimized model, and Apple Silicon uses `distil-large-v3` through MLX Whisper. Other supported languages use Canary or Whisper large-v3-turbo, with acceleration and fallback selected for the language and hardware. Notes run on a local Ollama instance. The default notes model is `qwen3:4b-instruct`. Macs with 8 GB of RAM use `llama3.2:3b`. Windows PCs with 8 GB of RAM use it too, including ones with a GPU. Windows CPU machines with fewer than 8 logical processors, or under 16 GB of RAM, also use `llama3.2:3b`. Ask AI answers use that same notes model. Ask AI search uses `qwen3-embedding:0.6b`. After an app update on a machine that uses `qwen3:4b-instruct`, leftover `llama3.1` keeps working until the new notes model is on disk.
+
+**Which meeting languages are supported?**
+AutoDoc supports 27 meeting languages on supported hardware. Choose your language during setup or in Settings; it controls transcription, meeting notes, and Ask AI answers. Settings shows language availability and required model downloads. 8 GB Macs and lower-spec Windows PCs remain English-only. On Windows, CPU-only machines with fewer than eight logical processors or less than 16 GB RAM use the English-only processing profile. See the [language list and requirements](https://getautodoc.com/faq#languages) and [latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest) for language-specific limitations.
+
+**Does AutoDoc include action items in its notes?**
+Action items are currently omitted from generated notes while Next Steps is disabled. Information classified as an action item can also be omitted. Review the recording and transcript when checking follow-up commitments. See the [latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest) for known issues.
 
 **What Mac do I need?**
 An **Apple Silicon Mac** (M1 or later) running macOS 14+, with 8 GB RAM minimum (16 GB+ recommended for the best experience) and ~10 GB free storage for first-run model downloads. On 8 GB, AutoDoc uses a smaller notes model and slower processing. **Intel Macs are not supported.**

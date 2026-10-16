@@ -22,6 +22,11 @@ const requiredMarkers = [
       /\[!\[Latest release\]\(https:\/\/img\.shields\.io\/github\/v\/release\/DuetDisplay\/AutoDoc\?[^)\n]+\)\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)/g
   },
   {
+    description: 'latest release-notes link',
+    pattern:
+      /\[Read the latest release notes\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)/g
+  },
+  {
     description: 'central latest-release download link',
     pattern:
       /^## \[⬇️ View the latest AutoDoc release\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)$/gm
@@ -76,6 +81,13 @@ function matchCount(value, pattern) {
 }
 
 export function verifyReadmeReleaseLinks(readme) {
+  const announcements = readme.match(/^\*\*(?:New in|Latest release)[\s\S]*?(?=\n\s*\n|$)/gm) ?? []
+  for (const announcement of announcements) {
+    if (/https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/tag\//.test(announcement)) {
+      throw new Error('README.md must not contain version-pinned release notes in its announcement')
+    }
+  }
+
   for (const marker of requiredMarkers) {
     const count = matchCount(readme, marker.pattern)
     if (count !== 1) {

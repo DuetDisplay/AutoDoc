@@ -83,6 +83,42 @@ Calendar OAuth and downloadable runtimes require self-hosting config — see
 - By contributing, you agree your contributions are licensed under the project's
   [AGPL-3.0 license](LICENSE).
 
+## Release announcements
+
+The **Update README Release** workflow opens or updates a documentation PR
+with a one-line teaser generated from the latest published stable GitHub
+release notes. It uses the opening summary and feature headings, removes
+product boilerplate and example lists, and limits the teaser to 16 words and
+120 characters. Review the generated wording in the PR. The full release
+notes remain available through `/releases/latest`; no separate summary or
+AI-service credentials are required.
+
+Publishing or editing a release triggers the workflow. A successful
+**Build & Release** run also triggers it because releases published with the
+repository's `GITHUB_TOKEN` do not trigger another release-event workflow.
+It always reads the latest stable release, so editing an older release cannot
+roll the README back. Drafts, prereleases, and release notes without a summary
+or feature headings leave the existing announcement intact. When the source
+phrases are too long, it uses a short release-notes invitation rather than
+cutting a claim mid-sentence.
+
+Review and merge the generated PR through the normal protected-branch
+process. GitHub Actions must be allowed to create pull requests in the
+repository's workflow permissions. The default token may require approval
+to start the generated PR's CI runs. An optional `RELEASE_DOCS_TOKEN` secret
+containing a fine-grained personal access token with Contents and Pull
+requests write access can create the PR without that additional CI approval.
+
+Only the text between `latest-release:start` and `latest-release:end` in
+`README.md` is generated. Keep feature descriptions, requirements, known
+issues, the changelog date, and the website consistent with each release.
+The sync can also be run locally with a GitHub release API response:
+
+```bash
+node scripts/sync-readme-release.mjs --release-json /path/to/release.json
+npm run test:readme-release-links
+```
+
 ## Reporting security issues
 
 Please **do not** file public issues for vulnerabilities. Follow

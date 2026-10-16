@@ -1,6 +1,6 @@
 # AutoDoc — Product Documentation
 
-AutoDoc is a local-first desktop application for macOS and Windows that records meetings, transcribes them on-device, and generates structured AI-powered notes with Ollama. Windows uses NVIDIA NeMo Parakeet as its primary transcription engine; Apple Silicon Macs use MLX Whisper. Meeting content is not sent to a cloud AI service.
+AutoDoc is a local-first desktop application for macOS and Windows that records meetings, transcribes them on-device, and generates structured AI-powered notes with Ollama. English transcription uses NVIDIA NeMo Parakeet on Windows and MLX Distil Whisper on Apple Silicon. Other supported meeting languages use Canary or Whisper large-v3-turbo, selected for the language and hardware. Meeting content is not sent to a cloud AI service.
 
 ---
 
@@ -85,7 +85,7 @@ Before transcription, audio files are prepared independently:
 3. **Result merge**: Timestamped segments are normalized, deduplicated, and merged chronologically.
 4. **Legacy support**: Older recordings that contain a single `audio.webm` file are handled transparently.
 
-### Platform engines
+### English transcription engines
 
 | Platform/profile | Primary engine | Model/device behavior |
 |------------------|----------------|-----------------------|
@@ -93,11 +93,27 @@ Before transcription, audio files are prepared independently:
 | **Windows CPU** | Parakeet | TDT 0.6B v3, INT8 CPU execution |
 | **Apple Silicon** | MLX Whisper | `distil-large-v3` through the bundled Python worker |
 
-On Windows, AutoDoc chooses DirectML acceleration for compatible GPUs with at least 4 GB VRAM. When the GPU is unavailable or setup fails, it switches to the CPU profile. Existing faster-whisper assets and whisper.cpp provide additional compatibility fallbacks; they are not the normal Windows path.
+For English on Windows, AutoDoc chooses DirectML acceleration for compatible GPUs with at least 4 GB VRAM. When the GPU is unavailable or setup fails, it switches to the CPU profile. Existing faster-whisper assets and whisper.cpp provide additional compatibility fallbacks; they are not the normal Windows path.
 
 The Windows processing profile also considers logical processor count, installed memory, and available memory. Lower-spec systems transcribe the two sources sequentially and defer notes generation to reduce peak memory use.
 
 On macOS, the MLX worker exchanges newline-delimited JSON messages with the Electron main process. whisper.cpp remains a compatibility fallback.
+
+### Meeting languages and multilingual engines
+
+AutoDoc supports 27 meeting languages on supported hardware. The language selected during onboarding or in Settings controls transcription, meeting notes, and Ask AI answers. Settings shows per-language availability and remaining first-use model downloads. After the required models download, processing runs locally and works offline.
+
+The shared language definitions select one of three routes:
+
+| Route | Languages | Engine behavior |
+|-------|-----------|-----------------|
+| English | English | Existing Parakeet or MLX Distil Whisper path described above |
+| Canary | Bulgarian, Croatian, Czech, Danish, Dutch, Estonian, Finnish, French, German, Hungarian, Italian, Latvian, Lithuanian, Polish, Portuguese, Romanian, Slovak, Slovenian, Swedish, Ukrainian | Canary-1B-v2; MLX on Apple Silicon, CUDA on eligible Windows NVIDIA GPUs or CPU fallback |
+| Whisper turbo | Greek, Russian, Spanish, Japanese, Simplified Chinese, Korean | Whisper large-v3-turbo; MLX on Apple Silicon, with Windows CUDA, Vulkan, or CPU routes selected according to hardware and readiness |
+
+8 GB Macs and Windows PCs using the small notes model remain English-only. That includes 8 GB Windows PCs with a GPU and CPU-only PCs below eight logical processors or 16 GB RAM. Windows engine availability also depends on setup and self-test results. Settings is the source of availability for the current computer; a generic DirectML recommendation for English does not guarantee acceleration for other languages. Additional meeting languages can require additional model downloads and storage.
+
+See the [latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest) for known language-specific limitations.
 
 Transcription output contains timestamped segments for each source. One recording is processed at a time; additional recordings remain queued.
 

@@ -12,6 +12,7 @@ const requiredLines = [
   `[![Download AutoDoc for macOS](docs/assets/badges/download-macos.svg)](${latestReleaseUrl})`,
   `[![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](${latestReleaseUrl})`,
   `[![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](${latestReleaseUrl})`,
+  `[Read the latest release notes](${latestReleaseUrl}).`,
   `## [⬇️ View the latest AutoDoc release](${latestReleaseUrl})`,
   `## [⬇️ Download AutoDoc for macOS](${latestReleaseUrl})`,
   `1. On the [latest release](${latestReleaseUrl}), download the macOS \`.dmg\` asset.`,
@@ -32,9 +33,9 @@ test('accepts the current repository README without modifying it', () => {
   const after = fs.readFileSync(readmePath, 'utf8')
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /Verified 8 stable README release links/)
+  assert.match(result.stdout, /Verified 9 stable README release links/)
   assert.equal(after, before)
-  assert.equal(verifyReadmeReleaseLinks(before).verifiedMarkerCount, 8)
+  assert.equal(verifyReadmeReleaseLinks(before).verifiedMarkerCount, 9)
 })
 
 for (const requiredLine of requiredLines) {
@@ -73,3 +74,20 @@ for (const forbiddenValue of forbiddenValues) {
     )
   })
 }
+
+test('rejects the stale v1.2.0 release-notes announcement', () => {
+  const staleAnnouncement =
+    '**New in v1.2.0:** topic-based notes, timestamped playback, PDF/Word/Markdown export, and reliability fixes. [Read the release notes](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.2.0).'
+  assert.throws(
+    () => verifyReadmeReleaseLinks(`${canonicalReadme}\n\n${staleAnnouncement}`),
+    /version-pinned release notes in its announcement/
+  )
+})
+
+test('allows an intentional historical release citation outside the announcement', () => {
+  assert.doesNotThrow(() =>
+    verifyReadmeReleaseLinks(
+      `${canonicalReadme}\n\nHistorically verified in [v1.2.0](https://github.com/DuetDisplay/AutoDoc/releases/tag/v1.2.0).`
+    )
+  )
+})
