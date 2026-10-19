@@ -2004,10 +2004,19 @@ export function registerRecordingIpc(
           area: 'recording',
           message: 'Failed to start recording',
           error: err,
+          // Window titles stay out of the log; ids and the source type are enough to triage.
           context: {
             sourceId,
-            sourceName,
-            trackingContext: trackingContext ?? null,
+            sourceType: getSourceTypeFromId(sourceId),
+            hasSourceName: Boolean(sourceName),
+            trackingContext: trackingContext
+              ? {
+                  meetingSourceId: trackingContext.meetingSourceId,
+                  providerId: trackingContext.providerId,
+                  recordingIntent: trackingContext.recordingIntent,
+                  selectionEventId: trackingContext.selectionEventId ?? null
+                }
+              : null,
             meetingLanguage
           }
         })
