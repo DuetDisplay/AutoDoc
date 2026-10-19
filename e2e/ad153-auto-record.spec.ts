@@ -376,15 +376,12 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
     expect(raw).not.toContain('Testing Autodoc')
     expect(raw).not.toContain('Jamal')
 
-    // The e2e calendar fixture bypasses the main-process calendar manager, so the recording
-    // title cannot be resolved here; the remembered source is keyed by the timed event id.
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          JSON.parse(localStorage.getItem('autodoc:recording-source-preferences') ?? '{}')
-        )
+    // A silent automatic start must not teach AutoDoc to prefer that window next time.
+    expect(
+      await page.evaluate(() =>
+        JSON.parse(localStorage.getItem('autodoc:recording-source-preferences') ?? '{}')
       )
-      .toMatchObject({ 'event:timed-meeting': { sourceId: 'window:1:0' } })
+    ).toEqual({})
 
     await notice.getByRole('button', { name: 'Stop' }).click()
     await expect

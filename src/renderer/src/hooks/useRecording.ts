@@ -24,6 +24,14 @@ import type {
   RecordingTrackingContext
 } from '../../../shared/types'
 
+export interface RecordingStartOptions {
+  /**
+   * Remember this window for the meeting. Only set when the user chose it themselves, never for
+   * an automatic start, so a wrong automatic choice cannot outrank the real meeting window later.
+   */
+  rememberSource?: boolean
+}
+
 function getRecordingSourceType(sourceId: string): string {
   return sourceId.split(':', 1)[0] ?? 'unknown'
 }
@@ -101,7 +109,8 @@ export function useRecording() {
       sourceId: string,
       sourceNameParam: string,
       selectionContext?: RecordingSelectionContext,
-      trackingContext?: RecordingTrackingContext | null
+      trackingContext?: RecordingTrackingContext | null,
+      startOptions?: RecordingStartOptions
     ) => {
       if (startPromiseRef.current) {
         return startPromiseRef.current
@@ -132,7 +141,7 @@ export function useRecording() {
             category: 'recording',
             action: 'recording_started'
           })
-          if (selectionContext) {
+          if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
               id: sourceId,
               name: sourceNameParam,
@@ -288,7 +297,8 @@ export function useRecordingActions() {
       sourceId: string,
       sourceNameParam: string,
       selectionContext?: RecordingSelectionContext,
-      trackingContext?: RecordingTrackingContext | null
+      trackingContext?: RecordingTrackingContext | null,
+      startOptions?: RecordingStartOptions
     ) => {
       if (startPromiseRef.current) {
         return startPromiseRef.current
@@ -308,7 +318,7 @@ export function useRecordingActions() {
             trackingContext ?? null
           )
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
-          if (selectionContext) {
+          if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
               id: sourceId,
               name: sourceNameParam,

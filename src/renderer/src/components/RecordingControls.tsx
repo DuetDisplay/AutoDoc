@@ -4,6 +4,7 @@ import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
 import { logPickerOpened, logPickerResult } from '../services/picker-diagnostics'
 import { useToastStore } from '../stores/toast'
+import type { RecordingStartOptions } from '../hooks/useRecording'
 import {
   buildRecordingSelectionContext,
   buildRecordingTrackingContext,
@@ -92,7 +93,8 @@ interface RecordingControlsProps {
     sourceId: string,
     sourceName: string,
     selectionContext?: ReturnType<typeof buildRecordingSelectionContext>,
-    trackingContext?: RecordingTrackingContext | null
+    trackingContext?: RecordingTrackingContext | null,
+    startOptions?: RecordingStartOptions
   ) => Promise<unknown>
   onStopRecording: () => void
   onFetchSources: () => Promise<RecordingSource[]>
@@ -218,7 +220,9 @@ export function RecordingControls({
       source.id,
       source.name,
       selectionContext,
-      buildRecordingTrackingContext(source, detectedSource, selectionContext, trigger)
+      buildRecordingTrackingContext(source, detectedSource, selectionContext, trigger),
+      // The user picked this window, so remember it for the meeting.
+      { rememberSource: true }
     )
   }
 

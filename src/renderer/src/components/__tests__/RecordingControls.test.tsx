@@ -45,7 +45,8 @@ describe('RecordingControls', () => {
       'window:1',
       'Jamal - Duet Display – Slack',
       selectionContext,
-      expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' })
+      expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' }),
+      { rememberSource: true }
     )
     expect(useRecordingPickerStore.getState().isOpen).toBe(false)
   })
@@ -377,7 +378,8 @@ describe('RecordingControls', () => {
         providerId: 'zoom',
         selectionEventId: null,
         recordingIntent: 'meeting'
-      }
+      },
+      { rememberSource: true }
     )
   })
 
@@ -414,7 +416,8 @@ describe('RecordingControls', () => {
         providerId: 'zoom',
         selectionEventId: null,
         recordingIntent: 'meeting'
-      }
+      },
+      { rememberSource: true }
     )
   })
 })
