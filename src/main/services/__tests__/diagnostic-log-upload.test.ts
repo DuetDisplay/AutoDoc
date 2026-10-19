@@ -107,4 +107,21 @@ describe('diagnostic log upload', () => {
     expect(sanitized).not.toContain('QA User')
     expect(parsed.binaryPath).toBe('[home]\\AppData\\Roaming\\AutoDoc\\ollama.exe')
   })
+  it('swallows Go-style byte escapes inside a Windows user name', () => {
+    // Raw stderr (single backslashes) and the JSON-serialized form (doubled backslashes).
+    const single = String.raw`C:\Users\Test\xb3as\AppData\Roaming\AutoDoc\ollama-data\blobs`
+    const doubled = String.raw`C:\\Users\\Test\\xb3as\\AppData\\Roaming\\AutoDoc\\ollama-data\\blobs`
+    const unicode = String.raw`C:\\Users\\Test\\u0142as\\AppData\\Roaming`
+
+    expect(sanitizeDiagnosticLogTail(single)).toBe(
+      String.raw`[home]\AppData\Roaming\AutoDoc\ollama-data\blobs`
+    )
+    expect(sanitizeDiagnosticLogTail(doubled)).toBe(
+      String.raw`[home]\\AppData\\Roaming\\AutoDoc\\ollama-data\\blobs`
+    )
+    expect(sanitizeDiagnosticLogTail(unicode)).toBe(String.raw`[home]\\AppData\\Roaming`)
+    for (const input of [single, doubled, unicode]) {
+      expect(sanitizeDiagnosticLogTail(input)).not.toMatch(/Test|xb3|u0142/)
+    }
+  })
 })

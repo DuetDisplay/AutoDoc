@@ -75,6 +75,44 @@ it.each([
   }
 )
 
+it.each(['win32', 'darwin'] as const)(
+  'reports a model-load 500 on %s without restarting the runtime or retrying',
+  async (platform) => {
+    setPlatform(platform)
+    const recover = vi.fn()
+    const onModelLoadFailure = vi.fn()
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        {
+          error:
+            'llama runner process has terminated: error loading model: llama_model_loader: failed to load model from C:\\x'
+        },
+        { status: 500 }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const provider = new OllamaProvider('http://localhost:11435', 'qwen3:4b-instruct', {
+        recoverRuntimeOnce: recover,
+        onModelLoadFailure
+      })
+      await expect(
+        provider.summarize(
+          'model-load-failure',
+          '[00:00] [Chris] We agreed to launch the customer portal on Friday.'
+        )
+      ).rejects.toThrow(/failed to load model/)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(recover).not.toHaveBeenCalled()
+      expect(onModelLoadFailure).toHaveBeenCalledTimes(1)
+      expect(onModelLoadFailure.mock.calls[0][0]).toContain('failed to load model')
+    } finally {
+      vi.unstubAllGlobals()
+      setPlatform(originalPlatform)
+    }
+  }
+)
+
 function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', {
     configurable: true,

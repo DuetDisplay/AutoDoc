@@ -3,6 +3,7 @@ import { lstat, readdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { MODELS_SUBDIR, PYTHON_ENV_SUBDIR, RECORDING_SUBDIR } from '../../shared/constants'
 import type { AppStorageInfo } from '../../shared/types'
+import { getRelocatedOllamaModelsDir } from './ollama-models-dir'
 
 const LOGS_SUBDIR = 'logs'
 const OLLAMA_DATA_SUBDIR = 'ollama-data'
@@ -12,6 +13,8 @@ export interface StoragePaths {
   recordingsPath: string
   logsPath: string
   managedDownloadPaths: string[]
+  /** Managed downloads kept outside userData (Windows ASCII models directory). */
+  externalManagedDownloadPaths: string[]
 }
 
 export interface PathDiagnostics {
@@ -44,7 +47,10 @@ export function getStoragePaths(): StoragePaths {
       join(userDataPath, MODELS_SUBDIR),
       join(userDataPath, OLLAMA_DATA_SUBDIR),
       join(userDataPath, PYTHON_ENV_SUBDIR)
-    ]
+    ],
+    externalManagedDownloadPaths: [getRelocatedOllamaModelsDir()].filter(
+      (path): path is string => path != null
+    )
   }
 }
 
@@ -98,14 +104,20 @@ async function describePath(targetPath: string): Promise<PathDiagnostics> {
 
 export async function getAppStorageInfo(): Promise<AppStorageInfo> {
   const paths = getStoragePaths()
-  const [recordingsBytes, logsBytes, totalBytes, ...managedSizes] = await Promise.all([
+  const [recordingsBytes, logsBytes, userDataBytes, ...managedSizes] = await Promise.all([
     getPathSize(paths.recordingsPath),
     getPathSize(paths.logsPath),
     getPathSize(paths.userDataPath),
-    ...paths.managedDownloadPaths.map((targetPath) => getPathSize(targetPath))
+    ...[...paths.managedDownloadPaths, ...paths.externalManagedDownloadPaths].map((targetPath) =>
+      getPathSize(targetPath)
+    )
   ])
 
   const downloadedComponentsBytes = managedSizes.reduce((sum, size) => sum + size, 0)
+  const externalBytes = managedSizes
+    .slice(paths.managedDownloadPaths.length)
+    .reduce((sum, size) => sum + size, 0)
+  const totalBytes = userDataBytes + externalBytes
   const otherLocalDataBytes = Math.max(
     0,
     totalBytes - downloadedComponentsBytes - recordingsBytes - logsBytes
@@ -159,8 +171,10 @@ export async function getStorageDiagnostics(
 }
 
 export async function clearDownloadedComponents(): Promise<void> {
-  const { managedDownloadPaths } = getStoragePaths()
+  const { managedDownloadPaths, externalManagedDownloadPaths } = getStoragePaths()
   await Promise.all(
-    managedDownloadPaths.map((targetPath) => rm(targetPath, { recursive: true, force: true }))
+    [...managedDownloadPaths, ...externalManagedDownloadPaths].map((targetPath) =>
+      rm(targetPath, { recursive: true, force: true })
+    )
   )
 }

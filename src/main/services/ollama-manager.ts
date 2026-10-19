@@ -21,6 +21,15 @@ import { getInstalledModelsDir, getInstalledOllamaDataDir } from './dev-runtime-
 import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
+import {
+  createOllamaModelLoadFailedError,
+  isOllamaModelLoadFailureText
+} from './ollama-model-load-failure'
+import {
+  createDefaultOllamaModelsDirDeps,
+  resolveOllamaModelsDir,
+  setRelocatedOllamaModelsDir
+} from './ollama-models-dir'
 import { getMsSinceLastResume } from './ollama-resume'
 import {
   recordOllamaServeStable,
@@ -340,6 +349,8 @@ export class OllamaManager extends EventEmitter {
   private readyPromise: Promise<void> | null = null
   private startPromise: Promise<void> | null = null
   private recoveryPromise: Promise<void> | null = null
+  private resolvedModelsDir: { originalDir: string; promise: Promise<string> } | null = null
+  private modelLoadFailureCount = 0
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
@@ -649,6 +660,38 @@ export class OllamaManager extends EventEmitter {
 
   private getOllamaDataDir(): string {
     return this.getInstalledFallbackOllamaDataDir() ?? join(app.getPath('userData'), 'ollama-data')
+  }
+
+  /**
+   * The models directory handed to Ollama. On Windows a non-ASCII profile path is
+   * replaced by an ASCII one (see ollama-models-dir). Resolved once per process,
+   * before the first spawn, so every reader sees the same directory.
+   */
+  private resolveOllamaDataDir(): Promise<string> {
+    const originalDir = this.getOllamaDataDir()
+    if (this.resolvedModelsDir?.originalDir !== originalDir) {
+      const promise = resolveOllamaModelsDir(
+        originalDir,
+        createDefaultOllamaModelsDirDeps({
+          log: (event) => logAutodocEvent({ area: 'ollama', ...event }),
+          markerPath: join(app.getPath('userData'), 'ollama-models-dir.txt')
+        })
+      ).then((result) => {
+        setRelocatedOllamaModelsDir(result)
+        return result.dir
+      })
+      this.resolvedModelsDir = { originalDir, promise }
+    }
+    return this.resolvedModelsDir.promise
+  }
+
+  /** Count of serve exits caused by the model file failing to load; restarting cannot fix them. */
+  getModelLoadFailureCount(): number {
+    return this.modelLoadFailureCount
+  }
+
+  clearModelLoadFailures(): void {
+    this.modelLoadFailureCount = 0
   }
 
   async isReady(): Promise<boolean> {
@@ -1028,7 +1071,7 @@ export class OllamaManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     await mkdir(this.getModelsDir(), { recursive: true })
     await mkdir(this.getRuntimeDir(), { recursive: true })
-    await mkdir(this.getOllamaDataDir(), { recursive: true })
+    await mkdir(await this.resolveOllamaDataDir(), { recursive: true })
 
     await this.adoptInstalledRuntimeIfAvailable()
 
@@ -1221,7 +1264,8 @@ export class OllamaManager extends EventEmitter {
 
     this.assertStartEpoch(epoch)
 
-    const modelsDir = this.getOllamaDataDir()
+    const modelsDir = await this.resolveOllamaDataDir()
+    this.assertStartEpoch(epoch)
     const proc = spawn(binary, ['serve'], {
       env: {
         ...process.env,
@@ -1400,13 +1444,19 @@ export class OllamaManager extends EventEmitter {
         if (earlyExitAfterReady && !this.stopped) {
           recordOllamaStartFailure()
         }
+        const modelLoadFailed =
+          intentionalKillReason == null && isOllamaModelLoadFailureText(stderr)
+        if (modelLoadFailed) {
+          this.modelLoadFailureCount += 1
+        }
         const exitContext = {
           exitCode: code,
           signal: signal ?? null,
           pid: proc.pid ?? null,
           msSinceLastResume: getMsSinceLastResume(),
           earlyExitAfterReady,
-          msSinceReady
+          msSinceReady,
+          ...(modelLoadFailed ? { modelLoadFailure: true } : {})
         }
         const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
@@ -1445,11 +1495,13 @@ export class OllamaManager extends EventEmitter {
         }
         if (!settled) {
           finish(() => {
-            reject(
+            const exitFailure =
               exitError ??
-                new Error(
-                  `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
-                )
+              new Error(
+                `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
+              )
+            reject(
+              modelLoadFailed ? createOllamaModelLoadFailedError(exitFailure.message) : exitFailure
             )
           })
         }

@@ -45,6 +45,10 @@ import {
 } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
+import {
+  createOllamaRuntimeRecovery,
+  OLLAMA_MODEL_LOAD_FAILED_MESSAGE
+} from './services/ollama-runtime-recovery'
 import { SegmentationService, shouldUseLosslessPresentation } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
@@ -1096,7 +1100,21 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
+  // Set while the notes model is known not to load; the status stays failed until the
+  // user retries, instead of reporting ready just because the serve answers.
+  let ollamaModelLoadLatched = false
+
   const markOllamaSetupReady = (): void => {
+    if (ollamaModelLoadLatched) {
+      if (ollamaSetupState.phase !== 'error') {
+        ollamaSetupState.phase = 'error'
+        ollamaSetupState.percent = 0
+        ollamaSetupState.error = OLLAMA_MODEL_LOAD_FAILED_MESSAGE
+        ollamaSetupState.failedStep = 'model_load'
+        broadcastOllamaStatus()
+      }
+      return
+    }
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
@@ -1119,12 +1137,15 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   }
 
-  const markOllamaSetupFailed = (err: unknown): void => {
+  const markOllamaSetupFailed = (
+    err: unknown,
+    failedStep?: OllamaSetupStatus['failedStep']
+  ): void => {
     ollamaSetupState.phase = 'error'
     ollamaSetupState.percent = 0
     ollamaSetupState.error = err instanceof Error ? err.message : String(err)
     ollamaSetupState.failedStep =
-      lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
+      failedStep ?? (lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase)
     broadcastOllamaStatus()
     logAutodocFailure({
       area: 'ollama',
@@ -1147,8 +1168,14 @@ app.whenReady().then(async () => {
   let ollamaRecoveryPromise: Promise<void> | null = null
 
   // `force` is honored only by the Windows setup coordinator; the non-Windows
-  // path keeps its existing single recovery flow unchanged.
-  const startOllama = (options: { force?: boolean } = {}): Promise<void> => {
+  // path keeps its existing single recovery flow unchanged. `userInitiated` marks an
+  // explicit user retry, which re-enables recovery after a model-load failure.
+  const startOllama = (
+    options: { force?: boolean; userInitiated?: boolean } = {}
+  ): Promise<void> => {
+    if (options.userInitiated) {
+      ollamaRuntimeRecovery.clearModelLoadLatch()
+    }
     if (windowsOllamaSetupCoordinator) {
       return windowsOllamaSetupCoordinator.ensureRunning(options).then(() => {
         markOllamaSetupReady()
@@ -1175,7 +1202,9 @@ app.whenReady().then(async () => {
     return ollamaRecoveryPromise
   }
 
-  const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
+  const ensureOllamaRunning = (
+    options: { force?: boolean; userInitiated?: boolean } = {}
+  ): void => {
     void startOllama(options).catch(() => {})
   }
 
@@ -1193,6 +1222,7 @@ app.whenReady().then(async () => {
         await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
       },
       recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
+      onModelLoadFailure: (message) => ollamaRuntimeRecovery.reportModelLoadFailure(message),
       snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
     })
   const ollamaProvider = createOllamaProvider()
@@ -1228,82 +1258,17 @@ app.whenReady().then(async () => {
       markOllamaSetupReady()
     }
   }
-  const recoverUnhealthyOllamaRuntime = async (): Promise<void> => {
-    const retryDelaysMs = [0, 5_000, 15_000]
-    const recoveryEpoch = managedOllamaManager.captureLifecycleEpoch()
-    managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-    markOllamaSetupStarting()
-    let lastError: Error | null = null
-    for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex++) {
-      const delayMs = retryDelaysMs[attemptIndex]
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-      }
-      try {
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        await managedOllamaManager.recoverUnhealthyRuntime()
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-
-        let serverRunning = await managedOllamaManager.isServerRunning()
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        let hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-
-        // A fresh serve can spend 10+ s discovering GPUs without answering.
-        // Wait for it so the next attempt does not kill a healthy server.
-        if (!(serverRunning && hasNotesModel) && managedOllamaManager.isServeStarting()) {
-          await managedOllamaManager.waitForStartingServe()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          serverRunning = await managedOllamaManager.isServerRunning()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        }
-
-        if (serverRunning && !hasNotesModel) {
-          await managedOllamaManager.startAndPull()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          serverRunning = await managedOllamaManager.isServerRunning()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        }
-        if (serverRunning && hasNotesModel) {
-          markOllamaSetupReady()
-          return
-        }
-        lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
-        logAutodocEvent({
-          area: 'ollama',
-          message: 'ollama recovery attempt not ready',
-          context: {
-            attempt: attemptIndex + 1,
-            serverRunning,
-            hasNotesModel,
-            error: null
-          }
-        })
-      } catch (error) {
-        if (isOllamaStartCancelledError(error)) {
-          throw error
-        }
-        lastError = error instanceof Error ? error : new Error(String(error))
-        logAutodocEvent({
-          area: 'ollama',
-          message: 'ollama recovery attempt not ready',
-          context: {
-            attempt: attemptIndex + 1,
-            serverRunning: null,
-            hasNotesModel: null,
-            error: lastError.message
-          }
-        })
-      }
+  const ollamaRuntimeRecovery = createOllamaRuntimeRecovery({
+    manager: managedOllamaManager,
+    markSetupStarting: markOllamaSetupStarting,
+    markSetupReady: markOllamaSetupReady,
+    markSetupFailed: markOllamaSetupFailed,
+    isCancellationError: isOllamaStartCancelledError,
+    onLatchChange: (latched) => {
+      ollamaModelLoadLatched = latched
     }
-    markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
-    throw lastError ?? new Error('Ollama recovery failed')
-  }
+  })
+  const recoverUnhealthyOllamaRuntime = (): Promise<void> => ollamaRuntimeRecovery.recover()
   const postWakePolicy = getOllamaPostWakePolicy()
   const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
@@ -1374,9 +1339,7 @@ app.whenReady().then(async () => {
     delayMs: postWakePolicy.delayMs,
     retryDelaysMs: postWakePolicy.retryDelaysMs,
     readyHoldMs: postWakePolicy.readyHoldMs,
-    onWakeSucceeded: postWakePolicy.pauseEnabled
-      ? recordOllamaPostWakeCheckSucceeded
-      : undefined,
+    onWakeSucceeded: postWakePolicy.pauseEnabled ? recordOllamaPostWakeCheckSucceeded : undefined,
     onWakeFailed: postWakePolicy.pauseEnabled ? recordOllamaPostWakeCheckFailed : undefined
   })
   const scheduleOllamaCheckAfterWake = (): void => {
@@ -2239,7 +2202,11 @@ app.whenReady().then(async () => {
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
-    markReprocessNotificationPending,
+    (meetingId) => {
+      // A manual notes retry is an explicit user action; allow one fresh attempt.
+      ollamaRuntimeRecovery.clearModelLoadLatch()
+      markReprocessNotificationPending(meetingId)
+    },
     recordingService.getRecordingsBaseDir(),
     () =>
       isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||

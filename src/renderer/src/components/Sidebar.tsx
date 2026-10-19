@@ -36,6 +36,8 @@ export function Sidebar() {
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null)
   const [setupPhase, setSetupPhase] = useState<string | null>(null)
   const [setupPercent, setSetupPercent] = useState(0)
+  // The serve can answer while the notes model cannot be loaded; never call that "connected".
+  const [modelLoadFailed, setModelLoadFailed] = useState(false)
   const [whisperPhase, setWhisperPhase] = useState<string | null>(null)
   const [whisperPercent, setWhisperPercent] = useState(0)
   const [supportAvailable, setSupportAvailable] = useState<boolean | null>(null)
@@ -47,17 +49,21 @@ export function Sidebar() {
   const supportRequestPendingRef = useRef(false)
   const setupPhaseRef = useRef<string | null>(null)
   setupPhaseRef.current = setupPhase
+  const modelLoadFailedRef = useRef(false)
+  modelLoadFailedRef.current = modelLoadFailed
 
   useEffect(() => {
     window.electronAPI.invoke('ollama:get-setup-status').then((status) => {
       setSetupPhase(status.phase)
       setSetupPercent(status.percent)
+      setModelLoadFailed(status.phase === 'error' && status.failedStep === 'model_load')
       if (status.phase === 'ready') setOllamaConnected(true)
     })
 
     const unsub = window.electronAPI.on('ollama:setup-progress', (status) => {
       setSetupPhase(status.phase)
       setSetupPercent(status.percent)
+      setModelLoadFailed(status.phase === 'error' && status.failedStep === 'model_load')
       if (status.phase === 'ready') setOllamaConnected(true)
     })
 
@@ -97,7 +103,7 @@ export function Sidebar() {
     const check = () => {
       window.electronAPI.invoke('ollama:check-status').then((connected) => {
         setOllamaConnected(connected)
-        if (!connected) return
+        if (!connected || modelLoadFailedRef.current) return
         const forceReady = () => {
           setSetupPhase('ready')
           setSetupPercent(100)
@@ -260,6 +266,11 @@ export function Sidebar() {
                   style={{ width: `${setupPhase === 'starting' ? 20 : setupPercent}%` }}
                 />
               </div>
+            </div>
+          ) : modelLoadFailed ? (
+            <div className="flex items-center gap-2 px-2.5 py-2">
+              <div className="w-2 h-2 rounded-full bg-clay" />
+              <span className="text-[11px] text-ink-faint">Notes model unavailable</span>
             </div>
           ) : ollamaConnected !== null ? (
             <div className="flex items-center gap-2 px-2.5 py-2">

@@ -23,7 +23,7 @@ export function registerLlmIpc(
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
   getOllamaSetupStatus: () => OllamaSetupStatus,
-  ensureOllamaRunning: (options?: { force?: boolean }) => void,
+  ensureOllamaRunning: (options?: { force?: boolean; userInitiated?: boolean }) => void,
   startSetupFromStatusCheck = true,
   onManualSegmentationRetry?: (meetingId: string) => void,
   recordingsBaseDir?: string,
@@ -221,6 +221,6 @@ export function registerLlmIpc(
       return
     }
 
-    ensureOllamaRunning({ force: true })
+    ensureOllamaRunning({ force: true, userInitiated: true })
   })
 }

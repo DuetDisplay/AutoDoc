@@ -16,7 +16,9 @@ const SECRET_REPLACEMENTS: Array<[RegExp, string]> = [
 const PATH_PATTERNS = [
   /\/Users\/[^/\s"]+/g,
   // Log entries are sanitized after JSON serialization, where Windows separators are doubled.
-  /[A-Za-z]:\\{1,2}Users\\{1,2}[^\\"]+/gi
+  // The user name may hold Go-style \xNN / \uNNNN byte escapes for non-ASCII characters; the
+  // escape backslashes can be doubled too, so swallow them instead of stopping at them.
+  /[A-Za-z]:\\{1,2}Users\\{1,2}(?:\\{1,2}x[0-9A-Fa-f]{2}|\\{1,2}u[0-9A-Fa-f]{4}|[^\\"])+/gi
 ]
 
 export interface DiagnosticLogAttachment {

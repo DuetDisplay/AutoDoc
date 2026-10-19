@@ -197,6 +197,73 @@ describe('OllamaManager start lifecycle', () => {
     }
   })
 
+  it('classifies a serve that exits loading the model as a non-transient model-load failure', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-model-load-'))
+    try {
+      const { OllamaManager, spawnMock, logAutodocFailure } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      const rejected = expect(started).rejects.toMatchObject({
+        code: 'OLLAMA_MODEL_LOAD_FAILED',
+        message: expect.stringContaining('Ollama exited with code 1')
+      })
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit(
+        'data',
+        Buffer.from(
+          'error loading model: llama_model_loader: failed to load model from C:\\Users\\Test\\xb3as\\AppData\\Roaming\\AutoDoc\\ollama-data\\blobs\\sha256-85e4\n' +
+            'some later unrelated line\n'.repeat(40)
+        )
+      )
+      serveProc.emit('exit', 1, null)
+      await rejected
+
+      expect(manager.getModelLoadFailureCount()).toBe(1)
+      const failure = logAutodocFailure.mock.calls.find(
+        (call) => call[0]?.message === 'ollama server process exited'
+      )
+      expect(failure?.[0].context).toMatchObject({ modelLoadFailure: true })
+      expect(failure?.[0].context.stderrTail).not.toContain('Test')
+
+      manager.clearModelLoadFailures()
+      expect(manager.getModelLoadFailureCount()).toBe(0)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not count an ordinary crash or an app-initiated kill as a model-load failure', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-crash-'))
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager(rootDir)
+      const serveProc = createFakeProcess(4242)
+      spawnMock.mockReturnValue(serveProc)
+
+      const manager = new OllamaManager()
+      manager.latchCpuAccelerator('test')
+      stubStartLifecycle(manager)
+
+      vi.useFakeTimers()
+      const started = manager.start({ forceRespawn: true })
+      const rejected = expect(started).rejects.toThrow(/Ollama exited with code 1/)
+      await vi.advanceTimersByTimeAsync(1000)
+      serveProc.stderr.emit('data', Buffer.from('panic: something else went wrong\n'))
+      serveProc.emit('exit', 1, null)
+      await rejected
+
+      expect(manager.getModelLoadFailureCount()).toBe(0)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('reuses the same healthy tracked serve on a repeated normal start', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-start-reuse-'))
     try {
