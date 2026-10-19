@@ -335,10 +335,34 @@ function isSlackHuddleWindowName(name: string): boolean {
 
 type SlackWindowKind = 'huddle' | 'main' | 'preview' | 'other'
 
+// Slack's sidebar views; the main window takes the view's name as its first title segment.
+const SLACK_MAIN_VIEW_NAMES = new Set([
+  'home',
+  'dms',
+  'activity',
+  'later',
+  'huddles',
+  'threads',
+  'files',
+  'search',
+  'drafts & sent',
+  'canvases',
+  'lists',
+  'directories',
+  'templates',
+  'workflows',
+  'more',
+  'agents',
+  'mentions & reactions',
+  'saved items',
+  'people',
+  'channels'
+])
+
 // Slack titles its main window "<view> (DM|Channel|...) - <workspace> - Slack", sometimes with a
-// "[Main]" marker appended, or "Huddles - <workspace> - Slack" on the Huddles view. The pre-join
-// preview has an empty first segment ("- <workspace> - ... - Slack"). Huddle windows have no
-// parenthesised view marker in their first segment.
+// "[Main]" marker appended, or "<sidebar view> - <workspace> - Slack" (for example "Huddles" or
+// "Activity"). The pre-join preview has an empty first segment ("- <workspace> - ... - Slack").
+// Huddle windows have no parenthesised view marker in their first segment.
 function getSlackWindowKind(name: string): SlackWindowKind {
   const normalizedName = normalizeWindowName(name)
   if (!normalizedName.includes('slack')) return 'other'
@@ -346,7 +370,7 @@ function getSlackWindowKind(name: string): SlackWindowKind {
   if (isSlackHuddleWindowName(name)) return 'huddle'
   if (normalizedName === '-' || normalizedName.startsWith('- ')) return 'preview'
   const firstSegment = normalizedName.split(' - ')[0].trim()
-  if (firstSegment === 'huddles' || /\([^)]+\)$/.test(firstSegment)) return 'main'
+  if (SLACK_MAIN_VIEW_NAMES.has(firstSegment) || /\([^)]+\)$/.test(firstSegment)) return 'main'
   return 'other'
 }
 

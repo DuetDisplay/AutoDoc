@@ -304,6 +304,25 @@ describe('detectMeetingWindow', () => {
         }
       )
 
+      it.each([
+        'Activity - AutoDocTest - Slack',
+        'Home - AutoDocTest - Slack',
+        'DMs - AutoDocTest - Slack'
+      ])('never picks the main window on a sidebar view when it is alone: %s', (title) => {
+        const result = chooseAutoRecordSource([slack('w:view', title)], slackContext)
+        expect(result.confidence).not.toBe('high')
+        expect(result.candidates[0].slackMainWindowName).toBe(true)
+      })
+
+      it('picks the huddle over the main window on a sidebar view', () => {
+        const result = chooseAutoRecordSource(
+          [slack('w:view', 'Activity - AutoDocTest - Slack'), slack('w:huddle', HUDDLE)],
+          slackContext
+        )
+        expect(result.source?.id).toBe('w:huddle')
+        expect(result.confidence).toBe('high')
+      })
+
       it('treats the Huddles view as a main window, not a huddle', () => {
         const result = chooseAutoRecordSource([slack('w:view', HUDDLES_VIEW)], slackContext)
         expect(result.confidence).not.toBe('high')
