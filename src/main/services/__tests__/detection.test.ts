@@ -224,9 +224,7 @@ describe('DetectionService', () => {
     }
     const webContentsSend = vi.fn()
     mocks.getAllWindows.mockReturnValue([{ webContents: { send: webContentsSend } }] as any)
-    mocks.isAutoRecordEnabled.mockImplementation(
-      (eventId: string) => eventId === timed.id
-    )
+    mocks.isAutoRecordEnabled.mockImplementation((eventId: string) => eventId === timed.id)
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['teams.exe'])
 
     const service = new DetectionService(
@@ -1209,5 +1207,125 @@ describe('DetectionService', () => {
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+  })
+
+  describe('auto-record started notice', () => {
+    const startSilentAutoRecord = async (
+      options: { isRecording?: () => boolean; stopRecording?: () => Promise<void> } = {}
+    ): Promise<{ service: DetectionService; requestId: number }> => {
+      setPlatform('win32')
+      const send = vi.fn()
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+      mocks.isAutoRecordEnabled.mockReturnValue(true)
+      mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+      const service = new DetectionService(
+        { getState: () => ({ isRecording: options.isRecording?.() ?? true }) } as never,
+        () => [makeEvent('evt-1', -60_000)],
+        options.stopRecording
+      )
+      ;(service as any).requestAutoRecord('Event evt-1', 'slack', null, false)
+      const payload = send.mock.calls.find(([channel]) => channel === 'detection:auto-record')![1]
+      return { service, requestId: payload.requestId }
+    }
+
+    it('shows a stoppable notice after a silent auto-start', async () => {
+      const { service, requestId } = await startSilentAutoRecord()
+      service.showAutoRecordStartedNotice(requestId)
+
+      expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+      expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'AI Notes Started',
+          body: 'Event evt-1 is being recorded.',
+          bodyTitle: 'Event evt-1',
+          bodySuffix: 'is being recorded.',
+          primaryActionLabel: 'Stop',
+          kind: 'recording-started',
+          autoDismissMs: 15_000,
+          suppressAppActivationWhileVisible: true
+        })
+      )
+      expect(mocks.logAutodocEvent).toHaveBeenCalledWith({
+        area: 'detection',
+        message: 'Auto-record started notice shown',
+        context: { requestId }
+      })
+    })
+
+    it('does not show the notice for a stale request id or when not recording', async () => {
+      const stale = await startSilentAutoRecord()
+      stale.service.showAutoRecordStartedNotice(stale.requestId + 1)
+      expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+
+      const idle = await startSilentAutoRecord({ isRecording: () => false })
+      idle.service.showAutoRecordStartedNotice(idle.requestId)
+      expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    })
+
+    it('does not show the notice when the user confirmed with Start AI Notes', async () => {
+      setPlatform('win32')
+      const send = vi.fn()
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+      mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+      const service = new DetectionService(
+        { getState: () => ({ isRecording: true }) } as never,
+        () => [makeEvent('evt-1', -60_000)]
+      )
+      ;(service as any).showPrompt('Event evt-1', 'slack', null)
+      mocks.showNotificationWindow.mock.calls[0][0].onPrimaryAction()
+      const payload = send.mock.calls.find(([channel]) => channel === 'detection:auto-record')![1]
+      mocks.showNotificationWindow.mockClear()
+
+      service.showAutoRecordStartedNotice(payload.requestId)
+
+      expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    })
+
+    it('still shows the notice when a poll clears the pending request first', async () => {
+      const { service, requestId } = await startSilentAutoRecord()
+      await (service as any).poll()
+      service.showAutoRecordStartedNotice(requestId)
+      expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops through the normal stop path without re-triggering the same call', async () => {
+      let isRecording = true
+      const stopRecording = vi.fn(async () => {
+        isRecording = false
+      })
+      const send = vi.fn()
+      const { service, requestId } = await startSilentAutoRecord({
+        isRecording: () => isRecording,
+        stopRecording
+      })
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+      service.showAutoRecordStartedNotice(requestId)
+      mocks.showNotificationWindow.mock.calls[0][0].onPrimaryAction()
+      await Promise.resolve()
+
+      expect(stopRecording).toHaveBeenCalledTimes(1)
+      expect(mocks.logAutodocEvent).toHaveBeenCalledWith({
+        area: 'detection',
+        message: 'Auto-record stopped from notice',
+        context: { requestId }
+      })
+
+      await (service as any).poll()
+      await (service as any).poll()
+      expect(send).not.toHaveBeenCalledWith('detection:auto-record', expect.anything())
+      expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+    })
+
+    it('hides the notice when the recording stops for another reason', async () => {
+      let isRecording = true
+      const { service, requestId } = await startSilentAutoRecord({
+        isRecording: () => isRecording
+      })
+      service.showAutoRecordStartedNotice(requestId)
+      isRecording = false
+      await (service as any).poll()
+
+      expect(mocks.hideNotificationWindow).toHaveBeenCalledWith('recording-started')
+    })
   })
 })

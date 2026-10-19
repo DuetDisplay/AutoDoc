@@ -147,6 +147,7 @@ describe('App', () => {
     )
     expect(useRecordingPickerStore.getState().isOpen).toBe(false)
     expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+    expect(api.invoke).not.toHaveBeenCalledWith('detection:auto-record-started', expect.anything())
     const decision = api.invoke.mock.calls.find(
       ([channel, logged]) =>
         channel === 'diagnostics:record-action' && logged?.action === 'auto_record_decision'
@@ -211,6 +212,7 @@ describe('App', () => {
       'detection:source-selection-required',
       expect.anything()
     )
+    await waitFor(() => expect(api.invoke).toHaveBeenCalledWith('detection:auto-record-started', 3))
     expect(api.invoke).toHaveBeenCalledWith(
       'diagnostics:record-action',
       expect.objectContaining({

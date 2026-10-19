@@ -182,13 +182,27 @@ function hasTrackedMeetingTitleContinuity(
   return trackedTokens.some((token) => currentTokens.has(token))
 }
 
+function truncateNoticeTitle(title: string, maxLength = 56): string {
+  const trimmed = title.trim()
+  if (trimmed.length <= maxLength) return trimmed
+  return `${trimmed.slice(0, maxLength - 3).trimEnd()}...`
+}
+
 export class DetectionService {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private lastProviderSignalKey = ''
   private promptedCalendarEventId: string | null = null
   private autoRecordPendingUntil = 0
   private autoRecordRequestId = 0
-  private pendingAutoRecord: { payload: DetectionAutoRecordPayload; title: string } | null = null
+  private pendingAutoRecord: {
+    payload: DetectionAutoRecordPayload
+    title: string
+    confirmed: boolean
+  } | null = null
+  // A poll can clear the pending request once recording is live, before the renderer reports
+  // that its silent start finished; keep the request so the notice can still be shown.
+  private settledAutoRecord: { requestId: number; title: string } | null = null
+  private recordingStartedNoticeVisible = false
   private sourceSelectionPending = false
   private pendingAutoStop: AutoStopPendingState | null = null
   private windowMissingPolls = 0
@@ -208,7 +222,8 @@ export class DetectionService {
 
   constructor(
     private recordingService: RecordingService,
-    getCalendarEvents: () => CalendarEvent[]
+    getCalendarEvents: () => CalendarEvent[],
+    private stopRecording: () => Promise<void> = async () => {}
   ) {
     this.getCalendarEvents = getCalendarEvents
   }
@@ -227,6 +242,66 @@ export class DetectionService {
     this.resetAutoStopState()
     this.clearAutoRecordPending()
     hideNotificationWindow('meeting-detection')
+    this.hideRecordingStartedNotice()
+  }
+
+  // Called by the renderer after a silent auto-record start succeeded. The notice is only for
+  // starts the user did not confirm, so they always know AutoDoc is recording and can stop it.
+  showAutoRecordStartedNotice(requestId: number): void {
+    const pending = this.pendingAutoRecord
+    const request =
+      pending?.payload.requestId === requestId
+        ? { title: pending.title, confirmed: pending.confirmed }
+        : this.settledAutoRecord?.requestId === requestId
+          ? { title: this.settledAutoRecord.title, confirmed: false }
+          : null
+    if (!request || request.confirmed) return
+    if (!this.recordingService.getState().isRecording) return
+    this.settledAutoRecord = null
+    // A quick Stop must still count as a manual stop before the next poll sees the recording.
+    this.wasRecording = true
+    const displayTitle = truncateNoticeTitle(request.title)
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Auto-record started notice shown',
+      context: { requestId }
+    })
+    this.recordingStartedNoticeVisible = true
+    showNotificationWindow({
+      title: 'AI Notes Started',
+      body: `${displayTitle} is being recorded.`,
+      bodyTitle: displayTitle,
+      bodySuffix: 'is being recorded.',
+      primaryActionLabel: 'Stop',
+      kind: 'recording-started',
+      autoDismissMs: 15_000,
+      suppressAppActivationWhileVisible: true,
+      onPrimaryAction: () => {
+        this.recordingStartedNoticeVisible = false
+        logAutodocEvent({
+          area: 'detection',
+          message: 'Auto-record stopped from notice',
+          context: { requestId }
+        })
+        this.stopRecording().catch((error) => {
+          logAutodocFailure({
+            area: 'detection',
+            message: 'Could not stop auto-record from notice',
+            error,
+            context: { requestId }
+          })
+        })
+      },
+      onDismiss: () => {
+        this.recordingStartedNoticeVisible = false
+      }
+    })
+  }
+
+  private hideRecordingStartedNotice(): void {
+    if (!this.recordingStartedNoticeVisible) return
+    this.recordingStartedNoticeVisible = false
+    hideNotificationWindow('recording-started')
   }
 
   dismissPrompt(): void {
@@ -325,6 +400,7 @@ export class DetectionService {
       }
 
       this.resetAutoStopState()
+      this.hideRecordingStartedNotice()
 
       if (this.sourceSelectionPending) {
         const observation = await this.getActiveProvider()
@@ -1003,7 +1079,7 @@ export class DetectionService {
       suppressAppActivationWhileVisible: true,
       onPrimaryAction: () => {
         focusMainWindow()
-        this.requestAutoRecord(title, providerId, event)
+        this.requestAutoRecord(title, providerId, event, true)
       },
       onDismiss: () => {}
     })
@@ -1012,7 +1088,7 @@ export class DetectionService {
   private promptForCalendarEvent(event: CalendarEvent, detectedProviderId: string): void {
     const providerId = inferProviderFromMeetingUrl(event.meetingUrl) ?? detectedProviderId
     if (isAutoRecordEnabled(event.id, event.recurringEventId)) {
-      this.requestAutoRecord(event.title, providerId, event)
+      this.requestAutoRecord(event.title, providerId, event, false)
       return
     }
 
@@ -1022,7 +1098,8 @@ export class DetectionService {
   private requestAutoRecord(
     title: string,
     providerId: string | null,
-    event: CalendarEvent | null
+    event: CalendarEvent | null,
+    confirmed: boolean
   ): void {
     const payload: DetectionAutoRecordPayload = {
       requestId: ++this.autoRecordRequestId,
@@ -1031,7 +1108,7 @@ export class DetectionService {
       eventId: event?.id ?? null,
       recurringEventId: event?.recurringEventId ?? null
     }
-    this.pendingAutoRecord = { title, payload }
+    this.pendingAutoRecord = { title, payload, confirmed }
     this.markAutoRecordPending()
     logAutodocEvent({
       area: 'detection',
@@ -1106,6 +1183,13 @@ export class DetectionService {
 
   private clearAutoRecordPending(): void {
     this.autoRecordPendingUntil = 0
+    this.settledAutoRecord =
+      this.pendingAutoRecord && !this.pendingAutoRecord.confirmed
+        ? {
+            requestId: this.pendingAutoRecord.payload.requestId,
+            title: this.pendingAutoRecord.title
+          }
+        : null
     this.pendingAutoRecord = null
     this.sourceSelectionPending = false
   }

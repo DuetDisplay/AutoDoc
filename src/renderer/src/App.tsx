@@ -716,6 +716,7 @@ export default function App() {
                 'auto_record'
               )
             )
+            await window.electronAPI.invoke('detection:auto-record-started', payload.requestId)
             return
           }
 

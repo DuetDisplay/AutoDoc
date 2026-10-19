@@ -1628,7 +1628,12 @@ app.whenReady().then(async () => {
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
-  const detectionService = new DetectionService(recordingService, () => cachedEvents)
+  const detectionService = new DetectionService(
+    recordingService,
+    () => cachedEvents,
+    // Same path as the tray Stop: the renderer runs its normal stop and the meeting is kept.
+    () => flushRecordingForQuit()
+  )
 
   ipcMain.handle('detection:dismiss', () => {
     detectionService.dismissPrompt()
@@ -1636,6 +1641,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('detection:source-selection-required', (_event, requestId: number) => {
     if (getMainWindow()?.webContents !== _event.sender) return
     detectionService.showSourceSelectionPrompt(requestId)
+  })
+  ipcMain.handle('detection:auto-record-started', (_event, requestId: number) => {
+    if (getMainWindow()?.webContents !== _event.sender) return
+    detectionService.showAutoRecordStartedNotice(requestId)
   })
 
   const whisperEngineSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }

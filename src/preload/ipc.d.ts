@@ -235,6 +235,7 @@ export interface IpcInvokeEvents {
   ]
   'detection:dismiss': []
   'detection:source-selection-required': [requestId: number]
+  'detection:auto-record-started': [requestId: number]
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
@@ -400,6 +401,7 @@ export interface IpcInvokeReturns {
   'chat:select-recording-stream': void
   'detection:dismiss': void
   'detection:source-selection-required': void
+  'detection:auto-record-started': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean

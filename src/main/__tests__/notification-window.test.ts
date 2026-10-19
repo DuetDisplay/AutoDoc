@@ -139,7 +139,7 @@ describe('notification window activation suppression', () => {
     setPlatform(originalPlatform)
   })
 
-  it.each(['meeting-detection', 'notes-ready', undefined] as const)(
+  it.each(['meeting-detection', 'notes-ready', 'recording-started', undefined] as const)(
     'protects an unfocused visible macOS window for %s notifications',
     async (kind) => {
       setPlatform('darwin')

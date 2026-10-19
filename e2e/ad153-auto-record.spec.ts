@@ -230,14 +230,12 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
         trackedMeetingProviderId: 'slack'
       })
     expect(await page.getByText('Select the meeting window', { exact: true }).count()).toBe(0)
-    // No "Select window" notification: only the main window exists.
-    expect(session.electronApp.windows().length).toBe(1)
-    expect(
-      await session.electronApp.evaluate(
-        ({ BrowserWindow }) =>
-          BrowserWindow.getAllWindows().filter((window) => !window.isFocusable()).length
-      )
-    ).toBe(0)
+    // No "Select window" notification; the only notification is the started notice.
+    await expect.poll(() => session.electronApp.windows().length).toBe(2)
+    const notice = session.electronApp.windows().find((window) => window !== page)!
+    await expect(notice.getByText('AI Notes Started', { exact: true })).toBeVisible()
+    await expect(notice.getByText('Testing Autodoc is being recorded.')).toBeVisible()
+    await expect(notice.getByRole('button', { name: 'Select window' })).toHaveCount(0)
 
     // The e2e calendar fixture bypasses the main-process calendar manager, so the recording
     // title cannot be resolved here; the remembered source is keyed by the timed event id.
@@ -248,6 +246,18 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
         )
       )
       .toMatchObject({ 'event:timed-meeting': { sourceId: 'window:1:0' } })
+
+    await notice.getByRole('button', { name: 'Stop' }).click()
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.invoke('recording:get-state')))
+      .toMatchObject({ isRecording: false })
+    // The same still-active call must not start another recording.
+    await pollDetection(page, 20_000)
+    expect(
+      await page.evaluate(() => window.electronAPI.invoke('recording:get-state'))
+    ).toMatchObject({
+      isRecording: false
+    })
   } finally {
     await session.cleanup()
   }

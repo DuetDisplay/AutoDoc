@@ -48,7 +48,7 @@ interface NotificationOptions {
   suppressAppActivationWhileVisible?: boolean
 }
 
-export type NotificationKind = 'meeting-detection' | 'notes-ready'
+export type NotificationKind = 'meeting-detection' | 'notes-ready' | 'recording-started'
 
 export function onNotificationActivationSuppressionChange(
   listener: NotificationActivationSuppressionListener
