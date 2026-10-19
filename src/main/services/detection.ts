@@ -189,6 +189,15 @@ function hasTrackedMeetingTitleContinuity(
   return trackedTokens.some((token) => currentTokens.has(token))
 }
 
+// Electron reports a minimized Windows window as focused but not visible, so focus alone does
+// not mean the user can see AutoDoc. Only a visible, un-minimized, focused window counts.
+function isMainWindowForegrounded(): boolean {
+  const mainWindow = getMainWindow()
+  return Boolean(
+    mainWindow && mainWindow.isFocused() && mainWindow.isVisible() && !mainWindow.isMinimized()
+  )
+}
+
 function truncateNoticeTitle(title: string, maxLength = 56): string {
   const trimmed = title.trim()
   if (trimmed.length <= maxLength) return trimmed
@@ -467,7 +476,7 @@ export class DetectionService {
     logAutodocEvent({
       area: 'detection',
       message: 'Meeting window selection required',
-      context: { ...request.payload, mainWindowFocused: getMainWindow()?.isFocused() ?? false }
+      context: { ...request.payload, mainWindowFocused: isMainWindowForegrounded() }
     })
     const openPicker = (): void => {
       if (this.pendingAutoRecord !== request) return
@@ -481,7 +490,7 @@ export class DetectionService {
       })
       this.broadcast('detection:select-window', { ...request.payload })
     }
-    if (getMainWindow()?.isFocused()) {
+    if (isMainWindowForegrounded()) {
       openPicker()
       return
     }

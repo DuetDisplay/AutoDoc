@@ -17,7 +17,13 @@ const mocks = vi.hoisted(() => ({
   getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
   focusMainWindow: vi.fn(() => true),
-  getMainWindow: vi.fn((): { isFocused: () => boolean } => ({ isFocused: () => false })),
+  getMainWindow: vi.fn(
+    (): { isFocused: () => boolean; isVisible: () => boolean; isMinimized: () => boolean } => ({
+      isFocused: () => false,
+      isVisible: () => true,
+      isMinimized: () => false
+    })
+  ),
   execFile: vi.fn()
 }))
 
@@ -105,7 +111,11 @@ describe('DetectionService', () => {
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
     mocks.focusMainWindow.mockReset()
     mocks.focusMainWindow.mockReturnValue(true)
-    mocks.getMainWindow.mockReturnValue({ isFocused: () => false })
+    mocks.getMainWindow.mockReturnValue({
+      isFocused: () => false,
+      isVisible: () => true,
+      isMinimized: () => false
+    })
     mocks.execFile.mockReset()
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, '', '')
@@ -364,7 +374,11 @@ describe('DetectionService', () => {
   it('opens the picker directly when AutoDoc already has focus', async () => {
     setPlatform('win32')
     const send = vi.fn()
-    mocks.getMainWindow.mockReturnValue({ isFocused: () => true })
+    mocks.getMainWindow.mockReturnValue({
+      isFocused: () => true,
+      isVisible: () => true,
+      isMinimized: () => false
+    })
     mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
     mocks.isAutoRecordEnabled.mockReturnValue(true)
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
@@ -380,6 +394,47 @@ describe('DetectionService', () => {
       expect.objectContaining({ eventId: 'timed' })
     )
   })
+
+  it.each([
+    // Windows reports a minimized window as focused but not visible.
+    ['minimized on Windows', { isFocused: true, isVisible: false, isMinimized: true }],
+    [
+      'minimized but still reporting visible',
+      { isFocused: true, isVisible: true, isMinimized: true }
+    ],
+    ['hidden', { isFocused: true, isVisible: false, isMinimized: false }]
+  ])(
+    'shows the Select window banner instead of the picker when AutoDoc is %s but reports focus',
+    async (_label, state) => {
+      setPlatform('win32')
+      const send = vi.fn()
+      mocks.getMainWindow.mockReturnValue({
+        isFocused: () => state.isFocused,
+        isVisible: () => state.isVisible,
+        isMinimized: () => state.isMinimized
+      })
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+      mocks.isAutoRecordEnabled.mockReturnValue(true)
+      mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+      const service = new DetectionService(
+        { getState: () => ({ isRecording: false }) } as never,
+        () => [makeEvent('timed', -60_000)]
+      )
+      await service.debugPollNow()
+      service.showSourceSelectionPrompt(1)
+
+      expect(send).not.toHaveBeenCalledWith('detection:select-window', expect.anything())
+      expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
+        expect.objectContaining({ primaryActionLabel: 'Select window' })
+      )
+      expect(mocks.logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Meeting window selection required',
+          context: expect.objectContaining({ mainWindowFocused: false })
+        })
+      )
+    }
+  )
 
   it('suppresses follow-up prompts while an auto-record start is pending', async () => {
     setPlatform('darwin')
