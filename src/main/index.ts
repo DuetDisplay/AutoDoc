@@ -134,6 +134,7 @@ import {
   recordOllamaPostWakeCheckSucceeded
 } from './services/ollama-start-failures'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
+import { shouldLogRendererDiagnosticToAppLog } from '../shared/diagnostics'
 import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
@@ -614,13 +615,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
     recordRendererDiagnosticAction(payload)
 
-    if (
-      payload.category === 'system' ||
-      payload.category === 'onboarding' ||
-      (payload.category === 'recording' &&
-        (payload.action.startsWith('capture_recovery_') ||
-          payload.action === 'auto_record_decision'))
-    ) {
+    if (shouldLogRendererDiagnosticToAppLog(payload)) {
       logAutodocEvent({
         area: payload.category === 'recording' ? 'recording' : 'app',
         message: `renderer_diagnostic:${payload.action}`,

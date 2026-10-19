@@ -15,6 +15,19 @@ export interface RecordingSelectionContext {
   providerHint: string | null
 }
 
+/** Per-window scoring detail for diagnostics. Never carries the window name. */
+export interface AutoRecordCandidateDiagnostics {
+  sourceType: 'window' | 'screen'
+  score: number
+  method: AutoRecordSourceSelection['method']
+  providerHintMatch: boolean
+  meetingPattern: boolean
+  browser: boolean
+  slackHuddleName: boolean
+  slackMainWindowName: boolean
+  rememberedSource: boolean
+}
+
 export interface AutoRecordSourceSelection {
   source: RecordingSource | null
   confidence: 'high' | 'low' | 'none'
@@ -25,13 +38,22 @@ export interface AutoRecordSourceSelection {
   meetingWindowCount: number
   bestScore: number
   secondBestScore: number | null
+  /** Scored windows, best first, limited to the top AUTO_RECORD_DIAGNOSTIC_CANDIDATES. */
+  candidates: AutoRecordCandidateDiagnostics[]
+  /** Source ids in the same order as `candidates` (ids only, no window names). */
+  candidateSourceIds: string[]
+  /** Index into `candidates` of the chosen source, or null when nothing was chosen. */
+  chosenIndex: number | null
 }
 
 interface ScoredSource {
   source: RecordingSource
   score: number
   method: AutoRecordSourceSelection['method']
+  features: Omit<AutoRecordCandidateDiagnostics, 'sourceType' | 'score' | 'method'>
 }
+
+export const AUTO_RECORD_DIAGNOSTIC_CANDIDATES = 6
 
 const BROWSER_NAME_PATTERNS = [
   /\bsafari\b/i,
@@ -84,7 +106,10 @@ export function chooseAutoRecordSource(
       browserWindowCount: 0,
       meetingWindowCount: 0,
       bestScore: 0,
-      secondBestScore: null
+      secondBestScore: null,
+      candidates: [],
+      candidateSourceIds: [],
+      chosenIndex: null
     }
   }
 
@@ -95,25 +120,37 @@ export function chooseAutoRecordSource(
     .map((source): ScoredSource => {
       let score = 0
       let method: AutoRecordSourceSelection['method'] = 'none'
+      const features: ScoredSource['features'] = {
+        providerHintMatch: false,
+        meetingPattern: false,
+        browser: false,
+        slackHuddleName: false,
+        slackMainWindowName: false,
+        rememberedSource: false
+      }
 
       const preferenceMatch = preference ? getPreferredSourceMatch(source, preference) : null
       if (preferenceMatch) {
         score += preferenceMatch === 'id' ? 150 : 120
+        features.rememberedSource = true
         method = 'remembered_source'
       }
 
       if (isSlackHuddleWindowName(source.name)) {
         score += 110
+        features.slackHuddleName = true
         if (method === 'none') method = 'meeting_pattern'
       }
 
       if (providerHint && matchesProviderHint(source.name, providerHint)) {
         score += 90
+        features.providerHintMatch = true
         if (method === 'none') method = 'provider_hint'
       }
 
       if (isMeetingPatternMatch(source.name)) {
         score += 70
+        features.meetingPattern = true
         if (method === 'none') method = 'meeting_pattern'
       }
 
@@ -121,19 +158,32 @@ export function chooseAutoRecordSource(
       // huddle window; demote it so a huddle window beats it instead of tying.
       if (isSlackMainWindowName(source.name)) {
         score -= SLACK_MAIN_WINDOW_PENALTY
+        features.slackMainWindowName = true
       }
 
       if (isBrowserWindowName(source.name)) {
         score += 20
+        features.browser = true
         if (method === 'none') method = 'browser_window'
       }
 
-      return { source, score, method }
+      return { source, score, method, features }
     })
     .sort((left, right) => right.score - left.score)
 
   const best = scored[0]
   const secondBest = scored[1]
+  const candidates = scored.slice(0, AUTO_RECORD_DIAGNOSTIC_CANDIDATES).map(
+    (entry): AutoRecordCandidateDiagnostics => ({
+      sourceType: 'window',
+      score: entry.score,
+      method: entry.method,
+      ...entry.features
+    })
+  )
+  const candidateSourceIds = scored
+    .slice(0, AUTO_RECORD_DIAGNOSTIC_CANDIDATES)
+    .map((entry) => entry.source.id)
   const scoreGap = secondBest ? best.score - secondBest.score : best.score
 
   if (!best || best.score <= 0) {
@@ -146,7 +196,10 @@ export function chooseAutoRecordSource(
       browserWindowCount,
       meetingWindowCount,
       bestScore: best?.score ?? 0,
-      secondBestScore: secondBest?.score ?? null
+      secondBestScore: secondBest?.score ?? null,
+      candidates,
+      candidateSourceIds,
+      chosenIndex: null
     }
   }
 
@@ -160,7 +213,10 @@ export function chooseAutoRecordSource(
       browserWindowCount,
       meetingWindowCount,
       bestScore: best?.score ?? 0,
-      secondBestScore: secondBest?.score ?? null
+      secondBestScore: secondBest?.score ?? null,
+      candidates,
+      candidateSourceIds,
+      chosenIndex: null
     }
   }
 
@@ -175,7 +231,10 @@ export function chooseAutoRecordSource(
     browserWindowCount,
     meetingWindowCount,
     bestScore: best.score,
-    secondBestScore: secondBest?.score ?? null
+    secondBestScore: secondBest?.score ?? null,
+    candidates,
+    candidateSourceIds,
+    chosenIndex: 0
   }
 }
 
@@ -227,7 +286,8 @@ export function buildRecordingTrackingContext(
     providerId: trackedSource
       ? (selectionContext?.providerHint ?? inferProviderHintFromSourceName(trackedSource.name))
       : null,
-    recordingIntent
+    recordingIntent,
+    selectionEventId: selectionContext?.eventId ?? null
   }
 }
 

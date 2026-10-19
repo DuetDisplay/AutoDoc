@@ -353,7 +353,10 @@ describe('DetectionService', () => {
     const banner = mocks.showNotificationWindow.mock.calls[0][0]
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
     await service.debugPollNow()
-    expect(mocks.hideNotificationWindow).toHaveBeenCalledWith('meeting-detection')
+    expect(mocks.hideNotificationWindow).toHaveBeenCalledWith(
+      'meeting-detection',
+      'provider_signal_changed'
+    )
     banner.onPrimaryAction()
     expect(mocks.focusMainWindow).not.toHaveBeenCalled()
   })
@@ -1325,7 +1328,10 @@ describe('DetectionService', () => {
       isRecording = false
       await (service as any).poll()
 
-      expect(mocks.hideNotificationWindow).toHaveBeenCalledWith('recording-started')
+      expect(mocks.hideNotificationWindow).toHaveBeenCalledWith(
+        'recording-started',
+        'recording_stopped'
+      )
     })
   })
 })

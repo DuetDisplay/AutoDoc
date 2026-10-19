@@ -53,6 +53,7 @@ import { onManualUpdateCheckStarted } from './services/update-check-events'
 import { useCalendarStore } from './stores/calendar'
 import { getSavedSourcePreference } from './services/recording-source-preferences'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import { logPickerOpened } from './services/picker-diagnostics'
 import { useToastStore } from './stores/toast'
 import type { AppRuntimeInfo } from '../../shared/types'
 import { hasCurrentOrImminentMeeting } from './services/feedback-prompt-safety'
@@ -700,22 +701,51 @@ export default function App() {
               meetingWindowCount: selection.meetingWindowCount,
               browserWindowCount: selection.browserWindowCount,
               bestScore: selection.bestScore,
-              secondBestScore: selection.secondBestScore
+              secondBestScore: selection.secondBestScore,
+              eventId: payload.eventId,
+              candidates: selection.candidates,
+              chosenIndex: selection.chosenIndex
             }
           })
 
           if (selection.source && selection.confidence === 'high') {
-            await handleStart(
-              selection.source.id,
-              selection.source.name,
-              selectionContext,
-              buildRecordingTrackingContext(
-                selection.source,
-                selection.source,
+            try {
+              await handleStart(
+                selection.source.id,
+                selection.source.name,
                 selectionContext,
-                'auto_record'
+                buildRecordingTrackingContext(
+                  selection.source,
+                  selection.source,
+                  selectionContext,
+                  'auto_record'
+                )
               )
-            )
+            } catch (startError) {
+              recordPersistentDiagnosticAction({
+                category: 'recording',
+                action: 'auto_record_start_outcome',
+                details: {
+                  outcome: 'failed',
+                  requestId: payload.requestId,
+                  eventId: payload.eventId,
+                  error: (startError instanceof Error
+                    ? startError.message
+                    : String(startError)
+                  ).slice(0, 300)
+                }
+              })
+              throw startError
+            }
+            recordPersistentDiagnosticAction({
+              category: 'recording',
+              action: 'auto_record_start_outcome',
+              details: {
+                outcome: 'started',
+                requestId: payload.requestId,
+                eventId: payload.eventId
+              }
+            })
             await window.electronAPI.invoke('detection:auto-record-started', payload.requestId)
             return
           }
@@ -784,7 +814,17 @@ export default function App() {
             detectedId: selection.source?.id ?? null,
             suggestionLabel: selection.source ? 'Suggested window' : null,
             selectionContext,
-            trigger: 'auto_record'
+            trigger: 'auto_record',
+            scoredSourceIds: selection.candidateSourceIds,
+            requestId: payload.requestId,
+            diagnosticTrigger: 'select_window'
+          })
+          logPickerOpened({
+            trigger: 'select_window',
+            requestId: payload.requestId,
+            eventId: payload.eventId,
+            sourceCount: sources.length,
+            suggestionHighlighted: selection.source !== null
           })
           window.location.hash = ROUTES.upcoming
         } catch (error) {

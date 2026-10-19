@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type { RecordingSource } from '../../../shared/types'
 import type { RecordingSelectionContext } from '../services/window-detection'
 
+export type PickerDiagnosticTrigger = 'manual' | 'auto_record' | 'select_window'
+
 interface RecordingPickerState {
   isOpen: boolean
   title: string
@@ -11,6 +13,10 @@ interface RecordingPickerState {
   suggestionLabel: string | null
   selectionContext: RecordingSelectionContext | null
   trigger: 'manual' | 'auto_record'
+  /** Diagnostics only: ids in score order, the opening request and where the picker came from. */
+  scoredSourceIds: string[]
+  requestId: number | null
+  diagnosticTrigger: PickerDiagnosticTrigger
   openPicker: (params: {
     title: string
     subtitle?: string | null
@@ -19,6 +25,9 @@ interface RecordingPickerState {
     suggestionLabel?: string | null
     selectionContext?: RecordingSelectionContext | null
     trigger?: 'manual' | 'auto_record'
+    scoredSourceIds?: string[]
+    requestId?: number | null
+    diagnosticTrigger?: PickerDiagnosticTrigger
   }) => void
   closePicker: () => void
 }
@@ -32,6 +41,9 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   suggestionLabel: null,
   selectionContext: null,
   trigger: 'manual',
+  scoredSourceIds: [],
+  requestId: null,
+  diagnosticTrigger: 'manual',
 
   openPicker: ({
     title,
@@ -40,7 +52,10 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
     detectedId = null,
     suggestionLabel = null,
     selectionContext = null,
-    trigger = 'manual'
+    trigger = 'manual',
+    scoredSourceIds = [],
+    requestId = null,
+    diagnosticTrigger = trigger
   }) =>
     set({
       isOpen: true,
@@ -50,7 +65,10 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       detectedId,
       suggestionLabel,
       selectionContext,
-      trigger
+      trigger,
+      scoredSourceIds,
+      requestId,
+      diagnosticTrigger
     }),
 
   closePicker: () =>
@@ -61,6 +79,9 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       detectedId: null,
       suggestionLabel: null,
       selectionContext: null,
-      trigger: 'manual'
+      trigger: 'manual',
+      scoredSourceIds: [],
+      requestId: null,
+      diagnosticTrigger: 'manual'
     })
 }))

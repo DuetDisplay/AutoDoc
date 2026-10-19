@@ -5,6 +5,8 @@ let notificationWindow: BrowserWindow | null = null
 let notificationKind: NotificationKind | null = null
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
+// Pending notification for programmatic-hide reporting; cleared once the user acts on it.
+let notifyHidden: ((reason: NotificationHideReason) => void) | null = null
 let suppressAppActivationUntil = 0
 let suppressAppActivationWhileNotificationVisible = false
 type NotificationActivationSuppressionListener = (isSuppressed: boolean) => void
@@ -42,12 +44,16 @@ interface NotificationOptions {
   bodySuffix?: string
   primaryActionLabel: string
   onPrimaryAction: () => void
-  onDismiss: () => void
+  onDismiss: (reason: NotificationDismissReason) => void
+  /** Called when the app (not the user) hides or replaces this notification. */
+  onHidden?: (reason: NotificationHideReason) => void
   kind?: NotificationKind
   autoDismissMs?: number
   suppressAppActivationWhileVisible?: boolean
 }
 
+export type NotificationDismissReason = 'user' | 'timeout'
+export type NotificationHideReason = string
 export type NotificationKind = 'meeting-detection' | 'notes-ready' | 'recording-started'
 
 export function onNotificationActivationSuppressionChange(
@@ -133,6 +139,8 @@ function prepareNotificationDismissal(): () => void {
 export function showNotificationWindow(options: NotificationOptions): void {
   if (notificationWindow) {
     clearAutoDismissTimer()
+    notifyHidden?.('superseded')
+    notifyHidden = null
     cleanupListeners?.()
     cleanupListeners = null
     notificationWindow.close()
@@ -170,10 +178,16 @@ export function showNotificationWindow(options: NotificationOptions): void {
   notificationKind = options.kind ?? null
   setNotificationActivationSuppression(options.suppressAppActivationWhileVisible === true)
 
+  notifyHidden = options.onHidden ?? null
+  const ownNotifyHidden = notifyHidden
+  const clearHiddenNotifier = (): void => {
+    if (notifyHidden === ownNotifyHidden) notifyHidden = null
+  }
   let actionHandled = false
   const handlePrimaryAction = (): void => {
     if (actionHandled) return
     actionHandled = true
+    clearHiddenNotifier()
     clearAutoDismissTimer()
     try {
       options.onPrimaryAction()
@@ -181,25 +195,27 @@ export function showNotificationWindow(options: NotificationOptions): void {
       animateOut()
     }
   }
-  const handleDismiss = (): void => {
+  const handleDismiss = (reason: NotificationDismissReason = 'user'): void => {
     if (actionHandled) return
     actionHandled = true
+    clearHiddenNotifier()
     clearAutoDismissTimer()
     try {
       suppressAppActivationUntil = Date.now() + 1_000
       preserveMainWindowState()
-      options.onDismiss()
+      options.onDismiss(reason)
     } finally {
       animateOut()
     }
   }
 
+  const dismissListener = (): void => handleDismiss('user')
   ipcMain.once('notification:primary-action', handlePrimaryAction)
-  ipcMain.once('notification:dismiss', handleDismiss)
+  ipcMain.once('notification:dismiss', dismissListener)
 
   const cleanup = (): void => {
     ipcMain.removeListener('notification:primary-action', handlePrimaryAction)
-    ipcMain.removeListener('notification:dismiss', handleDismiss)
+    ipcMain.removeListener('notification:dismiss', dismissListener)
   }
   cleanupListeners = cleanup
 
@@ -403,7 +419,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   if (autoDismissMs > 0) {
     autoDismissTimer = setTimeout(() => {
       if (notificationWindow === win) {
-        handleDismiss()
+        handleDismiss('timeout')
       }
     }, autoDismissMs)
   }
@@ -431,12 +447,17 @@ function animateOut(): void {
     })
 }
 
-export function hideNotificationWindow(kind?: NotificationKind): void {
+export function hideNotificationWindow(
+  kind?: NotificationKind,
+  reason: NotificationHideReason = 'unspecified'
+): void {
   if (kind && notificationKind !== kind) {
     return
   }
 
   if (notificationWindow) {
+    notifyHidden?.(reason)
+    notifyHidden = null
     animateOut()
   }
 }

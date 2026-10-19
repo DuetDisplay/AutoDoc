@@ -287,3 +287,77 @@ describe('detectMeetingWindow', () => {
     })
   })
 })
+
+describe('chooseAutoRecordSource diagnostics', () => {
+  const slackSources: RecordingSource[] = [
+    { id: 'window:huddle', name: 'Huddle: Product – Slack', thumbnailDataUrl: '' },
+    { id: 'window:dm', name: 'Jamal (DM) - Duet Display - Slack', thumbnailDataUrl: '' },
+    { id: 'window:chrome', name: 'Testing Autodoc - Google Chrome', thumbnailDataUrl: '' },
+    { id: 'window:code', name: 'Visual Studio Code', thumbnailDataUrl: '' },
+    { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' }
+  ]
+  const context = { eventId: 'evt', recurringEventId: null, providerHint: 'slack' }
+
+  it('exposes per-window features that add up to the score, without window names', () => {
+    const selection = chooseAutoRecordSource(slackSources, context)
+    expect(selection.chosenIndex).toBe(0)
+    expect(selection.candidateSourceIds[0]).toBe('window:huddle')
+    expect(selection.candidates).toHaveLength(4)
+    for (const candidate of selection.candidates) {
+      const expected =
+        (candidate.slackHuddleName ? 110 : 0) +
+        (candidate.providerHintMatch ? 90 : 0) +
+        (candidate.meetingPattern ? 70 : 0) -
+        (candidate.slackMainWindowName ? 60 : 0) +
+        (candidate.browser ? 20 : 0) +
+        (candidate.rememberedSource ? 150 : 0)
+      expect(candidate.score).toBe(expected)
+      expect(candidate.sourceType).toBe('window')
+    }
+    expect(selection.candidates[0]).toMatchObject({
+      slackHuddleName: true,
+      slackMainWindowName: false,
+      providerHintMatch: true
+    })
+    expect(
+      selection.candidates.find((c, i) => selection.candidateSourceIds[i] === 'window:dm')
+    ).toMatchObject({ slackMainWindowName: true, providerHintMatch: true })
+    expect(selection.candidates[0].score).toBe(selection.bestScore)
+    const logged = JSON.stringify(selection.candidates)
+    expect(logged).not.toContain('Jamal')
+    expect(logged).not.toContain('Testing Autodoc')
+  })
+
+  it('flags a remembered source and leaves chosenIndex null for a tie', () => {
+    const remembered = chooseAutoRecordSource(slackSources, context, {
+      sourceId: 'window:code',
+      sourceName: 'Visual Studio Code',
+      updatedAt: 0
+    } as never)
+    expect(remembered.candidates.filter((c) => c.rememberedSource)).toHaveLength(1)
+    expect(remembered.candidates.find((c) => c.rememberedSource)?.method).toBe('remembered_source')
+
+    const tie = chooseAutoRecordSource(
+      [
+        { id: 'window:1', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+        { id: 'window:2', name: 'Jamal - Other Workspace - Slack', thumbnailDataUrl: '' }
+      ],
+      context
+    )
+    expect(tie.source).toBeNull()
+    expect(tie.chosenIndex).toBeNull()
+    expect(tie.candidates.map((c) => c.score)).toEqual([160, 160])
+  })
+
+  it('limits diagnostics to the top six windows', () => {
+    const many = Array.from({ length: 9 }, (_, index) => ({
+      id: `window:${index}`,
+      name: `Zoom Meeting ${index}`,
+      thumbnailDataUrl: ''
+    }))
+    const selection = chooseAutoRecordSource(many, { ...context, providerHint: 'zoom' })
+    expect(selection.candidates).toHaveLength(6)
+    expect(selection.candidateSourceIds).toHaveLength(6)
+    expect(selection.windowCount).toBe(9)
+  })
+})

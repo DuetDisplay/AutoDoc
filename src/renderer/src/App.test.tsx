@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { useRecordingPickerStore } from './stores/recording-picker'
+import { shouldLogRendererDiagnosticToAppLog } from '../../shared/diagnostics'
 import {
   createCalendarAccount,
   createCalendarEvent,
@@ -177,6 +178,120 @@ describe('App', () => {
         providerHint: 'slack'
       }
     })
+  })
+
+  it('logs the QA scenario decision, picker opening and start outcomes without any titles', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [createCalendarAccount()],
+      'calendar:get-events': [createCalendarEvent({ id: 'timed', title: 'Testing Autodoc' })]
+    })
+    recordingMocks.fetchSources.mockResolvedValue([
+      { id: 'window:1', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+      { id: 'window:2', name: 'Jamal - Other Workspace - Slack', thumbnailDataUrl: '' },
+      { id: 'screen:0', name: 'Testing Autodoc', thumbnailDataUrl: '' }
+    ])
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Upcoming' })
+    const payload = {
+      requestId: 7,
+      providerId: 'slack',
+      hasCalendarEvent: true,
+      eventId: 'timed',
+      recurringEventId: null
+    }
+    act(() => api.emit('detection:auto-record', payload))
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
+    )
+    act(() => api.emit('detection:select-window', payload))
+    await waitFor(() => expect(useRecordingPickerStore.getState().isOpen).toBe(true))
+    expect(useRecordingPickerStore.getState()).toMatchObject({
+      requestId: 7,
+      diagnosticTrigger: 'select_window',
+      scoredSourceIds: ['window:1', 'window:2']
+    })
+
+    const recorded = (): Array<{ action: string; details: Record<string, unknown> }> =>
+      api.invoke.mock.calls
+        .filter(([channel]) => channel === 'diagnostics:record-action')
+        .map(([, logged]) => logged)
+    const decision = recorded().find((entry) => entry.action === 'auto_record_decision')!
+    expect(decision.details).toMatchObject({
+      eventId: 'timed',
+      chosenIndex: null,
+      candidates: [
+        expect.objectContaining({ sourceType: 'window', score: 160, providerHintMatch: true }),
+        expect.objectContaining({ sourceType: 'window', score: 160, meetingPattern: true })
+      ]
+    })
+    expect(recorded().find((entry) => entry.action === 'recording_picker_opened')).toMatchObject({
+      details: {
+        trigger: 'select_window',
+        requestId: 7,
+        eventId: 'timed',
+        sourceCount: 3,
+        suggestionHighlighted: false
+      }
+    })
+
+    // A confident window starts and reports the started outcome.
+    recordingMocks.fetchSources.mockResolvedValue([
+      { id: 'window:huddle', name: 'Huddle: Product – Slack', thumbnailDataUrl: '' }
+    ])
+    act(() => api.emit('detection:auto-record', { ...payload, requestId: 8 }))
+    await waitFor(() =>
+      expect(
+        recorded().find((entry) => entry.action === 'auto_record_start_outcome')
+      ).toMatchObject({
+        details: { outcome: 'started', requestId: 8, eventId: 'timed' }
+      })
+    )
+    const everything = JSON.stringify(recorded())
+    expect(everything).not.toContain('Jamal')
+    expect(everything).not.toContain('Testing Autodoc')
+    expect(everything).not.toContain('Huddle:')
+    // Every action must pass the main-process allowlist so it reaches autodocLog.
+    for (const entry of recorded().filter((e) =>
+      ['auto_record_decision', 'auto_record_start_outcome', 'recording_picker_opened'].includes(
+        e.action
+      )
+    )) {
+      expect(shouldLogRendererDiagnosticToAppLog({ category: 'recording', ...entry })).toBe(true)
+    }
+  })
+
+  it('logs a failed auto-record start with the request and event ids', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+    recordingMocks.fetchSources.mockResolvedValue([
+      { id: 'window:huddle', name: 'Huddle: Product – Slack', thumbnailDataUrl: '' }
+    ])
+    recordingMocks.handleStart.mockRejectedValueOnce(new Error('capture exploded'))
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Upcoming' })
+    act(() =>
+      api.emit('detection:auto-record', {
+        requestId: 9,
+        providerId: 'slack',
+        hasCalendarEvent: true,
+        eventId: 'timed',
+        recurringEventId: null
+      })
+    )
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('diagnostics:record-action', {
+        category: 'recording',
+        action: 'auto_record_start_outcome',
+        details: { outcome: 'failed', requestId: 9, eventId: 'timed', error: 'capture exploded' }
+      })
+    )
+    expect(api.invoke).not.toHaveBeenCalledWith('detection:auto-record-started', 9)
   })
 
   it('starts a confidently identified meeting with the detector event even when the UI calendar differs', async () => {

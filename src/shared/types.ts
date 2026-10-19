@@ -330,6 +330,8 @@ export interface RecordingTrackingContext {
   meetingSourceName: string | null
   providerId: string | null
   recordingIntent: RecordingIntent
+  /** Calendar event the renderer's selection context pointed at; used for diagnostics only. */
+  selectionEventId?: string | null
 }
 
 export interface RecordingState {

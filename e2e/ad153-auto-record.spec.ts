@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { CalendarEvent } from '../src/shared/types'
 import {
@@ -7,6 +9,38 @@ import {
   pollDetection,
   setDetectionState
 } from './helpers/electron-app'
+
+interface LoggedEvent {
+  message: string
+  context: Record<string, any> | null
+}
+
+/** Reads the e2e app's autodocLog.log; lines are JSON. */
+function readAutodocLog(userDataDir: string): { raw: string; events: LoggedEvent[] } {
+  let raw = ''
+  try {
+    raw = readFileSync(path.join(userDataDir, 'logs', 'autodocLog.log'), 'utf8')
+  } catch {
+    // The log is written asynchronously; callers poll until the lines they need appear.
+  }
+  const events = raw
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as LoggedEvent)
+  return { raw, events }
+}
+
+function findLogged(
+  userDataDir: string,
+  message: string,
+  match: (context: Record<string, any>) => boolean = () => true
+): Record<string, any> | undefined {
+  return (
+    readAutodocLog(userDataDir).events.find(
+      (event) => event.message === message && match(event.context ?? {})
+    )?.context ?? undefined
+  )
+}
 
 for (const [windowState, action] of [
   ['hidden', 'open'],
@@ -128,6 +162,15 @@ for (const [windowState, action] of [
         const closed = banner.waitForEvent('close')
         await banner.locator('#dismiss').click()
         await closed
+        await expect
+          .poll(() =>
+            findLogged(
+              session.userDataDir,
+              'Notification banner dismissed by user',
+              (c) => c.bannerKind === 'select_window'
+            )
+          )
+          .toBeDefined()
         await pollDetection(page, 20_000)
         expect(await page.getByText('Select the meeting window', { exact: true }).count()).toBe(0)
         expect(
@@ -161,6 +204,43 @@ for (const [windowState, action] of [
           )
         )
         .toMatchObject({ 'event:timed-meeting': { sourceId: 'window:1:0' } })
+      // QA triage evidence: the log explains the banner, the picker and the user's choice.
+      const dir = session.userDataDir
+      await expect
+        .poll(() => findLogged(dir, 'renderer_diagnostic:recording_picker_result')?.details?.result)
+        .toBe('picked')
+      expect(
+        findLogged(dir, 'Notification banner shown', (c) => c.bannerKind === 'select_window')
+      ).toMatchObject({ eventId: 'timed-meeting', providerId: 'slack' })
+      expect(
+        findLogged(
+          dir,
+          'Notification banner primary action clicked',
+          (c) => c.bannerKind === 'select_window'
+        )
+      ).toBeDefined()
+      expect(findLogged(dir, 'renderer_diagnostic:recording_picker_opened')?.details).toMatchObject(
+        {
+          trigger: 'select_window',
+          eventId: 'timed-meeting',
+          sourceCount: 2,
+          suggestionHighlighted: false
+        }
+      )
+      expect(findLogged(dir, 'renderer_diagnostic:recording_picker_result')?.details).toMatchObject(
+        {
+          pickedIndex: expect.any(Number),
+          pickedWasSuggested: false,
+          sourceType: 'window'
+        }
+      )
+      expect(
+        findLogged(
+          dir,
+          'Meeting detection decision',
+          (c) => c.reason === 'auto_record_enabled_for_event'
+        )
+      ).toMatchObject({ eventId: 'timed-meeting', decision: 'auto_record' })
     } finally {
       await session.cleanup()
     }
@@ -236,6 +316,61 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
     await expect(notice.getByText('AI Notes Started', { exact: true })).toBeVisible()
     await expect(notice.getByText('Testing Autodoc is being recorded.')).toBeVisible()
     await expect(notice.getByRole('button', { name: 'Select window' })).toHaveCount(0)
+
+    // One exported autodocLog.log must explain the whole start decision for QA.
+    const dir = session.userDataDir
+    await expect
+      .poll(() => findLogged(dir, 'Recording calendar attachment'))
+      .toMatchObject({
+        phase: 'recording_started',
+        selectionEventId: 'timed-meeting',
+        matchedEventId: 'timed-meeting',
+        matchedIsAllDay: false,
+        matchesSelection: true
+      })
+    expect(findLogged(dir, 'Meeting provider signal appeared')).toMatchObject({
+      providerId: 'slack',
+      activeProcessNames: ['com.tinyspeck.slackmacgap']
+    })
+    const candidates = findLogged(dir, 'Calendar candidates changed')
+    expect(candidates).toMatchObject({
+      chosenEventId: 'timed-meeting',
+      chosenRule: 'only_timed_candidate'
+    })
+    expect(candidates?.candidates).toEqual([
+      expect.objectContaining({ eventId: 'all-day', isAllDay: true, autoRecordEnabled: false }),
+      expect.objectContaining({
+        eventId: 'timed-meeting',
+        isAllDay: false,
+        autoRecordEnabled: true,
+        hasMeetingUrl: false
+      })
+    ])
+    const decision = findLogged(dir, 'renderer_diagnostic:auto_record_decision')?.details
+    expect(decision).toMatchObject({
+      outcome: 'auto_start',
+      eventId: 'timed-meeting',
+      chosenIndex: 0
+    })
+    expect(decision.candidates).toHaveLength(2)
+    expect(decision.candidates[0]).toMatchObject({
+      sourceType: 'window',
+      slackHuddleName: false,
+      slackMainWindowName: false,
+      providerHintMatch: true
+    })
+    expect(decision.candidates[1]).toMatchObject({ slackMainWindowName: true })
+    expect(decision.candidates[0].score).toBeGreaterThan(decision.candidates[1].score)
+    expect(findLogged(dir, 'renderer_diagnostic:auto_record_start_outcome')?.details).toMatchObject(
+      { outcome: 'started', eventId: 'timed-meeting' }
+    )
+    expect(
+      findLogged(dir, 'Notification banner shown', (c) => c.bannerKind === 'recording_started')
+    ).toMatchObject({ eventId: 'timed-meeting' })
+    // No window title, event title, attendee or URL may reach the log.
+    const { raw } = readAutodocLog(dir)
+    expect(raw).not.toContain('Testing Autodoc')
+    expect(raw).not.toContain('Jamal')
 
     // The e2e calendar fixture bypasses the main-process calendar manager, so the recording
     // title cannot be resolved here; the remembered source is keyed by the timed event id.

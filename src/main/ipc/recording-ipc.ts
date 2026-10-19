@@ -15,7 +15,7 @@ import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { logQaGateFinalizingRecovery } from '../services/qa-gate-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
 import { refreshTray } from '../services/tray'
-import { getE2ERecordingSources } from '../services/e2e-fixtures'
+import { getE2ECalendarEvents, getE2ERecordingSources } from '../services/e2e-fixtures'
 import { renameWithRetry, replaceFileWithRetry } from '../services/file-operation-retry'
 import { captureMessage } from '../services/sentry-reporter'
 import { DEFAULT_MEETING_LANGUAGE, type MeetingLanguageCode } from '../../shared/meeting-language'
@@ -135,7 +135,9 @@ export function buildVideoConcatList(
   gapsMs: number[] | null
   timelineSpanMs: number | null
 } {
-  const fileOnlyList = joinConcatList(segmentPaths.map((segmentPath) => concatFileLine(segmentPath)))
+  const fileOnlyList = joinConcatList(
+    segmentPaths.map((segmentPath) => concatFileLine(segmentPath))
+  )
   const noGaps = {
     listFile: fileOnlyList,
     appliedTimelineGaps: false,
@@ -206,6 +208,41 @@ function logRecordingDebug(
   console.log(RECORDING_DEBUG_PREFIX, message, {
     meetingId: meetingId ?? null,
     ...(context ?? {})
+  })
+}
+
+// Diagnostics for "attached to the wrong event": which calendar event the renderer's
+// selection pointed at versus which one matchCalendarEvent picks. Ids and booleans only.
+const recordingSelectionEventIds = new Map<string, string | null>()
+const loggedAttachmentMatches = new Map<string, string | null>()
+
+function logRecordingAttachment(
+  meetingId: string,
+  phase: 'recording_started' | 'calendar_title_resolved',
+  matched: CalendarEvent | null,
+  calendarConnected: boolean
+): void {
+  // Only recordings started in this session have a known selection context.
+  if (!recordingSelectionEventIds.has(meetingId)) return
+  const matchedEventId = matched?.id ?? null
+  const key = `${meetingId}:${phase}`
+  if (loggedAttachmentMatches.has(key) && loggedAttachmentMatches.get(key) === matchedEventId) {
+    return
+  }
+  loggedAttachmentMatches.set(key, matchedEventId)
+  const selectionEventId = recordingSelectionEventIds.get(meetingId) ?? null
+  logAutodocEvent({
+    area: 'recording',
+    message: 'Recording calendar attachment',
+    meetingId,
+    context: {
+      phase,
+      selectionEventId,
+      matchedEventId,
+      matchedIsAllDay: matched ? matched.isAllDay === true : null,
+      matchesSelection: selectionEventId !== null && selectionEventId === matchedEventId,
+      calendarConnected
+    }
   })
 }
 
@@ -764,9 +801,7 @@ function normalizeCaptureSourceError(err: unknown): Error {
   return err instanceof Error ? err : new Error(message)
 }
 
-async function readSegmentTimingEntries(
-  meetingDir: string
-): Promise<SegmentTimingEntry[]> {
+async function readSegmentTimingEntries(meetingDir: string): Promise<SegmentTimingEntry[]> {
   const timingPath = join(meetingDir, 'segment-timings.json')
   const raw = await readFile(timingPath, 'utf-8').catch(() => null)
   if (!raw) {
@@ -1508,6 +1543,7 @@ export function registerRecordingIpc(
 
         const events = await getRecentEventsForMatching()
         const matched = matchCalendarEvent(events, metadata.startedAt)
+        logRecordingAttachment(meetingId, 'calendar_title_resolved', matched, true)
         const calendarTitle = getRecordingDisplayCalendarTitle(metadata, matched)
         if (!calendarTitle) {
           return
@@ -1527,7 +1563,7 @@ export function registerRecordingIpc(
         )
         broadcastEntryUpdated(meetingId)
         logRecordingDebug('background calendar title refresh finished', meetingId, {
-          calendarTitle,
+          hasCalendarTitle: true,
           elapsedMs: Date.now() - refreshStartedAt
         })
       } catch (err) {
@@ -1608,10 +1644,9 @@ export function registerRecordingIpc(
       }
       const startedAt = metadata?.startedAt ?? dirStat.birthtime.getTime()
 
-      const calendarTitle = getRecordingDisplayCalendarTitle(
-        metadata,
-        matchCalendarEvent(recentEvents, startedAt)
-      )
+      const matchedEvent = matchCalendarEvent(recentEvents, startedAt)
+      logRecordingAttachment(meetingId, 'calendar_title_resolved', matchedEvent, true)
+      const calendarTitle = getRecordingDisplayCalendarTitle(metadata, matchedEvent)
       const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
 
       if (!metadata?.customTitle && !calendarTitle) {
@@ -1942,6 +1977,27 @@ export function registerRecordingIpc(
         }
         broadcastState(recordingService.getState())
         refreshTray()
+        recordingSelectionEventIds.set(paths.meetingId, trackingContext?.selectionEventId ?? null)
+        const startedAt = state.startedAt!
+        void (async () => {
+          try {
+            // The e2e calendar fixture bypasses the calendar manager, so read it directly.
+            const connected = isE2E || calendarManager.isConnected()
+            const events = isE2E
+              ? getE2ECalendarEvents()
+              : connected
+                ? await getRecentEventsForMatching()
+                : []
+            logRecordingAttachment(
+              paths.meetingId,
+              'recording_started',
+              matchCalendarEvent(events, startedAt),
+              connected
+            )
+          } catch {
+            // Diagnostics must never affect recording start.
+          }
+        })()
         return paths
       } catch (err) {
         logAutodocFailure({
@@ -2073,6 +2129,7 @@ export function registerRecordingIpc(
       // Calendar fetch failed
     }
 
+    logRecordingAttachment(meetingId, 'calendar_title_resolved', calendarEvent, !isWindows)
     const calendarTitle = getRecordingDisplayCalendarTitle(metadata, calendarEvent)
 
     const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
@@ -2197,7 +2254,9 @@ export function registerRecordingIpc(
           ...(previous?.endOffsetMs !== undefined ? { endOffsetMs: previous.endOffsetMs } : {})
         }
         return [
-          ...existing.filter((entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)),
+          ...existing.filter(
+            (entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)
+          ),
           nextEntry
         ]
       })
@@ -2235,7 +2294,9 @@ export function registerRecordingIpc(
           endOffsetMs: Math.max(0, Math.round(endOffsetMs))
         }
         return [
-          ...existing.filter((entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)),
+          ...existing.filter(
+            (entry) => !(entry.type === type && entry.segmentIndex === segmentIndex)
+          ),
           nextEntry
         ]
       })

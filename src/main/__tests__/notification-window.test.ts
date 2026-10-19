@@ -441,3 +441,55 @@ describe('notification window activation suppression', () => {
     expect(shouldSuppressNotificationActivation()).toBe(false)
   })
 })
+
+describe('notification window dismiss and hide reasons', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mocks.getMainWindow.mockReturnValue(null)
+    mocks.ipcHandlers.clear()
+    mocks.windows.length = 0
+    resetNotificationActivationSuppressionForTests()
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('tells a user dismiss from an auto-dismiss timeout', () => {
+    const userDismiss = vi.fn()
+    showTestNotification({ onDismiss: userDismiss })
+    mocks.ipcHandlers.get('notification:dismiss')?.()
+    expect(userDismiss).toHaveBeenCalledWith('user')
+
+    const timedOut = vi.fn()
+    showTestNotification({ onDismiss: timedOut, autoDismissMs: 100 })
+    vi.advanceTimersByTime(100)
+    expect(timedOut).toHaveBeenCalledWith('timeout')
+  })
+
+  it('reports a programmatic hide once with its reason, and never after a user action', () => {
+    const onHidden = vi.fn()
+    showTestNotification({ kind: 'meeting-detection', onHidden })
+    hideNotificationWindow('recording-started', 'ignored')
+    expect(onHidden).not.toHaveBeenCalled()
+    hideNotificationWindow('meeting-detection', 'call_ended')
+    hideNotificationWindow('meeting-detection', 'call_ended')
+    expect(onHidden).toHaveBeenCalledTimes(1)
+    expect(onHidden).toHaveBeenCalledWith('call_ended')
+
+    const afterClick = vi.fn()
+    showTestNotification({ kind: 'meeting-detection', onHidden: afterClick })
+    mocks.ipcHandlers.get('notification:primary-action')?.()
+    hideNotificationWindow('meeting-detection', 'call_ended')
+    expect(afterClick).not.toHaveBeenCalled()
+  })
+
+  it('reports a replaced notification as superseded', () => {
+    const onHidden = vi.fn()
+    showTestNotification({ onHidden })
+    showTestNotification()
+    expect(onHidden).toHaveBeenCalledWith('superseded')
+  })
+})

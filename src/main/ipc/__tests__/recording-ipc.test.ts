@@ -751,7 +751,10 @@ describe('recording IPC source handling', () => {
         } as any,
         { getStatus: vi.fn(), enqueue: vi.fn() } as any,
         { ensureReady: vi.fn(), getFfmpegPath: vi.fn(() => '/mock/ffmpeg') } as any,
-        { isConnected: vi.fn(() => false), fetchAllRecentEvents: vi.fn().mockResolvedValue([]) } as any
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
       )
 
       const saveStart = handle.mock.calls.find(
@@ -783,21 +786,23 @@ describe('recording IPC source handling', () => {
       await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
       await saveEnd?.(null, 'meeting-timing', 'video', 0, 3000)
 
-      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
-        [{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }]
-      )
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual([{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }])
 
       await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
-      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
-        [{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }]
-      )
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual([{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }])
 
       await Promise.all([
         saveStart?.(null, 'meeting-timing', 'video', 1, 8000),
         saveEnd?.(null, 'meeting-timing', 'video', 1, 12000)
       ])
 
-      expect(JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))).toEqual(
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual(
         expect.arrayContaining([
           { type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 },
           { type: 'video', segmentIndex: 1, offsetMs: 8000, endOffsetMs: 12000 }
@@ -1839,5 +1844,95 @@ describe('buildVideoConcatList', () => {
     expect(result.listFile).toBe(
       ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
     )
+  })
+})
+
+describe('recording calendar attachment diagnostics', () => {
+  const startedAt = new Date(2026, 5, 15, 10, 0).getTime()
+  const timedEvent = {
+    id: 'timed',
+    externalId: 'timed',
+    accountId: 'a',
+    provider: 'google',
+    recurringEventId: null,
+    title: 'Testing Autodoc',
+    startTime: startedAt - 60_000,
+    endTime: startedAt + 60_000,
+    isAllDay: false,
+    attendees: [],
+    meetingUrl: null,
+    autoRecord: 'off',
+    syncedAt: startedAt
+  } as CalendarEvent
+
+  async function startRecordingWith(
+    matched: CalendarEvent | null,
+    selectionEventId: string | null
+  ): Promise<void> {
+    vi.clearAllMocks()
+    vi.mocked(matchCalendarEvent).mockReturnValue(matched)
+    registerRecordingIpc(
+      {
+        getState: vi.fn(() => ({ isRecording: true, startedAt })),
+        startRecording: vi
+          .fn()
+          .mockResolvedValue({ meetingId: `m-${selectionEventId}`, dir: '/tmp' }),
+        stopRecording: vi.fn()
+      } as any,
+      {} as any,
+      {} as any,
+      {
+        isConnected: vi.fn(() => true),
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([timedEvent])
+      } as any
+    )
+    const start = handle.mock.calls.findLast(([channel]) => channel === 'recording:start')?.[1]
+    await start({}, 'window:1', 'Jamal - Slack', {
+      meetingSourceId: 'window:1',
+      meetingSourceName: 'Jamal - Slack',
+      providerId: 'slack',
+      recordingIntent: 'meeting',
+      selectionEventId
+    })
+    await vi.waitFor(() =>
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Recording calendar attachment' })
+      )
+    )
+  }
+
+  it('logs the selection event id, the matched id and whether they agree', async () => {
+    await startRecordingWith(timedEvent, 'timed')
+    expect(logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'recording',
+        message: 'Recording calendar attachment',
+        context: {
+          phase: 'recording_started',
+          selectionEventId: 'timed',
+          matchedEventId: 'timed',
+          matchedIsAllDay: false,
+          matchesSelection: true,
+          calendarConnected: true
+        }
+      })
+    )
+  })
+
+  it('flags a mismatch when the matcher picks a different event, including an all-day one', async () => {
+    await startRecordingWith({ ...timedEvent, id: 'home', isAllDay: true }, 'timed')
+    expect(logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Recording calendar attachment',
+        context: expect.objectContaining({
+          selectionEventId: 'timed',
+          matchedEventId: 'home',
+          matchedIsAllDay: true,
+          matchesSelection: false
+        })
+      })
+    )
+    const everything = JSON.stringify(logAutodocEvent.mock.calls)
+    expect(everything).not.toContain('Testing Autodoc')
   })
 })

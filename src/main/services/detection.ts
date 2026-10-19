@@ -4,7 +4,11 @@ import { BROWSER_PATTERNS, MEETING_APP_PATTERNS } from '../../shared/constants'
 import type { CalendarEvent, DetectionAutoRecordPayload } from '../../shared/types'
 import { selectActiveCalendarEvent } from '../../shared/calendar-selection'
 import type { RecordingService } from './recording'
-import { showNotificationWindow, hideNotificationWindow } from '../notification-window'
+import {
+  showNotificationWindow,
+  hideNotificationWindow,
+  type NotificationKind
+} from '../notification-window'
 import { isAutoRecordEnabled } from './auto-record-store'
 import { getActiveCaptureProcessIdsMac } from './mac-meeting-detector'
 import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
@@ -22,6 +26,9 @@ const WINDOW_MISSING_POLLS_THRESHOLD = 2
 const PROVIDER_MISSING_POLLS_THRESHOLD = 2
 const MEETING_WINDOW_MISSING_POLLS_THRESHOLD = 3
 const isE2E = process.env.AUTODOC_E2E === '1'
+
+type BannerKind = 'start_prompt' | 'select_window' | 'recording_started'
+type DetectionDecision = 'skip' | 'prompt' | 'auto_record'
 
 type AutoStopReason = 'window_closed' | 'mic_idle' | 'provider_gone'
 
@@ -201,7 +208,12 @@ export class DetectionService {
   } | null = null
   // A poll can clear the pending request once recording is live, before the renderer reports
   // that its silent start finished; keep the request so the notice can still be shown.
-  private settledAutoRecord: { requestId: number; title: string } | null = null
+  private settledAutoRecord: {
+    requestId: number
+    title: string
+    eventId: string | null
+    providerId: string | null
+  } | null = null
   private recordingStartedNoticeVisible = false
   private sourceSelectionPending = false
   private pendingAutoStop: AutoStopPendingState | null = null
@@ -215,6 +227,11 @@ export class DetectionService {
   private loggedStrongMeetingProviderGuardBlock = false
   private loggedStrongMeetingMicIdleGuardBlock = false
   private lastAutoStopSignalLogKey = ''
+  // Diagnostic keys so each observation or decision is logged once on change, not every poll.
+  private lastProviderObservationLogKey: string | null = null
+  private lastProviderObservationId: string | null = null
+  private lastCalendarCandidatesLogKey: string | null = null
+  private lastDecisionLogKey = ''
   private suppressedProviderSignalKey = ''
   private suppressedCalendarEventId: string | null = null
   private debugNowOffsetMs = 0
@@ -241,8 +258,8 @@ export class DetectionService {
     }
     this.resetAutoStopState()
     this.clearAutoRecordPending()
-    hideNotificationWindow('meeting-detection')
-    this.hideRecordingStartedNotice()
+    this.hideBanner('meeting-detection', 'service_stopped')
+    this.hideRecordingStartedNotice('service_stopped')
   }
 
   // Called by the renderer after a silent auto-record start succeeded. The notice is only for
@@ -251,9 +268,19 @@ export class DetectionService {
     const pending = this.pendingAutoRecord
     const request =
       pending?.payload.requestId === requestId
-        ? { title: pending.title, confirmed: pending.confirmed }
+        ? {
+            title: pending.title,
+            confirmed: pending.confirmed,
+            eventId: pending.payload.eventId,
+            providerId: pending.payload.providerId
+          }
         : this.settledAutoRecord?.requestId === requestId
-          ? { title: this.settledAutoRecord.title, confirmed: false }
+          ? {
+              title: this.settledAutoRecord.title,
+              confirmed: false,
+              eventId: this.settledAutoRecord.eventId,
+              providerId: this.settledAutoRecord.providerId
+            }
           : null
     if (!request || request.confirmed) return
     if (!this.recordingService.getState().isRecording) return
@@ -267,46 +294,183 @@ export class DetectionService {
       context: { requestId }
     })
     this.recordingStartedNoticeVisible = true
-    showNotificationWindow({
-      title: 'AI Notes Started',
-      body: `${displayTitle} is being recorded.`,
-      bodyTitle: displayTitle,
-      bodySuffix: 'is being recorded.',
-      primaryActionLabel: 'Stop',
-      kind: 'recording-started',
-      autoDismissMs: 15_000,
-      suppressAppActivationWhileVisible: true,
-      onPrimaryAction: () => {
-        this.recordingStartedNoticeVisible = false
-        logAutodocEvent({
-          area: 'detection',
-          message: 'Auto-record stopped from notice',
-          context: { requestId }
-        })
-        this.stopRecording().catch((error) => {
-          logAutodocFailure({
+    this.showBanner(
+      'recording_started',
+      { requestId, eventId: request.eventId, providerId: request.providerId },
+      {
+        title: 'AI Notes Started',
+        body: `${displayTitle} is being recorded.`,
+        bodyTitle: displayTitle,
+        bodySuffix: 'is being recorded.',
+        primaryActionLabel: 'Stop',
+        kind: 'recording-started',
+        autoDismissMs: 15_000,
+        suppressAppActivationWhileVisible: true,
+        onPrimaryAction: () => {
+          this.recordingStartedNoticeVisible = false
+          logAutodocEvent({
             area: 'detection',
-            message: 'Could not stop auto-record from notice',
-            error,
+            message: 'Auto-record stopped from notice',
             context: { requestId }
           })
-        })
-      },
-      onDismiss: () => {
-        this.recordingStartedNoticeVisible = false
+          this.stopRecording().catch((error) => {
+            logAutodocFailure({
+              area: 'detection',
+              message: 'Could not stop auto-record from notice',
+              error,
+              context: { requestId }
+            })
+          })
+        },
+        onDismiss: () => {
+          this.recordingStartedNoticeVisible = false
+        }
       }
-    })
+    )
   }
 
-  private hideRecordingStartedNotice(): void {
+  private hideRecordingStartedNotice(reason = 'recording_stopped'): void {
     if (!this.recordingStartedNoticeVisible) return
     this.recordingStartedNoticeVisible = false
-    hideNotificationWindow('recording-started')
+    this.hideBanner('recording-started', reason)
   }
 
   dismissPrompt(): void {
     this.clearAutoRecordPending()
-    hideNotificationWindow('meeting-detection')
+    this.hideBanner('meeting-detection', 'renderer_dismiss')
+  }
+
+  // Wraps showNotificationWindow so every banner logs how it was shown and how it ended.
+  // Context holds ids and booleans only; titles are deliberately never logged.
+  private showBanner(
+    bannerKind: BannerKind,
+    context: Record<string, unknown>,
+    options: Parameters<typeof showNotificationWindow>[0]
+  ): void {
+    const base = { bannerKind, notificationKind: options.kind ?? null, ...context }
+    logAutodocEvent({ area: 'detection', message: 'Notification banner shown', context: base })
+    showNotificationWindow({
+      ...options,
+      onPrimaryAction: () => {
+        logAutodocEvent({
+          area: 'detection',
+          message: 'Notification banner primary action clicked',
+          context: base
+        })
+        options.onPrimaryAction()
+      },
+      onDismiss: (reason) => {
+        logAutodocEvent({
+          area: 'detection',
+          message:
+            reason === 'timeout'
+              ? 'Notification banner auto-dismissed by timeout'
+              : 'Notification banner dismissed by user',
+          context: base
+        })
+        options.onDismiss(reason)
+      },
+      onHidden: (reason) => {
+        logAutodocEvent({
+          area: 'detection',
+          message: 'Notification banner hidden by app',
+          context: { ...base, reason }
+        })
+      }
+    })
+  }
+
+  private hideBanner(kind: NotificationKind, reason: string): void {
+    hideNotificationWindow(kind, reason)
+  }
+
+  private logProviderObservation(observation: MeetingProviderObservation): void {
+    const activeProcessNames = [...observation.activeIds].sort()
+    const providerId = observation.provider?.id ?? null
+    const key = `${providerId ?? ''}|${observation.detector}|${activeProcessNames.join(',')}`
+    if (key === this.lastProviderObservationLogKey) return
+    const previousProviderId = this.lastProviderObservationId
+    const isFirst = this.lastProviderObservationLogKey === null
+    this.lastProviderObservationLogKey = key
+    this.lastProviderObservationId = providerId
+    let message: string
+    if (providerId && !previousProviderId) message = 'Meeting provider signal appeared'
+    else if (!providerId && previousProviderId) message = 'Meeting provider signal disappeared'
+    else if (providerId) message = 'Meeting provider signal changed'
+    else if (isFirst) message = 'No meeting provider signal'
+    else message = 'Capture processes changed without a meeting provider'
+    logAutodocEvent({
+      area: 'detection',
+      message,
+      context: {
+        providerId,
+        previousProviderId,
+        detector: observation.detector,
+        activeProcessNames
+      }
+    })
+  }
+
+  private logCalendarCandidates(
+    events: CalendarEvent[],
+    now: number,
+    chosen: CalendarEvent | null
+  ): void {
+    const inProgress = events.filter((event) => event.startTime <= now && event.endTime >= now)
+    const candidates = inProgress.map((event) => ({
+      eventId: event.id,
+      recurringEventId: event.recurringEventId ?? null,
+      isAllDay: event.isAllDay === true,
+      autoRecordEnabled: isAutoRecordEnabled(event.id, event.recurringEventId),
+      hasMeetingUrl: Boolean(event.meetingUrl),
+      meetingUrlProvider: inferProviderFromMeetingUrl(event.meetingUrl),
+      startTime: event.startTime,
+      endTime: event.endTime
+    }))
+    const timed = candidates.filter((candidate) => !candidate.isAllDay)
+    let chosenRule: string
+    if (!chosen) {
+      chosenRule = candidates.length === 0 ? 'no_in_progress_event' : 'only_all_day_events'
+    } else if (timed.length === 1) {
+      chosenRule = 'only_timed_candidate'
+    } else if (
+      timed.some((candidate) => candidate.autoRecordEnabled !== timed[0].autoRecordEnabled) &&
+      timed.find((candidate) => candidate.eventId === chosen.id)?.autoRecordEnabled
+    ) {
+      chosenRule = 'auto_record_enabled_preferred'
+    } else {
+      chosenRule = 'latest_start_time'
+    }
+    const chosenEventId = chosen?.id ?? null
+    const key = JSON.stringify({ candidates, chosenEventId })
+    if (key === this.lastCalendarCandidatesLogKey) return
+    this.lastCalendarCandidatesLogKey = key
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Calendar candidates changed',
+      context: {
+        calendarEventCount: events.length,
+        candidateCount: candidates.length,
+        candidates,
+        chosenEventId,
+        chosenRule
+      }
+    })
+  }
+
+  private logDecision(
+    decision: DetectionDecision,
+    reason: string,
+    context: Record<string, unknown> = {}
+  ): void {
+    const key = JSON.stringify({ decision, reason, ...context })
+    if (key === this.lastDecisionLogKey) return
+    this.lastDecisionLogKey = key
+    logAutodocEvent({
+      area: 'detection',
+      message: 'Meeting detection decision',
+      context: { decision, reason, ...context }
+    })
   }
 
   showSourceSelectionPrompt(requestId: number): void {
@@ -335,16 +499,24 @@ export class DetectionService {
       openPicker()
       return
     }
-    showNotificationWindow({
-      title: request.title,
-      body: 'Choose a window.',
-      primaryActionLabel: 'Select window',
-      kind: 'meeting-detection',
-      autoDismissMs: 0,
-      suppressAppActivationWhileVisible: true,
-      onPrimaryAction: openPicker,
-      onDismiss: () => this.clearAutoRecordPending()
-    })
+    this.showBanner(
+      'select_window',
+      {
+        requestId,
+        eventId: request.payload.eventId,
+        providerId: request.payload.providerId
+      },
+      {
+        title: request.title,
+        body: 'Choose a window.',
+        primaryActionLabel: 'Select window',
+        kind: 'meeting-detection',
+        autoDismissMs: 0,
+        suppressAppActivationWhileVisible: true,
+        onPrimaryAction: openPicker,
+        onDismiss: () => this.clearAutoRecordPending()
+      }
+    )
   }
 
   async debugPollNow(advanceMs = 0): Promise<void> {
@@ -357,9 +529,10 @@ export class DetectionService {
       if (this.recordingService.getState().isRecording) {
         this.wasRecording = true
         this.clearAutoRecordPending()
+        this.logDecision('skip', 'recording_in_progress')
         if (!this.shouldUseMeetingAutoStop()) {
           this.resetAutoStopState()
-          hideNotificationWindow('meeting-detection')
+          this.hideBanner('meeting-detection', 'recording_started')
           return
         }
         const windowClosed = await this.isRecordedWindowClosed()
@@ -395,7 +568,7 @@ export class DetectionService {
           this.cancelPendingAutoStop(snapshot)
         }
 
-        hideNotificationWindow('meeting-detection')
+        this.hideBanner('meeting-detection', 'recording_started')
         return
       }
 
@@ -404,23 +577,31 @@ export class DetectionService {
 
       if (this.sourceSelectionPending) {
         const observation = await this.getActiveProvider()
+        this.logProviderObservation(observation)
         const signalKey = observation.provider ? `${observation.provider.id}:mic` : ''
         if (signalKey !== this.lastProviderSignalKey) {
           this.clearAutoRecordPending()
-          hideNotificationWindow('meeting-detection')
+          this.hideBanner('meeting-detection', 'provider_signal_changed')
           this.resetProviderState()
         } else {
+          this.logDecision('skip', 'source_selection_pending', {
+            requestId: this.pendingAutoRecord?.payload.requestId ?? null
+          })
           return
         }
       }
 
       if (this.isAutoRecordPending()) {
-        hideNotificationWindow('meeting-detection')
+        this.logDecision('skip', 'auto_record_pending', {
+          requestId: this.pendingAutoRecord?.payload.requestId ?? null
+        })
+        this.hideBanner('meeting-detection', 'auto_record_pending')
         return
       }
 
       const matchingEvent = this.findInProgressEvent()
       const providerObservation = await this.getActiveProvider()
+      this.logProviderObservation(providerObservation)
       const providerSignalKey = providerObservation.provider
         ? `${providerObservation.provider.id}:mic`
         : ''
@@ -433,10 +614,15 @@ export class DetectionService {
         return
       }
 
-      if (this.hasUpcomingEventSoon()) {
+      const upcomingEvent = this.findUpcomingEventSoon()
+      if (upcomingEvent) {
+        this.logDecision('skip', 'upcoming_event_within_10_min', {
+          upcomingEventId: upcomingEvent.id,
+          providerId: providerObservation.provider?.id ?? null
+        })
         this.promptedCalendarEventId = null
         this.resetProviderState()
-        hideNotificationWindow('meeting-detection')
+        this.hideBanner('meeting-detection', 'upcoming_event_within_10_min')
         return
       }
 
@@ -971,22 +1157,28 @@ export class DetectionService {
     providerSignalKey: string
   ): Promise<void> {
     if (!providerSignalKey) {
+      this.logDecision('skip', 'no_provider_signal', { eventId: event.id })
       if (this.lastProviderSignalKey) {
         this.broadcast('detection:mic-inactive', {})
         this.lastProviderSignalKey = ''
       }
-      hideNotificationWindow('meeting-detection')
+      this.hideBanner('meeting-detection', 'call_ended')
       return
     }
 
+    const providerId = providerSignalKey.split(':')[0]
     if (this.shouldSuppressPrompt(providerSignalKey, event.id)) {
+      this.logDecision('skip', 'suppressed_after_manual_stop', { eventId: event.id, providerId })
       return
     }
 
     const providerJustActivated = providerSignalKey !== this.lastProviderSignalKey
     this.lastProviderSignalKey = providerSignalKey
 
-    if (!providerJustActivated && this.promptedCalendarEventId === event.id) return
+    if (!providerJustActivated && this.promptedCalendarEventId === event.id) {
+      this.logDecision('skip', 'already_prompted_for_event', { eventId: event.id, providerId })
+      return
+    }
 
     this.promptedCalendarEventId = event.id
     this.promptForCalendarEvent(event, providerSignalKey.split(':')[0])
@@ -997,19 +1189,25 @@ export class DetectionService {
     providerSignalKey: string
   ): Promise<void> {
     if (!provider) {
+      this.logDecision('skip', 'no_provider_signal')
       this.resetProviderState()
-      hideNotificationWindow('meeting-detection')
+      this.hideBanner('meeting-detection', 'call_ended')
       return
     }
 
     if (this.shouldSuppressPrompt(providerSignalKey, null)) {
+      this.logDecision('skip', 'suppressed_after_manual_stop', { providerId: provider.id })
       this.lastProviderSignalKey = providerSignalKey
       return
     }
 
-    if (providerSignalKey === this.lastProviderSignalKey) return
+    if (providerSignalKey === this.lastProviderSignalKey) {
+      this.logDecision('skip', 'already_prompted_for_provider_signal', { providerId: provider.id })
+      return
+    }
 
     this.lastProviderSignalKey = providerSignalKey
+    this.logDecision('prompt', 'ad_hoc_provider_signal', { providerId: provider.id })
     this.showPrompt(provider.name, provider.id)
   }
 
@@ -1071,27 +1269,45 @@ export class DetectionService {
   ): void {
     const body = 'Would you like to start AI notes?'
 
-    showNotificationWindow({
-      title,
-      body,
-      primaryActionLabel: 'Start AI Notes',
-      kind: 'meeting-detection',
-      suppressAppActivationWhileVisible: true,
-      onPrimaryAction: () => {
-        focusMainWindow()
-        this.requestAutoRecord(title, providerId, event, true)
+    this.showBanner(
+      'start_prompt',
+      {
+        requestId: null,
+        nextRequestId: this.autoRecordRequestId + 1,
+        eventId: event?.id ?? null,
+        providerId,
+        hasCalendarEvent: event !== null
       },
-      onDismiss: () => {}
-    })
+      {
+        title,
+        body,
+        primaryActionLabel: 'Start AI Notes',
+        kind: 'meeting-detection',
+        suppressAppActivationWhileVisible: true,
+        onPrimaryAction: () => {
+          focusMainWindow()
+          this.requestAutoRecord(title, providerId, event, true)
+        },
+        onDismiss: () => {}
+      }
+    )
   }
 
   private promptForCalendarEvent(event: CalendarEvent, detectedProviderId: string): void {
     const providerId = inferProviderFromMeetingUrl(event.meetingUrl) ?? detectedProviderId
     if (isAutoRecordEnabled(event.id, event.recurringEventId)) {
+      this.logDecision('auto_record', 'auto_record_enabled_for_event', {
+        eventId: event.id,
+        providerId
+      })
       this.requestAutoRecord(event.title, providerId, event, false)
       return
     }
 
+    this.logDecision('prompt', 'calendar_event_without_auto_record', {
+      eventId: event.id,
+      providerId
+    })
     this.showPrompt(event.title, providerId, event)
   }
 
@@ -1113,24 +1329,30 @@ export class DetectionService {
     logAutodocEvent({
       area: 'detection',
       message: 'Auto-record requested',
-      context: { ...payload }
+      context: { ...payload, confirmedByUser: confirmed }
     })
     this.broadcast('detection:auto-record', { ...payload })
   }
 
   private findInProgressEvent(): CalendarEvent | null {
     const now = this.getNow()
-    return selectActiveCalendarEvent(this.getCalendarEvents(), now, (event) =>
+    const events = this.getCalendarEvents()
+    const chosen = selectActiveCalendarEvent(events, now, (event) =>
       isAutoRecordEnabled(event.id, event.recurringEventId)
     )
+    this.logCalendarCandidates(events, now, chosen)
+    return chosen
   }
 
-  private hasUpcomingEventSoon(): boolean {
+  private findUpcomingEventSoon(): CalendarEvent | null {
     const now = this.getNow()
     const events = this.getCalendarEvents()
 
-    return events.some(
-      (event) => !event.isAllDay && event.startTime > now && event.startTime - now < EVENT_WINDOW_MS
+    return (
+      events.find(
+        (event) =>
+          !event.isAllDay && event.startTime > now && event.startTime - now < EVENT_WINDOW_MS
+      ) ?? null
     )
   }
 
@@ -1187,7 +1409,9 @@ export class DetectionService {
       this.pendingAutoRecord && !this.pendingAutoRecord.confirmed
         ? {
             requestId: this.pendingAutoRecord.payload.requestId,
-            title: this.pendingAutoRecord.title
+            title: this.pendingAutoRecord.title,
+            eventId: this.pendingAutoRecord.payload.eventId,
+            providerId: this.pendingAutoRecord.payload.providerId
           }
         : null
     this.pendingAutoRecord = null
