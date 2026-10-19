@@ -43,7 +43,11 @@ import {
   trackMeetingProcessed,
   type MeetingProcessTimes
 } from './services/meeting-processed-analytics'
-import { recordDiagnosticAction, setDiagnosticConsentEnabled } from './services/diagnostic-trail'
+import {
+  recordDiagnosticAction,
+  recordPersistentDiagnosticAction,
+  setDiagnosticConsentEnabled
+} from './services/diagnostic-trail'
 import { updateRendererSentryConsent } from './services/renderer-sentry'
 import { onManualUpdateCheckStarted } from './services/update-check-events'
 import { useCalendarStore } from './stores/calendar'
@@ -680,6 +684,25 @@ export default function App() {
             selectionContext,
             getSavedSourcePreference(selectionContext)
           )
+          const startsAutomatically = selection.source !== null && selection.confidence === 'high'
+          // Persistent so the outcome reaches the app log without analytics consent.
+          recordPersistentDiagnosticAction({
+            category: 'recording',
+            action: 'auto_record_decision',
+            details: {
+              requestId: payload.requestId,
+              outcome: startsAutomatically ? 'auto_start' : 'selection_required',
+              hasCalendarEvent,
+              providerHint: selection.providerHint,
+              selectionMethod: selection.method,
+              selectionConfidence: selection.confidence,
+              windowCount: selection.windowCount,
+              meetingWindowCount: selection.meetingWindowCount,
+              browserWindowCount: selection.browserWindowCount,
+              bestScore: selection.bestScore,
+              secondBestScore: selection.secondBestScore
+            }
+          })
 
           if (selection.source && selection.confidence === 'high') {
             await handleStart(

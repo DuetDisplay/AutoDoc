@@ -213,4 +213,77 @@ describe('detectMeetingWindow', () => {
     expect(context.meetingSourceId).toBe('w:5')
     expect(context.providerId).toBe('teams')
   })
+
+  describe('Slack huddle versus main window', () => {
+    const slackContext = { eventId: 'e', recurringEventId: null, providerHint: 'slack' }
+    const slack = (id: string, name: string): RecordingSource => ({
+      id,
+      name,
+      thumbnailDataUrl: ''
+    })
+
+    it('picks the huddle window over the DM window with high confidence', () => {
+      const result = chooseAutoRecordSource(
+        [
+          slack('w:1', 'Walterio - Duet Display - Slack'),
+          slack('w:2', 'Walterio (DM) - Duet Display - Slack')
+        ],
+        slackContext
+      )
+      expect(result.source?.id).toBe('w:1')
+      expect(result.confidence).toBe('high')
+      expect(result.bestScore).toBeGreaterThan(result.secondBestScore ?? 0)
+    })
+
+    it('demotes any parenthesised view marker, case-insensitively', () => {
+      for (const marker of ['(Channel)', '(Private Channel)', '(Group DM)', '(dm)']) {
+        const result = chooseAutoRecordSource(
+          [slack('w:1', `general ${marker} - Acme - Slack`), slack('w:2', 'Jamal - Acme - Slack')],
+          slackContext
+        )
+        expect(result.source?.id).toBe('w:2')
+        expect(result.confidence).toBe('high')
+      }
+    })
+
+    it('stays ambiguous when both windows are main-window views', () => {
+      const result = chooseAutoRecordSource(
+        [
+          slack('w:1', 'Jamal (DM) - Acme - Slack'),
+          slack('w:2', 'general (Channel) - Acme - Slack')
+        ],
+        slackContext
+      )
+      expect(result.source).toBeNull()
+    })
+
+    it('stays ambiguous for two indistinguishable windows', () => {
+      const result = chooseAutoRecordSource(
+        [slack('w:1', 'Jamal - Duet Display - Slack'), slack('w:2', 'Jamal - Other - Slack')],
+        slackContext
+      )
+      expect(result.source).toBeNull()
+    })
+
+    it('does not treat the Huddles view as a huddle window', () => {
+      const result = chooseAutoRecordSource(
+        [slack('w:1', 'Huddles - Acme - Slack'), slack('w:2', 'Huddle with Jamal - Acme - Slack')],
+        slackContext
+      )
+      expect(result.source?.id).toBe('w:2')
+      expect(result.confidence).toBe('high')
+    })
+
+    it('does not penalise other providers', () => {
+      const result = chooseAutoRecordSource(
+        [
+          { id: 'w:1', name: 'Zoom Meeting (Sprint)', thumbnailDataUrl: '' },
+          { id: 'w:2', name: 'Visual Studio Code', thumbnailDataUrl: '' }
+        ],
+        { eventId: null, recurringEventId: null, providerHint: 'zoom' }
+      )
+      expect(result.source?.id).toBe('w:1')
+      expect(result.bestScore).toBe(160)
+    })
+  })
 })

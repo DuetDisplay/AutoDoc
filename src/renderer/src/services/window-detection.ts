@@ -23,6 +23,8 @@ export interface AutoRecordSourceSelection {
   windowCount: number
   browserWindowCount: number
   meetingWindowCount: number
+  bestScore: number
+  secondBestScore: number | null
 }
 
 interface ScoredSource {
@@ -43,6 +45,8 @@ const BROWSER_NAME_PATTERNS = [
   /\bopera\b/i,
   /\bvivaldi\b/i
 ]
+
+const SLACK_MAIN_WINDOW_PENALTY = 60
 
 const GENERIC_PROVIDER_WINDOW_NAMES = new Set([
   'slack',
@@ -78,7 +82,9 @@ export function chooseAutoRecordSource(
       providerHint,
       windowCount: 0,
       browserWindowCount: 0,
-      meetingWindowCount: 0
+      meetingWindowCount: 0,
+      bestScore: 0,
+      secondBestScore: null
     }
   }
 
@@ -111,6 +117,12 @@ export function chooseAutoRecordSource(
         if (method === 'none') method = 'meeting_pattern'
       }
 
+      // The main Slack window (a DM or channel view) matches the same patterns as the
+      // huddle window; demote it so a huddle window beats it instead of tying.
+      if (isSlackMainWindowName(source.name)) {
+        score -= SLACK_MAIN_WINDOW_PENALTY
+      }
+
       if (isBrowserWindowName(source.name)) {
         score += 20
         if (method === 'none') method = 'browser_window'
@@ -132,7 +144,9 @@ export function chooseAutoRecordSource(
       providerHint,
       windowCount: windows.length,
       browserWindowCount,
-      meetingWindowCount
+      meetingWindowCount,
+      bestScore: best?.score ?? 0,
+      secondBestScore: secondBest?.score ?? null
     }
   }
 
@@ -144,7 +158,9 @@ export function chooseAutoRecordSource(
       providerHint,
       windowCount: windows.length,
       browserWindowCount,
-      meetingWindowCount
+      meetingWindowCount,
+      bestScore: best?.score ?? 0,
+      secondBestScore: secondBest?.score ?? null
     }
   }
 
@@ -157,7 +173,9 @@ export function chooseAutoRecordSource(
     providerHint,
     windowCount: windows.length,
     browserWindowCount,
-    meetingWindowCount
+    meetingWindowCount,
+    bestScore: best.score,
+    secondBestScore: secondBest?.score ?? null
   }
 }
 
@@ -238,6 +256,15 @@ function getPreferredSourceMatch(
 function isSlackHuddleWindowName(name: string): boolean {
   const normalizedName = normalizeWindowName(name)
   return normalizedName.includes('slack') && /\bhuddle\b/.test(normalizedName)
+}
+
+// Slack titles its main window "<view> (DM|Channel|...) - <workspace> - Slack"; huddle windows
+// have no parenthesised view marker in their first segment.
+function isSlackMainWindowName(name: string): boolean {
+  const normalizedName = normalizeWindowName(name)
+  if (!normalizedName.includes('slack') || isSlackHuddleWindowName(name)) return false
+  const firstSegment = normalizedName.split(' - ')[0]
+  return /\([^)]+\)$/.test(firstSegment.trim())
 }
 
 function isMeetingPatternMatch(name: string): boolean {

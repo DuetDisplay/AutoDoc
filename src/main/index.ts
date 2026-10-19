@@ -613,7 +613,9 @@ app.whenReady().then(async () => {
     if (
       payload.category === 'system' ||
       payload.category === 'onboarding' ||
-      (payload.category === 'recording' && payload.action.startsWith('capture_recovery_'))
+      (payload.category === 'recording' &&
+        (payload.action.startsWith('capture_recovery_') ||
+          payload.action === 'auto_record_decision'))
     ) {
       logAutodocEvent({
         area: payload.category === 'recording' ? 'recording' : 'app',

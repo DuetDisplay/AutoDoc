@@ -50,8 +50,8 @@ for (const [windowState, action] of [
       },
       recording: {
         sources: [
-          { id: 'window:1:0', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' },
-          { id: 'window:2:0', name: 'Jamal (DM) - Duet Display – Slack', thumbnailDataUrl: '' }
+          { id: 'window:1:0', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+          { id: 'window:2:0', name: 'Jamal - Other Workspace - Slack', thumbnailDataUrl: '' }
         ]
       }
     })
@@ -146,7 +146,7 @@ for (const [windowState, action] of [
             ?.isVisible()
         )
       ).toBe(true)
-      await page.getByRole('button', { name: 'Jamal - Duet Display – Slack', exact: true }).click()
+      await page.getByRole('button', { name: 'Jamal - Duet Display - Slack', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.electronAPI.invoke('recording:get-state')))
         .toMatchObject({
@@ -166,3 +166,89 @@ for (const [windowState, action] of [
     }
   })
 }
+
+test('a Slack huddle auto-records on the huddle window and attaches to the timed meeting', async () => {
+  const now = Date.now()
+  const timed: CalendarEvent = {
+    id: 'timed-meeting',
+    externalId: 'timed-meeting',
+    accountId: 'calendar',
+    provider: 'google',
+    recurringEventId: null,
+    title: 'Testing Autodoc',
+    startTime: now - 60_000,
+    endTime: now + 30 * 60_000,
+    attendees: [],
+    meetingUrl: null,
+    autoRecord: 'off',
+    syncedAt: now
+  }
+  const session = await launchIsolatedE2EApp({
+    platform: 'darwin',
+    permissions: { microphone: true, screen: true },
+    calendar: {
+      accounts: [{ id: 'calendar', provider: 'google', email: 'qa@example.com', connectedAt: now }],
+      events: [
+        {
+          ...timed,
+          id: 'all-day',
+          title: 'Home',
+          isAllDay: true,
+          startTime: now - 12 * 60 * 60_000,
+          endTime: now + 12 * 60 * 60_000
+        },
+        timed
+      ]
+    },
+    recording: {
+      sources: [
+        { id: 'window:1:0', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+        { id: 'window:2:0', name: 'Jamal (DM) - Duet Display - Slack', thumbnailDataUrl: '' }
+      ]
+    }
+  })
+  try {
+    const page = await session.electronApp.firstWindow()
+    await page.evaluate(() =>
+      window.electronAPI.invoke('prefs:dismiss-meeting-language-announcement')
+    )
+    await completeOnboarding(page)
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+    await installFakeCaptureDevices(page, { useRealMediaRecorder: true })
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('calendar:sync')
+      await window.electronAPI.invoke('calendar:set-auto-record', 'timed-meeting', null, 'once')
+    })
+    await setDetectionState(page, { providerActiveIds: ['com.tinyspeck.slackmacgap'] })
+    await pollDetection(page)
+
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.invoke('recording:get-state')))
+      .toMatchObject({
+        isRecording: true,
+        sourceId: 'window:1:0',
+        trackedMeetingProviderId: 'slack'
+      })
+    expect(await page.getByText('Select the meeting window', { exact: true }).count()).toBe(0)
+    // No "Select window" notification: only the main window exists.
+    expect(session.electronApp.windows().length).toBe(1)
+    expect(
+      await session.electronApp.evaluate(
+        ({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().filter((window) => !window.isFocusable()).length
+      )
+    ).toBe(0)
+
+    // The e2e calendar fixture bypasses the main-process calendar manager, so the recording
+    // title cannot be resolved here; the remembered source is keyed by the timed event id.
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(localStorage.getItem('autodoc:recording-source-preferences') ?? '{}')
+        )
+      )
+      .toMatchObject({ 'event:timed-meeting': { sourceId: 'window:1:0' } })
+  } finally {
+    await session.cleanup()
+  }
+})

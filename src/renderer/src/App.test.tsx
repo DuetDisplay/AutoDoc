@@ -129,8 +129,8 @@ describe('App', () => {
       'calendar:get-events': [createCalendarEvent({ id: 'all-day', isAllDay: true })]
     })
     recordingMocks.fetchSources.mockResolvedValue([
-      { id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' },
-      { id: 'window:2', name: 'Jamal (DM) - Duet Display – Slack', thumbnailDataUrl: '' }
+      { id: 'window:1', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+      { id: 'window:2', name: 'Jamal - Other Workspace - Slack', thumbnailDataUrl: '' }
     ])
     render(<App />)
     await screen.findByRole('heading', { name: 'Upcoming' })
@@ -147,6 +147,25 @@ describe('App', () => {
     )
     expect(useRecordingPickerStore.getState().isOpen).toBe(false)
     expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+    const decision = api.invoke.mock.calls.find(
+      ([channel, logged]) =>
+        channel === 'diagnostics:record-action' && logged?.action === 'auto_record_decision'
+    )?.[1]
+    expect(decision).toMatchObject({
+      category: 'recording',
+      details: {
+        requestId: 7,
+        outcome: 'selection_required',
+        hasCalendarEvent: true,
+        providerHint: 'slack',
+        selectionConfidence: 'none',
+        windowCount: 2,
+        meetingWindowCount: 2,
+        bestScore: 160,
+        secondBestScore: 160
+      }
+    })
+    expect(JSON.stringify(decision)).not.toContain('Jamal')
     act(() => api.emit('detection:select-window', payload))
     await waitFor(() => expect(useRecordingPickerStore.getState().isOpen).toBe(true))
     expect(useRecordingPickerStore.getState()).toMatchObject({
@@ -191,6 +210,13 @@ describe('App', () => {
     expect(api.invoke).not.toHaveBeenCalledWith(
       'detection:source-selection-required',
       expect.anything()
+    )
+    expect(api.invoke).toHaveBeenCalledWith(
+      'diagnostics:record-action',
+      expect.objectContaining({
+        action: 'auto_record_decision',
+        details: expect.objectContaining({ requestId: 3, outcome: 'auto_start' })
+      })
     )
   })
 
