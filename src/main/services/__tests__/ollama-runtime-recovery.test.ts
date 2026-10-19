@@ -64,12 +64,23 @@ function createRecovery(manager: OllamaRecoveryManager) {
 describe('model load failure classification', () => {
   it('recognises the llama.cpp load errors and ignores memory shortfalls', () => {
     expect(isOllamaModelLoadFailureText(STDERR_MODEL_LOAD)).toBe(true)
-    expect(isOllamaModelLoadFailureText('llama_model_loader: bad magic')).toBe(true)
     expect(
       isOllamaModelLoadFailureText(
-        'Ollama returned 500: {"error":"llama runner process has terminated: error loading model: failed to load model"}'
+        'Ollama returned 500: {"error":"llama runner process has terminated: error loading model: llama_model_loader: failed to load model from C:\\x"}'
       )
     ).toBe(true)
+    // Printed on every successful load; a later unrelated crash must not latch notes off.
+    expect(
+      isOllamaModelLoadFailureText(
+        'llama_model_loader: loaded meta data with 35 key-value pairs and 398 tensors from C:\\x'
+      )
+    ).toBe(false)
+    // GPU allocation failures stay on the existing recovery path (for example the CPU fallback).
+    expect(
+      isOllamaModelLoadFailureText(
+        'llama runner process has terminated: error loading model: unable to allocate CUDA0 buffer\nllama_model_load_from_file_impl: failed to load model'
+      )
+    ).toBe(false)
     expect(
       isOllamaModelLoadFailureText(
         'model requires more system memory (9.0 GiB) than is available (4.0 GiB)'

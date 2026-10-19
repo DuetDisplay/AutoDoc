@@ -1,6 +1,9 @@
 export const OLLAMA_MODEL_LOAD_FAILED_ERROR_CODE = 'OLLAMA_MODEL_LOAD_FAILED'
 
-const MODEL_LOAD_FAILURE_PATTERN = /llama_model_loader|failed to load model|error loading model/i
+// llama.cpp raises "failed to load model from <path>" only when the model file cannot be
+// opened or parsed. Bare "llama_model_loader" lines are printed on every successful load, and
+// "error loading model" alone also covers GPU allocation failures that recovery can fix.
+const MODEL_LOAD_FAILURE_PATTERN = /failed to load model from/i
 const INSUFFICIENT_MEMORY_PATTERN = /requires more system memory/i
 
 /**
