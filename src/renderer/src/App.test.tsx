@@ -53,6 +53,13 @@ vi.mock('./components/PermissionToast', () => ({
   PermissionToast: () => null
 }))
 
+/** Advances fake timers and flushes the promises the auto-record wait loop is awaiting. */
+async function advanceAutoRecordWait(ms: number): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
 describe('App', () => {
   beforeEach(() => {
     resetRendererStores()
@@ -142,10 +149,14 @@ describe('App', () => {
       eventId: 'timed',
       recurringEventId: 'timed-series'
     }
+    vi.useFakeTimers()
     act(() => api.emit('detection:auto-record', payload))
-    await waitFor(() =>
-      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
-    )
+    // Slack keeps looking for a meeting window before it asks the user to pick one.
+    await advanceAutoRecordWait(1_000)
+    expect(api.invoke).not.toHaveBeenCalledWith('detection:source-selection-required', 7)
+    await advanceAutoRecordWait(30_000)
+    expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
+    vi.useRealTimers()
     expect(useRecordingPickerStore.getState().isOpen).toBe(false)
     expect(recordingMocks.handleStart).not.toHaveBeenCalled()
     expect(api.invoke).not.toHaveBeenCalledWith('detection:auto-record-started', expect.anything())
@@ -158,6 +169,8 @@ describe('App', () => {
       details: {
         requestId: 7,
         outcome: 'selection_required',
+        attempt: 1,
+        waitingForMeetingWindow: true,
         hasCalendarEvent: true,
         providerHint: 'slack',
         selectionConfidence: 'none',
@@ -201,10 +214,11 @@ describe('App', () => {
       eventId: 'timed',
       recurringEventId: null
     }
+    vi.useFakeTimers()
     act(() => api.emit('detection:auto-record', payload))
-    await waitFor(() =>
-      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
-    )
+    await advanceAutoRecordWait(31_000)
+    expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
+    vi.useRealTimers()
     act(() => api.emit('detection:select-window', payload))
     await waitFor(() => expect(useRecordingPickerStore.getState().isOpen).toBe(true))
     expect(useRecordingPickerStore.getState()).toMatchObject({
@@ -260,6 +274,156 @@ describe('App', () => {
     )) {
       expect(shouldLogRendererDiagnosticToAppLog({ category: 'recording', ...entry })).toBe(true)
     }
+  })
+
+  describe('waiting for a Slack meeting window', () => {
+    const MAIN = 'autodoc-social-radar (Channel) - AutoDocTest - Slack [Main] 🏠'
+    const PREVIEW = '- AutoDocTest - 1 new item - Slack'
+    const HUDDLE = 'autodoc-social-radar - AutoDocTest - 1 new item - Slack'
+    const payload = {
+      requestId: 20,
+      providerId: 'slack',
+      hasCalendarEvent: true,
+      eventId: 'timed',
+      recurringEventId: null
+    }
+    const preJoinSources = [
+      { id: 'window:main', name: MAIN, thumbnailDataUrl: '' },
+      { id: 'window:preview', name: PREVIEW, thumbnailDataUrl: '' }
+    ]
+
+    const setup = async () => {
+      const api = installMockElectronApi({
+        'prefs:get-onboarding-complete': true,
+        'prefs:get-analytics-consent': false,
+        'calendar:get-accounts': [],
+        'calendar:get-events': []
+      })
+      recordingMocks.fetchSources.mockResolvedValue(preJoinSources)
+      render(<App />)
+      await screen.findByRole('heading', { name: 'Upcoming' })
+      vi.useFakeTimers()
+      const decisions = (): Array<Record<string, any>> =>
+        api.invoke.mock.calls
+          .filter(
+            ([channel, logged]) =>
+              channel === 'diagnostics:record-action' && logged?.action === 'auto_record_decision'
+          )
+          .map(([, logged]) => logged.details)
+      return { api, decisions }
+    }
+
+    it('does not record the main or pre-join window and starts once the huddle window appears', async () => {
+      const { api, decisions } = await setup()
+      act(() => api.emit('detection:auto-record', payload))
+      await advanceAutoRecordWait(6_000)
+      expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'detection:source-selection-required',
+        expect.anything()
+      )
+
+      recordingMocks.fetchSources.mockResolvedValue([
+        ...preJoinSources,
+        { id: 'window:huddle', name: HUDDLE, thumbnailDataUrl: '' }
+      ])
+      await advanceAutoRecordWait(2_000)
+
+      expect(recordingMocks.handleStart).toHaveBeenCalledTimes(1)
+      expect(recordingMocks.handleStart).toHaveBeenCalledWith(
+        'window:huddle',
+        HUDDLE,
+        { eventId: 'timed', recurringEventId: null, providerHint: 'slack' },
+        expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' })
+      )
+      expect(api.invoke).toHaveBeenCalledWith('detection:auto-record-started', 20)
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'detection:source-selection-required',
+        expect.anything()
+      )
+      // First attempt while waiting, then only the change to a confident start.
+      expect(decisions()).toMatchObject([
+        { requestId: 20, outcome: 'selection_required', attempt: 1, waitingForMeetingWindow: true },
+        { requestId: 20, outcome: 'auto_start', attempt: 5, waitingForMeetingWindow: false }
+      ])
+      expect(JSON.stringify(decisions())).not.toContain('AutoDocTest')
+    })
+
+    it('stops waiting without escalating when the mic goes inactive', async () => {
+      const { api, decisions } = await setup()
+      act(() => api.emit('detection:auto-record', payload))
+      await advanceAutoRecordWait(4_000)
+      const fetchesBefore = recordingMocks.fetchSources.mock.calls.length
+      act(() => api.emit('detection:mic-inactive', {}))
+      await advanceAutoRecordWait(60_000)
+
+      expect(recordingMocks.fetchSources.mock.calls.length).toBe(fetchesBefore)
+      expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'detection:source-selection-required',
+        expect.anything()
+      )
+      expect(decisions().at(-1)).toMatchObject({
+        requestId: 20,
+        outcome: 'wait_cancelled',
+        reason: 'mic_inactive'
+      })
+
+      // A later request (the user joined after all) works normally.
+      recordingMocks.fetchSources.mockResolvedValue([
+        { id: 'window:huddle', name: HUDDLE, thumbnailDataUrl: '' }
+      ])
+      act(() => api.emit('detection:auto-record', { ...payload, requestId: 21 }))
+      await advanceAutoRecordWait(0)
+      expect(recordingMocks.handleStart).toHaveBeenCalledTimes(1)
+    })
+
+    it('replaces the wait when a newer auto-record request arrives', async () => {
+      const { api, decisions } = await setup()
+      act(() => api.emit('detection:auto-record', payload))
+      await advanceAutoRecordWait(4_000)
+      act(() => api.emit('detection:auto-record', { ...payload, requestId: 21 }))
+      await advanceAutoRecordWait(31_000)
+
+      expect(decisions().find((d) => d.outcome === 'wait_cancelled')).toMatchObject({
+        requestId: 20,
+        reason: 'superseded'
+      })
+      expect(api.invoke).not.toHaveBeenCalledWith('detection:source-selection-required', 20)
+      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 21)
+    })
+
+    it('falls back to window selection after 30 seconds without a clear window', async () => {
+      const { api, decisions } = await setup()
+      act(() => api.emit('detection:auto-record', payload))
+      await advanceAutoRecordWait(28_000)
+      expect(api.invoke).not.toHaveBeenCalledWith(
+        'detection:source-selection-required',
+        expect.anything()
+      )
+      await advanceAutoRecordWait(2_000)
+
+      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 20)
+      expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+      // One log for the first attempt and one for the final outcome, not one per tick.
+      expect(decisions()).toMatchObject([
+        { outcome: 'selection_required', attempt: 1, waitingForMeetingWindow: true },
+        { outcome: 'selection_required', attempt: 16, waitingForMeetingWindow: false }
+      ])
+    })
+
+    it('keeps the immediate behaviour for other providers', async () => {
+      const { api, decisions } = await setup()
+      recordingMocks.fetchSources.mockResolvedValue([
+        { id: 'window:1', name: 'Zoom Meeting (Sprint)', thumbnailDataUrl: '' },
+        { id: 'window:2', name: 'Zoom Workplace', thumbnailDataUrl: '' }
+      ])
+      act(() => api.emit('detection:auto-record', { ...payload, providerId: 'zoom' }))
+      await advanceAutoRecordWait(0)
+
+      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 20)
+      expect(decisions()).toMatchObject([{ attempt: 1, waitingForMeetingWindow: false }])
+    })
   })
 
   it('logs a failed auto-record start with the request and event ids', async () => {

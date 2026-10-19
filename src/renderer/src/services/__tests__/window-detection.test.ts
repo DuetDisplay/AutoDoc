@@ -274,6 +274,108 @@ describe('detectMeetingWindow', () => {
       expect(result.confidence).toBe('high')
     })
 
+    describe('real Slack titles', () => {
+      const MAIN = 'autodoc-social-radar (Channel) - AutoDocTest - Slack'
+      const MAIN_HOME = 'autodoc-social-radar (Channel) - AutoDocTest - Slack [Main] 🏠'
+      const MAIN_HOME_AUDIO = 'autodoc-social-radar (Channel) - AutoDocTest - Slack [Main] 🏠🔊'
+      const MAIN_MARKER_ONLY = 'AutoDocTest - Slack [Main] 🏠'
+      const HUDDLE = 'autodoc-social-radar - AutoDocTest - 1 new item - Slack'
+      const MAC_PREVIEW = '- AutoDocTest - 1 new item - Slack'
+      const WINDOWS_PREVIEW = '- AutodocTest2 - Slack'
+      const HUDDLES_VIEW = 'Huddles - AutodocTest2 - Slack'
+
+      it.each([MAIN, MAIN_HOME, MAIN_HOME_AUDIO, MAIN_MARKER_ONLY])(
+        'never picks the main window with high confidence when it is alone: %s',
+        (title) => {
+          const result = chooseAutoRecordSource([slack('w:main', title)], slackContext)
+          expect(result.confidence).not.toBe('high')
+          expect(result.candidates[0].slackMainWindowName).toBe(true)
+          // It is still offered so the picker can suggest it.
+          expect(result.source?.id).toBe('w:main')
+        }
+      )
+
+      it.each([MAC_PREVIEW, WINDOWS_PREVIEW])(
+        'never picks the pre-join preview with high confidence: %s',
+        (title) => {
+          const result = chooseAutoRecordSource([slack('w:preview', title)], slackContext)
+          expect(result.confidence).not.toBe('high')
+          expect(result.candidates[0].slackPreviewWindowName).toBe(true)
+        }
+      )
+
+      it('treats the Huddles view as a main window, not a huddle', () => {
+        const result = chooseAutoRecordSource([slack('w:view', HUDDLES_VIEW)], slackContext)
+        expect(result.confidence).not.toBe('high')
+        expect(result.candidates[0]).toMatchObject({
+          slackHuddleName: false,
+          slackMainWindowName: true
+        })
+      })
+
+      it.each([MAIN, MAIN_HOME, MAIN_HOME_AUDIO])(
+        'picks the huddle window over the main window with high confidence: %s',
+        (title) => {
+          const result = chooseAutoRecordSource(
+            [slack('w:main', title), slack('w:huddle', HUDDLE)],
+            slackContext
+          )
+          expect(result.source?.id).toBe('w:huddle')
+          expect(result.confidence).toBe('high')
+        }
+      )
+
+      it.each([
+        [MAC_PREVIEW, MAIN_HOME],
+        [WINDOWS_PREVIEW, HUDDLES_VIEW]
+      ])('lets neither the preview nor the main window win: %s + %s', (preview, main) => {
+        const result = chooseAutoRecordSource(
+          [slack('w:preview', preview), slack('w:main', main)],
+          slackContext
+        )
+        expect(result.confidence).not.toBe('high')
+      })
+
+      it('picks the huddle window over the pre-join preview', () => {
+        const result = chooseAutoRecordSource(
+          [slack('w:preview', MAC_PREVIEW), slack('w:huddle', HUDDLE)],
+          slackContext
+        )
+        expect(result.source?.id).toBe('w:huddle')
+        expect(result.confidence).toBe('high')
+      })
+
+      it('ignores a remembered main or preview window so it cannot outrank the huddle', () => {
+        const preference = {
+          sourceId: 'w:main',
+          sourceName: MAIN,
+          updatedAt: 0
+        } as never
+        const result = chooseAutoRecordSource(
+          [slack('w:main', MAIN_HOME), slack('w:huddle', HUDDLE)],
+          slackContext,
+          preference
+        )
+        expect(result.source?.id).toBe('w:huddle')
+        expect(result.confidence).toBe('high')
+        expect(result.candidates.some((c) => c.rememberedSource)).toBe(false)
+
+        const alone = chooseAutoRecordSource([slack('w:main', MAIN)], slackContext, preference)
+        expect(alone.confidence).not.toBe('high')
+        expect(alone.method).not.toBe('remembered_source')
+      })
+
+      it('still honours a remembered huddle window', () => {
+        const result = chooseAutoRecordSource(
+          [slack('w:huddle', HUDDLE), slack('w:huddle2', 'other-channel - AutoDocTest - Slack')],
+          slackContext,
+          { sourceId: 'w:huddle2', sourceName: 'x', updatedAt: 0 } as never
+        )
+        expect(result.source?.id).toBe('w:huddle2')
+        expect(result.candidates.find((c) => c.rememberedSource)).toBeDefined()
+      })
+    })
+
     it('does not penalise other providers', () => {
       const result = chooseAutoRecordSource(
         [
@@ -308,7 +410,8 @@ describe('chooseAutoRecordSource diagnostics', () => {
         (candidate.slackHuddleName ? 110 : 0) +
         (candidate.providerHintMatch ? 90 : 0) +
         (candidate.meetingPattern ? 70 : 0) -
-        (candidate.slackMainWindowName ? 60 : 0) +
+        (candidate.slackMainWindowName ? 60 : 0) -
+        (candidate.slackPreviewWindowName ? 60 : 0) +
         (candidate.browser ? 20 : 0) +
         (candidate.rememberedSource ? 150 : 0)
       expect(candidate.score).toBe(expected)

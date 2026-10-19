@@ -14,8 +14,16 @@ import { useRecordingStore } from './stores/recording'
 import {
   buildAutoRecordSelectionContext,
   buildRecordingTrackingContext,
-  chooseAutoRecordSource
+  chooseAutoRecordSource,
+  type AutoRecordSourceSelection
 } from './services/window-detection'
+import {
+  AUTO_RECORD_WINDOW_POLL_MS,
+  AUTO_RECORD_WINDOW_WAIT_MS,
+  cancelAutoRecordWait,
+  sleepForAutoRecordWait,
+  type AutoRecordWindowWait
+} from './services/auto-record-wait'
 import { RecordingBanner } from './components/RecordingBanner'
 import { VideoCaptureWarning } from './components/VideoCaptureWarning'
 import { MeetingDetectedBanner } from './components/MeetingDetectedBanner'
@@ -314,6 +322,11 @@ export default function App() {
   const whisperFailureKey = useRef<string | null>(null)
   const ollamaFailureKey = useRef<string | null>(null)
   const autoRecordStartInFlight = useRef(false)
+  const autoRecordWait = useRef<AutoRecordWindowWait | null>(null)
+  const isRecordingRef = useRef(isRecording)
+  isRecordingRef.current = isRecording
+  const recordingActionsRef = useRef({ fetchSources, handleStart })
+  recordingActionsRef.current = { fetchSources, handleStart }
   const runtimeInfoRef = useRef<AppRuntimeInfo | null>(null)
 
   useEffect(() => {
@@ -660,14 +673,26 @@ export default function App() {
   useEffect(() => {
     if (isRecording) {
       autoRecordStartInFlight.current = false
+      cancelAutoRecordWait(autoRecordWait, 'recording_started')
     }
   }, [isRecording])
+
+  useEffect(() => {
+    return () => {
+      cancelAutoRecordWait(autoRecordWait, 'unmounted')
+    }
+  }, [])
 
   useEffect(() => {
     const unsub = window.electronAPI.on('detection:auto-record', (payload) => {
       const { providerId, hasCalendarEvent } = payload
       void (async () => {
-        if (isRecording || autoRecordStartInFlight.current) return
+        if (isRecordingRef.current) return
+        // A newer request replaces a pending wait for a meeting window.
+        if (cancelAutoRecordWait(autoRecordWait, 'superseded')) {
+          autoRecordStartInFlight.current = false
+        }
+        if (autoRecordStartInFlight.current) return
         autoRecordStartInFlight.current = true
         const selectionContext = buildAutoRecordSelectionContext(payload)
         recordDiagnosticAction({
@@ -678,39 +703,77 @@ export default function App() {
             hasCalendarEvent
           }
         })
+        // Slack turns the mic on in its pre-join preview, before the huddle window exists, so
+        // for Slack keep looking for the meeting window instead of escalating straight away.
+        const wait: AutoRecordWindowWait | null =
+          providerId === 'slack'
+            ? {
+                requestId: payload.requestId,
+                eventId: payload.eventId,
+                attempt: 0,
+                cancelled: false,
+                wake: null
+              }
+            : null
+        autoRecordWait.current = wait
         try {
-          const sources = await fetchSources()
-          const selection = chooseAutoRecordSource(
-            sources,
-            selectionContext,
-            getSavedSourcePreference(selectionContext)
-          )
-          const startsAutomatically = selection.source !== null && selection.confidence === 'high'
-          // Persistent so the outcome reaches the app log without analytics consent.
-          recordPersistentDiagnosticAction({
-            category: 'recording',
-            action: 'auto_record_decision',
-            details: {
-              requestId: payload.requestId,
-              outcome: startsAutomatically ? 'auto_start' : 'selection_required',
-              hasCalendarEvent,
-              providerHint: selection.providerHint,
-              selectionMethod: selection.method,
-              selectionConfidence: selection.confidence,
-              windowCount: selection.windowCount,
-              meetingWindowCount: selection.meetingWindowCount,
-              browserWindowCount: selection.browserWindowCount,
-              bestScore: selection.bestScore,
-              secondBestScore: selection.secondBestScore,
-              eventId: payload.eventId,
-              candidates: selection.candidates,
-              chosenIndex: selection.chosenIndex
+          let selection: AutoRecordSourceSelection
+          let startsAutomatically = false
+          let attempt = 0
+          let lastLoggedOutcome: string | null = null
+          const waitStartedAt = Date.now()
+          for (;;) {
+            attempt++
+            if (wait) wait.attempt = attempt
+            const sources = await recordingActionsRef.current.fetchSources()
+            if (wait?.cancelled) return
+            selection = chooseAutoRecordSource(
+              sources,
+              selectionContext,
+              getSavedSourcePreference(selectionContext)
+            )
+            startsAutomatically = selection.source !== null && selection.confidence === 'high'
+            const waitingForMeetingWindow =
+              wait !== null &&
+              !startsAutomatically &&
+              Date.now() - waitStartedAt < AUTO_RECORD_WINDOW_WAIT_MS
+            const outcome = startsAutomatically ? 'auto_start' : 'selection_required'
+            // Log the first attempt, the final outcome and any change, not every tick.
+            if (attempt === 1 || !waitingForMeetingWindow || outcome !== lastLoggedOutcome) {
+              lastLoggedOutcome = outcome
+              // Persistent so the outcome reaches the app log without analytics consent.
+              recordPersistentDiagnosticAction({
+                category: 'recording',
+                action: 'auto_record_decision',
+                details: {
+                  requestId: payload.requestId,
+                  outcome,
+                  attempt,
+                  waitingForMeetingWindow,
+                  hasCalendarEvent,
+                  providerHint: selection.providerHint,
+                  selectionMethod: selection.method,
+                  selectionConfidence: selection.confidence,
+                  windowCount: selection.windowCount,
+                  meetingWindowCount: selection.meetingWindowCount,
+                  browserWindowCount: selection.browserWindowCount,
+                  bestScore: selection.bestScore,
+                  secondBestScore: selection.secondBestScore,
+                  eventId: payload.eventId,
+                  candidates: selection.candidates,
+                  chosenIndex: selection.chosenIndex
+                }
+              })
             }
-          })
+            if (!waitingForMeetingWindow || !wait) break
+            await sleepForAutoRecordWait(wait, AUTO_RECORD_WINDOW_POLL_MS)
+            if (wait.cancelled) return
+          }
+          if (autoRecordWait.current === wait) autoRecordWait.current = null
 
           if (selection.source && selection.confidence === 'high') {
             try {
-              await handleStart(
+              await recordingActionsRef.current.handleStart(
                 selection.source.id,
                 selection.source.name,
                 selectionContext,
@@ -789,7 +852,8 @@ export default function App() {
             provider_hint: selection.providerHint ?? 'unknown'
           })
         } catch (err) {
-          autoRecordStartInFlight.current = false
+          if (autoRecordWait.current === wait) autoRecordWait.current = null
+          if (!wait?.cancelled) autoRecordStartInFlight.current = false
           console.error('Auto-record failed:', err)
           return
         }
@@ -832,9 +896,16 @@ export default function App() {
         }
       })()
     })
+    // The mic went quiet again, so the user never joined: stop waiting without escalating.
+    const unsubMicInactive = window.electronAPI.on('detection:mic-inactive', () => {
+      if (cancelAutoRecordWait(autoRecordWait, 'mic_inactive')) {
+        autoRecordStartInFlight.current = false
+      }
+    })
     return () => {
       unsub()
       unsubSelectWindow()
+      unsubMicInactive()
     }
   }, [isRecording, fetchSources, handleStart])
 

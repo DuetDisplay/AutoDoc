@@ -48,6 +48,8 @@ for (const [windowState, action] of [
   ['hidden', 'dismiss']
 ] as const) {
   test(`an ambiguous auto-record meeting offers a visible action while AutoDoc is ${windowState} (${action})`, async () => {
+    // Slack requests keep looking for a meeting window for 30 s before asking the user to pick.
+    test.setTimeout(90_000)
     const now = Date.now()
     const event: CalendarEvent = {
       id: 'timed-meeting',
@@ -138,11 +140,13 @@ for (const [windowState, action] of [
         })
       })
       await expect
-        .poll(async () =>
-          session.electronApp.evaluate(
-            ({ BrowserWindow }) =>
-              BrowserWindow.getAllWindows().filter((window) => !window.isFocusable()).length
-          )
+        .poll(
+          async () =>
+            session.electronApp.evaluate(
+              ({ BrowserWindow }) =>
+                BrowserWindow.getAllWindows().filter((window) => !window.isFocusable()).length
+            ),
+          { timeout: 45_000 }
         )
         .toBe(1)
       await expect.poll(() => session.electronApp.windows().length).toBe(2)

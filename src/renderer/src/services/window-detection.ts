@@ -25,6 +25,7 @@ export interface AutoRecordCandidateDiagnostics {
   browser: boolean
   slackHuddleName: boolean
   slackMainWindowName: boolean
+  slackPreviewWindowName: boolean
   rememberedSource: boolean
 }
 
@@ -126,17 +127,24 @@ export function chooseAutoRecordSource(
         browser: false,
         slackHuddleName: false,
         slackMainWindowName: false,
+        slackPreviewWindowName: false,
         rememberedSource: false
       }
 
-      const preferenceMatch = preference ? getPreferredSourceMatch(source, preference) : null
+      const slackKind = getSlackWindowKind(source.name)
+      const slackNonMeeting = slackKind === 'main' || slackKind === 'preview'
+
+      // A remembered choice must never lift a Slack main or pre-join window: an earlier wrong
+      // automatic pick can otherwise outrank the real huddle window.
+      const preferenceMatch =
+        preference && !slackNonMeeting ? getPreferredSourceMatch(source, preference) : null
       if (preferenceMatch) {
         score += preferenceMatch === 'id' ? 150 : 120
         features.rememberedSource = true
         method = 'remembered_source'
       }
 
-      if (isSlackHuddleWindowName(source.name)) {
+      if (slackKind === 'huddle') {
         score += 110
         features.slackHuddleName = true
         if (method === 'none') method = 'meeting_pattern'
@@ -154,11 +162,14 @@ export function chooseAutoRecordSource(
         if (method === 'none') method = 'meeting_pattern'
       }
 
-      // The main Slack window (a DM or channel view) matches the same patterns as the
-      // huddle window; demote it so a huddle window beats it instead of tying.
-      if (isSlackMainWindowName(source.name)) {
+      // The main Slack window (a DM or channel view) and the pre-join preview match the same
+      // patterns as the huddle window; demote them so a huddle window beats them instead of tying.
+      if (slackKind === 'main') {
         score -= SLACK_MAIN_WINDOW_PENALTY
         features.slackMainWindowName = true
+      } else if (slackKind === 'preview') {
+        score -= SLACK_MAIN_WINDOW_PENALTY
+        features.slackPreviewWindowName = true
       }
 
       if (isBrowserWindowName(source.name)) {
@@ -220,7 +231,11 @@ export function chooseAutoRecordSource(
     }
   }
 
-  const confidence = best.score >= 90 && scoreGap >= 15 ? 'high' : 'low'
+  // Slack turns the mic on in its pre-join preview, before the huddle window exists, and the main
+  // window outlives the huddle. Neither may ever be recorded without the user choosing it.
+  const bestIsSlackNonMeeting =
+    best.features.slackMainWindowName || best.features.slackPreviewWindowName
+  const confidence = best.score >= 90 && scoreGap >= 15 && !bestIsSlackNonMeeting ? 'high' : 'low'
 
   return {
     source: best.source,
@@ -318,13 +333,21 @@ function isSlackHuddleWindowName(name: string): boolean {
   return normalizedName.includes('slack') && /\bhuddle\b/.test(normalizedName)
 }
 
-// Slack titles its main window "<view> (DM|Channel|...) - <workspace> - Slack"; huddle windows
-// have no parenthesised view marker in their first segment.
-function isSlackMainWindowName(name: string): boolean {
+type SlackWindowKind = 'huddle' | 'main' | 'preview' | 'other'
+
+// Slack titles its main window "<view> (DM|Channel|...) - <workspace> - Slack", sometimes with a
+// "[Main]" marker appended, or "Huddles - <workspace> - Slack" on the Huddles view. The pre-join
+// preview has an empty first segment ("- <workspace> - ... - Slack"). Huddle windows have no
+// parenthesised view marker in their first segment.
+function getSlackWindowKind(name: string): SlackWindowKind {
   const normalizedName = normalizeWindowName(name)
-  if (!normalizedName.includes('slack') || isSlackHuddleWindowName(name)) return false
-  const firstSegment = normalizedName.split(' - ')[0]
-  return /\([^)]+\)$/.test(firstSegment.trim())
+  if (!normalizedName.includes('slack')) return 'other'
+  if (normalizedName.includes('[main]')) return 'main'
+  if (isSlackHuddleWindowName(name)) return 'huddle'
+  if (normalizedName === '-' || normalizedName.startsWith('- ')) return 'preview'
+  const firstSegment = normalizedName.split(' - ')[0].trim()
+  if (firstSegment === 'huddles' || /\([^)]+\)$/.test(firstSegment)) return 'main'
+  return 'other'
 }
 
 function isMeetingPatternMatch(name: string): boolean {
