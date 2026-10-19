@@ -206,9 +206,10 @@ export class DetectionService {
     title: string
     confirmed: boolean
   } | null = null
-  // A poll can clear the pending request once recording is live, before the renderer reports
-  // that its silent start finished; keep the request so the notice can still be shown.
-  private settledAutoRecord: {
+  // The renderer reports that its silent start finished only after the capture is live, which
+  // can take longer than several polls; the pending request is cleared by then, so keep the last
+  // unconfirmed request until its notice is shown, a newer request replaces it, or recording ends.
+  private unconfirmedAutoRecord: {
     requestId: number
     title: string
     eventId: string | null
@@ -258,6 +259,7 @@ export class DetectionService {
     }
     this.resetAutoStopState()
     this.clearAutoRecordPending()
+    this.unconfirmedAutoRecord = null
     this.hideBanner('meeting-detection', 'service_stopped')
     this.hideRecordingStartedNotice('service_stopped')
   }
@@ -265,26 +267,10 @@ export class DetectionService {
   // Called by the renderer after a silent auto-record start succeeded. The notice is only for
   // starts the user did not confirm, so they always know AutoDoc is recording and can stop it.
   showAutoRecordStartedNotice(requestId: number): void {
-    const pending = this.pendingAutoRecord
-    const request =
-      pending?.payload.requestId === requestId
-        ? {
-            title: pending.title,
-            confirmed: pending.confirmed,
-            eventId: pending.payload.eventId,
-            providerId: pending.payload.providerId
-          }
-        : this.settledAutoRecord?.requestId === requestId
-          ? {
-              title: this.settledAutoRecord.title,
-              confirmed: false,
-              eventId: this.settledAutoRecord.eventId,
-              providerId: this.settledAutoRecord.providerId
-            }
-          : null
-    if (!request || request.confirmed) return
+    const request = this.unconfirmedAutoRecord
+    if (!request || request.requestId !== requestId) return
     if (!this.recordingService.getState().isRecording) return
-    this.settledAutoRecord = null
+    this.unconfirmedAutoRecord = null
     // A quick Stop must still count as a manual stop before the next poll sees the recording.
     this.wasRecording = true
     const displayTitle = truncateNoticeTitle(request.title)
@@ -574,6 +560,8 @@ export class DetectionService {
 
       this.resetAutoStopState()
       this.hideRecordingStartedNotice()
+      // Recording ended before the renderer reported its start, so there is nothing to announce.
+      if (this.wasRecording) this.unconfirmedAutoRecord = null
 
       if (this.sourceSelectionPending) {
         const observation = await this.getActiveProvider()
@@ -1325,6 +1313,14 @@ export class DetectionService {
       recurringEventId: event?.recurringEventId ?? null
     }
     this.pendingAutoRecord = { title, payload, confirmed }
+    this.unconfirmedAutoRecord = confirmed
+      ? null
+      : {
+          requestId: payload.requestId,
+          title,
+          eventId: payload.eventId,
+          providerId: payload.providerId
+        }
     this.markAutoRecordPending()
     logAutodocEvent({
       area: 'detection',
@@ -1405,15 +1401,6 @@ export class DetectionService {
 
   private clearAutoRecordPending(): void {
     this.autoRecordPendingUntil = 0
-    this.settledAutoRecord =
-      this.pendingAutoRecord && !this.pendingAutoRecord.confirmed
-        ? {
-            requestId: this.pendingAutoRecord.payload.requestId,
-            title: this.pendingAutoRecord.title,
-            eventId: this.pendingAutoRecord.payload.eventId,
-            providerId: this.pendingAutoRecord.payload.providerId
-          }
-        : null
     this.pendingAutoRecord = null
     this.sourceSelectionPending = false
   }

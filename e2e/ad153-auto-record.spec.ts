@@ -397,3 +397,84 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
     await session.cleanup()
   }
 })
+
+test('a slow capture start still shows the auto-record started notice after several recording polls', async () => {
+  const now = Date.now()
+  const timed: CalendarEvent = {
+    id: 'timed-meeting',
+    externalId: 'timed-meeting',
+    accountId: 'calendar',
+    provider: 'google',
+    recurringEventId: null,
+    title: 'Testing Autodoc',
+    startTime: now - 60_000,
+    endTime: now + 30 * 60_000,
+    attendees: [],
+    meetingUrl: null,
+    autoRecord: 'off',
+    syncedAt: now
+  }
+  const session = await launchIsolatedE2EApp({
+    platform: 'darwin',
+    permissions: { microphone: true, screen: true },
+    calendar: {
+      accounts: [{ id: 'calendar', provider: 'google', email: 'qa@example.com', connectedAt: now }],
+      events: [timed]
+    },
+    recording: {
+      sources: [
+        { id: 'window:1:0', name: 'Jamal - Duet Display - Slack', thumbnailDataUrl: '' },
+        { id: 'window:2:0', name: 'Jamal (DM) - Duet Display - Slack', thumbnailDataUrl: '' }
+      ]
+    }
+  })
+  try {
+    const page = await session.electronApp.firstWindow()
+    await page.evaluate(() =>
+      window.electronAPI.invoke('prefs:dismiss-meeting-language-announcement')
+    )
+    await completeOnboarding(page)
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
+    await installFakeCaptureDevices(page, { useRealMediaRecorder: true })
+    await page.evaluate(async () => {
+      await window.electronAPI.invoke('calendar:sync')
+      await window.electronAPI.invoke('calendar:set-auto-record', 'timed-meeting', null, 'once')
+      // Hold the capture back so the renderer's start outlasts several detection polls.
+      const w = window as unknown as { __captureRequests: number; __releaseCapture: () => void }
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+      w.__captureRequests = 0
+      const gate = new Promise<void>((resolve) => {
+        w.__releaseCapture = resolve
+      })
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        w.__captureRequests++
+        await gate
+        return original(constraints)
+      }
+    })
+    await setDetectionState(page, { providerActiveIds: ['com.tinyspeck.slackmacgap'] })
+    await pollDetection(page)
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.invoke('recording:get-state')))
+      .toMatchObject({ isRecording: true })
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { __captureRequests: number }).__captureRequests)
+      )
+      .toBeGreaterThan(0)
+    await pollDetection(page)
+    await pollDetection(page)
+    await page.evaluate(() =>
+      (window as unknown as { __releaseCapture: () => void }).__releaseCapture()
+    )
+
+    await expect
+      .poll(() => page.evaluate(() => window.electronAPI.invoke('recording:get-state')))
+      .toMatchObject({ isRecording: true, sourceId: 'window:1:0' })
+    await expect.poll(() => session.electronApp.windows().length, { timeout: 7000 }).toBe(2)
+    const notice = session.electronApp.windows().find((window) => window !== page)!
+    await expect(notice.getByRole('button', { name: 'Stop' })).toBeVisible()
+  } finally {
+    await session.cleanup()
+  }
+})

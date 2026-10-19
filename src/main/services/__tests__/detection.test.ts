@@ -1291,6 +1291,35 @@ describe('DetectionService', () => {
       expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
     })
 
+    it('still shows the notice when a slow capture start outlasts several polls', async () => {
+      const { service, requestId } = await startSilentAutoRecord()
+      await (service as any).poll()
+      await (service as any).poll()
+      await (service as any).poll()
+      service.showAutoRecordStartedNotice(requestId)
+      expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+    })
+
+    it('drops the unreported start when the recording ended before the renderer reported it', async () => {
+      let isRecording = true
+      const { service, requestId } = await startSilentAutoRecord({
+        isRecording: () => isRecording
+      })
+      await (service as any).poll()
+      isRecording = false
+      await (service as any).poll()
+      isRecording = true
+      service.showAutoRecordStartedNotice(requestId)
+      expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    })
+
+    it('does not show the same notice twice', async () => {
+      const { service, requestId } = await startSilentAutoRecord()
+      service.showAutoRecordStartedNotice(requestId)
+      service.showAutoRecordStartedNotice(requestId)
+      expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
+    })
+
     it('stops through the normal stop path without re-triggering the same call', async () => {
       let isRecording = true
       const stopRecording = vi.fn(async () => {
