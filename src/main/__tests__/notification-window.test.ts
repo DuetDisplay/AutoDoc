@@ -213,6 +213,14 @@ describe('notification window activation suppression', () => {
     expect(mocks.appHide).not.toHaveBeenCalled()
   })
 
+  it('keeps a selection prompt open when auto dismissal is disabled', () => {
+    const onDismiss = vi.fn()
+    showTestNotification({ onDismiss, autoDismissMs: 0 })
+    vi.advanceTimersByTime(60_000)
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(mocks.windows.at(-1)?.close).not.toHaveBeenCalled()
+  })
+
   it('keeps the background app hidden on auto-dismiss', () => {
     setPlatform('darwin')
     const main = createMainWindow({ visible: false })

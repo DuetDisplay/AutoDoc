@@ -1668,6 +1668,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('detection:dismiss', () => {
     detectionService.dismissPrompt()
   })
+  ipcMain.handle('detection:source-selection-required', (_event, requestId: number) => {
+    if (getMainWindow()?.webContents !== _event.sender) return
+    detectionService.showSourceSelectionPrompt(requestId)
+  })
 
   const whisperEngineSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
   const isSpeakerDiarizationSetupEnabled = (): boolean =>

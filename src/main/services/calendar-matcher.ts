@@ -12,6 +12,8 @@ export function matchCalendarEvent(
   let best: CalendarEvent | null = null
   let bestOverlap = Number.POSITIVE_INFINITY
   for (const event of events) {
+    // All-day blocks such as "Home" or "Out of Office" never own a recording.
+    if (event.isAllDay) continue
     const overlapStart = Math.max(event.startTime - buffer, recordingStartMs)
     const overlapEnd = Math.min(event.endTime + buffer, recordingStartMs + 1)
     if (overlapStart > overlapEnd) {
@@ -22,14 +24,6 @@ export function matchCalendarEvent(
     if (!best) {
       best = event
       bestOverlap = closeness
-      continue
-    }
-
-    if (Boolean(event.isAllDay) !== Boolean(best.isAllDay)) {
-      if (!event.isAllDay) {
-        best = event
-        bestOverlap = closeness
-      }
       continue
     }
 

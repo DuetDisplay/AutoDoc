@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getActiveCaptureProcessIdsMac: vi.fn(async () => [] as string[]),
   getActiveCaptureProcessIdsWindows: vi.fn(async () => [] as string[]),
   focusMainWindow: vi.fn(() => true),
+  getMainWindow: vi.fn((): { isFocused: () => boolean } => ({ isFocused: () => false })),
   execFile: vi.fn()
 }))
 
@@ -48,7 +49,8 @@ vi.mock('../windows-meeting-detector', () => ({
 }))
 
 vi.mock('../main-window', () => ({
-  focusMainWindow: mocks.focusMainWindow
+  focusMainWindow: mocks.focusMainWindow,
+  getMainWindow: mocks.getMainWindow
 }))
 
 vi.mock('child_process', () => ({
@@ -103,6 +105,7 @@ describe('DetectionService', () => {
     mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
     mocks.focusMainWindow.mockReset()
     mocks.focusMainWindow.mockReturnValue(true)
+    mocks.getMainWindow.mockReturnValue({ isFocused: () => false })
     mocks.execFile.mockReset()
     mocks.execFile.mockImplementation((_file, _args, _options, callback) => {
       callback(null, '', '')
@@ -234,10 +237,14 @@ describe('DetectionService', () => {
     await (service as any).poll()
 
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
-    expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
-      hasCalendarEvent: true,
-      providerId: 'google_meet'
-    })
+    expect(webContentsSend).toHaveBeenCalledWith(
+      'detection:auto-record',
+      expect.objectContaining({
+        hasCalendarEvent: true,
+        providerId: 'google_meet',
+        eventId: 'standup'
+      })
+    )
   })
 
   it('prefers the later-starting timed meeting over a long working-hours block', async () => {
@@ -289,8 +296,88 @@ describe('DetectionService', () => {
     expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
     expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
       hasCalendarEvent: true,
-      providerId: null
+      providerId: 'teams',
+      requestId: 1,
+      eventId: 'evt-1',
+      recurringEventId: null
     })
+  })
+
+  it('keeps an actionable source-selection banner visible past the start grace period', async () => {
+    setPlatform('win32')
+    const send = vi.fn()
+    const timed = makeEvent('timed', -60_000)
+    const allDay = {
+      ...makeEvent('home', -12 * 60 * 60_000),
+      isAllDay: true,
+      endTime: Date.now() + 12 * 60 * 60_000
+    }
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+    mocks.isAutoRecordEnabled.mockImplementation((id?: string) => id === 'timed')
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [allDay, timed]
+    )
+    await service.debugPollNow()
+    const payload = send.mock.calls.find(([channel]) => channel === 'detection:auto-record')![1]
+    expect(payload).toMatchObject({ eventId: 'timed', providerId: 'slack' })
+    service.showSourceSelectionPrompt(payload.requestId)
+    const banner = mocks.showNotificationWindow.mock.calls[0][0]
+    expect(banner).toMatchObject({
+      title: 'Event timed',
+      primaryActionLabel: 'Select window',
+      autoDismissMs: 0
+    })
+    mocks.hideNotificationWindow.mockClear()
+    await service.debugPollNow(20_000)
+    expect(mocks.hideNotificationWindow).not.toHaveBeenCalled()
+    expect(mocks.focusMainWindow).not.toHaveBeenCalled()
+    banner.onPrimaryAction()
+    expect(mocks.focusMainWindow).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledWith('detection:select-window', payload)
+  })
+
+  it('cancels an outstanding selection banner when the provider disappears', async () => {
+    setPlatform('win32')
+    const send = vi.fn()
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+    mocks.isAutoRecordEnabled.mockReturnValue(true)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [makeEvent('timed', -60_000)]
+    )
+    await service.debugPollNow()
+    service.showSourceSelectionPrompt(999)
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    service.showSourceSelectionPrompt(1)
+    const banner = mocks.showNotificationWindow.mock.calls[0][0]
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue([])
+    await service.debugPollNow()
+    expect(mocks.hideNotificationWindow).toHaveBeenCalledWith('meeting-detection')
+    banner.onPrimaryAction()
+    expect(mocks.focusMainWindow).not.toHaveBeenCalled()
+  })
+
+  it('opens the picker directly when AutoDoc already has focus', async () => {
+    setPlatform('win32')
+    const send = vi.fn()
+    mocks.getMainWindow.mockReturnValue({ isFocused: () => true })
+    mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+    mocks.isAutoRecordEnabled.mockReturnValue(true)
+    mocks.getActiveCaptureProcessIdsWindows.mockResolvedValue(['slack.exe'])
+    const service = new DetectionService(
+      { getState: () => ({ isRecording: false }) } as never,
+      () => [makeEvent('timed', -60_000)]
+    )
+    await service.debugPollNow()
+    service.showSourceSelectionPrompt(1)
+    expect(mocks.showNotificationWindow).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith(
+      'detection:select-window',
+      expect.objectContaining({ eventId: 'timed' })
+    )
   })
 
   it('suppresses follow-up prompts while an auto-record start is pending', async () => {
@@ -341,7 +428,10 @@ describe('DetectionService', () => {
     expect(mocks.focusMainWindow).toHaveBeenCalledOnce()
     expect(webContentsSend).toHaveBeenCalledWith('detection:auto-record', {
       providerId: 'zoom',
-      hasCalendarEvent: false
+      hasCalendarEvent: false,
+      requestId: 1,
+      eventId: null,
+      recurringEventId: null
     })
   })
 

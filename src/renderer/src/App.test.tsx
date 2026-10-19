@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { useRecordingPickerStore } from './stores/recording-picker'
 import {
   createCalendarAccount,
   createCalendarEvent,
@@ -11,14 +12,21 @@ import {
   resetRendererStores
 } from './test/fixtures'
 
+const recordingMocks = vi.hoisted(() => ({
+  fetchSources: vi.fn(
+    async () => [] as Array<{ id: string; name: string; thumbnailDataUrl: string }>
+  ),
+  handleStart: vi.fn()
+}))
+
 vi.mock('./hooks/useRecording', () => ({
   useRecording: () => ({
     isRecording: false,
     sourceName: null,
     elapsedSeconds: 0,
     handleStop: vi.fn(),
-    fetchSources: vi.fn(),
-    handleStart: vi.fn()
+    fetchSources: recordingMocks.fetchSources,
+    handleStart: recordingMocks.handleStart
   }),
   useRecordingActions: () => ({
     isRecording: false,
@@ -47,6 +55,9 @@ vi.mock('./components/PermissionToast', () => ({
 describe('App', () => {
   beforeEach(() => {
     resetRendererStores()
+    useRecordingPickerStore.getState().closePicker()
+    recordingMocks.fetchSources.mockReset().mockResolvedValue([])
+    recordingMocks.handleStart.mockReset()
     window.location.hash = '#/'
   })
 
@@ -108,6 +119,79 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /connect google calendar/i })).toBeInTheDocument()
     })
+  })
+
+  it('requests a visible fallback before opening an ambiguous auto-record picker', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [createCalendarAccount()],
+      'calendar:get-events': [createCalendarEvent({ id: 'all-day', isAllDay: true })]
+    })
+    recordingMocks.fetchSources.mockResolvedValue([
+      { id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' },
+      { id: 'window:2', name: 'Jamal (DM) - Duet Display – Slack', thumbnailDataUrl: '' }
+    ])
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Upcoming' })
+    const payload = {
+      requestId: 7,
+      providerId: 'slack',
+      hasCalendarEvent: true,
+      eventId: 'timed',
+      recurringEventId: 'timed-series'
+    }
+    act(() => api.emit('detection:auto-record', payload))
+    await waitFor(() =>
+      expect(api.invoke).toHaveBeenCalledWith('detection:source-selection-required', 7)
+    )
+    expect(useRecordingPickerStore.getState().isOpen).toBe(false)
+    expect(recordingMocks.handleStart).not.toHaveBeenCalled()
+    act(() => api.emit('detection:select-window', payload))
+    await waitFor(() => expect(useRecordingPickerStore.getState().isOpen).toBe(true))
+    expect(useRecordingPickerStore.getState()).toMatchObject({
+      trigger: 'auto_record',
+      selectionContext: {
+        eventId: 'timed',
+        recurringEventId: 'timed-series',
+        providerHint: 'slack'
+      }
+    })
+  })
+
+  it('starts a confidently identified meeting with the detector event even when the UI calendar differs', async () => {
+    const api = installMockElectronApi({
+      'prefs:get-onboarding-complete': true,
+      'prefs:get-analytics-consent': false,
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+    recordingMocks.fetchSources.mockResolvedValue([
+      { id: 'window:huddle', name: 'Huddle: Product – Slack', thumbnailDataUrl: '' }
+    ])
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Upcoming' })
+    act(() =>
+      api.emit('detection:auto-record', {
+        requestId: 3,
+        providerId: 'slack',
+        hasCalendarEvent: true,
+        eventId: 'timed',
+        recurringEventId: null
+      })
+    )
+    await waitFor(() =>
+      expect(recordingMocks.handleStart).toHaveBeenCalledWith(
+        'window:huddle',
+        'Huddle: Product – Slack',
+        { eventId: 'timed', recurringEventId: null, providerHint: 'slack' },
+        expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' })
+      )
+    )
+    expect(api.invoke).not.toHaveBeenCalledWith(
+      'detection:source-selection-required',
+      expect.anything()
+    )
   })
 
   it('shows the low-memory Mac processing banner globally after the first recording', async () => {

@@ -1,6 +1,8 @@
 import { BROWSER_PATTERNS, MEETING_APP_PATTERNS } from '../../../shared/constants'
+import { selectActiveCalendarEvent } from '../../../shared/calendar-selection'
 import type {
   CalendarEvent,
+  DetectionAutoRecordPayload,
   RecordingIntent,
   RecordingSource,
   RecordingTrackingContext
@@ -163,13 +165,7 @@ export function findActiveCalendarEvent(
   events: CalendarEvent[],
   now = Date.now()
 ): CalendarEvent | null {
-  for (const event of events) {
-    if (event.startTime <= now && event.endTime >= now) {
-      return event
-    }
-  }
-
-  return null
+  return selectActiveCalendarEvent(events, now)
 }
 
 export function buildRecordingSelectionContext(
@@ -180,6 +176,16 @@ export function buildRecordingSelectionContext(
     eventId: event?.id ?? null,
     recurringEventId: event?.recurringEventId ?? null,
     providerHint: inferProviderHint(event?.meetingUrl) ?? fallbackProviderId
+  }
+}
+
+export function buildAutoRecordSelectionContext(
+  payload: DetectionAutoRecordPayload
+): RecordingSelectionContext {
+  return {
+    eventId: payload.eventId,
+    recurringEventId: payload.recurringEventId,
+    providerHint: payload.providerId
   }
 }
 

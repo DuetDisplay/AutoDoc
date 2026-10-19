@@ -12,10 +12,9 @@ import { NOTES_ENGINE_VERSION } from '../../shared/notes-feedback'
 import { useRecording } from './hooks/useRecording'
 import { useRecordingStore } from './stores/recording'
 import {
-  buildRecordingSelectionContext,
+  buildAutoRecordSelectionContext,
   buildRecordingTrackingContext,
-  chooseAutoRecordSource,
-  findActiveCalendarEvent
+  chooseAutoRecordSource
 } from './services/window-detection'
 import { RecordingBanner } from './components/RecordingBanner'
 import { VideoCaptureWarning } from './components/VideoCaptureWarning'
@@ -660,102 +659,120 @@ export default function App() {
   }, [isRecording])
 
   useEffect(() => {
-    const unsub = window.electronAPI.on(
-      'detection:auto-record',
-      ({ providerId, hasCalendarEvent }) => {
-        void (async () => {
-          if (isRecording || autoRecordStartInFlight.current) return
-          autoRecordStartInFlight.current = true
-          const activeEvent = findActiveCalendarEvent(events)
-          const selectionContext = buildRecordingSelectionContext(activeEvent, providerId)
-          recordDiagnosticAction({
-            category: 'recording',
-            action: 'auto_record_requested',
-            details: {
-              providerId,
-              hasCalendarEvent
-            }
-          })
-          try {
-            const sources = await fetchSources()
-            const selection = chooseAutoRecordSource(
-              sources,
+    const unsub = window.electronAPI.on('detection:auto-record', (payload) => {
+      const { providerId, hasCalendarEvent } = payload
+      void (async () => {
+        if (isRecording || autoRecordStartInFlight.current) return
+        autoRecordStartInFlight.current = true
+        const selectionContext = buildAutoRecordSelectionContext(payload)
+        recordDiagnosticAction({
+          category: 'recording',
+          action: 'auto_record_requested',
+          details: {
+            providerId,
+            hasCalendarEvent
+          }
+        })
+        try {
+          const sources = await fetchSources()
+          const selection = chooseAutoRecordSource(
+            sources,
+            selectionContext,
+            getSavedSourcePreference(selectionContext)
+          )
+
+          if (selection.source && selection.confidence === 'high') {
+            await handleStart(
+              selection.source.id,
+              selection.source.name,
               selectionContext,
-              getSavedSourcePreference(selectionContext)
-            )
-
-            if (selection.source && selection.confidence === 'high') {
-              await handleStart(
-                selection.source.id,
-                selection.source.name,
+              buildRecordingTrackingContext(
+                selection.source,
+                selection.source,
                 selectionContext,
-                buildRecordingTrackingContext(
-                  selection.source,
-                  selection.source,
-                  selectionContext,
-                  'auto_record'
-                )
+                'auto_record'
               )
-              return
-            }
-
-            recordDiagnosticAction({
-              category: 'recording',
-              action: 'meeting_window_detection_failed',
-              details: {
-                hasCalendarEvent,
-                providerId: selection.providerHint,
-                windowCount: selection.windowCount,
-                browserWindowCount: selection.browserWindowCount,
-                meetingWindowCount: selection.meetingWindowCount,
-                selectionMethod: selection.method,
-                selectionConfidence: selection.confidence
-              }
-            })
-            trackEvent('meeting_window_detection_failed', {
-              trigger: 'auto_record',
-              has_calendar_event: hasCalendarEvent,
-              provider_hint: selection.providerHint ?? 'unknown',
-              window_count: selection.windowCount,
-              browser_window_count: selection.browserWindowCount,
-              meeting_window_count: selection.meetingWindowCount,
-              selection_method: selection.method,
-              selection_confidence: selection.confidence
-            })
-
-            useRecordingPickerStore.getState().openPicker({
-              title: 'Select the meeting window',
-              subtitle:
-                'AutoDoc could not confidently identify the meeting window. Pick it manually instead of falling back to a screen capture.',
-              sources,
-              detectedId: selection.source?.id ?? null,
-              suggestionLabel: selection.source ? 'Suggested window' : null
-            })
-            recordDiagnosticAction({
-              category: 'recording',
-              action: 'manual_source_selection_required',
-              details: {
-                trigger: 'auto_record',
-                hasSuggestion: selection.source !== null
-              }
-            })
-            trackEvent('recording_manual_source_selection_required', {
-              trigger: 'auto_record',
-              has_suggestion: selection.source !== null,
-              provider_hint: selection.providerHint ?? 'unknown'
-            })
-            window.location.hash = ROUTES.upcoming
-          } catch (err) {
-            autoRecordStartInFlight.current = false
-            console.error('Auto-record failed:', err)
+            )
             return
           }
+
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'meeting_window_detection_failed',
+            details: {
+              hasCalendarEvent,
+              providerId: selection.providerHint,
+              windowCount: selection.windowCount,
+              browserWindowCount: selection.browserWindowCount,
+              meetingWindowCount: selection.meetingWindowCount,
+              selectionMethod: selection.method,
+              selectionConfidence: selection.confidence
+            }
+          })
+          trackEvent('meeting_window_detection_failed', {
+            trigger: 'auto_record',
+            has_calendar_event: hasCalendarEvent,
+            provider_hint: selection.providerHint ?? 'unknown',
+            window_count: selection.windowCount,
+            browser_window_count: selection.browserWindowCount,
+            meeting_window_count: selection.meetingWindowCount,
+            selection_method: selection.method,
+            selection_confidence: selection.confidence
+          })
+
+          await window.electronAPI.invoke('detection:source-selection-required', payload.requestId)
+          recordDiagnosticAction({
+            category: 'recording',
+            action: 'manual_source_selection_required',
+            details: {
+              trigger: 'auto_record',
+              hasSuggestion: selection.source !== null
+            }
+          })
+          trackEvent('recording_manual_source_selection_required', {
+            trigger: 'auto_record',
+            has_suggestion: selection.source !== null,
+            provider_hint: selection.providerHint ?? 'unknown'
+          })
+        } catch (err) {
           autoRecordStartInFlight.current = false
-        })()
-      }
-    )
-    return unsub
-  }, [events, isRecording, fetchSources, handleStart])
+          console.error('Auto-record failed:', err)
+          return
+        }
+        autoRecordStartInFlight.current = false
+      })()
+    })
+    const unsubSelectWindow = window.electronAPI.on('detection:select-window', (payload) => {
+      void (async () => {
+        if (isRecording) return
+        const selectionContext = buildAutoRecordSelectionContext(payload)
+        try {
+          const sources = await fetchSources()
+          const selection = chooseAutoRecordSource(
+            sources,
+            selectionContext,
+            getSavedSourcePreference(selectionContext)
+          )
+          useRecordingPickerStore.getState().openPicker({
+            title: 'Select the meeting window',
+            subtitle: 'Choose the window for this meeting to start AI notes.',
+            sources,
+            detectedId: selection.source?.id ?? null,
+            suggestionLabel: selection.source ? 'Suggested window' : null,
+            selectionContext,
+            trigger: 'auto_record'
+          })
+          window.location.hash = ROUTES.upcoming
+        } catch (error) {
+          console.error('Failed to open meeting window picker:', error)
+        }
+      })()
+    })
+    return () => {
+      unsub()
+      unsubSelectWindow()
+    }
+  }, [isRecording, fetchSources, handleStart])
 
   useEffect(() => {
     return window.electronAPI.on('notes:open-meeting', ({ meetingId }) => {

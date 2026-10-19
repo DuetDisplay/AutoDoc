@@ -4,9 +4,35 @@ import {
   chooseAutoRecordSource,
   detectMeetingWindow
 } from '../window-detection'
+import { findActiveCalendarEvent } from '../window-detection'
+import { createCalendarEvent } from '../../test/fixtures'
 import type { RecordingSource } from '../../../../shared/types'
 
 describe('detectMeetingWindow', () => {
+  it('ignores all-day blocks and prefers auto-record over a later timed event', () => {
+    const now = Date.now()
+    const timed = createCalendarEvent({
+      id: 'auto',
+      autoRecord: 'once',
+      startTime: now - 120_000,
+      endTime: now + 60_000
+    })
+    const later = createCalendarEvent({
+      id: 'later',
+      autoRecord: 'off',
+      startTime: now - 60_000,
+      endTime: now + 120_000
+    })
+    const allDay = { ...timed, id: 'home', isAllDay: true }
+    expect(findActiveCalendarEvent([allDay, later, timed], now)?.id).toBe('auto')
+    expect(findActiveCalendarEvent([allDay], now)).toBeNull()
+    expect(
+      findActiveCalendarEvent(
+        [timed, later].map((event) => ({ ...event, autoRecord: 'off' })),
+        now
+      )?.id
+    ).toBe('later')
+  })
   const sources: RecordingSource[] = [
     { id: 'w:1', name: 'Zoom Meeting - Sprint Planning', thumbnailDataUrl: '' },
     { id: 'w:2', name: 'Visual Studio Code', thumbnailDataUrl: '' },

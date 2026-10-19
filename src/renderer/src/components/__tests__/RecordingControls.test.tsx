@@ -19,6 +19,36 @@ beforeEach(() => {
 })
 
 describe('RecordingControls', () => {
+  it('keeps the detector context and meeting intent when the user chooses an ambiguous window', async () => {
+    const onStartRecording = vi.fn(async () => {})
+    const selectionContext = {
+      eventId: 'timed',
+      recurringEventId: 'timed-series',
+      providerHint: 'slack'
+    }
+    useRecordingPickerStore.getState().openPicker({
+      title: 'Select the meeting window',
+      sources: [{ id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' }],
+      selectionContext,
+      trigger: 'auto_record'
+    })
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={onStartRecording}
+        onStopRecording={() => {}}
+        onFetchSources={async () => []}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Jamal - Duet Display – Slack' }))
+    expect(onStartRecording).toHaveBeenCalledWith(
+      'window:1',
+      'Jamal - Duet Display – Slack',
+      selectionContext,
+      expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' })
+    )
+    expect(useRecordingPickerStore.getState().isOpen).toBe(false)
+  })
   it('renders start recording button when not recording', () => {
     render(
       <RecordingControls

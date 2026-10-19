@@ -545,6 +545,9 @@ export interface DiarizationSetupStatus {
 export interface DetectionAutoRecordPayload {
   providerId: string | null
   hasCalendarEvent: boolean
+  requestId: number
+  eventId: string | null
+  recurringEventId: string | null
 }
 
 export interface DetectionAutoStopPayload {

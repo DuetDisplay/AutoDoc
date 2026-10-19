@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { RecordingSource } from '../../../shared/types'
+import type { RecordingSelectionContext } from '../services/window-detection'
 
 interface RecordingPickerState {
   isOpen: boolean
@@ -8,12 +9,16 @@ interface RecordingPickerState {
   sources: RecordingSource[]
   detectedId: string | null
   suggestionLabel: string | null
+  selectionContext: RecordingSelectionContext | null
+  trigger: 'manual' | 'auto_record'
   openPicker: (params: {
     title: string
     subtitle?: string | null
     sources: RecordingSource[]
     detectedId?: string | null
     suggestionLabel?: string | null
+    selectionContext?: RecordingSelectionContext | null
+    trigger?: 'manual' | 'auto_record'
   }) => void
   closePicker: () => void
 }
@@ -25,15 +30,27 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
   sources: [],
   detectedId: null,
   suggestionLabel: null,
+  selectionContext: null,
+  trigger: 'manual',
 
-  openPicker: ({ title, subtitle = null, sources, detectedId = null, suggestionLabel = null }) =>
+  openPicker: ({
+    title,
+    subtitle = null,
+    sources,
+    detectedId = null,
+    suggestionLabel = null,
+    selectionContext = null,
+    trigger = 'manual'
+  }) =>
     set({
       isOpen: true,
       title,
       subtitle,
       sources,
       detectedId,
-      suggestionLabel
+      suggestionLabel,
+      selectionContext,
+      trigger
     }),
 
   closePicker: () =>
@@ -42,6 +59,8 @@ export const useRecordingPickerStore = create<RecordingPickerState>((set) => ({
       subtitle: null,
       sources: [],
       detectedId: null,
-      suggestionLabel: null
+      suggestionLabel: null,
+      selectionContext: null,
+      trigger: 'manual'
     })
 }))

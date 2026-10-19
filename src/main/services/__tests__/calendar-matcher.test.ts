@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { CalendarEvent } from '../../../shared/types'
 import { matchCalendarEvent } from '../calendar-matcher'
+
+vi.mock('../crypto', () => ({ isEncrypted: vi.fn(), decryptJSON: vi.fn() }))
 
 function event(
   overrides: Partial<CalendarEvent> & Pick<CalendarEvent, 'id' | 'startTime' | 'endTime'>
@@ -57,5 +59,17 @@ describe('matchCalendarEvent', () => {
     })
 
     expect(matchCalendarEvent([allDay, earlyCall], start + 30 * 60_000)?.id).toBe('early-call')
+  })
+
+  it('ignores all-day blocks even when no timed meeting overlaps', () => {
+    const allDay = event({
+      id: 'home',
+      title: 'Home',
+      startTime: Date.parse('2026-06-15T00:00:00.000Z'),
+      endTime: Date.parse('2026-06-16T00:00:00.000Z'),
+      isAllDay: true
+    })
+
+    expect(matchCalendarEvent([allDay], recordingStart)).toBeNull()
   })
 })

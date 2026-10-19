@@ -234,6 +234,7 @@ export interface IpcInvokeEvents {
     history?: ChatHistoryMessage[]
   ]
   'detection:dismiss': []
+  'detection:source-selection-required': [requestId: number]
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
@@ -398,6 +399,7 @@ export interface IpcInvokeReturns {
   'chat:send-stream': void
   'chat:select-recording-stream': void
   'detection:dismiss': void
+  'detection:source-selection-required': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean
@@ -457,6 +459,7 @@ export interface IpcOnEvents {
   'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]
+  'detection:select-window': [payload: DetectionAutoRecordPayload]
   'notes:open-meeting': [payload: { meetingId: string }]
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]

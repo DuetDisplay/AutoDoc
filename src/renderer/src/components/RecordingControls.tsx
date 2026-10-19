@@ -112,6 +112,8 @@ export function RecordingControls({
     sources,
     detectedId,
     suggestionLabel,
+    selectionContext: pickerSelectionContext,
+    trigger,
     openPicker,
     closePicker
   } = useRecordingPickerStore()
@@ -124,8 +126,8 @@ export function RecordingControls({
     return [detectedSource, ...sources.filter((source) => source.id !== detectedId)]
   }, [detectedId, sources])
   const selectionContext = useMemo(
-    () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
-    [events]
+    () => pickerSelectionContext ?? buildRecordingSelectionContext(findActiveCalendarEvent(events)),
+    [events, pickerSelectionContext]
   )
 
   const handleRecordClick = async (): Promise<void> => {
@@ -145,6 +147,7 @@ export function RecordingControls({
 
       openPicker({
         title: 'Select a window to record',
+        selectionContext,
         subtitle:
           selection.source && selection.confidence === 'high'
             ? 'AutoDoc highlighted the most likely meeting window.'
@@ -182,7 +185,7 @@ export function RecordingControls({
       source.id,
       source.name,
       selectionContext,
-      buildRecordingTrackingContext(source, detectedSource, selectionContext)
+      buildRecordingTrackingContext(source, detectedSource, selectionContext, trigger)
     )
   }
 

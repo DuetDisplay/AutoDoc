@@ -399,11 +399,14 @@ export function showNotificationWindow(options: NotificationOptions): void {
   })
 
   const autoDismissMs = options.autoDismissMs ?? 30_000
-  autoDismissTimer = setTimeout(() => {
-    if (notificationWindow === win) {
-      handleDismiss()
-    }
-  }, autoDismissMs)
+  // Zero keeps an actionable prompt visible until its owner closes it.
+  if (autoDismissMs > 0) {
+    autoDismissTimer = setTimeout(() => {
+      if (notificationWindow === win) {
+        handleDismiss()
+      }
+    }, autoDismissMs)
+  }
 }
 
 function animateOut(): void {
