@@ -293,10 +293,8 @@ export class DetectionService {
       'recording_started',
       { requestId, eventId: request.eventId, providerId: request.providerId },
       {
-        title: 'AI Notes Started',
-        body: `${displayTitle} is being recorded.`,
-        bodyTitle: displayTitle,
-        bodySuffix: 'is being recorded.',
+        title: displayTitle,
+        body: 'AI notes started. This meeting is being recorded.',
         primaryActionLabel: 'Stop',
         kind: 'recording-started',
         autoDismissMs: 15_000,

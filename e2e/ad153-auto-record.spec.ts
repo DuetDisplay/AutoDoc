@@ -317,8 +317,10 @@ test('a Slack huddle auto-records on the huddle window and attaches to the timed
     // No "Select window" notification; the only notification is the started notice.
     await expect.poll(() => session.electronApp.windows().length).toBe(2)
     const notice = session.electronApp.windows().find((window) => window !== page)!
-    await expect(notice.getByText('AI Notes Started', { exact: true })).toBeVisible()
-    await expect(notice.getByText('Testing Autodoc is being recorded.')).toBeVisible()
+    await expect(notice.getByText('Testing Autodoc', { exact: true })).toBeVisible()
+    await expect(
+      notice.getByText('AI notes started. This meeting is being recorded.', { exact: true })
+    ).toBeVisible()
     await expect(notice.getByRole('button', { name: 'Select window' })).toHaveCount(0)
 
     // One exported autodocLog.log must explain the whole start decision for QA.

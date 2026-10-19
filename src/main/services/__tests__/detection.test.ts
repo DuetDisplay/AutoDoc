@@ -1293,10 +1293,8 @@ describe('DetectionService', () => {
       expect(mocks.showNotificationWindow).toHaveBeenCalledTimes(1)
       expect(mocks.showNotificationWindow).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'AI Notes Started',
-          body: 'Event evt-1 is being recorded.',
-          bodyTitle: 'Event evt-1',
-          bodySuffix: 'is being recorded.',
+          title: 'Event evt-1',
+          body: 'AI notes started. This meeting is being recorded.',
           primaryActionLabel: 'Stop',
           kind: 'recording-started',
           autoDismissMs: 15_000,
@@ -1308,6 +1306,24 @@ describe('DetectionService', () => {
         message: 'Auto-record started notice shown',
         context: { requestId }
       })
+    })
+
+    it('truncates a long meeting name in the notice title', async () => {
+      setPlatform('win32')
+      const send = vi.fn()
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send } }] as never)
+      const service = new DetectionService(
+        { getState: () => ({ isRecording: true }) } as never,
+        () => []
+      )
+      ;(service as any).requestAutoRecord('A'.repeat(80), 'slack', null, false)
+      const payload = send.mock.calls.find(([channel]) => channel === 'detection:auto-record')![1]
+      service.showAutoRecordStartedNotice(payload.requestId)
+
+      const { title, body } = mocks.showNotificationWindow.mock.calls[0][0]
+      expect(title).toHaveLength(56)
+      expect(title.endsWith('...')).toBe(true)
+      expect(body).toBe('AI notes started. This meeting is being recorded.')
     })
 
     it('does not show the notice for a stale request id or when not recording', async () => {
