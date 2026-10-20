@@ -163,12 +163,16 @@ export async function resolveOllamaModelsDir(
 
 /** Asks cmd.exe for the 8.3 name; the path travels in an env var to avoid quoting problems. */
 export function resolveWindowsShortPath(path: string): Promise<string | null> {
+  const directory = win32.normalize(path)
+  // Treat the last component as a directory too. Without its trailing separator,
+  // cmd's %~sI can return a malformed alias for some non-ASCII directory layouts.
+  const target = directory.endsWith('\\') ? directory : `${directory}\\`
   return new Promise((resolve) => {
     execFile(
       process.env.ComSpec ?? 'cmd.exe',
       ['/d', '/s', '/c', '"for %I in ("%AUTODOC_SHORT_PATH_TARGET%") do @echo %~sI"'],
       {
-        env: { ...process.env, AUTODOC_SHORT_PATH_TARGET: path },
+        env: { ...process.env, AUTODOC_SHORT_PATH_TARGET: target },
         timeout: SHORT_PATH_TIMEOUT_MS,
         windowsHide: true,
         windowsVerbatimArguments: true
