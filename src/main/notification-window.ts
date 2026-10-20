@@ -236,7 +236,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   const body = escapeHtml(options.body)
   const subtitle =
     options.bodyTitle && options.bodySuffix
-      ? `<div class="subtitle has-note-title">${escapeHtml(`${options.bodyTitle} ${options.bodySuffix}`)}</div>`
+      ? `<div class="subtitle">${escapeHtml(`${options.bodyTitle} ${options.bodySuffix}`)}</div>`
       : `<div class="subtitle">${body}</div>`
   const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
@@ -312,17 +312,12 @@ export function showNotificationWindow(options: NotificationOptions): void {
     text-overflow: ellipsis;
   }
 
+  /* Wraps to at most three lines, which the fixed window height already fits. */
   .subtitle {
     font-size: 11.5px;
     color: #86837e;
     line-height: 1.25;
     margin-top: 1px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .subtitle.has-note-title {
     min-width: 0;
     overflow: hidden;
     display: -webkit-box;
