@@ -65,6 +65,7 @@ export function SegmentationBadge({
   const isInsufficientMemory =
     status === 'failed' && (hasMemoryFailure ?? errorCode === 'ollama-insufficient-memory')
   let label = isInsufficientMemory ? 'Not enough memory' : config.label
+  if (status === 'failed' && errorCode === 'llm-empty-output') label = 'No notes found — Retry'
   if (status === 'segmenting' && progress == null) {
     label = 'Preparing notes...'
   } else if (status === 'segmenting' && progress != null) {

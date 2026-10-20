@@ -1771,7 +1771,7 @@ describe('SegmentationService', () => {
         status: 'failed',
         errorCode: 'llm-empty-output',
         userReason:
-          'Notes couldn’t finish. AutoDoc hit a problem writing notes this time. Your transcript is still available.',
+          'No notes were generated. AutoDoc didn’t find anything in the transcript to turn into notes. You can retry, and your transcript is still available.',
         notesLayout: 'v1'
       })
       expect(send).toHaveBeenCalledWith(
@@ -1789,7 +1789,7 @@ describe('SegmentationService', () => {
       )
       expect(await reopened.getStatus('m2')).toBe('failed')
       expect(await reopened.getErrorCode('m2')).toBe('llm-empty-output')
-      expect(await reopened.getUserReason('m2')).toContain('Notes couldn’t finish')
+      expect(await reopened.getUserReason('m2')).toContain('No notes were generated')
 
       fsMock.readdir.mockResolvedValue(['m2'] as any)
       fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)
