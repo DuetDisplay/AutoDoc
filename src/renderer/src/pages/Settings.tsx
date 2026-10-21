@@ -3,6 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { SpeechLicenses } from '../components/SpeechLicenses'
 import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
 import { useCalendarStore } from '../stores/calendar'
+import { useRecordingStore } from '../stores/recording'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
 import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
@@ -58,7 +59,9 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
     return 'Calendar sync is unavailable for this Microsoft mailbox type.'
   }
   if (account.syncIssue === 'reconnect-required') {
-    return 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
+    return account.provider === 'google'
+      ? 'Google Calendar needs to be reconnected to resume calendar sync. Disconnect it, then connect again and allow calendar access.'
+      : 'Microsoft Outlook needs to be reconnected to resume calendar sync.'
   }
 
   return null
@@ -84,6 +87,10 @@ export function Settings() {
   const [showSpeechLicenses, setShowSpeechLicenses] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' })
+  const isRecording = useRecordingStore((state) => state.isRecording)
+  const installBlockedReason = isRecording
+    ? 'Finish your recording before restarting.'
+    : updateStatus.installBlockedReason
   const [runtimeInfo, setRuntimeInfo] = useState<AppRuntimeInfo | null>(null)
   const [storageInfo, setStorageInfo] = useState<AppStorageInfo | null>(null)
   const [analyticsConsent, setAnalyticsConsentState] = useState<boolean | null>(null)
@@ -801,21 +808,33 @@ export function Settings() {
               {updateStatus.state === 'downloaded' && (
                 <button
                   onClick={() => {
+                    if (installBlockedReason) return
                     setIsInstallingUpdate(true)
                     trackEvent('update_install_requested', {
                       available_version: updateStatus.version ?? 'unknown'
                     })
-                    window.setTimeout(() => {
-                      void window.electronAPI.invoke('updater:install')
-                    }, 300)
+                    void window.electronAPI.invoke('updater:install').then((result) => {
+                      if (result?.blockedReason) {
+                        setIsInstallingUpdate(false)
+                        setUpdateStatus({
+                          ...updateStatus,
+                          installBlockedReason: result.blockedReason
+                        })
+                      }
+                    })
                   }}
-                  disabled={isInstallingUpdate}
+                  disabled={isInstallingUpdate || Boolean(installBlockedReason)}
                   className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
                 >
                   {isInstallingUpdate
                     ? 'Restarting...'
                     : `Restart to update to v${updateStatus.version}`}
                 </button>
+              )}
+              {updateStatus.state === 'downloaded' && installBlockedReason && (
+                <span role="status" className="text-[11px] text-ink-muted">
+                  {installBlockedReason}
+                </span>
               )}
               {updateStatus.state === 'installing' && (
                 <span className="text-[11px] text-sage font-medium animate-pulse">

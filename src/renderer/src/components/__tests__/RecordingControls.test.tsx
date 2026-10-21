@@ -19,6 +19,141 @@ beforeEach(() => {
 })
 
 describe('RecordingControls', () => {
+  it('keeps the detector context and meeting intent when the user chooses an ambiguous window', async () => {
+    const onStartRecording = vi.fn(async () => {})
+    const selectionContext = {
+      eventId: 'timed',
+      recurringEventId: 'timed-series',
+      providerHint: 'slack'
+    }
+    useRecordingPickerStore.getState().openPicker({
+      title: 'Select the meeting window',
+      sources: [{ id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' }],
+      selectionContext,
+      trigger: 'auto_record'
+    })
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={onStartRecording}
+        onStopRecording={() => {}}
+        onFetchSources={async () => []}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Jamal - Duet Display – Slack' }))
+    expect(onStartRecording).toHaveBeenCalledWith(
+      'window:1',
+      'Jamal - Duet Display – Slack',
+      selectionContext,
+      expect.objectContaining({ recordingIntent: 'meeting', providerId: 'slack' }),
+      { rememberSource: true }
+    )
+    expect(useRecordingPickerStore.getState().isOpen).toBe(false)
+  })
+  it('logs which scored source the user picked and whether it was the suggestion', async () => {
+    useRecordingPickerStore.getState().openPicker({
+      title: 'Select the meeting window',
+      sources: [
+        { id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' },
+        { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' }
+      ],
+      detectedId: 'window:1',
+      selectionContext: { eventId: 'timed', recurringEventId: null, providerHint: 'slack' },
+      trigger: 'auto_record',
+      scoredSourceIds: ['window:1'],
+      requestId: 7,
+      diagnosticTrigger: 'select_window'
+    })
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={async () => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => []}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Entire Screen' }))
+    const logged = mockInvoke.mock.calls.filter(
+      ([channel]) => channel === 'diagnostics:record-action'
+    )
+    expect(logged).toEqual([
+      [
+        'diagnostics:record-action',
+        {
+          category: 'recording',
+          action: 'recording_picker_result',
+          details: {
+            trigger: 'select_window',
+            requestId: 7,
+            eventId: 'timed',
+            result: 'picked',
+            pickedIndex: null,
+            pickedWasSuggested: false,
+            sourceType: 'screen'
+          }
+        }
+      ]
+    ])
+    expect(JSON.stringify(logged)).not.toContain('Jamal')
+  })
+
+  it('logs when the user cancels the picker', async () => {
+    useRecordingPickerStore.getState().openPicker({
+      title: 'Select the meeting window',
+      sources: [{ id: 'window:1', name: 'Jamal - Slack', thumbnailDataUrl: '' }],
+      selectionContext: { eventId: 'timed', recurringEventId: null, providerHint: 'slack' },
+      trigger: 'auto_record',
+      requestId: 9,
+      diagnosticTrigger: 'select_window'
+    })
+    const { container } = render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={async () => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => []}
+      />
+    )
+    await userEvent.click(container.querySelector('.fixed.inset-0') as HTMLElement)
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'diagnostics:record-action',
+      expect.objectContaining({
+        action: 'recording_picker_result',
+        details: expect.objectContaining({ requestId: 9, result: 'cancelled' })
+      })
+    )
+    expect(useRecordingPickerStore.getState().isOpen).toBe(false)
+  })
+
+  it('logs a manual picker opening with the suggestion state', async () => {
+    mockInvoke.mockResolvedValue(undefined)
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={() => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [
+          { id: 'window:1', name: 'Zoom Meeting', thumbnailDataUrl: '' },
+          { id: 'window:2', name: 'Visual Studio Code', thumbnailDataUrl: '' }
+        ]}
+      />
+    )
+    await userEvent.click(screen.getByText('Record'))
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('diagnostics:record-action', {
+        category: 'recording',
+        action: 'recording_picker_opened',
+        details: {
+          trigger: 'manual',
+          requestId: null,
+          eventId: null,
+          sourceCount: 2,
+          suggestionHighlighted: true
+        }
+      })
+    )
+  })
+
   it('renders start recording button when not recording', () => {
     render(
       <RecordingControls
@@ -241,8 +376,10 @@ describe('RecordingControls', () => {
         meetingSourceId: 'window:1',
         meetingSourceName: 'Zoom Meeting',
         providerId: 'zoom',
+        selectionEventId: null,
         recordingIntent: 'meeting'
-      }
+      },
+      { rememberSource: true }
     )
   })
 
@@ -277,8 +414,10 @@ describe('RecordingControls', () => {
         meetingSourceId: 'window:1',
         meetingSourceName: 'Zoom Meeting',
         providerId: 'zoom',
+        selectionEventId: null,
         recordingIntent: 'meeting'
-      }
+      },
+      { rememberSource: true }
     )
   })
 })

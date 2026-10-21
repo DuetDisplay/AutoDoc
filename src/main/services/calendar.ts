@@ -12,13 +12,26 @@ import {
 } from './token-store'
 import type { CalendarEvent, CalendarAccount } from '../../shared/types'
 import type { CalendarProvider } from './calendar-types'
-import { logAutodocFailure } from './autodoc-log'
-import { CalendarTransientError, isTransientCalendarError } from './calendar-error-classification'
+import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
+import {
+  CalendarTransientError,
+  ReconnectRequiredCalendarAuthError,
+  isReconnectRequiredGoogleAuthError,
+  isTransientCalendarError
+} from './calendar-error-classification'
 import { requireConfiguredAuthWorkerUrl } from './distribution-config'
 import { parseGoogleEventTime } from './calendar-time'
 
 const OAUTH_PORT = 42813
 const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
+const GOOGLE_RECONNECT_MESSAGE = 'Google Calendar needs to be reconnected to resume calendar sync.'
+const GOOGLE_CALENDAR_READ_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events.readonly',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar'
+]
+const MISSING_CALENDAR_SCOPE_MESSAGE =
+  'AutoDoc needs permission to read your calendar. Connect again and leave the calendar access box ticked.'
 const CLIENT_ID = '610162912921-4k5ljde2b6bf70idvq4kpdit343c1v8g.apps.googleusercontent.com'
 function extractEmailFromIdToken(idToken: string | undefined): string | null {
   if (!idToken) return null
@@ -157,6 +170,23 @@ export class GoogleCalendarProvider implements CalendarProvider {
           tokens.expiry_date = Date.now() + (tokens.expires_in as number) * 1000
         }
 
+        if (typeof tokens.scope === 'string') {
+          const granted = tokens.scope.split(/\s+/).filter(Boolean)
+          if (!GOOGLE_CALENDAR_READ_SCOPES.some((scope) => granted.includes(scope))) {
+            res.writeHead(200, { 'Content-Type': 'text/html' })
+            res.end(`<html><body><p>${MISSING_CALENDAR_SCOPE_MESSAGE}</p></body></html>`)
+            rejectAndClose(new Error(MISSING_CALENDAR_SCOPE_MESSAGE))
+            return
+          }
+        } else {
+          logAutodocEvent({
+            area: 'calendar',
+            level: 'warn',
+            message: 'Google calendar scope could not be verified from the token response',
+            context: { provider: 'google' }
+          })
+        }
+
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end(
           '<html><body><p>Connected to Google Calendar! You may close this tab.</p></body></html>'
@@ -247,14 +277,25 @@ export class GoogleCalendarProvider implements CalendarProvider {
     const client = this.getClient(accountId)
     const calendar = google.calendar({ version: 'v3', auth: client })
 
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: opts.timeMin,
-      ...(opts.timeMax ? { timeMax: opts.timeMax } : {}),
-      maxResults: opts.maxResults,
-      singleEvents: true,
-      orderBy: 'startTime'
-    })
+    const response = await calendar.events
+      .list({
+        calendarId: 'primary',
+        timeMin: opts.timeMin,
+        ...(opts.timeMax ? { timeMax: opts.timeMax } : {}),
+        maxResults: opts.maxResults,
+        singleEvents: true,
+        orderBy: 'startTime'
+      })
+      .catch((err: unknown) => {
+        if (isReconnectRequiredGoogleAuthError(err)) {
+          throw new ReconnectRequiredCalendarAuthError(
+            GOOGLE_RECONNECT_MESSAGE,
+            'reconnect-required',
+            { cause: err }
+          )
+        }
+        throw err
+      })
 
     const items = response.data.items ?? []
 
@@ -331,6 +372,13 @@ export class GoogleCalendarProvider implements CalendarProvider {
             }
           )
         }
+        if (isReconnectRequiredGoogleAuthError(error)) {
+          throw new ReconnectRequiredCalendarAuthError(
+            GOOGLE_RECONNECT_MESSAGE,
+            'reconnect-required',
+            { cause: error }
+          )
+        }
         console.error('Google token refresh failed:', responseText)
         logAutodocFailure({
           area: 'calendar',
@@ -354,6 +402,12 @@ export class GoogleCalendarProvider implements CalendarProvider {
       client.setCredentials(updated)
       saveTokensForAccount(accountId, updated)
     } catch (err) {
+      if (
+        err instanceof ReconnectRequiredCalendarAuthError ||
+        err instanceof CalendarTransientError
+      ) {
+        throw err
+      }
       if (isTransientCalendarError(err)) {
         throw new CalendarTransientError(
           'Google token refresh failed due to transient network conditions',

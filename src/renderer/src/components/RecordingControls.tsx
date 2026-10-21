@@ -2,7 +2,9 @@ import { useMemo, useState, type ReactElement } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
+import { logPickerOpened, logPickerResult } from '../services/picker-diagnostics'
 import { useToastStore } from '../stores/toast'
+import type { RecordingStartOptions } from '../hooks/useRecording'
 import {
   buildRecordingSelectionContext,
   buildRecordingTrackingContext,
@@ -91,7 +93,8 @@ interface RecordingControlsProps {
     sourceId: string,
     sourceName: string,
     selectionContext?: ReturnType<typeof buildRecordingSelectionContext>,
-    trackingContext?: RecordingTrackingContext | null
+    trackingContext?: RecordingTrackingContext | null,
+    startOptions?: RecordingStartOptions
   ) => Promise<unknown>
   onStopRecording: () => void
   onFetchSources: () => Promise<RecordingSource[]>
@@ -112,6 +115,11 @@ export function RecordingControls({
     sources,
     detectedId,
     suggestionLabel,
+    selectionContext: pickerSelectionContext,
+    trigger,
+    scoredSourceIds,
+    requestId: pickerRequestId,
+    diagnosticTrigger,
     openPicker,
     closePicker
   } = useRecordingPickerStore()
@@ -124,8 +132,8 @@ export function RecordingControls({
     return [detectedSource, ...sources.filter((source) => source.id !== detectedId)]
   }, [detectedId, sources])
   const selectionContext = useMemo(
-    () => buildRecordingSelectionContext(findActiveCalendarEvent(events)),
-    [events]
+    () => pickerSelectionContext ?? buildRecordingSelectionContext(findActiveCalendarEvent(events)),
+    [events, pickerSelectionContext]
   )
 
   const handleRecordClick = async (): Promise<void> => {
@@ -145,6 +153,7 @@ export function RecordingControls({
 
       openPicker({
         title: 'Select a window to record',
+        selectionContext,
         subtitle:
           selection.source && selection.confidence === 'high'
             ? 'AutoDoc highlighted the most likely meeting window.'
@@ -155,7 +164,16 @@ export function RecordingControls({
           ? selection.confidence === 'high'
             ? 'Detected meeting'
             : 'Suggested window'
-          : null
+          : null,
+        scoredSourceIds: selection.candidateSourceIds,
+        diagnosticTrigger: 'manual'
+      })
+      logPickerOpened({
+        trigger: 'manual',
+        requestId: null,
+        eventId: selectionContext.eventId,
+        sourceCount: fetchedSources.length,
+        suggestionHighlighted: selection.source !== null
       })
     } catch (err) {
       console.warn('Failed to list recording sources:', err)
@@ -173,7 +191,27 @@ export function RecordingControls({
     }
   }
 
+  const handleCancelPicker = (): void => {
+    logPickerResult({
+      trigger: diagnosticTrigger,
+      requestId: pickerRequestId,
+      eventId: selectionContext.eventId,
+      result: 'cancelled'
+    })
+    closePicker()
+  }
+
   const handleSourceSelect = (source: RecordingSource): void => {
+    const scoredIndex = scoredSourceIds.indexOf(source.id)
+    logPickerResult({
+      trigger: diagnosticTrigger,
+      requestId: pickerRequestId,
+      eventId: selectionContext.eventId,
+      result: 'picked',
+      pickedIndex: scoredIndex >= 0 ? scoredIndex : null,
+      pickedWasSuggested: source.id === detectedId,
+      sourceType: source.id.startsWith('screen:') ? 'screen' : 'window'
+    })
     closePicker()
     const detectedSource = detectedId
       ? (sources.find((candidate) => candidate.id === detectedId) ?? null)
@@ -182,7 +220,9 @@ export function RecordingControls({
       source.id,
       source.name,
       selectionContext,
-      buildRecordingTrackingContext(source, detectedSource, selectionContext)
+      buildRecordingTrackingContext(source, detectedSource, selectionContext, trigger),
+      // The user picked this window, so remember it for the meeting.
+      { rememberSource: true }
     )
   }
 
@@ -209,7 +249,7 @@ export function RecordingControls({
 
       {showPicker && (
         <>
-          <div className="fixed inset-0 z-40" onClick={closePicker} />
+          <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
           <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
             <p className="text-[11px] font-medium text-ink-muted mb-1">{title}</p>
             {subtitle && <p className="text-[10px] text-ink-faint mb-2">{subtitle}</p>}

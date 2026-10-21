@@ -330,6 +330,8 @@ export interface RecordingTrackingContext {
   meetingSourceName: string | null
   providerId: string | null
   recordingIntent: RecordingIntent
+  /** Calendar event the renderer's selection context pointed at; used for diagnostics only. */
+  selectionEventId?: string | null
 }
 
 export interface RecordingState {
@@ -480,7 +482,7 @@ export interface OllamaSetupStatus {
   /** Model name when phase is pulling (e.g. llama3.1 vs qwen3-embedding:0.6b). */
   pullModel?: string
   error?: string
-  failedStep?: 'starting' | 'downloading' | 'pulling' | 'ready'
+  failedStep?: 'starting' | 'downloading' | 'pulling' | 'ready' | 'model_load'
 }
 
 export interface WhisperSetupStatus {
@@ -545,6 +547,9 @@ export interface DiarizationSetupStatus {
 export interface DetectionAutoRecordPayload {
   providerId: string | null
   hasCalendarEvent: boolean
+  requestId: number
+  eventId: string | null
+  recurringEventId: string | null
 }
 
 export interface DetectionAutoStopPayload {

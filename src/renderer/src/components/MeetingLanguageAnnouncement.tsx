@@ -69,7 +69,7 @@ export function MeetingLanguageAnnouncement({
       className="fixed inset-0 m-auto w-[420px] max-w-[calc(100%-48px)] rounded-2xl border border-border bg-bg-card p-7 text-ink shadow-xl backdrop:bg-ink/20"
     >
       <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-sage-dark">
-        New in 1.3.0
+        New
       </p>
       <h2 id="meeting-language-announcement-title" className="text-[24px] font-serif leading-tight">
         Your meetings, in your language

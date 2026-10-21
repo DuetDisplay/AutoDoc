@@ -107,4 +107,64 @@ describe('diagnostic log upload', () => {
     expect(sanitized).not.toContain('QA User')
     expect(parsed.binaryPath).toBe('[home]\\AppData\\Roaming\\AutoDoc\\ollama.exe')
   })
+  it('swallows Go-style byte escapes inside a Windows user name', () => {
+    // Raw stderr (single backslashes) and the JSON-serialized form (doubled backslashes).
+    const single = String.raw`C:\Users\Test\xb3as\AppData\Roaming\AutoDoc\ollama-data\blobs`
+    const doubled = String.raw`C:\\Users\\Test\\xb3as\\AppData\\Roaming\\AutoDoc\\ollama-data\\blobs`
+    const unicode = String.raw`C:\\Users\\Test\\u0142as\\AppData\\Roaming`
+
+    expect(sanitizeDiagnosticLogTail(single)).toBe(
+      String.raw`[home]\AppData\Roaming\AutoDoc\ollama-data\blobs`
+    )
+    expect(sanitizeDiagnosticLogTail(doubled)).toBe(
+      String.raw`[home]\\AppData\\Roaming\\AutoDoc\\ollama-data\\blobs`
+    )
+    expect(sanitizeDiagnosticLogTail(unicode)).toBe(String.raw`[home]\\AppData\\Roaming`)
+    for (const input of [single, doubled, unicode]) {
+      expect(sanitizeDiagnosticLogTail(input)).not.toMatch(/Test|xb3|u0142/)
+    }
+  })
+
+  it('keeps log lines valid JSON when window names hold brackets, quotes and emoji', () => {
+    const entry = {
+      message: 'Auto-record stop signals',
+      context: {
+        relevantWindowNames: [
+          'autodoc-social-radar (Channel) - AutoDocTest - Slack [Main] 🏠🔊',
+          'say "hello" ] [ - Slack',
+          'back\\slash \\" quote ]'
+        ],
+        title: 'Weekly "sync" [Main] 🏠',
+        sourceName: 'He said \\"hi\\" ] there',
+        trackedSourceName: 'x ] "y"',
+        matchedTrackedSourceName: '[Main] "z"',
+        calendarTitle: 'Q3 "planning" ]',
+        keep: 'visible'
+      }
+    }
+    const line = JSON.stringify(entry)
+
+    const sanitized = sanitizeDiagnosticLogTail(`${line}\n${line}`)
+    const [first, second] = sanitized.split('\n').map((text) => JSON.parse(text))
+
+    for (const parsed of [first, second]) {
+      expect(parsed.context).toEqual({
+        relevantWindowNames: [],
+        title: null,
+        sourceName: null,
+        trackedSourceName: null,
+        matchedTrackedSourceName: null,
+        calendarTitle: null,
+        keep: 'visible'
+      })
+    }
+    expect(sanitized).not.toContain('AutoDocTest')
+    expect(sanitized).not.toContain('planning')
+  })
+
+  it('redacts a token that holds an escaped quote without leaving broken JSON', () => {
+    const line = JSON.stringify({ access_token: 'abc"def]ghi', next: 'ok' })
+    const parsed = JSON.parse(sanitizeDiagnosticLogTail(line)) as Record<string, string>
+    expect(parsed).toEqual({ access_token: '[redacted]', next: 'ok' })
+  })
 })

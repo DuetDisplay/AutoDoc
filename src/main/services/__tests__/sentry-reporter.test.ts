@@ -47,4 +47,53 @@ describe('sentry reporter', () => {
     })
     expect(captureException).toHaveBeenCalled()
   })
+
+  it('sets a Sentry fingerprint when one is provided', () => {
+    const setFingerprint = vi.fn()
+    const setTag = vi.fn()
+    const setExtras = vi.fn()
+    const captureException = vi.fn()
+
+    initSentryReporter({
+      withScope(callback: (scope: unknown) => void) {
+        callback({
+          setFingerprint,
+          setTag,
+          setExtras
+        })
+      },
+      captureException
+    } as never)
+
+    captureError(new Error('Ollama exited with code 1: sampler params'), {
+      area: 'ollama',
+      fingerprint: ['ollama-server-exited', '1']
+    })
+
+    expect(setFingerprint).toHaveBeenCalledWith(['ollama-server-exited', '1'])
+    expect(captureException).toHaveBeenCalled()
+  })
+
+  it('does not set a Sentry fingerprint when none is provided', () => {
+    const setFingerprint = vi.fn()
+    const setTag = vi.fn()
+    const setExtras = vi.fn()
+    const captureException = vi.fn()
+
+    initSentryReporter({
+      withScope(callback: (scope: unknown) => void) {
+        callback({
+          setFingerprint,
+          setTag,
+          setExtras
+        })
+      },
+      captureException
+    } as never)
+
+    captureError(new Error('boom'), { area: 'app' })
+
+    expect(setFingerprint).not.toHaveBeenCalled()
+    expect(captureException).toHaveBeenCalled()
+  })
 })

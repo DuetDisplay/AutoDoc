@@ -7,6 +7,15 @@ import { RECORDING_SUBDIR } from '../../shared/constants'
 import { normalizeMeetingLanguage, type MeetingLanguageCode } from '../../shared/meeting-language'
 
 export class RecordingService {
+  private shutdownPending = false
+  private starting = false
+
+  setShutdownPending(pending: boolean): void {
+    this.shutdownPending = pending
+  }
+  hasActiveCapture(): boolean {
+    return this.starting || this.state.isRecording
+  }
   private state: RecordingState = {
     isRecording: false,
     meetingId: null,
@@ -30,13 +39,21 @@ export class RecordingService {
     trackingContext: RecordingTrackingContext | null = null,
     meetingLanguage: MeetingLanguageCode = 'en'
   ): Promise<RecordingPaths> {
-    if (this.state.isRecording) {
+    if (this.shutdownPending)
+      throw new Error('AutoDoc is finishing your recording before quitting.')
+    if (this.starting || this.state.isRecording) {
       throw new Error('Already recording')
     }
 
     const meetingId = randomUUID()
     const dir = this.getMeetingDir(meetingId)
-    await mkdir(dir, { recursive: true })
+    this.starting = true
+    try {
+      await mkdir(dir, { recursive: true })
+      if (this.shutdownPending) throw new Error('AutoDoc is quitting.')
+    } finally {
+      this.starting = false
+    }
 
     this.state = {
       isRecording: true,

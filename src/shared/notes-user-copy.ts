@@ -1,4 +1,10 @@
-export type NotesUserFailureKind = 'empty' | 'memory' | 'engine' | 'generic' | 'layout'
+export type NotesUserFailureKind =
+  | 'empty'
+  | 'nothing-found'
+  | 'memory'
+  | 'engine'
+  | 'generic'
+  | 'layout'
 
 export interface NotesUserCopy {
   title: string
@@ -9,6 +15,12 @@ const COPY: Record<NotesUserFailureKind, NotesUserCopy> = {
   empty: {
     title: 'No notes were generated',
     body: 'There wasn’t enough conversation to turn into notes. Your transcript is still available.'
+  },
+  // The model ran but nothing it wrote was supported by the transcript. This also covers a long
+  // meeting where the model returned nothing, so it must not claim the conversation was short.
+  'nothing-found': {
+    title: 'No notes were generated',
+    body: 'AutoDoc didn’t find anything in the transcript to turn into notes. You can retry, and your transcript is still available.'
   },
   memory: {
     title: 'Not enough available memory',
@@ -37,5 +49,6 @@ export function notesFailureKindFromCode(errorCode: string | undefined): NotesUs
   if (errorCode === 'ollama-unavailable' || errorCode === 'ollama-model-setup') return 'engine'
   if (errorCode === 'scan_or_persist') return 'layout'
   if (errorCode === 'no_notes_detected') return 'empty'
+  if (errorCode === 'llm-empty-output') return 'nothing-found'
   return 'generic'
 }

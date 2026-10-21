@@ -39,4 +39,24 @@ describe('SegmentationBadge', () => {
     render(<SegmentationBadge status="no-notes" />)
     expect(screen.getByText('No notes generated')).toBeInTheDocument()
   })
+
+  it('says no notes were found, and still offers retry, when nothing was accepted', () => {
+    let retried = false
+    render(
+      <SegmentationBadge
+        status="failed"
+        errorCode="llm-empty-output"
+        onRetry={() => {
+          retried = true
+        }}
+      />
+    )
+    screen.getByText('No notes found — Retry').click()
+    expect(retried).toBe(true)
+  })
+
+  it('keeps the generic failure label for other errors', () => {
+    render(<SegmentationBadge status="failed" errorCode="unknown" />)
+    expect(screen.getByText('Notes failed — Retry')).toBeInTheDocument()
+  })
 })

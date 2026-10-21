@@ -48,6 +48,7 @@ interface CaptureHandles {
   micSegmentIndex: number
   systemSegmentIndex: number
   createdAt: number
+  timelineOriginMs: number
   stopping: boolean
   recoverySequence: number
   consecutiveVideoRecoveries: number
@@ -67,10 +68,12 @@ interface CaptureHandles {
   micWatchdog: AudioWatchdog | null
   systemWatchdog: AudioWatchdog | null
   pendingChunkWrites: Set<Promise<void>>
+  videoSegmentEndsRecorded: Set<number>
   cleanupMonitoring: (() => void) | null
   recoveryTimer: ReturnType<typeof setTimeout> | null
   monitorLoopPromise: Promise<void> | null
   recoveryPromise: Promise<void> | null
+  deferredRecoveryReason: string | null
   recoveryValidation: RecoveryValidationState | null
   finalizePromise: Promise<void> | null
   finalized: boolean
@@ -338,7 +341,15 @@ function scheduleVideoRecoveryStabilityReset(capture: CaptureHandles): void {
   }, VIDEO_RECOVERY_STABILITY_MS)
 }
 
-async function disableVideoCapture(capture: CaptureHandles, reason: string): Promise<void> {
+async function disableVideoCapture(
+  capture: CaptureHandles,
+  reason: string,
+  options: {
+    error?: unknown
+    attemptCount?: number
+    degradationPath: 'retries-exhausted' | 'consecutive-recoveries'
+  }
+): Promise<void> {
   if (capture.videoDisabled || activeCapture !== capture || capture.stopping || capture.finalized) {
     return
   }
@@ -361,11 +372,38 @@ async function disableVideoCapture(capture: CaptureHandles, reason: string): Pro
     console.warn('Failed to report audio-only recording fallback:', err)
   }
 
+  captureRecordingRecoveryFailure(
+    new Error('Recording continued in audio-only mode after repeated video capture failures', {
+      cause: options.error
+    }),
+    {
+      meetingId: capture.meetingId,
+      sourceType: getSourceType(capture.sourceId),
+      segmentIndex: capture.segmentIndex,
+      reason,
+      attemptCount: options.attemptCount ?? capture.consecutiveVideoRecoveries,
+      expectedAudio: capture.expectedAudio,
+      actualAudio: getCaptureAudioAvailability(capture),
+      failureKind: 'degraded',
+      degradationPath: options.degradationPath
+    }
+  )
+
   await waitForRecorderStop(capture.videoRecorder, 'video')
+  recordVideoSegmentEnd(
+    capture.pendingChunkWrites,
+    capture.videoSegmentEndsRecorded,
+    capture.meetingId,
+    capture.segmentIndex,
+    capture.timelineOriginMs
+  )
   capture.videoStream.getTracks().forEach((track) => track.stop())
 
   capture.cleanupMonitoring?.()
   installCaptureMonitoring(capture)
+  if (!capture.recoveryPromise) {
+    queueMissingAudioRecovery(capture)
+  }
 }
 
 async function abandonCapture(capture: CaptureHandles, reason: string): Promise<void> {
@@ -397,14 +435,35 @@ async function abandonCapture(capture: CaptureHandles, reason: string): Promise<
 
 async function handleCaptureRecoveryTerminalFailure(
   capture: CaptureHandles,
-  reason: string
+  reason: string,
+  options: { error?: unknown; attemptCount?: number } = {}
 ): Promise<void> {
   const actualAudio = getCaptureAudioAvailability(capture)
   const hasHealthyAudio = actualAudio.hasMic || actualAudio.hasSystemAudio
 
   if (hasHealthyAudio && !capture.videoDisabled && reason.startsWith('video:')) {
-    await disableVideoCapture(capture, reason)
+    await disableVideoCapture(capture, reason, {
+      error: options.error,
+      attemptCount: options.attemptCount,
+      degradationPath: 'retries-exhausted'
+    })
     return
+  }
+
+  if (reason.startsWith('video:')) {
+    captureRecordingRecoveryFailure(
+      options.error ?? new Error('Failed to recover video capture'),
+      {
+        meetingId: capture.meetingId,
+        sourceType: getSourceType(capture.sourceId),
+        segmentIndex: capture.segmentIndex,
+        reason,
+        attemptCount: options.attemptCount ?? capture.consecutiveVideoRecoveries,
+        expectedAudio: capture.expectedAudio,
+        actualAudio,
+        failureKind: 'failed'
+      }
+    )
   }
 
   await abandonCapture(capture, reason)
@@ -568,7 +627,7 @@ function trackChunkWrite(
 function trackSegmentTiming(
   pendingChunkWrites: Set<Promise<void>>,
   meetingId: string,
-  type: 'mic' | 'system',
+  type: 'video' | 'mic' | 'system',
   segmentIndex: number,
   offsetMs: number
 ): void {
@@ -582,6 +641,72 @@ function trackSegmentTiming(
     })
 
   pendingChunkWrites.add(savePromise)
+}
+
+function trackSegmentEnd(
+  pendingChunkWrites: Set<Promise<void>>,
+  meetingId: string,
+  type: 'video' | 'mic' | 'system',
+  segmentIndex: number,
+  endOffsetMs: number
+): void {
+  const savePromise: Promise<void> = window.electronAPI
+    .invoke('recording:save-segment-end', meetingId, type, segmentIndex, endOffsetMs)
+    .catch((err) => {
+      console.error(`Failed to persist ${type} segment end:`, err)
+    })
+    .finally(() => {
+      pendingChunkWrites.delete(savePromise)
+    })
+
+  pendingChunkWrites.add(savePromise)
+}
+
+/**
+ * Writes a video segment's end at most once. Chromium can stop the video recorder on its own when
+ * its only track ends, so the recorder's own `stop` event is the primary source; the explicit
+ * calls in finalize/recovery/audio-only fallback are idempotent fallbacks.
+ */
+function recordVideoSegmentEnd(
+  pendingChunkWrites: Set<Promise<void>>,
+  endedSegments: Set<number>,
+  meetingId: string,
+  segmentIndex: number,
+  timelineOriginMs: number
+): void {
+  if (endedSegments.has(segmentIndex)) return
+  endedSegments.add(segmentIndex)
+  trackSegmentEnd(
+    pendingChunkWrites,
+    meetingId,
+    'video',
+    segmentIndex,
+    Math.max(0, Date.now() - timelineOriginMs)
+  )
+}
+
+// Registered right after the recorder is created so it fires before any waitForRecorderStop
+// listener; the end-save promise is therefore in pendingChunkWrites before finalize drains it.
+function watchVideoSegmentEnd(
+  recorder: MediaRecorder,
+  pendingChunkWrites: Set<Promise<void>>,
+  endedSegments: Set<number>,
+  meetingId: string,
+  segmentIndex: number,
+  timelineOriginMs: number
+): void {
+  recorder.addEventListener(
+    'stop',
+    () =>
+      recordVideoSegmentEnd(
+        pendingChunkWrites,
+        endedSegments,
+        meetingId,
+        segmentIndex,
+        timelineOriginMs
+      ),
+    { once: true }
+  )
 }
 
 function waitForRecorderStop(recorder: MediaRecorder | null, label: string): Promise<void> {
@@ -639,10 +764,10 @@ async function waitForPendingChunkWrites(pendingChunkWrites: Set<Promise<void>>)
   }
 }
 
-async function createCaptureStreams(
+async function createVideoStream(
   sourceId: string,
   context: 'initial' | 'recovery' = 'initial'
-): Promise<CaptureStreams> {
+): Promise<MediaStream> {
   const videoStream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -675,6 +800,15 @@ async function createCaptureStreams(
       'Screen capture stream is not live. Screen recording permission may be missing.'
     )
   }
+
+  return videoStream
+}
+
+async function createCaptureStreams(
+  sourceId: string,
+  context: 'initial' | 'recovery' = 'initial'
+): Promise<CaptureStreams> {
+  const videoStream = await createVideoStream(sourceId, context)
 
   const audioStream = await createSystemAudioStream(sourceId)
   if (audioStream.getAudioTracks().length === 0) {
@@ -778,14 +912,33 @@ async function createMicStream({
   return null
 }
 
+function queueMissingAudioRecovery(capture: CaptureHandles): void {
+  if (activeCapture !== capture || capture.stopping || capture.finalized) {
+    return
+  }
+
+  const missingSources = getMissingRecoverySources(
+    capture.expectedAudio,
+    getCaptureAudioAvailability(capture)
+  )
+  if (missingSources.includes('mic')) {
+    queueCaptureRecovery(capture, 'mic:ended')
+    return
+  }
+  if (missingSources.includes('system')) {
+    queueCaptureRecovery(capture, 'system:ended')
+  }
+}
+
 function queueCaptureRecovery(capture: CaptureHandles, reason: string): void {
-  if (
-    activeCapture !== capture ||
-    capture.stopping ||
-    capture.finalized ||
-    capture.finalizePromise ||
-    capture.recoveryPromise
-  ) {
+  if (activeCapture !== capture || capture.stopping || capture.finalized || capture.finalizePromise) {
+    return
+  }
+
+  if (capture.recoveryPromise) {
+    if (!reason.startsWith('video:')) {
+      capture.deferredRecoveryReason = reason
+    }
     return
   }
 
@@ -1021,6 +1174,7 @@ function buildCaptureHandles(
   options: {
     consecutiveVideoRecoveries?: number
     videoDisabled?: boolean
+    timelineOriginMs?: number
   } = {}
 ): CaptureHandles {
   const { videoStream, audioStream, micStream } = streams
@@ -1028,6 +1182,8 @@ function buildCaptureHandles(
   const hasMic = micStream !== null && micStream.getAudioTracks().length > 0
   const pendingChunkWrites = new Set<Promise<void>>()
   const createdAt = Date.now()
+  const timelineOriginMs = options.timelineOriginMs ?? createdAt
+  const audioOffsetMs = Math.max(0, createdAt - timelineOriginMs)
 
   const videoRecorder = createStartedRecorder(
     new MediaStream(videoStream.getVideoTracks()),
@@ -1042,10 +1198,20 @@ function buildCaptureHandles(
       }
     }
   )
+  const videoSegmentEndsRecorded = new Set<number>()
+  watchVideoSegmentEnd(
+    videoRecorder,
+    pendingChunkWrites,
+    videoSegmentEndsRecorded,
+    meetingId,
+    segmentIndex,
+    timelineOriginMs
+  )
+  trackSegmentTiming(pendingChunkWrites, meetingId, 'video', segmentIndex, audioOffsetMs)
 
   let micRecorder: MediaRecorder | null = null
   if (hasMic) {
-    trackSegmentTiming(pendingChunkWrites, meetingId, 'mic', segmentIndex, 0)
+    trackSegmentTiming(pendingChunkWrites, meetingId, 'mic', segmentIndex, audioOffsetMs)
     micRecorder = createStartedRecorder(
       micStream!,
       'mic',
@@ -1061,7 +1227,7 @@ function buildCaptureHandles(
 
   let systemRecorder: MediaRecorder | null = null
   if (hasSystemAudio) {
-    trackSegmentTiming(pendingChunkWrites, meetingId, 'system', segmentIndex, 0)
+    trackSegmentTiming(pendingChunkWrites, meetingId, 'system', segmentIndex, audioOffsetMs)
     systemRecorder = createStartedRecorder(
       audioStream,
       'system',
@@ -1084,6 +1250,7 @@ function buildCaptureHandles(
     micSegmentIndex: segmentIndex,
     systemSegmentIndex: segmentIndex,
     createdAt,
+    timelineOriginMs,
     stopping: false,
     recoverySequence,
     consecutiveVideoRecoveries: options.consecutiveVideoRecoveries ?? 0,
@@ -1100,10 +1267,12 @@ function buildCaptureHandles(
     micWatchdog: null,
     systemWatchdog: null,
     pendingChunkWrites,
+    videoSegmentEndsRecorded,
     cleanupMonitoring: null,
     recoveryTimer: null,
     monitorLoopPromise: null,
     recoveryPromise: null,
+    deferredRecoveryReason: null,
     recoveryValidation: null,
     finalizePromise: null,
     finalized: false
@@ -1120,6 +1289,7 @@ async function createCaptureSegment(
     sourceName?: string | null
     consecutiveVideoRecoveries?: number
     videoDisabled?: boolean
+    timelineOriginMs?: number
   } = {}
 ): Promise<CaptureHandles> {
   const captureContext = recoverySequence > 0 ? 'recovery' : 'initial'
@@ -1138,7 +1308,8 @@ async function createCaptureSegment(
       streams,
       {
         consecutiveVideoRecoveries: options.consecutiveVideoRecoveries,
-        videoDisabled: options.videoDisabled
+        videoDisabled: options.videoDisabled,
+        timelineOriginMs: options.timelineOriginMs
       }
     )
 
@@ -1168,6 +1339,13 @@ function finalizeCapture(capture: CaptureHandles): Promise<void> {
         waitForRecorderStop(capture.micRecorder, 'mic'),
         waitForRecorderStop(capture.systemRecorder, 'system')
       ])
+      recordVideoSegmentEnd(
+        capture.pendingChunkWrites,
+        capture.videoSegmentEndsRecorded,
+        capture.meetingId,
+        capture.segmentIndex,
+        capture.timelineOriginMs
+      )
       await waitForPendingChunkWrites(capture.pendingChunkWrites)
     } finally {
       capture.videoStream.getTracks().forEach((t) => t.stop())
@@ -1371,7 +1549,7 @@ async function recoverAudioCapture(
             capture.meetingId,
             'mic',
             segmentIndex,
-            Date.now() - capture.createdAt
+            Date.now() - capture.timelineOriginMs
           )
           micRecorder = createStartedRecorder(
             micStream,
@@ -1397,7 +1575,7 @@ async function recoverAudioCapture(
             capture.meetingId,
             'system',
             segmentIndex,
-            Date.now() - capture.createdAt
+            Date.now() - capture.timelineOriginMs
           )
           systemRecorder = createStartedRecorder(
             systemStream,
@@ -1534,6 +1712,184 @@ async function recoverAudioCapture(
   return capture.recoveryPromise
 }
 
+async function recoverVideoCapture(capture: CaptureHandles, reason: string): Promise<void> {
+  if (activeCapture !== capture || capture.stopping || capture.finalized || capture.videoDisabled) {
+    return
+  }
+
+  if (capture.recoveryPromise) {
+    return capture.recoveryPromise
+  }
+
+  if (capture.consecutiveVideoRecoveries >= MAX_CONSECUTIVE_VIDEO_RECOVERIES) {
+    await disableVideoCapture(capture, reason, {
+      attemptCount: capture.consecutiveVideoRecoveries,
+      degradationPath: 'consecutive-recoveries'
+    })
+    return
+  }
+
+  capture.recoveryPromise = (async () => {
+    console.warn(`Video source changed during recording, attempting video recovery (${reason})`)
+    const expectedAudio = capture.expectedAudio
+    recordCaptureRecoveryDiagnostic('capture_recovery_started', {
+      meetingId: capture.meetingId,
+      sourceType: getSourceType(capture.sourceId),
+      segmentIndex: capture.segmentIndex,
+      reason,
+      expectedAudio
+    })
+
+    await waitForRecorderStop(capture.videoRecorder, 'video')
+    recordVideoSegmentEnd(
+      capture.pendingChunkWrites,
+      capture.videoSegmentEndsRecorded,
+      capture.meetingId,
+      capture.segmentIndex,
+      capture.timelineOriginMs
+    )
+    capture.videoStream.getTracks().forEach((track) => track.stop())
+
+    for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt += 1) {
+      if (activeCapture !== capture || capture.stopping || capture.finalized) {
+        return
+      }
+
+      let replacementStream: MediaStream | null = null
+      try {
+        const resolvedSourceId = await resolveRecoverySourceId(capture)
+        if (!resolvedSourceId) {
+          throw new Error('Capture source no longer available')
+        }
+
+        replacementStream = await createVideoStream(resolvedSourceId, 'recovery')
+        if (activeCapture !== capture || capture.stopping || capture.finalized) {
+          replacementStream.getTracks().forEach((track) => track.stop())
+          return
+        }
+
+        const segmentIndex = capture.nextSegmentIndex
+        const videoRecorder = createStartedRecorder(
+          new MediaStream(replacementStream.getVideoTracks()),
+          'video',
+          VIDEO_RECORDER_MIME_CANDIDATES,
+          {
+            videoBitsPerSecond: 1_500_000
+          },
+          async (e) => {
+            if (e.data.size > 0) {
+              trackChunkWrite(
+                capture.pendingChunkWrites,
+                capture.meetingId,
+                'video',
+                segmentIndex,
+                e.data
+              )
+            }
+          }
+        )
+
+        watchVideoSegmentEnd(
+          videoRecorder,
+          capture.pendingChunkWrites,
+          capture.videoSegmentEndsRecorded,
+          capture.meetingId,
+          segmentIndex,
+          capture.timelineOriginMs
+        )
+
+        capture.cleanupMonitoring?.()
+        capture.sourceId = resolvedSourceId
+        capture.videoStream = replacementStream
+        capture.videoRecorder = videoRecorder
+        capture.segmentIndex = segmentIndex
+        capture.nextSegmentIndex = segmentIndex + 1
+        capture.consecutiveVideoRecoveries += 1
+        trackSegmentTiming(
+          capture.pendingChunkWrites,
+          capture.meetingId,
+          'video',
+          segmentIndex,
+          Math.max(0, Date.now() - capture.timelineOriginMs)
+        )
+        scheduleVideoRecoveryStabilityReset(capture)
+        installCaptureMonitoring(capture)
+
+        recordCaptureRecoveryDiagnostic('capture_recovery_recovered', {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex,
+          reason,
+          attempt,
+          expectedAudio,
+          actualAudio: getCaptureAudioAvailability(capture)
+        })
+        console.log('Video capture recovered without interrupting audio', {
+          meetingId: capture.meetingId,
+          nextSegmentIndex: segmentIndex,
+          reason,
+          attempt
+        })
+        return
+      } catch (err) {
+        replacementStream?.getTracks().forEach((track) => track.stop())
+
+        const canRetry =
+          attempt < MAX_RECOVERY_ATTEMPTS && activeCapture === capture && !capture.stopping
+
+        if (!canRetry) {
+          recordCaptureRecoveryDiagnostic('capture_recovery_failed', {
+            meetingId: capture.meetingId,
+            sourceType: getSourceType(capture.sourceId),
+            segmentIndex: capture.segmentIndex,
+            reason,
+            attempt,
+            expectedAudio,
+            error: serializeErrorForDiagnostics(err)
+          })
+          console.error('Failed to recover video capture:', err)
+          await handleCaptureRecoveryTerminalFailure(capture, reason, {
+            error: err,
+            attemptCount: attempt
+          })
+          return
+        }
+
+        recordCaptureRecoveryDiagnostic('capture_recovery_attempt_failed', {
+          meetingId: capture.meetingId,
+          sourceType: getSourceType(capture.sourceId),
+          segmentIndex: capture.segmentIndex,
+          reason,
+          attempt,
+          expectedAudio,
+          error: serializeErrorForDiagnostics(err)
+        })
+        console.warn('Video capture recovery attempt failed, retrying', {
+          meetingId: capture.meetingId,
+          attempt,
+          reason,
+          error: describeError(err)
+        })
+        await delay(RECOVERY_RETRY_DELAY_MS * attempt)
+        if (activeCapture !== capture || capture.stopping || capture.finalized) {
+          return
+        }
+      }
+    }
+  })().finally(() => {
+    capture.recoveryPromise = null
+    const deferredReason = capture.deferredRecoveryReason
+    capture.deferredRecoveryReason = null
+    if (deferredReason === 'devicechange') {
+      queueCaptureRecovery(capture, 'devicechange')
+      return
+    }
+    queueMissingAudioRecovery(capture)
+  })
+
+  return capture.recoveryPromise
+}
+
 async function recoverCapture(capture: CaptureHandles, reason: string): Promise<void> {
   if (activeCapture !== capture || capture.stopping || capture.finalized) {
     return
@@ -1561,14 +1917,7 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
   }
 
   if (reason.startsWith('video:')) {
-    if (capture.videoDisabled) {
-      return
-    }
-
-    if (capture.consecutiveVideoRecoveries >= MAX_CONSECUTIVE_VIDEO_RECOVERIES) {
-      await disableVideoCapture(capture, reason)
-      return
-    }
+    return recoverVideoCapture(capture, reason)
   }
 
   capture.recoveryPromise = (async () => {
@@ -1610,7 +1959,8 @@ async function recoverCapture(capture: CaptureHandles, reason: string): Promise<
             {
               sourceName: capture.sourceName,
               consecutiveVideoRecoveries: capture.consecutiveVideoRecoveries,
-              videoDisabled: capture.videoDisabled
+              videoDisabled: capture.videoDisabled,
+              timelineOriginMs: capture.timelineOriginMs
             }
           )
           capture.nextSegmentIndex = segmentIndex + 1

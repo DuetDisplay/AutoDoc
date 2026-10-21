@@ -45,7 +45,16 @@ vi.mock('fs', () => ({
   writeFileSync: writeFileSyncMock,
   renameSync: renameSyncMock,
   mkdirSync: vi.fn(),
+  openSync: vi.fn(() => 42),
+  fsyncSync: vi.fn(),
+  closeSync: vi.fn(),
+  existsSync: vi.fn(() => false),
   Dirent: class {}
+}))
+
+vi.mock('../windows-key-protection', () => ({
+  protectWindowsRecordingKey: (key: Buffer) => Buffer.concat([Buffer.from('test-dpapi:'), key]),
+  unprotectWindowsRecordingKey: (value: Buffer) => value.subarray(11)
 }))
 
 async function freshImport() {

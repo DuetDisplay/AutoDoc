@@ -423,6 +423,110 @@ describe('SegmentationService', () => {
       expect(readiness.isReadyForGeneration).toHaveBeenCalledWith('llama3.1')
     })
 
+    describe('dead Ollama serve', () => {
+      const makeReadiness = (overrides: Record<string, unknown> = {}) => ({
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        isServerRunning: vi.fn().mockResolvedValue(false),
+        recoverUnhealthyRuntime: vi.fn().mockResolvedValue(undefined),
+        prepareModelForGeneration: vi.fn().mockResolvedValue(DEFAULT_OLLAMA_MODEL),
+        isReadyForGeneration: vi.fn().mockResolvedValue(true),
+        ...overrides
+      })
+      const makeService = (readiness: ReturnType<typeof makeReadiness>): SegmentationService => {
+        let boundModel = ''
+        provider.setModel = vi.fn((model) => {
+          boundModel = model
+        })
+        provider.getModel = () => boundModel
+        return new SegmentationService(provider, readiness, '/mock/home/AutoDoc/recordings')
+      }
+
+      it('starts a stopped serve before preparing the model and then proceeds', async () => {
+        const readiness = makeReadiness()
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-dead')).resolves.toBe(true)
+        expect(readiness.recoverUnhealthyRuntime).toHaveBeenCalledOnce()
+        expect(readiness.prepareModelForGeneration).toHaveBeenCalledOnce()
+        expect(readiness.recoverUnhealthyRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+          readiness.prepareModelForGeneration.mock.invocationCallOrder[0]
+        )
+      })
+
+      it('recovers once and retries preparation after a connection-level failure', async () => {
+        const readiness = makeReadiness({
+          isServerRunning: vi.fn().mockResolvedValue(true),
+          prepareModelForGeneration: vi
+            .fn()
+            .mockRejectedValueOnce(new TypeError('fetch failed'))
+            .mockResolvedValue(DEFAULT_OLLAMA_MODEL)
+        })
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-conn')).resolves.toBe(true)
+        expect(readiness.recoverUnhealthyRuntime).toHaveBeenCalledOnce()
+        expect(readiness.prepareModelForGeneration).toHaveBeenCalledTimes(2)
+      })
+
+      it('does not retry more than once when recovery already ran in this call', async () => {
+        const readiness = makeReadiness({
+          prepareModelForGeneration: vi.fn().mockRejectedValue(new TypeError('fetch failed'))
+        })
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-twice')).rejects.toThrow(
+          /Ollama notes model setup failed: fetch failed/
+        )
+        expect(readiness.recoverUnhealthyRuntime).toHaveBeenCalledOnce()
+        expect(readiness.prepareModelForGeneration).toHaveBeenCalledOnce()
+      })
+
+      it('does not recover for a non-connection preparation error', async () => {
+        const readiness = makeReadiness({
+          isServerRunning: vi.fn().mockResolvedValue(true),
+          prepareModelForGeneration: vi
+            .fn()
+            .mockRejectedValue(new Error("Ollama notes model setup failed: 'x' is not installed"))
+        })
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-missing')).rejects.toThrow(
+          "Ollama notes model setup failed: 'x' is not installed"
+        )
+        expect(readiness.recoverUnhealthyRuntime).not.toHaveBeenCalled()
+        expect(readiness.prepareModelForGeneration).toHaveBeenCalledOnce()
+      })
+
+      it('reports a setup failure when recovery of a stopped serve fails', async () => {
+        const readiness = makeReadiness({
+          recoverUnhealthyRuntime: vi.fn().mockRejectedValue(new Error('could not start'))
+        })
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-fail')).rejects.toThrow(
+          /Ollama notes model setup failed: could not start/
+        )
+        expect(readiness.recoverUnhealthyRuntime).toHaveBeenCalledOnce()
+        expect(readiness.prepareModelForGeneration).not.toHaveBeenCalled()
+      })
+
+      it('rethrows a cancelled start unchanged', async () => {
+        const cancelled = Object.assign(new Error('cancelled'), { code: 'OLLAMA_START_CANCELLED' })
+        const readiness = makeReadiness({
+          recoverUnhealthyRuntime: vi.fn().mockRejectedValue(cancelled)
+        })
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-cancel')).rejects.toBe(
+          cancelled
+        )
+      })
+
+      it('never probes the serve or prepares a model on darwin', async () => {
+        Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+        const readiness = makeReadiness()
+        service = makeService(readiness)
+        await expect((service as any).ensureOllamaReadyForGeneration('m-mac')).resolves.toBe(true)
+        expect(readiness.isServerRunning).not.toHaveBeenCalled()
+        expect(readiness.prepareModelForGeneration).not.toHaveBeenCalled()
+        expect(readiness.recoverUnhealthyRuntime).not.toHaveBeenCalled()
+      })
+    })
+
     it('returns a missing scan model to preparation even when an optional pass swallows the error', async () => {
       const missing = new Error("Ollama returned 404: model 'qwen3:4b-instruct' not found")
       provider.completePrompt = vi.fn().mockRejectedValue(missing)
@@ -1667,7 +1771,7 @@ describe('SegmentationService', () => {
         status: 'failed',
         errorCode: 'llm-empty-output',
         userReason:
-          'Notes couldn’t finish. AutoDoc hit a problem writing notes this time. Your transcript is still available.',
+          'No notes were generated. AutoDoc didn’t find anything in the transcript to turn into notes. You can retry, and your transcript is still available.',
         notesLayout: 'v1'
       })
       expect(send).toHaveBeenCalledWith(
@@ -1685,7 +1789,7 @@ describe('SegmentationService', () => {
       )
       expect(await reopened.getStatus('m2')).toBe('failed')
       expect(await reopened.getErrorCode('m2')).toBe('llm-empty-output')
-      expect(await reopened.getUserReason('m2')).toContain('Notes couldn’t finish')
+      expect(await reopened.getUserReason('m2')).toContain('No notes were generated')
 
       fsMock.readdir.mockResolvedValue(['m2'] as any)
       fsMock.stat.mockResolvedValue({ isDirectory: () => true } as any)

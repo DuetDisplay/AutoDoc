@@ -9,16 +9,21 @@ export interface UpdateStatus {
   version?: string
   percent?: number
   error?: string
+  installBlockedReason?: string
 }
 
 let currentStatus: UpdateStatus = { state: 'idle' }
 let errorResetToken = 0
 let prepareForInstall: (() => void) | undefined
 let onUpdateDownloaded: ((status: UpdateStatus) => void) | undefined
+let getInstallBlockReason: (() => string | undefined) | undefined
+let onInstallFailed: (() => void) | undefined
 
 interface AutoUpdaterOptions {
   prepareForInstall?: () => void
   onUpdateDownloaded?: (status: UpdateStatus) => void
+  getInstallBlockReason?: () => string | undefined
+  onInstallFailed?: () => void
 }
 
 function getUpdaterVersion(info: unknown): string | undefined {
@@ -72,6 +77,7 @@ function broadcast(status: UpdateStatus): void {
 }
 
 function reportUpdaterError(message: string, err: unknown): void {
+  if (currentStatus.state === 'installing') onInstallFailed?.()
   const error = normalizeUpdaterError(err)
   console.error(`${message}:`, err)
   logAutodocFailure({
@@ -104,7 +110,9 @@ function safeCheckForUpdates(): void {
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return currentStatus
+  return currentStatus.state === 'downloaded'
+    ? { ...currentStatus, installBlockedReason: getInstallBlockReason?.() }
+    : currentStatus
 }
 
 function configureUpdateFeedOverride(): void {
@@ -141,6 +149,8 @@ export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
 
   prepareForInstall = options.prepareForInstall
   onUpdateDownloaded = options.onUpdateDownloaded
+  getInstallBlockReason = options.getInstallBlockReason
+  onInstallFailed = options.onInstallFailed
 
   try {
     autoUpdater.autoDownload = true
@@ -199,6 +209,11 @@ export function initAutoUpdater(options: AutoUpdaterOptions = {}): void {
 
     // Then check every 4 hours
     setInterval(() => safeCheckForUpdates(), 4 * 60 * 60 * 1000)
+    setInterval(() => {
+      if (currentStatus.state !== 'downloaded') return
+      const status = getUpdateStatus()
+      if (status.installBlockedReason !== currentStatus.installBlockedReason) broadcast(status)
+    }, 1000)
   } catch (err) {
     reportUpdaterError('Auto-updater failed to initialize', err)
   }
@@ -210,6 +225,11 @@ export function checkForUpdates(): void {
 
 export function installUpdate(): void {
   try {
+    const installBlockedReason = getInstallBlockReason?.()
+    if (installBlockedReason) {
+      broadcast({ state: 'downloaded', version: currentStatus.version, installBlockedReason })
+      return
+    }
     broadcast({ state: 'installing', version: currentStatus.version })
     prepareForInstall?.()
     autoUpdater.quitAndInstall()

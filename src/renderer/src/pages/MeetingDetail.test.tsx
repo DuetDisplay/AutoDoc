@@ -206,7 +206,10 @@ describe('memory failure guidance', () => {
   })
 })
 
-function installNoNotesElectronApi(initialStatus: 'no-notes' | 'failed' = 'no-notes', errorCode?: string) {
+function installNoNotesElectronApi(
+  initialStatus: 'no-notes' | 'failed' = 'no-notes',
+  errorCode?: string
+) {
   let segmentationStatus: 'no-notes' | 'failed' | 'queued' = initialStatus
   return installMockElectronApi({
     'transcription:get-status': 'complete',
@@ -1201,10 +1204,10 @@ describe('MeetingDetail', () => {
       installNoNotesElectronApi(status, 'llm-empty-output')
       await renderMeetingDetail()
 
-      expect(screen.getByText('Notes couldn’t finish')).toBeInTheDocument()
+      expect(screen.getByText('No notes were generated')).toBeInTheDocument()
       expect(
         screen.getByText(
-          'AutoDoc hit a problem writing notes this time. Your transcript is still available.'
+          'AutoDoc didn’t find anything in the transcript to turn into notes. You can retry, and your transcript is still available.'
         )
       ).toBeInTheDocument()
       expect(screen.queryByText(/There wasn’t enough conversation/)).not.toBeInTheDocument()
@@ -1225,10 +1228,12 @@ describe('MeetingDetail', () => {
           errorCode: 'llm-empty-output'
         })
       )
-      expect(screen.getByText('Notes couldn’t finish')).toBeInTheDocument()
+      expect(screen.getByText('No notes were generated')).toBeInTheDocument()
       expect(screen.queryByText(/There wasn’t enough conversation/)).not.toBeInTheDocument()
-      act(() => api.emit('segmentation:status-changed', { meetingId: 'test-123', status: 'queued' }))
-      expect(screen.queryByText('Notes couldn’t finish')).not.toBeInTheDocument()
+      act(() =>
+        api.emit('segmentation:status-changed', { meetingId: 'test-123', status: 'queued' })
+      )
+      expect(screen.queryByText('No notes were generated')).not.toBeInTheDocument()
       expect(screen.getByText('Queued for notes')).toBeInTheDocument()
     }
   )

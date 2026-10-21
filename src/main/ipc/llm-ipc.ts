@@ -23,10 +23,11 @@ export function registerLlmIpc(
   ollamaManager: OllamaManager,
   ollamaProvider: OllamaProvider,
   getOllamaSetupStatus: () => OllamaSetupStatus,
-  ensureOllamaRunning: (options?: { force?: boolean }) => void,
+  ensureOllamaRunning: (options?: { force?: boolean; userInitiated?: boolean }) => void,
   startSetupFromStatusCheck = true,
   onManualSegmentationRetry?: (meetingId: string) => void,
-  recordingsBaseDir?: string
+  recordingsBaseDir?: string,
+  shouldDeferForcedRestart?: () => boolean
 ): void {
   consecutiveOllamaHealthFailures = 0
   ipcMain.handle('ollama:check-status', async (): Promise<boolean> => {
@@ -51,6 +52,13 @@ export function registerLlmIpc(
       return true
     }
 
+    if (ollamaManager.isServeStarting()) {
+      // A serve we just started can spend 10+ s discovering GPUs without
+      // answering. Report not connected but do not count it as unhealthy or
+      // trigger a restart that would kill it.
+      return false
+    }
+
     consecutiveOllamaHealthFailures += 1
     const setupAlreadyFinished = getOllamaSetupStatus().phase === 'ready'
     if (startSetupFromStatusCheck) {
@@ -69,7 +77,10 @@ export function registerLlmIpc(
       // Coordinated Windows setup already finished. Status checks stay passive
       // during the first download so they do not abort an in-flight pull, but
       // a later dead serve will never recover from the cached ready promise.
-      ensureOllamaRunning({ force: true })
+      // A post-wake chain or 3-wake pause owns that restart schedule.
+      if (shouldDeferForcedRestart?.() !== true) {
+        ensureOllamaRunning({ force: true })
+      }
     }
     return false
   })
@@ -210,6 +221,6 @@ export function registerLlmIpc(
       return
     }
 
-    ensureOllamaRunning({ force: true })
+    ensureOllamaRunning({ force: true, userInitiated: true })
   })
 }

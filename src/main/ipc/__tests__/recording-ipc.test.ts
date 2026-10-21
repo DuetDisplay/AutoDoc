@@ -7,6 +7,7 @@ import * as path from 'path'
 import { spawn } from 'child_process'
 import { BrowserWindow } from 'electron'
 import {
+  buildVideoConcatList,
   getRecordingSourceCaptureOptions,
   registerRecordingIpc,
   serializeRecordingSource,
@@ -126,6 +127,72 @@ describe('recording IPC source handling', () => {
       if (name === 'userData') return '/mock/user-data'
       throw new Error(`unexpected app.getPath(${name})`)
     })
+  })
+
+  it('recovers numbered audio segments and retains the recorded language', async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-interrupted-'))
+    const meetingDir = path.join(baseDir, 'interrupted')
+    await fsp.mkdir(meetingDir)
+    await fsp.writeFile(path.join(meetingDir, 'mic-00000.webm'), 'saved audio')
+    const metadata: MeetingMetadata = {
+      sourceName: 'Meeting',
+      startedAt: Date.now() - 10_000,
+      stoppedAt: Date.now() - 10_000,
+      durationSeconds: 0,
+      meetingLanguage: 'fr',
+      isFinalizing: true
+    }
+    vi.mocked(readMetadata).mockResolvedValue(metadata)
+    const enqueue = vi.fn()
+    const recording = registerRecordingIpc(
+      {
+        getState: () => ({ isRecording: false }),
+        getRecordingsBaseDir: () => baseDir
+      } as any,
+      { enqueue } as any,
+      {
+        ensureFfmpeg: vi.fn().mockResolvedValue(undefined),
+        getFfmpegPath: () => '/mock/ffmpeg'
+      } as any,
+      { isConnected: () => false } as any
+    )
+    await recording.recoverInterruptedRecordings()
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledWith('interrupted'))
+    expect(await fsp.readFile(path.join(meetingDir, 'mic.webm'), 'utf8')).toBe('saved audio')
+    expect(encryptJSON).toHaveBeenCalledWith(
+      expect.objectContaining({ meetingLanguage: 'fr' }),
+      path.join(meetingDir, 'metadata.json')
+    )
+    await fsp.rm(baseDir, { recursive: true, force: true })
+  })
+
+  it('does not label an active recording as wrapping up because of its recovery metadata', async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-active-metadata-'))
+    const meetingDir = path.join(baseDir, 'active')
+    await fsp.mkdir(meetingDir)
+    await fsp.writeFile(path.join(meetingDir, 'mic-00000.webm'), 'audio')
+    vi.mocked(readMetadata).mockResolvedValue({
+      sourceName: 'Meeting',
+      startedAt: Date.now(),
+      stoppedAt: Date.now(),
+      durationSeconds: 0,
+      meetingLanguage: 'fr',
+      isFinalizing: true
+    })
+    registerRecordingIpc(
+      {
+        getState: () => ({ isRecording: true, meetingId: 'active' }),
+        getRecordingsBaseDir: () => baseDir
+      } as any,
+      { getStatus: async () => 'pending' } as any,
+      {} as any,
+      { isConnected: () => false } as any
+    )
+    const list = handle.mock.calls.findLast(([channel]) => channel === 'recording:list')?.[1]
+    const entries = await list()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].isFinalizing).toBe(false)
+    await fsp.rm(baseDir, { recursive: true, force: true })
   })
 
   it('disables Windows picker thumbnails while requesting app icons', () => {
@@ -667,6 +734,85 @@ describe('recording IPC source handling', () => {
     }
   })
 
+  it('merges video segment ends without dropping start offsets', async () => {
+    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
+    const recordingsDir = path.join(userDataDir, 'recordings')
+    const meetingDir = path.join(recordingsDir, 'meeting-timing')
+
+    try {
+      await fsp.mkdir(meetingDir, { recursive: true })
+
+      registerRecordingIpc(
+        {
+          stopRecording: vi.fn(),
+          getState: vi.fn(() => ({ isRecording: true, meetingId: 'meeting-timing' })),
+          getRecordingsBaseDir: vi.fn(() => recordingsDir),
+          startRecording: vi.fn()
+        } as any,
+        { getStatus: vi.fn(), enqueue: vi.fn() } as any,
+        { ensureReady: vi.fn(), getFfmpegPath: vi.fn(() => '/mock/ffmpeg') } as any,
+        {
+          isConnected: vi.fn(() => false),
+          fetchAllRecentEvents: vi.fn().mockResolvedValue([])
+        } as any
+      )
+
+      const saveStart = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-segment-timing'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            type: 'video' | 'mic' | 'system',
+            segmentIndex: number,
+            offsetMs: number
+          ) => Promise<void>)
+        | undefined
+      const saveEnd = handle.mock.calls.find(
+        ([channel]) => channel === 'recording:save-segment-end'
+      )?.[1] as
+        | ((
+            event: unknown,
+            meetingId: string,
+            type: 'video' | 'mic' | 'system',
+            segmentIndex: number,
+            endOffsetMs: number
+          ) => Promise<void>)
+        | undefined
+
+      expect(saveStart).toBeTypeOf('function')
+      expect(saveEnd).toBeTypeOf('function')
+
+      await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
+      await saveEnd?.(null, 'meeting-timing', 'video', 0, 3000)
+
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual([{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }])
+
+      await saveStart?.(null, 'meeting-timing', 'video', 0, 0)
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual([{ type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 }])
+
+      await Promise.all([
+        saveStart?.(null, 'meeting-timing', 'video', 1, 8000),
+        saveEnd?.(null, 'meeting-timing', 'video', 1, 12000)
+      ])
+
+      expect(
+        JSON.parse(await fsp.readFile(path.join(meetingDir, 'segment-timings.json'), 'utf-8'))
+      ).toEqual(
+        expect.arrayContaining([
+          { type: 'video', segmentIndex: 0, offsetMs: 0, endOffsetMs: 3000 },
+          { type: 'video', segmentIndex: 1, offsetMs: 8000, endOffsetMs: 12000 }
+        ])
+      )
+    } finally {
+      await fsp.rm(userDataDir, { recursive: true, force: true })
+    }
+  })
+
   it('lists imported meetings that have a transcript but no audio or video', async () => {
     const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-ipc-'))
     const recordingsDir = path.join(userDataDir, 'recordings')
@@ -947,6 +1093,7 @@ describe.runIf(process.platform === 'win32')('recoverWindowsFinalizingMeetings',
         } as any,
         {
           ensureReady: vi.fn(),
+          ensureFfmpeg: vi.fn(),
           getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
         } as any,
         {
@@ -1056,6 +1203,7 @@ describe.runIf(process.platform === 'win32')('windows finalize-stop robustness',
       } as any,
       {
         ensureReady: vi.fn(),
+        ensureFfmpeg: vi.fn(),
         getFfmpegPath: vi.fn(() => '/mock/ffmpeg')
       } as any,
       {
@@ -1471,12 +1619,16 @@ describe('recording IPC meeting language', () => {
     recordingsDir: string
     stopResult?: Record<string, unknown>
     meetingLanguage?: () => 'en' | 'de'
+    registerRecordingIpc?: typeof registerRecordingIpc
   }) {
     const recordingService = {
       stopRecording: vi.fn(() => options.stopResult),
       getState: vi.fn(() => ({ isRecording: options.stopResult != null })),
       getRecordingsBaseDir: vi.fn(() => options.recordingsDir),
-      startRecording: vi.fn().mockResolvedValue({ meetingId: 'meeting-new' })
+      startRecording: vi.fn().mockResolvedValue({
+        meetingId: 'meeting-new',
+        dir: options.recordingsDir + '/meeting-new'
+      })
     }
     const whisperManager = {
       ensureReady: vi.fn(),
@@ -1485,7 +1637,8 @@ describe('recording IPC meeting language', () => {
       getWhisperPath: vi.fn(() => '/mock/whisper'),
       getModelPath: vi.fn(() => '/mock/model')
     }
-    const registered = registerRecordingIpc(
+    const registerIpc = options.registerRecordingIpc ?? registerRecordingIpc
+    const registered = registerIpc(
       recordingService as any,
       { getStatus: vi.fn(), enqueue: vi.fn() } as any,
       whisperManager as any,
@@ -1500,6 +1653,25 @@ describe('recording IPC meeting language', () => {
         ...args: unknown[]
       ) => Promise<unknown>
     return { ...registered, recordingService, handler, whisperManager }
+  }
+
+  async function loadRecordingIpcForPlatform(platform: NodeJS.Platform) {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: platform
+    })
+    vi.resetModules()
+    const { registerRecordingIpc: registerForPlatform } = await import('../recording-ipc')
+    return {
+      registerRecordingIpc: registerForPlatform,
+      restorePlatform() {
+        Object.defineProperty(process, 'platform', {
+          configurable: true,
+          value: originalPlatform
+        })
+      }
+    }
   }
 
   it('starts each recording in the current default meeting language', async () => {
@@ -1544,32 +1716,52 @@ describe('recording IPC meeting language', () => {
     }
   })
 
-  it('prepares only ffmpeg after a non-English recording stops, never the English model', async () => {
-    const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-tools-'))
-    const recordingsDir = path.join(userDataDir, 'recordings')
-    try {
-      appGetPath.mockImplementation(() => userDataDir)
-      await fsp.mkdir(path.join(recordingsDir, 'meeting-german'), { recursive: true })
-      const { stopActiveRecording, whisperManager } = register({
-        recordingsDir,
-        stopResult: {
-          meetingId: 'meeting-german',
-          startedAt: Date.now() - 2_000,
-          sourceId: 'screen:0:0',
-          sourceName: 'Entire screen',
-          meetingLanguage: 'de',
-          recordingIntent: 'general'
-        }
-      })
-
-      stopActiveRecording()
-
-      await vi.waitFor(() => expect(whisperManager.ensureFfmpeg).toHaveBeenCalled())
-      expect(whisperManager.ensureReady).not.toHaveBeenCalled()
-    } finally {
-      await fsp.rm(userDataDir, { recursive: true, force: true })
+  it.each([
+    {
+      platform: 'darwin' as const,
+      afterStop: async (handler: (channel: string) => (...args: unknown[]) => Promise<unknown>) => {
+        void handler
+      }
+    },
+    {
+      platform: 'win32' as const,
+      afterStop: async (handler: (channel: string) => (...args: unknown[]) => Promise<unknown>) => {
+        await handler('recording:finalize-stop')(null, 'meeting-german')
+      }
     }
-  })
+  ])(
+    'prepares only ffmpeg after a non-English recording stops on $platform, never the English model',
+    async ({ platform, afterStop }) => {
+      const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autodoc-recording-tools-'))
+      const recordingsDir = path.join(userDataDir, 'recordings')
+      const loaded = await loadRecordingIpcForPlatform(platform)
+      try {
+        appGetPath.mockImplementation(() => userDataDir)
+        await fsp.mkdir(path.join(recordingsDir, 'meeting-german'), { recursive: true })
+        const { stopActiveRecording, whisperManager, handler } = register({
+          recordingsDir,
+          registerRecordingIpc: loaded.registerRecordingIpc,
+          stopResult: {
+            meetingId: 'meeting-german',
+            startedAt: Date.now() - 2_000,
+            sourceId: 'screen:0:0',
+            sourceName: 'Entire screen',
+            meetingLanguage: 'de',
+            recordingIntent: 'general'
+          }
+        })
+
+        stopActiveRecording()
+        await afterStop(handler)
+
+        await vi.waitFor(() => expect(whisperManager.ensureFfmpeg).toHaveBeenCalled())
+        expect(whisperManager.ensureReady).not.toHaveBeenCalled()
+      } finally {
+        loaded.restorePlatform()
+        await fsp.rm(userDataDir, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('keeps the recorded meeting language when the title is updated', async () => {
     let persisted: MeetingMetadata | null = {
@@ -1592,5 +1784,155 @@ describe('recording IPC meeting language', () => {
     )
 
     vi.mocked(encryptJSON).mockResolvedValue(undefined as never)
+  })
+})
+
+describe('buildVideoConcatList', () => {
+  const segments = ['C:/meetings/screen-0000.webm', 'C:/meetings/screen-0001.webm']
+
+  it('computes real gaps from start and end offsets', () => {
+    const result = buildVideoConcatList(segments, [0, 8000], [3000])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.gapsMs).toEqual([5000])
+    expect(result.totalGapMs).toBe(5000)
+    expect(result.timelineSpanMs).toBe(8000)
+    expect(result.listFile).toBe(
+      [
+        "file 'C:/meetings/screen-0000.webm'",
+        'duration 8.000',
+        "file 'C:/meetings/screen-0001.webm'",
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('writes duration lines when starts are present but ends are missing', () => {
+    const result = buildVideoConcatList(segments, [0, 8000])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
+    expect(result.timelineSpanMs).toBe(8000)
+    expect(result.listFile).toContain('duration 8.000')
+  })
+
+  it('still writes duration lines for small positive spacing', () => {
+    const result = buildVideoConcatList(segments, [0, 100])
+
+    expect(result.appliedTimelineGaps).toBe(true)
+    expect(result.listFile).toContain('duration 0.100')
+  })
+
+  it('omits duration lines when any start offset is missing', () => {
+    const result = buildVideoConcatList(segments, [0, undefined])
+
+    expect(result.appliedTimelineGaps).toBe(false)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
+    expect(result.listFile).toBe(
+      ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
+    )
+  })
+
+  it('omits duration lines when a computed duration is not positive', () => {
+    const result = buildVideoConcatList(segments, [8000, 8000])
+
+    expect(result.appliedTimelineGaps).toBe(false)
+    expect(result.gapsMs).toBeNull()
+    expect(result.totalGapMs).toBeNull()
+    expect(result.listFile).toBe(
+      ["file 'C:/meetings/screen-0000.webm'", "file 'C:/meetings/screen-0001.webm'", ''].join('\n')
+    )
+  })
+})
+
+describe('recording calendar attachment diagnostics', () => {
+  const startedAt = new Date(2026, 5, 15, 10, 0).getTime()
+  const timedEvent = {
+    id: 'timed',
+    externalId: 'timed',
+    accountId: 'a',
+    provider: 'google',
+    recurringEventId: null,
+    title: 'Testing Autodoc',
+    startTime: startedAt - 60_000,
+    endTime: startedAt + 60_000,
+    isAllDay: false,
+    attendees: [],
+    meetingUrl: null,
+    autoRecord: 'off',
+    syncedAt: startedAt
+  } as CalendarEvent
+
+  async function startRecordingWith(
+    matched: CalendarEvent | null,
+    selectionEventId: string | null
+  ): Promise<void> {
+    vi.clearAllMocks()
+    vi.mocked(matchCalendarEvent).mockReturnValue(matched)
+    registerRecordingIpc(
+      {
+        getState: vi.fn(() => ({ isRecording: true, startedAt })),
+        startRecording: vi
+          .fn()
+          .mockResolvedValue({ meetingId: `m-${selectionEventId}`, dir: '/tmp' }),
+        stopRecording: vi.fn()
+      } as any,
+      {} as any,
+      {} as any,
+      {
+        isConnected: vi.fn(() => true),
+        fetchAllRecentEvents: vi.fn().mockResolvedValue([timedEvent])
+      } as any
+    )
+    const start = handle.mock.calls.findLast(([channel]) => channel === 'recording:start')?.[1]
+    await start({}, 'window:1', 'Jamal - Slack', {
+      meetingSourceId: 'window:1',
+      meetingSourceName: 'Jamal - Slack',
+      providerId: 'slack',
+      recordingIntent: 'meeting',
+      selectionEventId
+    })
+    await vi.waitFor(() =>
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Recording calendar attachment' })
+      )
+    )
+  }
+
+  it('logs the selection event id, the matched id and whether they agree', async () => {
+    await startRecordingWith(timedEvent, 'timed')
+    expect(logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        area: 'recording',
+        message: 'Recording calendar attachment',
+        context: {
+          phase: 'recording_started',
+          selectionEventId: 'timed',
+          matchedEventId: 'timed',
+          matchedIsAllDay: false,
+          matchesSelection: true,
+          calendarConnected: true
+        }
+      })
+    )
+  })
+
+  it('flags a mismatch when the matcher picks a different event, including an all-day one', async () => {
+    await startRecordingWith({ ...timedEvent, id: 'home', isAllDay: true }, 'timed')
+    expect(logAutodocEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Recording calendar attachment',
+        context: expect.objectContaining({
+          selectionEventId: 'timed',
+          matchedEventId: 'home',
+          matchedIsAllDay: true,
+          matchesSelection: false
+        })
+      })
+    )
+    const everything = JSON.stringify(logAutodocEvent.mock.calls)
+    expect(everything).not.toContain('Testing Autodoc')
   })
 })

@@ -6,6 +6,7 @@ import {
   systemPreferences,
   powerMonitor,
   Notification,
+  dialog,
   type WebContents
 } from 'electron'
 import { join } from 'path'
@@ -28,6 +29,7 @@ import { is } from '@electron-toolkit/utils'
 import { CalendarManager } from './services/calendar-manager'
 import { registerCalendarIpc } from './ipc/calendar-ipc'
 import { RecordingService } from './services/recording'
+import { SafeQuitCoordinator } from './services/safe-quit'
 import { registerRecordingIpc } from './ipc/recording-ipc'
 import { WhisperManager } from './services/whisper-manager'
 import { selectWindowsProcessingProfile } from './services/windows-processing-profile'
@@ -43,6 +45,10 @@ import {
 } from './services/llm'
 import { isOllamaStartCancelledError, OllamaManager } from './services/ollama-manager'
 import { OllamaSetupCoordinator } from './services/ollama-setup-coordinator'
+import {
+  createOllamaRuntimeRecovery,
+  OLLAMA_MODEL_LOAD_FAILED_MESSAGE
+} from './services/ollama-runtime-recovery'
 import { SegmentationService, shouldUseLosslessPresentation } from './services/segmentation'
 import { LocalProcessingCoordinator } from './services/local-processing-coordinator'
 import { registerLlmIpc } from './ipc/llm-ipc'
@@ -115,7 +121,20 @@ import {
   recordMainDiagnosticAction,
   recordRendererDiagnosticAction
 } from './services/diagnostic-trail'
+import {
+  createOllamaPostWakeScheduler,
+  getOllamaPostWakePolicy,
+  isOllamaPostWakeSchedulerActive,
+  runOllamaWakeCheck
+} from './services/ollama-post-wake'
+import { markOllamaResumed } from './services/ollama-resume'
+import {
+  areBackgroundOllamaRestartsPaused,
+  recordOllamaPostWakeCheckFailed,
+  recordOllamaPostWakeCheckSucceeded
+} from './services/ollama-start-failures'
 import { normalizeSentryBreadcrumb } from '../shared/sentry-breadcrumbs'
+import { shouldLogRendererDiagnosticToAppLog } from '../shared/diagnostics'
 import {
   buildSingleInstanceLaunchData,
   enforceInstalledApplicationPolicy,
@@ -281,8 +300,30 @@ if (is.dev && process.platform === 'darwin' && app.dock) {
 }
 
 let ollamaManager: OllamaManager | null = null
+let ollamaPostWakeScheduler: ReturnType<typeof createOllamaPostWakeScheduler> | null = null
 let shutdownTranscriptionWorker: (() => void) | null = null
 let isQuitting = false
+let prepareRecordingQuit: () => Promise<void> = async () => {}
+let getUpdateInstallBlockReason: () => string | undefined = () =>
+  'AutoDoc is starting. Try again shortly.'
+let prepareIdleUpdateInstall: () => void = () => {}
+let cancelIdleUpdateInstall: () => void = () => {}
+const safeQuit = new SafeQuitCoordinator({
+  prepare: () => prepareRecordingQuit(),
+  quit: () => app.quit(),
+  onError: (error) => {
+    isQuitting = false
+    logAutodocFailure({
+      area: 'recording',
+      message: 'Could not finish recording before quit',
+      error
+    })
+    dialog.showErrorBox(
+      'AutoDoc is still saving your recording',
+      'AutoDoc stayed open to protect your recording. Wait for it to finish, then quit again.'
+    )
+  }
+})
 let mainSentry: MainSentryRuntimeModule | null = null
 let mainSentryEnabled = false
 let onMainSentryReady: (() => void) | null = null
@@ -574,11 +615,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('diagnostics:record-action', (_event, payload) => {
     recordRendererDiagnosticAction(payload)
 
-    if (
-      payload.category === 'system' ||
-      payload.category === 'onboarding' ||
-      (payload.category === 'recording' && payload.action.startsWith('capture_recovery_'))
-    ) {
+    if (shouldLogRendererDiagnosticToAppLog(payload)) {
       logAutodocEvent({
         area: payload.category === 'recording' ? 'recording' : 'app',
         message: `renderer_diagnostic:${payload.action}`,
@@ -698,8 +735,16 @@ app.whenReady().then(async () => {
   // Auto-updater
   if (!isE2E && !__AUTODOC_QA_BUILD__) {
     initAutoUpdater({
+      getInstallBlockReason: () => getUpdateInstallBlockReason(),
+      onInstallFailed: () => {
+        cancelIdleUpdateInstall()
+        isQuitting = false
+        safeQuit.cancelPreparedQuit()
+      },
       prepareForInstall: () => {
+        prepareIdleUpdateInstall()
         isQuitting = true
+        safeQuit.allowQuit()
       },
       onUpdateDownloaded: notifyUpdateReadyIfHidden
     })
@@ -711,9 +756,12 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('updater:install', () => {
+    const blockedReason = getUpdateInstallBlockReason()
+    if (blockedReason) return { blockedReason }
     if (!isE2E && !__AUTODOC_QA_BUILD__) {
       installUpdate()
     }
+    return {}
   })
 
   ipcMain.handle('permissions:check', async () => {
@@ -1047,7 +1095,21 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   })
 
+  // Set while the notes model is known not to load; the status stays failed until the
+  // user retries, instead of reporting ready just because the serve answers.
+  let ollamaModelLoadLatched = false
+
   const markOllamaSetupReady = (): void => {
+    if (ollamaModelLoadLatched) {
+      if (ollamaSetupState.phase !== 'error') {
+        ollamaSetupState.phase = 'error'
+        ollamaSetupState.percent = 0
+        ollamaSetupState.error = OLLAMA_MODEL_LOAD_FAILED_MESSAGE
+        ollamaSetupState.failedStep = 'model_load'
+        broadcastOllamaStatus()
+      }
+      return
+    }
     lastSuccessfulOllamaPhase = 'ready'
     ollamaSetupState.phase = 'ready'
     ollamaSetupState.percent = 100
@@ -1070,12 +1132,15 @@ app.whenReady().then(async () => {
     broadcastOllamaStatus()
   }
 
-  const markOllamaSetupFailed = (err: unknown): void => {
+  const markOllamaSetupFailed = (
+    err: unknown,
+    failedStep?: OllamaSetupStatus['failedStep']
+  ): void => {
     ollamaSetupState.phase = 'error'
     ollamaSetupState.percent = 0
     ollamaSetupState.error = err instanceof Error ? err.message : String(err)
     ollamaSetupState.failedStep =
-      lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase
+      failedStep ?? (lastSuccessfulOllamaPhase === 'error' ? 'starting' : lastSuccessfulOllamaPhase)
     broadcastOllamaStatus()
     logAutodocFailure({
       area: 'ollama',
@@ -1098,19 +1163,21 @@ app.whenReady().then(async () => {
   let ollamaRecoveryPromise: Promise<void> | null = null
 
   // `force` is honored only by the Windows setup coordinator; the non-Windows
-  // path keeps its existing single recovery flow unchanged.
-  const ensureOllamaRunning = (options: { force?: boolean } = {}): void => {
+  // path keeps its existing single recovery flow unchanged. `userInitiated` marks an
+  // explicit user retry, which re-enables recovery after a model-load failure.
+  const startOllama = (
+    options: { force?: boolean; userInitiated?: boolean } = {}
+  ): Promise<void> => {
+    if (options.userInitiated) {
+      ollamaRuntimeRecovery.clearModelLoadLatch()
+    }
     if (windowsOllamaSetupCoordinator) {
-      void windowsOllamaSetupCoordinator
-        .ensureRunning(options)
-        .then(() => {
-          markOllamaSetupReady()
-        })
-        .catch(() => {})
-      return
+      return windowsOllamaSetupCoordinator.ensureRunning(options).then(() => {
+        markOllamaSetupReady()
+      })
     }
 
-    if (ollamaRecoveryPromise) return
+    if (ollamaRecoveryPromise) return ollamaRecoveryPromise
 
     managedOllamaManager.resetReady()
     markOllamaSetupStarting()
@@ -1122,10 +1189,18 @@ app.whenReady().then(async () => {
       })
       .catch((err) => {
         markOllamaSetupFailed(err)
+        throw err
       })
       .finally(() => {
         ollamaRecoveryPromise = null
       })
+    return ollamaRecoveryPromise
+  }
+
+  const ensureOllamaRunning = (
+    options: { force?: boolean; userInitiated?: boolean } = {}
+  ): void => {
+    void startOllama(options).catch(() => {})
   }
 
   const broadcastSegmentationDiagnostic = (payload: SegmentationDiagnosticPayload): void => {
@@ -1142,6 +1217,7 @@ app.whenReady().then(async () => {
         await managedOllamaManager.maybeRecycleBloatedRunners(meetingId, { betweenChunks: true })
       },
       recoverRuntimeOnce: () => recoverUnhealthyOllamaRuntime(),
+      onModelLoadFailure: (message) => ollamaRuntimeRecovery.reportModelLoadFailure(message),
       snapshotRunners: () => managedOllamaManager.snapshotManagedRunners()
     })
   const ollamaProvider = createOllamaProvider()
@@ -1177,80 +1253,93 @@ app.whenReady().then(async () => {
       markOllamaSetupReady()
     }
   }
-  const recoverUnhealthyOllamaRuntime = async (): Promise<void> => {
-    const retryDelaysMs = [0, 5_000, 15_000]
-    const recoveryEpoch = managedOllamaManager.captureLifecycleEpoch()
-    managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-    markOllamaSetupStarting()
-    let lastError: Error | null = null
-    for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex++) {
-      const delayMs = retryDelaysMs[attemptIndex]
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-      }
-      try {
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        await managedOllamaManager.recoverUnhealthyRuntime()
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-
-        let serverRunning = await managedOllamaManager.isServerRunning()
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        let hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
-        managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-
-        if (serverRunning && !hasNotesModel) {
-          await managedOllamaManager.startAndPull()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          serverRunning = await managedOllamaManager.isServerRunning()
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-          hasNotesModel = serverRunning && (await managedOllamaManager.hasUsableNotesModel())
-          managedOllamaManager.assertLifecycleEpoch(recoveryEpoch)
-        }
-        if (serverRunning && hasNotesModel) {
-          markOllamaSetupReady()
-          return
-        }
-        lastError = new Error('Ollama recovery finished but serve or notes model is not ready')
-      } catch (error) {
-        if (isOllamaStartCancelledError(error)) {
-          throw error
-        }
-        lastError = error instanceof Error ? error : new Error(String(error))
-      }
+  const ollamaRuntimeRecovery = createOllamaRuntimeRecovery({
+    manager: managedOllamaManager,
+    markSetupStarting: markOllamaSetupStarting,
+    markSetupReady: markOllamaSetupReady,
+    markSetupFailed: markOllamaSetupFailed,
+    isCancellationError: isOllamaStartCancelledError,
+    onLatchChange: (latched) => {
+      ollamaModelLoadLatched = latched
     }
-    markOllamaSetupFailed(lastError ?? new Error('Ollama recovery failed'))
-    throw lastError ?? new Error('Ollama recovery failed')
-  }
-  const ensureOllamaRunningIfNeeded = (): void => {
+  })
+  const recoverUnhealthyOllamaRuntime = (): Promise<void> => ollamaRuntimeRecovery.recover()
+  const postWakePolicy = getOllamaPostWakePolicy()
+  const ensureOllamaRunningIfNeeded = async (): Promise<void> => {
     const lifecycleEpoch = managedOllamaManager.captureLifecycleEpoch()
     try {
       managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
     } catch {
       return
     }
-    void managedOllamaManager
-      .isServerRunning()
-      .then((running) => {
-        managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
-        if (running) {
-          if (windowsOllamaSetupCoordinator) {
-            ensureOllamaRunning()
-          } else {
-            markOllamaSetupReady()
+    const onAlreadyRunningAfterWake = (): void => {
+      if (windowsOllamaSetupCoordinator) {
+        ensureOllamaRunning()
+      } else {
+        markOllamaSetupReady()
+      }
+    }
+    try {
+      await runOllamaWakeCheck({
+        isBackgroundRestartPaused: () =>
+          postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused(),
+        isServerRunning: async () => {
+          try {
+            const running = await managedOllamaManager.isServerRunning()
+            managedOllamaManager.assertLifecycleEpoch(lifecycleEpoch)
+            return running
+          } catch (error) {
+            if (isOllamaStartCancelledError(error)) throw error
+            logAutodocFailure({
+              area: 'ollama',
+              message: 'Failed to check Ollama after system resume',
+              error
+            })
+            throw error
           }
-          return
+        },
+        onAlreadyRunning: onAlreadyRunningAfterWake,
+        startIfNeeded: async () => {
+          // A serve still discovering GPUs is healthy; wait for it instead of replacing it.
+          if (
+            managedOllamaManager.isServeStarting() &&
+            (await managedOllamaManager.waitForStartingServe())
+          ) {
+            onAlreadyRunningAfterWake()
+            return
+          }
+          await startOllama({ force: true })
         }
-        ensureOllamaRunning({ force: true })
       })
-      .catch((error) => {
-        if (isOllamaStartCancelledError(error)) return
-        logAutodocFailure({
-          area: 'ollama',
-          message: 'Failed to check Ollama after system resume',
-          error
-        })
-      })
+    } catch (error) {
+      if (isOllamaStartCancelledError(error)) return
+      throw error
+    }
+  }
+  ollamaPostWakeScheduler = createOllamaPostWakeScheduler({
+    checkOllama: ensureOllamaRunningIfNeeded,
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
+    isServeStarting: () => managedOllamaManager.isServeStarting(),
+    waitForStartingServe: () => managedOllamaManager.waitForStartingServe(),
+    captureEpoch: () => managedOllamaManager.captureLifecycleEpoch(),
+    isEpochCurrent: (epoch) => {
+      try {
+        managedOllamaManager.assertLifecycleEpoch(epoch)
+        return true
+      } catch {
+        return false
+      }
+    },
+    isPaused: postWakePolicy.pauseEnabled ? areBackgroundOllamaRestartsPaused : undefined,
+    delayMs: postWakePolicy.delayMs,
+    retryDelaysMs: postWakePolicy.retryDelaysMs,
+    readyHoldMs: postWakePolicy.readyHoldMs,
+    onWakeSucceeded: postWakePolicy.pauseEnabled ? recordOllamaPostWakeCheckSucceeded : undefined,
+    onWakeFailed: postWakePolicy.pauseEnabled ? recordOllamaPostWakeCheckFailed : undefined
+  })
+  const scheduleOllamaCheckAfterWake = (): void => {
+    if (isQuitting) return
+    ollamaPostWakeScheduler?.scheduleAfterWake()
   }
   const segmentationOllamaReadiness = {
     waitUntilReady: waitUntilOllamaReady,
@@ -1262,6 +1351,7 @@ app.whenReady().then(async () => {
             (await managedOllamaManager.ensureNotesModelReady(preferredModel)).activeModel
         }
       : {}),
+    isServerRunning: () => managedOllamaManager.isServerRunning(),
     isReadyForGeneration: async (model?: string) =>
       (await managedOllamaManager.isServerRunning()) &&
       (await (process.platform === 'win32'
@@ -1327,6 +1417,7 @@ app.whenReady().then(async () => {
       }
     })
     managedOllamaManager.stop()
+    ollamaPostWakeScheduler?.clearPending()
     managedOllamaManager.resetReady()
     await clearDownloadedComponents()
     logAutodocEvent({
@@ -1348,6 +1439,7 @@ app.whenReady().then(async () => {
     }
 
     managedOllamaManager.stop()
+    ollamaPostWakeScheduler?.clearPending()
     managedOllamaManager.resetReady()
 
     void getStorageDiagnostics({
@@ -1393,16 +1485,19 @@ app.whenReady().then(async () => {
     setTimeout(() => app.exit(0), 100)
   })
   let pendingRecoveryPromise: Promise<unknown> | null = null
-  let recoverWindowsFinalizingMeetings: () => Promise<void> = async () => {}
+  let recoverInterruptedRecordings: () => Promise<void> = async () => {}
 
   const recoverPendingWork = (): void => {
-    if (pendingRecoveryPromise) return
+    if (pendingRecoveryPromise || isQuitting) return
 
-    pendingRecoveryPromise = Promise.all([
-      transcriptionService.scanAndEnqueuePending(),
-      segmentationService.scanAndEnqueuePending(),
-      recoverWindowsFinalizingMeetings()
-    ])
+    pendingRecoveryPromise = (async () => {
+      await recoverInterruptedRecordings()
+      if (isE2E && process.env.AUTODOC_E2E_SKIP_LOCAL_PROCESSING === '1') return
+      await Promise.all([
+        transcriptionService.scanAndEnqueuePending(),
+        segmentationService.scanAndEnqueuePending()
+      ])
+    })()
       .catch((err) => {
         logAutodocFailure({
           area: 'app',
@@ -1528,10 +1623,23 @@ app.whenReady().then(async () => {
 
   let cachedEvents: import('../shared/types').CalendarEvent[] = []
 
-  const detectionService = new DetectionService(recordingService, () => cachedEvents)
+  const detectionService = new DetectionService(
+    recordingService,
+    () => cachedEvents,
+    // Same path as the tray Stop: the renderer runs its normal stop and the meeting is kept.
+    () => flushRecordingForQuit()
+  )
 
   ipcMain.handle('detection:dismiss', () => {
     detectionService.dismissPrompt()
+  })
+  ipcMain.handle('detection:source-selection-required', (_event, requestId: number) => {
+    if (getMainWindow()?.webContents !== _event.sender) return
+    detectionService.showSourceSelectionPrompt(requestId)
+  })
+  ipcMain.handle('detection:auto-record-started', (_event, requestId: number) => {
+    if (getMainWindow()?.webContents !== _event.sender) return
+    detectionService.showAutoRecordStartedNotice(requestId)
   })
 
   const whisperEngineSetupState: WhisperSetupStatus = { phase: 'checking', percent: 0 }
@@ -1838,8 +1946,7 @@ app.whenReady().then(async () => {
   }
 
   const {
-    stopActiveRecording,
-    recoverWindowsFinalizingMeetings: recoverWindowsFinalizingMeetingsImpl,
+    recoverInterruptedRecordings: recoverInterruptedRecordingsImpl,
     hasPostProcessingWork
   } = registerRecordingIpc(
     recordingService,
@@ -1848,7 +1955,100 @@ app.whenReady().then(async () => {
     calendarManager,
     () => resolveRecordingMeetingLanguage(prefsStore.getMeetingLanguage())
   )
-  recoverWindowsFinalizingMeetings = recoverWindowsFinalizingMeetingsImpl
+  recoverInterruptedRecordings = recoverInterruptedRecordingsImpl
+  getUpdateInstallBlockReason = () => {
+    if (recordingService.hasActiveCapture()) return 'Finish your recording before restarting.'
+    if (
+      pendingRecoveryPromise !== null ||
+      hasPostProcessingWork() ||
+      transcriptionService.hasActiveOrQueuedWork() ||
+      segmentationService.hasActiveOrQueuedWork()
+    ) {
+      return 'AutoDoc is processing your meeting. Restart when it finishes.'
+    }
+    const phase = whisperManager.getSetupStatus().phase
+    if (phase !== 'ready' && phase !== 'checking' && phase !== 'error')
+      return 'Wait for the model download to finish before restarting.'
+    if (isQuitting) return 'AutoDoc is saving your recording.'
+    return undefined
+  }
+  prepareIdleUpdateInstall = () => recordingService.setShutdownPending(true)
+  cancelIdleUpdateInstall = () => recordingService.setShutdownPending(false)
+  whisperManager.on('setup-status', (status) => {
+    if (status.phase === 'ready' && !isQuitting) recoverPendingWork()
+  })
+
+  let pendingQuitStop: {
+    requestId: string
+    resolve: () => void
+    reject: (error: Error) => void
+  } | null = null
+  ipcMain.on('recording:quit-ready', (event, requestId: string, error?: string) => {
+    if (event.sender !== getMainWindow()?.webContents || pendingQuitStop?.requestId !== requestId)
+      return
+    if (error) pendingQuitStop.reject(new Error(error))
+    else pendingQuitStop.resolve()
+  })
+  const requestRendererRecordingStop = async (): Promise<void> => {
+    const mainWindow = getMainWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (recordingService.hasActiveCapture()) throw new Error('Recording window is unavailable')
+      return
+    }
+    const requestId = `quit-${Date.now()}`
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingQuitStop = null
+        reject(new Error('Timed out waiting for recording capture to flush'))
+      }, 20_000)
+      pendingQuitStop = {
+        requestId,
+        resolve: () => {
+          clearTimeout(timer)
+          pendingQuitStop = null
+          resolve()
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          pendingQuitStop = null
+          reject(error)
+        }
+      }
+      mainWindow.webContents.send('recording:prepare-to-quit', requestId)
+    })
+  }
+  let pendingRecordingFlush: Promise<void> | null = null
+  const flushRecordingForQuit = (): Promise<void> => {
+    if (pendingRecordingFlush) return pendingRecordingFlush
+    const pending = requestRendererRecordingStop()
+    pendingRecordingFlush = pending
+    void pending.then(
+      () => {
+        pendingRecordingFlush = null
+      },
+      () => {
+        pendingRecordingFlush = null
+      }
+    )
+    return pending
+  }
+  prepareRecordingQuit = async () => {
+    isQuitting = true
+    recordingService.setShutdownPending(true)
+    try {
+      if (recordingService.hasActiveCapture() || hasPostProcessingWork())
+        await flushRecordingForQuit()
+      if (pendingRecoveryPromise) await pendingRecoveryPromise
+      const deadline = Date.now() + 60_000
+      while (recordingService.hasActiveCapture() || hasPostProcessingWork()) {
+        if (Date.now() >= deadline) throw new Error('Recording finalization has not finished')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    } catch (error) {
+      recordingService.setShutdownPending(false)
+      throw error
+    }
+  }
 
   const feedbackPromptStore = new FeedbackPromptStore()
   const feedbackPromptService = new FeedbackPromptService({
@@ -2006,8 +2206,15 @@ app.whenReady().then(async () => {
     () => ({ ...ollamaSetupState }),
     ensureOllamaRunning,
     !windowsOllamaSetupCoordinator,
-    markReprocessNotificationPending,
-    recordingService.getRecordingsBaseDir()
+    (meetingId) => {
+      // A manual notes retry is an explicit user action; allow one fresh attempt.
+      ollamaRuntimeRecovery.clearModelLoadLatch()
+      markReprocessNotificationPending(meetingId)
+    },
+    recordingService.getRecordingsBaseDir(),
+    () =>
+      isOllamaPostWakeSchedulerActive(ollamaPostWakeScheduler) ||
+      (postWakePolicy.pauseEnabled && areBackgroundOllamaRestartsPaused())
   )
   let preparedMeetingLanguage = 'en'
   // A failed preparation must read as an error, not as "checking", so the
@@ -2017,7 +2224,8 @@ app.whenReady().then(async () => {
     whisperManager,
     () => {
       const language = prefsStore.getMeetingLanguage()
-      if (language === preparedMeetingLanguage) return getCombinedTranscriptionSetupStatus()
+      const status = getCombinedTranscriptionSetupStatus()
+      if (language === preparedMeetingLanguage || status.meetingLanguage === language) return status
       if (meetingLanguageSetupFailure?.language === language) {
         return {
           phase: 'error',
@@ -2153,6 +2361,10 @@ app.whenReady().then(async () => {
 
   createWindow()
 
+  if (isE2E && process.env.AUTODOC_E2E_RECOVER_INTERRUPTED_RECORDINGS === '1') {
+    recoverPendingWork()
+  }
+
   // System tray — show upcoming meetings, open app, quit
   if (!isE2E) {
     const showWindow = () => {
@@ -2166,7 +2378,13 @@ app.whenReady().then(async () => {
         stopRecording: () => {
           if (!recordingService.getState().isRecording) return
           try {
-            stopActiveRecording()
+            void flushRecordingForQuit().catch((error) => {
+              logAutodocFailure({
+                area: 'recording',
+                message: 'Could not stop recording from tray',
+                error
+              })
+            })
           } catch {
             // Failure already logged in recording IPC
           }
@@ -2186,13 +2404,20 @@ app.whenReady().then(async () => {
     }
 
     if (!isRealSetupTest) {
+      powerMonitor.on('suspend', () => {
+        recordMainDiagnosticAction({ category: 'system', action: 'suspend' })
+      })
+
       powerMonitor.on('resume', () => {
-        ensureOllamaRunningIfNeeded()
+        recordMainDiagnosticAction({ category: 'system', action: 'resume' })
+        markOllamaResumed()
+        scheduleOllamaCheckAfterWake()
         recoverPendingWork()
       })
 
       powerMonitor.on('unlock-screen', () => {
-        ensureOllamaRunningIfNeeded()
+        recordMainDiagnosticAction({ category: 'system', action: 'unlock-screen' })
+        scheduleOllamaCheckAfterWake()
         recoverPendingWork()
       })
 
@@ -2215,8 +2440,10 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!safeQuit.beforeQuit(event)) return
   isQuitting = true
+  ollamaPostWakeScheduler?.cancel()
   ollamaManager?.stop()
   shutdownTranscriptionWorker?.()
   stopRecordingMediaHttpServer()
@@ -2225,6 +2452,7 @@ app.on('before-quit', () => {
   'before-quit-for-update',
   () => {
     isQuitting = true
+    ollamaPostWakeScheduler?.cancel()
   }
 )
 

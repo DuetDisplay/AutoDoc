@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types'
 import { logAutodocEvent } from './autodoc-log'
 import { isMissingOllamaModelError } from './notes-model-errors'
+import { isOllamaModelLoadFailureText } from './ollama-model-load-failure'
 import { captureMessage } from './sentry-reporter'
 import {
   explicitActionSpeechActClauses,
@@ -1475,13 +1476,18 @@ type OllamaContextProfile =
   | 'windows-cpu'
 
 export function isTransientOllamaRuntimeError(message: string): boolean {
+  // The runner message for a model that cannot be opened also says "runner process has
+  // terminated", but restarting never helps, so it must not be retried as transient.
+  if (isOllamaModelLoadFailureText(message)) return false
   return (
     message.includes('fetch failed') ||
     message.includes('This operation was aborted') ||
     message.includes('aborted due to timeout') ||
     message === 'The operation was aborted' ||
     message.includes('llama-server process has terminated') ||
+    message.includes('llama runner process has terminated') ||
     message.includes('model runner has unexpectedly stopped') ||
+    /\bexit status 1\b/.test(message) ||
     message.includes('0xe06d7363')
   )
 }
@@ -1563,6 +1569,8 @@ interface OllamaProviderOptions {
    */
   maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
   recoverRuntimeOnce?: () => Promise<void>
+  /** Called when a request failed because the model file could not be loaded. Must not throw. */
+  onModelLoadFailure?: (message: string) => void
   /** Dev/eval only. Must never throw. Used to record runner PID/RSS per writer call. */
   snapshotRunners?: () => Array<{ pid: number; rssMiB: number | null; numCtx: number | null }>
 }
@@ -1609,6 +1617,7 @@ export class OllamaProvider implements LLMProvider {
   private onTelemetry?: (event: OllamaProviderTelemetryEvent) => void
   private maybeRecycleRunner?: (meetingId?: string) => void | Promise<void>
   private recoverRuntimeOnce?: () => Promise<void>
+  private onModelLoadFailure?: (message: string) => void
   private snapshotRunners?: () => Array<{
     pid: number
     rssMiB: number | null
@@ -1655,6 +1664,7 @@ export class OllamaProvider implements LLMProvider {
     this.onTelemetry = options.onTelemetry
     this.maybeRecycleRunner = options.maybeRecycleRunner
     this.recoverRuntimeOnce = options.recoverRuntimeOnce
+    this.onModelLoadFailure = options.onModelLoadFailure
     this.snapshotRunners = options.snapshotRunners
     this.setInitialContextProfile()
   }
@@ -1679,6 +1689,10 @@ export class OllamaProvider implements LLMProvider {
       return await this.generatePrompt(prompt, options)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (isOllamaModelLoadFailureText(message)) {
+        this.onModelLoadFailure?.(message)
+        throw error
+      }
       if (!this.recoverRuntimeOnce || !isTransientOllamaRuntimeError(message)) {
         throw error
       }
@@ -2139,7 +2153,14 @@ export class OllamaProvider implements LLMProvider {
           if (lastError.message === 'SEGMENTATION_PREEMPTED') {
             throw lastError
           }
-          if (process.platform === 'win32' && isMissingOllamaModelError(lastError)) throw lastError
+          if (isMissingOllamaModelError(lastError)) {
+            if (process.platform === 'win32') throw lastError
+          }
+          if (isOllamaModelLoadFailureText(lastError.message)) {
+            // Retrying or restarting cannot make an unloadable model load.
+            this.onModelLoadFailure?.(lastError.message)
+            throw lastError
+          }
           if (
             isWriterParseError(lastError) &&
             isWindowsTopicWriterEnabled() &&

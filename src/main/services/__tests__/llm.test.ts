@@ -75,6 +75,44 @@ it.each([
   }
 )
 
+it.each(['win32', 'darwin'] as const)(
+  'reports a model-load 500 on %s without restarting the runtime or retrying',
+  async (platform) => {
+    setPlatform(platform)
+    const recover = vi.fn()
+    const onModelLoadFailure = vi.fn()
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        {
+          error:
+            'llama runner process has terminated: error loading model: llama_model_loader: failed to load model from C:\\x'
+        },
+        { status: 500 }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const provider = new OllamaProvider('http://localhost:11435', 'qwen3:4b-instruct', {
+        recoverRuntimeOnce: recover,
+        onModelLoadFailure
+      })
+      await expect(
+        provider.summarize(
+          'model-load-failure',
+          '[00:00] [Chris] We agreed to launch the customer portal on Friday.'
+        )
+      ).rejects.toThrow(/failed to load model/)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(recover).not.toHaveBeenCalled()
+      expect(onModelLoadFailure).toHaveBeenCalledTimes(1)
+      expect(onModelLoadFailure.mock.calls[0][0]).toContain('failed to load model')
+    } finally {
+      vi.unstubAllGlobals()
+      setPlatform(originalPlatform)
+    }
+  }
+)
+
 function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', {
     configurable: true,
@@ -291,6 +329,34 @@ describe('OllamaProvider grounding', () => {
     expect(mocks.logAutodocEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: 'notes llm chunk skipped' })
     )
+  })
+
+  it('recovers the serve once after llama-server exits with status 1 and finishes the writer chunk', async () => {
+    setPlatform('win32')
+    const recoverRuntimeOnce = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: 'llama-server process has terminated: exit status 1' },
+          { status: 500 }
+        )
+      )
+      .mockResolvedValue(makeSuccessfulOllamaResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new OllamaProvider('http://localhost:11434', 'test-model', {
+      recoverRuntimeOnce
+    }).summarize(
+      'meeting-exit-1',
+      '[00:00] [Chris] The Windows notes retry completed after the stalled request was cancelled.',
+      undefined,
+      5
+    )
+
+    expect(result.information).toHaveLength(1)
+    expect(recoverRuntimeOnce).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('recovers the serve once after fetch failed and finishes the writer chunk', async () => {
@@ -1767,6 +1833,21 @@ describe('OllamaProvider grounding', () => {
       )
     ).toBe(true)
     expect(isTransientOllamaRuntimeError('model runner has unexpectedly stopped')).toBe(true)
+    expect(
+      isTransientOllamaRuntimeError(
+        'Ollama returned 500: {"error":"llama-server process has terminated: exit status 1"}'
+      )
+    ).toBe(true)
+    expect(
+      isTransientOllamaRuntimeError(
+        'Ollama returned 500: {"error":"llama runner process has terminated: exit status 1"}'
+      )
+    ).toBe(true)
+    expect(
+      isTransientOllamaRuntimeError(
+        'Ollama exited with code 1: 0 description="NVIDIA GeForce RTX 4070 Laptop GPU"'
+      )
+    ).toBe(false)
     expect(isTransientOllamaRuntimeError('fetch failed')).toBe(true)
     expect(isTransientOllamaRuntimeError('Invalid JSON from Ollama')).toBe(false)
     expect(isTransientOllamaRuntimeError('Unexpected token } in JSON at position 12')).toBe(false)

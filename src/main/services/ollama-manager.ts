@@ -22,6 +22,21 @@ import { canUseSystemRuntimeFallback } from './runtime-policy'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { sanitizeDiagnosticLogTail } from './diagnostic-log-upload'
 import {
+  createOllamaModelLoadFailedError,
+  isOllamaModelLoadFailureText
+} from './ollama-model-load-failure'
+import {
+  createDefaultOllamaModelsDirDeps,
+  resolveOllamaModelsDir,
+  setRelocatedOllamaModelsDir
+} from './ollama-models-dir'
+import { getMsSinceLastResume } from './ollama-resume'
+import {
+  recordOllamaServeStable,
+  recordOllamaStartFailure,
+  recordOllamaStartSuccess
+} from './ollama-start-failures'
+import {
   selectOllamaAccelerator,
   shouldRecycleRunnerBetweenWriterChunks,
   type OllamaAccelerator,
@@ -46,6 +61,14 @@ const TEST_OLLAMA_SETUP_SEQUENCE =
         .map((entry) => entry.trim())
         .filter(Boolean)
     : []
+
+/** Why the app itself killed an Ollama serve process (as opposed to it crashing). */
+type OllamaKillReason =
+  | 'stop'
+  | 'recover-unhealthy-runtime'
+  | 'replace-unadopted-server'
+  | 'start-cancelled'
+  | 'start-timeout'
 
 type PreferredModelResolver = () => string | null | undefined | Promise<string | null | undefined>
 
@@ -261,6 +284,16 @@ export function parseManagedLlamaServerPids(listing: string, runtimeDir: string)
 // 18.5 tok/s over 8 varied prompts while RSS went 3.8 → 5.9 GiB). Recycling the
 // runner costs one model reload (~5-10s) and restores full speed, which pays for
 // itself within the next chunk once decode has degraded.
+export const EARLY_EXIT_AFTER_READY_MS = 60_000
+
+// A freshly started Ollama 0.30 serve prints "Listening on" and then spends
+// ~10 s (longer on slow GPUs or right after wake) discovering GPUs. /api/tags
+// does not answer meanwhile, so a healthy server looks dead. Give a serve the
+// app started itself time to finish before replacing it.
+export const STARTING_SERVE_GRACE_MS = 60_000
+export const STARTING_SERVE_WAIT_MS = 30_000
+export const STARTING_SERVE_POLL_MS = 2_000
+
 const RUNNER_RECYCLE_RSS_MIB_LARGE_HOST = 4864 // ~4.75 GiB on hosts with >= 20 GiB RAM
 const RUNNER_RECYCLE_RSS_MIB_SMALL_HOST = 4352 // ~4.25 GiB — low-RAM hosts hit swap sooner
 const RUNNER_RECYCLE_RSS_MIB_WIN_16G = 3584 // ~3.5 GiB — 16 GB boxes share RAM with GPU drivers
@@ -300,6 +333,9 @@ export function parseWindowsNetstatListeningPids(output: string): number[] {
 
 export class OllamaManager extends EventEmitter {
   private process: ChildProcess | null = null
+  // Serve processes the app deliberately killed. On Windows `taskkill /f /t` always makes
+  // the process exit with code 1, so the exit handler uses this to tell those apart from crashes.
+  private intentionalKillReasons = new WeakMap<ChildProcess, OllamaKillReason>()
   private model: string
   private preferredModel: string
   private resolveModel: PreferredModelResolver | null
@@ -313,9 +349,13 @@ export class OllamaManager extends EventEmitter {
   private readyPromise: Promise<void> | null = null
   private startPromise: Promise<void> | null = null
   private recoveryPromise: Promise<void> | null = null
+  private resolvedModelsDir: { originalDir: string; promise: Promise<string> } | null = null
+  private modelLoadFailureCount = 0
   private startEpoch = 0
   private stopped = false
   private readyServeProcess: ChildProcess | null = null
+  private readyAtMs: number | null = null
+  private serveStableTimer: ReturnType<typeof setTimeout> | null = null
   private adoptedSystemRuntime = false
   private testServerRunning = false
   private didReapAdoptedRunners = false
@@ -464,6 +504,13 @@ export class OllamaManager extends EventEmitter {
   private async runUnhealthyRecovery(): Promise<void> {
     const epoch = this.startEpoch
     this.assertStartEpoch(epoch)
+    // A serve that is not answering only because it is still discovering GPUs is healthy.
+    // A serve that answers is still recovered as before (for example a dead runner).
+    if (this.isServeStarting() && !(await this.isServerRunning())) {
+      const started = await this.waitForStartingServe()
+      this.assertStartEpoch(epoch)
+      if (started) return
+    }
     if (this.acceleratorDecision?.accelerator === 'vulkan') {
       this.latchCpuAccelerator('vulkan runner died; latched CPU for process lifetime')
     }
@@ -487,7 +534,7 @@ export class OllamaManager extends EventEmitter {
   ): Promise<void> {
     this.assertStartEpoch(epoch)
     if (previousProc) {
-      const killed = await this.killProcessAndWait(previousProc)
+      const killed = await this.killProcessAndWait(previousProc, 'recover-unhealthy-runtime')
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -502,6 +549,7 @@ export class OllamaManager extends EventEmitter {
       }
     }
     this.assertStartEpoch(epoch)
+    this.markTrackedProcessKilledByApp('recover-unhealthy-runtime')
     this.killProcessOnPort()
     this.killManagedLlamaServers()
     this.didReapAdoptedRunners = false
@@ -614,6 +662,38 @@ export class OllamaManager extends EventEmitter {
     return this.getInstalledFallbackOllamaDataDir() ?? join(app.getPath('userData'), 'ollama-data')
   }
 
+  /**
+   * The models directory handed to Ollama. On Windows a non-ASCII profile path is
+   * replaced by an ASCII one (see ollama-models-dir). Resolved once per process,
+   * before the first spawn, so every reader sees the same directory.
+   */
+  private resolveOllamaDataDir(): Promise<string> {
+    const originalDir = this.getOllamaDataDir()
+    if (this.resolvedModelsDir?.originalDir !== originalDir) {
+      const promise = resolveOllamaModelsDir(
+        originalDir,
+        createDefaultOllamaModelsDirDeps({
+          log: (event) => logAutodocEvent({ area: 'ollama', ...event }),
+          markerPath: join(app.getPath('userData'), 'ollama-models-dir.txt')
+        })
+      ).then((result) => {
+        setRelocatedOllamaModelsDir(result)
+        return result.dir
+      })
+      this.resolvedModelsDir = { originalDir, promise }
+    }
+    return this.resolvedModelsDir.promise
+  }
+
+  /** Count of serve exits caused by the model file failing to load; restarting cannot fix them. */
+  getModelLoadFailureCount(): number {
+    return this.modelLoadFailureCount
+  }
+
+  clearModelLoadFailures(): void {
+    this.modelLoadFailureCount = 0
+  }
+
   async isReady(): Promise<boolean> {
     try {
       await access(this.getBinaryPath())
@@ -623,6 +703,55 @@ export class OllamaManager extends EventEmitter {
       return true
     } catch {
       return false
+    }
+  }
+
+  /**
+   * True while a serve this app started is alive, owns the port and became
+   * ready recently, so a failed health probe may only mean it is still
+   * discovering GPUs rather than being hung.
+   */
+  isServeStarting(): boolean {
+    const proc = this.process
+    if (!proc || proc.exitCode != null || proc.signalCode != null) return false
+    if (this.readyServeProcess !== proc) return false
+    if (this.readyAtMs == null || Date.now() - this.readyAtMs >= STARTING_SERVE_GRACE_MS) {
+      return false
+    }
+    return !IS_WIN || (proc.pid != null && this.getListeningPidsOnOllamaPort().includes(proc.pid))
+  }
+
+  /**
+   * Wait for a still-starting serve to start answering. Returns true once the
+   * server responds. Returns false immediately when no serve is starting, and
+   * after the timeout, when the process exits or stops being the ready serve,
+   * or when the lifecycle epoch changes.
+   */
+  async waitForStartingServe(timeoutMs = STARTING_SERVE_WAIT_MS): Promise<boolean> {
+    if (!this.isServeStarting()) return false
+    const proc = this.process
+    if (!proc) return false
+    const epoch = this.startEpoch
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama server still starting; waiting before replacing',
+      context: {
+        pid: proc.pid ?? null,
+        msSinceReady: this.readyAtMs != null ? Math.max(0, Date.now() - this.readyAtMs) : null
+      }
+    })
+    const deadline = Date.now() + timeoutMs
+    while (true) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return false
+      await new Promise((r) => setTimeout(r, Math.min(STARTING_SERVE_POLL_MS, remaining)))
+      if (!this.isStartEpochCurrent(epoch)) return false
+      if (!this.isCurrentLiveChild(proc) || this.readyServeProcess !== proc) return false
+      if (await this.isServerRunning()) {
+        if (!this.isStartEpochCurrent(epoch)) return false
+        if (!this.isCurrentLiveChild(proc) || this.readyServeProcess !== proc) return false
+        return true
+      }
     }
   }
 
@@ -942,7 +1071,7 @@ export class OllamaManager extends EventEmitter {
   async ensureReady(): Promise<void> {
     await mkdir(this.getModelsDir(), { recursive: true })
     await mkdir(this.getRuntimeDir(), { recursive: true })
-    await mkdir(this.getOllamaDataDir(), { recursive: true })
+    await mkdir(await this.resolveOllamaDataDir(), { recursive: true })
 
     await this.adoptInstalledRuntimeIfAvailable()
 
@@ -1011,10 +1140,14 @@ export class OllamaManager extends EventEmitter {
     if (this.startPromise) {
       return this.startPromise
     }
-    const run = this.startServe(options, epoch).catch((error) => {
-      this.assertStartEpoch(epoch)
-      throw error
-    })
+    const run = this.startServe(options, epoch)
+      .then(() => {
+        recordOllamaStartSuccess()
+      })
+      .catch((error) => {
+        this.assertStartEpoch(epoch)
+        throw error
+      })
     const promise = run.finally(() => {
       if (this.startPromise === promise) {
         this.startPromise = null
@@ -1034,18 +1167,43 @@ export class OllamaManager extends EventEmitter {
 
     const tracked = this.process
     if (tracked && tracked.exitCode == null && tracked.signalCode == null) {
-      if (!options.forceRespawn && this.readyServeProcess === tracked) {
-        const running = await this.isServerRunning()
+      const isReadyServeProcess = this.readyServeProcess === tracked
+      let running: boolean | null = null
+      let ownsPort: boolean | null = null
+      let waitedForStart = false
+      if (!options.forceRespawn && isReadyServeProcess) {
+        running = await this.isServerRunning()
         this.assertStartEpoch(epoch)
-        const ownsPort =
+        ownsPort =
           !IS_WIN ||
           (tracked.pid != null && this.getListeningPidsOnOllamaPort().includes(tracked.pid))
         if (running && ownsPort) {
           this.reapManagedLlamaServersOnce('adopt-existing-server')
           return
         }
+        if (!running && this.isServeStarting()) {
+          waitedForStart = true
+          const started = await this.waitForStartingServe()
+          this.assertStartEpoch(epoch)
+          if (started) {
+            this.reapManagedLlamaServersOnce('adopt-existing-server')
+            return
+          }
+        }
       }
-      const killed = await this.killProcessAndWait(tracked)
+      logAutodocEvent({
+        area: 'ollama',
+        message: 'ollama server not adopted; replacing',
+        context: {
+          pid: tracked.pid ?? null,
+          forceRespawn: options.forceRespawn === true,
+          isReadyServeProcess,
+          running,
+          ownsPort,
+          waitedForStart
+        }
+      })
+      const killed = await this.killProcessAndWait(tracked, 'replace-unadopted-server')
       this.assertStartEpoch(epoch)
       if (!killed) {
         throw new Error(
@@ -1077,6 +1235,15 @@ export class OllamaManager extends EventEmitter {
     }
 
     // Kill any orphaned process holding our port from a previous app session
+    logAutodocEvent({
+      area: 'ollama',
+      message: 'ollama server clearing port before spawn',
+      context: {
+        reason: options.forceRespawn ? 'force-respawn' : 'no-responsive-server',
+        forceRespawn: options.forceRespawn === true
+      }
+    })
+    this.markTrackedProcessKilledByApp('replace-unadopted-server')
     this.killProcessOnPort()
     this.reapManagedLlamaServersOnce('replace-orphaned-server')
     await new Promise((r) => setTimeout(r, 1000))
@@ -1097,11 +1264,13 @@ export class OllamaManager extends EventEmitter {
 
     this.assertStartEpoch(epoch)
 
+    const modelsDir = await this.resolveOllamaDataDir()
+    this.assertStartEpoch(epoch)
     const proc = spawn(binary, ['serve'], {
       env: {
         ...process.env,
         OLLAMA_HOST: OLLAMA_HOST,
-        OLLAMA_MODELS: this.getOllamaDataDir(),
+        OLLAMA_MODELS: modelsDir,
         ...decision.env
       },
       stdio: ['ignore', 'pipe', 'pipe']
@@ -1111,11 +1280,11 @@ export class OllamaManager extends EventEmitter {
     logAutodocEvent({
       area: 'ollama',
       message: 'ollama server spawn attempt',
-      context: { binaryPath: binary, pid: proc.pid ?? null }
+      context: { binaryPath: binary, pid: proc.pid ?? null, modelsDir }
     })
 
     if (this.startEpoch !== epoch) {
-      const killed = await this.killProcessAndWait(proc)
+      const killed = await this.killProcessAndWait(proc, 'start-cancelled')
       if (killed && this.process === proc) {
         this.process = null
       }
@@ -1166,7 +1335,7 @@ export class OllamaManager extends EventEmitter {
           error: new Error('Ollama server failed to start within 30 seconds'),
           context: { timeoutMs: 30_000, binaryPath: binary, pid: proc.pid ?? null }
         })
-        void this.killProcessAndWait(proc).then((killed) => {
+        void this.killProcessAndWait(proc, 'start-timeout').then((killed) => {
           if (killed) {
             if (this.process === proc) {
               this.process = null
@@ -1192,6 +1361,8 @@ export class OllamaManager extends EventEmitter {
         if (!this.isStartEpochCurrent(epoch) || !this.isCurrentLiveChild(proc)) return
         finish(() => {
           this.readyServeProcess = proc
+          this.readyAtMs = Date.now()
+          this.scheduleServeStableCheck(proc)
           logAutodocEvent({
             area: 'ollama',
             message: 'ollama server became ready',
@@ -1250,30 +1421,63 @@ export class OllamaManager extends EventEmitter {
       })
 
       proc.on('exit', (code, signal) => {
+        const wasReadyProc = this.readyServeProcess === proc
+        const msSinceReady =
+          wasReadyProc && this.readyAtMs != null ? Math.max(0, Date.now() - this.readyAtMs) : null
+        const intentionalKillReason = this.intentionalKillReasons.get(proc) ?? null
+        const earlyExitAfterReady =
+          intentionalKillReason == null &&
+          code !== null &&
+          code !== 0 &&
+          msSinceReady != null &&
+          msSinceReady < EARLY_EXIT_AFTER_READY_MS
         if (this.process === proc) {
           this.process = null
         }
         if (this.readyServeProcess === proc) {
           this.readyServeProcess = null
         }
+        if (wasReadyProc) {
+          this.readyAtMs = null
+          this.clearServeStableTimer()
+        }
+        if (earlyExitAfterReady && !this.stopped) {
+          recordOllamaStartFailure()
+        }
+        const modelLoadFailed =
+          intentionalKillReason == null && isOllamaModelLoadFailureText(stderr)
+        if (modelLoadFailed) {
+          this.modelLoadFailureCount += 1
+        }
         const exitContext = {
           exitCode: code,
           signal: signal ?? null,
-          pid: proc.pid ?? null
+          pid: proc.pid ?? null,
+          msSinceLastResume: getMsSinceLastResume(),
+          earlyExitAfterReady,
+          msSinceReady,
+          ...(modelLoadFailed ? { modelLoadFailure: true } : {})
         }
-        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
-        const exitError =
-          code !== null && code !== 0
-            ? new Error(
-                `Ollama exited with code ${code}${sanitizedStderrTail ? `: ${sanitizedStderrTail}` : ''}`
-              )
-            : null
-        if (exitError) {
+        const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
+        const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
+        if (intentionalKillReason != null) {
+          // The app killed this serve itself (Windows taskkill always exits with code 1), so it
+          // is not a crash and must not reach the AUTODOC-8 failure stream.
+          logAutodocEvent({
+            area: 'ollama',
+            message: 'ollama server process stopped by app',
+            context: { ...exitContext, reason: intentionalKillReason }
+          })
+        } else if (code !== null && code !== 0) {
           logAutodocFailure({
             area: 'ollama',
             message: 'ollama server process exited',
-            error: exitError,
-            context: exitContext
+            error: new Error(`Ollama exited with code ${code}`),
+            context: {
+              ...exitContext,
+              stderrTail: sanitizedStderrTail || null
+            },
+            fingerprint: ['ollama-server-exited', String(code)]
           })
         } else {
           logAutodocEvent({
@@ -1285,10 +1489,8 @@ export class OllamaManager extends EventEmitter {
         }
         if (!settled) {
           finish(() => {
-            reject(
-              exitError ??
-                new Error(`Ollama exited with code ${code}, signal ${signal}: ${sanitizedStderrTail}`)
-            )
+            const message = `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
+            reject(modelLoadFailed ? createOllamaModelLoadFailedError(message) : new Error(message))
           })
         }
       })
@@ -1301,8 +1503,10 @@ export class OllamaManager extends EventEmitter {
     this.startEpoch += 1
     const proc = this.process
     this.readyServeProcess = null
+    this.readyAtMs = null
+    this.clearServeStableTimer()
     if (proc) {
-      void this.killProcessAndWait(proc).then((killed) => {
+      void this.killProcessAndWait(proc, 'stop').then((killed) => {
         if (killed && this.process === proc) {
           this.process = null
         }
@@ -1317,6 +1521,7 @@ export class OllamaManager extends EventEmitter {
       })
     }
     // Also kill any process on our port that we didn't spawn (adopted from a previous session)
+    this.markTrackedProcessKilledByApp('stop')
     this.killProcessOnPort()
     this.killManagedLlamaServers()
     this.didReapAdoptedRunners = false
@@ -1331,6 +1536,21 @@ export class OllamaManager extends EventEmitter {
     this.readyPromise = null
     this.readyServeProcess = null
     this.testServerRunning = false
+  }
+
+  private clearServeStableTimer(): void {
+    if (this.serveStableTimer == null) return
+    clearTimeout(this.serveStableTimer)
+    this.serveStableTimer = null
+  }
+
+  private scheduleServeStableCheck(proc: ChildProcess): void {
+    this.clearServeStableTimer()
+    this.serveStableTimer = setTimeout(() => {
+      this.serveStableTimer = null
+      if (this.stopped || this.readyServeProcess !== proc) return
+      recordOllamaServeStable()
+    }, EARLY_EXIT_AFTER_READY_MS)
   }
 
   private isCurrentLiveChild(proc: ChildProcess): boolean {
@@ -1405,7 +1625,26 @@ export class OllamaManager extends EventEmitter {
     })
   }
 
-  private async killProcessAndWait(proc: ChildProcess): Promise<boolean> {
+  private markIntentionalKill(proc: ChildProcess, reason: OllamaKillReason): void {
+    if (!this.intentionalKillReasons.has(proc)) {
+      this.intentionalKillReasons.set(proc, reason)
+    }
+  }
+
+  /**
+   * killProcessOnPort() and killProcessByPid can take out our tracked serve too, since its PID
+   * listens on the port. Mark it first so its exit is not reported as a crash.
+   */
+  private markTrackedProcessKilledByApp(reason: OllamaKillReason): void {
+    const tracked = this.process
+    if (tracked && tracked.exitCode == null && tracked.signalCode == null) {
+      this.markIntentionalKill(tracked, reason)
+    }
+  }
+
+  private async killProcessAndWait(proc: ChildProcess, reason: OllamaKillReason): Promise<boolean> {
+    // Record before killing so the exit handler can read it regardless of event ordering.
+    this.markIntentionalKill(proc, reason)
     if (proc.pid != null) {
       await this.killProcessByPid(proc.pid)
     } else if (!IS_WIN) {

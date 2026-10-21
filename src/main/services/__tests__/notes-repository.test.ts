@@ -18,6 +18,11 @@ import { NOTES_ENCRYPTED_MAX_BYTES } from '../notes-schema'
 
 let mockPaths = { appData: '', userData: '' }
 
+vi.mock('../windows-key-protection', () => ({
+  protectWindowsRecordingKey: (key: Buffer) => Buffer.concat([Buffer.from('test-dpapi:'), key]),
+  unprotectWindowsRecordingKey: (value: Buffer) => value.subarray(11)
+}))
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
   app: {
@@ -229,13 +234,22 @@ describe('NotesRepository', () => {
     const meetingDir = await meeting(meetingId)
     const { NotesRepository } = await freshModules()
     const repository = new NotesRepository(recordingsDir)
-    const original = await repository.writeV2(meetingId, content(), { expectedRevision: null, ...sourceBindings(meetingId) })
+    const original = await repository.writeV2(meetingId, content(), {
+      expectedRevision: null,
+      ...sourceBindings(meetingId)
+    })
     expect(original.generation).toMatchObject({ id: expect.any(String), engineVersion: 'v2.1' })
-    const edited = await repository.writeV2(meetingId, content('Edited'), { expectedRevision: original.revision, ...sourceBindings(meetingId) })
+    const edited = await repository.writeV2(meetingId, content('Edited'), {
+      expectedRevision: original.revision,
+      ...sourceBindings(meetingId)
+    })
     expect(edited.generation).toEqual(original.generation)
     // The pipeline replaces notes.json before promoting the fresh generation.
     await fsp.unlink(path.join(meetingDir, 'notes.json'))
-    const regenerated = await repository.writeV2(meetingId, content('Edited'), { expectedRevision: null, ...sourceBindings(meetingId) })
+    const regenerated = await repository.writeV2(meetingId, content('Edited'), {
+      expectedRevision: null,
+      ...sourceBindings(meetingId)
+    })
     expect(regenerated.revision).toBe(edited.revision)
     expect(regenerated.generation?.id).not.toBe(edited.generation?.id)
   })

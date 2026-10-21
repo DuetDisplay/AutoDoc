@@ -57,3 +57,25 @@ export function buildDiagnosticTrailEntry(
 
   return entry
 }
+
+/**
+ * Recording actions that always reach autodocLog, with no analytics consent, because they
+ * explain the meeting-detection -> auto-record -> window-selection flow for QA. Keep this
+ * list explicit; their details must carry ids, booleans, counts and scores only.
+ */
+export const PERSISTENT_RECORDING_DIAGNOSTIC_ACTIONS: ReadonlySet<string> = new Set([
+  'auto_record_decision',
+  'auto_record_start_outcome',
+  'recording_picker_opened',
+  'recording_picker_result'
+])
+
+/** True when a renderer diagnostic action is copied into the app log in the main process. */
+export function shouldLogRendererDiagnosticToAppLog(payload: DiagnosticActionPayload): boolean {
+  if (payload.category === 'system' || payload.category === 'onboarding') return true
+  return (
+    payload.category === 'recording' &&
+    (payload.action.startsWith('capture_recovery_') ||
+      PERSISTENT_RECORDING_DIAGNOSTIC_ACTIONS.has(payload.action))
+  )
+}

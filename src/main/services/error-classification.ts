@@ -1,5 +1,7 @@
 export function classifyError(rawError: string): string {
   const error = rawError.toLowerCase()
+  if (error.includes('speech model is missing or incomplete')) return 'speech-model-missing'
+  if (error.includes('speech model setup failed')) return 'speech-model-setup'
   if (error.includes('ollama notes model setup failed')) return 'ollama-model-setup'
 
   if (

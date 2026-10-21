@@ -15,7 +15,7 @@ let missingHelperLogged = false
 export async function getActiveCaptureProcessIdsWindows(): Promise<string[]> {
   if (process.platform !== 'win32') return []
 
-  const helperPath = resolveHelperPath()
+  const helperPath = resolveWindowsMeetingDetectorPath()
   if (!helperPath) {
     if (!missingHelperLogged) {
       missingHelperLogged = true
@@ -48,14 +48,15 @@ export async function getActiveCaptureProcessIdsWindows(): Promise<string[]> {
   })
 }
 
-function resolveHelperPath(): string | null {
+export function resolveWindowsMeetingDetectorPath(): string | null {
   const appPath = app.isReady() ? app.getAppPath() : process.cwd()
-  const candidates = [
-    join(process.cwd(), HELPER_RELATIVE_PATH),
-    join(appPath, HELPER_RELATIVE_PATH),
-    join(process.resourcesPath, 'app.asar.unpacked', HELPER_RELATIVE_PATH),
-    join(process.resourcesPath, HELPER_RELATIVE_PATH)
-  ]
+  const resourcesPath = process.resourcesPath ?? appPath
+  const candidates = app.isPackaged
+    ? [
+        join(resourcesPath, 'app.asar.unpacked', HELPER_RELATIVE_PATH),
+        join(resourcesPath, HELPER_RELATIVE_PATH)
+      ]
+    : [join(appPath, HELPER_RELATIVE_PATH), join(process.cwd(), HELPER_RELATIVE_PATH)]
 
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate

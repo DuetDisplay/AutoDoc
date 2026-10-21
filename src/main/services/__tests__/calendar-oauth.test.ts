@@ -51,8 +51,11 @@ vi.mock('../token-store', () => ({
   hasTokensForAccount: (accountId: string) => tokenStore.has(accountId)
 }))
 
+const { logAutodocEvent } = vi.hoisted(() => ({ logAutodocEvent: vi.fn() }))
+
 vi.mock('../autodoc-log', () => ({
-  logAutodocFailure: vi.fn()
+  logAutodocFailure: vi.fn(),
+  logAutodocEvent
 }))
 
 function encodeTokenData(tokens: Record<string, unknown>): string {
@@ -227,5 +230,78 @@ describe('Calendar OAuth', () => {
     await expect(observedPromise).resolves.toEqual(
       expect.objectContaining({ message: 'Calendar connection cancelled' })
     )
+  })
+
+  describe('Google connect scope verification', () => {
+    const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
+
+    async function startGoogleConnect(tokens: Record<string, unknown>) {
+      const provider = new GoogleCalendarProvider()
+      const connectPromise = provider.connect()
+      const openedUrl = await waitForOpenExternal()
+      const state = new URL(openedUrl).searchParams.get('state')
+      const body = requestLocalCallback(
+        `/callback?tokens=${encodeURIComponent(encodeTokenData(tokens))}&state=${encodeURIComponent(state!)}`
+      )
+      return { connectPromise, body }
+    }
+
+    it('rejects the connection and saves nothing when no calendar scope was granted', async () => {
+      const { connectPromise, body } = await startGoogleConnect({
+        access_token: 'google-access-token',
+        refresh_token: 'google-refresh-token',
+        expires_in: 3600,
+        scope: 'openid https://www.googleapis.com/auth/userinfo.email'
+      })
+
+      await expect(connectPromise).rejects.toThrow(
+        'AutoDoc needs permission to read your calendar. Connect again and leave the calendar access box ticked.'
+      )
+      expect(body).toContain('AutoDoc needs permission to read your calendar')
+      expect(tokenStore.size).toBe(0)
+    })
+
+    it('does not accept a different calendar scope that merely shares a prefix', async () => {
+      const { connectPromise } = await startGoogleConnect({
+        access_token: 'google-access-token',
+        expires_in: 3600,
+        scope: 'openid https://www.googleapis.com/auth/calendar.settings.readonly'
+      })
+
+      await expect(connectPromise).rejects.toThrow('AutoDoc needs permission to read your calendar')
+      expect(tokenStore.size).toBe(0)
+    })
+
+    it('saves the account when the calendar scope was granted', async () => {
+      const { connectPromise } = await startGoogleConnect({
+        access_token: 'google-access-token',
+        refresh_token: 'google-refresh-token',
+        expires_in: 3600,
+        scope: `openid ${CALENDAR_EVENTS_SCOPE}`,
+        id_token: `x.${Buffer.from(JSON.stringify({ email: 'g@example.com' })).toString('base64')}.y`
+      })
+
+      const account = await connectPromise
+      expect(account.email).toBe('g@example.com')
+      expect(tokenStore.get(account.id)).toEqual(
+        expect.objectContaining({ access_token: 'google-access-token' })
+      )
+      expect(logAutodocEvent).not.toHaveBeenCalled()
+    })
+
+    it('saves the account and logs a warning once when the token has no scope field', async () => {
+      const { connectPromise } = await startGoogleConnect({
+        access_token: 'google-access-token',
+        expires_in: 3600,
+        id_token: `x.${Buffer.from(JSON.stringify({ email: 'g@example.com' })).toString('base64')}.y`
+      })
+
+      const account = await connectPromise
+      expect(tokenStore.has(account.id)).toBe(true)
+      expect(logAutodocEvent).toHaveBeenCalledTimes(1)
+      expect(logAutodocEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ area: 'calendar', level: 'warn' })
+      )
+    })
   })
 })

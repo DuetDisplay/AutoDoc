@@ -128,6 +128,29 @@ describe('WhisperManager', () => {
       expect(downloadMacSpeechModels).not.toHaveBeenCalled()
     })
 
+    it('waits for language setup and rechecks local assets before a recording can transcribe', async () => {
+      const assertReady = vi
+        .spyOn(manager, 'assertMacMeetingLanguageReady')
+        .mockRejectedValueOnce(new Error('The speech model is missing or incomplete.'))
+        .mockResolvedValue(undefined)
+      let finish!: () => void
+      const prepare = vi.spyOn(manager as any, 'requestMeetingLanguageSetup').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      let ready = false
+      const pending = manager.ensureMacMeetingLanguageReady('fr').then(() => {
+        ready = true
+      })
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledWith('fr', false))
+      expect(ready).toBe(false)
+      finish()
+      await pending
+      expect(assertReady).toHaveBeenCalledTimes(2)
+    })
+
     it.each(['fr', 'es'] as const)(
       'prepares %s without the Distil setup or model',
       async (language) => {
@@ -143,6 +166,30 @@ describe('WhisperManager', () => {
         expect(manager.getSetupStatus().phase).toBe('ready')
       }
     )
+
+    it('does not cancel a Settings download when a queued recording needs another language', async () => {
+      vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
+      vi.spyOn(manager, 'assertMacMeetingLanguageReady')
+        .mockRejectedValueOnce(new Error('The speech model is missing or incomplete.'))
+        .mockResolvedValue(undefined)
+      let finish!: () => void
+      vi.mocked(downloadMacSpeechModels).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      const settings = manager.prepareMeetingLanguage('es')
+      await vi.waitFor(() => expect(downloadMacSpeechModels).toHaveBeenCalledTimes(1))
+      const signal = (manager as any).activeSetupAbort.signal as AbortSignal
+      const recording = manager.ensureMacMeetingLanguageReady('fr')
+      await vi.waitFor(() => expect((manager as any).languageSetupRequests.has('fr')).toBe(true))
+      const cancelled = signal.aborted
+      finish()
+      await Promise.all([settings, recording])
+      expect(cancelled).toBe(false)
+      expect(downloadMacSpeechModels).toHaveBeenCalledTimes(2)
+    })
 
     it('deduplicates setup and queues language changes until the current download finishes', async () => {
       vi.spyOn(manager as never, 'ensureFfmpegForSelectedRuntime').mockResolvedValue(undefined)
@@ -337,7 +384,8 @@ describe('WhisperManager', () => {
         availability: 'locked',
         reason: 'Spanish needs a supported graphics card on this PC.'
       })
-      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      const { bindMeetingLanguagePreferenceStore } =
+        await import('../meeting-language-availability')
       let current: 'en' | 'es' = 'es'
       bindMeetingLanguagePreferenceStore({
         getMeetingLanguage: () => current,
@@ -365,7 +413,8 @@ describe('WhisperManager', () => {
         firstUseDownloadBytes: 100,
         needsSelfTest: true
       })
-      const { bindMeetingLanguagePreferenceStore } = await import('../meeting-language-availability')
+      const { bindMeetingLanguagePreferenceStore } =
+        await import('../meeting-language-availability')
       let current: 'en' | 'es' = 'es'
       bindMeetingLanguagePreferenceStore({
         getMeetingLanguage: () => current,

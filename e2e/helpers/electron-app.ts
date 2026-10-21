@@ -165,7 +165,7 @@ export async function relaunchIsolatedE2EApp(
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        rmSync(userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
       }
     }
   }

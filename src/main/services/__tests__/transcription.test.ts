@@ -234,6 +234,7 @@ describe('TranscriptionService', () => {
     fsMock.writeFile.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
     mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
+    mockWhisper.ensureMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     mockConverter = createMockAudioConverter()
     mockCalendar = createMockCalendarManager()
     service = new TranscriptionService(
@@ -402,7 +403,7 @@ describe('TranscriptionService', () => {
   it('waits for both Mac sources before releasing resources after a source failure', async () => {
     setPlatform('darwin')
     fsMock.access.mockImplementation(async (file) => {
-      if (/\/(mic|system)\.webm$/.test(String(file))) return undefined
+      if (/[\\/](mic|system)\.webm$/.test(String(file))) return undefined
       throw new Error('ENOENT')
     })
     let rejectFirst!: (error: Error) => void
@@ -2587,12 +2588,85 @@ describe('TranscriptionService meeting-language routing', () => {
     fsMock.unlink.mockResolvedValue(undefined as any)
     mockWhisper = createMockWhisperManager()
     mockWhisper.assertMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
+    mockWhisper.ensureMacMeetingLanguageReady = vi.fn().mockResolvedValue(undefined)
     multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockImplementation(
       async (language: string) => readyWindowsEngine(language)
     )
   })
 
   afterEach(() => setPlatform(originalPlatform))
+
+  it('retains non-English job identity and does not spend retries when model setup fails', async () => {
+    setPlatform('darwin')
+    recordMeeting('de')
+    mockWhisper.ensureMacMeetingLanguageReady = vi
+      .fn()
+      .mockRejectedValue(new Error('Speech model setup failed: offline'))
+    const service = createService()
+    const { logAutodocFailure } = await import('../autodoc-log')
+    service.enqueue('model-offline')
+    await vi.waitFor(() =>
+      expect(logAutodocFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Transcription failed',
+          context: expect.objectContaining({
+            meetingLanguage: 'de',
+            asrRoute: 'canary',
+            backend: 'canary-mlx',
+            modelName: 'Mediform/canary-1b-v2-mlx-q8',
+            errorCode: 'speech-model-setup',
+            retries: 0
+          })
+        })
+      )
+    )
+  })
+
+  it.each(['en', 'de'] as const)(
+    'does not spend Windows processing retries when %s speech setup fails',
+    async (language) => {
+      setPlatform('win32')
+      recordMeeting(language)
+      if (language === 'en') {
+        vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
+        vi.mocked(mockWhisper.ensureReady).mockRejectedValue(new Error('offline'))
+      } else {
+        multilingualReadyMock.ensureWindowsMultilingualEngineReady.mockRejectedValue(
+          new Error('offline')
+        )
+      }
+      const service = createService()
+      service.enqueue(`windows-setup-${language}`)
+      await vi.waitFor(() =>
+        expect(autodocLogMock.logAutodocFailure).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Transcription failed',
+            meetingId: `windows-setup-${language}`,
+            context: expect.objectContaining({
+              meetingLanguage: language,
+              asrRoute: language === 'en' ? 'english' : 'canary',
+              ...(language === 'de' ? { backend: null, modelName: null } : {}),
+              errorCode: 'speech-model-setup',
+              retries: 0
+            })
+          })
+        )
+      )
+    }
+  )
+
+  it('applies a cooldown to completed fast manual failures without capping future retries', async () => {
+    const service = createService()
+    const enqueue = vi.spyOn(service, 'enqueue').mockImplementation(() => {})
+    const time = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    service.retry('fast-failure')
+    service.retry('fast-failure')
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    time.mockReturnValue(2500)
+    service.retry('fast-failure')
+    expect(enqueue).toHaveBeenCalledTimes(2)
+    time.mockRestore()
+  })
 
   it('installs Canary for a German Windows meeting instead of using an English-only model', async () => {
     setPlatform('win32')
@@ -2656,22 +2730,37 @@ describe('TranscriptionService meeting-language routing', () => {
   )
 
   it.each(['de', 'es'])(
-    'checks local Mac assets for %s without English setup',
+    'waits for missing Mac assets for %s without English setup',
     async (language) => {
       setPlatform('darwin')
       vi.mocked(mockWhisper.isReady).mockResolvedValue(false)
-      vi.mocked(mockWhisper.assertMacMeetingLanguageReady).mockRejectedValue(
-        new Error('Select the meeting language in Settings to download it.')
+      let finishSetup!: () => void
+      mockWhisper.ensureMacMeetingLanguageReady = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSetup = resolve
+          })
       )
       const service = createService()
       const transcribe = stubTranscribe(service)
       recordMeeting(language)
       mockWhisper.getMlxWhisperTurboModelRef = vi.fn().mockReturnValue('/local/turbo')
-      await expect((service as any).processJob('missing-model')).rejects.toThrow('Settings')
-      expect(mockWhisper.assertMacMeetingLanguageReady).toHaveBeenCalledWith(language)
+      mockWhisper.isMlxWhisperSelected = vi.fn().mockReturnValue(true)
+      macCanaryMock.resolveMacCanaryTranscriber.mockReturnValue({
+        pythonPath: '/canary/python3',
+        scriptPath: '/canary/script'
+      } as any)
+      const pending = (service as any).processJob('missing-model')
+      await vi.waitFor(() =>
+        expect(mockWhisper.ensureMacMeetingLanguageReady).toHaveBeenCalledWith(language)
+      )
+      expect(transcribe).not.toHaveBeenCalled()
+      finishSetup()
+      await expect(pending).resolves.toBeUndefined()
+      expect(mockWhisper.ensureMacMeetingLanguageReady).toHaveBeenCalledWith(language)
       expect(mockWhisper.ensureReady).not.toHaveBeenCalled()
       expect(multilingualReadyMock.ensureWindowsMultilingualEngineReady).not.toHaveBeenCalled()
-      expect(transcribe).not.toHaveBeenCalled()
+      expect(transcribe).toHaveBeenCalled()
     }
   )
 

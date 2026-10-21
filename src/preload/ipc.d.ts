@@ -77,6 +77,7 @@ export interface UpdateStatus {
   version?: string
   percent?: number
   error?: string
+  installBlockedReason?: string
 }
 
 export interface SearchResult {
@@ -105,6 +106,7 @@ export interface ChatClarificationOption {
 }
 
 export interface IpcSendEvents {
+  'recording:quit-ready': [requestId: string, error?: string]
   'window:minimize': []
   'window:maximize': []
   'window:close': []
@@ -180,6 +182,12 @@ export interface IpcInvokeEvents {
     segmentIndex: number,
     offsetMs: number
   ]
+  'recording:save-segment-end': [
+    meetingId: string,
+    type: 'video' | 'mic' | 'system',
+    segmentIndex: number,
+    endOffsetMs: number
+  ]
   'recording:video-capture-ended-early': [meetingId: string]
   'recording:update-title': [meetingId: string, customTitle: string]
   'recording:delete': [meetingId: string]
@@ -226,6 +234,8 @@ export interface IpcInvokeEvents {
     history?: ChatHistoryMessage[]
   ]
   'detection:dismiss': []
+  'detection:source-selection-required': [requestId: number]
+  'detection:auto-record-started': [requestId: number]
   'speakers:get': [meetingId: string]
   'speakers:rename': [meetingId: string, speakerId: string, newLabel: string]
   'prefs:get-onboarding-complete': []
@@ -337,6 +347,7 @@ export interface IpcInvokeReturns {
   'recording:get-state': RecordingState
   'recording:save-chunk': void
   'recording:save-segment-timing': void
+  'recording:save-segment-end': void
   'recording:video-capture-ended-early': void
   'recording:update-title': void
   'recording:delete': void
@@ -389,6 +400,8 @@ export interface IpcInvokeReturns {
   'chat:send-stream': void
   'chat:select-recording-stream': void
   'detection:dismiss': void
+  'detection:source-selection-required': void
+  'detection:auto-record-started': void
   'speakers:get': SpeakerMap
   'speakers:rename': void
   'prefs:get-onboarding-complete': boolean
@@ -433,10 +446,11 @@ export interface IpcInvokeReturns {
   'e2e:trigger-notes-ready-notification': string
   'updater:get-status': UpdateStatus
   'updater:check': void
-  'updater:install': void
+  'updater:install': { blockedReason?: string }
 }
 
 export interface IpcOnEvents {
+  'recording:prepare-to-quit': [requestId: string]
   'recording:status-changed': [state: RecordingState]
   'recording:entry-updated': [payload: { meetingId: string }]
   'calendar:events-updated': [events: CalendarEvent[]]
@@ -447,6 +461,7 @@ export interface IpcOnEvents {
   'segmentation:diagnostic-event': [payload: SegmentationDiagnosticPayload]
   'detection:meeting-detected': [payload: { title: string; body: string }]
   'detection:auto-record': [payload: DetectionAutoRecordPayload]
+  'detection:select-window': [payload: DetectionAutoRecordPayload]
   'notes:open-meeting': [payload: { meetingId: string }]
   'detection:mic-inactive': [payload: Record<string, never>]
   'detection:auto-stop': [payload: DetectionAutoStopPayload]

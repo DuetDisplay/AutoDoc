@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarManager } from '../calendar-manager'
 import {
+  CalendarTransientError,
   ReconnectRequiredCalendarAuthError,
+  isReconnectRequiredGoogleAuthError,
   isReconnectRequiredMicrosoftAuthError
 } from '../calendar-error-classification'
+import { GoogleCalendarProvider } from '../calendar'
 import type { CalendarProvider } from '../calendar-types'
 
 type Deferred<T> = {
@@ -16,9 +19,40 @@ type TestCalendarManagerAccess = {
   providers: Map<string, CalendarProvider>
 }
 
-const { logAutodocFailure, captureMessage } = vi.hoisted(() => ({
+const { logAutodocFailure, captureMessage, eventsList } = vi.hoisted(() => ({
   logAutodocFailure: vi.fn(),
-  captureMessage: vi.fn()
+  captureMessage: vi.fn(),
+  eventsList: vi.fn()
+}))
+
+vi.mock('electron', () => ({ shell: { openExternal: vi.fn() } }))
+
+vi.mock('googleapis', () => ({
+  google: {
+    auth: {
+      OAuth2: class {
+        credentials: Record<string, unknown> = {}
+        on(): void {
+          // no-op
+        }
+        setCredentials(creds: Record<string, unknown>): void {
+          this.credentials = creds
+        }
+      }
+    },
+    calendar: () => ({ events: { list: eventsList }, calendarList: { get: vi.fn() } })
+  }
+}))
+
+vi.mock('../token-store', () => ({
+  saveTokensForAccount: vi.fn(),
+  loadTokensForAccount: vi.fn(() => ({
+    access_token: 'access',
+    refresh_token: 'refresh',
+    expiry_date: Date.now() + 60 * 60_000
+  })),
+  clearTokensForAccount: vi.fn(),
+  hasTokensForAccount: vi.fn(() => true)
 }))
 
 vi.mock('electron-store', () => ({
@@ -34,7 +68,8 @@ vi.mock('electron-store', () => ({
 }))
 
 vi.mock('../autodoc-log', () => ({
-  logAutodocFailure
+  logAutodocFailure,
+  logAutodocEvent: vi.fn()
 }))
 
 vi.mock('../sentry-reporter', () => ({
@@ -298,4 +333,194 @@ describe('Calendar sync hardening', () => {
       expect(logAutodocFailure).toHaveBeenCalledTimes(2)
     }
   )
+})
+
+function gaxiosLikeError(
+  status: number,
+  message: string,
+  extra: Record<string, unknown> = {}
+): Error {
+  return Object.assign(new Error(message), { status, code: status, ...extra })
+}
+
+describe('isReconnectRequiredGoogleAuthError', () => {
+  it.each([
+    [
+      '403 insufficient authentication scopes',
+      gaxiosLikeError(403, 'Request had insufficient authentication scopes.')
+    ],
+    [
+      '403 with insufficientPermissions reason',
+      gaxiosLikeError(403, 'Forbidden', { errors: [{ reason: 'insufficientPermissions' }] })
+    ],
+    [
+      '403 with ACCESS_TOKEN_SCOPE_INSUFFICIENT detail',
+      gaxiosLikeError(403, 'Forbidden', {
+        response: {
+          status: 403,
+          data: { error: { details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }
+        }
+      })
+    ],
+    [
+      'refresh invalid_grant',
+      new Error('Google token refresh failed: 400 {"error":"invalid_grant"}')
+    ]
+  ])('is true for %s', (_label, error) => {
+    expect(isReconnectRequiredGoogleAuthError(error)).toBe(true)
+  })
+
+  it.each([
+    [
+      '403 rateLimitExceeded',
+      gaxiosLikeError(403, 'Rate Limit Exceeded', { errors: [{ reason: 'rateLimitExceeded' }] })
+    ],
+    [
+      '403 userRateLimitExceeded',
+      gaxiosLikeError(403, 'User Rate Limit Exceeded', {
+        errors: [{ reason: 'userRateLimitExceeded' }]
+      })
+    ],
+    [
+      '403 quotaExceeded',
+      gaxiosLikeError(403, 'Quota exceeded', { errors: [{ reason: 'quotaExceeded' }] })
+    ],
+    [
+      '403 accessNotConfigured',
+      gaxiosLikeError(403, 'Google Calendar API has not been used in project', {
+        errors: [{ reason: 'accessNotConfigured' }]
+      })
+    ],
+    ['404 not found', gaxiosLikeError(404, 'Not Found')],
+    ['bare 401', gaxiosLikeError(401, 'Invalid Credentials')],
+    [
+      'insufficient scopes text without 403',
+      gaxiosLikeError(400, 'insufficient authentication scopes')
+    ],
+    ['generic error', new Error('boom')],
+    ['non-error', undefined]
+  ])('is false for %s', (_label, error) => {
+    expect(isReconnectRequiredGoogleAuthError(error)).toBe(false)
+  })
+})
+
+describe('GoogleCalendarProvider reconnect handling', () => {
+  function createManager(provider: GoogleCalendarProvider): CalendarManager {
+    const manager = new CalendarManager()
+    ;(manager as any).accounts = [
+      {
+        id: 'google-account-1',
+        provider: 'google',
+        email: 'user@gmail.com',
+        connectedAt: Date.now()
+      }
+    ]
+    ;(manager as unknown as TestCalendarManagerAccess).providers = new Map([
+      ['google', provider as CalendarProvider]
+    ])
+    return manager
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    delete process.env.AUTODOC_AUTH_WORKER_URL
+    process.env.AUTODOC_OFFICIAL_BUILD = '1'
+  })
+
+  it.each(fetchScenarios)(
+    'marks the account reconnect-required after a 403 insufficient-scopes error while fetching $label',
+    async ({ invoke }) => {
+      eventsList.mockRejectedValue(
+        gaxiosLikeError(403, 'Request had insufficient authentication scopes.')
+      )
+      const manager = createManager(new GoogleCalendarProvider())
+
+      await expect(invoke(manager)).resolves.toEqual([])
+      await expect(invoke(manager)).resolves.toEqual([])
+
+      expect(eventsList).toHaveBeenCalledTimes(1)
+      expect((manager as any).accounts[0]).toEqual(
+        expect.objectContaining({ syncIssue: 'reconnect-required' })
+      )
+      expect(captureMessage).toHaveBeenCalledTimes(1)
+      expect(captureMessage).toHaveBeenCalledWith(
+        'Calendar account requires reconnect',
+        expect.objectContaining({
+          tags: expect.objectContaining({
+            provider: 'google',
+            calendar_sync_issue: 'reconnect-required'
+          })
+        })
+      )
+    }
+  )
+
+  it.each([
+    ['rateLimitExceeded', 'Rate Limit Exceeded'],
+    ['quotaExceeded', 'Quota exceeded'],
+    ['accessNotConfigured', 'Google Calendar API has not been used in project 123']
+  ])('does not mark the account for a 403 %s error', async (reason, message) => {
+    eventsList.mockRejectedValue(gaxiosLikeError(403, message, { errors: [{ reason }] }))
+    const manager = createManager(new GoogleCalendarProvider())
+
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+    await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+    expect(eventsList).toHaveBeenCalledTimes(2)
+    expect((manager as any).accounts[0]).toEqual(
+      expect.not.objectContaining({ syncIssue: 'reconnect-required' })
+    )
+    expect(captureMessage).not.toHaveBeenCalled()
+  })
+
+  describe('token refresh', () => {
+    const expiredTokens = {
+      access_token: 'access',
+      refresh_token: 'refresh',
+      expiry_date: Date.now() - 1000
+    }
+
+    async function stubExpiredProvider(): Promise<GoogleCalendarProvider> {
+      const { loadTokensForAccount } = await import('../token-store')
+      vi.mocked(loadTokensForAccount).mockReturnValue(expiredTokens)
+      return new GoogleCalendarProvider()
+    }
+
+    it('marks the account reconnect-required when refresh fails with invalid_grant', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          text: async () =>
+            '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+        })
+      )
+      const manager = createManager(await stubExpiredProvider())
+
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+
+      expect(eventsList).not.toHaveBeenCalled()
+      expect((manager as any).accounts[0]).toEqual(
+        expect.objectContaining({ syncIssue: 'reconnect-required' })
+      )
+      expect(captureMessage).toHaveBeenCalledTimes(1)
+    })
+
+    it('still treats a transient refresh failure as transient and does not mark the account', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch failed: ENOTFOUND')))
+      const provider = await stubExpiredProvider()
+
+      await expect(provider.fetchUpcomingEvents('google-account-1')).rejects.toBeInstanceOf(
+        CalendarTransientError
+      )
+
+      const manager = createManager(provider)
+      await expect(manager.fetchAllUpcomingEvents()).resolves.toEqual([])
+      expect((manager as any).accounts[0]).toEqual(
+        expect.not.objectContaining({ syncIssue: 'reconnect-required' })
+      )
+      expect(captureMessage).not.toHaveBeenCalled()
+    })
+  })
 })

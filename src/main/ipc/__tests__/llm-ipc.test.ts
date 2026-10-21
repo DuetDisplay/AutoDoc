@@ -18,13 +18,12 @@ function registerWith(
   startSetupFromStatusCheck?: boolean,
   onManualSegmentationRetry?: (meetingId: string) => void,
   setupPhase: 'starting' | 'ready' = 'starting',
-  lifecycle: {
+  lifecycle?: {
     captureLifecycleEpoch: () => number
     assertLifecycleEpoch: (epoch: number) => void
-  } = {
-    captureLifecycleEpoch: () => 0,
-    assertLifecycleEpoch: () => {}
-  }
+    isServeStarting?: () => boolean
+  },
+  shouldDeferForcedRestart?: () => boolean
 ) {
   const retry = vi.fn()
   const getActivity = vi.fn((): 'waiting-for-local-ai' | null => null)
@@ -35,7 +34,9 @@ function registerWith(
     } as never,
     {
       isServerRunning,
-      ...lifecycle
+      isServeStarting: lifecycle?.isServeStarting ?? (() => false),
+      captureLifecycleEpoch: lifecycle?.captureLifecycleEpoch ?? (() => 0),
+      assertLifecycleEpoch: lifecycle?.assertLifecycleEpoch ?? (() => {})
     } as never,
     {
       getModel: () => 'llama3.1'
@@ -43,7 +44,9 @@ function registerWith(
     () => ({ phase: setupPhase, percent: setupPhase === 'ready' ? 100 : 0 }),
     ensureOllamaRunning,
     startSetupFromStatusCheck,
-    onManualSegmentationRetry
+    onManualSegmentationRetry,
+    undefined,
+    shouldDeferForcedRestart
   )
   return { retry, getActivity }
 }
@@ -72,6 +75,63 @@ describe('registerLlmIpc', () => {
 
     await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
     expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('does not force-replace a dead serve while post-wake work is deferring restarts', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      false,
+      undefined,
+      'ready',
+      undefined,
+      () => true
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+  })
+
+  it('force-replaces a dead serve when the deferral predicate is false', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      false,
+      undefined,
+      'ready',
+      undefined,
+      () => false
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('still force-restarts from Mac status checks while a deferral predicate is true', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(
+      vi.fn().mockResolvedValue(false),
+      ensureOllamaRunning,
+      true,
+      undefined,
+      'ready',
+      undefined,
+      () => true
+    )
+
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
   })
 
   it('preserves the existing active status-check behavior by default', async () => {
@@ -111,6 +171,43 @@ describe('registerLlmIpc', () => {
     expect(ensureOllamaRunning).toHaveBeenCalledTimes(2)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
     expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, undefined)
+  })
+
+  it('does not count or restart while a freshly started serve is still starting', async () => {
+    const ensureOllamaRunning = vi.fn()
+    let starting = true
+    const isServerRunning = vi.fn().mockResolvedValue(false)
+    registerWith(isServerRunning, ensureOllamaRunning, true, undefined, 'ready', {
+      captureLifecycleEpoch: () => 0,
+      assertLifecycleEpoch: () => {},
+      isServeStarting: () => starting
+    })
+
+    for (let i = 0; i < 4; i++) {
+      await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    }
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
+
+    // Once the grace period ends, failed polls count from zero as usual.
+    starting = false
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(1, undefined)
+    await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    expect(ensureOllamaRunning).toHaveBeenNthCalledWith(2, { force: true })
+  })
+
+  it('does not force-restart a starting serve in the passive coordinated branch', async () => {
+    const ensureOllamaRunning = vi.fn()
+    registerWith(vi.fn().mockResolvedValue(false), ensureOllamaRunning, false, undefined, 'ready', {
+      captureLifecycleEpoch: () => 0,
+      assertLifecycleEpoch: () => {},
+      isServeStarting: () => true
+    })
+
+    for (let i = 0; i < 3; i++) {
+      await expect(handlers.get('ollama:check-status')?.({})).resolves.toBe(false)
+    }
+    expect(ensureOllamaRunning).not.toHaveBeenCalled()
   })
 
   it('does not restart from a stale status check after the manager is stopped', async () => {

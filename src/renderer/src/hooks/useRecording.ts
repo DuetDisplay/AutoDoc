@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useRecordingStore } from '../stores/recording'
+import { finishRecording, trackRecordingStart } from '../services/finish-recording'
 import {
   startCapture,
   stopCapture,
@@ -23,18 +24,12 @@ import type {
   RecordingTrackingContext
 } from '../../../shared/types'
 
-function isWindowsRenderer(): boolean {
-  return (
-    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ===
-      'Windows' || navigator.platform.startsWith('Win')
-  )
-}
-
-function logRecordingRenderer(message: string, context?: Record<string, unknown>): void {
-  console.info('[recording-renderer]', message, {
-    at: new Date().toISOString(),
-    ...(context ?? {})
-  })
+export interface RecordingStartOptions {
+  /**
+   * Remember this window for the meeting. Only set when the user chose it themselves, never for
+   * an automatic start, so a wrong automatic choice cannot outrank the real meeting window later.
+   */
+  rememberSource?: boolean
 }
 
 function getRecordingSourceType(sourceId: string): string {
@@ -114,7 +109,8 @@ export function useRecording() {
       sourceId: string,
       sourceNameParam: string,
       selectionContext?: RecordingSelectionContext,
-      trackingContext?: RecordingTrackingContext | null
+      trackingContext?: RecordingTrackingContext | null,
+      startOptions?: RecordingStartOptions
     ) => {
       if (startPromiseRef.current) {
         return startPromiseRef.current
@@ -145,7 +141,7 @@ export function useRecording() {
             category: 'recording',
             action: 'recording_started'
           })
-          if (selectionContext) {
+          if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
               id: sourceId,
               name: sourceNameParam,
@@ -181,7 +177,7 @@ export function useRecording() {
         }
       })()
 
-      startPromiseRef.current = startPromise
+      startPromiseRef.current = trackRecordingStart(startPromise)
       return await startPromise
     },
     [reset]
@@ -196,29 +192,7 @@ export function useRecording() {
       }
     })
     try {
-      const stopStartedAt = performance.now()
-      const stopResult = isWindowsRenderer()
-        ? await window.electronAPI.invoke('recording:stop')
-        : null
-      logRecordingRenderer('recording:stop returned to renderer', {
-        meetingId: stopResult?.meetingId ?? null,
-        elapsedMs: Math.round(performance.now() - stopStartedAt),
-        isWindows: isWindowsRenderer()
-      })
-      await stopCapture()
-      logRecordingRenderer('stopCapture finished in renderer', {
-        meetingId: stopResult?.meetingId ?? null,
-        elapsedMs: Math.round(performance.now() - stopStartedAt)
-      })
-      if (isWindowsRenderer() && stopResult) {
-        await window.electronAPI.invoke('recording:finalize-stop', stopResult.meetingId)
-        logRecordingRenderer('recording:finalize-stop completed in renderer', {
-          meetingId: stopResult.meetingId,
-          elapsedMs: Math.round(performance.now() - stopStartedAt)
-        })
-      } else {
-        await window.electronAPI.invoke('recording:stop')
-      }
+      await finishRecording()
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
       const durationBucket = toDurationBucket(durationSeconds)
       trackEvent('recording_stopped', {
@@ -246,6 +220,27 @@ export function useRecording() {
     setUnrecoverableCaptureHandler(handleStop)
     return () => setUnrecoverableCaptureHandler(null)
   }, [handleStop])
+
+  useEffect(
+    () =>
+      window.electronAPI.on('recording:prepare-to-quit', (requestId) => {
+        void (async () => {
+          try {
+            await startPromiseRef.current?.catch(() => {})
+            if (useRecordingStore.getState().isRecording) await handleStop()
+            else await finishRecording()
+            window.electronAPI.send('recording:quit-ready', requestId)
+          } catch (error) {
+            window.electronAPI.send(
+              'recording:quit-ready',
+              requestId,
+              error instanceof Error ? error.message : String(error)
+            )
+          }
+        })()
+      }),
+    [handleStop]
+  )
 
   useEffect(() => {
     setVideoDisabledHandler(async (disabledMeetingId) => {
@@ -302,7 +297,8 @@ export function useRecordingActions() {
       sourceId: string,
       sourceNameParam: string,
       selectionContext?: RecordingSelectionContext,
-      trackingContext?: RecordingTrackingContext | null
+      trackingContext?: RecordingTrackingContext | null,
+      startOptions?: RecordingStartOptions
     ) => {
       if (startPromiseRef.current) {
         return startPromiseRef.current
@@ -322,7 +318,7 @@ export function useRecordingActions() {
             trackingContext ?? null
           )
           await startCapture(sourceId, paths.meetingId, sourceNameParam)
-          if (selectionContext) {
+          if (selectionContext && startOptions?.rememberSource) {
             saveSourcePreference(selectionContext, {
               id: sourceId,
               name: sourceNameParam,
@@ -353,7 +349,7 @@ export function useRecordingActions() {
         }
       })()
 
-      startPromiseRef.current = startPromise
+      startPromiseRef.current = trackRecordingStart(startPromise)
       return await startPromise
     },
     [reset]
@@ -362,29 +358,7 @@ export function useRecordingActions() {
   const handleStop = useCallback(async () => {
     try {
       const durationSeconds = useRecordingStore.getState().elapsedSeconds
-      const stopStartedAt = performance.now()
-      const stopResult = isWindowsRenderer()
-        ? await window.electronAPI.invoke('recording:stop')
-        : null
-      logRecordingRenderer('recording:stop returned to renderer (actions hook)', {
-        meetingId: stopResult?.meetingId ?? null,
-        elapsedMs: Math.round(performance.now() - stopStartedAt),
-        isWindows: isWindowsRenderer()
-      })
-      await stopCapture()
-      logRecordingRenderer('stopCapture finished in renderer (actions hook)', {
-        meetingId: stopResult?.meetingId ?? null,
-        elapsedMs: Math.round(performance.now() - stopStartedAt)
-      })
-      if (isWindowsRenderer() && stopResult) {
-        await window.electronAPI.invoke('recording:finalize-stop', stopResult.meetingId)
-        logRecordingRenderer('recording:finalize-stop completed in renderer (actions hook)', {
-          meetingId: stopResult.meetingId,
-          elapsedMs: Math.round(performance.now() - stopStartedAt)
-        })
-      } else {
-        await window.electronAPI.invoke('recording:stop')
-      }
+      await finishRecording()
       const durationBucket = toDurationBucket(durationSeconds)
       trackEvent('recording_stopped', {
         duration_bucket: durationBucket

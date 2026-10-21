@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audiopolicy.h>
+#include <wincrypt.h>
 
 #include <iostream>
 #include <set>
@@ -8,6 +9,68 @@
 #include <vector>
 
 namespace {
+
+struct SecureBytes {
+  std::vector<BYTE> bytes;
+  explicit SecureBytes(size_t size) : bytes(size) {}
+  ~SecureBytes() { SecureZeroMemory(bytes.data(), bytes.size()); }
+};
+
+struct SecureBlob {
+  DATA_BLOB data = {};
+  ~SecureBlob()
+  {
+    if (data.pbData != nullptr) {
+      SecureZeroMemory(data.pbData, data.cbData);
+      LocalFree(data.pbData);
+    }
+  }
+};
+
+int protectRecordingKey(bool decrypt)
+{
+  const size_t maxBytes = decrypt ? 65536 : 32;
+  SecureBytes input(maxBytes + 1);
+  DWORD total = 0;
+  while (total <= maxBytes) {
+    DWORD count = 0;
+    if (!ReadFile(GetStdHandle(STD_INPUT_HANDLE), input.bytes.data() + total,
+                  static_cast<DWORD>(input.bytes.size() - total), &count, nullptr)) {
+      if (GetLastError() == ERROR_BROKEN_PIPE) break;
+      std::cerr << "Recording key input failed";
+      return 1;
+    }
+    if (count == 0) break;
+    total += count;
+  }
+  if (total == 0 || total > maxBytes || (!decrypt && total != 32)) {
+    std::cerr << "Invalid recording key input";
+    return 1;
+  }
+
+  DATA_BLOB source = {total, input.bytes.data()};
+  SecureBlob output;
+  const BOOL success = decrypt
+    ? CryptUnprotectData(&source, nullptr, nullptr, nullptr, nullptr,
+                         CRYPTPROTECT_UI_FORBIDDEN, &output.data)
+    : CryptProtectData(&source, L"AutoDoc recording key", nullptr, nullptr, nullptr,
+                       CRYPTPROTECT_UI_FORBIDDEN, &output.data);
+  if (!success || (decrypt && output.data.cbData != 32)) {
+    std::cerr << "Recording key protection failed";
+    return 1;
+  }
+  DWORD totalWritten = 0;
+  while (totalWritten < output.data.cbData) {
+    DWORD written = 0;
+    if (!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), output.data.pbData + totalWritten,
+                   output.data.cbData - totalWritten, &written, nullptr) || written == 0) {
+      std::cerr << "Recording key output failed";
+      return 1;
+    }
+    totalWritten += written;
+  }
+  return 0;
+}
 
 std::wstring baseNameFromPath(const std::wstring& path)
 {
@@ -186,8 +249,11 @@ std::vector<std::string> getActiveCaptureProcessIds()
 
 } // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
+  if (argc == 2 && std::string(argv[1]) == "--protect-key") return protectRecordingKey(false);
+  if (argc == 2 && std::string(argv[1]) == "--unprotect-key") return protectRecordingKey(true);
+  if (argc != 1) return 2;
   const std::vector<std::string> ids = getActiveCaptureProcessIds();
 
   std::cout << '[';

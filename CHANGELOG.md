@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Updates wait until recordings, meeting processing, and speech model downloads finish.
+- Quitting saves the current recording before closing. Interrupted recordings are
+  recovered from retained capture files on the next launch.
+- Windows keeps recordings readable after an unexpected shutdown during the app's
+  first launch.
+- Transcription waits for missing speech models to download and recovers after setup,
+  including meetings that previously exhausted automatic retries. Repeated Retry
+  clicks no longer cause bursts of immediate failures.
+
 ## [1.3.0] — 2026-10-14
 
 ### Added

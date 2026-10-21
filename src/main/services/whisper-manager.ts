@@ -1262,14 +1262,23 @@ export class WhisperManager extends EventEmitter {
 
   /** Non-English setup installs its route, without downloading the English model. */
   prepareMeetingLanguage(language: MeetingLanguageCode): Promise<void> {
-    this.latestRequestedSetupLanguage = language
-    if (this.activeSetupLanguage && this.activeSetupLanguage !== language) {
-      this.activeSetupAbort?.abort()
+    return this.requestMeetingLanguageSetup(language, true)
+  }
+
+  private requestMeetingLanguageSetup(
+    language: MeetingLanguageCode,
+    interactive: boolean
+  ): Promise<void> {
+    if (interactive) {
+      this.latestRequestedSetupLanguage = language
+      if (this.activeSetupLanguage && this.activeSetupLanguage !== language)
+        this.activeSetupAbort?.abort()
     }
     const pending = this.languageSetupRequests.get(language)
     if (pending) return pending
     const request = this.languageSetupQueue.then(async () => {
-      if (this.latestRequestedSetupLanguage !== language) throw new MeetingLanguageSetupSuperseded()
+      if (interactive && this.latestRequestedSetupLanguage !== language)
+        throw new MeetingLanguageSetupSuperseded()
       this.activeSetupLanguage = language
       this.activeSetupAbort = new AbortController()
       try {
@@ -1394,6 +1403,29 @@ export class WhisperManager extends EventEmitter {
     if ((await getMacRouteFirstUseDownloadBytes(language)) > 0) {
       throw new Error(
         'The speech model is missing or incomplete. Select the meeting language in Settings to download it.'
+      )
+    }
+  }
+
+  /** A recording can outlive onboarding or a failed first-use download. */
+  async ensureMacMeetingLanguageReady(language: MeetingLanguageCode): Promise<void> {
+    try {
+      await this.assertMacMeetingLanguageReady(language)
+      return
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes('speech model is missing or incomplete')
+      )
+        throw error
+    }
+    try {
+      // Background jobs join setup without cancelling a newer choice in Settings.
+      await this.requestMeetingLanguageSetup(language, false)
+      await this.assertMacMeetingLanguageReady(language)
+    } catch (error) {
+      throw new Error(
+        `Speech model setup failed: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   }
@@ -3470,10 +3502,7 @@ export class WhisperManager extends EventEmitter {
       // Unknown-size downloads stay indeterminate; callers signal completion by phase.
       if (totalBytes <= 0) reportProgress(0)
       while (true) {
-        if (
-          this.activeSetupLanguage &&
-          this.latestRequestedSetupLanguage !== this.activeSetupLanguage
-        ) {
+        if (this.activeSetupLanguage && this.activeSetupAbort?.signal.aborted) {
           // Keep the partial file: a verified download resumes if this language is picked again.
           void reader.cancel().catch(() => {})
           throw new MeetingLanguageSetupSuperseded()

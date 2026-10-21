@@ -15,6 +15,16 @@ vi.mock('../../services/windows-multilingual-readiness', () => ({
     getWindowsMeetingLanguageAvailability(...args)
 }))
 
+vi.mock('../../services/mac-processing-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/mac-processing-profile')>()
+  return {
+    ...actual,
+    // Host arch stays x64 on Windows; the real helper would treat a stubbed
+    // darwin platform as a non-Apple-Silicon Mac and lock every language but en.
+    macUsesSmallNotesModel: () => false
+  }
+})
+
 vi.mock('electron-store', () => {
   return {
     default: vi.fn().mockImplementation((opts?: { defaults?: Record<string, unknown> }) => {

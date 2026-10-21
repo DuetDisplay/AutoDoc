@@ -7,9 +7,12 @@ import { Readable } from 'stream'
 import { execFileSync } from 'child_process'
 import { app, safeStorage } from 'electron'
 import { renameWithRetry } from './file-operation-retry'
+import { protectWindowsRecordingKey, unprotectWindowsRecordingKey } from './windows-key-protection'
 
 const STORE_KEY = 'encryption_key'
 const STORE_VERSION_KEY = 'encryption_key_version'
+const DPAPI_STORE_KEY = 'encryption_key_dpapi'
+const DPAPI_PREVIOUS_KEY = 'encryption_key_dpapi_previous'
 const STORE_FILENAME = 'autodoc-encryption.json'
 const CANONICAL_APP_DIR = 'AutoDoc'
 
@@ -27,8 +30,10 @@ const LEGACY_MAC_SAFE_STORAGE_SERVICES = [
 ] as const
 
 interface StoredKeyFile {
+  [key: string]: unknown
   [STORE_KEY]?: string
   [STORE_VERSION_KEY]?: number
+  [DPAPI_STORE_KEY]?: unknown
 }
 
 export class EncryptionKeyUnavailableError extends Error {
@@ -105,23 +110,41 @@ function readStoreFile(filePath: string): StoredKeyFile | null {
 function writeStoreFile(filePath: string, data: StoredKeyFile): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tempPath = `${filePath}.tmp`
-  fs.writeFileSync(tempPath, JSON.stringify(data))
+  const fd = fs.openSync(tempPath, 'w', 0o600)
+  try {
+    fs.writeFileSync(fd, JSON.stringify(data))
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
   fs.renameSync(tempPath, filePath)
 }
 
-function persistKey(key: Buffer): void {
+function persistKey(
+  key: Buffer,
+  previousStore: StoredKeyFile = {},
+  preserveInvalidBackup = false
+): void {
+  const encryptionAvailable = safeStorage.isEncryptionAvailable()
+  if (process.platform === 'win32' && !encryptionAvailable) {
+    throw new EncryptionKeyUnavailableError('Windows secure key storage is unavailable')
+  }
+  // Complete DPAPI protection before writing anything; no key may be used if
+  // the independently recoverable backup cannot be persisted.
+  const backup = process.platform === 'win32' ? protectWindowsRecordingKey(key) : null
   const b64 = key.toString('base64')
-  const storedValue = safeStorage.isEncryptionAvailable()
-    ? safeStorage.encryptString(b64).toString('latin1')
-    : b64
+  const storedValue = encryptionAvailable ? safeStorage.encryptString(b64).toString('latin1') : b64
 
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!encryptionAvailable) {
     console.warn('safeStorage not available — storing encryption key as plaintext')
   }
 
   writeStoreFile(getPrimaryStorePath(), {
+    ...previousStore,
     [STORE_KEY]: storedValue,
-    [STORE_VERSION_KEY]: 1
+    [STORE_VERSION_KEY]: 1,
+    ...(backup ? { [DPAPI_STORE_KEY]: backup.toString('base64') } : {}),
+    ...(preserveInvalidBackup ? { [DPAPI_PREVIOUS_KEY]: previousStore[DPAPI_STORE_KEY] } : {})
   })
 }
 
@@ -149,6 +172,25 @@ function decodeStoredKey(storedValue: string): Buffer | null {
 function loadKeyFromKnownStores(): Buffer | null {
   for (const storePath of getLegacyStorePaths()) {
     const store = readStoreFile(storePath)
+    if (!store) continue
+    const backup = store?.[DPAPI_STORE_KEY]
+    if (process.platform === 'win32' && typeof backup === 'string') {
+      try {
+        if (backup.length > 90000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(backup)) {
+          throw new Error('Invalid protected key encoding')
+        }
+        const protectedKey = Buffer.from(backup, 'base64')
+        if (protectedKey.toString('base64') !== backup)
+          throw new Error('Invalid protected key encoding')
+        const key = unprotectWindowsRecordingKey(protectedKey)
+        if (storePath !== getPrimaryStorePath()) persistKey(key, store)
+        cachedKey = key
+        cachedKeyError = null
+        return key
+      } catch {
+        // Preserve the backup and try the existing safeStorage field below.
+      }
+    }
     const storedValue = store?.[STORE_KEY]
     if (typeof storedValue !== 'string' || storedValue.length === 0) {
       continue
@@ -159,11 +201,11 @@ function loadKeyFromKnownStores(): Buffer | null {
       continue
     }
 
+    if (process.platform === 'win32' || storePath !== getPrimaryStorePath()) {
+      persistKey(key, store, process.platform === 'win32' && backup !== undefined)
+    }
     cachedKey = key
     cachedKeyError = null
-    if (storePath !== getPrimaryStorePath()) {
-      persistKey(key)
-    }
     return key
   }
 
@@ -177,6 +219,13 @@ export function getKey(): Buffer {
   const recovered = loadKeyFromKnownStores()
   if (recovered) return recovered
 
+  if (
+    process.platform === 'win32' &&
+    getLegacyStorePaths().some((storePath) => fs.existsSync(storePath))
+  ) {
+    cachedKeyError = new EncryptionKeyUnavailableError()
+    throw cachedKeyError
+  }
   return generateAndPersistKey()
 }
 
@@ -262,7 +311,11 @@ export async function initializeEncryption(recordingsBaseDir: string): Promise<v
     return
   }
 
-  if (await recordingsContainEncryptedFiles(recordingsBaseDir)) {
+  if (
+    (process.platform === 'win32' &&
+      getLegacyStorePaths().some((storePath) => fs.existsSync(storePath))) ||
+    (await recordingsContainEncryptedFiles(recordingsBaseDir))
+  ) {
     cachedKeyError = new EncryptionKeyUnavailableError(
       'Encrypted recordings exist but the AutoDoc encryption key could not be recovered. Restore the prior autodoc-encryption.json store before retrying transcription.'
     )
