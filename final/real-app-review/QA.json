@@ -1,0 +1,22 @@
+{
+  "duration_seconds": 16,
+  "dimensions": [
+    1920,
+    1080
+  ],
+  "fps": 60,
+  "audio_streams": 0,
+  "decode": "FFmpeg complete decode succeeds",
+  "native_timestamp": "0:15",
+  "source_take": "autodoc-native-take4.mov",
+  "handoff_review_frames": [
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442
+  ]
+}

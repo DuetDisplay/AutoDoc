@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-20",
+  "workflow": {
+    "source": "https://github.com/Leonxlnx/cinetic",
+    "commit": "ecfa6605de1adb9345ce937724810dc32267d068",
+    "use": "Creative direction, edit planning and independent director/art critique. Final native capture and edit use ScreenCaptureKit and FFmpeg."
+  },
+  "app": "Actual AutoDoc Electron desktop app, built from the current local source, with normal renderer, IPC, media server and encrypted-media playback. No app source changes for this video.",
+  "profile": "Isolated temporary profile; real setup test flags avoid production tray/install behavior. No personal meeting or account data.",
+  "mocked": "Meeting title, notes, transcript and completed-processing metadata are seeded fixtures. No transcription or model-generation claim is demonstrated.",
+  "meeting_video": "Native Firefox window recording of https://www.duetdisplay.com/ . Browser chrome cropped. Initial six seconds trimmed and final frame padded to a 32-second mock meeting. No stock or AI-generated meeting footage.",
+  "native_capture": {
+    "file": "tools/demo/real-app-rebuild/source/autodoc-native-take4.mov",
+    "size": [
+      2560,
+      1600
+    ],
+    "window_points": [
+      1280,
+      800
+    ],
+    "audio": false,
+    "cursor": false
+  },
+  "edit": {
+    "intro_seconds": 2.5,
+    "notes_source_seconds": [
+      4.2,
+      9.0
+    ],
+    "replay_source_seconds": [
+      9.2,
+      14.9
+    ],
+    "ending_seconds": 3,
+    "fps": 60,
+    "changes": "Editorial crops/zoom, quiet title cards and hard cuts. 200 ms between source shots omitted at the player handoff. Playback content is not replaced or retimed.",
+    "timestamp": "Native note 0:15 opens actual recorded iPad image at 0:15."
+  },
+  "output": {
+    "file": "autodoc-real-app-silent.mp4",
+    "size": [
+      1920,
+      1080
+    ],
+    "duration_seconds": 16,
+    "audio_streams": 0
+  },
+  "raw_reference": "autodoc-native-raw.mp4 is the full native take remuxed without re-encoding.",
+  "first_pass": "Previous synthetic/browser-fixture concepts are preserved separately and are not sources for this rebuild."
+}

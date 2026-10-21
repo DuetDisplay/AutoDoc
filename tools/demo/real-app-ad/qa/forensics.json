@@ -1,0 +1,1652 @@
+{
+ "file": "final/real-app-ad-review/autodoc-moment-ad.mp4",
+ "fps": 60.0,
+ "size": [
+  1920,
+  1080
+ ],
+ "frames": 1020,
+ "range": [
+  0,
+  1019
+ ],
+ "pass": true,
+ "fails": 0,
+ "warnings": 20,
+ "declared": {
+  "cuts": [
+   [
+    475,
+    475
+   ],
+   [
+    825,
+    825
+   ]
+  ],
+  "freezes": [
+   [
+    75,
+    131
+   ],
+   [
+    270,
+    353
+   ],
+   [
+    490,
+    695
+   ]
+  ],
+  "ignore": [],
+  "cue_moments": 0,
+  "reading": [
+   [
+    20,
+    150
+   ],
+   [
+    77,
+    185
+   ],
+   [
+    260,
+    399
+   ],
+   [
+    442,
+    726
+   ],
+   [
+    924,
+    1020
+   ]
+  ]
+ },
+ "pace": "calm",
+ "thresholds": {
+  "spike_min": 1.0,
+  "region_spike_min": 1.5,
+  "region_busy": 0.15,
+  "spike_ratio": 2.5,
+  "spike_add": 0.3,
+  "burst_frames": 3,
+  "flow_explained": 0.5,
+  "stall_max": 0.05,
+  "stall_moving": 0.8,
+  "hold_mad": 0.1,
+  "max_hold": 72,
+  "frozen_px": 16,
+  "max_end_hold": 121,
+  "quiet_window": 60,
+  "quiet_mad": 0.1,
+  "ghost_delta": 80,
+  "ghost_px": 2000,
+  "border_delta": 40,
+  "border_frac": 0.25,
+  "sliver_frames": 3,
+  "judder_window": 24,
+  "judder_resp": 0.7,
+  "sharp_ratio": 3.0,
+  "sharp_min": 30.0,
+  "band_area": 0.03,
+  "smear_area": 0.2,
+  "seam_abs": 0.4,
+  "seam_ratio": 1.5,
+  "det_min": 0.3,
+  "det_ratio": 5.0
+ },
+ "stats": {
+  "mad_median": 0.07,
+  "mad_p90": 1.63,
+  "mad_max": 5.241,
+  "mad_max_frame": 728,
+  "spike_classes": {
+   "motion": 6,
+   "cut": 2
+  },
+  "fast_crossings": 71,
+  "energy_per_second": [
+   0.1,
+   0.07,
+   0.62,
+   0.72,
+   0.14,
+   0.01,
+   1.7,
+   0.84,
+   0.07,
+   0.04,
+   0.03,
+   0.44,
+   2.77,
+   0.48,
+   0.69,
+   0.06,
+   0.02
+  ],
+  "energy_per_act": {}
+ },
+ "flags": [
+  {
+   "check": "hook",
+   "severity": "warn",
+   "frame": "0-119",
+   "t": 0.0,
+   "note": "the first 2 s move 0.09 against a typical 2 s of 0.42: a still opening loses a muted feed; start inside the action (the device already moving, the first change by 0.5 s) and let the first line land over motion"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 0,
+   "t": 0.0,
+   "note": "9.2% of the frame (44 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 60,
+   "t": 1.0,
+   "note": "9.8% of the frame (47 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "judder",
+   "severity": "warn",
+   "frame": "84-107",
+   "t": 1.4,
+   "note": "a slow move (0.14 px/f) in p3 [192, 412, 256, 256] advances in whole-pixel stairs (2 jumps): put all translation inside one transform and animate no left/top",
+   "track": "p3"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 120,
+   "t": 2.0,
+   "note": "9.8% of the frame (47 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 180,
+   "t": 3.0,
+   "note": "12.3% of the frame (59 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 240,
+   "t": 4.0,
+   "note": "8.1% of the frame (39 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "sharpness",
+   "severity": "warn",
+   "frame": 259,
+   "t": 4.317,
+   "note": "sharpness 3 -> 45 in one frame in region [640, 720, 640, 360] while it is otherwise still: a stepped blur ramp; cross-fade a sharp and a blurred copy (RackFocus)"
+  },
+  {
+   "check": "hold",
+   "severity": "warn",
+   "frame": "271-366",
+   "t": 4.517,
+   "note": "96 f (1.6 s) where only small elements move (mean change 0.009): the frame reads locked-off; add a push or drift"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 300,
+   "t": 5.0,
+   "note": "7.9% of the frame (38 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 360,
+   "t": 6.0,
+   "note": "8.5% of the frame (41 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 420,
+   "t": 7.0,
+   "note": "11.0% of the frame (53 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 480,
+   "t": 8.0,
+   "note": "7.7% of the frame (37 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 540,
+   "t": 9.0,
+   "note": "7.5% of the frame (36 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 600,
+   "t": 10.0,
+   "note": "7.5% of the frame (36 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 660,
+   "t": 11.0,
+   "note": "7.5% of the frame (36 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 720,
+   "t": 12.0,
+   "note": "7.9% of the frame (38 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 780,
+   "t": 13.0,
+   "note": "7.5% of the frame (36 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "banding",
+   "severity": "warn",
+   "frame": 840,
+   "t": 14.0,
+   "note": "5.8% of the frame (28 tiles) is smooth gradient in flat 8-bit plateaus: visible bands; use dithered PNG backdrops (red boxes in the sheet)"
+  },
+  {
+   "check": "quiet",
+   "severity": "warn",
+   "frame": "888-1019",
+   "t": 14.8,
+   "note": "132 f of near-stillness (mean change 0.058); fine for a read, otherwise add drift or a push"
+  }
+ ],
+ "checks": {
+  "spikes": [
+   {
+    "frame": 63,
+    "frames": [
+     63,
+     63
+    ],
+    "mad": 2.175,
+    "neighbour_median": 0.54,
+    "region": [
+     0,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.38,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 82,
+    "frames": [
+     82,
+     82
+    ],
+    "mad": 2.163,
+    "neighbour_median": 0.013,
+    "region": [
+     0,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.4,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 86,
+    "frames": [
+     86,
+     86
+    ],
+    "mad": 2.17,
+    "neighbour_median": 0.002,
+    "region": [
+     0,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.37,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 99,
+    "frames": [
+     99,
+     99
+    ],
+    "mad": 2.156,
+    "neighbour_median": 0.003,
+    "region": [
+     0,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.42,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 475,
+    "frames": [
+     475,
+     476
+    ],
+    "mad": 4.193,
+    "neighbour_median": 0.013,
+    "class": "cut",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 825,
+    "frames": [
+     824,
+     825
+    ],
+    "mad": 1.731,
+    "neighbour_median": 0.006,
+    "region": [
+     640,
+     720,
+     640,
+     360
+    ],
+    "class": "cut",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 908,
+    "frames": [
+     908,
+     908
+    ],
+    "mad": 1.647,
+    "neighbour_median": 0.194,
+    "region": [
+     640,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.44,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   },
+   {
+    "frame": 939,
+    "frames": [
+     939,
+     939
+    ],
+    "mad": 1.838,
+    "neighbour_median": 0.4,
+    "region": [
+     640,
+     360,
+     640,
+     360
+    ],
+    "flow_residual": 0.45,
+    "out_and_back": false,
+    "class": "motion",
+    "seam": null,
+    "cue": null
+   }
+  ],
+  "stalls": [],
+  "holds": [
+   {
+    "from": 271,
+    "to": 366,
+    "frames": 96,
+    "seconds": 1.6,
+    "kind": "quiet",
+    "mean_mad": 0.009,
+    "max_changed_px": 78
+   },
+   {
+    "from": 550,
+    "to": 639,
+    "frames": 90,
+    "seconds": 1.5,
+    "kind": "declared",
+    "mean_mad": 0.033,
+    "max_changed_px": 151
+   }
+  ],
+  "quiet": [
+   {
+    "from": 48,
+    "to": 146,
+    "mean_mad": 0.111,
+    "kind": "read"
+   },
+   {
+    "from": 888,
+    "to": 1019,
+    "mean_mad": 0.058,
+    "kind": "quiet"
+   }
+  ],
+  "hook": {
+   "first_2s": 0.087,
+   "typical_2s": 0.421,
+   "first_change_s": 0.62
+  },
+  "ghosts": [],
+  "crossings": [
+   {
+    "frame": 166,
+    "px": 2024,
+    "motion_px": 38500,
+    "bbox": [
+     680,
+     270,
+     956,
+     526
+    ]
+   },
+   {
+    "frame": 167,
+    "px": 2104,
+    "motion_px": 39564,
+    "bbox": [
+     664,
+     278,
+     1022,
+     526
+    ]
+   },
+   {
+    "frame": 168,
+    "px": 2280,
+    "motion_px": 40768,
+    "bbox": [
+     642,
+     284,
+     1040,
+     530
+    ]
+   },
+   {
+    "frame": 169,
+    "px": 2556,
+    "motion_px": 40460,
+    "bbox": [
+     622,
+     292,
+     998,
+     530
+    ]
+   },
+   {
+    "frame": 170,
+    "px": 2840,
+    "motion_px": 38468,
+    "bbox": [
+     1000,
+     316,
+     568,
+     520
+    ]
+   },
+   {
+    "frame": 171,
+    "px": 2944,
+    "motion_px": 37100,
+    "bbox": [
+     978,
+     312,
+     688,
+     532
+    ]
+   },
+   {
+    "frame": 172,
+    "px": 2536,
+    "motion_px": 37392,
+    "bbox": [
+     954,
+     312,
+     722,
+     498
+    ]
+   },
+   {
+    "frame": 173,
+    "px": 2432,
+    "motion_px": 34812,
+    "bbox": [
+     934,
+     316,
+     740,
+     504
+    ]
+   },
+   {
+    "frame": 174,
+    "px": 2348,
+    "motion_px": 33980,
+    "bbox": [
+     914,
+     322,
+     744,
+     508
+    ]
+   },
+   {
+    "frame": 175,
+    "px": 2084,
+    "motion_px": 32032,
+    "bbox": [
+     894,
+     328,
+     772,
+     504
+    ]
+   },
+   {
+    "frame": 180,
+    "px": 2208,
+    "motion_px": 31616,
+    "bbox": [
+     816,
+     356,
+     760,
+     390
+    ]
+   },
+   {
+    "frame": 181,
+    "px": 2064,
+    "motion_px": 32232,
+    "bbox": [
+     802,
+     356,
+     780,
+     396
+    ]
+   },
+   {
+    "frame": 186,
+    "px": 2156,
+    "motion_px": 31980,
+    "bbox": [
+     746,
+     394,
+     800,
+     380
+    ]
+   },
+   {
+    "frame": 187,
+    "px": 2288,
+    "motion_px": 31644,
+    "bbox": [
+     738,
+     394,
+     768,
+     384
+    ]
+   },
+   {
+    "frame": 188,
+    "px": 2560,
+    "motion_px": 31836,
+    "bbox": [
+     728,
+     394,
+     768,
+     388
+    ]
+   },
+   {
+    "frame": 189,
+    "px": 2900,
+    "motion_px": 31916,
+    "bbox": [
+     720,
+     394,
+     762,
+     390
+    ]
+   },
+   {
+    "frame": 190,
+    "px": 3024,
+    "motion_px": 32324,
+    "bbox": [
+     712,
+     394,
+     720,
+     394
+    ]
+   },
+   {
+    "frame": 191,
+    "px": 3048,
+    "motion_px": 32500,
+    "bbox": [
+     704,
+     394,
+     712,
+     398
+    ]
+   },
+   {
+    "frame": 192,
+    "px": 3356,
+    "motion_px": 32492,
+    "bbox": [
+     696,
+     394,
+     744,
+     402
+    ]
+   },
+   {
+    "frame": 193,
+    "px": 3296,
+    "motion_px": 33040,
+    "bbox": [
+     688,
+     394,
+     722,
+     404
+    ]
+   },
+   {
+    "frame": 194,
+    "px": 3508,
+    "motion_px": 30876,
+    "bbox": [
+     682,
+     394,
+     746,
+     404
+    ]
+   },
+   {
+    "frame": 195,
+    "px": 3292,
+    "motion_px": 30436,
+    "bbox": [
+     674,
+     394,
+     738,
+     404
+    ]
+   },
+   {
+    "frame": 196,
+    "px": 3312,
+    "motion_px": 29004,
+    "bbox": [
+     668,
+     394,
+     728,
+     402
+    ]
+   },
+   {
+    "frame": 197,
+    "px": 3224,
+    "motion_px": 27176,
+    "bbox": [
+     662,
+     394,
+     744,
+     402
+    ]
+   },
+   {
+    "frame": 198,
+    "px": 3112,
+    "motion_px": 25804,
+    "bbox": [
+     656,
+     396,
+     746,
+     398
+    ]
+   },
+   {
+    "frame": 199,
+    "px": 3176,
+    "motion_px": 24624,
+    "bbox": [
+     650,
+     398,
+     718,
+     350
+    ]
+   },
+   {
+    "frame": 200,
+    "px": 3308,
+    "motion_px": 23768,
+    "bbox": [
+     644,
+     398,
+     678,
+     354
+    ]
+   },
+   {
+    "frame": 201,
+    "px": 3068,
+    "motion_px": 24516,
+    "bbox": [
+     638,
+     400,
+     708,
+     354
+    ]
+   },
+   {
+    "frame": 202,
+    "px": 3168,
+    "motion_px": 23404,
+    "bbox": [
+     634,
+     402,
+     716,
+     354
+    ]
+   },
+   {
+    "frame": 203,
+    "px": 2948,
+    "motion_px": 22832,
+    "bbox": [
+     628,
+     404,
+     670,
+     354
+    ]
+   },
+   {
+    "frame": 204,
+    "px": 2824,
+    "motion_px": 21724,
+    "bbox": [
+     622,
+     404,
+     650,
+     356
+    ]
+   },
+   {
+    "frame": 205,
+    "px": 2676,
+    "motion_px": 21992,
+    "bbox": [
+     618,
+     406,
+     728,
+     356
+    ]
+   },
+   {
+    "frame": 206,
+    "px": 2440,
+    "motion_px": 20892,
+    "bbox": [
+     614,
+     406,
+     636,
+     358
+    ]
+   },
+   {
+    "frame": 207,
+    "px": 2352,
+    "motion_px": 20784,
+    "bbox": [
+     608,
+     408,
+     622,
+     356
+    ]
+   },
+   {
+    "frame": 208,
+    "px": 2040,
+    "motion_px": 19724,
+    "bbox": [
+     604,
+     408,
+     652,
+     358
+    ]
+   },
+   {
+    "frame": 209,
+    "px": 2032,
+    "motion_px": 19852,
+    "bbox": [
+     600,
+     410,
+     664,
+     360
+    ]
+   },
+   {
+    "frame": 382,
+    "px": 2128,
+    "motion_px": 16332,
+    "bbox": [
+     442,
+     506,
+     724,
+     116
+    ]
+   },
+   {
+    "frame": 383,
+    "px": 2052,
+    "motion_px": 18872,
+    "bbox": [
+     436,
+     384,
+     1426,
+     238
+    ]
+   },
+   {
+    "frame": 389,
+    "px": 2068,
+    "motion_px": 65816,
+    "bbox": [
+     382,
+     382,
+     1538,
+     428
+    ]
+   },
+   {
+    "frame": 390,
+    "px": 2800,
+    "motion_px": 76976,
+    "bbox": [
+     368,
+     378,
+     1552,
+     430
+    ]
+   },
+   {
+    "frame": 391,
+    "px": 3804,
+    "motion_px": 86344,
+    "bbox": [
+     354,
+     378,
+     1566,
+     428
+    ]
+   },
+   {
+    "frame": 392,
+    "px": 3888,
+    "motion_px": 95172,
+    "bbox": [
+     338,
+     376,
+     1568,
+     430
+    ]
+   },
+   {
+    "frame": 393,
+    "px": 3732,
+    "motion_px": 101396,
+    "bbox": [
+     324,
+     376,
+     1582,
+     428
+    ]
+   },
+   {
+    "frame": 394,
+    "px": 3656,
+    "motion_px": 100980,
+    "bbox": [
+     312,
+     376,
+     1604,
+     414
+    ]
+   },
+   {
+    "frame": 395,
+    "px": 2668,
+    "motion_px": 99760,
+    "bbox": [
+     300,
+     374,
+     1604,
+     414
+    ]
+   },
+   {
+    "frame": 396,
+    "px": 2288,
+    "motion_px": 99724,
+    "bbox": [
+     290,
+     374,
+     1584,
+     414
+    ]
+   },
+   {
+    "frame": 397,
+    "px": 2268,
+    "motion_px": 94976,
+    "bbox": [
+     280,
+     372,
+     1568,
+     428
+    ]
+   },
+   {
+    "frame": 398,
+    "px": 2124,
+    "motion_px": 91236,
+    "bbox": [
+     272,
+     374,
+     1646,
+     426
+    ]
+   },
+   {
+    "frame": 399,
+    "px": 2120,
+    "motion_px": 89488,
+    "bbox": [
+     264,
+     372,
+     1654,
+     412
+    ]
+   },
+   {
+    "frame": 402,
+    "px": 2132,
+    "motion_px": 98672,
+    "bbox": [
+     244,
+     370,
+     1676,
+     428
+    ]
+   },
+   {
+    "frame": 403,
+    "px": 2392,
+    "motion_px": 93044,
+    "bbox": [
+     238,
+     414,
+     1682,
+     370
+    ]
+   },
+   {
+    "frame": 404,
+    "px": 2524,
+    "motion_px": 104116,
+    "bbox": [
+     234,
+     378,
+     1676,
+     418
+    ]
+   },
+   {
+    "frame": 405,
+    "px": 2688,
+    "motion_px": 104752,
+    "bbox": [
+     172,
+     202,
+     1740,
+     580
+    ]
+   },
+   {
+    "frame": 406,
+    "px": 2728,
+    "motion_px": 102756,
+    "bbox": [
+     224,
+     198,
+     1676,
+     586
+    ]
+   },
+   {
+    "frame": 407,
+    "px": 2744,
+    "motion_px": 93032,
+    "bbox": [
+     150,
+     206,
+     1738,
+     590
+    ]
+   },
+   {
+    "frame": 408,
+    "px": 2632,
+    "motion_px": 89516,
+    "bbox": [
+     150,
+     204,
+     1728,
+     578
+    ]
+   },
+   {
+    "frame": 409,
+    "px": 2416,
+    "motion_px": 91004,
+    "bbox": [
+     150,
+     202,
+     1718,
+     566
+    ]
+   },
+   {
+    "frame": 410,
+    "px": 2200,
+    "motion_px": 88464,
+    "bbox": [
+     208,
+     368,
+     1638,
+     426
+    ]
+   },
+   {
+    "frame": 411,
+    "px": 2128,
+    "motion_px": 75680,
+    "bbox": [
+     204,
+     462,
+     1716,
+     306
+    ]
+   },
+   {
+    "frame": 412,
+    "px": 2072,
+    "motion_px": 82496,
+    "bbox": [
+     200,
+     374,
+     1630,
+     406
+    ]
+   },
+   {
+    "frame": 722,
+    "px": 2080,
+    "motion_px": 115960,
+    "bbox": [
+     868,
+     312,
+     886,
+     522
+    ]
+   },
+   {
+    "frame": 723,
+    "px": 2100,
+    "motion_px": 126504,
+    "bbox": [
+     846,
+     304,
+     904,
+     536
+    ]
+   },
+   {
+    "frame": 724,
+    "px": 2320,
+    "motion_px": 137708,
+    "bbox": [
+     822,
+     296,
+     918,
+     550
+    ]
+   },
+   {
+    "frame": 725,
+    "px": 2700,
+    "motion_px": 148060,
+    "bbox": [
+     786,
+     292,
+     950,
+     562
+    ]
+   },
+   {
+    "frame": 726,
+    "px": 2592,
+    "motion_px": 155440,
+    "bbox": [
+     764,
+     288,
+     962,
+     572
+    ]
+   },
+   {
+    "frame": 727,
+    "px": 2980,
+    "motion_px": 160820,
+    "bbox": [
+     736,
+     280,
+     982,
+     588
+    ]
+   },
+   {
+    "frame": 728,
+    "px": 3188,
+    "motion_px": 159756,
+    "bbox": [
+     708,
+     272,
+     1002,
+     604
+    ]
+   },
+   {
+    "frame": 729,
+    "px": 2872,
+    "motion_px": 156672,
+    "bbox": [
+     722,
+     268,
+     982,
+     614
+    ]
+   },
+   {
+    "frame": 730,
+    "px": 2828,
+    "motion_px": 153076,
+    "bbox": [
+     658,
+     268,
+     1038,
+     620
+    ]
+   },
+   {
+    "frame": 731,
+    "px": 2576,
+    "motion_px": 147836,
+    "bbox": [
+     672,
+     260,
+     1018,
+     634
+    ]
+   },
+   {
+    "frame": 732,
+    "px": 2020,
+    "motion_px": 141528,
+    "bbox": [
+     652,
+     256,
+     1034,
+     642
+    ]
+   }
+  ],
+  "borders": [],
+  "judder": [
+   {
+    "from": 84,
+    "to": 107,
+    "speed": 0.14,
+    "jumps": 2,
+    "isolated": 2,
+    "track": "p3",
+    "box": [
+     192,
+     412,
+     256,
+     256
+    ]
+   }
+  ],
+  "sharpness": [
+   {
+    "frame": 259,
+    "region": [
+     640,
+     720,
+     640,
+     360
+    ],
+    "before": 2.9,
+    "after": 45.4
+   }
+  ],
+  "banding": [
+   {
+    "frame": 0,
+    "area": 0.0917,
+    "tiles": 44,
+    "flagged": true
+   },
+   {
+    "frame": 60,
+    "area": 0.0979,
+    "tiles": 47,
+    "flagged": true
+   },
+   {
+    "frame": 120,
+    "area": 0.0979,
+    "tiles": 47,
+    "flagged": true
+   },
+   {
+    "frame": 180,
+    "area": 0.1229,
+    "tiles": 59,
+    "flagged": true
+   },
+   {
+    "frame": 240,
+    "area": 0.0813,
+    "tiles": 39,
+    "flagged": true
+   },
+   {
+    "frame": 300,
+    "area": 0.0792,
+    "tiles": 38,
+    "flagged": true
+   },
+   {
+    "frame": 360,
+    "area": 0.0854,
+    "tiles": 41,
+    "flagged": true
+   },
+   {
+    "frame": 420,
+    "area": 0.1104,
+    "tiles": 53,
+    "flagged": true
+   },
+   {
+    "frame": 480,
+    "area": 0.0771,
+    "tiles": 37,
+    "flagged": true
+   },
+   {
+    "frame": 540,
+    "area": 0.075,
+    "tiles": 36,
+    "flagged": true
+   },
+   {
+    "frame": 600,
+    "area": 0.075,
+    "tiles": 36,
+    "flagged": true
+   },
+   {
+    "frame": 660,
+    "area": 0.075,
+    "tiles": 36,
+    "flagged": true
+   },
+   {
+    "frame": 720,
+    "area": 0.0792,
+    "tiles": 38,
+    "flagged": true
+   },
+   {
+    "frame": 780,
+    "area": 0.075,
+    "tiles": 36,
+    "flagged": true
+   },
+   {
+    "frame": 840,
+    "area": 0.0583,
+    "tiles": 28,
+    "flagged": true
+   }
+  ],
+  "banding_sheet": "/Users/chris/Documents/Repos/AutoDoc-Local/tools/demo/real-app-ad/out/banding.png",
+  "smear": [
+   {
+    "frame": 0,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.029,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 30,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.029,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 60,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.029,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 90,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.029,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 120,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.029,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 150,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.01,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 180,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.223,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 210,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.21,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 240,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.196,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 270,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.182,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 300,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.182,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 330,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.181,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 360,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.18,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 390,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.135,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 420,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.074,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 450,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.061,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 480,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.055,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 510,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.056,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 540,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.056,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 570,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.056,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 600,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.056,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 630,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.056,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 660,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.057,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 690,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.057,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 720,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.01,
+    "level": 226,
+    "flagged": false
+   },
+   {
+    "frame": 750,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.009,
+    "level": 68,
+    "flagged": false
+   },
+   {
+    "frame": 780,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.011,
+    "level": 68,
+    "flagged": false
+   },
+   {
+    "frame": 810,
+    "area": 0.0001,
+    "patchy": 0.002,
+    "field": 0.074,
+    "level": 235,
+    "flagged": false
+   },
+   {
+    "frame": 840,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.009,
+    "level": 85,
+    "flagged": false
+   },
+   {
+    "frame": 870,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.975,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 900,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.941,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 930,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.94,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 960,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.939,
+    "level": 231,
+    "flagged": false
+   },
+   {
+    "frame": 990,
+    "area": 0.0,
+    "patchy": 0.0,
+    "field": 0.937,
+    "level": 231,
+    "flagged": false
+   }
+  ],
+  "smear_sheet": "/Users/chris/Documents/Repos/AutoDoc-Local/tools/demo/real-app-ad/out/smear.png",
+  "seams": [],
+  "loop": null,
+  "determinism": null
+ }
+}

@@ -1,0 +1,75 @@
+{
+  "pace": "calm",
+  "fps": 60,
+  "qa": {
+    "cuts": [
+      475,
+      825
+    ],
+    "freezes": [
+      [
+        75,
+        131
+      ],
+      [
+        270,
+        353
+      ],
+      [
+        490,
+        695
+      ]
+    ],
+    "cut_reasons": {
+      "475": "Genuine viewport step in the native AutoDoc replay, confirmed against raw source; this is not an editorial camera pop.",
+      "825": "Native webpage/player update visible in raw capture; preserve recorded pixels rather than invent intermediate UI."
+    }
+  },
+  "copy": [
+    {
+      "text": "The moment.",
+      "resolved": 20,
+      "out": 150,
+      "read": [
+        20,
+        132
+      ]
+    },
+    {
+      "text": "One click away.",
+      "resolved": 77,
+      "out": 185,
+      "read": [
+        77,
+        132
+      ]
+    },
+    {
+      "text": "Click the timestamp.",
+      "resolved": 260,
+      "out": 399,
+      "read": [
+        260,
+        354
+      ]
+    },
+    {
+      "text": "Back to the moment.",
+      "resolved": 442,
+      "out": 726,
+      "read": [
+        442,
+        676
+      ]
+    },
+    {
+      "text": "Capture the moment.",
+      "resolved": 924,
+      "out": 1020,
+      "read": [
+        924,
+        1020
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+out/
+capture/window-recorder
+source/*.mov
+source/*.webm
+seed.cjs

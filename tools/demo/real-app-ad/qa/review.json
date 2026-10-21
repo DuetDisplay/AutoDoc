@@ -1,0 +1,18 @@
+{
+  "rounds": 2,
+  "initial_findings": [
+    "Native replay was too static.",
+    "Note aperture clipped a neighboring heading during transition.",
+    "Combined end wordmark needed centering.",
+    "Connector completed after the split settled."
+  ],
+  "fixes": [
+    "Recaptured actual AutoDoc playback of a genuine webpage scroll.",
+    "Isolated the full Opening visual section before the reframe.",
+    "Centered the exact combined lockup using flex layout.",
+    "Connector finishes within 30 frames of the settled split."
+  ],
+  "remaining_P0_P1": [],
+  "scope": "Director reviewed encoded preview frame sequences; art reviewed final style frames. Master encoding/decoding checked separately. Review does not certify advertising effectiveness.",
+  "motion_preview": "Encoded frame-sequence review confirmed camera settles before click; cursor lands correctly; reframe preserves causality. This was not a full-speed subjective playback assessment."
+}

@@ -1,0 +1,29 @@
+{
+  "name": "autodoc-real-app-ad",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "stills": "node render.cjs stills",
+    "preview": "node render.cjs preview",
+    "render": "node render.cjs master",
+    "studio": "remotion studio src/index.tsx --no-open",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "remotion": "4.0.526",
+    "@remotion/cli": "4.0.526",
+    "@remotion/fonts": "4.0.526",
+    "@remotion/media": "4.0.526",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "@remotion/bundler": "4.0.526",
+    "@remotion/renderer": "4.0.526"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

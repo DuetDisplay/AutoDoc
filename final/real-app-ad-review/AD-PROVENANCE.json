@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-20",
+  "workflow": {
+    "source": "https://github.com/Leonxlnx/cinetic",
+    "commit": "ecfa6605de1adb9345ce937724810dc32267d068",
+    "use": "Creative direction, edit planning and independent director/art critique. Final native capture and edit use ScreenCaptureKit and FFmpeg."
+  },
+  "app": "Actual AutoDoc Electron desktop app, built from the current local source, with normal renderer, IPC, media server and encrypted-media playback. No app source changes for this video.",
+  "profile": "Isolated temporary profile; real setup test flags avoid production tray/install behavior. No personal meeting or account data.",
+  "mocked": "Meeting title, notes, transcript and completed-processing metadata are seeded fixtures. No transcription or model-generation claim is demonstrated.",
+  "meeting_video": "New native Firefox capture of the real Duet homepage: iPad image, genuine scroll, animated company-logo strip. Browser chrome cropped. Initial three seconds trimmed; fifteen-second initial hold added to align the mock note at 0:15. Final hold pads the mock meeting to 32 seconds.",
+  "native_capture": {
+    "file": "tools/demo/real-app-ad/out/autodoc-native-motion.mov",
+    "size": [
+      2560,
+      1600
+    ],
+    "window_points": [
+      1280,
+      800
+    ],
+    "audio": false,
+    "cursor": false,
+    "duration_seconds": 19
+  },
+  "edit": {
+    "duration_seconds": 17,
+    "fps": 60,
+    "notes": "Unaltered native note pixels extracted from take 4, held and reframed for reading. The real 0:15 timestamp is enhanced with an editorial cursor, press ring and connector. The same note remains visible beside actual desktop-player footage. No app controls or playback UI are recreated.",
+    "replay": "Fresh native AutoDoc capture playing the staged real-browser recording at its original speed.",
+    "motion": "Log-space anchor camera, curved cursor path, masked reframing and a two-sample temporal blend from 120 samples/second to 60 fps.",
+    "audio": "No audio stream.",
+    "replay_source_start_seconds": 3.1333333333
+  },
+  "output": {
+    "file": "autodoc-moment-ad.mp4",
+    "size": [
+      1920,
+      1080
+    ],
+    "duration_seconds": 17,
+    "audio_streams": 0
+  },
+  "raw_reference": "autodoc-native-motion-raw.mp4: full fresh native app capture, video copied without re-encoding.",
+  "first_pass": "Previous synthetic/browser-fixture concepts are preserved separately and are not sources for this rebuild.",
+  "version": "Advertisement edit with enhanced cursor and timestamp relay",
+  "source_sha256": {
+    "out/autodoc-native-motion.mov": "534288e010549374455385a6b94df951048f5dddf0a5ddb5511940b1563e67ed",
+    "out/public-page-motion.mov": "8fc61c0aec69ec985d3e3a79ca8d749e04d6ece0ad48f29809a5aec109834136",
+    "public/native/notes.png": "3f3b2073f9309331864e04947406ac0b2ab119a0a9c887e671c1d6aabfbd45e5",
+    "public/native/replay.mp4": "fccd70fd13fc704fff208d41ef418026f5c048c53543ac27c4923609c61b62ee",
+    "source/meeting-motion.webm": "6c7d1579c0b4247e37aef280a3c9bf5662517204e39e75cad2baaa2a2902c6a9"
+  },
+  "portable_checkout": {
+    "native_replay": "tools/demo/real-app-ad/public/native/replay.mp4",
+    "native_notes_frame": "tools/demo/real-app-ad/public/native/notes.png",
+    "mock_meeting_screen_video": "tools/demo/real-app-ad/source/meeting-motion.webm",
+    "native_raw_take": "final/real-app-ad-review/autodoc-native-motion-raw.mp4",
+    "source_mov_files": "Retained only on the original capture machine; the committed native MP4 is a lossless video-stream remux of its MOV source. MOVs and the isolated app profile are unnecessary for editing/rendering."
+  }
+}

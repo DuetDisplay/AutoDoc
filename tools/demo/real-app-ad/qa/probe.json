@@ -1,0 +1,73 @@
+{
+ "file": "final/real-app-ad-review/autodoc-moment-ad.mp4",
+ "pass": true,
+ "checks": [
+  {
+   "name": "size",
+   "ok": true,
+   "expected": "1920x1080",
+   "actual": "1920x1080"
+  },
+  {
+   "name": "fps",
+   "ok": true,
+   "expected": 60.0,
+   "actual": 60.0
+  },
+  {
+   "name": "frames",
+   "ok": true,
+   "expected": 1020,
+   "actual": 1020
+  },
+  {
+   "name": "duration",
+   "ok": true,
+   "expected": "17.000s +-0.018",
+   "actual": "17.000s"
+  },
+  {
+   "name": "vcodec",
+   "ok": true,
+   "expected": "h264",
+   "actual": "h264"
+  },
+  {
+   "name": "pix_fmt",
+   "ok": true,
+   "expected": "yuv420p",
+   "actual": "yuv420p"
+  },
+  {
+   "name": "bt709",
+   "ok": true,
+   "expected": "bt709/bt709/bt709/tv",
+   "actual": "bt709/bt709/bt709/tv"
+  },
+  {
+   "name": "audio",
+   "ok": true,
+   "expected": "none",
+   "actual": "none"
+  }
+ ],
+ "facts": {
+  "width": 1920,
+  "height": 1080,
+  "fps": 60.0,
+  "frames": 1020,
+  "duration": 17.0,
+  "container_duration": 17.0,
+  "vcodec": "h264",
+  "profile": "High",
+  "pix_fmt": "yuv420p",
+  "color": {
+   "space": "bt709",
+   "primaries": "bt709",
+   "transfer": "bt709",
+   "range": "tv"
+  },
+  "size_mb": 3.557,
+  "bitrate_kbps": 1674
+ }
+}
