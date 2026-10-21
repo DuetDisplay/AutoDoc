@@ -7,16 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-20
+
 ### Fixed
 
-- Updates wait until recordings, meeting processing, and speech model downloads finish.
-- Quitting saves the current recording before closing. Interrupted recordings are
-  recovered from retained capture files on the next launch.
-- Windows keeps recordings readable after an unexpected shutdown during the app's
-  first launch.
-- Transcription waits for missing speech models to download and recovers after setup,
-  including meetings that previously exhausted automatic retries. Repeated Retry
+- Auto-record prefers the timed meeting over all-day calendar events. The selected
+  event stays attached to the recording. ([#55](https://github.com/DuetDisplay/AutoDoc/issues/55))
+- Slack auto-record waits until a huddle is joined and selects its call window
+  instead of Slack's main or pre-join window. Ambiguous windows produce a visible
+  **Select window** prompt, including when AutoDoc is minimized on Windows.
+- Auto-record shows an **AI notes started** notice with the meeting name and a
+  **Stop** button. Notification text wraps, and only windows chosen by the user
+  are remembered for later recordings.
+- Video capture recovery keeps healthy microphone and system audio running.
+  Recording continues with audio if video cannot recover, and exported video
+  preserves the meeting timeline across recovery gaps.
+- Updates wait until recordings, meeting processing, and speech model downloads
+  finish. Quitting saves the current recording before closing.
+  ([#66](https://github.com/DuetDisplay/AutoDoc/issues/66))
+- Interrupted recordings recover from retained capture files on the next launch.
+  Windows also keeps recordings readable after an unexpected shutdown during the
+  app's first launch. Recovery preserves surviving audio; it cannot recreate
+  audio that was never captured. ([#57](https://github.com/DuetDisplay/AutoDoc/issues/57))
+- Transcription waits for missing speech models to download and resumes after
+  setup, including meetings that exhausted automatic retries. Repeated Retry
   clicks no longer cause bursts of immediate failures.
+  ([#67](https://github.com/DuetDisplay/AutoDoc/issues/67))
+- Windows notes generation pulls a missing notes model and makes one recovery
+  attempt after an Ollama exit. After Windows wakes, background restarts wait for
+  GPU drivers and pause after repeated failures. Notes jobs can start a stopped
+  engine without replacing one that is still starting.
+  ([#46](https://github.com/DuetDisplay/AutoDoc/issues/46))
+- Windows notes models can load when the user profile path contains non-ASCII
+  characters. Existing models move to a compatible path without downloading
+  again. If the model file still cannot be opened, AutoDoc shows **Notes model
+  unavailable** until the user retries instead of repeatedly restarting.
+  ([#68](https://github.com/DuetDisplay/AutoDoc/issues/68))
+- Google Calendar asks users to reconnect when required permission is missing or
+  expired, instead of continuing to poll a broken connection.
+  ([#49](https://github.com/DuetDisplay/AutoDoc/issues/49))
+- Meetings with no accepted note content show **No notes were generated** rather
+  than a notes failure. The meeting-language introduction no longer names a
+  specific version.
+- Diagnostic logs remain valid JSON when titles contain brackets or quotes.
+  Auto-record diagnostics omit window and meeting titles, and Windows errors
+  redact the full user name.
+
+### Known limitations
+
+- The transcription and notes limitations listed under 1.3.0 still apply.
+- Recovery of interrupted recordings does not establish that every cause of a
+  stalled Stop or lost meeting detection has been fixed.
+- The non-ASCII Windows profile fix has unit coverage; verification with a real
+  Windows account whose name contains non-ASCII characters is still pending.
 
 ## [1.3.0] — 2026-10-14
 
@@ -170,7 +213,8 @@ First public release of AutoDoc.
 - AES-256-GCM encryption at rest, keyed via macOS Keychain.
 - Opt-in analytics and crash reporting.
 
-[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/DuetDisplay/AutoDoc/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/DuetDisplay/AutoDoc/compare/v1.1.2...v1.1.3
