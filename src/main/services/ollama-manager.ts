@@ -1460,12 +1460,6 @@ export class OllamaManager extends EventEmitter {
         }
         const sanitizedStderrTail = sanitizeDiagnosticLogTail(stderr.slice(-8000)).trim()
         const sanitizedStderrBrief = sanitizeDiagnosticLogTail(stderr.slice(-300)).trim()
-        const exitError =
-          code !== null && code !== 0
-            ? new Error(
-                `Ollama exited with code ${code}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
-              )
-            : null
         if (intentionalKillReason != null) {
           // The app killed this serve itself (Windows taskkill always exits with code 1), so it
           // is not a crash and must not reach the AUTODOC-8 failure stream.
@@ -1474,7 +1468,7 @@ export class OllamaManager extends EventEmitter {
             message: 'ollama server process stopped by app',
             context: { ...exitContext, reason: intentionalKillReason }
           })
-        } else if (exitError) {
+        } else if (code !== null && code !== 0) {
           logAutodocFailure({
             area: 'ollama',
             message: 'ollama server process exited',
@@ -1495,14 +1489,8 @@ export class OllamaManager extends EventEmitter {
         }
         if (!settled) {
           finish(() => {
-            const exitFailure =
-              exitError ??
-              new Error(
-                `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
-              )
-            reject(
-              modelLoadFailed ? createOllamaModelLoadFailedError(exitFailure.message) : exitFailure
-            )
+            const message = `Ollama exited with code ${code}, signal ${signal}${sanitizedStderrBrief ? `: ${sanitizedStderrBrief}` : ''}`
+            reject(modelLoadFailed ? createOllamaModelLoadFailedError(message) : new Error(message))
           })
         }
       })
