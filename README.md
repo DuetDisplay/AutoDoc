@@ -28,7 +28,7 @@ Notes and timestamp playback (short excerpt). [Watch the full 34-second product 
 
 <!-- latest-release:start -->
 
-**New in v1.3.0:** 27 meeting languages and improved meeting notes. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
+**New in v1.3.1:** AutoDoc 1.3.1 improves recording and notes reliability on macOS and Windows. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
 
 <!-- latest-release:end -->
 
