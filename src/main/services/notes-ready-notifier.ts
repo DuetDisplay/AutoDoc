@@ -4,6 +4,7 @@ import { readMetadata } from './calendar-matcher'
 import { showNotificationWindow } from '../notification-window'
 import { focusMainWindow, getMainWindow } from './main-window'
 import type { MeetingMetadata } from '../../shared/types'
+import { tMain } from './ui-locale'
 
 function getMeetingDisplayTitle(metadata: MeetingMetadata | null): string | null {
   return (
@@ -24,10 +25,10 @@ function truncateDisplayTitle(displayTitle: string, maxLength = 56): string {
 
 export function buildNotesReadyBody(displayTitle: string | null): string {
   if (!displayTitle) {
-    return 'Notes are ready.'
+    return tMain('notesReady.body')
   }
 
-  return `${truncateDisplayTitle(displayTitle)} notes are ready.`
+  return tMain('notesReady.bodyWithTitle', { title: truncateDisplayTitle(displayTitle) })
 }
 
 export async function notifyNotesReady(
@@ -42,12 +43,12 @@ export async function notifyNotesReady(
   }
   const displayTitle = getMeetingDisplayTitle(metadata)
   showNotificationWindow({
-    title: 'Notes Ready',
+    title: tMain('notesReady.title'),
     body: buildNotesReadyBody(displayTitle),
     ...(displayTitle
-      ? { bodyTitle: truncateDisplayTitle(displayTitle), bodySuffix: 'notes are ready.' }
+      ? { bodyTitle: truncateDisplayTitle(displayTitle), bodySuffix: tMain('notesReady.bodySuffix') }
       : {}),
-    primaryActionLabel: 'Open Notes',
+    primaryActionLabel: tMain('notesReady.open'),
     kind: 'notes-ready',
     onPrimaryAction: () => {
       focusMainWindow()

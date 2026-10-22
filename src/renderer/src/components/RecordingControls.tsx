@@ -12,9 +12,7 @@ import {
   findActiveCalendarEvent
 } from '../services/window-detection'
 import { getSavedSourcePreference } from '../services/recording-source-preferences'
-
-const SCREEN_RECORDING_PERMISSION_MESSAGE =
-  'AutoDoc needs Screen Recording access. If you just enabled it, fully quit and reopen AutoDoc, then press Record again.'
+import { useT } from '../services/i18n'
 
 function isUsableImageDataUrl(value: string | null | undefined): value is string {
   if (!value?.startsWith('data:image/')) return false
@@ -106,6 +104,7 @@ export function RecordingControls({
   onStopRecording,
   onFetchSources
 }: RecordingControlsProps): ReactElement {
+  const t = useT()
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
   const {
@@ -152,18 +151,18 @@ export function RecordingControls({
       )
 
       openPicker({
-        title: 'Select a window to record',
+        title: t('recording.selectWindowToRecord'),
         selectionContext,
         subtitle:
           selection.source && selection.confidence === 'high'
-            ? 'AutoDoc highlighted the most likely meeting window.'
+            ? t('recording.highlightedWindow')
             : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
         suggestionLabel: selection.source
           ? selection.confidence === 'high'
-            ? 'Detected meeting'
-            : 'Suggested window'
+            ? t('recording.detectedMeeting')
+            : t('recording.suggestedWindow')
           : null,
         scoredSourceIds: selection.candidateSourceIds,
         diagnosticTrigger: 'manual'
@@ -179,9 +178,11 @@ export function RecordingControls({
       console.warn('Failed to list recording sources:', err)
       useToastStore.getState().showToast({
         type: 'screen',
-        message: SCREEN_RECORDING_PERMISSION_MESSAGE,
+        message: t('recording.screenPermission'),
+        messageKey: 'recording.screenPermission',
         action: {
-          label: 'Open Settings',
+          label: t('upcoming.openSettings'),
+          labelKey: 'upcoming.openSettings',
           type: 'open-settings',
           target: 'screen'
         }
@@ -230,9 +231,9 @@ export function RecordingControls({
     return (
       <button
         onClick={onStopRecording}
-        className="text-[11px] font-medium text-white bg-status-recording px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity"
+        className="i18n-btn text-[11px] font-medium text-on-brand bg-status-recording px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity"
       >
-        Stop Recording
+        {t('recording.stopRecording')}
       </button>
     )
   }
@@ -242,17 +243,23 @@ export function RecordingControls({
       <button
         onClick={handleRecordClick}
         disabled={loading}
-        className="text-[11px] font-medium text-white bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+        className="i18n-btn text-[11px] font-medium text-on-brand bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
       >
-        {loading ? 'Loading...' : 'Record'}
+        {loading ? t('common.loading') : t('recording.record')}
       </button>
 
       {showPicker && (
         <>
           <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
-          <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
-            <p className="text-[11px] font-medium text-ink-muted mb-1">{title}</p>
-            {subtitle && <p className="text-[10px] text-ink-faint mb-2">{subtitle}</p>}
+          <div className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-2rem)] bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
+            <p className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]">
+              {title}
+            </p>
+            {subtitle && (
+              <p className="text-[10px] text-ink-faint mb-2 text-pretty [overflow-wrap:anywhere]">
+                {subtitle}
+              </p>
+            )}
             <div className="flex flex-col gap-1.5">
               {orderedSources.map((source) => (
                 <button
@@ -264,9 +271,11 @@ export function RecordingControls({
                 >
                   <SourcePreview source={source} />
                   <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-[12px] text-ink truncate">{source.name}</span>
+                    <span className="i18n-ellipsis text-[12px] text-ink" title={source.name}>
+                      {source.name}
+                    </span>
                     {source.id === detectedId && suggestionLabel && (
-                      <span className="text-[10px] text-status-connected font-medium">
+                      <span className="text-[10px] text-status-connected font-medium text-pretty [overflow-wrap:anywhere]">
                         {suggestionLabel}
                       </span>
                     )}

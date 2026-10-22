@@ -102,15 +102,15 @@ export function AnalyticsStep({
             </div>
             <div className="border-t border-border-subtle mt-3 pt-3 space-y-2">
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
                 <span>Meeting content, meeting titles, transcripts, or calendar data</span>
               </div>
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
                 <span>Names, emails, or any personal information</span>
               </div>
               <div className="flex items-start gap-2">
-                <span className="text-red-400 font-bold mt-[1px]">✗</span>
+                <span className="text-clay font-bold mt-[1px]">✗</span>
                 <span>Audio, video, or screen recordings</span>
               </div>
             </div>
@@ -134,7 +134,7 @@ export function AnalyticsStep({
       <div className="flex flex-col gap-2">
         <button
           onClick={() => onNext(true, diagnosticLogUploadConsented)}
-          className="w-full px-6 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn w-full px-6 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
           Share anonymous product health
         </button>

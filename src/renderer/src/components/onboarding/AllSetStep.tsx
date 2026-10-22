@@ -24,7 +24,7 @@ export function AllSetStep({ onFinish }: { onFinish: () => void }) {
       </p>
       <button
         onClick={onFinish}
-        className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+        className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
       >
         Open AutoDoc
       </button>

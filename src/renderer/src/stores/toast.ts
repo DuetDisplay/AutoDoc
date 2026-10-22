@@ -1,7 +1,9 @@
 import { create } from 'zustand'
+import type { MessageKey } from '../../../shared/i18n'
 
 export interface ToastAction {
   label: string
+  labelKey?: MessageKey
   type: 'open-settings' | 'navigate'
   target: 'screen' | 'microphone' | string
 }
@@ -9,6 +11,7 @@ export interface ToastAction {
 export interface Toast {
   type: 'screen' | 'microphone' | 'calendar' | 'warning'
   message: string
+  messageKey?: MessageKey
   action?: ToastAction
 }
 

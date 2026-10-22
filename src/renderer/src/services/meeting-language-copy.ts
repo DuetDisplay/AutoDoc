@@ -1,5 +1,7 @@
 import type { MeetingLanguageEngineState } from '../../../shared/meeting-language'
+import { translate } from '../../../shared/i18n'
 import { formatBytes, formatMeetingLanguageFirstUseDownload } from './format-bytes'
+import { readCachedUiLanguage } from './document-language'
 
 export const SLOWER_MEETING_LANGUAGE_NOTE = 'Slower on this PC'
 export const OFFLINE_DOWNLOAD_NOTE = 'Needs internet to download'
@@ -9,7 +11,10 @@ export function meetingLanguageSelectableNote(
 ): string | null {
   if (!engineState || engineState.availability === 'locked') return null
   const sizeNote = formatMeetingLanguageFirstUseDownload(engineState.firstUseDownloadBytes)
-  const slowerNote = engineState.availability === 'slower' ? SLOWER_MEETING_LANGUAGE_NOTE : null
+  const slowerNote =
+    engineState.availability === 'slower'
+      ? translate(readCachedUiLanguage(), 'picker.slowerOnThisPc')
+      : null
   if (engineState.availability === 'available' && engineState.reason) {
     return sizeNote ? `${engineState.reason} · ${sizeNote}` : engineState.reason
   }

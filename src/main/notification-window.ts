@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, ipcMain } from 'electron'
+import { app, BrowserWindow, nativeTheme, screen, ipcMain } from 'electron'
 import { getMainWindow } from './services/main-window'
 
 let notificationWindow: BrowserWindow | null = null
@@ -256,6 +256,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
   .toast {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 14px;
     padding: 14px 14px 14px 16px;
@@ -307,9 +308,11 @@ export function showNotificationWindow(options: NotificationOptions): void {
     color: #1A1A17;
     letter-spacing: -0.02em;
     line-height: 1.3;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Wraps to at most three lines, which the fixed window height already fits. */
@@ -318,6 +321,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     color: #86837e;
     line-height: 1.25;
     margin-top: 1px;
+    overflow-wrap: anywhere;
     min-width: 0;
     overflow: hidden;
     display: -webkit-box;
@@ -328,9 +332,10 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    flex-shrink: 0;
+    min-width: 0;
   }
 
   .btn-record {
@@ -345,7 +350,9 @@ export function showNotificationWindow(options: NotificationOptions): void {
     letter-spacing: -0.01em;
     cursor: pointer;
     transition: all 0.15s ease;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: 11rem;
+    line-height: 1.25;
   }
   .btn-record:hover { background: #3d3b37; }
   .btn-record:active { transform: scale(0.97); }
@@ -366,13 +373,27 @@ export function showNotificationWindow(options: NotificationOptions): void {
   }
   .btn-x:hover { background: rgba(0,0,0,0.05); color: #86837e; }
   .btn-x svg { width: 12px; height: 12px; }
+
+  .toast.dark {
+    background: rgba(42, 42, 36, 0.96);
+    border: 1px solid rgba(245, 245, 240, 0.10);
+    box-shadow:
+      0 12px 40px rgba(0, 0, 0, 0.36),
+      0 4px 12px rgba(0, 0, 0, 0.22);
+  }
+  .toast.dark .title { color: #F5F5F0; }
+  .toast.dark .subtitle { color: #9C9B94; }
+  .toast.dark .btn-record { background: #F5F5F0; color: #1C1C18; }
+  .toast.dark .btn-record:hover { background: #C8C6BC; }
+  .toast.dark .btn-x { color: #6B6A63; }
+  .toast.dark .btn-x:hover { background: rgba(255,255,255,0.08); color: #C8C6BC; }
 </style>
 </head>
 <body>
-  <div class="toast">
+  <div class="toast${nativeTheme.shouldUseDarkColors ? ' dark' : ''}">
     <div class="dot"></div>
     <div class="text">
-      <div class="title">${title}</div>
+      <div class="title" title="${title}">${title}</div>
       ${subtitle}
     </div>
     <div class="actions">

@@ -5,6 +5,8 @@ import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import type { RecordingEntry, SegmentationStatus, TranscriptionStatus } from '../../../shared/types'
 import { FeedbackPromptSlot } from '../components/FeedbackPromptSlot'
+import { useI18n } from '../services/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
 
 const ACTIVE_TRANSCRIPTION_STATUSES: TranscriptionStatus[] = [
   'queued',
@@ -89,6 +91,8 @@ export function Recordings({
 }: {
   feedbackPromptSuppressed?: boolean
 }) {
+  const { language, t } = useI18n()
+  const dateLocale = dateLocaleForUiLanguage(language)
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [transcriptionMemoryFailures, setTranscriptionMemoryFailures] = useState<
     Record<string, boolean>
@@ -431,17 +435,17 @@ export function Recordings({
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="AI Notes" />
+      <PageHeader title={t('recordings.title')} />
 
       <FeedbackPromptSlot surface="ai_notes" suppressed={feedbackPromptSuppressed} />
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center p-6">
-          <p className="text-ink-muted text-[13px]">Loading...</p>
+          <p className="text-ink-muted text-[13px]">{t('common.loading')}</p>
         </div>
       ) : recordings.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
-          <p className="text-ink-muted text-[13px]">No notes yet. Start a meeting to begin.</p>
+          <p className="text-ink-muted text-[13px] text-pretty">{t('recordings.empty')}</p>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
@@ -452,14 +456,14 @@ export function Recordings({
                 className="px-4 py-3.5 bg-bg-card border border-border rounded-xl cursor-pointer hover:border-ink-muted transition-colors"
                 onClick={() => navigate(`/recordings/${rec.meetingId}`)}
               >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-[13.5px] font-semibold text-ink tracking-[-0.01em]">
+                <div className="flex flex-wrap justify-between items-start gap-3 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere]">
                       {rec.title}
                     </div>
-                    <div className="text-[11.5px] text-ink-faint mt-0.5 flex items-center gap-2">
+                    <div className="text-[11.5px] text-ink-faint mt-0.5 flex flex-wrap items-center gap-2">
                       <span>
-                        {new Date(rec.date).toLocaleDateString('en-US', {
+                        {new Date(rec.date).toLocaleDateString(dateLocale, {
                           weekday: 'short',
                           month: 'short',
                           day: 'numeric'
@@ -473,15 +477,15 @@ export function Recordings({
                         </>
                       )}
                       <span className="flex items-center gap-1">
-                        {rec.hasAudio && <span>Audio</span>}
+                        {rec.hasAudio && <span>{t('recordings.audio')}</span>}
                         {rec.hasAudio && rec.hasVideo && <span>+</span>}
-                        {rec.hasVideo && <span>Video</span>}
+                        {rec.hasVideo && <span>{t('recordings.video')}</span>}
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
                     {rec.isFinalizing ? (
-                      <span className="text-[11px] text-ink-faint">Wrapping up recording...</span>
+                      <span className="text-[11px] text-ink-faint">{t('recordings.wrappingUp')}</span>
                     ) : (
                       <>
                         <TranscriptionBadge
@@ -502,11 +506,11 @@ export function Recordings({
                         )}
                         {rec.videoStatus === 'processing' && (
                           <span className="text-[11px] text-ink-faint animate-pulse">
-                            Processing video…
+                            {t('recordings.processingVideo')}
                           </span>
                         )}
                         {rec.videoStatus === 'failed' && (
-                          <span className="text-[11px] text-ink-faint">Video failed</span>
+                          <span className="text-[11px] text-ink-faint">{t('recordings.videoFailed')}</span>
                         )}
                       </>
                     )}

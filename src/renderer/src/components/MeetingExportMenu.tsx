@@ -362,7 +362,7 @@ export function MeetingExportMenu({
             type="button"
             aria-label={`Dismiss ${feedback.action} error`}
             onClick={() => setFeedback(null)}
-            className="flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-clay-dark/70 transition-colors hover:bg-white/50 hover:text-clay-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
+            className="flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-clay-dark/70 transition-colors hover:bg-bg-accent hover:text-clay-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
           >
             ×
           </button>

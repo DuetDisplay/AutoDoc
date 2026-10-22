@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  nativeTheme,
   shell,
   systemPreferences,
   powerMonitor,
@@ -59,8 +60,14 @@ import { registerSpeakersIpc } from './ipc/speakers-ipc'
 import {
   PrefsStore,
   readInitialAnalyticsConsent,
+  readInitialAppearance,
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
+import {
+  applyNativeAppearance,
+  windowBackgroundForAppearance
+} from './services/appearance-runtime'
+import { tMain } from './services/ui-locale'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
@@ -529,7 +536,7 @@ function createWindow(): void {
     show: false,
     title: APP_NAME,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    backgroundColor: '#FAFAF7',
+    backgroundColor: windowBackgroundForAppearance(readInitialAppearance()),
     icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -725,8 +732,8 @@ app.whenReady().then(async () => {
     }
 
     const notification = new Notification({
-      title: 'AutoDoc update ready',
-      body: 'Restart to install.'
+      title: tMain('update.readyTitle'),
+      body: tMain('update.readyBody')
     })
     notification.on('click', openSettingsFromUpdateNotification)
     notification.show()
@@ -2308,6 +2315,12 @@ app.whenReady().then(async () => {
     })
     console.error('Encryption migration failed:', err)
   }
+
+  nativeTheme.on('updated', () => {
+    if (prefsStore.getAppearance() === 'auto') {
+      applyNativeAppearance('auto')
+    }
+  })
 
   registerPrefsIpc(
     prefsStore,

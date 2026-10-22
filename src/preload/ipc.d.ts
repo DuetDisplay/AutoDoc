@@ -57,6 +57,7 @@ import type {
   SegmentationDiagnosticPayload,
   VideoStatus
 } from '../shared/types'
+import type { AppearanceMode } from '../shared/appearance'
 import type {
   MeetingLanguageAvailability,
   MeetingLanguageCode,
@@ -64,6 +65,7 @@ import type {
   WindowsMeetingLanguageAvailabilityInfo,
   WindowsMultilingualEngineReadyInfo
 } from '../shared/meeting-language'
+import type { UiLanguageCode } from '../shared/ui-language'
 import type {
   E2EDetectionState,
   E2EFeedbackPromptDebugState,
@@ -255,6 +257,10 @@ export interface IpcInvokeEvents {
   'prefs:set-diagnostic-log-upload-consent': [enabled: boolean]
   'prefs:get-video-watermark-visible': []
   'prefs:set-video-watermark-visible': [visible: boolean]
+  'prefs:get-appearance': []
+  'prefs:set-appearance': [appearance: AppearanceMode]
+  'prefs:get-ui-language': []
+  'prefs:set-ui-language': [language: UiLanguageCode]
   'prefs:get-meeting-language': []
   'prefs:get-meeting-language-availability': []
   'prefs:set-meeting-language': [language: MeetingLanguageCode]
@@ -418,6 +424,10 @@ export interface IpcInvokeReturns {
   'prefs:set-diagnostic-log-upload-consent': void
   'prefs:get-video-watermark-visible': boolean
   'prefs:set-video-watermark-visible': void
+  'prefs:get-appearance': AppearanceMode
+  'prefs:set-appearance': void
+  'prefs:get-ui-language': UiLanguageCode
+  'prefs:set-ui-language': void
   'prefs:get-meeting-language': MeetingLanguageCode
   'prefs:get-meeting-language-availability': MeetingLanguageAvailability
   'prefs:set-meeting-language': void
@@ -483,6 +493,8 @@ export interface IpcOnEvents {
   'prefs:analytics-consent-changed': [enabled: boolean]
   'prefs:diagnostic-log-upload-consent-changed': [enabled: boolean]
   'prefs:video-watermark-visible-changed': [visible: boolean]
+  'prefs:appearance-changed': [appearance: AppearanceMode]
+  'prefs:ui-language-changed': [language: UiLanguageCode]
   'prefs:experimental-speaker-diarization-changed': [enabled: boolean]
   'feedback:contact-initiated': [surface: SupportEmailSurface]
   'feedback:critical-ui-changed': [suppressed: boolean]

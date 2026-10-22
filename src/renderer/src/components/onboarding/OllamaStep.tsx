@@ -93,7 +93,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
         </p>
         <button
           onClick={onNext}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
           Continue
         </button>
@@ -132,7 +132,7 @@ export function OllamaStep({ onNext }: { onNext: () => void }) {
             setPercent(0)
             await window.electronAPI.invoke('ollama:retry-setup')
           }}
-          className="px-6 py-2.5 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+          className="i18n-btn px-6 py-2.5 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
         >
           Retry
         </button>

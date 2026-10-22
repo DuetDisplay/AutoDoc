@@ -102,7 +102,7 @@ export function TranscriptView({
 
   if (status === 'failed') {
     return (
-      <p className="text-[12px] text-red-600">
+      <p className="text-[12px] text-clay-dark">
         Transcription failed. Use the retry button to try again.
       </p>
     )

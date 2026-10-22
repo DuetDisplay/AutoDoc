@@ -49,7 +49,7 @@ function StatusSummary({
     <div className="space-y-3">
       <div
         className={`rounded-lg border px-3 py-2.5 ${
-          snapshot.eligible ? 'border-sage/30 bg-sage-light/60' : 'border-border-subtle bg-white/60'
+          snapshot.eligible ? 'border-sage/30 bg-sage-light/60' : 'border-border-subtle bg-bg-card/60'
         }`}
       >
         <p className="text-[12px] font-semibold text-ink">
@@ -190,7 +190,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
     >
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-[13px] font-semibold text-ink">Feedback prompt simulator</h3>
-        <span className="rounded-full border border-clay/30 bg-[#F8E7DE] px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-clay-dark">
+        <span className="rounded-full border border-clay/30 bg-clay-light px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-clay-dark">
           QA BUILD
         </span>
       </div>
@@ -208,7 +208,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
 
         <fieldset className="mt-4">
           <legend className="text-[11px] font-semibold text-ink">Open the prompt on</legend>
-          <div className="mt-2 inline-flex rounded-lg border border-border-subtle bg-white p-1">
+          <div className="mt-2 inline-flex flex-wrap rounded-lg border border-border-subtle bg-bg-card p-1">
             {(
               [
                 ['upcoming', 'Upcoming'],
@@ -218,7 +218,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
               <label
                 key={value}
                 className={`cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-sage/50 ${
-                  surface === value ? 'bg-ink text-white' : 'text-ink-muted hover:text-ink'
+                  surface === value ? 'bg-ink text-on-ink' : 'text-ink-muted hover:text-ink'
                 }`}
               >
                 <input
@@ -240,7 +240,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('initial', true)}
-            className="rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Show first prompt
           </button>
@@ -248,7 +248,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('reminder', true)}
-            className="rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Show final reminder
           </button>
@@ -256,7 +256,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={openSurface}
-            className="rounded-lg border border-border-subtle bg-white px-3 py-2 text-[11px] font-semibold text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-semibold text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Open selected surface
           </button>
@@ -270,7 +270,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('contacted')}
-            className="rounded-lg border border-border-subtle bg-white px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Set already contacted
           </button>
@@ -278,7 +278,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('never')}
-            className="rounded-lg border border-border-subtle bg-white px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Set Don’t ask again
           </button>
@@ -286,7 +286,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('reset')}
-            className="rounded-lg border border-border-subtle bg-white px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reset natural eligibility
           </button>

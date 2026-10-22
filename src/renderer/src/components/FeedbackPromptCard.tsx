@@ -116,7 +116,7 @@ export function FeedbackPromptCard({
               type="button"
               disabled={pending}
               onClick={onShare}
-              className={`${actionClassName} bg-sage text-white hover:bg-sage-dark`}
+              className={`${actionClassName} i18n-btn bg-sage text-on-brand hover:bg-sage-dark`}
             >
               Share feedback
             </button>

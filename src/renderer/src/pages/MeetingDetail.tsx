@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { NOTES_WRITER_PROGRESS_END, SEGMENT_LABELS } from '../../../shared/constants'
+import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
+import type { MessageKey } from '../../../shared/i18n'
+import { useT } from '../services/i18n'
 import type {
   SegmentCategory,
   Segment,
@@ -128,16 +130,17 @@ function NotesGeneratingPlaceholder({
   status: SegmentationStatus
   progress?: number
 }) {
+  const t = useT()
   const label =
     status === 'downloading-model'
-      ? 'Setting up the local AI model...'
+      ? t('meeting.settingUpModel')
       : status === 'queued'
-        ? 'Queued for notes...'
+        ? t('meeting.queuedForNotes')
         : progress == null
-          ? 'Preparing notes...'
+          ? t('meeting.preparingNotes')
           : progress >= NOTES_WRITER_PROGRESS_END
-            ? 'Shaping notes...'
-            : 'Generating notes...'
+            ? t('meeting.shapingNotes')
+            : t('meeting.generatingNotes')
 
   return (
     <div
@@ -156,8 +159,7 @@ function NotesGeneratingPlaceholder({
         )}
       </div>
       <p className="mt-1 pl-[18px] text-[11.5px] leading-relaxed text-ink-faint">
-        AutoDoc is writing structured notes from the transcript, right on this device. This can take
-        a few minutes for longer meetings.
+        {t('meeting.writingNotes')}
       </p>
       {status === 'segmenting' && progress != null && (
         <div className="mt-3 ml-[18px] h-1 overflow-hidden rounded-full bg-bg-accent">
@@ -278,6 +280,7 @@ function EditableText({
 }
 
 export function MeetingDetail() {
+  const t = useT()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -1362,10 +1365,10 @@ export function MeetingDetail() {
   const notesActionsDisabled =
     detail?.isFinalizing === true || notesGenerationInFlight || !hasNotesContent
   const notesActionsDisabledReason = detail?.isFinalizing
-    ? 'Notes are available after this recording finishes.'
+    ? t('meeting.exportDisabledAfterRecording')
     : notesGenerationInFlight
-      ? 'Notes are available when generation finishes.'
-      : 'There aren’t any notes to copy or export.'
+      ? t('meeting.exportDisabledGenerating')
+      : t('meeting.exportDisabledEmpty')
 
   const groupByTopic = (items: Segment[]): { topic: string | null; items: Segment[] }[] => {
     const groups: { topic: string | null; items: Segment[] }[] = []
@@ -1407,7 +1410,7 @@ export function MeetingDetail() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
+      <div className="px-6 py-4 border-b border-border flex flex-wrap items-start justify-between gap-4 min-w-0">
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 text-[12px]">
             <button
@@ -1438,7 +1441,7 @@ export function MeetingDetail() {
             />
           </div>
           {detail && (
-            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
+            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
               <span>
                 {new Date(detail.date).toLocaleDateString('en-US', {
                   weekday: 'short',
@@ -1481,7 +1484,7 @@ export function MeetingDetail() {
           role="status"
           className="mb-3 rounded-lg border border-border-subtle px-3 py-2 text-sm text-ink-muted"
         >
-          Reprocessing failed. Your previous transcript and notes are still available.
+          {t('meeting.reprocessFailed')}
         </p>
       )}
       <div className="flex items-end justify-between gap-4 border-b border-border px-6">
@@ -1496,7 +1499,11 @@ export function MeetingDetail() {
                   : 'text-ink-faint hover:text-ink-muted'
               }`}
             >
-              {tab === 'notes' ? 'Notes' : tab === 'transcript' ? 'Transcript' : 'Settings'}
+              {tab === 'notes'
+                ? t('meeting.notes')
+                : tab === 'transcript'
+                  ? t('meeting.transcript')
+                  : t('meeting.settings')}
             </button>
           ))}
         </div>
@@ -1514,7 +1521,7 @@ export function MeetingDetail() {
       <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-6" data-content-scroll>
         {detail?.isFinalizing && (
           <div className="mb-4 rounded-xl border border-border bg-bg-card px-4 py-3 text-[12px] text-ink-muted">
-            Wrapping up this recording. It should finish appearing in a moment.
+            {t('meeting.wrappingUp')}
           </div>
         )}
         {activeTab === 'notes' ? (
@@ -1524,11 +1531,11 @@ export function MeetingDetail() {
               segmentationActivity?.activity === 'waiting-for-local-ai' && (
                 <div
                   role="status"
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-snug text-amber-900"
+                  className="flex items-center gap-2 rounded-lg border border-clay/30 bg-clay-light px-3 py-2 text-[11.5px] leading-snug text-clay-dark"
                 >
                   <svg
                     aria-hidden="true"
-                    className="h-3.5 w-3.5 shrink-0 text-amber-700"
+                    className="h-3.5 w-3.5 shrink-0 text-clay-dark"
                     viewBox="0 0 20 20"
                     fill="none"
                     stroke="currentColor"
@@ -1538,16 +1545,16 @@ export function MeetingDetail() {
                     <path d="M10 6.5v3.9l2.6 1.5" />
                   </svg>
                   <p>
-                    <span className="font-semibold">Notes are taking longer than usual.</span>{' '}
-                    AutoDoc is still waiting for the local AI model to respond.
+                    <span className="font-semibold">{t('meeting.notesSlowTitle')}</span>{' '}
+                    {t('meeting.notesSlowBody')}
                   </p>
                 </div>
               )}
             {memoryCallout}
             {!showMemoryCallout && (showHardFailCallout || layoutDegraded) && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+              <div className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
                 <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
                     <svg
                       aria-hidden="true"
                       className="h-4 w-4"
@@ -1572,13 +1579,15 @@ export function MeetingDetail() {
                         onClick={handleReprocessNotes}
                         className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
                       >
-                        {segmentationErrorCode === 'scan_or_persist' ? 'Regenerate notes' : 'Try again'}
+                        {segmentationErrorCode === 'scan_or_persist'
+                          ? t('meeting.regenerateNotes')
+                          : t('meeting.tryAgain')}
                       </button>
                       <button
                         onClick={() => setActiveTab('transcript')}
                         className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg border border-border text-ink-muted hover:text-ink hover:bg-bg-accent transition-colors"
                       >
-                        View transcript
+                        {t('meeting.viewTranscript')}
                       </button>
                     </div>
                   </div>
@@ -1612,12 +1621,12 @@ export function MeetingDetail() {
                 <div className="bg-bg-card border border-border rounded-xl px-5 py-8 text-center">
                   <p className="text-[12.5px] font-medium text-ink-muted">
                     {segmentationStatus === 'pending'
-                      ? 'Notes will appear here once the transcript is ready.'
-                      : 'No notes for this meeting yet.'}
+                      ? t('meeting.notesWhenReady')
+                      : t('meeting.noNotesYet')}
                   </p>
                   {segmentationStatus !== 'pending' && (
                     <p className="mt-1 text-[11.5px] text-ink-faint">
-                      You can generate them from Settings → Notes → Reprocess.
+                      {t('meeting.generateFromSettings')}
                     </p>
                   )}
                 </div>
@@ -1632,7 +1641,7 @@ export function MeetingDetail() {
                       <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-ink" />
                         <span className="text-[11px] font-bold text-ink tracking-[0.03em] uppercase">
-                          {SEGMENT_LABELS[category]}
+                          {t(`segment.${category}` as MessageKey)}
                         </span>
                         {items.length > 0 && (
                           <span className="text-[10px] text-ink-faint ml-1">({items.length})</span>
@@ -1643,21 +1652,23 @@ export function MeetingDetail() {
                           onClick={() => addSegment(category)}
                           className="text-[11px] text-ink-faint hover:text-sage transition-colors"
                         >
-                          + Add
+                          {t('meeting.add')}
                         </button>
                       )}
                     </div>
                     {items.length === 0 ? (
                       <p className="text-[12px] text-ink-muted leading-relaxed">
                         {segmentationStatus === 'segmenting'
-                          ? 'Analyzing transcript...'
+                          ? t('meeting.analyzingTranscript')
                           : segmentationStatus === 'no-notes'
-                            ? 'AutoDoc could not turn this transcript into structured notes. The transcript is still available below.'
+                            ? t('meeting.noStructuredNotes')
                             : segmentationStatus === 'failed'
                               ? segmentationErrorCode === 'ollama-insufficient-memory'
-                                ? 'AutoDoc could not generate notes because Ollama did not have enough available RAM.'
-                                : 'Segmentation failed. Try retrying above.'
-                              : `No ${SEGMENT_LABELS[category].toLowerCase()} recorded yet.`}
+                                ? t('meeting.ollamaMemory')
+                                : t('meeting.segmentationFailed')
+                              : t('meeting.noCategoryYet', {
+                                  category: t(`segment.${category}` as MessageKey)
+                                })}
                       </p>
                     ) : (
                       <div className="flex flex-col gap-3">
@@ -1838,9 +1849,9 @@ export function MeetingDetail() {
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[12.5px] font-semibold text-ink">Transcript</div>
+                    <div className="text-[12.5px] font-semibold text-ink">{t('meeting.transcript')}</div>
                     <div className="text-[11px] text-ink-faint">
-                      Re-transcribe audio and regenerate notes from the new transcript
+                      {t('meeting.reprocessTranscriptHint')}
                     </div>
                   </div>
                   <button
@@ -1854,19 +1865,17 @@ export function MeetingDetail() {
                     className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
-                      ? 'Processing...'
+                      ? t('meeting.processing')
                       : transcriptionStatus === 'queued' || transcriptionStatus === 'downloading'
-                        ? 'Queued...'
-                        : 'Reprocess'}
+                        ? t('meeting.queued')
+                        : t('meeting.reprocess')}
                   </button>
                 </div>
                 <div className="border-t border-border" />
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[12.5px] font-semibold text-ink">Notes</div>
-                    <div className="text-[11px] text-ink-faint">
-                      Regenerate AI notes from the existing transcript
-                    </div>
+                    <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
+                    <div className="text-[11px] text-ink-faint">{t('meeting.reprocessNotesHint')}</div>
                   </div>
                   <button
                     onClick={handleReprocessNotes}
@@ -1879,11 +1888,11 @@ export function MeetingDetail() {
                     className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {segmentationStatus === 'segmenting'
-                      ? 'Processing...'
+                      ? t('meeting.processing')
                       : segmentationStatus === 'queued' ||
                           segmentationStatus === 'downloading-model'
-                        ? 'Queued...'
-                        : 'Reprocess'}
+                        ? t('meeting.queued')
+                        : t('meeting.reprocess')}
                   </button>
                 </div>
               </div>
@@ -1892,22 +1901,22 @@ export function MeetingDetail() {
             {/* Danger zone */}
             <div className="bg-bg-card border border-clay/20 rounded-xl p-5">
               <h3 className="text-[12px] font-bold text-clay tracking-[0.03em] uppercase mb-1">
-                Danger Zone
+                {t('meeting.dangerZone')}
               </h3>
-              <p className="text-[11.5px] text-ink-muted mb-4">This action cannot be undone.</p>
+              <p className="text-[11.5px] text-ink-muted mb-4">{t('meeting.cannotUndo')}</p>
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-[12.5px] font-semibold text-ink">Delete recording</div>
-                  <div className="text-[11px] text-ink-faint">
-                    Permanently remove all audio, video, transcript, and notes
+                  <div className="text-[12.5px] font-semibold text-ink">
+                    {t('meeting.deleteRecording')}
                   </div>
+                  <div className="text-[11px] text-ink-faint">{t('meeting.deleteRecordingHint')}</div>
                 </div>
                 {!showDeleteConfirm ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
                     className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay hover:bg-clay/20 transition-colors"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -1915,13 +1924,13 @@ export function MeetingDetail() {
                       onClick={() => setShowDeleteConfirm(false)}
                       className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg text-ink-faint hover:text-ink transition-colors"
                     >
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                     <button
                       onClick={handleDelete}
-                      className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-white hover:bg-clay/90 transition-colors"
+                      className="i18n-btn px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay text-on-brand hover:bg-clay/90 transition-colors"
                     >
-                      Confirm Delete
+                      {t('meeting.confirmDelete')}
                     </button>
                   </div>
                 )}

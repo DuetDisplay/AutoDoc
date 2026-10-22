@@ -208,7 +208,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
             features={[
               {
                 icon: '✅',
-                iconBg: 'bg-[#FEF3C7]',
+                iconBg: 'bg-clay-light',
                 title: 'Summary',
                 description: 'A short overview of the meeting'
               },

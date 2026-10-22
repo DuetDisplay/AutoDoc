@@ -40,7 +40,7 @@ export function SpeakerRenameDropdown({
   return (
     <div
       ref={ref}
-      className="absolute top-full left-0 mt-1 z-50 bg-bg-card border border-border rounded-lg shadow-lg min-w-[200px]"
+      className="absolute top-full left-0 mt-1 z-50 bg-bg-card border border-border rounded-lg shadow-lg min-w-[12rem] max-w-[calc(100vw-2rem)]"
     >
       {suggestions && suggestions.length > 0 && (
         <>

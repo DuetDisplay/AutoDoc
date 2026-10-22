@@ -62,6 +62,7 @@ vi.mock('../services/main-window', () => ({ getMainWindow: mocks.getMainWindow }
 vi.mock('electron', () => ({
   app: { hide: mocks.appHide },
   BrowserWindow: mocks.FakeNotificationWindow,
+  nativeTheme: { shouldUseDarkColors: false, themeSource: 'system' },
   screen: {
     getPrimaryDisplay: () => ({
       workArea: { x: 0, y: 0, width: 1440, height: 900 }

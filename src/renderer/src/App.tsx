@@ -176,8 +176,8 @@ function UpdateReadyPrompt({
 
   if (showUpToDateBanner) {
     return (
-      <div className="mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 flex items-start gap-3 shadow-sm animate-[slideDown_300ms_ease]">
-        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-sage shadow-[inset_0_0_0_1px_rgba(122,158,126,0.34)] [animation:checkCirclePop_420ms_ease-out]">
+      <div className="mx-6 mt-2 mb-0 bg-sage-light border border-sage/25 rounded-lg px-4 py-3 flex flex-wrap items-start gap-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
+        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-bg-card text-sage shadow-[inset_0_0_0_1px_rgba(122,158,126,0.34)] [animation:checkCirclePop_420ms_ease-out]">
           <svg
             aria-hidden="true"
             viewBox="0 0 20 20"
@@ -205,7 +205,7 @@ function UpdateReadyPrompt({
           type="button"
           aria-label="Dismiss up to date message"
           onClick={() => setShowUpToDateBanner(false)}
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark/70 transition-colors hover:bg-white/70 hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark/70 transition-colors hover:bg-bg-card hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
         >
           <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none">
             <path
@@ -255,7 +255,7 @@ function UpdateReadyPrompt({
   }
 
   return (
-    <div className="mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 flex items-center gap-3 shadow-sm animate-[slideDown_300ms_ease]">
+    <div className="mx-6 mt-2 mb-0 bg-bg-card border border-sage/30 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3 shadow-sm animate-[slideDown_300ms_ease] min-w-0">
       <span className="h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className="text-[12px] font-semibold text-ink">
@@ -280,7 +280,7 @@ function UpdateReadyPrompt({
         type="button"
         onClick={handleRestart}
         disabled={isInstalling || Boolean(installBlockedReason)}
-        className="text-[12px] font-semibold text-white bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
+        className="i18n-btn text-[12px] font-semibold text-on-brand bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
       >
         {isInstalling ? 'Restarting...' : 'Restart'}
       </button>
@@ -1007,14 +1007,14 @@ export default function App() {
         }
         onVisibilityChange={setLanguageAnnouncementVisible}
       />
-      <div className="flex h-screen bg-bg-primary relative">
+      <div className="flex h-screen min-w-0 overflow-x-hidden bg-bg-primary relative">
         {/* Top drag region for moving the window */}
         <div
           className="absolute top-0 left-0 right-0 h-[52px] z-10"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <Sidebar />
-        <main className="flex-1 overflow-hidden flex flex-col pt-[52px]">
+        <main className="flex-1 min-w-0 overflow-hidden flex flex-col pt-[52px]">
           <RecordingBanner
             isRecording={isRecording}
             videoDisabled={videoDisabled}

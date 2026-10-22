@@ -96,7 +96,7 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
       {!availability && error ? (
         <button
           onClick={() => void load()}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold"
         >
           Retry
         </button>
@@ -104,7 +104,7 @@ export function MeetingLanguageStep({ onNext }: { onNext: () => void }) {
         <button
           onClick={() => void continueSetup()}
           disabled={!availability || saving}
-          className="px-6 py-2.5 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
+          className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
         >
           {saving ? 'Saving…' : availability ? 'Continue' : 'Loading languages…'}
         </button>

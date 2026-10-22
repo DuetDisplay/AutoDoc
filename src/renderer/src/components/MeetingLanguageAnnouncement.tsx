@@ -104,7 +104,7 @@ export function MeetingLanguageAnnouncement({
           ref={chooseButton}
           disabled={saving}
           onClick={() => void dismiss(true)}
-          className="rounded-lg bg-sage-dark px-4 py-2 text-[13px] font-semibold text-white hover:bg-sage-dark/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-50"
+          className="i18n-btn rounded-lg bg-sage-dark px-4 py-2 text-[13px] font-semibold text-on-brand hover:bg-sage-dark/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-50"
         >
           Choose language
         </button>

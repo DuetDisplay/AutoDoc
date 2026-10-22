@@ -15,6 +15,7 @@ import { getActiveCaptureProcessIdsWindows } from './windows-meeting-detector'
 import { logAutodocEvent, logAutodocFailure } from './autodoc-log'
 import { getE2EDetectionState } from './e2e-fixtures'
 import { focusMainWindow, getMainWindow } from './main-window'
+import { tMain } from './ui-locale'
 
 const POLL_INTERVAL_MS = 3_000
 const EVENT_WINDOW_MS = 10 * 60_000 // Suppress pre-start prompts when an event begins within 10 minutes
@@ -1262,7 +1263,7 @@ export class DetectionService {
     providerId: string | null,
     event: CalendarEvent | null = null
   ): void {
-    const body = 'Would you like to start AI notes?'
+    const body = tMain('recording.wouldYouLikeToStart')
 
     this.showBanner(
       'start_prompt',
@@ -1276,7 +1277,7 @@ export class DetectionService {
       {
         title,
         body,
-        primaryActionLabel: 'Start AI Notes',
+        primaryActionLabel: tMain('recording.startNotes'),
         kind: 'meeting-detection',
         suppressAppActivationWhileVisible: true,
         onPrimaryAction: () => {

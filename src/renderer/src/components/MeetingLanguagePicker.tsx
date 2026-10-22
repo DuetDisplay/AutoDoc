@@ -7,10 +7,8 @@ import {
   type MeetingLanguageAvailability,
   type MeetingLanguageCode
 } from '../../../shared/meeting-language'
-import {
-  meetingLanguageSelectableNote,
-  OFFLINE_DOWNLOAD_NOTE
-} from '../services/meeting-language-copy'
+import { meetingLanguageSelectableNote } from '../services/meeting-language-copy'
+import { useT } from '../services/i18n'
 
 interface MeetingLanguagePickerProps {
   value: MeetingLanguageCode
@@ -59,6 +57,7 @@ export function MeetingLanguagePicker({
   availability = UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
   offline = false
 }: MeetingLanguagePickerProps) {
+  const t = useT()
   // Available languages first, then locked ones under their own heading.
   const options = [
     ...MEETING_LANGUAGE_DEFINITIONS.filter((definition) =>
@@ -200,7 +199,7 @@ export function MeetingLanguagePicker({
   return (
     <div
       ref={rootRef}
-      className="relative shrink-0"
+      className="relative min-w-0 max-w-full"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           setIsOpen(false)
@@ -211,7 +210,7 @@ export function MeetingLanguagePicker({
         ref={triggerRef}
         type="button"
         disabled={disabled}
-        aria-label={`Meeting language: ${selected.label}`}
+        aria-label={t('meeting.languageAria', { language: selected.label })}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={listboxId}
@@ -223,9 +222,9 @@ export function MeetingLanguagePicker({
           }
         }}
         onKeyDown={handleTriggerKeyDown}
-        className="flex min-w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-wait disabled:opacity-60"
+        className="flex min-w-0 max-w-full w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium leading-snug text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-wait disabled:opacity-60"
       >
-        <span>{selected.label}</span>
+        <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">{selected.label}</span>
         <svg
           aria-hidden="true"
           focusable="false"
@@ -247,9 +246,9 @@ export function MeetingLanguagePicker({
         <div
           id={listboxId}
           role="listbox"
-          aria-label="Meeting language options"
+          aria-label={t('meeting.languageOptionsAria')}
           style={{ maxHeight: placement.maxHeight }}
-          className={`absolute right-0 z-50 w-64 overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg ${
+          className={`absolute right-0 z-50 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-bg-card p-1.5 shadow-lg ${
             placement.above ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
           }`}
         >
@@ -261,7 +260,7 @@ export function MeetingLanguagePicker({
             const selectableNote = isLocked
               ? null
               : offline && needsDownload
-                ? OFFLINE_DOWNLOAD_NOTE
+                ? t('picker.offlineDownload')
                 : meetingLanguageSelectableNote(engineState)
             const lockedReason =
               isLocked && engineState?.availability === 'locked' ? engineState.reason : null
@@ -273,8 +272,8 @@ export function MeetingLanguagePicker({
                     className="mx-1 mb-1 mt-1.5 border-t border-border-subtle px-2 pb-1 pt-2 text-[10px] font-medium text-ink-faint"
                   >
                     {navigator.userAgent.includes('Windows')
-                      ? WINDOWS_LOCKED_MEETING_LANGUAGES_HEADING
-                      : LOCKED_MEETING_LANGUAGES_HEADING}
+                      ? t('picker.needsPowerfulPc')
+                      : t('picker.needsMemory')}
                   </div>
                 )}
                 <button
@@ -298,8 +297,8 @@ export function MeetingLanguagePicker({
                   }`}
                 >
                   <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="flex items-baseline gap-2">
-                      <span>{definition.label}</span>
+                    <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-pretty [overflow-wrap:anywhere]">{definition.label}</span>
                       {definition.code === 'en' && (
                         <span className="text-[10px] font-medium text-ink-faint">
                           Default · optimized

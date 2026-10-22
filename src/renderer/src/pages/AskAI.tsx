@@ -12,6 +12,7 @@ import { useChatStore } from '../stores/chat'
 import { trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import type { ChatClarificationOption } from '../../../preload/ipc'
+import { useT } from '../services/i18n'
 
 let fallbackRequestIdCounter = 0
 const FIRST_TOKEN_TIMEOUT_MS = 45_000
@@ -26,6 +27,7 @@ function createChatRequestId(): string {
 }
 
 export function AskAI(): ReactElement {
+  const t = useT()
   const {
     messages,
     draftInput,
@@ -101,7 +103,7 @@ export function AskAI(): ReactElement {
     if (activeRequestIdRef.current !== requestId) return
     updateMessage(
       messageId,
-      'Sorry, this is taking longer than expected. Please try again.',
+      t('askAi.timeout'),
       undefined,
       'timed_out'
     )
@@ -172,7 +174,7 @@ export function AskAI(): ReactElement {
         if (activeRequestIdRef.current !== requestId) return
         updateMessage(
           assistantMessageId,
-          'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+          t('askAi.failed'),
           undefined,
           'failed'
         )
@@ -217,7 +219,7 @@ export function AskAI(): ReactElement {
       if (activeRequestIdRef.current !== requestId) return
       updateMessage(
         assistantMessageId,
-        'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+        t('askAi.failed'),
         undefined,
         'failed'
       )
@@ -285,7 +287,7 @@ export function AskAI(): ReactElement {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title="Ask AI"
+        title={t('askAi.title')}
         action={
           <button
             type="button"
@@ -293,7 +295,7 @@ export function AskAI(): ReactElement {
             disabled={messages.length === 0 && !draftInput.trim()}
             className="px-3 py-1.5 rounded-lg border border-border bg-bg-card text-[12px] font-medium text-ink hover:border-sage hover:bg-sage/5 transition-colors disabled:opacity-40"
           >
-            New chat
+            {t('askAi.newChat')}
           </button>
         }
       />
@@ -316,14 +318,11 @@ export function AskAI(): ReactElement {
                 />
               </svg>
             </div>
-            <p className="text-ink-muted text-[13px] text-center max-w-xs">
-              Ask questions about your meetings. I&apos;ll use your recent transcripts and notes to
-              answer.
+            <p className="text-ink-muted text-[13px] text-center max-w-xs text-pretty">
+              {t('askAi.emptyHint')}
             </p>
             {ollamaReady === false && (
-              <p className="text-clay text-[11px] mt-1">
-                Local AI is reconnecting in the background. Try again in a few seconds.
-              </p>
+              <p className="text-clay text-[11px] mt-1 text-pretty">{t('askAi.reconnecting')}</p>
             )}
           </div>
         )}
@@ -338,7 +337,7 @@ export function AskAI(): ReactElement {
                 <div
                   className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
                     msg.role === 'user'
-                      ? 'bg-sage text-white rounded-br-md'
+                      ? 'bg-sage text-on-brand rounded-br-md'
                       : 'bg-bg-card border border-border text-ink rounded-bl-md'
                   }`}
                 >
@@ -406,7 +405,7 @@ export function AskAI(): ReactElement {
             value={draftInput}
             onChange={(e) => setDraftInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your meetings..."
+            placeholder={t('askAi.placeholder')}
             disabled={loading}
             className="flex-1 px-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors disabled:opacity-50"
             autoFocus
@@ -415,20 +414,20 @@ export function AskAI(): ReactElement {
             <button
               type="button"
               onClick={handleStop}
-              aria-label="Stop generating"
-              className="px-4 py-2.5 bg-clay text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
+              aria-label={t('askAi.stopGenerating')}
+              className="i18n-btn px-4 py-2.5 bg-clay text-on-brand rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5"
             >
-              <span className="w-2.5 h-2.5 rounded-[2px] bg-white" />
-              Stop
+              <span className="w-2.5 h-2.5 rounded-[2px] bg-on-brand" />
+              {t('askAi.stop')}
             </button>
           ) : (
             <button
               type="button"
               onClick={handleSend}
               disabled={!draftInput.trim()}
-              className="px-4 py-2.5 bg-sage text-white rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+              className="i18n-btn px-4 py-2.5 bg-sage text-on-brand rounded-lg text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
             >
-              Send
+              {t('askAi.send')}
             </button>
           )}
         </div>

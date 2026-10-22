@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('electron', () => ({
   app: { setLoginItemSettings: vi.fn() },
-  BrowserWindow: { getAllWindows: vi.fn(() => []) },
-  ipcMain: { handle: vi.fn() }
+  BrowserWindow: { getAllWindows: vi.fn(() => []), prototype: { setBackgroundColor: vi.fn() } },
+  ipcMain: { handle: vi.fn() },
+  nativeTheme: {
+    themeSource: 'system',
+    shouldUseDarkColors: false,
+    on: vi.fn()
+  }
 }))
 
 const { getWindowsMeetingLanguageAvailability } = vi.hoisted(() => ({
@@ -437,7 +442,7 @@ describe('PrefsStore', () => {
 
     const send = vi.fn()
     vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
-      { webContents: { send } }
+      { webContents: { send }, setBackgroundColor: vi.fn() }
     ] as unknown as ReturnType<typeof BrowserWindow.getAllWindows>)
     const handler = registration[1] as unknown as (event: unknown, visible: boolean) => void
 
@@ -445,6 +450,40 @@ describe('PrefsStore', () => {
 
     expect(store.getVideoWatermarkVisible()).toBe(false)
     expect(send).toHaveBeenCalledWith('prefs:video-watermark-visible-changed', false)
+  })
+
+  it('broadcasts appearance and app language changes', () => {
+    const send = vi.fn()
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+      { webContents: { send }, setBackgroundColor: vi.fn() }
+    ] as unknown as ReturnType<typeof BrowserWindow.getAllWindows>)
+    registerPrefsIpc(store)
+    const appearanceRegistration = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.findLast(([channel]) => channel === 'prefs:set-appearance')
+    const languageRegistration = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.findLast(([channel]) => channel === 'prefs:set-ui-language')
+    if (!appearanceRegistration || !languageRegistration) {
+      throw new Error('Expected appearance and app language handlers to be registered')
+    }
+
+    const setAppearance = appearanceRegistration[1] as unknown as (
+      event: unknown,
+      appearance: string
+    ) => void
+    const setUiLanguage = languageRegistration[1] as unknown as (
+      event: unknown,
+      language: string
+    ) => void
+
+    setAppearance({}, 'dark')
+    setUiLanguage({}, 'ko')
+
+    expect(store.getAppearance()).toBe('dark')
+    expect(store.getUiLanguage()).toBe('ko')
+    expect(send).toHaveBeenCalledWith('prefs:appearance-changed', 'dark')
+    expect(send).toHaveBeenCalledWith('prefs:ui-language-changed', 'ko')
   })
 
   it('persists the low-memory Mac processing banner dismissal flag', () => {

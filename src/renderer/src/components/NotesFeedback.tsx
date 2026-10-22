@@ -188,7 +188,7 @@ export function NotesFeedback({
               <button
                 type="submit"
                 disabled={sending}
-                className="rounded-lg bg-sage-dark px-4 py-2 font-semibold text-white disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage"
+                className="i18n-btn rounded-lg bg-sage-dark px-4 py-2 font-semibold text-on-brand disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage"
               >
                 {sending
                   ? 'Sending…'

@@ -24,7 +24,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
       </p>
       <button
         onClick={onNext}
-        className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+        className="i18n-btn px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
       >
         Get Started →
       </button>

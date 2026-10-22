@@ -26,11 +26,11 @@ const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; className: str
   },
   complete: {
     label: 'Transcribed',
-    className: 'text-green-700 bg-green-50'
+    className: 'text-sage-dark bg-sage-light'
   },
   failed: {
     label: 'Failed — Retry',
-    className: 'text-red-700 bg-red-50 cursor-pointer hover:bg-red-100'
+    className: 'text-clay-dark bg-clay-light cursor-pointer hover:bg-clay/20'
   }
 }
 
@@ -87,7 +87,7 @@ export function TranscriptionBadge({
   return (
     <Tag
       {...(Tag === 'button' ? { type: 'button' as const, disabled: retryPending } : {})}
-      className={`relative text-[10px] font-medium px-2 py-0.5 rounded-full overflow-hidden ${config.className} ${isMemoryFailure ? 'cursor-default hover:bg-red-50' : ''}`}
+      className={`relative max-w-full text-[10px] font-medium leading-snug px-2 py-0.5 rounded-full overflow-hidden text-pretty [overflow-wrap:anywhere] ${config.className} ${isMemoryFailure ? 'cursor-default hover:bg-clay/20' : ''}`}
       onClick={
         Tag === 'button'
           ? () => {

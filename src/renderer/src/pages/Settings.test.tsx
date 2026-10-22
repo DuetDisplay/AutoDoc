@@ -6,6 +6,8 @@ import type {
   WindowsMeetingLanguageAvailabilityInfo
 } from '../../../shared/meeting-language'
 import { Settings } from './Settings'
+import { I18nProvider } from '../services/i18n'
+import { ThemeProvider } from '../services/theme'
 import {
   createCalendarAccount,
   createRuntimeInfo,
@@ -966,5 +968,62 @@ describe('Settings Windows meeting languages', () => {
     ).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('es')
     expect(api.invoke).toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
+  })
+
+  it('persists appearance and offers to switch the app language after a meeting language change', async () => {
+    const state = {
+      meetingLanguage: 'en',
+      appearance: 'auto',
+      uiLanguage: 'en'
+    }
+
+    const api = installMockElectronApi({
+      'app:get-version': '0.1.11',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-meeting-language': () => state.meetingLanguage,
+      'prefs:set-meeting-language': (language: string) => {
+        state.meetingLanguage = language
+      },
+      'prefs:get-appearance': () => state.appearance,
+      'prefs:set-appearance': (appearance: string) => {
+        state.appearance = appearance
+      },
+      'prefs:get-ui-language': () => state.uiLanguage,
+      'prefs:set-ui-language': (language: string) => {
+        state.uiLanguage = language
+      },
+      'calendar:get-accounts': [],
+      'calendar:get-events': []
+    })
+
+    const user = userEvent.setup()
+    render(
+      <ThemeProvider>
+        <I18nProvider>
+          <Settings />
+        </I18nProvider>
+      </ThemeProvider>
+    )
+
+    const dark = await screen.findByRole('button', { name: 'Dark' })
+    await user.click(dark)
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('prefs:set-appearance', 'dark')
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
+    await user.click(screen.getByRole('option', { name: 'Korean' }))
+
+    expect(
+      await screen.findByText('Also use 한국어 for the app?')
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use 한국어' }))
+    await waitFor(() => {
+      expect(api.invoke).toHaveBeenCalledWith('prefs:set-ui-language', 'ko')
+    })
   })
 })

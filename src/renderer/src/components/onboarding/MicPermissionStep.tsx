@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { recordPersistentDiagnosticAction } from '../../services/diagnostic-trail'
 import { trackEvent } from '../../services/analytics'
+import { useT } from '../../services/i18n'
 
 export function MicPermissionStep({
   onNext,
@@ -9,6 +10,7 @@ export function MicPermissionStep({
   onNext: () => void
   allowAutoAdvance?: boolean
 }) {
+  const t = useT()
   const [granted, setGranted] = useState(false)
   const [openedSettings, setOpenedSettings] = useState(false)
 
@@ -166,7 +168,7 @@ export function MicPermissionStep({
       </p>
 
       <div className="flex items-start gap-3 px-4 py-3 bg-bg-card border border-border rounded-xl text-left mb-7">
-        <div className="w-9 h-9 rounded-lg bg-[#FEF3C7] flex items-center justify-center text-[16px] shrink-0">
+        <div className="w-9 h-9 rounded-lg bg-clay-light flex items-center justify-center text-[16px] shrink-0">
           🎧
         </div>
         <div>
@@ -183,31 +185,31 @@ export function MicPermissionStep({
       {granted ? (
         <button
           onClick={() => void handleContinue()}
-          className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Continue →
+          {t('onboarding.continue')}
         </button>
       ) : openedSettings ? (
         <>
           <button
             onClick={() => void handleContinue()}
-            className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+            className="i18n-btn px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Continue →
+            {t('onboarding.continue')}
           </button>
           <button
             onClick={handleEnable}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Open Settings again
+            {t('onboarding.openSettingsAgain')}
           </button>
         </>
       ) : (
         <button
           onClick={handleEnable}
-          className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Enable Microphone
+          {t('onboarding.enableMicrophone')}
         </button>
       )}
     </div>

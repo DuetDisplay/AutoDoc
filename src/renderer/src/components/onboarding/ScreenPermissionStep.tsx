@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { trackEvent } from '../../services/analytics'
+import { useT } from '../../services/i18n'
 
 export function ScreenPermissionStep({
   onNext,
@@ -8,6 +9,7 @@ export function ScreenPermissionStep({
   onNext: () => void
   allowAutoAdvance?: boolean
 }) {
+  const t = useT()
   const [granted, setGranted] = useState(false)
   const [opened, setOpened] = useState(false)
   const [isRestoring, setIsRestoring] = useState(true)
@@ -135,38 +137,38 @@ export function ScreenPermissionStep({
       {isRestoring ? null : granted ? (
         <button
           onClick={() => void handleContinue()}
-          className="px-8 py-3 bg-sage text-white rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
+          className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Continue →
+          {t('onboarding.continue')}
         </button>
       ) : opened ? (
         <>
           <button
             onClick={() => void handleContinue()}
-            className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+            className="i18n-btn px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Continue →
+            {t('onboarding.continue')}
           </button>
           <button
             onClick={() => void handleOpenSettings()}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Open Settings again
+            {t('onboarding.openSettingsAgain')}
           </button>
         </>
       ) : (
         <>
           <button
             onClick={handleEnable}
-            className="px-8 py-3 bg-ink text-white rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
+            className="i18n-btn px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Enable Screen Recording
+            {t('onboarding.enableScreenRecording')}
           </button>
           <button
             onClick={onNext}
             className="block mx-auto mt-3 text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
           >
-            Skip for now
+            {t('onboarding.skipForNow')}
           </button>
         </>
       )}

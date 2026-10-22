@@ -1,10 +1,16 @@
 import Store from 'electron-store'
 import { app } from 'electron'
 import {
+  DEFAULT_APPEARANCE,
+  normalizeAppearance,
+  type AppearanceMode
+} from '../../shared/appearance'
+import {
   DEFAULT_MEETING_LANGUAGE,
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
+import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguageCode } from '../../shared/ui-language'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
@@ -21,6 +27,8 @@ interface PrefsSchema {
   diagnosticLogUploadConsent: boolean
   videoWatermarkVisible: boolean
   meetingLanguage: MeetingLanguageCode
+  appearance: AppearanceMode
+  uiLanguage: UiLanguageCode
   experimentalSpeakerDiarization: boolean
   lowSpecMacProcessingBannerDismissed: boolean
   notesEngineUpgradeEligible: boolean
@@ -42,6 +50,8 @@ function createPrefsStore(): Store<PrefsSchema> {
       diagnosticLogUploadConsent: false,
       videoWatermarkVisible: true,
       meetingLanguage: DEFAULT_MEETING_LANGUAGE,
+      appearance: DEFAULT_APPEARANCE,
+      uiLanguage: DEFAULT_UI_LANGUAGE,
       experimentalSpeakerDiarization: false,
       lowSpecMacProcessingBannerDismissed: false,
       notesEngineUpgradeEligible: false,
@@ -56,6 +66,14 @@ export function readInitialAnalyticsConsent(): boolean | null {
 
 export function readInitialDiagnosticLogUploadConsent(): boolean {
   return createPrefsStore().get('diagnosticLogUploadConsent')
+}
+
+export function readInitialAppearance(): AppearanceMode {
+  return normalizeAppearance(createPrefsStore().get('appearance'))
+}
+
+export function readInitialUiLanguage(): UiLanguageCode {
+  return normalizeUiLanguage(createPrefsStore().get('uiLanguage'))
 }
 
 export class PrefsStore {
@@ -163,6 +181,22 @@ export class PrefsStore {
 
   getMeetingLanguage(): MeetingLanguageCode {
     return normalizeMeetingLanguage(this.store.get('meetingLanguage'))
+  }
+
+  getAppearance(): AppearanceMode {
+    return normalizeAppearance(this.store.get('appearance'))
+  }
+
+  setAppearance(appearance: unknown): void {
+    this.store.set('appearance', normalizeAppearance(appearance))
+  }
+
+  getUiLanguage(): UiLanguageCode {
+    return normalizeUiLanguage(this.store.get('uiLanguage'))
+  }
+
+  setUiLanguage(language: unknown): void {
+    this.store.set('uiLanguage', normalizeUiLanguage(language))
   }
 
   setMeetingLanguage(language: unknown): void {

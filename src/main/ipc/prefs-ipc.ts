@@ -1,5 +1,9 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { applyNativeAppearance } from '../services/appearance-runtime'
+import { isAppearanceMode, normalizeAppearance, type AppearanceMode } from '../../shared/appearance'
+import { isUiLanguageCode, normalizeUiLanguage, type UiLanguageCode } from '../../shared/ui-language'
 import type { PrefsStore } from '../services/prefs-store'
+import { setMainUiLanguage } from '../services/ui-locale'
 import {
   isMeetingLanguageAvailable,
   isMeetingLanguageCode,
@@ -51,6 +55,20 @@ function broadcastExperimentalSpeakerDiarization(enabled: boolean): void {
   }
 }
 
+function broadcastAppearance(appearance: AppearanceMode): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('prefs:appearance-changed', appearance)
+  }
+}
+
+function broadcastUiLanguage(language: UiLanguageCode): void {
+  const windows = BrowserWindow.getAllWindows()
+  for (const win of windows) {
+    win.webContents.send('prefs:ui-language-changed', language)
+  }
+}
+
 export function registerPrefsIpc(
   prefsStore: PrefsStore,
   onAnalyticsConsentChanged?: (enabled: boolean) => void,
@@ -58,6 +76,9 @@ export function registerPrefsIpc(
   onExperimentalSpeakerDiarizationChanged?: (enabled: boolean) => void,
   getMeetingLanguageAvailability: () => MeetingLanguageAvailability = currentMeetingLanguageAvailability
 ): void {
+  applyNativeAppearance(prefsStore.getAppearance())
+  setMainUiLanguage(prefsStore.getUiLanguage())
+
   ipcMain.handle('prefs:get-onboarding-language-confirmed', () =>
     prefsStore.getOnboardingLanguageConfirmed()
   )
@@ -139,6 +160,33 @@ export function registerPrefsIpc(
   ipcMain.handle('prefs:set-video-watermark-visible', (_event, visible: boolean): void => {
     prefsStore.setVideoWatermarkVisible(visible)
     broadcastVideoWatermarkVisible(visible)
+  })
+
+  ipcMain.handle('prefs:get-appearance', (): AppearanceMode => {
+    return prefsStore.getAppearance()
+  })
+
+  ipcMain.handle('prefs:set-appearance', (_event, appearance: unknown): void => {
+    if (!isAppearanceMode(appearance)) {
+      throw new Error('This appearance setting is not supported.')
+    }
+    prefsStore.setAppearance(appearance)
+    applyNativeAppearance(normalizeAppearance(appearance))
+    broadcastAppearance(normalizeAppearance(appearance))
+  })
+
+  ipcMain.handle('prefs:get-ui-language', (): UiLanguageCode => {
+    return prefsStore.getUiLanguage()
+  })
+
+  ipcMain.handle('prefs:set-ui-language', (_event, language: unknown): void => {
+    if (!isUiLanguageCode(language)) {
+      throw new Error('This app language is not supported.')
+    }
+    const next = normalizeUiLanguage(language)
+    prefsStore.setUiLanguage(next)
+    setMainUiLanguage(next)
+    broadcastUiLanguage(next)
   })
 
   ipcMain.handle('prefs:get-meeting-language', (): MeetingLanguageCode => {

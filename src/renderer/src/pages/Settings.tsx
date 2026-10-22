@@ -1,7 +1,9 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
+import { CALENDAR_CONNECT_BUTTON_CLASS } from '../components/ConnectCalendar'
 import { PageHeader } from '../components/PageHeader'
 import { SpeechLicenses } from '../components/SpeechLicenses'
 import { MeetingLanguagePicker } from '../components/MeetingLanguagePicker'
+import { UiLanguagePicker } from '../components/UiLanguagePicker'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingStore } from '../stores/recording'
 import { useCalendarConnect } from '../hooks/useCalendarConnect'
@@ -36,6 +38,10 @@ import { notifyManualUpdateCheckStarted } from '../services/update-check-events'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { isNetworkErrorMessage } from '../services/network-errors'
 import { offlineMeetingLanguageMessage } from '../services/meeting-language-copy'
+import { APPEARANCE_MODES } from '../../../shared/appearance'
+import { UI_LANGUAGE_NATIVE_LABELS } from '../../../shared/ui-language'
+import { useI18n } from '../services/i18n'
+import { useAppearance } from '../services/theme'
 
 const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
   ? lazy(() =>
@@ -45,18 +51,24 @@ const FeedbackPromptQASimulator = __AUTODOC_QA_BUILD__
     )
   : null
 
-function getCalendarAccountLabel(account: CalendarAccount): string {
+function getCalendarAccountLabel(
+  account: CalendarAccount,
+  t: (key: 'settings.googleAccount' | 'settings.microsoftAccount') => string
+): string {
   const email = account.email.trim()
   if (email) {
     return email
   }
 
-  return account.provider === 'google' ? 'Google account' : 'Microsoft account'
+  return account.provider === 'google' ? t('settings.googleAccount') : t('settings.microsoftAccount')
 }
 
-function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
+function getCalendarSyncIssueMessage(
+  account: CalendarAccount,
+  t: (key: 'settings.syncUnsupportedMailbox' | 'settings.syncReconnectRequired') => string
+): string | null {
   if (account.syncIssue === 'unsupported-mailbox') {
-    return 'Calendar sync is unavailable for this Microsoft mailbox type.'
+    return t('settings.syncUnsupportedMailbox')
   }
   if (account.syncIssue === 'reconnect-required') {
     return account.provider === 'google'
@@ -68,6 +80,9 @@ function getCalendarSyncIssueMessage(account: CalendarAccount): string | null {
 }
 
 export function Settings() {
+  const { t, language: uiLanguage, setLanguage: setUiLanguage } = useI18n()
+  const { appearance, setAppearance } = useAppearance()
+  const [uiLanguageOffer, setUiLanguageOffer] = useState<MeetingLanguageCode | null>(null)
   const meetingLanguageSection = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const focusLanguage = () => {
@@ -353,7 +368,13 @@ export function Settings() {
           }
         }
         if (engineState?.availability === 'locked') {
-          setMeetingLanguageError(engineState.reason ?? "This language isn't available on this PC.")
+          setMeetingLanguageError(
+            engineState.reason ??
+              t('settings.meetingLanguageUnavailable', {
+                language: getMeetingLanguageDefinition(language).label,
+                machine: t('machine.pc')
+              })
+          )
           return
         }
         const needsEnsure =
@@ -375,13 +396,14 @@ export function Settings() {
       }
       await window.electronAPI.invoke('prefs:set-meeting-language', language)
       setMeetingLanguageState(language)
+      setUiLanguageOffer(language !== uiLanguage ? language : null)
       recordDiagnosticAction({
         category: 'settings',
         action: 'meeting_language_changed',
         details: { language }
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save the meeting language.'
+      const message = err instanceof Error ? err.message : t('settings.saveMeetingLanguageFailed')
       let savedLanguage: MeetingLanguageCode | null = null
       try {
         savedLanguage = normalizeMeetingLanguage(
@@ -409,9 +431,7 @@ export function Settings() {
   }
 
   const handleRemoveDownloadedComponents = async () => {
-    const confirmed = window.confirm(
-      'Remove the downloaded AI components from this machine? AutoDoc will download them again the next time they are needed.'
-    )
+    const confirmed = window.confirm(t('settings.removeDownloadsConfirm'))
     if (!confirmed) return
 
     setStorageNotice(null)
@@ -420,22 +440,16 @@ export function Settings() {
     try {
       const nextStorageInfo = await window.electronAPI.invoke('app:clear-downloaded-components')
       setStorageInfo(nextStorageInfo)
-      setStorageNotice(
-        'Downloaded AI components removed. AutoDoc will re-download them when needed.'
-      )
+      setStorageNotice(t('settings.removeDownloadsDone'))
     } catch (err) {
-      setStorageError(
-        err instanceof Error ? err.message : 'Failed to remove downloaded AI components.'
-      )
+      setStorageError(err instanceof Error ? err.message : t('settings.removeDownloadsFailed'))
     } finally {
       setIsRemovingDownloads(false)
     }
   }
 
   const handleResetLocalData = async () => {
-    const confirmed = window.confirm(
-      'Delete all local AutoDoc data and restart? This removes recordings, transcripts, settings, and downloaded AI components from this machine.'
-    )
+    const confirmed = window.confirm(t('settings.deleteAllDataConfirm'))
     if (!confirmed) return
 
     setStorageNotice(null)
@@ -443,19 +457,22 @@ export function Settings() {
     setIsResettingLocalData(true)
     try {
       await window.electronAPI.invoke('app:reset-local-data')
-      setStorageNotice('Restarting AutoDoc and clearing local data...')
+      setStorageNotice(t('settings.deleteAllDataRestarting'))
     } catch (err) {
       setIsResettingLocalData(false)
-      setStorageError(err instanceof Error ? err.message : 'Failed to delete local AutoDoc data.')
+      setStorageError(err instanceof Error ? err.message : t('settings.deleteAllDataFailed'))
     }
   }
 
   const uninstallGuidance =
     runtimeInfo?.platform === 'win32'
-      ? 'Windows uninstall can optionally remove AutoDoc local data. Use the controls here any time you want to reclaim space without uninstalling.'
-      : 'Deleting AutoDoc from Applications does not remove local data on macOS. Use the controls here to reclaim space or reset the app.'
+      ? t('settings.uninstallGuidanceWindows')
+      : t('settings.uninstallGuidanceMac')
 
-  const machineNoun = isWindows ? 'PC' : 'Mac'
+  const machineNoun = isWindows ? t('machine.pc') : t('machine.mac')
+  const offeredLanguageLabel = uiLanguageOffer
+    ? UI_LANGUAGE_NATIVE_LABELS[uiLanguageOffer]
+    : ''
   const pickerAvailability: MeetingLanguageAvailability = {
     ...meetingLanguageAvailability,
     languageStates
@@ -464,21 +481,66 @@ export function Settings() {
   const firstUseDownloadLabel = formatMeetingLanguageFirstUseDownload(
     languageStates[sizeLanguage]?.firstUseDownloadBytes ?? 0
   )
-  const meetingLanguageSetupLabel = getWhisperSetupLabel(meetingLanguageSetupStatus)
+  const meetingLanguageSetupLabel = getWhisperSetupLabel(meetingLanguageSetupStatus, t)
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Settings" />
+      <PageHeader title={t('settings.title')} />
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex flex-col gap-6 min-h-full">
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Calendars</h3>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('appearance.title')}</h3>
+            <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <p className="i18n-setting-copy text-[12px] text-ink-muted leading-relaxed text-pretty">
+                {t('appearance.description')}
+              </p>
+              <div
+                className="i18n-setting-control inline-flex flex-wrap rounded-lg border border-border-subtle bg-bg-card p-0.5"
+                role="group"
+                aria-label={t('appearance.title')}
+              >
+                {APPEARANCE_MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={appearance === mode}
+                    onClick={() => void setAppearance(mode)}
+                    className={`i18n-btn px-3 py-1.5 rounded-md text-[12px] font-medium leading-snug transition-colors ${
+                      appearance === mode
+                        ? 'bg-sage text-on-brand'
+                        : 'text-ink-muted hover:text-ink hover:bg-bg-accent'
+                    }`}
+                  >
+                    {t(`appearance.${mode}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('uiLanguage.title')}</h3>
+            <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <p className="i18n-setting-copy text-[12px] text-ink-muted leading-relaxed text-pretty">
+                {t('uiLanguage.description')}
+              </p>
+              <UiLanguagePicker
+                value={uiLanguage}
+                label={t('uiLanguage.title')}
+                onChange={(next) => {
+                  setUiLanguageOffer(null)
+                  void setUiLanguage(next)
+                }}
+              />
+            </div>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.calendars')}</h3>
 
             {accounts.length > 0 && (
               <div className="flex flex-col gap-2 mb-3">
                 {accounts.map((account) => (
                   <div key={account.id} className="flex flex-col gap-1">
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3 min-w-0">
                       {account.provider === 'google' ? (
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                           <path
@@ -506,19 +568,19 @@ export function Settings() {
                           <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
                         </svg>
                       )}
-                      <span className="text-[12px] text-ink-muted">
-                        {getCalendarAccountLabel(account)}
+                      <span className="min-w-0 flex-1 text-[12px] text-ink-muted [overflow-wrap:anywhere]">
+                        {getCalendarAccountLabel(account, t)}
                       </span>
                       <button
                         onClick={() => handleDisconnect(account.id)}
-                        className="text-[12px] font-medium text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
+                        className="i18n-btn text-[12px] font-medium leading-snug text-ink-muted bg-bg-accent px-3 py-1.5 rounded-lg border border-border-subtle hover:border-ink-muted transition-colors"
                       >
-                        Disconnect
+                        {t('settings.disconnect')}
                       </button>
                     </div>
-                    {getCalendarSyncIssueMessage(account) && (
-                      <p className="text-[11px] text-amber-700 ml-[26px]">
-                        {getCalendarSyncIssueMessage(account)}
+                    {getCalendarSyncIssueMessage(account, t) && (
+                      <p className="text-[11px] text-clay-dark ml-[26px] text-pretty">
+                        {getCalendarSyncIssueMessage(account, t)}
                       </p>
                     )}
                   </div>
@@ -526,11 +588,11 @@ export function Settings() {
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handleConnect('google')}
                 disabled={connectingProvider !== null}
-                className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+                className={CALENDAR_CONNECT_BUTTON_CLASS}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <path
@@ -550,12 +612,12 @@ export function Settings() {
                     fill="#EA4335"
                   />
                 </svg>
-                {connectingProvider === 'google' ? 'Connecting...' : 'Add Google Calendar'}
+                {connectingProvider === 'google' ? t('settings.connecting') : t('settings.addGoogle')}
               </button>
               <button
                 onClick={() => handleConnect('microsoft')}
                 disabled={connectingProvider !== null}
-                className="flex items-center gap-2 text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+                className={CALENDAR_CONNECT_BUTTON_CLASS}
               >
                 <svg width="14" height="14" viewBox="0 0 23 23" fill="none">
                   <rect x="1" y="1" width="10" height="10" fill="#F25022" />
@@ -563,29 +625,38 @@ export function Settings() {
                   <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
                   <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
                 </svg>
-                {connectingProvider === 'microsoft' ? 'Connecting...' : 'Add Microsoft Outlook'}
+                {connectingProvider === 'microsoft'
+                  ? t('settings.connecting')
+                  : t('settings.addMicrosoft')}
               </button>
             </div>
           </div>
-          <div ref={meetingLanguageSection} tabIndex={-1} aria-label="Meeting language settings">
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Meeting language</h3>
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-              <div>
-                <p className="text-[12px] text-ink-muted leading-relaxed">
-                  The language spoken in new recordings, including auto-record. Transcripts and
-                  notes are written in this language.
+          <div
+            ref={meetingLanguageSection}
+            tabIndex={-1}
+            aria-label={t('settings.meetingLanguageAria')}
+          >
+            <h3 className="text-[13px] font-semibold text-ink mb-2">
+              {t('settings.meetingLanguage')}
+            </h3>
+            <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div className="i18n-setting-copy">
+                <p className="text-[12px] text-ink-muted leading-relaxed text-pretty">
+                  {t('settings.meetingLanguageDescription')}
                 </p>
                 {meetingLanguageAvailability.restricted && (
-                  <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">
+                  <p className="mt-2 text-[11px] text-ink-muted leading-relaxed text-pretty">
                     {isWindows
-                      ? 'Languages other than English need larger AI models than this PC has the memory and processing power to run, so meetings here are in English.'
-                      : 'Languages other than English need larger AI models than this Mac’s 8 GB of memory can run, so meetings here are in English. They need 16 GB or more.'}
+                      ? t('settings.meetingLanguageRestrictedWindows')
+                      : t('settings.meetingLanguageRestrictedMac')}
                   </p>
                 )}
                 {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (
-                  <p role="status" className="mt-1 text-[11px] text-clay-dark">
-                    {getMeetingLanguageDefinition(meetingLanguage).label} isn&apos;t available on
-                    this {machineNoun}. New recordings use English.
+                  <p role="status" className="mt-1 text-[11px] text-clay-dark text-pretty">
+                    {t('settings.meetingLanguageUnavailable', {
+                      language: getMeetingLanguageDefinition(meetingLanguage).label,
+                      machine: machineNoun
+                    })}
                   </p>
                 )}
                 {firstUseDownloadLabel && (
@@ -599,61 +670,92 @@ export function Settings() {
                   </p>
                 )}
                 {meetingLanguageError && (
-                  <p role="alert" className="mt-1 text-[11px] text-clay-dark">
+                  <p role="alert" className="mt-1 text-[11px] text-clay-dark text-pretty">
                     {meetingLanguageError}
                   </p>
                 )}
+                {uiLanguageOffer && (
+                  <div className="mt-3 rounded-lg border border-sage/30 bg-sage-light px-3 py-2.5">
+                    <p className="text-[12px] font-semibold text-ink text-pretty">
+                      {t('uiLanguage.offerTitle', { language: offeredLanguageLabel })}
+                    </p>
+                    <p className="mt-1 text-[12px] text-ink-muted leading-relaxed text-pretty">
+                      {t('uiLanguage.offerBody', { language: offeredLanguageLabel })}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void setUiLanguage(uiLanguageOffer)
+                          setUiLanguageOffer(null)
+                        }}
+                        className="i18n-btn rounded-lg bg-sage px-3 py-1.5 text-[12px] font-medium leading-snug text-on-brand"
+                      >
+                        {t('uiLanguage.offerConfirm', { language: offeredLanguageLabel })}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUiLanguageOffer(null)}
+                        className="rounded-lg border border-border-subtle bg-bg-card px-3 py-1.5 text-[12px] font-medium leading-snug text-ink-muted"
+                      >
+                        {t('uiLanguage.offerKeep')}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-              <MeetingLanguagePicker
-                value={meetingLanguage}
-                disabled={isSavingMeetingLanguage || !runtimeInfo}
-                availability={pickerAvailability}
-                offline={!online}
-                onChange={(language) => void handleSetMeetingLanguage(language)}
-              />
+              <div className="i18n-setting-control">
+                <MeetingLanguagePicker
+                  value={meetingLanguage}
+                  disabled={isSavingMeetingLanguage || !runtimeInfo}
+                  availability={pickerAvailability}
+                  offline={!online}
+                  onChange={(language) => void handleSetMeetingLanguage(language)}
+                />
+              </div>
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Video playback</h3>
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-              <div>
-                <p className="text-[12px] font-semibold text-ink">AutoDoc watermark</p>
-                <p className="mt-0.5 text-[12px] text-ink-muted">
-                  Show “Meeting notes by AutoDoc” while watching recorded video. Original recordings
-                  stay unchanged.
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.videoPlayback')}</h3>
+            <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div className="i18n-setting-copy">
+                <p className="text-[12px] font-semibold text-ink text-pretty">
+                  {t('settings.watermarkTitle')}
+                </p>
+                <p className="mt-0.5 text-[12px] text-ink-muted text-pretty">
+                  {t('settings.watermarkDescription')}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => void handleToggleVideoWatermark()}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-ink-faint/30'}`}
                 aria-pressed={videoWatermarkVisible}
-                aria-label="Show AutoDoc watermark on recorded video"
+                aria-label={t('settings.watermarkAria')}
               >
                 <span
-                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${videoWatermarkVisible ? 'translate-x-5' : 'translate-x-0'}`}
+                  className={`block h-5 w-5 rounded-full bg-control-thumb transition-transform ${videoWatermarkVisible ? 'translate-x-5' : 'translate-x-0'}`}
                 />
               </button>
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Analytics & Crash Reports</h3>
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-              <div>
-                <p className="text-[12px] text-ink-muted">
-                  Share anonymous usage data and crash reports to help improve AutoDoc. Meeting
-                  content stays local, and technical logs are optional.
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.analytics')}</h3>
+            <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
+              <div className="i18n-setting-copy">
+                <p className="text-[12px] text-ink-muted text-pretty">
+                  {t('settings.analyticsDescription')}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => void handleToggleAnalytics()}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
                 aria-pressed={analyticsConsent === true}
-                aria-label="Toggle analytics and crash reports"
+                aria-label={t('settings.analyticsAria')}
               >
                 <span
-                  className={`block h-5 w-5 rounded-full bg-white transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
+                  className={`block h-5 w-5 rounded-full bg-control-thumb transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
                 />
               </button>
             </div>
@@ -664,107 +766,122 @@ export function Settings() {
                   checked={diagnosticLogUploadConsent}
                   onChange={() => void handleToggleDiagnosticLogUpload()}
                   disabled={analyticsConsent !== true}
-                  className="mt-0.5 h-4 w-4 rounded border-border-subtle text-sage focus:ring-sage disabled:opacity-50"
-                  aria-label="Attach technical app logs to error reports"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-border-subtle text-sage focus:ring-sage disabled:opacity-50"
+                  aria-label={t('settings.diagnosticLogsAria')}
                 />
-                <span className="text-[12px] text-ink-muted leading-relaxed">
+                <span className="min-w-0 text-[12px] text-ink-muted leading-relaxed text-pretty">
                   <strong className="text-ink font-semibold">
-                    Attach technical app logs to error reports
+                    {t('settings.diagnosticLogsTitle')}
                   </strong>{' '}
-                  when diagnostics are enabled. This can be off while analytics and crash reports
-                  stay on.
+                  {t('settings.diagnosticLogsDescription')}
                 </span>
               </label>
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Whisper Model</h3>
-            <p className="text-[12px] text-ink-muted">
-              {runtimeInfo?.whisperModel ?? 'Loading...'}
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.whisperModel')}</h3>
+            <p className="text-[12px] text-ink-muted [overflow-wrap:anywhere]">
+              {runtimeInfo?.whisperModel ?? t('settings.loading')}
             </p>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Ollama Model</h3>
-            <p className="text-[12px] text-ink-muted">{runtimeInfo?.ollamaModel ?? 'Loading...'}</p>
-          </div>
-          <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Storage Path</h3>
-            <p className="text-[12px] text-ink-muted font-mono">
-              {runtimeInfo?.storagePath ?? 'Loading...'}
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.ollamaModel')}</h3>
+            <p className="text-[12px] text-ink-muted [overflow-wrap:anywhere]">
+              {runtimeInfo?.ollamaModel ?? t('settings.loading')}
             </p>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">Storage</h3>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.storagePath')}</h3>
+            <p className="text-[12px] text-ink-muted font-mono [overflow-wrap:anywhere]">
+              {runtimeInfo?.storagePath ?? t('settings.loading')}
+            </p>
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.storage')}</h3>
             <div className="rounded-xl border border-border-subtle bg-bg-accent px-4 py-4">
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-ink">Downloaded AI components</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <span className="min-w-0 text-[12px] text-ink text-pretty">
+                    {t('settings.downloadedComponents')}
+                  </span>
                   <span className="text-[12px] font-medium text-ink">
                     {formatBytes(storageInfo?.downloadedComponentsBytes)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-ink">Recordings and transcripts</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <span className="min-w-0 text-[12px] text-ink text-pretty">
+                    {t('settings.recordingsAndTranscripts')}
+                  </span>
                   <span className="text-[12px] font-medium text-ink">
                     {formatBytes(storageInfo?.recordingsBytes)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-ink">Logs</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <span className="min-w-0 text-[12px] text-ink text-pretty">
+                    {t('settings.logs')}
+                  </span>
                   <span className="text-[12px] font-medium text-ink">
                     {formatBytes(storageInfo?.logsBytes)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-ink">Other local app data</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <span className="min-w-0 text-[12px] text-ink text-pretty">
+                    {t('settings.otherLocalData')}
+                  </span>
                   <span className="text-[12px] font-medium text-ink">
                     {formatBytes(storageInfo?.otherLocalDataBytes)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4 border-t border-border-subtle pt-2">
-                  <span className="text-[12px] font-semibold text-ink">Total</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-border-subtle pt-2">
+                  <span className="min-w-0 text-[12px] font-semibold text-ink text-pretty">
+                    {t('settings.total')}
+                  </span>
                   <span className="text-[12px] font-semibold text-ink">
                     {formatBytes(storageInfo?.totalBytes)}
                   </span>
                 </div>
               </div>
 
-              <p className="text-[12px] text-ink-muted mt-4">{uninstallGuidance}</p>
+              <p className="text-[12px] text-ink-muted mt-4 text-pretty">{uninstallGuidance}</p>
 
               <div className="flex flex-wrap gap-2 mt-4">
                 <button
                   type="button"
                   onClick={() => void handleRemoveDownloadedComponents()}
                   disabled={isRemovingDownloads || isResettingLocalData}
-                  className="text-[12px] font-medium text-white bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
+                  className="i18n-btn text-[12px] font-medium leading-snug text-on-ink bg-ink px-4 py-2 rounded-lg hover:bg-ink-secondary transition-colors disabled:opacity-50"
                 >
                   {isRemovingDownloads
-                    ? 'Removing Downloaded AI...'
-                    : 'Remove Downloaded AI Components'}
+                    ? t('settings.removingDownloads')
+                    : t('settings.removeDownloads')}
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleResetLocalData()}
                   disabled={isResettingLocalData || isRemovingDownloads}
-                  className="text-[12px] font-medium text-clay-dark bg-[#F8E7DE] px-4 py-2 rounded-lg hover:bg-[#F3D8CC] transition-colors disabled:opacity-50"
+                  className="text-[12px] font-medium leading-snug text-clay-dark bg-clay-light px-4 py-2 rounded-lg hover:bg-clay-light/80 transition-colors disabled:opacity-50"
                 >
-                  {isResettingLocalData ? 'Restarting AutoDoc...' : 'Delete All Local AutoDoc Data'}
+                  {isResettingLocalData ? t('settings.deletingAllData') : t('settings.deleteAllData')}
                 </button>
               </div>
 
-              {storageNotice && <p className="text-[12px] text-sage mt-3">{storageNotice}</p>}
-              {storageError && <p className="text-[12px] text-clay mt-3">{storageError}</p>}
+              {storageNotice && (
+                <p className="text-[12px] text-sage mt-3 text-pretty">{storageNotice}</p>
+              )}
+              {storageError && (
+                <p className="text-[12px] text-clay mt-3 text-pretty">{storageError}</p>
+              )}
             </div>
           </div>
           {FeedbackPromptQASimulator && runtimeInfo?.qaBuild && (
             <Suspense
-              fallback={<p className="text-[12px] text-ink-muted">Loading QA simulator...</p>}
+              fallback={<p className="text-[12px] text-ink-muted">{t('settings.loadingQa')}</p>}
             >
               <FeedbackPromptQASimulator />
             </Suspense>
           )}
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">About</h3>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.about')}</h3>
             <button
               type="button"
               aria-expanded={showSpeechLicenses}
@@ -772,37 +889,41 @@ export function Settings() {
               onClick={() => setShowSpeechLicenses((open) => !open)}
               className="mb-3 text-[12px] font-medium text-sage-dark underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
             >
-              Open-source and model licenses
+              {t('settings.licenses')}
             </button>
             {showSpeechLicenses && runtimeInfo && (
               <div id="speech-licenses">
                 <SpeechLicenses platform={runtimeInfo.platform} />
               </div>
             )}
-            <div className="flex items-center gap-3">
-              <span className="text-[12px] text-ink-muted">AutoDoc v{appVersion}</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[12px] text-ink-muted">
+                {t('settings.version', { version: appVersion })}
+              </span>
               {updateStatus.state === 'idle' && !__AUTODOC_QA_BUILD__ && (
                 <button
                   onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
                 >
-                  Check for updates
+                  {t('settings.checkForUpdates')}
                 </button>
               )}
               {updateStatus.state === 'idle' && __AUTODOC_QA_BUILD__ && (
-                <span className="text-[11px] text-ink-faint">Updates disabled in QA builds</span>
+                <span className="text-[11px] text-ink-faint">{t('settings.updatesDisabledQa')}</span>
               )}
               {updateStatus.state === 'checking' && (
-                <span className="text-[11px] text-ink-faint animate-pulse">Checking...</span>
+                <span className="text-[11px] text-ink-faint animate-pulse">
+                  {t('settings.checking')}
+                </span>
               )}
               {updateStatus.state === 'available' && (
                 <span className="text-[11px] text-sage font-medium">
-                  v{updateStatus.version} downloading...
+                  {t('settings.versionDownloading', { version: updateStatus.version ?? '' })}
                 </span>
               )}
               {updateStatus.state === 'downloading' && (
                 <span className="text-[11px] text-sage font-medium">
-                  Downloading update... {updateStatus.percent}%
+                  {t('settings.downloadingUpdate', { percent: updateStatus.percent ?? 0 })}
                 </span>
               )}
               {updateStatus.state === 'downloaded' && (
@@ -824,11 +945,11 @@ export function Settings() {
                     })
                   }}
                   disabled={isInstallingUpdate || Boolean(installBlockedReason)}
-                  className="text-[11px] font-semibold text-white bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
+                  className="i18n-btn text-[11px] font-semibold text-on-brand bg-sage px-3 py-1 rounded-lg hover:bg-sage-dark transition-colors"
                 >
                   {isInstallingUpdate
-                    ? 'Restarting...'
-                    : `Restart to update to v${updateStatus.version}`}
+                    ? t('settings.restarting')
+                    : t('settings.restartToUpdate', { version: updateStatus.version ?? '' })}
                 </button>
               )}
               {updateStatus.state === 'downloaded' && installBlockedReason && (
@@ -838,7 +959,7 @@ export function Settings() {
               )}
               {updateStatus.state === 'installing' && (
                 <span className="text-[11px] text-sage font-medium animate-pulse">
-                  Restarting...
+                  {t('settings.restarting')}
                 </span>
               )}
               {updateStatus.state === 'error' && (
@@ -846,7 +967,7 @@ export function Settings() {
                   onClick={handleCheckForUpdates}
                   className="text-[11px] font-medium text-clay hover:text-clay-dark transition-colors"
                 >
-                  Update Failed. Retry
+                  {t('settings.updateFailed')}
                 </button>
               )}
             </div>

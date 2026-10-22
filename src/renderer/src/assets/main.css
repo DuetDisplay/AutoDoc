@@ -31,11 +31,195 @@
   --color-dusk-dark: #5A4F73;
   --color-mist: #A3B4C0;
   --color-mist-light: #E8EEF2;
+  --color-on-ink: #FAFAF7;
+  --color-on-brand: #FFFFFF;
+  --color-control-thumb: #FFFFFF;
 
   /* Status — sage-based for connected, clay for recording */
   --color-status-connected: #7A9E7E;
   --color-status-recording: #C2886E;
   --color-status-processing: #8B7EAA;
+
+  --speaker-0-border: #5B8C6A;
+  --speaker-0-bg: #f6faf7;
+  --speaker-1-border: #C4956A;
+  --speaker-1-bg: #fdf8f4;
+  --speaker-2-border: #7A8FB5;
+  --speaker-2-bg: #f4f6fa;
+  --speaker-3-border: #B57A8F;
+  --speaker-3-bg: #faf4f6;
+  --speaker-4-border: #6A9E9E;
+  --speaker-4-bg: #f4fafa;
+  --speaker-5-border: #8F7AB5;
+  --speaker-5-bg: #f6f4fa;
+  --speaker-6-border: #A89460;
+  --speaker-6-bg: #faf8f4;
+  --speaker-7-border: #7A8A7A;
+  --speaker-7-bg: #f4f6f4;
+}
+
+html {
+  color-scheme: light;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+html,
+body,
+#root {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#root {
+  overflow-x: hidden;
+}
+
+button,
+[role='button'] {
+  max-width: 100%;
+}
+
+/*
+ * W3C CSS Text / internationalization: wrap instead of clipping, and pick
+ * line-breaking from the document language. CJK wraps between ideographs;
+ * Korean keeps Hangul words intact; long Latin languages hyphenate.
+ */
+:lang(zh),
+:lang(zh-Hans),
+:lang(ja) {
+  line-break: strict;
+  word-break: normal;
+  letter-spacing: 0;
+  text-autospace: normal;
+}
+
+:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-break: auto;
+  letter-spacing: 0;
+  text-autospace: normal;
+}
+
+:lang(de),
+:lang(fi),
+:lang(hu),
+:lang(nl),
+:lang(sv),
+:lang(da),
+:lang(et),
+:lang(lv),
+:lang(lt),
+:lang(cs),
+:lang(sk),
+:lang(sl),
+:lang(pl),
+:lang(ru),
+:lang(uk),
+:lang(bg),
+:lang(fr),
+:lang(it),
+:lang(es),
+:lang(pt),
+:lang(ro),
+:lang(el),
+:lang(hr) {
+  hyphens: auto;
+  hyphenate-limit-chars: 6 3 2;
+}
+
+.i18n-setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.i18n-setting-copy {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.i18n-setting-control {
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.i18n-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.i18n-btn {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.i18n-chrome-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-primary: #1c1c18;
+  --color-bg-sidebar: #161613;
+  --color-bg-accent: #252520;
+  --color-bg-card: #2a2a24;
+  --color-bg-deep: #121210;
+  --color-border: rgba(245, 245, 240, 0.12);
+  --color-border-subtle: rgba(245, 245, 240, 0.07);
+  --color-border-strong: rgba(245, 245, 240, 0.2);
+  --color-ink: #f5f5f0;
+  --color-ink-secondary: #c8c6bc;
+  --color-ink-muted: #9c9b94;
+  --color-ink-faint: #6b6a63;
+  --color-sage: #8fb392;
+  --color-sage-light: #2a3a2c;
+  --color-sage-dark: #b5d0b7;
+  --color-clay: #d4a08a;
+  --color-clay-light: #3a2c26;
+  --color-clay-dark: #e8c4b4;
+  --color-dusk: #a89bc4;
+  --color-dusk-light: #2e2a38;
+  --color-dusk-dark: #c8bde0;
+  --color-mist: #8a9ba8;
+  --color-mist-light: #252a2e;
+  --color-on-ink: #1c1c18;
+  --color-on-brand: #1c1c18;
+  --color-control-thumb: #f5f5f0;
+  --color-status-connected: #8fb392;
+  --color-status-recording: #d4a08a;
+  --color-status-processing: #a89bc4;
+  --speaker-0-border: #8fb392;
+  --speaker-0-bg: #243028;
+  --speaker-1-border: #d4a08a;
+  --speaker-1-bg: #322820;
+  --speaker-2-border: #8aa0c4;
+  --speaker-2-bg: #222830;
+  --speaker-3-border: #c48aa0;
+  --speaker-3-bg: #302228;
+  --speaker-4-border: #7eb3b3;
+  --speaker-4-bg: #203030;
+  --speaker-5-border: #a894c8;
+  --speaker-5-bg: #282230;
+  --speaker-6-border: #c4b078;
+  --speaker-6-bg: #302c20;
+  --speaker-7-border: #8a9a8a;
+  --speaker-7-bg: #242824;
 }
 
 @layer base {

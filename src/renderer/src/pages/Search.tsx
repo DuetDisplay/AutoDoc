@@ -4,8 +4,13 @@ import { PageHeader } from '../components/PageHeader'
 import { toCountBucket, trackEvent } from '../services/analytics'
 import { recordDiagnosticAction } from '../services/diagnostic-trail'
 import { useSearchStore } from '../stores/search'
+import { useI18n } from '../services/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
+import type { MessageKey } from '../../../shared/i18n'
 
 export function Search() {
+  const { language, t } = useI18n()
+  const dateLocale = dateLocaleForUiLanguage(language)
   const { query, results, searched, setQuery, setResults } = useSearchStore()
   const [searching, setSearching] = useState(false)
   const navigate = useNavigate()
@@ -70,7 +75,7 @@ export function Search() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Search" />
+      <PageHeader title={t('search.title')} />
       <div className="px-6 pt-4 pb-2">
         <div className="relative">
           <svg
@@ -90,15 +95,17 @@ export function Search() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search across all meetings..."
+            placeholder={t('search.placeholderMeetings')}
             className="w-full pl-10 pr-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors"
             autoFocus
           />
         </div>
         {searched && (
           <p className="text-[11px] text-ink-faint mt-2">
-            {totalMatches} {totalMatches === 1 ? 'match' : 'matches'} across {results.length}{' '}
-            {results.length === 1 ? 'meeting' : 'meetings'}
+            {totalMatches === 1 ? t('search.matchOne') : t('search.matchOther', { count: totalMatches })}{' '}
+            {results.length === 1
+              ? t('search.acrossMeetingsOne')
+              : t('search.acrossMeetingsOther', { count: results.length })}
           </p>
         )}
       </div>
@@ -106,13 +113,15 @@ export function Search() {
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         {searching && (
           <div className="flex items-center justify-center py-12">
-            <p className="text-ink-muted text-[13px]">Searching...</p>
+            <p className="text-ink-muted text-[13px]">{t('search.searching')}</p>
           </div>
         )}
 
         {!searching && searched && results.length === 0 && (
           <div className="flex items-center justify-center py-12">
-            <p className="text-ink-muted text-[13px]">No results found for &ldquo;{query}&rdquo;</p>
+            <p className="text-ink-muted text-[13px] text-pretty [overflow-wrap:anywhere]">
+              {t('search.noResults', { query })}
+            </p>
           </div>
         )}
 
@@ -131,7 +140,7 @@ export function Search() {
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
               />
             </svg>
-            <p className="text-ink-faint text-[13px]">Search transcripts and meeting notes</p>
+            <p className="text-ink-faint text-[13px]">{t('search.emptyHint')}</p>
           </div>
         )}
 
@@ -146,15 +155,19 @@ export function Search() {
                   className="px-4 py-3 border-b border-border/50 cursor-pointer hover:bg-bg-accent/40 transition-colors"
                   onClick={() => navigate(`/recordings/${result.meetingId}`)}
                 >
-                  <div className="text-[13px] font-semibold text-ink">{result.title}</div>
+                  <div className="text-[13px] font-semibold text-ink text-pretty [overflow-wrap:anywhere]">
+                    {result.title}
+                  </div>
                   <div className="text-[11px] text-ink-faint mt-0.5">
-                    {new Date(result.date).toLocaleDateString('en-US', {
+                    {new Date(result.date).toLocaleDateString(dateLocale, {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric'
                     })}
                     {' · '}
-                    {result.matches.length} {result.matches.length === 1 ? 'match' : 'matches'}
+                    {result.matches.length === 1
+                      ? t('search.matchOne')
+                      : t('search.matchOther', { count: result.matches.length })}
                   </div>
                 </div>
                 <div className="px-4 py-2 flex flex-col">
@@ -172,15 +185,17 @@ export function Search() {
                         }
                       >
                         <span
-                          className={`shrink-0 mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                          className={`shrink-0 mt-0.5 max-w-full text-[10px] font-medium px-1.5 py-0.5 rounded text-pretty [overflow-wrap:anywhere] ${
                             match.type === 'segment'
-                              ? 'bg-dusk/10 text-dusk'
-                              : 'bg-sage/10 text-sage'
+                              ? 'bg-dusk-light text-dusk-dark'
+                              : 'bg-sage-light text-sage-dark'
                           }`}
                         >
                           {match.type === 'segment'
-                            ? (match.category?.replace(/_/g, ' ') ?? 'note')
-                            : 'transcript'}
+                            ? match.category
+                              ? t(`segment.${match.category}` as MessageKey)
+                              : t('search.note')
+                            : t('search.transcript')}
                         </span>
                         <span className="text-[12px] text-ink-muted leading-relaxed">
                           {highlightMatch(match.text)}

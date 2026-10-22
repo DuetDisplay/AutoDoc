@@ -13,9 +13,9 @@ export function MemoryFailureCallout({
 }) {
   const details = memoryFailureDetails(failure)
   return (
-    <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+    <div role="alert" className="rounded-xl border border-clay/30 bg-clay-light px-4 py-3.5">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-700">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-clay/30 bg-bg-card text-clay-dark">
           <svg
             aria-hidden="true"
             className="h-4 w-4"
@@ -36,7 +36,7 @@ export function MemoryFailureCallout({
             apps, then retry.
           </p>
           {details && <p className="mt-2 text-[11px] text-ink-muted leading-relaxed">{details}</p>}
-          <div className="flex items-center gap-2 mt-3">
+          <div className="flex flex-wrap items-center gap-2 mt-3">
             <button
               onClick={onRetry}
               className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
