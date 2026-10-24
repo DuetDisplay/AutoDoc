@@ -1,3 +1,4 @@
+import { translatePlural } from '../../../shared/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { EventCard } from '../components/EventCard'
@@ -271,9 +272,7 @@ export function Upcoming({
                     {group.label}
                   </h2>
                   <span className="text-[11px] text-ink-faint text-pretty [overflow-wrap:anywhere]">
-                    {group.events.length === 1
-                      ? t('upcoming.meetingCountOne')
-                      : t('upcoming.meetingCountOther', { count: group.events.length })}
+                    {translatePlural(language, 'meetings', group.events.length)}
                   </span>
                 </div>
                 <div className="flex flex-col gap-2 min-w-0">

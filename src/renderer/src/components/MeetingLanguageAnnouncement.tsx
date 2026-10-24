@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MEETING_LANGUAGE_DEFINITIONS } from '../../../shared/meeting-language'
@@ -10,12 +11,14 @@ export function MeetingLanguageAnnouncement({
   suppressed: boolean
   onVisibilityChange: (visible: boolean) => void
 }) {
+  const t = useT()
+
   const navigate = useNavigate()
   const dialog = useRef<HTMLDialogElement>(null)
   const chooseButton = useRef<HTMLButtonElement>(null)
   const [pending, setPending] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
   const visible = pending && !suppressed
 
   useEffect(() => {
@@ -45,13 +48,13 @@ export function MeetingLanguageAnnouncement({
   const dismiss = async (chooseLanguage: boolean) => {
     if (saving) return
     setSaving(true)
-    setError(null)
+    setError(false)
     try {
       await window.electronAPI.invoke('prefs:dismiss-meeting-language-announcement')
       setPending(false)
       if (chooseLanguage) navigate(`${ROUTES.settings}?section=meeting-language`)
     } catch {
-      setError('Could not save this preference. Try again.')
+      setError(true)
     } finally {
       setSaving(false)
     }
@@ -72,22 +75,22 @@ export function MeetingLanguageAnnouncement({
         New
       </p>
       <h2 id="meeting-language-announcement-title" className="text-[24px] font-serif leading-tight">
-        Your meetings, in your language
+        {t('ui.yourMeetingsInYourLanguage')}
       </h2>
       <p
         id="meeting-language-announcement-body"
         className="mt-3 text-[14px] leading-relaxed text-ink-secondary"
       >
-        AutoDoc now supports {MEETING_LANGUAGE_DEFINITIONS.length} meeting languages. Choose the
-        language spoken in your meetings in Settings. New transcripts and notes will use that
-        language.
+        {t('ui.autoDocNowSupportsCountMeetingLanguagesChooseTheLanguageSpokenInYourMeeting', {
+          count: MEETING_LANGUAGE_DEFINITIONS.length
+        })}
       </p>
       <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">
-        Changing languages may need a one-time speech model download.
+        {t('ui.changingLanguagesMayNeedAOneTimeSpeechModelDownload')}
       </p>
       {error && (
         <p role="alert" className="mt-3 text-[12px] text-clay-dark">
-          {error}
+          {t('ui.couldNotSaveThisPreferenceTryAgain')}
         </p>
       )}
       <div className="mt-6 flex justify-end gap-3">
@@ -97,7 +100,7 @@ export function MeetingLanguageAnnouncement({
           onClick={() => void dismiss(false)}
           className="rounded-lg px-4 py-2 text-[13px] font-medium text-ink-muted hover:bg-bg-accent focus-visible:outline-2 focus-visible:outline-sage-dark disabled:opacity-50"
         >
-          Got it
+          {t('ui.gotIt')}
         </button>
         <button
           type="button"
@@ -106,7 +109,7 @@ export function MeetingLanguageAnnouncement({
           onClick={() => void dismiss(true)}
           className="i18n-btn rounded-lg bg-sage-dark px-4 py-2 text-[13px] font-semibold text-on-brand hover:bg-sage-dark/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage-dark disabled:opacity-50"
         >
-          Choose language
+          {t('ui.chooseLanguage')}
         </button>
       </div>
     </dialog>

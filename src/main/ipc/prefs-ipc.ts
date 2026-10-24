@@ -1,7 +1,12 @@
+import { refreshNotificationLocale } from '../notification-window'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { applyNativeAppearance } from '../services/appearance-runtime'
 import { isAppearanceMode, normalizeAppearance, type AppearanceMode } from '../../shared/appearance'
-import { isUiLanguageCode, normalizeUiLanguage, type UiLanguageCode } from '../../shared/ui-language'
+import {
+  isUiLanguageCode,
+  normalizeUiLanguage,
+  type UiLanguageCode
+} from '../../shared/ui-language'
 import type { PrefsStore } from '../services/prefs-store'
 import { setMainUiLanguage } from '../services/ui-locale'
 import {
@@ -187,6 +192,7 @@ export function registerPrefsIpc(
     prefsStore.setUiLanguage(next)
     setMainUiLanguage(next)
     broadcastUiLanguage(next)
+    refreshNotificationLocale()
   })
 
   ipcMain.handle('prefs:get-meeting-language', (): MeetingLanguageCode => {

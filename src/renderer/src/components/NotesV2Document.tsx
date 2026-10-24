@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useT } from '../services/i18n'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type {
   MeetingNotesContent,
   MeetingNotesV2,
@@ -66,15 +67,17 @@ function RemoveButton({
   testId?: string
   onClick: () => void
 }): ReactElement {
+  const t = useT()
+
   return (
     <button
       type="button"
       aria-label={label}
       data-testid={testId}
       onClick={onClick}
-      className="shrink-0 text-[11px] font-semibold text-transparent group-hover:text-clay hover:underline"
+      className="shrink-0 text-[11px] font-semibold text-transparent group-hover:text-clay focus-visible:text-clay-dark hover:underline"
     >
-      Remove
+      {t('ui.remove')}
     </button>
   )
 }
@@ -247,6 +250,8 @@ function OwnerEdit({
   owner: string | null
   onSave?: (next: string | null) => void
 }): ReactElement | null {
+  const t = useT()
+
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(owner ?? '')
   const [previousOwner, setPreviousOwner] = useState(owner)
@@ -277,8 +282,8 @@ function OwnerEdit({
       <input
         ref={inputRef}
         value={draft}
-        aria-label="Owner"
-        placeholder="Owner"
+        aria-label={t('ui.owner')}
+        placeholder={t('ui.owner')}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
@@ -300,11 +305,11 @@ function OwnerEdit({
     return (
       <button
         type="button"
-        aria-label="Add owner"
+        aria-label={t('ui.addOwner')}
         onClick={() => setEditing(true)}
         className="ml-1.5 text-[11px] font-semibold text-ink-faint hover:text-ink hover:underline"
       >
-        + Owner
+        {t('ui.owner2')}
       </button>
     )
   }
@@ -313,7 +318,7 @@ function OwnerEdit({
     <span className="ml-1.5 inline-flex items-center gap-1">
       <button
         type="button"
-        aria-label={`Owner: ${owner}`}
+        aria-label={t('ui.ownerOwner', { owner })}
         onClick={() => setEditing(true)}
         className="text-[11.5px] text-ink-muted hover:underline"
       >
@@ -321,11 +326,11 @@ function OwnerEdit({
       </button>
       <button
         type="button"
-        aria-label="Remove owner"
+        aria-label={t('ui.removeOwner')}
         onClick={() => onSave(null)}
-        className="text-[11px] font-semibold text-transparent group-hover:text-clay hover:underline"
+        className="text-[11px] font-semibold text-transparent group-hover:text-clay focus-visible:text-clay-dark hover:underline"
       >
-        Clear
+        {t('ui.clear')}
       </button>
     </span>
   )
@@ -340,6 +345,7 @@ function JumpButton({
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
 }): ReactElement | null {
+  const t = useT()
   if (isMeetingSpanOnly(sources, meetingSpan)) return null
   const start = earliestStart(sources)
   if (start == null) return null
@@ -348,7 +354,7 @@ function JumpButton({
       type="button"
       onClick={() => onSeek(start)}
       className="text-[11px] font-medium text-ink-faint hover:text-ink"
-      title={`Jump to ${formatClock(start)}`}
+      title={t('ui.jumpToTime', { time: formatClock(start) })}
     >
       ▶ {formatClock(start)}
     </button>
@@ -374,6 +380,8 @@ function NextStepRow({
   onSaveOwner?: (itemId: string, owner: string | null) => void
   onDelete?: (itemId: string) => void
 }): ReactElement {
+  const t = useT()
+
   const title = item.title?.trim() ?? ''
   const body = item.text.trim()
   const label = useLosslessPresentation ? body || title : title || body
@@ -423,7 +431,9 @@ function NextStepRow({
               onSave={onSaveOwner ? (owner) => onSaveOwner(item.id, owner) : undefined}
             />
             {item.deadline ? (
-              <span className="ml-1.5 text-[11.5px] text-ink-muted">Due: {item.deadline}</span>
+              <span className="ml-1.5 text-[11.5px] text-ink-muted">
+                {t('ui.dueDeadline', { deadline: item.deadline })}
+              </span>
             ) : null}
           </div>
         ) : (
@@ -435,7 +445,7 @@ function NextStepRow({
       </div>
       <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
       {onDelete ? (
-        <RemoveButton label="Delete next step" onClick={() => onDelete(item.id)} />
+        <RemoveButton label={t('ui.deleteNextStep')} onClick={() => onDelete(item.id)} />
       ) : null}
     </div>
   )
@@ -458,7 +468,7 @@ function Bullet({
   onSeek,
   onSave,
   onDelete,
-  deleteLabel = 'Delete note',
+  deleteLabel,
   indexOnly = false,
   sectionTitle = null
 }: {
@@ -472,6 +482,8 @@ function Bullet({
   indexOnly?: boolean
   sectionTitle?: string | null
 }): ReactElement {
+  const t = useT()
+
   const parsed = stripAgreed(item.text)
   const title = item.title?.trim() ?? ''
   const hasDistinctTitle = Boolean(useLosslessPresentation && title && title !== parsed.text)
@@ -496,7 +508,7 @@ function Bullet({
             type="button"
             onClick={() => onSeek(start)}
             className="text-[11px] tabular-nums text-ink-faint hover:text-ink"
-            title={`Jump to ${formatClock(start)}`}
+            title={t('ui.jumpToTime', { time: formatClock(start) })}
           >
             ▶ {formatClock(start)}
           </button>
@@ -507,7 +519,7 @@ function Bullet({
         {hasDistinctTitle || (indexOnly && title) ? (
           <div className="font-medium text-ink">{renderNoteMarkup(title)}</div>
         ) : null}
-        {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
+        {parsed.agreed ? <span className="sr-only">{t('ui.agreed')}</span> : null}
         {showBody ? (
           <InlineEdit
             value={parsed.text}
@@ -522,7 +534,7 @@ function Bullet({
       </div>
       {onDelete ? (
         <RemoveButton
-          label={deleteLabel}
+          label={deleteLabel ?? t('ui.deleteNote')}
           testId={`delete-${item.id}`}
           onClick={() => onDelete(item.id)}
         />
@@ -546,6 +558,8 @@ function DecisionsSection({
   onSave?: (itemId: string, text: string) => void
   onDelete?: (itemId: string) => void
 }): ReactElement | null {
+  const t = useT()
+
   if (items.length === 0) return null
 
   const ready = isWindowsRenderer()
@@ -555,7 +569,7 @@ function DecisionsSection({
 
   return (
     <section id="notes-decisions" className={`${NOTES_COLUMN} border-t border-border pt-4`}>
-      <h3 className="mb-2 text-[17px] font-semibold text-ink">Decisions</h3>
+      <h3 className="mb-2 text-[17px] font-semibold text-ink">{t('segment.decision')}</h3>
       {ready.map((item) => (
         <Bullet
           key={item.id}
@@ -565,7 +579,7 @@ function DecisionsSection({
           onSeek={onSeek}
           onSave={onSave}
           onDelete={onDelete}
-          deleteLabel="Delete decision"
+          deleteLabel={t('ui.deleteDecision')}
         />
       ))}
     </section>
@@ -585,11 +599,13 @@ function KeyTakeawaysSection({
   onSave?: (itemId: string, text: string) => void
   onDelete?: (itemId: string) => void
 }): ReactElement | null {
+  const t = useT()
+
   if (items.length === 0) return null
 
   return (
     <section id="notes-key-takeaways" className={`${NOTES_COLUMN} border-y border-border py-3`}>
-      <h3 className={NOTES_HEADING_CLASS}>Key Takeaways</h3>
+      <h3 className={NOTES_HEADING_CLASS}>{t('ui.keyTakeaways')}</h3>
       {items.map((item) => (
         <Bullet
           key={item.id}
@@ -599,7 +615,7 @@ function KeyTakeawaysSection({
           onSeek={onSeek}
           onSave={onSave}
           onDelete={onDelete}
-          deleteLabel="Delete key takeaway"
+          deleteLabel={t('ui.deleteKeyTakeaway')}
         />
       ))}
     </section>
@@ -621,6 +637,8 @@ function SubBullet({
   onSave?: (itemId: string, text: string) => void
   onDelete?: (itemId: string) => void
 }): ReactElement {
+  const t = useT()
+
   const parsed = stripAgreed(item.text)
   const title = item.title?.trim() ?? ''
   const hasDistinctTitle = Boolean(useLosslessPresentation && title && title !== parsed.text)
@@ -635,7 +653,7 @@ function SubBullet({
         {hasDistinctTitle ? (
           <div className="font-medium text-ink-secondary">{renderNoteMarkup(title)}</div>
         ) : null}
-        {parsed.agreed ? <span className="sr-only">Agreed: </span> : null}
+        {parsed.agreed ? <span className="sr-only">{t('ui.agreed')}</span> : null}
         <InlineEdit
           value={parsed.text}
           onSave={saveText}
@@ -646,7 +664,7 @@ function SubBullet({
         <JumpButton sources={item.sources} meetingSpan={meetingSpan} onSeek={onSeek} />
         {onDelete ? (
           <RemoveButton
-            label="Delete note"
+            label={t('ui.deleteNote')}
             testId={`delete-${item.id}`}
             onClick={() => onDelete(item.id)}
           />
@@ -718,6 +736,8 @@ export function NotesV2Document({
   onSeek: (startMs: number) => void
   onWrite?: (content: MeetingNotesContent) => void
 }): ReactElement {
+  const t = useT()
+
   const useLosslessPresentation = notesUseLosslessPresentation(notes)
   const windowsQuality = isWindowsRenderer()
   const documentNotes =
@@ -745,7 +765,7 @@ export function NotesV2Document({
         current.id === section.id
           ? {
               ...current,
-              keyPoints: [...current.keyPoints, createUserItem('New note', current.title)]
+              keyPoints: [...current.keyPoints, createUserItem(t('ui.newNote'), current.title)]
             }
           : current
       )
@@ -754,15 +774,15 @@ export function NotesV2Document({
   const addNextStep = (): void => {
     onWrite?.({
       ...notesContent(notes),
-      nextSteps: [...notes.nextSteps, createUserItem('New next step')]
+      nextSteps: [...notes.nextSteps, createUserItem(t('ui.newNextStep'))]
     })
   }
   const addSection = (): void => {
     const section: NoteSection = {
       id: `user-section:${crypto.randomUUID()}`,
-      title: 'New topic',
+      title: t('ui.newTopic'),
       summary: null,
-      keyPoints: [createUserItem('New note', 'New topic')],
+      keyPoints: [createUserItem(t('ui.newNote'), t('ui.newTopic'))],
       supportingDetails: []
     }
     onWrite?.({ ...notesContent(notes), sections: [...notes.sections, section] })
@@ -812,7 +832,7 @@ export function NotesV2Document({
       {summary ? (
         <section aria-labelledby="notes-summary" className={`${NOTES_COLUMN} pb-2`}>
           <h3 id="notes-summary" className={NOTES_HEADING_CLASS}>
-            Summary
+            {t('ui.summary')}
           </h3>
           <InlineEdit
             value={summary}
@@ -882,7 +902,7 @@ export function NotesV2Document({
                   className="mt-1 pl-[76px] text-[11px] font-semibold text-ink-faint hover:text-sage"
                   onClick={() => addKeyPoint(section)}
                 >
-                  + Add
+                  {t('meeting.add')}
                 </button>
               ) : null}
             </section>
@@ -894,7 +914,7 @@ export function NotesV2Document({
             className="text-[11px] font-semibold text-ink-faint hover:text-sage"
             onClick={addSection}
           >
-            + Add topic
+            {t('ui.addTopic')}
           </button>
         ) : null}
       </div>
@@ -912,7 +932,7 @@ export function NotesV2Document({
 
       {showNextSteps && (visibleNextSteps.length > 0 || onWrite) ? (
         <div id="notes-next-steps" className={`${NOTES_COLUMN} border-t border-border pt-4`}>
-          <h3 className="mb-2 text-[17px] font-semibold text-ink">Next Steps</h3>
+          <h3 className="mb-2 text-[17px] font-semibold text-ink">{t('ui.nextSteps')}</h3>
           {visibleNextSteps.map((item) => (
             <NextStepRow
               key={item.id}
@@ -930,7 +950,7 @@ export function NotesV2Document({
               className="mt-1 text-[11px] font-semibold text-ink-faint hover:text-sage"
               onClick={addNextStep}
             >
-              + Add
+              {t('meeting.add')}
             </button>
           ) : null}
         </div>

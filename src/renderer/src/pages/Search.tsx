@@ -1,3 +1,4 @@
+import { translatePlural } from '../../../shared/i18n'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
@@ -95,6 +96,7 @@ export function Search() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label={t('search.placeholderMeetings')}
             placeholder={t('search.placeholderMeetings')}
             className="w-full pl-10 pr-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors"
             autoFocus
@@ -102,10 +104,8 @@ export function Search() {
         </div>
         {searched && (
           <p className="text-[11px] text-ink-faint mt-2">
-            {totalMatches === 1 ? t('search.matchOne') : t('search.matchOther', { count: totalMatches })}{' '}
-            {results.length === 1
-              ? t('search.acrossMeetingsOne')
-              : t('search.acrossMeetingsOther', { count: results.length })}
+            {translatePlural(language, 'matches', totalMatches)}{' '}
+            {translatePlural(language, 'acrossMeetings', results.length)}
           </p>
         )}
       </div>

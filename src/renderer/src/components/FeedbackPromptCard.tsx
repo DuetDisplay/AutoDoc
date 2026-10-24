@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useId, type ReactElement, type ReactNode } from 'react'
 import type { OpenSupportEmailResult } from '../../../shared/types'
 
@@ -44,19 +45,21 @@ function SupportStatus({
   FeedbackPromptCardProps,
   'supportResult' | 'copyStatus' | 'pending' | 'onCopy'
 >): ReactNode {
+  const t = useT()
+
   if (!supportResult) return null
 
   if (supportResult.status === 'opened') {
-    return <p>Draft opened in your email app.</p>
+    return <p>{t('ui.draftOpenedInYourEmailApp')}</p>
   }
 
   if (supportResult.status === 'unavailable') {
-    return <p>Email isn’t configured in this build.</p>
+    return <p>{t('nav.emailUnavailable')}</p>
   }
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      <p>Mail app didn’t open.</p>
+      <p>{t('nav.mailDidNotOpen')}</p>
       <span className="break-all font-medium text-ink-muted select-text">
         {supportResult.address}
       </span>
@@ -66,12 +69,10 @@ function SupportStatus({
         onClick={() => onCopy(supportResult.address)}
         className="rounded-sm font-semibold text-sage-dark transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        Copy email address
+        {t('nav.copyEmail')}
       </button>
-      {copyStatus === 'copied' ? <p className="basis-full">Email address copied.</p> : null}
-      {copyStatus === 'failed' ? (
-        <p className="basis-full">Couldn’t copy. Select the address above.</p>
-      ) : null}
+      {copyStatus === 'copied' ? <p className="basis-full">{t('nav.emailCopied')}</p> : null}
+      {copyStatus === 'failed' ? <p className="basis-full">{t('nav.copyFailed')}</p> : null}
     </div>
   )
 }
@@ -90,6 +91,8 @@ export function FeedbackPromptCard({
   onNever,
   onDismiss
 }: FeedbackPromptCardProps): ReactElement {
+  const t = useT()
+
   const headingId = useId()
   const bodyId = useId()
 
@@ -105,10 +108,10 @@ export function FeedbackPromptCard({
         <WaveformMark />
         <div className="min-w-0 flex-1">
           <h2 id={headingId} className="text-[13px] font-semibold tracking-[-0.01em] text-ink">
-            How’s AutoDoc working for you?
+            {t('ui.howSAutoDocWorkingForYou')}
           </h2>
           <p id={bodyId} className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Tell us what’s working, what’s missing, or what AutoDoc could do better.
+            {t('ui.tellUsWhatSWorkingWhatSMissingOrWhatAutoDocCouldDoBetter')}
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -118,7 +121,7 @@ export function FeedbackPromptCard({
               onClick={onShare}
               className={`${actionClassName} i18n-btn bg-sage text-on-brand hover:bg-sage-dark`}
             >
-              Share feedback
+              {t('ui.shareFeedback')}
             </button>
             {appearance === 'initial' ? (
               <button
@@ -127,7 +130,7 @@ export function FeedbackPromptCard({
                 onClick={onLater}
                 className={`${actionClassName} text-sage-dark hover:bg-bg-card/60`}
               >
-                Maybe later
+                {t('ui.maybeLater')}
               </button>
             ) : (
               <button
@@ -136,7 +139,7 @@ export function FeedbackPromptCard({
                 onClick={onDismiss}
                 className={`${actionClassName} text-sage-dark hover:bg-bg-card/60`}
               >
-                Dismiss
+                {t('common.dismiss')}
               </button>
             )}
             <button
@@ -145,7 +148,7 @@ export function FeedbackPromptCard({
               onClick={onNever}
               className={`${actionClassName} text-ink-muted hover:bg-bg-card/60 hover:text-ink`}
             >
-              Don’t ask again
+              {t('ui.donTAskAgain')}
             </button>
           </div>
 

@@ -1,4 +1,7 @@
+import { useT } from '../../services/i18n'
 export function AllSetStep({ onFinish }: { onFinish: () => void }) {
+  const t = useT()
+
   return (
     <div className="text-center">
       {/* Green check circle */}
@@ -8,7 +11,9 @@ export function AllSetStep({ onFinish }: { onFinish: () => void }) {
           height="28"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#4A6B4E"
+          stroke="currentColor"
+          className="text-sage-dark"
+          aria-hidden="true"
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -17,16 +22,16 @@ export function AllSetStep({ onFinish }: { onFinish: () => void }) {
         </svg>
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-        You&apos;re All Set
+        {t('ui.youReAllSet')}
       </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc is ready to go. Start or join a meeting and we&apos;ll take it from here.
+        {t('ui.autoDocIsReadyToGoStartOrJoinAMeetingAndWeLlTakeItFromHere')}
       </p>
       <button
         onClick={onFinish}
         className="i18n-btn px-8 py-3 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
       >
-        Open AutoDoc
+        {t('ui.openAutoDoc')}
       </button>
     </div>
   )

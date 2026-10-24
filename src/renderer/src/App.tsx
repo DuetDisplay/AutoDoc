@@ -1,3 +1,4 @@
+import { useT } from './services/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
@@ -88,6 +89,7 @@ function UpdateReadyPrompt({
   onVisibilityChange?: (visible: boolean) => void
 }) {
   const isRecording = useRecordingStore((state) => state.isRecording)
+  const t = useT()
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const [showUpToDateBanner, setShowUpToDateBanner] = useState(false)
@@ -195,17 +197,17 @@ function UpdateReadyPrompt({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-semibold leading-5 text-sage-dark">
-            You&apos;re up to date
+            {t('ui.youReUpToDate')}
           </p>
           <p className="text-[11px] leading-5 text-ink-muted">
-            AutoDoc is running the latest available version.
+            {t('ui.autoDocIsRunningTheLatestAvailableVersion')}
           </p>
         </div>
         <button
           type="button"
-          aria-label="Dismiss up to date message"
+          aria-label={t('ui.dismissUpToDateMessage')}
           onClick={() => setShowUpToDateBanner(false)}
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark/70 transition-colors hover:bg-bg-card hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-sage-dark transition-colors hover:bg-bg-card hover:text-sage-dark focus:outline-none focus:ring-2 focus:ring-sage/40"
         >
           <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none">
             <path
@@ -259,12 +261,12 @@ function UpdateReadyPrompt({
       <span className="h-2 w-2 rounded-full bg-sage" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className="text-[12px] font-semibold text-ink">
-          {isInstalling ? 'Restarting...' : 'Update ready'}
+          {isInstalling ? t('settings.restarting') : t('ui.updateReady')}
         </p>
         <p className="text-[11px] text-ink-muted">
           {isInstalling
-            ? 'AutoDoc will reopen after the update installs.'
-            : (installBlockedReason ?? `Restart AutoDoc to install v${version}.`)}
+            ? t('ui.autoDocWillReopenAfterTheUpdateInstalls')
+            : (installBlockedReason ?? t('settings.restartToUpdate', { version }))}
         </p>
       </div>
       {!isInstalling && (
@@ -273,7 +275,7 @@ function UpdateReadyPrompt({
           onClick={() => setDismissedVersion(version)}
           className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
         >
-          Later
+          {t('ui.later')}
         </button>
       )}
       <button
@@ -282,13 +284,15 @@ function UpdateReadyPrompt({
         disabled={isInstalling || Boolean(installBlockedReason)}
         className="i18n-btn text-[12px] font-semibold text-on-brand bg-sage px-3 py-1.5 rounded-lg hover:bg-sage-dark transition-colors disabled:opacity-60"
       >
-        {isInstalling ? 'Restarting...' : 'Restart'}
+        {isInstalling ? t('settings.restarting') : t('ui.restart')}
       </button>
     </div>
   )
 }
 
 export default function App() {
+  const t = useT()
+
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [lowSpecBannerVisible, setLowSpecBannerVisible] = useState(false)
   const [notesEngineBannerVisible, setNotesEngineBannerVisible] = useState(false)

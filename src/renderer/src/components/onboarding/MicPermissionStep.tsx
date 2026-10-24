@@ -155,16 +155,18 @@ export function MicPermissionStep({
   return (
     <div className="text-center">
       <span className="inline-block px-2.5 py-1 bg-clay-light text-clay-dark rounded-md text-[11px] font-semibold uppercase tracking-wider mb-4">
-        REQUIRED
+        {t('ui.rEQUIRED')}
       </span>
       <div className="w-16 h-16 rounded-2xl bg-clay-light flex items-center justify-center text-[28px] mx-auto mb-5">
         🎤
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Microphone Access</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        {t('ui.microphoneAccess')}
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {openedSettings && !granted
-          ? 'macOS may require a restart for the permission to take effect. If you chose "Restart Later", you can continue setup and grant access from Settings later.'
-          : "AutoDoc needs your microphone to capture meeting audio. This is the core of how transcription works — without it, we can't hear your meetings."}
+          ? t('ui.macOSMayRequireARestartForThePermissionToTakeEffectIfYouChoseRestartLaterYo')
+          : t('ui.autoDocNeedsYourMicrophoneToCaptureMeetingAudioThisIsTheCoreOfHowTranscript')}
       </p>
 
       <div className="flex items-start gap-3 px-4 py-3 bg-bg-card border border-border rounded-xl text-left mb-7">
@@ -173,11 +175,10 @@ export function MicPermissionStep({
         </div>
         <div>
           <div className="text-[13px] font-semibold text-ink">
-            Use headphones for the clearest notes
+            {t('ui.useHeadphonesForTheClearestNotes')}
           </div>
           <div className="text-[12px] text-ink-muted leading-snug mt-0.5">
-            Wear headphones while recording. They help AutoDoc tell your voice apart from everyone
-            else&apos;s and make playback cleaner.
+            {t('ui.wearHeadphonesWhileRecordingTheyHelpAutoDocTellYourVoiceApartFromEveryoneEl')}
           </div>
         </div>
       </div>

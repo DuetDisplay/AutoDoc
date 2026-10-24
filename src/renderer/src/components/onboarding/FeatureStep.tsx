@@ -1,3 +1,4 @@
+import { useT } from '../../services/i18n'
 interface FeatureRow {
   icon: string
   iconBg: string
@@ -15,6 +16,8 @@ interface FeatureStepProps {
 }
 
 export function FeatureStep({ icon, iconBg, heading, body, features, onNext }: FeatureStepProps) {
+  const t = useT()
+
   return (
     <div className="text-center">
       <div
@@ -52,7 +55,7 @@ export function FeatureStep({ icon, iconBg, heading, body, features, onNext }: F
         onClick={onNext}
         className="px-8 py-3 border border-border rounded-[10px] text-[14px] font-medium text-ink hover:border-border-strong transition-colors"
       >
-        Next →
+        {t('ui.next')}
       </button>
     </div>
   )

@@ -435,6 +435,8 @@ export type TranscriptionStatus =
 
 export interface SpeakerInfo {
   label: string
+  /** Explicit names must never be translated, even if they match a default label. */
+  customLabel?: boolean
   suggestions?: string[]
 }
 

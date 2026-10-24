@@ -1,3 +1,4 @@
+import { completeOverlays } from './complete-overlays'
 import type { UiLanguageCode } from '../../ui-language'
 import type { MessageCatalog } from './en'
 import { chromeOverlays } from './chrome-overlays'
@@ -44,8 +45,10 @@ const ko: LocaleMessages = {
   'settings.addGoogle': 'Google 캘린더 추가',
   'settings.addMicrosoft': 'Microsoft Outlook 추가',
   'settings.connecting': '연결 중...',
-  'settings.syncUnsupportedMailbox': '이 Microsoft 사서함 유형에서는 캘린더 동기화를 사용할 수 없습니다.',
-  'settings.syncReconnectRequired': '캘린더 동기화를 다시 시작하려면 Microsoft Outlook을 다시 연결해야 합니다.',
+  'settings.syncUnsupportedMailbox':
+    '이 Microsoft 사서함 유형에서는 캘린더 동기화를 사용할 수 없습니다.',
+  'settings.syncReconnectRequired':
+    '캘린더 동기화를 다시 시작하려면 Microsoft Outlook을 다시 연결해야 합니다.',
   'settings.meetingLanguage': '회의 언어',
   'settings.meetingLanguageAria': '회의 언어 설정',
   'settings.meetingLanguageDescription':
@@ -59,7 +62,7 @@ const ko: LocaleMessages = {
   'settings.videoPlayback': '동영상 재생',
   'settings.watermarkTitle': 'AutoDoc 워터마크',
   'settings.watermarkDescription':
-    '녹화된 동영상을 볼 때 “Meeting notes by AutoDoc”을 표시합니다. 원본 녹화는 그대로 유지됩니다.',
+    '녹화된 동영상을 볼 때 “AutoDoc 회의 노트”을 표시합니다. 원본 녹화는 그대로 유지됩니다.',
   'settings.watermarkAria': '녹화된 동영상에 AutoDoc 워터마크 표시',
   'settings.analytics': '분석 및 충돌 보고',
   'settings.analyticsDescription':
@@ -81,12 +84,13 @@ const ko: LocaleMessages = {
   'settings.uninstallGuidanceWindows':
     'Windows에서 제거하면 AutoDoc 로컬 데이터를 함께 지울 수 있습니다. 제거하지 않고 공간을 확보하려면 여기 컨트롤을 사용하세요.',
   'settings.uninstallGuidanceMac':
-    'macOS에서 Applications의 AutoDoc을 삭제해도 로컬 데이터는 남지 않습니다. 공간을 확보하거나 앱을 초기화하려면 여기 컨트롤을 사용하세요.',
+    'macOS에서 Applications의 AutoDoc을 삭제해도 로컬 데이터는 그대로 남습니다. 공간을 확보하거나 앱을 초기화하려면 여기 컨트롤을 사용하세요.',
   'settings.removeDownloads': '다운로드된 AI 구성 요소 제거',
   'settings.removingDownloads': '다운로드된 AI 제거 중...',
   'settings.removeDownloadsConfirm':
     '이 기기에서 다운로드된 AI 구성 요소를 제거할까요? 다음에 필요할 때 AutoDoc이 다시 다운로드합니다.',
-  'settings.removeDownloadsDone': '다운로드된 AI 구성 요소를 제거했습니다. 필요할 때 다시 다운로드합니다.',
+  'settings.removeDownloadsDone':
+    '다운로드된 AI 구성 요소를 제거했습니다. 필요할 때 다시 다운로드합니다.',
   'settings.removeDownloadsFailed': '다운로드된 AI 구성 요소를 제거하지 못했습니다.',
   'settings.deleteAllData': '모든 로컬 AutoDoc 데이터 삭제',
   'settings.deletingAllData': 'AutoDoc을 다시 시작하는 중...',
@@ -224,7 +228,7 @@ export const localeCatalogs: Record<UiLanguageCode, LocaleMessages> = {
     'settings.videoPlayback': '動画再生',
     'settings.watermarkTitle': 'AutoDocウォーターマーク',
     'settings.watermarkDescription':
-      '録画した動画の再生中に「Meeting notes by AutoDoc」を表示します。元の録画は変わりません。',
+      '録画した動画の再生中に「AutoDocによる会議ノート」を表示します。元の録画は変わりません。',
     'settings.analytics': '分析とクラッシュ報告',
     'settings.storage': 'ストレージ',
     'settings.about': '情報',
@@ -393,7 +397,8 @@ export const localeCatalogs: Record<UiLanguageCode, LocaleMessages> = {
     'nav.emailUs': 'Nous écrire',
     'nav.recording': 'Enregistrement · {time}',
     'appearance.title': 'Apparence',
-    'appearance.description': 'Choisissez un thème clair ou sombre, ou suivez celui de l’ordinateur.',
+    'appearance.description':
+      'Choisissez un thème clair ou sombre, ou suivez celui de l’ordinateur.',
     'appearance.light': 'Clair',
     'appearance.dark': 'Sombre',
     'appearance.auto': 'Auto',
@@ -1040,7 +1045,13 @@ export const localeCatalogs: Record<UiLanguageCode, LocaleMessages> = {
   }
 }
 
-for (const overlays of [upcomingOverlays, chromeOverlays, remainingOverlays, leftoverOverlays]) {
+for (const overlays of [
+  upcomingOverlays,
+  chromeOverlays,
+  remainingOverlays,
+  leftoverOverlays,
+  completeOverlays
+]) {
   for (const [code, overlay] of Object.entries(overlays) as [UiLanguageCode, LocaleMessages][]) {
     localeCatalogs[code] = { ...localeCatalogs[code], ...overlay }
   }

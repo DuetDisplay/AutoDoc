@@ -1,3 +1,4 @@
+import { meetingLanguageName } from '../services/meeting-language-name'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import {
   getMeetingLanguageDefinition,
@@ -210,7 +211,7 @@ export function MeetingLanguagePicker({
         ref={triggerRef}
         type="button"
         disabled={disabled}
-        aria-label={t('meeting.languageAria', { language: selected.label })}
+        aria-label={t('meeting.languageAria', { language: meetingLanguageName(selected.code) })}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={listboxId}
@@ -224,7 +225,9 @@ export function MeetingLanguagePicker({
         onKeyDown={handleTriggerKeyDown}
         className="flex min-w-0 max-w-full w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium leading-snug text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-wait disabled:opacity-60"
       >
-        <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">{selected.label}</span>
+        <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">
+          {meetingLanguageName(selected.code)}
+        </span>
         <svg
           aria-hidden="true"
           focusable="false"
@@ -263,7 +266,9 @@ export function MeetingLanguagePicker({
                 ? t('picker.offlineDownload')
                 : meetingLanguageSelectableNote(engineState)
             const lockedReason =
-              isLocked && engineState?.availability === 'locked' ? engineState.reason : null
+              isLocked && engineState?.availability === 'locked'
+                ? t('ui.thisLanguageIsnTAvailableOnThisPC2')
+                : null
             return (
               <Fragment key={definition.code}>
                 {index === firstNotesLockedIndex && firstNotesLockedIndex !== -1 && (
@@ -298,10 +303,12 @@ export function MeetingLanguagePicker({
                 >
                   <span className="flex min-w-0 flex-col gap-0.5">
                     <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-pretty [overflow-wrap:anywhere]">{definition.label}</span>
+                      <span className="text-pretty [overflow-wrap:anywhere]">
+                        {meetingLanguageName(definition.code)}
+                      </span>
                       {definition.code === 'en' && (
                         <span className="text-[10px] font-medium text-ink-faint">
-                          Default · optimized
+                          {t('picker.defaultOptimized')}
                         </span>
                       )}
                       {selectableNote && (

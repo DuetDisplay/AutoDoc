@@ -6,6 +6,7 @@ describe('isNetworkErrorMessage', () => {
   it('recognizes connection failures, including IPC-wrapped ones', () => {
     for (const message of [
       'fetch failed',
+      'Download failed: offline. Try again when connected.',
       "Error invoking remote method 'whisper:prepare-meeting-language': TypeError: fetch failed",
       'getaddrinfo ENOTFOUND huggingface.co',
       'connect ECONNREFUSED 127.0.0.1:9',
@@ -33,13 +34,13 @@ describe('isNetworkErrorMessage', () => {
 describe('offlineMeetingLanguageMessage', () => {
   it('names the language, the download size and the language still in use', () => {
     expect(offlineMeetingLanguageMessage('Japanese', 1_613_977_880, 'English')).toBe(
-      "You're offline. Connect to the internet to download the Japanese speech model (about 1.5 GB). Your meeting language is still English."
+      'You’re offline. Connect to the internet to download the Japanese speech model (about 1.5 GB). Your meeting language is still English.'
     )
   })
 
   it('omits unknown sizes and languages', () => {
     expect(offlineMeetingLanguageMessage('German')).toBe(
-      "You're offline. Connect to the internet to download the German speech model."
+      'You’re offline. Connect to the internet to download the German speech model.'
     )
   })
 })

@@ -61,13 +61,11 @@ import {
   PrefsStore,
   readInitialAnalyticsConsent,
   readInitialAppearance,
+  readInitialUiLanguage,
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
-import {
-  applyNativeAppearance,
-  windowBackgroundForAppearance
-} from './services/appearance-runtime'
-import { tMain } from './services/ui-locale'
+import { applyNativeAppearance, windowBackgroundForAppearance } from './services/appearance-runtime'
+import { tMain, setMainUiLanguage } from './services/ui-locale'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
@@ -579,6 +577,7 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  setMainUiLanguage(readInitialUiLanguage())
   if (!(await warnIfUnsupportedMacOS())) return
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return

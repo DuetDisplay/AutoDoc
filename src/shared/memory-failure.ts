@@ -1,3 +1,5 @@
+import { translate } from './i18n'
+import { DEFAULT_UI_LANGUAGE, dateLocaleForUiLanguage, type UiLanguageCode } from './ui-language'
 export interface MemoryAmount {
   value: number
   unit: 'GB' | 'GiB' | 'MB' | 'MiB'
@@ -58,7 +60,10 @@ export function memoryFailureFromError(raw: string): MemoryFailure | undefined {
   return undefined
 }
 
-export function memoryFailureDetails(failure: MemoryFailure): string | undefined {
+export function memoryFailureDetails(
+  failure: MemoryFailure,
+  language: UiLanguageCode = DEFAULT_UI_LANGUAGE
+): string | undefined {
   const { available, minimum } = failure
   if (
     !available ||
@@ -70,6 +75,9 @@ export function memoryFailureDetails(failure: MemoryFailure): string | undefined
   )
     return undefined
   const format = (amount: MemoryAmount): string =>
-    `${amount.value.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${amount.unit}`
-  return `Available when checked: ${format(available)} · Minimum to start: ${format(minimum)}`
+    `${amount.value.toLocaleString(dateLocaleForUiLanguage(language), { maximumFractionDigits: 2 })} ${amount.unit}`
+  return translate(language, 'ui.availableWhenCheckedAvailableMinimumToStartMinimum', {
+    available: format(available),
+    minimum: format(minimum)
+  })
 }

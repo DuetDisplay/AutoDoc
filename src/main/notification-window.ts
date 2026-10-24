@@ -1,7 +1,10 @@
 import { app, BrowserWindow, nativeTheme, screen, ipcMain } from 'electron'
 import { getMainWindow } from './services/main-window'
+import { getMainUiLanguage, tMain } from './services/ui-locale'
+import { htmlLangForUiLanguage } from '../shared/ui-language'
 
 let notificationWindow: BrowserWindow | null = null
+let notificationLocaleUpdater: (() => void) | null = null
 let notificationKind: NotificationKind | null = null
 let autoDismissTimer: ReturnType<typeof setTimeout> | null = null
 let cleanupListeners: (() => void) | null = null
@@ -41,7 +44,6 @@ interface NotificationOptions {
   title: string
   body: string
   bodyTitle?: string
-  bodySuffix?: string
   primaryActionLabel: string
   onPrimaryAction: () => void
   onDismiss: (reason: NotificationDismissReason) => void
@@ -136,6 +138,11 @@ function prepareNotificationDismissal(): () => void {
   }
 }
 
+/** Refresh an already-visible notification when the user switches app language. */
+export function refreshNotificationLocale(): void {
+  notificationLocaleUpdater?.()
+}
+
 export function showNotificationWindow(options: NotificationOptions): void {
   if (notificationWindow) {
     clearAutoDismissTimer()
@@ -151,7 +158,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   const primaryDisplay = screen.getPrimaryDisplay()
   const workArea = primaryDisplay.workArea
   const winWidth = 400
-  const winHeight = 128 // Extra space for multi-line text, transparent padding, and shadow
+  const winHeight = 160 // Sized to the rendered content before showing the window.
   const x = Math.round(workArea.x + (workArea.width - winWidth) / 2)
   const y = workArea.y + 8
 
@@ -213,14 +220,48 @@ export function showNotificationWindow(options: NotificationOptions): void {
   ipcMain.once('notification:primary-action', handlePrimaryAction)
   ipcMain.once('notification:dismiss', dismissListener)
 
+  const updateLocale = (): void => {
+    if (win.isDestroyed()) return
+    const notesReady = options.kind === 'notes-ready'
+    win.webContents.send('notification:locale', {
+      lang: htmlLangForUiLanguage(getMainUiLanguage()),
+      title: notesReady ? tMain('notesReady.title') : options.title,
+      body: notesReady
+        ? tMain('notesReady.body')
+        : options.kind === 'meeting-detection'
+          ? tMain('recording.wouldYouLikeToStart')
+          : options.body,
+      action: notesReady
+        ? tMain('notesReady.open')
+        : options.kind === 'meeting-detection'
+          ? tMain('recording.startNotes')
+          : options.primaryActionLabel,
+      dismiss: tMain('common.dismiss')
+    })
+  }
+  notificationLocaleUpdater = updateLocale
+  const resize = (event: Electron.IpcMainEvent, height: unknown): void => {
+    if (
+      event.sender !== win.webContents ||
+      win.isDestroyed() ||
+      typeof height !== 'number' ||
+      !Number.isFinite(height)
+    )
+      return
+    win.setContentSize(winWidth, Math.min(workArea.height - 16, Math.max(100, Math.ceil(height))))
+  }
+  ipcMain.on('notification:resize', resize)
   const cleanup = (): void => {
     ipcMain.removeListener('notification:primary-action', handlePrimaryAction)
     ipcMain.removeListener('notification:dismiss', dismissListener)
+    ipcMain.removeListener('notification:resize', resize)
+    if (notificationLocaleUpdater === updateLocale) notificationLocaleUpdater = null
   }
   cleanupListeners = cleanup
 
   win.on('closed', () => {
     cleanup()
+    nativeTheme.removeListener('updated', updateNotificationTheme)
     if (cleanupListeners === cleanup) {
       cleanupListeners = null
     }
@@ -234,14 +275,14 @@ export function showNotificationWindow(options: NotificationOptions): void {
 
   const title = escapeHtml(options.title)
   const body = escapeHtml(options.body)
-  const subtitle =
-    options.bodyTitle && options.bodySuffix
-      ? `<div class="subtitle">${escapeHtml(`${options.bodyTitle} ${options.bodySuffix}`)}</div>`
-      : `<div class="subtitle">${body}</div>`
+  // Keep the meeting title separate from the complete translated status sentence.
+  const subtitle = options.bodyTitle
+    ? `<div class="meeting-title" title="${escapeHtml(options.bodyTitle)}">${escapeHtml(options.bodyTitle)}</div><div class="subtitle">${escapeHtml(tMain('notesReady.body'))}</div>`
+    : `<div class="subtitle">${body}</div>`
   const primaryActionLabel = escapeHtml(options.primaryActionLabel)
 
   const html = `<!DOCTYPE html>
-<html>
+<html lang="${htmlLangForUiLanguage(getMainUiLanguage())}">
 <head>
 <meta charset="UTF-8">
 <style>
@@ -300,7 +341,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     50% { opacity: 0.5; transform: scale(0.85); }
   }
 
-  .text { flex: 1; min-width: 0; }
+  .text { flex: 1 1 12rem; min-width: 0; }
 
   .title {
     font-size: 13px;
@@ -309,25 +350,26 @@ export function showNotificationWindow(options: NotificationOptions): void {
     letter-spacing: -0.02em;
     line-height: 1.3;
     overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    white-space: normal;
   }
 
   /* Wraps to at most three lines, which the fixed window height already fits. */
   .subtitle {
     font-size: 11.5px;
-    color: #86837e;
+    color: #62615a;
     line-height: 1.25;
     margin-top: 1px;
     overflow-wrap: anywhere;
-    min-width: 0;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
     white-space: normal;
+  }
+
+  .meeting-title {
+    margin-top: 3px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: #62615a;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .actions {
@@ -363,7 +405,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     border-radius: 50%;
     border: none;
     background: transparent;
-    color: #c4c1bc;
+    color: #6b6a63;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -371,7 +413,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     transition: all 0.15s ease;
     font-family: inherit;
   }
-  .btn-x:hover { background: rgba(0,0,0,0.05); color: #86837e; }
+  .btn-x:hover { background: rgba(0,0,0,0.05); color: #62615a; }
   .btn-x svg { width: 12px; height: 12px; }
 
   .toast.dark {
@@ -382,10 +424,11 @@ export function showNotificationWindow(options: NotificationOptions): void {
       0 4px 12px rgba(0, 0, 0, 0.22);
   }
   .toast.dark .title { color: #F5F5F0; }
+  .toast.dark .meeting-title { color: #C8C6BC; }
   .toast.dark .subtitle { color: #9C9B94; }
   .toast.dark .btn-record { background: #F5F5F0; color: #1C1C18; }
   .toast.dark .btn-record:hover { background: #C8C6BC; }
-  .toast.dark .btn-x { color: #6B6A63; }
+  .toast.dark .btn-x { color: #AAA99F; }
   .toast.dark .btn-x:hover { background: rgba(255,255,255,0.08); color: #C8C6BC; }
 </style>
 </head>
@@ -398,7 +441,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
     </div>
     <div class="actions">
       <button class="btn-record" id="primary-action">${primaryActionLabel}</button>
-      <button class="btn-x" id="dismiss">
+      <button class="btn-x" id="dismiss" aria-label="${escapeHtml(tMain('common.dismiss'))}">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
           <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
         </svg>
@@ -407,6 +450,20 @@ export function showNotificationWindow(options: NotificationOptions): void {
   </div>
   <script>
     const { ipcRenderer } = require('electron');
+    const reportSize = () => ipcRenderer.send('notification:resize', Math.ceil(document.querySelector('.toast').getBoundingClientRect().height + 26));
+    new ResizeObserver(reportSize).observe(document.querySelector('.toast'));
+    ipcRenderer.on('notification:locale', (_event, copy) => {
+      document.documentElement.lang = copy.lang;
+      document.querySelector('.title').textContent = copy.title;
+      document.querySelector('.title').title = copy.title;
+      document.querySelector('.subtitle').textContent = copy.body;
+      document.getElementById('primary-action').textContent = copy.action;
+      document.getElementById('dismiss').setAttribute('aria-label', copy.dismiss);
+      reportSize();
+    });
+    ipcRenderer.on('notification:appearance', (_event, dark) => {
+      document.querySelector('.toast').classList.toggle('dark', dark);
+    });
     function dismiss(channel) {
       const toast = document.querySelector('.toast');
       if (channel === 'notification:dismiss') {
@@ -422,13 +479,26 @@ export function showNotificationWindow(options: NotificationOptions): void {
 </body>
 </html>`
 
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-
-  win.once('ready-to-show', () => {
-    if (notificationWindow === win) {
-      win.showInactive()
+  function updateNotificationTheme(): void {
+    if (!win.isDestroyed())
+      win.webContents.send('notification:appearance', nativeTheme.shouldUseDarkColors)
+  }
+  nativeTheme.on('updated', updateNotificationTheme)
+  win.webContents.once('did-finish-load', async () => {
+    try {
+      const height = await win.webContents.executeJavaScript(
+        'Math.ceil(document.querySelector(".toast").getBoundingClientRect().height + 26)'
+      )
+      if (!win.isDestroyed() && Number.isFinite(height))
+        win.setContentSize(winWidth, Math.min(workArea.height - 16, Math.max(100, height)))
+      updateNotificationTheme()
+      updateLocale()
+    } catch {
+      /* The notification may have closed while loading. */
     }
+    if (notificationWindow === win && !win.isDestroyed()) win.showInactive()
   })
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 
   const autoDismissMs = options.autoDismissMs ?? 30_000
   // Zero keeps an actionable prompt visible until its owner closes it.

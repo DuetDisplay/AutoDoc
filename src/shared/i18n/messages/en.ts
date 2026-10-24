@@ -1,4 +1,7 @@
+import { completeEn } from './complete-en'
+
 export const en = {
+  ...completeEn,
   'nav.upcoming': 'Upcoming',
   'nav.recordings': 'AI Notes',
   'nav.search': 'Search',
@@ -144,8 +147,7 @@ export const en = {
   'askAi.stop': 'Stop',
   'askAi.stopGenerating': 'Stop generating',
   'askAi.timeout': 'Sorry, this is taking longer than expected. Please try again.',
-  'askAi.failed':
-    'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
+  'askAi.failed': 'Sorry, I had trouble answering that. Make sure Ollama is running and try again.',
   'upcoming.title': 'Upcoming',
   'upcoming.sync': 'Sync',
   'upcoming.syncing': 'Syncing...',
@@ -154,8 +156,7 @@ export const en = {
   'upcoming.tomorrow': 'Tomorrow',
   'upcoming.meetingCountOne': '1 meeting',
   'upcoming.meetingCountOther': '{count} meetings',
-  'upcoming.connectToast':
-    'Connect a calendar to see upcoming meetings and auto-name recordings.',
+  'upcoming.connectToast': 'Connect a calendar to see upcoming meetings and auto-name recordings.',
   'upcoming.openSettings': 'Open Settings',
   'upcoming.autoRecordSaveFailed': 'Could not save auto-record preference. Please try again.',
   'upcoming.connectPrompt': 'Connect a calendar to see upcoming meetings',
@@ -218,8 +219,7 @@ export const en = {
   'setup.downloadingBackend': 'Downloading {backend}... {percent}%',
   'setup.installingAudioTools': 'Installing audio tools... {percent}%',
   'setup.downloadingSpeechModel': 'Downloading speech model... {percent}%',
-  'setup.downloadingSpeechModelBackend':
-    'Downloading speech model for {backend}... {percent}%',
+  'setup.downloadingSpeechModelBackend': 'Downloading speech model for {backend}... {percent}%',
   'setup.preparingSpeakerRuntime': 'Preparing speaker ID runtime... {percent}%',
   'setup.installingSpeakerId': 'Installing speaker ID... {percent}%',
   'setup.downloadingSpeakerModel': 'Downloading speaker model... {percent}%',
@@ -278,7 +278,7 @@ export const en = {
   'meeting.noCategoryYet': 'No {category} recorded yet.',
   'meeting.exportDisabledAfterRecording': 'Notes are available after this recording finishes.',
   'meeting.exportDisabledGenerating': 'Notes are available when generation finishes.',
-  'meeting.exportDisabledEmpty': "There aren’t any notes to copy or export.",
+  'meeting.exportDisabledEmpty': 'There aren’t any notes to copy or export.',
   'meeting.queuedForNotes': 'Queued for notes...',
   'meeting.preparingNotes': 'Preparing notes...',
   'meeting.shapingNotes': 'Shaping notes...',

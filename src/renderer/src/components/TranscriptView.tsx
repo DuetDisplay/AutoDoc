@@ -1,3 +1,5 @@
+import { displaySpeakerLabel } from '../services/speaker-label'
+import { useT } from '../services/i18n'
 import { useEffect, useState } from 'react'
 import type { Transcript, TranscriptionStatus, SpeakerMap } from '../../../shared/types'
 import { SPEAKER_COLORS } from '../../../shared/constants'
@@ -41,6 +43,8 @@ export function TranscriptView({
   speakers,
   transcriptionProgress
 }: TranscriptViewProps) {
+  const t = useT()
+
   const [setupStatus, setSetupStatus] = useState<
     import('../../../shared/types').WhisperSetupStatus | null
   >(null)
@@ -60,7 +64,7 @@ export function TranscriptView({
   if (status === 'pending' || status === 'queued') {
     return (
       <p className="text-[12px] text-ink-muted">
-        Awaiting transcription. This will begin automatically.
+        {t('ui.awaitingTranscriptionThisWillBeginAutomatically')}
       </p>
     )
   }
@@ -70,7 +74,7 @@ export function TranscriptView({
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
         <p className="text-[12px] text-ink-muted">
-          {getWhisperSetupLabel(activeSetupStatus) ?? 'Preparing transcription engine...'}
+          {getWhisperSetupLabel(activeSetupStatus, t) ?? t('ui.preparingTranscriptionEngine')}
         </p>
       </div>
     )
@@ -78,10 +82,13 @@ export function TranscriptView({
 
   if (status === 'transcribing') {
     const statusText =
-      formatTranscriptionStatusText({
-        status,
-        progress: transcriptionProgress
-      }) ?? 'Transcribing audio...'
+      formatTranscriptionStatusText(
+        {
+          status,
+          progress: transcriptionProgress
+        },
+        t
+      ) ?? t('ui.transcribingAudio')
 
     return (
       <div className="flex items-center gap-2">
@@ -95,7 +102,7 @@ export function TranscriptView({
     return (
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-ink-muted animate-pulse" />
-        <p className="text-[12px] text-ink-muted">Identifying speakers...</p>
+        <p className="text-[12px] text-ink-muted">{t('ui.identifyingSpeakers')}</p>
       </div>
     )
   }
@@ -103,13 +110,13 @@ export function TranscriptView({
   if (status === 'failed') {
     return (
       <p className="text-[12px] text-clay-dark">
-        Transcription failed. Use the retry button to try again.
+        {t('ui.transcriptionFailedUseTheRetryButtonToTryAgain')}
       </p>
     )
   }
 
   if (segments.length === 0) {
-    return <p className="text-[12px] text-ink-muted">No transcript segments found.</p>
+    return <p className="text-[12px] text-ink-muted">{t('ui.noTranscriptSegmentsFound')}</p>
   }
 
   const hasSpeakers = speakers != null && Object.keys(speakers).length > 0
@@ -155,7 +162,9 @@ export function TranscriptView({
     <div className="flex flex-col gap-2">
       {merged.map((group, i) => {
         const color = hasSpeakers ? getSpeakerColor(group.speaker, speakerIds) : null
-        const speakerLabel = hasSpeakers ? (speakers![group.speaker]?.label ?? null) : null
+        const speakerLabel = hasSpeakers
+          ? displaySpeakerLabel(group.speaker, speakers![group.speaker], t)
+          : null
 
         return (
           <div

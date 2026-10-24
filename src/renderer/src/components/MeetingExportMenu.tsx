@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../../shared/i18n'
+import { useT } from '../services/i18n'
 import { useCallback, useEffect, useId, useRef, useState, type ReactElement } from 'react'
 import type {
   MeetingCopyNotesResult,
@@ -15,44 +17,48 @@ export interface MeetingExportMenuProps {
 type Action = 'copy' | 'export'
 
 type ActionFeedback =
-  | { action: Action; kind: 'success'; message: 'Copied' | 'Exported' }
-  | { action: Action; kind: 'failed'; message: string }
+  | { action: Action; kind: 'success'; message: MessageKey }
+  | { action: Action; kind: 'failed'; message: MessageKey }
   | null
 
 interface ExportFormatOption {
   format: MeetingExportFormat
   label: string
   extension: string
-  description: string
+  description: MessageKey
 }
 
 const EXPORT_FORMATS: readonly ExportFormatOption[] = [
-  { format: 'pdf', label: 'PDF', extension: '.pdf', description: 'Best for sharing' },
-  { format: 'docx', label: 'Word', extension: '.docx', description: 'Editable document' },
-  { format: 'markdown', label: 'Markdown', extension: '.md', description: 'Plain text' }
+  { format: 'pdf', label: 'PDF', extension: '.pdf', description: 'ui.bestForSharing' },
+  { format: 'docx', label: 'Word', extension: '.docx', description: 'ui.editableDocument' },
+  { format: 'markdown', label: 'Markdown', extension: '.md', description: 'ui.plainText' }
 ]
 
 const SUCCESS_VISIBLE_MS = 2_400
 
-function exportFailureMessage(result: Extract<MeetingExportResult, { status: 'failed' }>): string {
+function exportFailureMessage(
+  result: Extract<MeetingExportResult, { status: 'failed' }>
+): MessageKey {
   switch (result.code) {
     case 'disk-full':
-      return 'Not enough disk space to export. Choose another location or free up space.'
+      return 'ui.notEnoughDiskSpaceToExportChooseAnotherLocationOrFreeUpSpace'
     case 'nothing-to-export':
-      return 'There aren’t any notes to export yet.'
+      return 'ui.thereArenTAnyNotesToExportYet'
     case 'permission-denied':
-      return 'AutoDoc couldn’t save the notes there. Choose another location and try again.'
+      return 'ui.autoDocCouldnTSaveTheNotesThereChooseAnotherLocationAndTryAgain'
     case 'invalid-request':
     case 'render-failed':
     case 'write-failed':
-      return 'Couldn’t export notes. Try again.'
+      return 'ui.couldnTExportNotesTryAgain'
   }
 }
 
-function copyFailureMessage(result: Extract<MeetingCopyNotesResult, { status: 'failed' }>): string {
+function copyFailureMessage(
+  result: Extract<MeetingCopyNotesResult, { status: 'failed' }>
+): MessageKey {
   return result.code === 'nothing-to-copy'
-    ? 'There aren’t any notes to copy yet.'
-    : 'Couldn’t copy notes. Try again.'
+    ? 'ui.thereArenTAnyNotesToCopyYet'
+    : 'ui.couldnTCopyNotesTryAgain'
 }
 
 function CopyIcon(): ReactElement {
@@ -110,6 +116,8 @@ export function MeetingExportMenu({
   onCopyNotes,
   onExport
 }: MeetingExportMenuProps): ReactElement {
+  const t = useT()
+
   const [open, setOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<Action | null>(null)
   const [feedback, setFeedback] = useState<ActionFeedback>(null)
@@ -130,7 +138,7 @@ export function MeetingExportMenu({
     successTimerRef.current = null
   }, [])
 
-  const showSuccess = useCallback((action: Action, message: 'Copied' | 'Exported'): void => {
+  const showSuccess = useCallback((action: Action, message: MessageKey): void => {
     setFeedback({ action, kind: 'success', message })
     successTimerRef.current = window.setTimeout(() => {
       setFeedback(null)
@@ -203,10 +211,10 @@ export function MeetingExportMenu({
     if (!beginAction('copy')) return
     try {
       const result = await onCopyNotes()
-      if (result.status === 'copied') showSuccess('copy', 'Copied')
+      if (result.status === 'copied') showSuccess('copy', 'ui.copied')
       else setFeedback({ action: 'copy', kind: 'failed', message: copyFailureMessage(result) })
     } catch {
-      setFeedback({ action: 'copy', kind: 'failed', message: 'Couldn’t copy notes. Try again.' })
+      setFeedback({ action: 'copy', kind: 'failed', message: 'ui.couldnTCopyNotesTryAgain' })
     } finally {
       finishAction('copy')
     }
@@ -216,7 +224,7 @@ export function MeetingExportMenu({
     if (!beginAction('export')) return
     try {
       const result = await onExport(format)
-      if (result.status === 'saved') showSuccess('export', 'Exported')
+      if (result.status === 'saved') showSuccess('export', 'ui.exported')
       else if (result.status === 'failed') {
         setFeedback({ action: 'export', kind: 'failed', message: exportFailureMessage(result) })
       }
@@ -224,7 +232,7 @@ export function MeetingExportMenu({
       setFeedback({
         action: 'export',
         kind: 'failed',
-        message: 'Couldn’t export notes. Try again.'
+        message: 'ui.couldnTExportNotesTryAgain'
       })
     } finally {
       finishAction('export')
@@ -244,18 +252,23 @@ export function MeetingExportMenu({
 
   const copySucceeded = feedback?.kind === 'success' && feedback.action === 'copy'
   const exportSucceeded = feedback?.kind === 'success' && feedback.action === 'export'
-  const copyLabel = busyAction === 'copy' ? 'Copying…' : copySucceeded ? 'Copied' : 'Copy notes'
+  const copyLabel =
+    busyAction === 'copy' ? t('nav.copying') : copySucceeded ? t('ui.copied') : t('ui.copyNotes')
   const exportLabel =
-    busyAction === 'export' ? 'Exporting…' : exportSucceeded ? 'Exported' : 'Export'
+    busyAction === 'export'
+      ? t('ui.exporting')
+      : exportSucceeded
+        ? t('ui.exported')
+        : t('ui.export')
   const controlsDisabled = disabled || busyAction !== null
   const baseButtonClass =
-    'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-45'
+    'inline-flex items-center gap-1.5 rounded-lg border [hyphens:none] px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-45'
   const normalButtonClass =
     'border-border bg-bg-card text-ink-muted hover:border-border-strong hover:text-ink'
   const successButtonClass = 'border-sage/25 bg-sage-light text-sage-dark'
 
   return (
-    <div ref={rootRef} className="relative flex items-center gap-1.5">
+    <div ref={rootRef} className="relative flex max-w-full flex-wrap items-center gap-1.5">
       <button
         ref={copyTriggerRef}
         type="button"
@@ -320,10 +333,10 @@ export function MeetingExportMenu({
           className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-border bg-bg-card p-3 shadow-lg"
         >
           <h2 id={headingId} className="text-[12px] font-semibold text-ink">
-            Export notes
+            {t('ui.exportNotes')}
           </h2>
           <p id={descriptionId} className="mt-0.5 text-[10.5px] leading-4 text-ink-faint">
-            Choose a file format.
+            {t('ui.chooseAFileFormat')}
           </p>
 
           <div className="mt-2 flex flex-col gap-1 border-t border-border-subtle pt-2">
@@ -337,7 +350,9 @@ export function MeetingExportMenu({
               >
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12px] font-medium text-ink">{option.label}</span>
-                  <span className="block text-[10.5px] text-ink-faint">{option.description}</span>
+                  <span className="block text-[10.5px] text-ink-faint">
+                    {t(option.description)}
+                  </span>
                 </span>
                 <span className="font-mono text-[10px] text-ink-faint">{option.extension}</span>
               </button>
@@ -348,7 +363,7 @@ export function MeetingExportMenu({
 
       {feedback?.kind === 'success' ? (
         <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-          {feedback.message}
+          {t(feedback.message)}
         </span>
       ) : null}
 
@@ -357,12 +372,14 @@ export function MeetingExportMenu({
           role="alert"
           className="absolute right-0 top-full z-50 mt-1.5 flex w-72 items-start gap-2 rounded-xl border border-clay/25 bg-clay-light px-3 py-2.5 text-[11.5px] leading-relaxed text-clay-dark shadow-sm"
         >
-          <span className="min-w-0 flex-1">{feedback.message}</span>
+          <span className="min-w-0 flex-1">{t(feedback.message)}</span>
           <button
             type="button"
-            aria-label={`Dismiss ${feedback.action} error`}
+            aria-label={
+              feedback.action === 'copy' ? t('ui.dismissCopyError') : t('ui.dismissExportError')
+            }
             onClick={() => setFeedback(null)}
-            className="flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-clay-dark/70 transition-colors hover:bg-bg-accent hover:text-clay-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
+            className="flex size-5 shrink-0 items-center justify-center rounded text-[15px] leading-none text-clay-dark transition-colors hover:bg-bg-accent hover:text-clay-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
           >
             ×
           </button>

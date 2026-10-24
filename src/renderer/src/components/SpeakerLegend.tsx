@@ -1,3 +1,5 @@
+import { displaySpeakerLabel } from '../services/speaker-label'
+import { useT } from '../services/i18n'
 import { useState } from 'react'
 import { SPEAKER_COLORS } from '../../../shared/constants'
 import { SpeakerRenameDropdown } from './SpeakerRenameDropdown'
@@ -17,24 +19,28 @@ interface SpeakerLegendProps {
 }
 
 export function SpeakerLegend({ speakers, speakerIds, onRename }: SpeakerLegendProps) {
+  const t = useT()
+
   const [renamingId, setRenamingId] = useState<string | null>(null)
 
   return (
     <div className="flex gap-4 px-4 py-3 bg-bg-card border border-border rounded-xl mb-3 items-center flex-wrap">
-      <span className="text-[11px] text-ink-faint">Speakers:</span>
+      <span className="text-[11px] text-ink-faint">{t('ui.speakers')}</span>
       {speakerIds.map((id) => {
         const info = speakers[id]
         const color = getSpeakerColor(id, speakerIds)
         return (
           <div key={id} className="relative flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-            <span className="text-[12px] text-ink font-medium">{info?.label ?? id}</span>
+            <span className="text-[12px] text-ink font-medium">
+              {displaySpeakerLabel(id, info, t)}
+            </span>
             {id !== 'me' && (
               <button
                 onClick={() => setRenamingId(renamingId === id ? null : id)}
                 className="text-[10px] text-ink-faint border border-border rounded px-1.5 py-px hover:text-ink-muted transition-colors"
               >
-                rename
+                {t('ui.rename')}
               </button>
             )}
             {renamingId === id && (

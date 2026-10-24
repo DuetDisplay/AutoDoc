@@ -1,3 +1,4 @@
+import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
@@ -19,16 +20,6 @@ const ACTIVE_SEGMENTATION_STATUSES: SegmentationStatus[] = [
   'downloading-model',
   'segmenting'
 ]
-
-function formatDuration(seconds: number): string {
-  const mins = Math.ceil(seconds / 60)
-  if (mins >= 60) {
-    const h = Math.floor(mins / 60)
-    const m = mins % 60
-    return m > 0 ? `${h}h ${m}m` : `${h}h`
-  }
-  return `${mins}m`
-}
 
 function mergeRecordIfChanged<T>(
   prev: Record<string, T>,
@@ -469,11 +460,15 @@ export function Recordings({
                           day: 'numeric'
                         })}
                       </span>
-                      <span className="text-border">|</span>
+                      <span aria-hidden="true" className="text-border">
+                        |
+                      </span>
                       {rec.duration != null && (
                         <>
-                          <span>{formatDuration(rec.duration)}</span>
-                          <span className="text-border">|</span>
+                          <span>{formatUiDuration(language, rec.duration)}</span>
+                          <span aria-hidden="true" className="text-border">
+                            |
+                          </span>
                         </>
                       )}
                       <span className="flex items-center gap-1">
@@ -485,7 +480,9 @@ export function Recordings({
                   </div>
                   <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
                     {rec.isFinalizing ? (
-                      <span className="text-[11px] text-ink-faint">{t('recordings.wrappingUp')}</span>
+                      <span className="text-[11px] text-ink-faint">
+                        {t('recordings.wrappingUp')}
+                      </span>
                     ) : (
                       <>
                         <TranscriptionBadge
@@ -510,7 +507,9 @@ export function Recordings({
                           </span>
                         )}
                         {rec.videoStatus === 'failed' && (
-                          <span className="text-[11px] text-ink-faint">{t('recordings.videoFailed')}</span>
+                          <span className="text-[11px] text-ink-faint">
+                            {t('recordings.videoFailed')}
+                          </span>
                         )}
                       </>
                     )}

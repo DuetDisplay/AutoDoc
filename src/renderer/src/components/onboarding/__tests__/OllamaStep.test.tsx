@@ -25,7 +25,7 @@ describe('OllamaStep', () => {
     })
 
     expect(screen.getByText('Setting Up AI')).toBeInTheDocument()
-    expect(screen.getByText(/downloading Ollama runtime\.\.\. 42%/i)).toBeInTheDocument()
+    expect(screen.getByText(/downloading Ollama\.\.\. 42%/i)).toBeInTheDocument()
   })
 
   it('waits for confirmation when already ready', async () => {
@@ -44,7 +44,7 @@ describe('OllamaStep', () => {
 
     expect(screen.getByRole('heading', { name: 'AI Model Ready' })).toBeInTheDocument()
     expect(
-      screen.getByText(/Ollama runtime and the notes model are installed and ready to go\./i)
+      screen.getByText(/Ollama and the notes model are installed and ready to go\./i)
     ).toBeInTheDocument()
 
     await act(async () => {

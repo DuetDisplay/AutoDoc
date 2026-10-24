@@ -29,15 +29,16 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
       <span className="inline-block px-2.5 py-1 bg-mist-light text-ink-muted rounded-md text-[11px] font-semibold uppercase tracking-wider mb-4">
-        OPTIONAL
+        {t('ui.oPTIONAL')}
       </span>
       <div className="w-16 h-16 rounded-2xl bg-sage-light flex items-center justify-center text-[28px] mx-auto mb-5">
         📅
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Connect Calendar</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        {t('ui.connectCalendar')}
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        Connect your calendar to automatically name recordings after meetings and suggest speaker
-        names from attendee lists.
+        {t('ui.connectYourCalendarToAutomaticallyNameRecordingsAfterMeetingsAndSuggestSpea')}
       </p>
 
       {connected ? (

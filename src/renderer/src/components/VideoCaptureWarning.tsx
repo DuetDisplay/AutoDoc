@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import type { JSX } from 'react'
 
 interface VideoCaptureWarningProps {
@@ -6,16 +7,17 @@ interface VideoCaptureWarningProps {
 
 const COPY = {
   live: {
-    title: 'Screen recording stopped',
-    body: 'Audio is still recording. Your transcript and notes will continue to be saved.'
+    title: 'ui.screenRecordingStopped',
+    body: 'ui.audioIsStillRecordingYourTranscriptAndNotesWillContinueToBeSaved'
   },
   saved: {
-    title: 'Screen recording ended early',
-    body: 'The screen video may be incomplete. Audio, transcript, and notes were saved.'
+    title: 'ui.screenRecordingEndedEarly',
+    body: 'ui.theScreenVideoMayBeIncompleteAudioTranscriptAndNotesWereSaved'
   }
 } as const
 
 export function VideoCaptureWarning({ variant }: VideoCaptureWarningProps): JSX.Element {
+  const t = useT()
   const copy = COPY[variant]
 
   return (
@@ -37,8 +39,8 @@ export function VideoCaptureWarning({ variant }: VideoCaptureWarningProps): JSX.
         </svg>
       </div>
       <div className="min-w-0 pt-0.5">
-        <p className="text-[12px] font-semibold text-ink">{copy.title}</p>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-clay-dark">{copy.body}</p>
+        <p className="text-[12px] font-semibold text-ink">{t(copy.title)}</p>
+        <p className="mt-0.5 text-[11.5px] leading-relaxed text-clay-dark">{t(copy.body)}</p>
       </div>
     </div>
   )

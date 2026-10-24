@@ -1,4 +1,7 @@
+import { useT } from '../../services/i18n'
 export function WelcomeStep({ onNext }: { onNext: () => void }) {
+  const t = useT()
+
   return (
     <div className="text-center">
       {/* Animated waveform */}
@@ -18,15 +21,15 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
 
       <h1 className="font-serif text-[36px] text-ink tracking-[-0.02em]">AutoDoc</h1>
       <p className="text-[15px] text-ink-muted leading-relaxed mt-1.5 mb-8">
-        Your meetings talk. We listen.
+        {t('ui.yourMeetingsTalkWeListen')}
         <br />
-        So you don&apos;t have to take notes.
+        {t('ui.soYouDonTHaveToTakeNotes')}
       </p>
       <button
         onClick={onNext}
         className="i18n-btn px-8 py-3 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
       >
-        Get Started →
+        {t('ui.getStarted')}
       </button>
     </div>
   )

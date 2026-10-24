@@ -122,16 +122,18 @@ export function ScreenPermissionStep({
   return (
     <div className="text-center">
       <span className="inline-block px-2.5 py-1 bg-mist-light text-ink-muted rounded-md text-[11px] font-semibold uppercase tracking-wider mb-4">
-        OPTIONAL
+        {t('ui.oPTIONAL')}
       </span>
       <div className="w-16 h-16 rounded-2xl bg-mist-light flex items-center justify-center text-[28px] mx-auto mb-5">
         🖥️
       </div>
-      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">Screen Recording</h2>
+      <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
+        {t('ui.screenRecording')}
+      </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
         {opened
-          ? 'If macOS did not grant screen access automatically, you can enable it in System Settings. Screen visuals and system audio are verified separately when recording starts, and you may need to restart AutoDoc after changing the setting.'
-          : 'AutoDoc uses screen recording permission to capture meeting visuals. macOS verifies system audio separately when a recording starts, so you can continue even if you skip this for now.'}
+          ? t('ui.ifMacOSDidNotGrantScreenAccessAutomaticallyYouCanEnableItInSystemSettingsSc')
+          : t('ui.autoDocUsesScreenRecordingPermissionToCaptureMeetingVisualsMacOSVerifiesSys')}
       </p>
 
       {isRestoring ? null : granted ? (

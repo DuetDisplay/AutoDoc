@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { StepDots } from '../components/onboarding/StepDots'
 import { WelcomeStep } from '../components/onboarding/WelcomeStep'
@@ -33,6 +34,8 @@ function getVisibleStepOrder(platform: string | null): readonly number[] {
 }
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
+  const t = useT()
+
   const [platform, setPlatform] = useState<string | null>(null)
   const [stepIndex, setStepIndex] = useState<number | null>(null)
   const [navigationMode, setNavigationMode] = useState<NavigationMode>('restore')
@@ -162,8 +165,10 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="🔒"
             iconBg="bg-sage-light"
-            heading="Private by Design"
-            body="AutoDoc is fully open source and runs entirely on your machine. Your meetings are encrypted on disk and never leave your computer. No cloud. No accounts. No compromises. Built by ex-Apple engineers who believe your data is yours."
+            heading={t('ui.privateByDesign')}
+            body={t(
+              'ui.autoDocIsFullyOpenSourceAndRunsEntirelyOnYourMachineYourMeetingsAreEncrypte'
+            )}
             onNext={next}
           />
         )
@@ -172,27 +177,28 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           <FeatureStep
             icon="🎧"
             iconBg="bg-dusk-light"
-            heading="How It Works"
-            body="AutoDoc quietly records your meeting audio, transcribes it locally, and identifies who's speaking — all on your device."
+            heading={t('ui.howItWorks')}
+            body={t(
+              'ui.autoDocQuietlyRecordsYourMeetingAudioTranscribesItLocallyAndIdentifiesWhoSS'
+            )}
             features={[
               {
                 icon: '🎤',
                 iconBg: 'bg-sage-light',
-                title: 'Captures audio',
-                description:
-                  'Records mic and system audio separately for clean speaker identification'
+                title: t('ui.capturesAudio'),
+                description: t('ui.recordsMicAndSystemAudioSeparatelyForCleanSpeakerIdentification')
               },
               {
                 icon: '📝',
                 iconBg: 'bg-dusk-light',
-                title: 'Transcribes locally',
-                description: 'AutoDoc installs a one-time speech engine, then transcribes on-device'
+                title: t('ui.transcribesLocally'),
+                description: t('ui.autoDocInstallsAOneTimeSpeechEngineThenTranscribesOnDevice')
               },
               {
                 icon: '👥',
                 iconBg: 'bg-mist-light',
-                title: 'Identifies speakers',
-                description: 'Knows who\'s talking — labels "Me" vs "Them" automatically'
+                title: t('ui.identifiesSpeakers'),
+                description: t('ui.knowsWhoSTalkingLabelsMeVsThemAutomatically')
               }
             ]}
             onNext={next}
@@ -281,7 +287,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
           className="fixed top-12 left-6 px-3 py-2 rounded-[10px] text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          ← Back
+          {t('ui.back')}
         </button>
       )}
 

@@ -1,10 +1,12 @@
+import { formatUiDuration } from '../../../shared/i18n/format'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SyntheticEvent } from 'react'
 import { isWindowsRenderer } from '../services/microphone-access'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { NOTES_WRITER_PROGRESS_END } from '../../../shared/constants'
 import type { MessageKey } from '../../../shared/i18n'
-import { useT } from '../services/i18n'
+import { useI18n, useT } from '../services/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
 import type {
   SegmentCategory,
   Segment,
@@ -33,6 +35,7 @@ import { SegmentationBadge } from '../components/SegmentationBadge'
 import { SpeakerLegend } from '../components/SpeakerLegend'
 import { VideoCaptureWarning } from '../components/VideoCaptureWarning'
 import { MeetingExportMenu } from '../components/MeetingExportMenu'
+import { MediaPlaybackControls } from '../components/MediaPlaybackControls'
 import { VideoWatermarkOverlay } from '../components/VideoWatermarkOverlay'
 import { MEDIA_DEBUG_PREFIX, snapshotMediaElement } from '../lib/mediaDiagnostics'
 import { trackEvent } from '../services/analytics'
@@ -77,16 +80,6 @@ function segmentsWriteQueueFor(
   }
   queues.set(meetingId, created)
   return created
-}
-
-function formatDuration(seconds: number): string {
-  const mins = Math.ceil(seconds / 60)
-  if (mins >= 60) {
-    const h = Math.floor(mins / 60)
-    const m = mins % 60
-    return m > 0 ? `${h}h ${m}m` : `${h}h`
-  }
-  return `${mins}m`
 }
 
 function mergeProgress(
@@ -280,7 +273,7 @@ function EditableText({
 }
 
 export function MeetingDetail() {
-  const t = useT()
+  const { t, language } = useI18n()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -326,6 +319,7 @@ export function MeetingDetail() {
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const transcriptTopRef = useRef<HTMLDivElement | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const videoContainerRef = useRef<HTMLDivElement | null>(null)
   const videoWatermarkRef = useRef<HTMLDivElement | null>(null)
   /** Dedupe identical `<video>`/`<audio>` `error` bursts (same code + URL) within this window. */
   const mediaPlayerErrorLastAtRef = useRef<Map<string, number>>(new Map())
@@ -791,8 +785,8 @@ export function MeetingDetail() {
         meetingId: id,
         category,
         topic: null,
-        title: 'New item',
-        content: 'Add details here...',
+        title: t('ui.newItem'),
+        content: t('ui.addDetailsHere'),
         assignee: null,
         deadline: null,
         sourceStartMs: 0,
@@ -804,7 +798,7 @@ export function MeetingDetail() {
       }
       saveSegments(updated)
     },
-    [segments, id, saveSegments]
+    [segments, id, saveSegments, t]
   )
 
   useEffect(() => {
@@ -872,8 +866,8 @@ export function MeetingDetail() {
           setSegmentationProgress(nextSegmentationProgress)
           setSegmentationErrorCode(
             nextSegmentationStatus === 'failed' ||
-            nextSegmentationStatus === 'complete' ||
-            nextSegmentationStatus === 'no-notes'
+              nextSegmentationStatus === 'complete' ||
+              nextSegmentationStatus === 'no-notes'
               ? nextSegmentationErrorCode
               : undefined
           )
@@ -944,7 +938,9 @@ export function MeetingDetail() {
         setSegmentationStatus(payload.status)
         setSegmentationProgress(payload.progress)
         setSegmentationErrorCode(
-          payload.status === 'failed' || payload.status === 'complete' || payload.status === 'no-notes'
+          payload.status === 'failed' ||
+            payload.status === 'complete' ||
+            payload.status === 'no-notes'
             ? payload.errorCode
             : undefined
         )
@@ -1105,7 +1101,8 @@ export function MeetingDetail() {
     notesFailureKindFromCode(
       segmentationErrorCode === 'ollama-insufficient-memory' && !segmentationMemoryFailure
         ? 'unknown'
-        : segmentationErrorCode ?? (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined)
+        : (segmentationErrorCode ??
+            (segmentationStatus === 'no-notes' ? 'no_notes_detected' : undefined))
     )
   )
 
@@ -1417,7 +1414,7 @@ export function MeetingDetail() {
               onClick={() => navigate('/recordings')}
               className="text-ink-faint hover:text-ink transition-colors shrink-0"
             >
-              AI Notes
+              {t('recordings.title')}
             </button>
             <span className="text-ink-faint shrink-0">/</span>
             <EditableText
@@ -1443,7 +1440,7 @@ export function MeetingDetail() {
           {detail && (
             <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-ink-faint">
               <span>
-                {new Date(detail.date).toLocaleDateString('en-US', {
+                {new Date(detail.date).toLocaleDateString(dateLocaleForUiLanguage(language), {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
@@ -1453,8 +1450,10 @@ export function MeetingDetail() {
               </span>
               {detail.durationSeconds != null && (
                 <>
-                  <span className="text-border">|</span>
-                  <span>{formatDuration(detail.durationSeconds)}</span>
+                  <span aria-hidden="true" className="text-border">
+                    |
+                  </span>
+                  <span>{formatUiDuration(language, detail.durationSeconds)}</span>
                 </>
               )}
             </div>
@@ -1487,13 +1486,13 @@ export function MeetingDetail() {
           {t('meeting.reprocessFailed')}
         </p>
       )}
-      <div className="flex items-end justify-between gap-4 border-b border-border px-6">
-        <div className="flex">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border px-6">
+        <div className="flex max-w-full flex-wrap">
           {(['notes', 'transcript', 'settings'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-3.5 py-2.5 text-[11.5px] font-semibold transition-colors ${
+              className={`shrink-0 px-3.5 py-2.5 text-[11.5px] font-semibold [hyphens:none] transition-colors ${
                 activeTab === tab
                   ? 'text-ink border-b-2 border-ink -mb-px'
                   : 'text-ink-faint hover:text-ink-muted'
@@ -1577,7 +1576,7 @@ export function MeetingDetail() {
                     <div className="flex items-center gap-2 mt-3">
                       <button
                         onClick={handleReprocessNotes}
-                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 transition-colors"
+                        className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card transition-colors"
                       >
                         {segmentationErrorCode === 'scan_or_persist'
                           ? t('meeting.regenerateNotes')
@@ -1666,9 +1665,7 @@ export function MeetingDetail() {
                               ? segmentationErrorCode === 'ollama-insufficient-memory'
                                 ? t('meeting.ollamaMemory')
                                 : t('meeting.segmentationFailed')
-                              : t('meeting.noCategoryYet', {
-                                  category: t(`segment.${category}` as MessageKey)
-                                })}
+                              : t('ui.noItemsYet')}
                       </p>
                     ) : (
                       <div className="flex flex-col gap-3">
@@ -1704,18 +1701,24 @@ export function MeetingDetail() {
                                           item.sourceStartMs > 0 && (
                                             <button
                                               onClick={() => seekToSegment(item.sourceStartMs)}
-                                              className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
-                                              title={`Jump to ${formatTimestamp(item.sourceStartMs)}`}
+                                              aria-label={t('ui.jumpToTime', {
+                                                time: formatTimestamp(item.sourceStartMs)
+                                              })}
+                                              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded text-[11px] text-ink-faint hover:text-ink transition-all mt-0.5"
+                                              title={t('ui.jumpToTime', {
+                                                time: formatTimestamp(item.sourceStartMs)
+                                              })}
                                             >
                                               ▶ {formatTimestamp(item.sourceStartMs)}
                                             </button>
                                           )}
                                         <button
                                           onClick={() => deleteSegment(category, globalIndex)}
-                                          className="opacity-0 group-hover:opacity-100 text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
-                                          title="Delete"
+                                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded text-[11px] text-ink-faint hover:text-clay transition-all mt-0.5"
+                                          aria-label={t('common.delete')}
+                                          title={t('common.delete')}
                                         >
-                                          &times;
+                                          ×
                                         </button>
                                       </div>
                                     </div>
@@ -1731,12 +1734,14 @@ export function MeetingDetail() {
                                       <div className="flex gap-3 mt-0.5">
                                         {item.assignee && (
                                           <span className="text-[11px] text-ink-faint">
-                                            Owner: {item.assignee}
+                                            {t('ui.owner3')}
+                                            {item.assignee}
                                           </span>
                                         )}
                                         {item.deadline && (
                                           <span className="text-[11px] text-ink-faint">
-                                            Due: {item.deadline}
+                                            {t('ui.due')}
+                                            {item.deadline}
                                           </span>
                                         )}
                                       </div>
@@ -1757,62 +1762,65 @@ export function MeetingDetail() {
           <div className="flex flex-col gap-4">
             {(detail?.videoStatus === 'processing' || videoRetryPending) && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted animate-pulse">Finishing up your video…</p>
+                <p className="text-[13px] text-ink-muted animate-pulse">
+                  {t('ui.finishingUpYourVideo')}
+                </p>
                 <p className="text-[11.5px] text-ink-faint mt-1">
-                  Your transcript and notes are ready to use.
+                  {t('ui.yourTranscriptAndNotesAreReadyToUse')}
                 </p>
               </div>
             )}
             {detail?.videoStatus === 'failed' && !videoRetryPending && (
               <div className="bg-bg-card border border-border rounded-xl px-4 py-6 text-center">
-                <p className="text-[13px] text-ink-muted">Video processing failed</p>
+                <p className="text-[13px] text-ink-muted">{t('ui.videoProcessingFailed')}</p>
                 <button
                   onClick={handleRetryVideo}
                   className="mt-3 text-[11.5px] font-semibold text-sage hover:text-ink transition-colors"
                 >
-                  Retry
+                  {t('ui.retry')}
                 </button>
               </div>
             )}
             {media?.hasVideo && media.mediaBaseUrl && (
-              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
-                <div className="relative">
+              <div
+                ref={videoContainerRef}
+                data-video-player
+                className="bg-bg-card border border-border rounded-xl overflow-hidden"
+              >
+                <div data-video-viewport className="relative">
                   <video
                     ref={mediaRef as React.RefObject<HTMLVideoElement>}
-                    controls
+                    aria-label={t('media.video')}
                     className="block w-full"
                     src={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
                     onError={reportRendererMediaError('video')}
                   />
                   {videoWatermarkVisible && <VideoWatermarkOverlay ref={videoWatermarkRef} />}
                 </div>
-                <div className="flex justify-end px-3 py-1.5 border-t border-border">
-                  <button
-                    onClick={cyclePlaybackRate}
-                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors"
-                  >
-                    {playbackRate}x
-                  </button>
-                </div>
+                <MediaPlaybackControls
+                  mediaRef={mediaRef}
+                  sourceKey={`${media.mediaBaseUrl}/media/${id}/screen.webm`}
+                  playbackRate={playbackRate}
+                  onCyclePlaybackRate={cyclePlaybackRate}
+                  fullscreenTarget={videoContainerRef}
+                />
               </div>
             )}
             {media?.hasAudio && !media?.hasVideo && media.mediaBaseUrl && (
-              <div className="bg-bg-card border border-border rounded-xl p-4">
-                <div className="flex items-center gap-3">
-                  <audio
-                    ref={mediaRef as React.RefObject<HTMLAudioElement>}
-                    controls
-                    className="flex-1"
-                    src={`${media.mediaBaseUrl}/media/${id}/${media?.audioFile ?? 'audio.webm'}`}
-                    onError={reportRendererMediaError('audio')}
-                  />
-                  <button
-                    onClick={cyclePlaybackRate}
-                    className="text-[11px] font-semibold text-ink-muted hover:text-ink bg-bg-accent px-2 py-0.5 rounded transition-colors shrink-0"
-                  >
-                    {playbackRate}x
-                  </button>
-                </div>
+              <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
+                <audio
+                  ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                  aria-label={t('media.audio')}
+                  className="hidden"
+                  src={`${media.mediaBaseUrl}/media/${id}/${media.audioFile ?? 'audio.webm'}`}
+                  onError={reportRendererMediaError('audio')}
+                />
+                <MediaPlaybackControls
+                  mediaRef={mediaRef}
+                  sourceKey={`${media.mediaBaseUrl}/media/${id}/${media.audioFile ?? 'audio.webm'}`}
+                  playbackRate={playbackRate}
+                  onCyclePlaybackRate={cyclePlaybackRate}
+                />
               </div>
             )}
             {detail?.videoCaptureEndedEarly && <VideoCaptureWarning variant="saved" />}
@@ -1841,15 +1849,17 @@ export function MeetingDetail() {
             {/* Reprocess section */}
             <div className="bg-bg-card border border-border rounded-xl p-5">
               <h3 className="text-[12px] font-bold text-ink tracking-[0.03em] uppercase mb-1">
-                Reprocess
+                {t('meeting.reprocess')}
               </h3>
               <p className="text-[11.5px] text-ink-muted mb-4">
-                Re-run transcription or note generation from the original audio.
+                {t('ui.reRunTranscriptionOrNoteGenerationFromTheOriginalAudio')}
               </p>
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[12.5px] font-semibold text-ink">{t('meeting.transcript')}</div>
+                    <div className="text-[12.5px] font-semibold text-ink">
+                      {t('meeting.transcript')}
+                    </div>
                     <div className="text-[11px] text-ink-faint">
                       {t('meeting.reprocessTranscriptHint')}
                     </div>
@@ -1862,7 +1872,7 @@ export function MeetingDetail() {
                       transcriptionStatus === 'downloading' ||
                       transcriptionStatus === 'diarizing'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {transcriptionStatus === 'transcribing' || transcriptionStatus === 'diarizing'
                       ? t('meeting.processing')
@@ -1875,7 +1885,9 @@ export function MeetingDetail() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-[12.5px] font-semibold text-ink">{t('meeting.notes')}</div>
-                    <div className="text-[11px] text-ink-faint">{t('meeting.reprocessNotesHint')}</div>
+                    <div className="text-[11px] text-ink-faint">
+                      {t('meeting.reprocessNotesHint')}
+                    </div>
                   </div>
                   <button
                     onClick={handleReprocessNotes}
@@ -1885,7 +1897,7 @@ export function MeetingDetail() {
                       segmentationStatus === 'queued' ||
                       segmentationStatus === 'downloading-model'
                     }
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage/15 text-sage hover:bg-sage/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-sage-light text-sage-dark hover:bg-bg-card disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {segmentationStatus === 'segmenting'
                       ? t('meeting.processing')
@@ -1909,12 +1921,14 @@ export function MeetingDetail() {
                   <div className="text-[12.5px] font-semibold text-ink">
                     {t('meeting.deleteRecording')}
                   </div>
-                  <div className="text-[11px] text-ink-faint">{t('meeting.deleteRecordingHint')}</div>
+                  <div className="text-[11px] text-ink-faint">
+                    {t('meeting.deleteRecordingHint')}
+                  </div>
                 </div>
                 {!showDeleteConfirm ? (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay hover:bg-clay/20 transition-colors"
+                    className="px-3 py-1.5 text-[11.5px] font-semibold rounded-lg bg-clay/10 text-clay-dark hover:bg-clay/20 transition-colors"
                   >
                     {t('common.delete')}
                   </button>

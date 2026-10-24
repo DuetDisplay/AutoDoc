@@ -45,9 +45,7 @@ export async function notifyNotesReady(
   showNotificationWindow({
     title: tMain('notesReady.title'),
     body: buildNotesReadyBody(displayTitle),
-    ...(displayTitle
-      ? { bodyTitle: truncateDisplayTitle(displayTitle), bodySuffix: tMain('notesReady.bodySuffix') }
-      : {}),
+    ...(displayTitle ? { bodyTitle: displayTitle } : {}),
     primaryActionLabel: tMain('notesReady.open'),
     kind: 'notes-ready',
     onPrimaryAction: () => {

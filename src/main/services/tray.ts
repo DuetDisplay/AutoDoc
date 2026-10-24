@@ -1,7 +1,8 @@
 import { Tray, Menu, nativeImage, app, shell } from 'electron'
 import { join } from 'path'
 import type { CalendarEvent } from '../../shared/types'
-import { tMain } from './ui-locale'
+import { tMain, getMainUiLanguage } from './ui-locale'
+import { dateLocaleForUiLanguage } from '../../shared/ui-language'
 
 let tray: Tray | null = null
 let cachedEventsRef: () => CalendarEvent[] = () => []
@@ -58,7 +59,10 @@ function loadTrayNativeImage(): ReturnType<typeof nativeImage.createEmpty> {
 
 function formatTime(ms: number): string {
   const d = new Date(ms)
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return d.toLocaleTimeString(dateLocaleForUiLanguage(getMainUiLanguage()), {
+    hour: 'numeric',
+    minute: '2-digit'
+  })
 }
 
 function getUpcomingEvents(): CalendarEvent[] {

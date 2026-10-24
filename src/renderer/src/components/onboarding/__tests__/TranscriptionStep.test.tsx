@@ -52,8 +52,10 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Optimized for this Mac')).toBeInTheDocument()
-    expect(screen.getByText(/this Mac has limited memory/i)).toBeInTheDocument()
-    expect(screen.getByText(/process mic and system audio one at a time/i)).toBeInTheDocument()
+    expect(screen.getByText(/this computer has limited memory/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/process microphone and system audio one at a time/i)
+    ).toBeInTheDocument()
   })
 
   it('sets expectations when a low-memory Windows profile is selected', async () => {
@@ -75,8 +77,10 @@ describe('TranscriptionStep', () => {
     render(<TranscriptionStep onNext={vi.fn()} />)
 
     expect(await screen.findByText('Optimized for this PC')).toBeInTheDocument()
-    expect(screen.getByText(/this PC has limited memory/i)).toBeInTheDocument()
-    expect(screen.getByText(/process mic and system audio one at a time/i)).toBeInTheDocument()
+    expect(screen.getByText(/this computer has limited memory/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/process microphone and system audio one at a time/i)
+    ).toBeInTheDocument()
   })
 
   it('starts transcription setup when onboarding reaches the step', async () => {
@@ -428,7 +432,7 @@ describe('TranscriptionStep', () => {
         screen.getByRole('heading', { name: "This language isn't available on this PC" })
       ).toBeInTheDocument()
       expect(
-        screen.getAllByText('This PC cannot run Spanish transcription.').length
+        screen.getAllByText("This language isn't available on this PC.").length
       ).toBeGreaterThan(0)
       expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 

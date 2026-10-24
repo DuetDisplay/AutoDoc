@@ -251,7 +251,7 @@ describe('Sidebar', () => {
     } as any
 
     await renderSidebar()
-    expect(screen.getByText('Starting Ollama runtime...')).toBeInTheDocument()
+    expect(screen.getByText('Starting Ollama...')).toBeInTheDocument()
   })
 
   it('shows Ollama connected instead of stale startup progress when the runtime is already running', async () => {
@@ -272,7 +272,7 @@ describe('Sidebar', () => {
     await waitFor(() => {
       expect(screen.getByText('Ollama connected')).toBeInTheDocument()
     })
-    expect(screen.queryByText('Starting Ollama runtime...')).not.toBeInTheDocument()
+    expect(screen.queryByText('Starting Ollama...')).not.toBeInTheDocument()
   })
 
   describe('Ollama poll during setup', () => {

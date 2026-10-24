@@ -1,3 +1,7 @@
+import { translate, type MessageKey } from '../../../shared/i18n'
+import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
+import { readCachedUiLanguage } from '../services/document-language'
+import { useT } from '../services/i18n'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type {
@@ -10,27 +14,35 @@ import { isAnalyticsConfigured } from '../services/analytics'
 
 const QA_SIMULATOR_MARKER = 'AUTODOC_QA_FEEDBACK_SIMULATOR_V1'
 
-const REASON_LABELS: Record<string, string> = {
-  'eligible-initial': 'Ready to show the first prompt',
-  'eligible-reminder': 'Ready to show the final reminder',
-  'state-unavailable': 'Encrypted prompt state is unavailable',
-  'dependency-unavailable': 'A prompt dependency is unavailable',
-  'onboarding-incomplete': 'Finish onboarding before the prompt can appear',
-  busy: 'A live safety gate is active (window, recording, processing, critical UI, or update)',
-  'support-unavailable': 'The support address is unavailable',
-  'contact-initiated': 'Suppressed because support was already contacted',
-  'never-ask-again': 'Suppressed by Don’t ask again',
-  'baseline-unavailable': 'The local eligibility baseline is unavailable',
-  'usage-threshold-not-met': 'Natural session and time thresholds are not met',
-  'reminder-not-due': 'The final reminder is not due yet',
-  'reminder-already-shown': 'Both permitted impressions have been shown',
-  'reservation-active': 'Another prompt surface has an active reservation',
-  'reservation-unavailable': 'The prompt reservation is unavailable'
+const REASON_LABELS: Record<string, MessageKey> = {
+  'eligible-initial': 'ui.readyToShowTheFirstPrompt',
+  'eligible-reminder': 'ui.readyToShowTheFinalReminder',
+  'state-unavailable': 'ui.encryptedPromptStateIsUnavailable',
+  'dependency-unavailable': 'ui.aPromptDependencyIsUnavailable',
+  'onboarding-incomplete': 'ui.finishOnboardingBeforeThePromptCanAppear',
+  busy: 'ui.aLiveSafetyGateIsActiveWindowRecordingProcessingCriticalUIOrUpdate',
+  'support-unavailable': 'ui.theSupportAddressIsUnavailable',
+  'contact-initiated': 'ui.suppressedBecauseSupportWasAlreadyContacted',
+  'never-ask-again': 'ui.suppressedByDonTAskAgain',
+  'baseline-unavailable': 'ui.theLocalEligibilityBaselineIsUnavailable',
+  'usage-threshold-not-met': 'ui.naturalSessionAndTimeThresholdsAreNotMet',
+  'reminder-not-due': 'ui.theFinalReminderIsNotDueYet',
+  'reminder-already-shown': 'ui.bothPermittedImpressionsHaveBeenShown',
+  'reservation-active': 'ui.anotherPromptSurfaceHasAnActiveReservation',
+  'reservation-unavailable': 'ui.thePromptReservationIsUnavailable'
+}
+
+const SCENARIO_LABELS: Record<FeedbackPromptQAScenario, MessageKey> = {
+  reset: 'ui.naturalEligibilityRestored',
+  initial: 'ui.firstPromptStateLoaded',
+  reminder: 'ui.finalReminderStateLoaded',
+  contacted: 'ui.alreadyContactedSuppressionLoaded',
+  never: 'ui.donTAskAgainSuppressionLoaded'
 }
 
 function formatTimestamp(value: number | null | undefined): string {
-  if (value == null) return 'Not set'
-  return new Date(value).toLocaleString()
+  if (value == null) return translate(readCachedUiLanguage(), 'ui.notSet')
+  return new Date(value).toLocaleString(dateLocaleForUiLanguage(readCachedUiLanguage()))
 }
 
 function StatusSummary({
@@ -40,8 +52,10 @@ function StatusSummary({
   snapshot: FeedbackPromptQASnapshot | null
   analyticsConsent: boolean | null
 }): ReactElement {
+  const t = useT()
+
   if (!snapshot) {
-    return <p className="text-[12px] text-ink-muted">Status unavailable.</p>
+    return <p className="text-[12px] text-ink-muted">{t('ui.statusUnavailable')}</p>
   }
 
   const state = snapshot.state
@@ -49,60 +63,72 @@ function StatusSummary({
     <div className="space-y-3">
       <div
         className={`rounded-lg border px-3 py-2.5 ${
-          snapshot.eligible ? 'border-sage/30 bg-sage-light/60' : 'border-border-subtle bg-bg-card/60'
+          snapshot.eligible
+            ? 'border-sage/30 bg-sage-light/60'
+            : 'border-border-subtle bg-bg-card/60'
         }`}
       >
         <p className="text-[12px] font-semibold text-ink">
-          {snapshot.eligible ? 'Eligible now' : 'Currently suppressed'}
+          {snapshot.eligible ? t('ui.eligibleNow') : t('ui.currentlySuppressed')}
         </p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-ink-muted">
-          {REASON_LABELS[snapshot.reason] ?? snapshot.reason}
+          {t(REASON_LABELS[snapshot.reason] ?? 'ui.currentlySuppressed')}
         </p>
       </div>
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
         <div>
-          <dt className="text-ink-faint">Qualifying sessions</dt>
+          <dt className="text-ink-faint">{t('ui.qualifyingSessions')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
             {state
-              ? `${state.qualifyingSessionCount} across ${state.qualifyingSessionDates.length} day(s)`
-              : 'Unavailable'}
+              ? t('ui.sessionsAcrossDaysDayS', {
+                  sessions: state.qualifyingSessionCount,
+                  days: state.qualifyingSessionDates.length
+                })
+              : t('ui.unavailable')}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">Live gates</dt>
+          <dt className="text-ink-faint">{t('ui.liveGates')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
-            {snapshot.windowForegrounded ? 'Window foregrounded' : 'Window not foregrounded'} ·{' '}
-            {snapshot.supportAvailable ? 'Support address configured' : 'Support unavailable'}
+            {snapshot.windowForegrounded
+              ? t('ui.windowForegrounded')
+              : t('ui.windowNotForegrounded')}{' '}
+            ·{' '}
+            {snapshot.supportAvailable
+              ? t('ui.supportAddressConfigured')
+              : t('ui.supportUnavailable')}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">First prompt shown</dt>
+          <dt className="text-ink-faint">{t('ui.firstPromptShown')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
             {formatTimestamp(state?.initialPromptShownAt)}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">Final reminder shown</dt>
+          <dt className="text-ink-faint">{t('ui.finalReminderShown')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
             {formatTimestamp(state?.reminderPromptShownAt)}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">Contact initiated</dt>
+          <dt className="text-ink-faint">{t('ui.contactInitiated')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
             {formatTimestamp(state?.contactInitiatedAt)}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">Don’t ask again</dt>
-          <dd className="mt-0.5 font-medium text-ink">{state?.neverAskAgain ? 'Yes' : 'No'}</dd>
+          <dt className="text-ink-faint">{t('ui.donTAskAgain')}</dt>
+          <dd className="mt-0.5 font-medium text-ink">
+            {state?.neverAskAgain ? t('ui.yes') : t('ui.no')}
+          </dd>
         </div>
         <div>
-          <dt className="text-ink-faint">Analytics delivery</dt>
+          <dt className="text-ink-faint">{t('ui.analyticsDelivery')}</dt>
           <dd className="mt-0.5 font-medium text-ink">
-            {isAnalyticsConfigured() ? 'PostHog configured' : 'PostHog not configured'} ·{' '}
-            {analyticsConsent === true ? 'consent on' : 'consent off'}
+            {isAnalyticsConfigured() ? t('ui.postHogConfigured') : t('ui.postHogNotConfigured')} ·{' '}
+            {analyticsConsent === true ? t('ui.consentOn') : t('ui.consentOff')}
           </dd>
         </div>
       </dl>
@@ -111,6 +137,8 @@ function StatusSummary({
 }
 
 export function FeedbackPromptQASimulator(): ReactElement {
+  const t = useT()
+
   const navigate = useNavigate()
   const [surface, setSurface] = useState<FeedbackPromptSurface>('upcoming')
   const [snapshot, setSnapshot] = useState<FeedbackPromptQASnapshot | null>(null)
@@ -118,8 +146,11 @@ export function FeedbackPromptQASimulator(): ReactElement {
   const [pendingScenario, setPendingScenario] = useState<
     FeedbackPromptQAScenario | 'refresh' | null
   >(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{
+    scenario: FeedbackPromptQAScenario
+    reason?: MessageKey
+  } | null>(null)
+  const [error, setError] = useState<MessageKey | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     setPendingScenario('refresh')
@@ -132,8 +163,8 @@ export function FeedbackPromptQASimulator(): ReactElement {
       if (!next) throw new Error('The QA simulator is unavailable in this process.')
       setSnapshot(next)
       setAnalyticsConsent(consent === true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not read feedback prompt state.')
+    } catch {
+      setError('ui.couldNotReadFeedbackPromptState')
     } finally {
       setPendingScenario(null)
     }
@@ -157,22 +188,15 @@ export function FeedbackPromptQASimulator(): ReactElement {
         if (!next) throw new Error('The QA simulator rejected this state change.')
         setSnapshot(next)
 
-        const labels: Record<FeedbackPromptQAScenario, string> = {
-          reset: 'Natural eligibility restored.',
-          initial: 'First-prompt state loaded.',
-          reminder: 'Final-reminder state loaded.',
-          contacted: 'Already-contacted suppression loaded.',
-          never: 'Don’t-ask-again suppression loaded.'
-        }
         if (openAfter && (!next.eligible || next.kind !== scenario)) {
-          const reason = REASON_LABELS[next.reason] ?? next.reason
-          setNotice(`${labels[scenario]} Prompt not opened: ${reason}.`)
+          const reason = REASON_LABELS[next.reason] ?? 'ui.currentlySuppressed'
+          setNotice({ scenario, reason })
         } else {
-          setNotice(labels[scenario])
+          setNotice({ scenario })
           if (openAfter) openSurface()
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not change feedback prompt state.')
+      } catch {
+        setError('ui.couldNotChangeFeedbackPromptState')
       } finally {
         setPendingScenario(null)
       }
@@ -184,30 +208,27 @@ export function FeedbackPromptQASimulator(): ReactElement {
 
   return (
     <section
-      aria-label="Feedback prompt simulator"
+      aria-label={t('ui.feedbackPromptSimulator')}
       aria-busy={busy}
       data-qa-simulator={QA_SIMULATOR_MARKER}
     >
       <div className="mb-2 flex items-center gap-2">
-        <h3 className="text-[13px] font-semibold text-ink">Feedback prompt simulator</h3>
+        <h3 className="text-[13px] font-semibold text-ink">{t('ui.feedbackPromptSimulator')}</h3>
         <span className="rounded-full border border-clay/30 bg-clay-light px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-clay-dark">
-          QA BUILD
+          {t('ui.qABUILD')}
         </span>
       </div>
 
       <div className="rounded-xl border border-clay/30 bg-bg-accent px-4 py-4">
         <p className="text-[12px] leading-relaxed text-ink-muted">
-          Load a deterministic local state, then exercise the real prompt, persistence, support
-          email, and analytics flow. Live recording, processing, meeting, focus, and onboarding
-          safety gates still apply. Changes stay inside the isolated AutoDoc QA profile.
+          {t('ui.loadADeterministicLocalStateThenExerciseTheRealPromptPersistenceSupportEmai')}
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-          To verify remote analytics delivery, build with VITE_POSTHOG_KEY and enable Analytics &
-          Crash Reports above. No key or no consent means no event is sent.
+          {t('ui.toVerifyRemoteAnalyticsDeliveryBuildWithVITEPOSTHOGKEYAndEnableAnalyticsCra')}
         </p>
 
         <fieldset className="mt-4">
-          <legend className="text-[11px] font-semibold text-ink">Open the prompt on</legend>
+          <legend className="text-[11px] font-semibold text-ink">{t('ui.openThePromptOn')}</legend>
           <div className="mt-2 inline-flex flex-wrap rounded-lg border border-border-subtle bg-bg-card p-1">
             {(
               [
@@ -242,7 +263,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void applyScenario('initial', true)}
             className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Show first prompt
+            {t('ui.showFirstPrompt')}
           </button>
           <button
             type="button"
@@ -250,7 +271,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void applyScenario('reminder', true)}
             className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Show final reminder
+            {t('ui.showFinalReminder')}
           </button>
           <button
             type="button"
@@ -258,13 +279,13 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={openSurface}
             className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-semibold text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Open selected surface
+            {t('ui.openSelectedSurface')}
           </button>
         </div>
 
         <div className="my-4 border-t border-border-subtle" />
 
-        <p className="text-[11px] font-semibold text-ink">Suppression and reset states</p>
+        <p className="text-[11px] font-semibold text-ink">{t('ui.suppressionAndResetStates')}</p>
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
@@ -272,7 +293,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void applyScenario('contacted')}
             className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Set already contacted
+            {t('ui.setAlreadyContacted')}
           </button>
           <button
             type="button"
@@ -280,7 +301,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void applyScenario('never')}
             className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Set Don’t ask again
+            {t('ui.setDonTAskAgain')}
           </button>
           <button
             type="button"
@@ -288,7 +309,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void applyScenario('reset')}
             className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Reset natural eligibility
+            {t('ui.resetNaturalEligibility')}
           </button>
           <button
             type="button"
@@ -296,13 +317,22 @@ export function FeedbackPromptQASimulator(): ReactElement {
             onClick={() => void refresh()}
             className="rounded-lg px-2 py-2 text-[11px] font-medium text-sage transition-colors hover:text-sage-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Refresh status
+            {t('ui.refreshStatus')}
           </button>
         </div>
 
         <div className="mt-4" aria-live="polite">
-          {notice && <p className="mb-2 text-[11px] font-medium text-sage-dark">{notice}</p>}
-          {error && <p className="mb-2 text-[11px] font-medium text-clay-dark">{error}</p>}
+          {notice && (
+            <p className="mb-2 text-[11px] font-medium text-sage-dark">
+              {notice.reason
+                ? t('ui.resultPromptNotOpenedReason', {
+                    result: t(SCENARIO_LABELS[notice.scenario]),
+                    reason: t(notice.reason)
+                  })
+                : t(SCENARIO_LABELS[notice.scenario])}
+            </p>
+          )}
+          {error && <p className="mb-2 text-[11px] font-medium text-clay-dark">{t(error)}</p>}
           <StatusSummary snapshot={snapshot} analyticsConsent={analyticsConsent} />
         </div>
       </div>

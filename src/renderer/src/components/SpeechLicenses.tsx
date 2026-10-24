@@ -1,20 +1,22 @@
+import { useT } from '../services/i18n'
 import { useEffect, useState } from 'react'
 import { speechLicenseNotices, type SpeechLicenseNotice } from '../../../shared/speech-licenses'
 
 export function SpeechLicenses({ platform }: { platform: string }) {
+  const t = useT()
+
   const [packages, setPackages] = useState<SpeechLicenseNotice[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
   useEffect(() => {
     window.electronAPI.invoke('app:get-speech-runtime-licenses').then(setPackages, () => {
-      setError('Runtime package notices are unavailable in this build.')
+      setError(true)
     })
   }, [])
 
   return (
     <div className="mt-3 max-h-96 overflow-y-auto rounded-xl border border-border-subtle bg-bg-card p-4 text-[12px] text-ink-muted">
       <p className="mb-4">
-        Models and speech software shipped or downloaded for this platform. Installed components
-        depend on the meeting language and hardware.
+        {t('ui.modelsAndSpeechSoftwareShippedOrDownloadedForThisPlatformInstalledComponent')}
       </p>
       {speechLicenseNotices(platform).map((notice) => (
         <div key={notice.name} className="mb-4">
@@ -38,8 +40,8 @@ export function SpeechLicenses({ platform }: { platform: string }) {
           {notice.attribution && <p className="mt-1 leading-relaxed">{notice.attribution}</p>}
         </div>
       ))}
-      <h4 className="font-semibold text-ink mb-2">Runtime packages and native libraries</h4>
-      {error && <p role="status">{error}</p>}
+      <h4 className="font-semibold text-ink mb-2">{t('ui.runtimePackagesAndNativeLibraries')}</h4>
+      {error && <p role="status">{t('ui.runtimePackageNoticesAreUnavailableInThisBuild')}</p>}
       {packages.map((notice) => (
         <details key={`${notice.runtime}:${notice.name}`} className="mb-2">
           <summary className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50">
@@ -52,7 +54,7 @@ export function SpeechLicenses({ platform }: { platform: string }) {
             rel="noreferrer"
             className="text-sage-dark underline"
           >
-            Source
+            {t('ui.source')}
           </a>
           {notice.attribution && <p className="mt-1 leading-relaxed">{notice.attribution}</p>}
           {notice.text && (

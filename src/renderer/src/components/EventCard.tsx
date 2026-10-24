@@ -1,3 +1,4 @@
+import { translatePlural } from '../../../shared/i18n'
 import { useState, useRef, useEffect } from 'react'
 import type { AutoRecordMode, CalendarEvent } from '../../../shared/types'
 import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
@@ -58,7 +59,9 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
             {event.title}
           </div>
           {isRecurring && (
-            <span className="text-[10px] text-ink-faint text-pretty">{t('upcoming.recurring')}</span>
+            <span className="text-[10px] text-ink-faint text-pretty">
+              {t('upcoming.recurring')}
+            </span>
           )}
           {isActive && (
             <span className="text-[10px] font-medium text-status-connected text-pretty [overflow-wrap:anywhere]">
@@ -72,13 +75,7 @@ export function EventCard({ event, onSetAutoRecord }: EventCardProps) {
           {formatTime(event.startTime, dateLocale)} - {formatTime(event.endTime, dateLocale)}
           {platform && <span> · {platform}</span>}
           {event.attendees.length > 0 && (
-            <span>
-              {' '}
-              ·{' '}
-              {event.attendees.length === 1
-                ? t('upcoming.attendeeOne')
-                : t('upcoming.attendeeOther', { count: event.attendees.length })}
-            </span>
+            <span> · {translatePlural(language, 'attendees', event.attendees.length)}</span>
           )}
         </div>
       </div>

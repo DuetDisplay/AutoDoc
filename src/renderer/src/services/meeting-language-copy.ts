@@ -15,9 +15,6 @@ export function meetingLanguageSelectableNote(
     engineState.availability === 'slower'
       ? translate(readCachedUiLanguage(), 'picker.slowerOnThisPc')
       : null
-  if (engineState.availability === 'available' && engineState.reason) {
-    return sizeNote ? `${engineState.reason} · ${sizeNote}` : engineState.reason
-  }
   if (slowerNote && sizeNote) return `${slowerNote} · ${sizeNote}`
   return slowerNote ?? sizeNote
 }
@@ -28,9 +25,23 @@ export function offlineMeetingLanguageMessage(
   downloadBytes?: number | null,
   currentLanguageLabel?: string | null
 ): string {
-  const size = downloadBytes && downloadBytes > 0 ? ` (about ${formatBytes(downloadBytes)})` : ''
-  const current = currentLanguageLabel
-    ? ` Your meeting language is still ${currentLanguageLabel}.`
-    : ''
-  return `You're offline. Connect to the internet to download the ${languageLabel} speech model${size}.${current}`
+  const language = readCachedUiLanguage()
+  const message =
+    downloadBytes && downloadBytes > 0
+      ? translate(
+          language,
+          'ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModelAboutSize',
+          { language: languageLabel, size: formatBytes(downloadBytes, language) }
+        )
+      : translate(language, 'ui.youReOfflineConnectToTheInternetToDownloadTheLanguageSpeechModel', {
+          language: languageLabel
+        })
+  return currentLanguageLabel
+    ? [
+        message,
+        translate(language, 'ui.yourMeetingLanguageIsStillLanguage', {
+          language: currentLanguageLabel
+        })
+      ].join(' ')
+    : message
 }

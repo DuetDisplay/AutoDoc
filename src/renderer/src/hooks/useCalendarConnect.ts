@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CalendarAccount } from '../../../shared/types'
 import { recordPersistentDiagnosticAction } from '../services/diagnostic-trail'
@@ -19,11 +20,6 @@ interface UseCalendarConnectResult {
   error: string | null
   connect: (provider: CalendarProviderType) => Promise<void>
   clearError: () => void
-}
-
-const PROVIDER_LABEL: Record<CalendarProviderType, string> = {
-  google: 'Google Calendar',
-  microsoft: 'Microsoft Outlook'
 }
 
 /**
@@ -53,8 +49,9 @@ const PROVIDER_LABEL: Record<CalendarProviderType, string> = {
 export function useCalendarConnect(
   options: UseCalendarConnectOptions = {}
 ): UseCalendarConnectResult {
+  const t = useT()
   const [connectingProvider, setConnectingProvider] = useState<CalendarProviderType | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [errorProvider, setErrorProvider] = useState<CalendarProviderType | null>(null)
   const attemptRef = useRef<symbol | null>(null)
 
   // Keep callbacks in a ref so the connect callback stays stable.
@@ -78,7 +75,7 @@ export function useCalendarConnect(
     const attemptId = Symbol(provider)
     attemptRef.current = attemptId
     setConnectingProvider(provider)
-    setError(null)
+    setErrorProvider(null)
 
     try {
       const account = await window.electronAPI.invoke('calendar:connect', provider)
@@ -95,10 +92,7 @@ export function useCalendarConnect(
       if (attemptRef.current !== attemptId) return
       console.error('Failed to connect calendar:', err)
       optionsRef.current.onError?.(provider, err)
-      const message =
-        optionsRef.current.formatError?.(provider) ??
-        `We couldn't connect ${PROVIDER_LABEL[provider]}. Check the permission prompt and try again.`
-      setError(message)
+      setErrorProvider(provider)
     } finally {
       if (attemptRef.current === attemptId) {
         attemptRef.current = null
@@ -107,12 +101,19 @@ export function useCalendarConnect(
     }
   }, [])
 
-  const clearError = useCallback(() => setError(null), [])
+  const clearError = useCallback(() => setErrorProvider(null), [])
 
   return {
     connectingProvider,
     isConnecting: connectingProvider !== null,
-    error,
+    error: errorProvider
+      ? (options.formatError?.(errorProvider) ??
+        t('upcoming.connectFailed', {
+          provider: t(
+            errorProvider === 'google' ? 'upcoming.googleCalendar' : 'upcoming.microsoftOutlook'
+          )
+        }))
+      : null,
     connect,
     clearError
   }

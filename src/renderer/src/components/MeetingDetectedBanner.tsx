@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ROUTES } from '../../../shared/constants'
@@ -8,6 +9,8 @@ interface DetectionPayload {
 }
 
 export function MeetingDetectedBanner() {
+  const t = useT()
+
   const [detection, setDetection] = useState<DetectionPayload | null>(null)
   const navigate = useNavigate()
 
@@ -41,10 +44,13 @@ export function MeetingDetectedBanner() {
       <div className="flex items-start gap-3 min-w-0 flex-1">
         <div className="w-2.5 h-2.5 rounded-full bg-sage animate-pulse shrink-0 mt-1" />
         <div className="min-w-0">
-          <p className="text-[12.5px] font-semibold text-sage-dark i18n-ellipsis" title={detection.title}>
+          <p
+            className="text-[12.5px] font-semibold text-sage-dark i18n-ellipsis"
+            title={detection.title}
+          >
             {detection.title}
           </p>
-          <p className="text-[11px] text-sage-dark/70 text-pretty [overflow-wrap:anywhere]">
+          <p className="text-[11px] text-sage-dark text-pretty [overflow-wrap:anywhere]">
             {detection.body}
           </p>
         </div>
@@ -52,15 +58,15 @@ export function MeetingDetectedBanner() {
       <div className="flex flex-wrap items-center gap-2 shrink-0">
         <button
           onClick={handleDismiss}
-          className="px-3 py-1.5 text-[11px] font-medium text-sage-dark/70 hover:text-sage-dark transition-colors"
+          className="px-3 py-1.5 text-[11px] font-medium text-sage-dark hover:text-sage-dark transition-colors"
         >
-          Dismiss
+          {t('common.dismiss')}
         </button>
         <button
           onClick={handleRecord}
           className="i18n-btn px-3 py-1.5 text-[11px] font-semibold bg-sage text-on-brand rounded-lg hover:opacity-90 transition-opacity"
         >
-          Record
+          {t('recording.record')}
         </button>
       </div>
     </div>

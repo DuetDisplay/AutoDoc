@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useEffect, useState, type ReactElement } from 'react'
 import type { WhisperSetupStatus } from '../../../shared/types'
 
@@ -6,6 +7,8 @@ export function LowSpecMacProcessingBanner({
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }): ReactElement | null {
+  const t = useT()
+
   const [hasRecordings, setHasRecordings] = useState(false)
   const [isLowSpecHost, setIsLowSpecHost] = useState(false)
   const [dismissed, setDismissed] = useState(true)
@@ -104,17 +107,18 @@ export function LowSpecMacProcessingBanner({
           </div>
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-[12.5px] font-semibold text-ink">Optimized local processing is on</h2>
+          <h2 className="text-[12.5px] font-semibold text-ink">
+            {t('ui.optimizedLocalProcessingIsOn')}
+          </h2>
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            This computer has limited memory, so AutoDoc is processing recordings more carefully.
-            Notes may take a little longer, but this helps avoid slowdowns or failed processing.
+            {t('ui.thisComputerHasLimitedMemorySoAutoDocIsProcessingRecordingsMoreCarefullyNot')}
           </p>
         </div>
         <button
           onClick={dismiss}
           className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
         >
-          Got it
+          {t('ui.gotIt')}
         </button>
       </div>
     </div>

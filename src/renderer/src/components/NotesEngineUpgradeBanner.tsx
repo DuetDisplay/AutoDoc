@@ -1,3 +1,4 @@
+import { useT } from '../services/i18n'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import {
   DEFAULT_OLLAMA_EMBEDDING_MODEL,
@@ -17,6 +18,7 @@ export function NotesEngineUpgradeBanner({
 }: {
   onVisibilityChange?: (visible: boolean) => void
 }): ReactElement | null {
+  const t = useT()
   const [variant, setVariant] = useState<BannerVariant | null>(null)
   const [percent, setPercent] = useState(0)
   const [sessionDismissed, setSessionDismissed] = useState(false)
@@ -109,13 +111,13 @@ export function NotesEngineUpgradeBanner({
   if (!variant) return null
 
   const title =
-    variant === 'ready' ? 'New notes are ready' : 'Your notes just got a lot more readable'
+    variant === 'ready' ? t('ui.newNotesAreReady') : t('ui.yourNotesJustGotALotMoreReadable')
   const body =
     variant === 'ready'
-      ? 'Your next meeting will come back clearer and easier to scan. Existing notes stay as they are.'
+      ? t('ui.yourNextMeetingWillComeBackClearerAndEasierToScanExistingNotesStayAsTheyAre')
       : variant === 'offline'
-        ? 'We’ll install the new on-device notes engine the next time you’re online (about 2.5 GB, one time). You can keep recording — existing notes stay as they are.'
-        : 'We’re installing a new on-device notes engine so your next meetings come back clearer and easier to scan. Stay connected until this finishes (about 2.5 GB, one time). Your existing notes stay as they are.'
+        ? t('ui.weLlInstallTheNewOnDeviceNotesEngineTheNextTimeYouReOnlineAbout25GBOneTimeY')
+        : t('ui.weReInstallingANewOnDeviceNotesEngineSoYourNextMeetingsComeBackClearerAndEa')
 
   return (
     <div
@@ -154,7 +156,7 @@ export function NotesEngineUpgradeBanner({
           }}
           className="i18n-btn text-[12px] font-semibold text-sage transition-colors hover:text-sage-dark"
         >
-          {variant === 'ready' ? 'Got it' : 'Dismiss'}
+          {variant === 'ready' ? t('ui.gotIt') : t('common.dismiss')}
         </button>
       </div>
     </div>

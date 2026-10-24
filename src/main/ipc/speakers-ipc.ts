@@ -34,8 +34,9 @@ export function registerSpeakersIpc(recordingsBaseDir: string): void {
 
       if (speakers[speakerId]) {
         speakers[speakerId].label = newLabel
+        speakers[speakerId].customLabel = true
       } else {
-        speakers[speakerId] = { label: newLabel }
+        speakers[speakerId] = { label: newLabel, customLabel: true }
       }
 
       await encryptJSON(speakers, speakersPath)

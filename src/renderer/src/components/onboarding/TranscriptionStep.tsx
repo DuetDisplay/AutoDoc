@@ -1,7 +1,8 @@
+import { meetingLanguageName } from '../../services/meeting-language-name'
+import { useT } from '../../services/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WhisperSetupStatus } from '../../../../shared/types'
 import {
-  getMeetingLanguageDefinition,
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../../../shared/meeting-language'
@@ -13,13 +14,6 @@ const AUTO_RETRY_DELAY_MS = 1500
 const SHOW_SKIP_DELAY_MS = 1500
 const MAX_AUTO_RETRY_ATTEMPTS = 2
 
-const phaseLabels: Record<string, (percent: number) => string> = {
-  checking: () => 'Checking transcription setup...',
-  'preparing-speaker-runtime': (p) => `Preparing speaker identification runtime... ${p}%`,
-  'installing-speaker-id': (p) => `Installing speaker identification... ${p}%`,
-  'downloading-speaker-model': (p) => `Downloading speaker identification model... ${p}%`
-}
-
 export function TranscriptionStep({
   onNext,
   onChooseLanguage
@@ -27,10 +21,12 @@ export function TranscriptionStep({
   onNext: () => void
   onChooseLanguage?: () => void
 }) {
+  const t = useT()
+
   const [phase, setPhase] = useState<string>('checking')
   const [percent, setPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [lockedReason, setLockedReason] = useState<string | null>(null)
+  const [languageLocked, setLanguageLocked] = useState(false)
   const [cpuSlower, setCpuSlower] = useState(false)
   const [meetingLanguage, setMeetingLanguage] = useState<MeetingLanguageCode | null>(null)
   const [setupStatus, setSetupStatus] = useState<WhisperSetupStatus>({
@@ -61,7 +57,7 @@ export function TranscriptionStep({
     setPercent(100)
     setSetupStatus({ phase: 'ready', percent: 100 })
     setError(null)
-    setLockedReason(null)
+    setLanguageLocked(false)
     setIsAutoRetrying(false)
     autoRetryAttempts.current = 0
     hasSeenMeaningfulSetupProgress.current = false
@@ -115,7 +111,7 @@ export function TranscriptionStep({
             attempt_number: autoRetryAttempts.current + 1
           })
         }
-        setLockedReason(null)
+        setLanguageLocked(false)
         scheduleAutoRetry()
         if (autoRetryAttempts.current >= MAX_AUTO_RETRY_ATTEMPTS) {
           setIsAutoRetrying(false)
@@ -132,7 +128,7 @@ export function TranscriptionStep({
               clearRetryTimer()
               setIsAutoRetrying(false)
               setError(null)
-              setLockedReason(availability.reason ?? "This language isn't available on this PC.")
+              setLanguageLocked(true)
             })
             .catch(() => {})
         }
@@ -144,7 +140,7 @@ export function TranscriptionStep({
       }
 
       setError(null)
-      setLockedReason(null)
+      setLanguageLocked(false)
       setIsAutoRetrying(false)
       if (hasSeenMeaningfulSetupProgress.current && status.phase !== 'checking') {
         autoRetryAttempts.current = 0
@@ -220,8 +216,9 @@ export function TranscriptionStep({
   }, [phase, meetingLanguage])
 
   // A failed download because the machine is offline gets its own message.
+  const lockedReason = languageLocked ? t('ui.thisLanguageIsnTAvailableOnThisPC2') : null
   const networkFailure = isNetworkErrorMessage(error ?? setupStatus.error)
-  const languageLabel = getMeetingLanguageDefinition(meetingLanguage ?? 'en').label
+  const languageLabel = meetingLanguageName(meetingLanguage ?? 'en')
 
   if (phase === 'ready') {
     return (
@@ -232,7 +229,9 @@ export function TranscriptionStep({
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#4A6B4E"
+            stroke="currentColor"
+            className="text-sage-dark"
+            aria-hidden="true"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -241,21 +240,21 @@ export function TranscriptionStep({
           </svg>
         </div>
         <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-          Transcription Ready
+          {t('ui.transcriptionReady')}
         </h2>
         <p className={`text-[14px] text-ink-muted leading-relaxed ${cpuSlower ? 'mb-2' : 'mb-7'}`}>
-          Your local transcription engine is installed and ready to go.
+          {t('ui.yourLocalTranscriptionEngineIsInstalledAndReadyToGo')}
         </p>
         {cpuSlower && (
           <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-            This PC will transcribe this language on the processor, so it will be slower.
+            {t('ui.thisPCWillTranscribeThisLanguageOnTheProcessorSoItWillBeSlower')}
           </p>
         )}
         <button
           onClick={onNext}
           className="i18n-btn px-6 py-2.5 bg-sage text-on-brand rounded-[10px] text-[14px] font-semibold hover:opacity-90 transition-opacity"
         >
-          Continue
+          {t('ui.continue')}
         </button>
       </div>
     )
@@ -267,11 +266,10 @@ export function TranscriptionStep({
         📝
       </div>
       <h2 className="text-[20px] font-bold text-ink tracking-[-0.02em] mb-2">
-        Setting Up Transcription
+        {t('ui.settingUpTranscription')}
       </h2>
       <p className="text-[14px] text-ink-muted leading-relaxed mb-7">
-        AutoDoc uses a local speech engine and local speaker identification to process meetings
-        on-device. This downloads once and runs entirely on your machine.
+        {t('ui.autoDocUsesALocalSpeechEngineAndLocalSpeakerIdentificationToProcessMeetings')}
       </p>
 
       <div className="w-60 h-1 bg-border rounded-full mx-auto mb-2 overflow-hidden">
@@ -282,25 +280,21 @@ export function TranscriptionStep({
       </div>
       <div className="text-[12px] text-ink-faint mb-5">
         {lockedReason ??
-          (networkFailure ? 'No internet connection' : null) ??
-          getWhisperSetupLabel(setupStatus) ??
-          phaseLabels[phase]?.(percent) ??
-          (error ? `Setup failed: ${error}` : 'Preparing...')}
+          (networkFailure ? t('ui.noInternetConnection') : null) ??
+          getWhisperSetupLabel(setupStatus, t) ??
+          (error ? t('setup.transcriptionFailed') : t('ui.preparing'))}
       </div>
 
       {isLowSpecHost && (
         <div className="max-w-[390px] mx-auto mb-5 rounded-[16px] border border-sage/25 bg-sage-light/45 p-4 text-left">
           <h3 className="text-[14px] font-semibold text-ink mb-2">
-            {isLowSpecWindows ? 'Optimized for this PC' : 'Optimized for this Mac'}
+            {isLowSpecWindows ? t('ui.optimizedForThisPC') : t('ui.optimizedForThisMac')}
           </h3>
           <p className="text-[13px] text-ink-muted leading-relaxed mb-2">
-            AutoDoc detected that this {isLowSpecWindows ? 'PC' : 'Mac'} has limited memory, so we
-            will use a lower-impact local processing mode. Transcription and notes may take longer,
-            but this helps keep recording reliable while everything stays on your device.
+            {t('ui.thisComputerHasLimitedMemorySoAutoDocWillProcessRecordingsMoreCarefullyTran')}
           </p>
           <p className="text-[12px] text-ink-faint leading-relaxed">
-            AutoDoc will process mic and system audio one at a time on this{' '}
-            {isLowSpecWindows ? 'PC' : 'Mac'} to reduce memory pressure.
+            {t('ui.autoDocWillProcessMicrophoneAndSystemAudioOneAtATimeToReduceMemoryPressure')}
           </p>
         </div>
       )}
@@ -308,10 +302,10 @@ export function TranscriptionStep({
       {isAutoRetrying && (
         <div className="max-w-[360px] mx-auto mb-5 rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
           <h3 className="text-[14px] font-semibold text-ink mb-2">
-            Still finishing transcription setup
+            {t('ui.stillFinishingTranscriptionSetup')}
           </h3>
           <p className="text-[13px] text-ink-muted leading-relaxed">
-            AutoDoc is retrying automatically in the background so you can keep moving.
+            {t('ui.autoDocIsRetryingAutomaticallyInTheBackgroundSoYouCanKeepMoving')}
           </p>
         </div>
       )}
@@ -320,7 +314,7 @@ export function TranscriptionStep({
         <div className="flex flex-col items-center gap-3">
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
-              {"This language isn't available on this PC"}
+              {t('ui.thisLanguageIsnTAvailableOnThisPC')}
             </h3>
             <p className="text-[13px] text-ink-muted leading-relaxed">{lockedReason}</p>
           </div>
@@ -329,7 +323,7 @@ export function TranscriptionStep({
               onClick={onChooseLanguage}
               className="i18n-btn px-6 py-2.5 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
             >
-              Choose another language
+              {t('ui.chooseAnotherLanguage')}
             </button>
           )}
         </div>
@@ -340,13 +334,17 @@ export function TranscriptionStep({
           <div className="max-w-[360px] mx-auto rounded-[14px] border border-border bg-mist-light/60 p-4 text-left">
             <h3 className="text-[14px] font-semibold text-ink mb-2">
               {networkFailure
-                ? "You're offline"
-                : 'Transcription setup is taking longer than expected'}
+                ? t('ui.youReOffline')
+                : t('ui.transcriptionSetupIsTakingLongerThanExpected')}
             </h3>
             <p className="text-[13px] text-ink-muted leading-relaxed">
               {networkFailure
-                ? `Connect to the internet to download the ${languageLabel} speech model, then press Retry.`
-                : 'You can continue and AutoDoc will keep working on this in the background, or retry right now.'}
+                ? t('ui.connectToTheInternetToDownloadTheLanguageSpeechModelThenPressRetry', {
+                    language: languageLabel
+                  })
+                : t(
+                    'ui.youCanContinueAndAutoDocWillKeepWorkingOnThisInTheBackgroundOrRetryRightNow'
+                  )}
             </p>
           </div>
           <button
@@ -355,7 +353,7 @@ export function TranscriptionStep({
               autoRetryAttempts.current = 0
               hasSeenMeaningfulSetupProgress.current = false
               setError(null)
-              setLockedReason(null)
+              setLanguageLocked(false)
               setIsAutoRetrying(false)
               setPhase('checking')
               setPercent(0)
@@ -364,14 +362,14 @@ export function TranscriptionStep({
             }}
             className="i18n-btn px-6 py-2.5 bg-ink text-on-ink rounded-[10px] text-[14px] font-semibold hover:bg-ink-secondary transition-colors"
           >
-            Retry
+            {t('ui.retry')}
           </button>
           {onChooseLanguage && meetingLanguage && meetingLanguage !== 'en' && (
             <button
               onClick={onChooseLanguage}
               className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
             >
-              Choose another language
+              {t('ui.chooseAnotherLanguage')}
             </button>
           )}
         </div>
@@ -382,7 +380,7 @@ export function TranscriptionStep({
           onClick={onNext}
           className="text-[13px] text-ink-faint hover:text-ink-muted transition-colors"
         >
-          Continue - this will finish in the background
+          {t('ui.continueThisWillFinishInTheBackground')}
         </button>
       )}
     </div>

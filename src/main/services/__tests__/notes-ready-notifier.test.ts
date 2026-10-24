@@ -80,7 +80,6 @@ describe('notes ready notifier', () => {
         title: 'Notes Ready',
         body: 'Weekly Sync notes are ready.',
         bodyTitle: 'Weekly Sync',
-        bodySuffix: 'notes are ready.',
         primaryActionLabel: 'Open Notes',
         kind: 'notes-ready'
       })

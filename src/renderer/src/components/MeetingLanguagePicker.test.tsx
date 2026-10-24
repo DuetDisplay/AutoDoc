@@ -135,13 +135,15 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    const german = screen.getByRole('option', { name: new RegExp(`German\\s+${SLOWER_MEETING_LANGUAGE_NOTE}`) })
+    const german = screen.getByRole('option', {
+      name: new RegExp(`German\\s+${SLOWER_MEETING_LANGUAGE_NOTE}`)
+    })
     expect(german).not.toHaveAttribute('aria-disabled')
     await user.click(german)
     expect(onChange).toHaveBeenCalledWith('de')
   })
 
-  it('disables a locked language and shows the returned reason', async () => {
+  it('disables a locked language and shows localized availability copy', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()
     const reason = 'Spanish needs a supported graphics card on this PC.'
@@ -159,7 +161,9 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    const spanish = screen.getByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = screen.getByRole('option', {
+      name: "Spanish This language isn't available on this PC."
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     await user.click(spanish)
     expect(onChange).not.toHaveBeenCalled()
@@ -264,7 +268,9 @@ describe('MeetingLanguagePicker Windows engine availability', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    expect(screen.getByRole('option', { name: `Spanish ${reason}` })).toBeInTheDocument()
+    expect(
+      screen.getByRole('option', { name: "Spanish This language isn't available on this PC." })
+    ).toBeInTheDocument()
     expect(screen.queryByText(/download on first use/i)).not.toBeInTheDocument()
   })
 })

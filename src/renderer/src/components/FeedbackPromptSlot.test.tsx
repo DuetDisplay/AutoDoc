@@ -183,7 +183,9 @@ describe('FeedbackPromptSlot', () => {
     render(<FeedbackPromptSlot surface="upcoming" />)
     await screen.findByRole('region', { name: 'How’s AutoDoc working for you?' })
 
+    await waitFor(() => expect(animationFrames.size).toBeGreaterThan(0))
     act(runAnimationFrame)
+    await waitFor(() => expect(animationFrames.size).toBeGreaterThan(0))
     act(runAnimationFrame)
 
     await waitFor(() => {

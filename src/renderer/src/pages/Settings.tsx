@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../../shared/i18n'
+import { meetingLanguageName } from '../services/meeting-language-name'
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { CALENDAR_CONNECT_BUTTON_CLASS } from '../components/ConnectCalendar'
 import { PageHeader } from '../components/PageHeader'
@@ -11,7 +13,6 @@ import type { UpdateStatus } from '../../../preload/ipc.d'
 import type { AppRuntimeInfo, AppStorageInfo, CalendarAccount } from '../../../shared/types'
 import {
   DEFAULT_MEETING_LANGUAGE,
-  getMeetingLanguageDefinition,
   isMeetingLanguageAvailable,
   normalizeMeetingLanguage,
   UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY,
@@ -60,7 +61,9 @@ function getCalendarAccountLabel(
     return email
   }
 
-  return account.provider === 'google' ? t('settings.googleAccount') : t('settings.microsoftAccount')
+  return account.provider === 'google'
+    ? t('settings.googleAccount')
+    : t('settings.microsoftAccount')
 }
 
 function getCalendarSyncIssueMessage(
@@ -114,7 +117,17 @@ export function Settings() {
   const [meetingLanguage, setMeetingLanguageState] =
     useState<MeetingLanguageCode>(DEFAULT_MEETING_LANGUAGE)
   const [isSavingMeetingLanguage, setIsSavingMeetingLanguage] = useState(false)
-  const [meetingLanguageError, setMeetingLanguageError] = useState<string | null>(null)
+  const [meetingLanguageFailure, setMeetingLanguageFailure] = useState<
+    | { kind: 'save' | 'disk-full' }
+    | { kind: 'locked'; language: MeetingLanguageCode }
+    | {
+        kind: 'offline'
+        language: MeetingLanguageCode
+        bytes?: number
+        savedLanguage: MeetingLanguageCode | null
+      }
+    | null
+  >(null)
   const [meetingLanguageAvailability, setMeetingLanguageAvailability] =
     useState<MeetingLanguageAvailability>(UNRESTRICTED_MEETING_LANGUAGE_AVAILABILITY)
   const [languageStates, setLanguageStates] = useState<
@@ -124,8 +137,8 @@ export function Settings() {
     useState<MeetingLanguageCode | null>(null)
   const [meetingLanguageSetupStatus, setMeetingLanguageSetupStatus] =
     useState<WhisperSetupStatus | null>(null)
-  const [storageNotice, setStorageNotice] = useState<string | null>(null)
-  const [storageError, setStorageError] = useState<string | null>(null)
+  const [storageNotice, setStorageNotice] = useState<MessageKey | null>(null)
+  const [storageError, setStorageError] = useState<MessageKey | null>(null)
   const [isRemovingDownloads, setIsRemovingDownloads] = useState(false)
   const [isResettingLocalData, setIsResettingLocalData] = useState(false)
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false)
@@ -352,7 +365,7 @@ export function Settings() {
   }
 
   const handleSetMeetingLanguage = async (language: MeetingLanguageCode): Promise<void> => {
-    setMeetingLanguageError(null)
+    setMeetingLanguageFailure(null)
     setIsSavingMeetingLanguage(true)
     try {
       if (isWindows && language !== DEFAULT_MEETING_LANGUAGE) {
@@ -368,13 +381,7 @@ export function Settings() {
           }
         }
         if (engineState?.availability === 'locked') {
-          setMeetingLanguageError(
-            engineState.reason ??
-              t('settings.meetingLanguageUnavailable', {
-                language: getMeetingLanguageDefinition(language).label,
-                machine: t('machine.pc')
-              })
-          )
+          setMeetingLanguageFailure({ kind: 'locked', language })
           return
         }
         const needsEnsure =
@@ -413,14 +420,17 @@ export function Settings() {
       } catch {
         // Keep the last picker value if the saved preference cannot be read.
       }
-      setMeetingLanguageError(
-        isNetworkErrorMessage(message)
-          ? offlineMeetingLanguageMessage(
-              getMeetingLanguageDefinition(language).label,
-              languageStates[language]?.firstUseDownloadBytes,
-              savedLanguage ? getMeetingLanguageDefinition(savedLanguage).label : null
-            )
-          : message
+      setMeetingLanguageFailure(
+        /ENOSPC|disk(?: is)? full|no space left/i.test(message)
+          ? { kind: 'disk-full' }
+          : isNetworkErrorMessage(message)
+            ? {
+                kind: 'offline',
+                language,
+                bytes: languageStates[language]?.firstUseDownloadBytes,
+                savedLanguage
+              }
+            : { kind: 'save' }
       )
     } finally {
       if (!isWindows) await refreshLanguageStates()
@@ -440,9 +450,9 @@ export function Settings() {
     try {
       const nextStorageInfo = await window.electronAPI.invoke('app:clear-downloaded-components')
       setStorageInfo(nextStorageInfo)
-      setStorageNotice(t('settings.removeDownloadsDone'))
-    } catch (err) {
-      setStorageError(err instanceof Error ? err.message : t('settings.removeDownloadsFailed'))
+      setStorageNotice('settings.removeDownloadsDone')
+    } catch {
+      setStorageError('settings.removeDownloadsFailed')
     } finally {
       setIsRemovingDownloads(false)
     }
@@ -457,12 +467,31 @@ export function Settings() {
     setIsResettingLocalData(true)
     try {
       await window.electronAPI.invoke('app:reset-local-data')
-      setStorageNotice(t('settings.deleteAllDataRestarting'))
-    } catch (err) {
+      setStorageNotice('settings.deleteAllDataRestarting')
+    } catch {
       setIsResettingLocalData(false)
-      setStorageError(err instanceof Error ? err.message : t('settings.deleteAllDataFailed'))
+      setStorageError('settings.deleteAllDataFailed')
     }
   }
+
+  const meetingLanguageError = !meetingLanguageFailure
+    ? null
+    : meetingLanguageFailure.kind === 'offline'
+      ? offlineMeetingLanguageMessage(
+          meetingLanguageName(meetingLanguageFailure.language, uiLanguage),
+          meetingLanguageFailure.bytes,
+          meetingLanguageFailure.savedLanguage
+            ? meetingLanguageName(meetingLanguageFailure.savedLanguage, uiLanguage)
+            : null
+        )
+      : meetingLanguageFailure.kind === 'locked'
+        ? t('settings.meetingLanguageUnavailable', {
+            language: meetingLanguageName(meetingLanguageFailure.language, uiLanguage),
+            machine: t('machine.pc')
+          })
+        : meetingLanguageFailure.kind === 'disk-full'
+          ? t('ui.notEnoughDiskSpaceFreeUpSpaceAndTryAgain')
+          : t('settings.saveMeetingLanguageFailed')
 
   const uninstallGuidance =
     runtimeInfo?.platform === 'win32'
@@ -470,9 +499,7 @@ export function Settings() {
       : t('settings.uninstallGuidanceMac')
 
   const machineNoun = isWindows ? t('machine.pc') : t('machine.mac')
-  const offeredLanguageLabel = uiLanguageOffer
-    ? UI_LANGUAGE_NATIVE_LABELS[uiLanguageOffer]
-    : ''
+  const offeredLanguageLabel = uiLanguageOffer ? UI_LANGUAGE_NATIVE_LABELS[uiLanguageOffer] : ''
   const pickerAvailability: MeetingLanguageAvailability = {
     ...meetingLanguageAvailability,
     languageStates
@@ -612,7 +639,9 @@ export function Settings() {
                     fill="#EA4335"
                   />
                 </svg>
-                {connectingProvider === 'google' ? t('settings.connecting') : t('settings.addGoogle')}
+                {connectingProvider === 'google'
+                  ? t('settings.connecting')
+                  : t('settings.addGoogle')}
               </button>
               <button
                 onClick={() => handleConnect('microsoft')}
@@ -654,7 +683,7 @@ export function Settings() {
                 {!isMeetingLanguageAvailable(meetingLanguage, pickerAvailability) && (
                   <p role="status" className="mt-1 text-[11px] text-clay-dark text-pretty">
                     {t('settings.meetingLanguageUnavailable', {
-                      language: getMeetingLanguageDefinition(meetingLanguage).label,
+                      language: meetingLanguageName(meetingLanguage),
                       machine: machineNoun
                     })}
                   </p>
@@ -716,7 +745,9 @@ export function Settings() {
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.videoPlayback')}</h3>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">
+              {t('settings.videoPlayback')}
+            </h3>
             <div className="i18n-setting-row rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
               <div className="i18n-setting-copy">
                 <p className="text-[12px] font-semibold text-ink text-pretty">
@@ -729,12 +760,12 @@ export function Settings() {
               <button
                 type="button"
                 onClick={() => void handleToggleVideoWatermark()}
-                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${videoWatermarkVisible ? 'bg-sage' : 'bg-control-track-off'}`}
                 aria-pressed={videoWatermarkVisible}
                 aria-label={t('settings.watermarkAria')}
               >
                 <span
-                  className={`block h-5 w-5 rounded-full bg-control-thumb transition-transform ${videoWatermarkVisible ? 'translate-x-5' : 'translate-x-0'}`}
+                  className={`block h-5 w-5 rounded-full transition-transform ${videoWatermarkVisible ? 'translate-x-5 bg-control-thumb-on' : 'translate-x-0 bg-control-thumb'}`}
                 />
               </button>
             </div>
@@ -750,12 +781,12 @@ export function Settings() {
               <button
                 type="button"
                 onClick={() => void handleToggleAnalytics()}
-                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-ink-faint/30'}`}
+                className={`i18n-setting-control relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${analyticsConsent ? 'bg-sage' : 'bg-control-track-off'}`}
                 aria-pressed={analyticsConsent === true}
                 aria-label={t('settings.analyticsAria')}
               >
                 <span
-                  className={`block h-5 w-5 rounded-full bg-control-thumb transition-transform ${analyticsConsent ? 'translate-x-5' : 'translate-x-0'}`}
+                  className={`block h-5 w-5 rounded-full transition-transform ${analyticsConsent ? 'translate-x-5 bg-control-thumb-on' : 'translate-x-0 bg-control-thumb'}`}
                 />
               </button>
             </div>
@@ -772,14 +803,16 @@ export function Settings() {
                 <span className="min-w-0 text-[12px] text-ink-muted leading-relaxed text-pretty">
                   <strong className="text-ink font-semibold">
                     {t('settings.diagnosticLogsTitle')}
-                  </strong>{' '}
-                  {t('settings.diagnosticLogsDescription')}
+                  </strong>
+                  <span className="mt-1 block">{t('ui.optionalDiagnosticLogUpload')}</span>
                 </span>
               </label>
             </div>
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-ink mb-2">{t('settings.whisperModel')}</h3>
+            <h3 className="text-[13px] font-semibold text-ink mb-2">
+              {t('settings.whisperModel')}
+            </h3>
             <p className="text-[12px] text-ink-muted [overflow-wrap:anywhere]">
               {runtimeInfo?.whisperModel ?? t('settings.loading')}
             </p>
@@ -861,15 +894,21 @@ export function Settings() {
                   disabled={isResettingLocalData || isRemovingDownloads}
                   className="text-[12px] font-medium leading-snug text-clay-dark bg-clay-light px-4 py-2 rounded-lg hover:bg-clay-light/80 transition-colors disabled:opacity-50"
                 >
-                  {isResettingLocalData ? t('settings.deletingAllData') : t('settings.deleteAllData')}
+                  {isResettingLocalData
+                    ? t('settings.deletingAllData')
+                    : t('settings.deleteAllData')}
                 </button>
               </div>
 
               {storageNotice && (
-                <p className="text-[12px] text-sage mt-3 text-pretty">{storageNotice}</p>
+                <p role="status" className="text-[12px] text-sage-dark mt-3 text-pretty">
+                  {t(storageNotice)}
+                </p>
               )}
               {storageError && (
-                <p className="text-[12px] text-clay mt-3 text-pretty">{storageError}</p>
+                <p role="alert" className="text-[12px] text-clay-dark mt-3 text-pretty">
+                  {t(storageError)}
+                </p>
               )}
             </div>
           </div>
@@ -909,7 +948,9 @@ export function Settings() {
                 </button>
               )}
               {updateStatus.state === 'idle' && __AUTODOC_QA_BUILD__ && (
-                <span className="text-[11px] text-ink-faint">{t('settings.updatesDisabledQa')}</span>
+                <span className="text-[11px] text-ink-faint">
+                  {t('settings.updatesDisabledQa')}
+                </span>
               )}
               {updateStatus.state === 'checking' && (
                 <span className="text-[11px] text-ink-faint animate-pulse">

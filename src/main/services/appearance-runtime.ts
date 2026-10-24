@@ -11,7 +11,9 @@ export function applyNativeAppearance(mode: AppearanceMode): void {
   nativeTheme.themeSource = nativeThemeSourceForAppearance(mode)
   const background = windowBackgroundForTheme(resolveNativeTheme(mode))
   for (const win of BrowserWindow.getAllWindows()) {
-    win.setBackgroundColor?.(background)
+    // Floating notification windows draw their own translucent surface.
+    if (win.isFocusable?.() !== false) win.setBackgroundColor?.(background)
+    else win.webContents.send?.('notification:appearance', nativeTheme.shouldUseDarkColors)
   }
 }
 

@@ -65,7 +65,9 @@ describe('MeetingLanguageStep', () => {
     render(<MeetingLanguageStep onNext={next} />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Needs 16 GB')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to save the meeting language.'
+    )
     expect(next).not.toHaveBeenCalled()
     expect(saved).toBe('en')
   })
@@ -100,7 +102,9 @@ describe('MeetingLanguageStep', () => {
     ).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Meeting language: English' }))
 
-    const spanish = screen.getByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = screen.getByRole('option', {
+      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     expect(
       screen.getByRole('option', {

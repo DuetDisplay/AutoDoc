@@ -1,3 +1,4 @@
+import { translate } from '../../../shared/i18n'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -442,9 +443,51 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: /remove downloaded ai components/i }))
 
     expect(await screen.findByText(/downloaded ai components removed/i)).toBeInTheDocument()
-    expect(screen.getByText('0 B')).toBeInTheDocument()
+    expect(screen.getByText('0 byte')).toBeInTheDocument()
 
     confirmSpy.mockRestore()
+  })
+
+  it('localizes a storage failure and updates it when the app language changes', async () => {
+    const api = installMockElectronApi({
+      'app:get-version': '1.3.0',
+      'updater:get-status': createUpdateStatus(),
+      'app:get-runtime-info': createRuntimeInfo(),
+      'app:get-storage-info': createStorageInfo(),
+      'prefs:get-analytics-consent': false,
+      'prefs:get-diagnostic-log-upload-consent': false,
+      'prefs:get-ui-language': 'en',
+      'calendar:get-accounts': [],
+      'calendar:get-events': [],
+      'app:clear-downloaded-components': () => {
+        throw new Error('Synthetic backend permission failure')
+      }
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    try {
+      render(
+        <I18nProvider>
+          <Settings />
+        </I18nProvider>
+      )
+      await user.click(
+        await screen.findByRole('button', { name: /remove downloaded ai components/i })
+      )
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        translate('en', 'settings.removeDownloadsFailed')
+      )
+      expect(screen.queryByText('Synthetic backend permission failure')).not.toBeInTheDocument()
+      act(() => api.emit('prefs:ui-language-changed', 'fr'))
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          translate('fr', 'settings.removeDownloadsFailed')
+        )
+      )
+    } finally {
+      confirm.mockRestore()
+      window.localStorage.removeItem('autodoc-ui-language')
+    }
   })
 
   it('starts a full local reset from settings after confirmation', async () => {
@@ -699,7 +742,9 @@ describe('Settings Windows meeting languages', () => {
     render(<Settings />)
 
     await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
-    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = await screen.findByRole('option', {
+      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
     await user.click(spanish)
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
@@ -812,7 +857,7 @@ describe('Settings Windows meeting languages', () => {
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      "You're offline. Connect to the internet to download the German speech model (about 5.6 GB). Your meeting language is still English."
+      'You’re offline. Connect to the internet to download the German speech model (about 5.6 GB). Your meeting language is still English.'
     )
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
@@ -831,7 +876,9 @@ describe('Settings Windows meeting languages', () => {
       await screen.findByRole('option', { name: /German\s+About 5\.6 GB download on first use/ })
     )
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Disk is full.')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Not enough disk space. Free up space and try again.'
+    )
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'de')
@@ -928,13 +975,17 @@ describe('Settings Windows meeting languages', () => {
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('whisper:prepare-meeting-language', 'es')
     })
-    expect(await screen.findByRole('alert')).toHaveTextContent(reason)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to save the meeting language.'
+    )
     expect(screen.getByRole('button', { name: 'Meeting language: English' })).toBeInTheDocument()
     expect(state.meetingLanguage).toBe('en')
     expect(api.invoke).not.toHaveBeenCalledWith('prefs:set-meeting-language', 'es')
 
     await user.click(screen.getByRole('button', { name: 'Meeting language: English' }))
-    const spanish = await screen.findByRole('option', { name: new RegExp(`Spanish\\s+${reason}`) })
+    const spanish = await screen.findByRole('option', {
+      name: new RegExp('Spanish\\s+This language isn.t available on this PC.')
+    })
     expect(spanish).toHaveAttribute('aria-disabled', 'true')
   })
 
@@ -1018,9 +1069,7 @@ describe('Settings Windows meeting languages', () => {
     await user.click(await screen.findByRole('button', { name: 'Meeting language: English' }))
     await user.click(screen.getByRole('option', { name: 'Korean' }))
 
-    expect(
-      await screen.findByText('Also use 한국어 for the app?')
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Also use 한국어 for the app?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use 한국어' }))
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('prefs:set-ui-language', 'ko')
