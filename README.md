@@ -4,7 +4,7 @@
 
 # AutoDoc
 
-### Open-source meeting notes, processed on your computer.
+### Open-source meeting notes for Mac and Windows that also record your screen, so you can click a note and replay that moment.
 
 AutoDoc is an open-source, local-first meeting notes app for macOS and Windows. Record your screen and meeting audio, get editable notes, and click a note's timestamp to replay the moment. Transcription, notes, and Ask AI run on your computer. No AutoDoc account or AI API key required.
 
@@ -23,8 +23,6 @@ Ready-to-use installers are available for Mac and Windows. You do not need to bu
 <div align="center">
 
 ![AutoDoc Notes and timestamp playback](docs/assets/demo.gif)
-
-Notes and timestamp playback (short excerpt). [Watch the full 34-second product demo](docs/assets/demo-v1.2/autodoc-demo.mp4).
 
 <!-- latest-release:start -->
 
