@@ -372,5 +372,13 @@
   "media.download": "Скачать запись",
   "media.pictureInPicture": "Картинка в картинке",
   "media.exitPictureInPicture": "Выйти из режима «Картинка в картинке»",
-  "media.pictureInPictureFailed": "Режим «Картинка в картинке» недоступен. Вы можете продолжить просмотр здесь."
+  "media.pictureInPictureFailed": "Режим «Картинка в картинке» недоступен. Вы можете продолжить просмотр здесь.",
+  "githubStar.heading": "Вам нравится AutoDoc?",
+  "githubStar.body": "AutoDoc бесплатный, и его создаёт небольшая команда. Звезда на GitHub — самый простой способ помочь ему развиваться.",
+  "githubStar.star": "Поставить звезду на GitHub",
+  "githubStar.noThanks": "Нет, спасибо",
+  "githubStar.thanks": "Спасибо за поддержку!",
+  "githubStar.sourceCode": "Исходный код на GitHub",
+  "githubStar.starAutoDoc": "Поставить звезду AutoDoc",
+  "githubStar.openFailed": "Не удалось открыть GitHub. Попробуйте ещё раз."
 }

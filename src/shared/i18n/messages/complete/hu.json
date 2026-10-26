@@ -372,5 +372,13 @@
   "media.download": "Felvétel letöltése",
   "media.pictureInPicture": "Kép a képben",
   "media.exitPictureInPicture": "Kilépés a kép a képben módból",
-  "media.pictureInPictureFailed": "A kép a képben mód nem érhető el. Itt folytathatja a megtekintést."
+  "media.pictureInPictureFailed": "A kép a képben mód nem érhető el. Itt folytathatja a megtekintést.",
+  "githubStar.heading": "Tetszik az AutoDoc?",
+  "githubStar.body": "Az AutoDoc ingyenes, és egy kis csapat fejleszti. Egy GitHub-csillag a legegyszerűbb módja, hogy segítsd a fejlődését.",
+  "githubStar.star": "Csillagozás a GitHubon",
+  "githubStar.noThanks": "Nem, köszönöm",
+  "githubStar.thanks": "Köszönjük a támogatást!",
+  "githubStar.sourceCode": "Forráskód a GitHubon",
+  "githubStar.starAutoDoc": "AutoDoc csillagozása",
+  "githubStar.openFailed": "Nem sikerült megnyitni a GitHubot. Próbáld újra."
 }

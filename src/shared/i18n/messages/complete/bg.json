@@ -372,5 +372,13 @@
   "media.download": "Изтегляне на записа",
   "media.pictureInPicture": "Картина в картината",
   "media.exitPictureInPicture": "Изход от картина в картината",
-  "media.pictureInPictureFailed": "Картина в картината не е достъпна. Можете да продължите да гледате тук."
+  "media.pictureInPictureFailed": "Картина в картината не е достъпна. Можете да продължите да гледате тук.",
+  "githubStar.heading": "Харесвате ли AutoDoc?",
+  "githubStar.body": "AutoDoc е безплатен и се разработва от малък екип. Звезда в GitHub е най-лесният начин да помогнете за развитието му.",
+  "githubStar.star": "Дайте звезда в GitHub",
+  "githubStar.noThanks": "Не, благодаря",
+  "githubStar.thanks": "Благодарим за подкрепата!",
+  "githubStar.sourceCode": "Изходен код в GitHub",
+  "githubStar.starAutoDoc": "Дайте звезда на AutoDoc",
+  "githubStar.openFailed": "GitHub не можа да се отвори. Опитайте отново."
 }

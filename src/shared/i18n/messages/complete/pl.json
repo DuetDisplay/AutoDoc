@@ -372,5 +372,13 @@
   "media.download": "Pobierz nagranie",
   "media.pictureInPicture": "Obraz w obrazie",
   "media.exitPictureInPicture": "Zamknij obraz w obrazie",
-  "media.pictureInPictureFailed": "Obraz w obrazie jest niedostępny. Możesz oglądać dalej tutaj."
+  "media.pictureInPictureFailed": "Obraz w obrazie jest niedostępny. Możesz oglądać dalej tutaj.",
+  "githubStar.heading": "Podoba Ci się AutoDoc?",
+  "githubStar.body": "AutoDoc jest bezpłatny i tworzony przez mały zespół. Gwiazdka na GitHubie to najprostszy sposób, by pomóc mu się rozwijać.",
+  "githubStar.star": "Daj gwiazdkę na GitHubie",
+  "githubStar.noThanks": "Nie, dziękuję",
+  "githubStar.thanks": "Dziękujemy za wsparcie!",
+  "githubStar.sourceCode": "Kod źródłowy na GitHubie",
+  "githubStar.starAutoDoc": "Daj gwiazdkę AutoDoc",
+  "githubStar.openFailed": "Nie udało się otworzyć GitHuba. Spróbuj ponownie."
 }

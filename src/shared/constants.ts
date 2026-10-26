@@ -76,3 +76,5 @@ export const BROWSER_PATTERNS = [
 
 export const VIDEO_MIME_TYPE = 'video/webm;codecs=vp9'
 export const AUDIO_MIME_TYPE = 'audio/webm;codecs=opus'
+
+export const AUTODOC_GITHUB_URL = 'https://github.com/DuetDisplay/AutoDoc'

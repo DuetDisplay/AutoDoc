@@ -372,5 +372,13 @@
   "media.download": "ファイルをダウンロード",
   "media.pictureInPicture": "ピクチャーインピクチャー",
   "media.exitPictureInPicture": "ピクチャーインピクチャーを終了",
-  "media.pictureInPictureFailed": "ピクチャーインピクチャーを利用できません。このまま視聴できます。"
+  "media.pictureInPictureFailed": "ピクチャーインピクチャーを利用できません。このまま視聴できます。",
+  "githubStar.heading": "AutoDocを気に入っていただけましたか？",
+  "githubStar.body": "AutoDocは小さなチームが開発している無料アプリです。GitHubでスターを付けていただくことが、成長への一番の応援になります。",
+  "githubStar.star": "GitHubでスターを付ける",
+  "githubStar.noThanks": "今は結構です",
+  "githubStar.thanks": "応援ありがとうございます！",
+  "githubStar.sourceCode": "GitHubのソースコード",
+  "githubStar.starAutoDoc": "AutoDocにスターを付ける",
+  "githubStar.openFailed": "GitHubを開けませんでした。もう一度お試しください。"
 }

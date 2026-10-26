@@ -372,5 +372,13 @@
   "media.download": "Stiahnuť nahrávku",
   "media.pictureInPicture": "Obraz v obraze",
   "media.exitPictureInPicture": "Ukončiť obraz v obraze",
-  "media.pictureInPictureFailed": "Obraz v obraze nie je k dispozícii. Môžete pokračovať v sledovaní tu."
+  "media.pictureInPictureFailed": "Obraz v obraze nie je k dispozícii. Môžete pokračovať v sledovaní tu.",
+  "githubStar.heading": "Páči sa vám AutoDoc?",
+  "githubStar.body": "AutoDoc je zadarmo a vyvíja ho malý tím. Hviezdička na GitHube je najjednoduchší spôsob, ako mu pomôcť rásť.",
+  "githubStar.star": "Dať hviezdičku na GitHube",
+  "githubStar.noThanks": "Nie, ďakujem",
+  "githubStar.thanks": "Ďakujeme za podporu!",
+  "githubStar.sourceCode": "Zdrojový kód na GitHube",
+  "githubStar.starAutoDoc": "Dať AutoDocu hviezdičku",
+  "githubStar.openFailed": "GitHub sa nepodarilo otvoriť. Skúste to znova."
 }

@@ -141,6 +141,10 @@ export interface IpcInvokeEvents {
   'support:get-availability': []
   'support:open-email': [surface: SupportEmailSurface]
   'support:copy-email': [surface: SupportEmailSurface]
+  'github-star:reserve': []
+  'github-star:confirm': [reservationId: string]
+  'github-star:cancel': [reservationId: string]
+  'github-star:open': []
   'feedback:observe-foreground': []
   'feedback:reserve-prompt': [surface: FeedbackPromptSurface]
   'feedback:confirm-prompt': [reservationId: string, surface: FeedbackPromptSurface]
@@ -328,6 +332,10 @@ export interface IpcInvokeReturns {
   'support:get-availability': boolean
   'support:open-email': OpenSupportEmailResult
   'support:copy-email': CopySupportEmailResult
+  'github-star:reserve': string | null
+  'github-star:confirm': boolean
+  'github-star:cancel': void
+  'github-star:open': boolean
   'feedback:observe-foreground': void
   'feedback:reserve-prompt': FeedbackPromptReservationResponse
   'feedback:confirm-prompt': FeedbackPromptConfirmationResponse

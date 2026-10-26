@@ -372,5 +372,13 @@
   "media.download": "Lejupielādēt ierakstu",
   "media.pictureInPicture": "Attēls attēlā",
   "media.exitPictureInPicture": "Iziet no attēla attēlā",
-  "media.pictureInPictureFailed": "Attēls attēlā nav pieejams. Varat turpināt skatīties šeit."
+  "media.pictureInPictureFailed": "Attēls attēlā nav pieejams. Varat turpināt skatīties šeit.",
+  "githubStar.heading": "Vai jums patīk AutoDoc?",
+  "githubStar.body": "AutoDoc ir bezmaksas lietotne, ko veido neliela komanda. Zvaigznīte GitHub ir vienkāršākais veids, kā palīdzēt tai augt.",
+  "githubStar.star": "Piešķirt zvaigznīti GitHub",
+  "githubStar.noThanks": "Nē, paldies",
+  "githubStar.thanks": "Paldies par atbalstu!",
+  "githubStar.sourceCode": "Pirmkods GitHub",
+  "githubStar.starAutoDoc": "Piešķirt AutoDoc zvaigznīti",
+  "githubStar.openFailed": "Neizdevās atvērt GitHub. Mēģiniet vēlreiz."
 }

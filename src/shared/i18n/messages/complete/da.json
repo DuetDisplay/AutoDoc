@@ -372,5 +372,13 @@
   "media.download": "Download optagelse",
   "media.pictureInPicture": "Billede i billede",
   "media.exitPictureInPicture": "Luk billede i billede",
-  "media.pictureInPictureFailed": "Billede i billede er ikke tilgængeligt. Du kan fortsætte med at se her."
+  "media.pictureInPictureFailed": "Billede i billede er ikke tilgængeligt. Du kan fortsætte med at se her.",
+  "githubStar.heading": "Er du glad for AutoDoc?",
+  "githubStar.body": "AutoDoc er gratis og udvikles af et lille team. En stjerne på GitHub er den nemmeste måde at hjælpe det med at vokse.",
+  "githubStar.star": "Giv en stjerne på GitHub",
+  "githubStar.noThanks": "Nej tak",
+  "githubStar.thanks": "Tak for støtten!",
+  "githubStar.sourceCode": "Kildekode på GitHub",
+  "githubStar.starAutoDoc": "Giv AutoDoc en stjerne",
+  "githubStar.openFailed": "Kunne ikke åbne GitHub. Prøv igen."
 }

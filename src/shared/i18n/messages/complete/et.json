@@ -372,5 +372,13 @@
   "media.download": "Laadi salvestis alla",
   "media.pictureInPicture": "Pilt pildis",
   "media.exitPictureInPicture": "Välju pilt-pildis-režiimist",
-  "media.pictureInPictureFailed": "Pilt-pildis-režiim pole saadaval. Saate siin vaatamist jätkata."
+  "media.pictureInPictureFailed": "Pilt-pildis-režiim pole saadaval. Saate siin vaatamist jätkata.",
+  "githubStar.heading": "Kas AutoDoc meeldib sulle?",
+  "githubStar.body": "AutoDoc on tasuta ja seda arendab väike meeskond. Täht GitHubis on lihtsaim viis aidata sellel kasvada.",
+  "githubStar.star": "Anna GitHubis täht",
+  "githubStar.noThanks": "Ei, aitäh",
+  "githubStar.thanks": "Aitäh toetuse eest!",
+  "githubStar.sourceCode": "Lähtekood GitHubis",
+  "githubStar.starAutoDoc": "Anna AutoDocile täht",
+  "githubStar.openFailed": "GitHubi ei saanud avada. Proovi uuesti."
 }

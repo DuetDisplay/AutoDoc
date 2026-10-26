@@ -1,4 +1,12 @@
 import {
+  GithubStarPromptService,
+  createGithubStarPromptStore,
+  isSuccessfulStarMeeting
+} from './services/github-star-prompt'
+import { registerGithubStarIpc } from './ipc/github-star-ipc'
+import { hasMeetingExportNotes } from './services/meeting-export'
+import { loadMeetingExportSnapshot } from './services/meeting-export-sources'
+import {
   app,
   BrowserWindow,
   ipcMain,
@@ -1609,7 +1617,9 @@ app.whenReady().then(async () => {
       }
     })()
   }
+  let githubStarPromptService: GithubStarPromptService | null = null
   segmentationService.onComplete((meetingId) => {
+    void githubStarPromptService?.recordCompletedMeeting(meetingId)
     const allowRepeat = pendingReprocessNotificationMeetingIds.has(meetingId)
     void notifyNotesReady(recordingService.getRecordingsBaseDir(), meetingId, { allowRepeat })
       .catch((err) => {
@@ -2056,6 +2066,31 @@ app.whenReady().then(async () => {
     }
   }
 
+  const isPromptBusy = (): boolean => {
+    const mainWindow = getMainWindow()
+    const updateState = getUpdateStatus().state
+    const updateBusy =
+      updateState === 'checking' ||
+      updateState === 'available' ||
+      updateState === 'downloading' ||
+      updateState === 'downloaded' ||
+      updateState === 'installing'
+
+    return (
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      !mainWindow.isVisible() ||
+      mainWindow.isMinimized() ||
+      !mainWindow.isFocused() ||
+      recordingService.getState().isRecording ||
+      hasPostProcessingWork() ||
+      transcriptionService.hasActiveOrQueuedWork() ||
+      segmentationService.hasActiveOrQueuedWork() ||
+      shouldSuppressNotificationActivation() ||
+      updateBusy
+    )
+  }
+
   const feedbackPromptStore = new FeedbackPromptStore()
   const feedbackPromptService = new FeedbackPromptService({
     store: feedbackPromptStore,
@@ -2064,31 +2099,36 @@ app.whenReady().then(async () => {
       return Number.isFinite(baseline) ? baseline : null
     },
     isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
-    isBusy: () => {
-      const mainWindow = getMainWindow()
-      const updateState = getUpdateStatus().state
-      const updateBusy =
-        updateState === 'checking' ||
-        updateState === 'available' ||
-        updateState === 'downloading' ||
-        updateState === 'downloaded' ||
-        updateState === 'installing'
-
-      return (
-        !mainWindow ||
-        mainWindow.isDestroyed() ||
-        !mainWindow.isVisible() ||
-        mainWindow.isMinimized() ||
-        !mainWindow.isFocused() ||
-        recordingService.getState().isRecording ||
-        hasPostProcessingWork() ||
-        transcriptionService.hasActiveOrQueuedWork() ||
-        segmentationService.hasActiveOrQueuedWork() ||
-        shouldSuppressNotificationActivation() ||
-        updateBusy
-      )
-    },
+    isBusy: isPromptBusy,
+    isOtherPromptSuppressed: () => githubStarPromptService?.blocksFeedback() ?? false,
     isSupportAvailable: () => getSupportEmail() !== null
+  })
+
+  githubStarPromptService = new GithubStarPromptService({
+    store: createGithubStarPromptStore(Date.now()),
+    isBusy: isPromptBusy,
+    isOnboardingComplete: () => prefsStore.isOnboardingComplete(),
+    feedbackTakesPriority: async () =>
+      (await feedbackPromptService.wasShownThisSessionOrToday()) ||
+      (await feedbackPromptService.getEligibility()).eligible,
+    isGoodMeeting: async (meetingId) => {
+      try {
+        const metadata = await readMetadata(
+          join(recordingService.getRecordingsBaseDir(), meetingId)
+        )
+        return isSuccessfulStarMeeting(
+          metadata,
+          await transcriptionService.getStatus(meetingId),
+          await segmentationService.getStatus(meetingId),
+          hasMeetingExportNotes(
+            await loadMeetingExportSnapshot(recordingService.getRecordingsBaseDir(), meetingId)
+          ),
+          await segmentationService.getErrorCode(meetingId)
+        )
+      } catch {
+        return false
+      }
+    }
   })
 
   const qualifyingFocusMs =
@@ -2125,6 +2165,7 @@ app.whenReady().then(async () => {
     isTrustedSender: isTrustedMainWindowSender
   })
 
+  registerGithubStarIpc(githubStarPromptService, isTrustedMainWindowSender)
   registerFeedbackPromptIpc(feedbackPromptService, {
     isTrustedSender: isTrustedMainWindowSender,
     observeForeground: () => feedbackSessionTracker.observeActive()

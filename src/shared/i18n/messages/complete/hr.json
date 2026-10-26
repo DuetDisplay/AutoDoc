@@ -372,5 +372,13 @@
   "media.download": "Preuzmi snimku",
   "media.pictureInPicture": "Slika u slici",
   "media.exitPictureInPicture": "Izađi iz slike u slici",
-  "media.pictureInPictureFailed": "Slika u slici nije dostupna. Možete nastaviti gledati ovdje."
+  "media.pictureInPictureFailed": "Slika u slici nije dostupna. Možete nastaviti gledati ovdje.",
+  "githubStar.heading": "Sviđa vam se AutoDoc?",
+  "githubStar.body": "AutoDoc je besplatan i razvija ga mali tim. Zvjezdica na GitHubu najlakši je način da mu pomognete rasti.",
+  "githubStar.star": "Dodijeli zvjezdicu na GitHubu",
+  "githubStar.noThanks": "Ne, hvala",
+  "githubStar.thanks": "Hvala na podršci!",
+  "githubStar.sourceCode": "Izvorni kod na GitHubu",
+  "githubStar.starAutoDoc": "Dodijeli zvjezdicu AutoDocu",
+  "githubStar.openFailed": "Nije moguće otvoriti GitHub. Pokušajte ponovno."
 }

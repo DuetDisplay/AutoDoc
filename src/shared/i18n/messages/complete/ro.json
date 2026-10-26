@@ -372,5 +372,13 @@
   "media.download": "Descarcă înregistrarea",
   "media.pictureInPicture": "Imagine în imagine",
   "media.exitPictureInPicture": "Ieși din imagine în imagine",
-  "media.pictureInPictureFailed": "Imaginea în imagine nu este disponibilă. Puteți continua să vizionați aici."
+  "media.pictureInPictureFailed": "Imaginea în imagine nu este disponibilă. Puteți continua să vizionați aici.",
+  "githubStar.heading": "Îți place AutoDoc?",
+  "githubStar.body": "AutoDoc este gratuit și creat de o echipă mică. O stea pe GitHub este cel mai simplu mod de a-l ajuta să crească.",
+  "githubStar.star": "Acordă o stea pe GitHub",
+  "githubStar.noThanks": "Nu, mulțumesc",
+  "githubStar.thanks": "Mulțumim pentru sprijin!",
+  "githubStar.sourceCode": "Cod sursă pe GitHub",
+  "githubStar.starAutoDoc": "Acordă o stea pentru AutoDoc",
+  "githubStar.openFailed": "Nu s-a putut deschide GitHub. Încearcă din nou."
 }

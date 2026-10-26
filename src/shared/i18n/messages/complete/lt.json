@@ -372,5 +372,13 @@
   "media.download": "Atsisiųsti įrašą",
   "media.pictureInPicture": "Vaizdas vaizde",
   "media.exitPictureInPicture": "Išeiti iš vaizdo vaizde",
-  "media.pictureInPictureFailed": "Vaizdas vaizde nepasiekiamas. Galite toliau žiūrėti čia."
+  "media.pictureInPictureFailed": "Vaizdas vaizde nepasiekiamas. Galite toliau žiūrėti čia.",
+  "githubStar.heading": "Patinka AutoDoc?",
+  "githubStar.body": "AutoDoc yra nemokama programa, kurią kuria nedidelė komanda. Žvaigždutė GitHub yra paprasčiausias būdas padėti jai augti.",
+  "githubStar.star": "Skirti žvaigždutę GitHub",
+  "githubStar.noThanks": "Ne, ačiū",
+  "githubStar.thanks": "Ačiū už palaikymą!",
+  "githubStar.sourceCode": "Pirminis kodas GitHub",
+  "githubStar.starAutoDoc": "Skirti AutoDoc žvaigždutę",
+  "githubStar.openFailed": "Nepavyko atidaryti GitHub. Bandykite dar kartą."
 }

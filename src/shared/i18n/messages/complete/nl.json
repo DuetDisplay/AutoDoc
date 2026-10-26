@@ -372,5 +372,13 @@
   "media.download": "Opname downloaden",
   "media.pictureInPicture": "Beeld-in-beeld",
   "media.exitPictureInPicture": "Beeld-in-beeld sluiten",
-  "media.pictureInPictureFailed": "Beeld-in-beeld is niet beschikbaar. U kunt hier verder kijken."
+  "media.pictureInPictureFailed": "Beeld-in-beeld is niet beschikbaar. U kunt hier verder kijken.",
+  "githubStar.heading": "Bevalt AutoDoc?",
+  "githubStar.body": "AutoDoc is gratis en wordt gemaakt door een klein team. Een ster op GitHub is de makkelijkste manier om het te helpen groeien.",
+  "githubStar.star": "Geef een ster op GitHub",
+  "githubStar.noThanks": "Nee, bedankt",
+  "githubStar.thanks": "Bedankt voor je steun!",
+  "githubStar.sourceCode": "Broncode op GitHub",
+  "githubStar.starAutoDoc": "Geef AutoDoc een ster",
+  "githubStar.openFailed": "GitHub kon niet worden geopend. Probeer het opnieuw."
 }

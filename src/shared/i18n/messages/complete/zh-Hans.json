@@ -372,5 +372,13 @@
   "media.download": "下载录制文件",
   "media.pictureInPicture": "画中画",
   "media.exitPictureInPicture": "退出画中画",
-  "media.pictureInPictureFailed": "无法使用画中画。您可以继续在此观看。"
+  "media.pictureInPictureFailed": "无法使用画中画。您可以继续在此观看。",
+  "githubStar.heading": "喜欢 AutoDoc 吗？",
+  "githubStar.body": "AutoDoc 由一个小团队免费开发。在 GitHub 上点亮一颗星，是帮助它成长最简单的方式。",
+  "githubStar.star": "在 GitHub 上点星",
+  "githubStar.noThanks": "不用了，谢谢",
+  "githubStar.thanks": "感谢您的支持！",
+  "githubStar.sourceCode": "GitHub 上的源代码",
+  "githubStar.starAutoDoc": "为 AutoDoc 点星",
+  "githubStar.openFailed": "无法打开 GitHub。请重试。"
 }

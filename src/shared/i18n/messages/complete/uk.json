@@ -372,5 +372,13 @@
   "media.download": "Завантажити запис",
   "media.pictureInPicture": "Зображення в зображенні",
   "media.exitPictureInPicture": "Вийти із зображення в зображенні",
-  "media.pictureInPictureFailed": "Зображення в зображенні недоступне. Ви можете продовжити перегляд тут."
+  "media.pictureInPictureFailed": "Зображення в зображенні недоступне. Ви можете продовжити перегляд тут.",
+  "githubStar.heading": "Подобається AutoDoc?",
+  "githubStar.body": "AutoDoc безкоштовний, і його створює невелика команда. Зірка на GitHub — найпростіший спосіб допомогти йому розвиватися.",
+  "githubStar.star": "Поставити зірку на GitHub",
+  "githubStar.noThanks": "Ні, дякую",
+  "githubStar.thanks": "Дякуємо за підтримку!",
+  "githubStar.sourceCode": "Вихідний код на GitHub",
+  "githubStar.starAutoDoc": "Поставити зірку AutoDoc",
+  "githubStar.openFailed": "Не вдалося відкрити GitHub. Спробуйте ще раз."
 }

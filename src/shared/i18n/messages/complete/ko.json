@@ -372,5 +372,13 @@
   "media.download": "파일 다운로드",
   "media.pictureInPicture": "화면 속 화면",
   "media.exitPictureInPicture": "화면 속 화면 종료",
-  "media.pictureInPictureFailed": "화면 속 화면을 사용할 수 없습니다. 여기에서 계속 시청할 수 있습니다."
+  "media.pictureInPictureFailed": "화면 속 화면을 사용할 수 없습니다. 여기에서 계속 시청할 수 있습니다.",
+  "githubStar.heading": "AutoDoc이 마음에 드시나요?",
+  "githubStar.body": "AutoDoc은 소규모 팀이 만드는 무료 앱입니다. GitHub에서 별을 눌러 주시는 것이 성장을 돕는 가장 쉬운 방법입니다.",
+  "githubStar.star": "GitHub에서 별 누르기",
+  "githubStar.noThanks": "괜찮습니다",
+  "githubStar.thanks": "응원해 주셔서 감사합니다!",
+  "githubStar.sourceCode": "GitHub 소스 코드",
+  "githubStar.starAutoDoc": "AutoDoc에 별 누르기",
+  "githubStar.openFailed": "GitHub를 열 수 없습니다. 다시 시도해 주세요."
 }

@@ -372,5 +372,13 @@
   "media.download": "Λήψη εγγραφής",
   "media.pictureInPicture": "Εικόνα σε εικόνα",
   "media.exitPictureInPicture": "Έξοδος από εικόνα σε εικόνα",
-  "media.pictureInPictureFailed": "Η εικόνα σε εικόνα δεν είναι διαθέσιμη. Μπορείτε να συνεχίσετε να παρακολουθείτε εδώ."
+  "media.pictureInPictureFailed": "Η εικόνα σε εικόνα δεν είναι διαθέσιμη. Μπορείτε να συνεχίσετε να παρακολουθείτε εδώ.",
+  "githubStar.heading": "Σας αρέσει το AutoDoc;",
+  "githubStar.body": "Το AutoDoc είναι δωρεάν και δημιουργείται από μια μικρή ομάδα. Ένα αστέρι στο GitHub είναι ο πιο εύκολος τρόπος να το βοηθήσετε να αναπτυχθεί.",
+  "githubStar.star": "Αστέρι στο GitHub",
+  "githubStar.noThanks": "Όχι, ευχαριστώ",
+  "githubStar.thanks": "Ευχαριστούμε για την υποστήριξη!",
+  "githubStar.sourceCode": "Πηγαίος κώδικας στο GitHub",
+  "githubStar.starAutoDoc": "Αστέρι στο AutoDoc",
+  "githubStar.openFailed": "Δεν ήταν δυνατό το άνοιγμα του GitHub. Δοκιμάστε ξανά."
 }

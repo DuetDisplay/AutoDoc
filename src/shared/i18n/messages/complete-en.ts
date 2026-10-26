@@ -448,5 +448,14 @@ export const completeEn = {
   'ui.downloadingAskAISearchModelPercent': 'Downloading Ask AI search model... {percent}%',
   'ui.downloadingNotesModelPercent': 'Downloading notes model... {percent}%',
   'ui.optionalDiagnosticLogUpload':
-    'This is optional. You can leave this off while analytics and crash reports stay on.'
+    'This is optional. You can leave this off while analytics and crash reports stay on.',
+  'githubStar.heading': 'Enjoying AutoDoc?',
+  'githubStar.body':
+    'AutoDoc is free and made by a small team. A GitHub star is the easiest way to help it grow.',
+  'githubStar.star': 'Star on GitHub',
+  'githubStar.noThanks': 'No thanks',
+  'githubStar.thanks': 'Thanks for the support!',
+  'githubStar.sourceCode': 'Source code on GitHub',
+  'githubStar.starAutoDoc': 'Star AutoDoc',
+  'githubStar.openFailed': 'Couldn’t open GitHub. Try again.'
 } as const

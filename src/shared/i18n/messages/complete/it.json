@@ -372,5 +372,13 @@
   "media.download": "Scarica registrazione",
   "media.pictureInPicture": "Picture-in-picture",
   "media.exitPictureInPicture": "Esci da picture-in-picture",
-  "media.pictureInPictureFailed": "La modalità picture-in-picture non è disponibile. Puoi continuare a guardare qui."
+  "media.pictureInPictureFailed": "La modalità picture-in-picture non è disponibile. Puoi continuare a guardare qui.",
+  "githubStar.heading": "Ti piace AutoDoc?",
+  "githubStar.body": "AutoDoc è gratuito e sviluppato da un piccolo team. Una stella su GitHub è il modo più semplice per aiutarlo a crescere.",
+  "githubStar.star": "Metti una stella su GitHub",
+  "githubStar.noThanks": "No, grazie",
+  "githubStar.thanks": "Grazie per il sostegno!",
+  "githubStar.sourceCode": "Codice sorgente su GitHub",
+  "githubStar.starAutoDoc": "Metti una stella ad AutoDoc",
+  "githubStar.openFailed": "Impossibile aprire GitHub. Riprova."
 }

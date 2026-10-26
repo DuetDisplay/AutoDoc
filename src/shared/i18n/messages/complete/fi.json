@@ -372,5 +372,13 @@
   "media.download": "Lataa tallenne",
   "media.pictureInPicture": "Kuva kuvassa",
   "media.exitPictureInPicture": "Sulje kuva kuvassa",
-  "media.pictureInPictureFailed": "Kuva kuvassa ei ole käytettävissä. Voit jatkaa katselua tässä."
+  "media.pictureInPictureFailed": "Kuva kuvassa ei ole käytettävissä. Voit jatkaa katselua tässä.",
+  "githubStar.heading": "Pidätkö AutoDocista?",
+  "githubStar.body": "AutoDoc on ilmainen, ja sitä kehittää pieni tiimi. Tähti GitHubissa on helpoin tapa auttaa sitä kasvamaan.",
+  "githubStar.star": "Anna tähti GitHubissa",
+  "githubStar.noThanks": "Ei kiitos",
+  "githubStar.thanks": "Kiitos tuestasi!",
+  "githubStar.sourceCode": "Lähdekoodi GitHubissa",
+  "githubStar.starAutoDoc": "Anna AutoDocille tähti",
+  "githubStar.openFailed": "GitHubia ei voitu avata. Yritä uudelleen."
 }

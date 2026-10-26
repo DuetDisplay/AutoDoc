@@ -5,6 +5,7 @@ import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
 import type { RecordingEntry, SegmentationStatus, TranscriptionStatus } from '../../../shared/types'
+import { GithubStarPrompt } from '../components/GithubStarPrompt'
 import { FeedbackPromptSlot } from '../components/FeedbackPromptSlot'
 import { useI18n } from '../services/i18n'
 import { dateLocaleForUiLanguage } from '../../../shared/ui-language'
@@ -429,6 +430,8 @@ export function Recordings({
       <PageHeader title={t('recordings.title')} />
 
       <FeedbackPromptSlot surface="ai_notes" suppressed={feedbackPromptSuppressed} />
+
+      <GithubStarPrompt suppressed={feedbackPromptSuppressed} ready={!loading} />
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center p-6">

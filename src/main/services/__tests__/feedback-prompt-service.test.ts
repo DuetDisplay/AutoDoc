@@ -623,3 +623,26 @@ describe('FeedbackPromptService reservations, impressions, and actions', () => {
     ).resolves.toBe(false)
   })
 })
+
+describe('coordination with the one-time GitHub request', () => {
+  it('gives feedback priority on its session and local day, and keeps session exclusion across midnight', async () => {
+    const store = createStore()
+    const now = localTime(2026, 10, 26)
+    await store.updateState(() => qualifiedState())
+    const service = createService(store, { now: () => now })
+    expect(await service.wasShownThisSessionOrToday()).toBe(false)
+    const reservation = await service.reservePrompt('ai_notes')
+    await service.confirmPrompt(reservation.reservationId!, 'ai_notes')
+    expect(await service.wasShownThisSessionOrToday()).toBe(true)
+    expect(await service.wasShownThisSessionOrToday(now + DAY_MS)).toBe(true)
+    const restarted = createService(store, { now: () => now })
+    expect(await restarted.wasShownThisSessionOrToday()).toBe(true)
+    expect(await restarted.wasShownThisSessionOrToday(now + DAY_MS)).toBe(false)
+  })
+  it('suppresses feedback after the GitHub card has already appeared', async () => {
+    const store = createStore()
+    await store.updateState(() => qualifiedState())
+    const service = createService(store, { isOtherPromptSuppressed: () => true })
+    expect((await service.reservePrompt('ai_notes')).reserved).toBe(false)
+  })
+})
