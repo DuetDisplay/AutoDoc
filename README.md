@@ -12,8 +12,6 @@ AutoDoc is an open-source, local-first meeting notes app for macOS and Windows. 
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-7A9E7E?style=flat-square)](LICENSE) [![On-device meeting processing](https://img.shields.io/badge/processing-100%25_on--device-7A9E7E?style=flat-square)](PRIVACY.md) [![Platforms](https://img.shields.io/badge/macOS_14%2B_%C2%B7_Windows_10%2B-1A1A17?style=flat-square)](#download) [![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](https://github.com/DuetDisplay/AutoDoc/releases/latest)
 
-If AutoDoc is useful to you, starring the repo helps other people find it.
-
 </div>
 
 ---
@@ -59,16 +57,9 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 |---|---|
 | ![Notes with a summary and conversation topics](docs/assets/screenshots/notes.png) | ![Ask AI across meetings](docs/assets/screenshots/ask-ai.png) |
 
-**Notes on Windows**
-
-[![AutoDoc Notes on Windows](docs/assets/screenshots/windows-notes-v1.2.png)](docs/assets/screenshots/windows-notes-v1.2.png)
-
-<details>
-<summary>Copy and export</summary>
-
-[![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png)](docs/assets/screenshots/export-menu-v1.2.png)
-
-</details>
+| Notes on Windows | Copy and export |
+|---|---|
+| ![AutoDoc Notes on Windows](docs/assets/screenshots/windows-notes-v1.2.png) | ![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png) |
 
 ## Download
 
