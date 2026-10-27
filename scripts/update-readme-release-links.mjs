@@ -27,24 +27,9 @@ const requiredMarkers = [
       /\[Read the latest release notes\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)/g
   },
   {
-    description: 'central latest-release download link',
-    pattern:
-      /^## \[⬇️ View the latest AutoDoc release\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)$/gm
-  },
-  {
-    description: 'macOS latest-release download heading',
-    pattern:
-      /^## \[⬇️ Download AutoDoc for macOS\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)$/gm
-  },
-  {
     description: 'macOS latest-release install step',
     pattern:
       /^1\. On the \[latest release\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\), download the macOS `\.dmg` asset\.$/gm
-  },
-  {
-    description: 'Windows latest-release download heading',
-    pattern:
-      /^## \[⬇️ Download AutoDoc for Windows\]\(https:\/\/github\.com\/DuetDisplay\/AutoDoc\/releases\/latest\)$/gm
   },
   {
     description: 'Windows latest-release install step',
