@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import packageJson from '../package.json'
 import { launchPackagedRealSetupApp } from './helpers/electron-app'
 
 const packagedAppPath = process.env.AUTODOC_E2E_PACKAGED_APP
@@ -20,7 +21,7 @@ test('starts the patched packaged runtime and initializes updater and OAuth path
     await expect(page.getByRole('heading', { name: 'AutoDoc' })).toBeVisible()
 
     const electronVersion = await session.electronApp.evaluate(() => process.versions.electron)
-    expect(electronVersion).toBe('41.10.3')
+    expect(electronVersion).toBe(packageJson.devDependencies.electron)
 
     await session.electronApp.evaluate(({ shell }) => {
       const state = { count: 0 }

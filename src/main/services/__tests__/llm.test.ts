@@ -41,6 +41,7 @@ import {
   writerProgressPercent
 } from '../llm'
 import { runWithMeetingLanguage } from '../notes-language'
+import { runNotesScanPipeline } from '../notes-scan-pipeline'
 
 const originalPlatform = process.platform
 
@@ -271,6 +272,40 @@ describe('OllamaProvider grounding', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('parses the simulated Windows setup response into grounded notes without a real server', async () => {
+    setPlatform('win32')
+    vi.stubEnv('AUTODOC_TEST_REAL_SETUP', '1')
+    vi.stubEnv('AUTODOC_TEST_OLLAMA_SUMMARY_MODE', 'fixed-success')
+    const fetchMock = vi.fn().mockRejectedValue(new Error('No real server in this fixture'))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const provider = new OllamaProvider('http://localhost:11434', 'test-model')
+      const segments = await provider.summarize(
+        'ad76-fixture',
+        '[00:00] [Chris] The customer portal release budget is five thousand dollars. The launch is scheduled for Friday.\n' +
+          '[00:25] [Pat] Alex will review the release checklist by Thursday. We will confirm the launch date after the review.'
+      )
+      expect(segments.information[0]).toMatchObject({
+        title: 'Customer portal budget',
+        content: 'The customer portal release budget is five thousand dollars.'
+      })
+      const scan = await runNotesScanPipeline(segments, {
+        title: 'QA Meeting',
+        meetingId: 'ad76-fixture',
+        presentationMode: 'lossless',
+        attributionTranscript: [],
+        spanSources: [{ startMs: 0, endMs: 55_000 }],
+        generate: ({ prompt, ...options }) => provider.completePrompt(prompt, options)
+      })
+      expect(scan.content.sections[0].keyPoints[0].text).toBe(
+        'The customer portal release budget is five thousand dollars.'
+      )
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('cancels a timed-out Windows stream before starting its retry', async () => {

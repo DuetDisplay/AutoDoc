@@ -126,6 +126,16 @@ const TOPIC_MERGE_THRESHOLD = 0.52
 const TOPIC_SINGLETON_MERGE_THRESHOLD = 0.28
 const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.AUTODOC_TEST_MODE === '1'
 
+function usesSimulatedWindowsNotesSuccess(): boolean {
+  return (
+    process.platform === 'win32' &&
+    IS_TEST_RUNTIME &&
+    process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+    process.env.AUTODOC_TEST_OLLAMA_SUMMARY_MODE === 'fixed-success'
+  )
+}
+
+
 function parseDevPositiveInt(raw: string | undefined): number | undefined {
   if (raw == null || raw === '') return undefined
   if (!/^[1-9]\d*$/.test(raw.trim())) return undefined
@@ -1684,6 +1694,9 @@ export class OllamaProvider implements LLMProvider {
       format?: unknown
     }
   ): Promise<string> {
+    // The AD-76 setup fixture also traverses scan/grouping/overview requests.
+    // An empty structured response exercises their deterministic local fallback.
+    if (usesSimulatedWindowsNotesSuccess()) return '{}'
     await this.maybeRecycleRunner?.()
     try {
       return await this.generatePrompt(prompt, options)
@@ -2582,27 +2595,20 @@ export class OllamaProvider implements LLMProvider {
     onToken?: () => void,
     onWaiting?: () => void
   ): Promise<string> {
-    if (
-      process.platform === 'win32' &&
-      IS_TEST_RUNTIME &&
-      process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
-      process.env.AUTODOC_TEST_OLLAMA_SUMMARY_MODE === 'fixed-success'
-    ) {
+    if (usesSimulatedWindowsNotesSuccess()) {
       onToken?.()
       return JSON.stringify({
         decisions: [],
-        action_items: [
+        action_items: [],
+        information: [
           {
-            topic: 'Windows setup',
-            title: 'Coordinate Ollama setup',
-            content: 'AutoDoc should keep notes waiting while shared Ollama setup completes.',
-            assignee: null,
-            deadline: null,
+            topic: 'Customer portal',
+            title: 'Customer portal budget',
+            content: 'The customer portal release budget is five thousand dollars.',
             sourceStartMs: 0,
             sourceEndMs: 20_000
           }
         ],
-        information: [],
         discussion: [],
         status_updates: []
       })

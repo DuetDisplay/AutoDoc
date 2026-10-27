@@ -24,7 +24,7 @@ function seedCompletedTranscript(userDataDir: string, meetingId: string, started
         id: `${meetingId}-0`,
         meetingId,
         speaker: 'Chris',
-        text: 'The team reviewed the Windows Ollama setup issue and agreed that notes should wait while the shared setup is downloading.',
+        text: 'The customer portal release budget is five thousand dollars. The launch is scheduled for Friday.',
         startMs: 0,
         endMs: 20_000,
         confidence: 0.9
@@ -33,7 +33,7 @@ function seedCompletedTranscript(userDataDir: string, meetingId: string, started
         id: `${meetingId}-1`,
         meetingId,
         speaker: 'Pat',
-        text: 'If the automatic setup retries are exhausted, each waiting recording should show a retryable notes failure instead of hanging.',
+        text: 'Alex will review the release checklist by Thursday. We will confirm the launch date after the review.',
         startMs: 25_000,
         endMs: 55_000,
         confidence: 0.9
@@ -138,9 +138,9 @@ test.describe('AD-76 Windows Ollama setup coordination', () => {
       })
 
       for (const segments of generatedSegments) {
-        expect(segments?.actionItems?.[0]).toMatchObject({
-          title: 'Coordinate Ollama setup',
-          content: 'AutoDoc should keep notes waiting while shared Ollama setup completes.'
+        expect(segments?.information?.[0]).toMatchObject({
+          title: 'Customer portal budget',
+          content: 'The customer portal release budget is five thousand dollars.'
         })
       }
     } finally {

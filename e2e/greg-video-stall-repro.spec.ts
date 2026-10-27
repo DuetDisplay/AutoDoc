@@ -72,6 +72,10 @@ function seedGregIncidentMeeting(userDataDir: string): void {
 }
 
 test('Greg video concat stall clears finalizing and leaves transcript openable', async () => {
+  test.skip(
+    process.platform !== 'win32',
+    'Exercises native Windows recording finalization and ffmpeg recovery'
+  )
   test.setTimeout(90_000)
   mkdirSync(ARTIFACT_DIR, { recursive: true })
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'autodoc-greg-repro-'))

@@ -936,7 +936,7 @@ describe('ChatRecordingIndex', () => {
     expect(secondProvider.embedCalls).toEqual([])
   })
 
-  it('keeps structured broad questions warm over 500 recordings under the target budget', async () => {
+  it('keeps median warm broad-question latency over 500 recordings under the target budget', async () => {
     const baseDir = await createTempRecordingsDir()
     await createLargeLibrary(baseDir, 500)
     await createRecording(baseDir, 'broad-target-500', {
@@ -958,18 +958,23 @@ describe('ChatRecordingIndex', () => {
     const index = new ChatRecordingIndex(baseDir)
     await index.buildContext('Which meeting did we discuss Apollo launch?', [])
 
-    const started = performance.now()
-    const result = await index.buildContext('Which meeting did we discuss Apollo launch?', [])
-    const elapsedMs = performance.now() - started
-
-    expect(result.directAnswer).toBeNull()
-    expect(result.context).toContain('Growth Sync')
-    expect(result.context).toContain('Apollo launch')
-    expect(result.diagnostics.cacheHits).toBeGreaterThan(0)
-    expect(elapsedMs).toBeLessThan(50)
+    // Measure typical warm latency rather than one scheduler/GC pause while
+    // other test files run. Keep the same 50 ms budget and validate every result.
+    const samples: number[] = []
+    for (let sample = 0; sample < 5; sample++) {
+      const started = performance.now()
+      const result = await index.buildContext('Which meeting did we discuss Apollo launch?', [])
+      samples.push(performance.now() - started)
+      expect(result.directAnswer).toBeNull()
+      expect(result.context).toContain('Growth Sync')
+      expect(result.context).toContain('Apollo launch')
+      expect(result.diagnostics.cacheHits).toBeGreaterThan(0)
+    }
+    const medianMs = [...samples].sort((a, b) => a - b)[2]
+    expect(medianMs, `Warm query samples (ms): ${samples.join(', ')}`).toBeLessThan(50)
   }, 15_000)
 
-  it('keeps exact-title lookup warm over 500 recordings under the target budget', async () => {
+  it('keeps median warm exact-title latency over 500 recordings under the target budget', async () => {
     const baseDir = await createTempRecordingsDir()
     const startedAt = new Date(2026, 4, 27, 9, 49).getTime()
     await createLargeLibrary(baseDir, 500)
@@ -982,13 +987,16 @@ describe('ChatRecordingIndex', () => {
     const index = new ChatRecordingIndex(baseDir)
     await index.buildContext('Summarize Entire screen — May 27 at 9:49 AM', [])
 
-    const started = performance.now()
-    const result = await index.buildContext('Summarize Entire screen — May 27 at 9:49 AM', [])
-    const elapsedMs = performance.now() - started
-
-    expect(result.diagnostics.selectedMeetingIds).toEqual(['target-500'])
-    expect(result.diagnostics.cacheHits).toBeGreaterThanOrEqual(1)
-    expect(elapsedMs).toBeLessThan(50)
+    const samples: number[] = []
+    for (let sample = 0; sample < 5; sample++) {
+      const started = performance.now()
+      const result = await index.buildContext('Summarize Entire screen — May 27 at 9:49 AM', [])
+      samples.push(performance.now() - started)
+      expect(result.diagnostics.selectedMeetingIds).toEqual(['target-500'])
+      expect(result.diagnostics.cacheHits).toBeGreaterThanOrEqual(1)
+    }
+    const medianMs = [...samples].sort((a, b) => a - b)[2]
+    expect(medianMs, `Warm query samples (ms): ${samples.join(', ')}`).toBeLessThan(50)
   }, 15_000)
 
   it('invalidates cached note summaries when note files change', async () => {

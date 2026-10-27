@@ -11,6 +11,8 @@ async function reachTranscriptionStep(page: Page): Promise<void> {
   await page.getByRole('button', { name: /next/i }).click()
   await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
   await page.getByRole('button', { name: /skip for now/i }).click()
+  await expect(page.getByRole('heading', { name: 'Choose your meeting language' })).toBeVisible()
+  await page.getByRole('button', { name: /^continue$/i }).click()
   await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
 }
 

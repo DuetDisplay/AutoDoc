@@ -10,7 +10,8 @@ test('keeps Email Us accessible in the sidebar footer', async () => {
   const app = packagedAppPath
     ? await launchPackagedRealSetupApp(packagedAppPath, {
         AUTODOC_E2E: '1',
-        AUTODOC_TEST_REAL_SETUP: '0'
+        AUTODOC_TEST_REAL_SETUP: '0',
+        AUTODOC_SUPPORT_EMAIL: 'team@getautodoc.com'
       })
     : await launchIsolatedE2EAppWithEnv({
         AUTODOC_SUPPORT_EMAIL: 'team@getautodoc.com'

@@ -26,7 +26,7 @@ Ready-to-use installers are available for Mac and Windows. You do not need to bu
 
 <!-- latest-release:start -->
 
-**New in v1.3.1:** See the full changelog for details and remaining limitations. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
+**New in v1.3.2:** This release updates AutoDoc’s underlying runtime and networking components with security fixes for macOS and Windows. [Read the latest release notes](https://github.com/DuetDisplay/AutoDoc/releases/latest).
 
 <!-- latest-release:end -->
 

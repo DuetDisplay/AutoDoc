@@ -35,7 +35,7 @@ const WORD = /[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu
 
 const REPLACEMENT_CHAR = /\uFFFD/u
 /** Latin-extended or symbol jammed into an otherwise ASCII token: KeŰ, GetŰorant. */
-const INWORD_MOJIBAKE = /[A-Za-z][^\x00-\x7F\s]/u
+const INWORD_MOJIBAKE = /[A-Za-z][^\p{ASCII}\s]/u
 const EMPTY_TASK =
   /^(?:ask you(?: a question)?|give some feedback|make sure we do this(?: properly)?)\b/iu
 const LEADING_DISFLUENCY = /^(?:um+|uh+|uhh|er+|ah+)\b/iu

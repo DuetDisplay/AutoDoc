@@ -11,6 +11,7 @@ for (const platform of ['win32', 'darwin'] as const) {
       path.join(userData, 'autodoc-prefs.json'),
       JSON.stringify({
         onboardingComplete: true,
+        onboardingLanguageConfirmed: true,
         launchAtLogin: false,
         analyticsConsent: false,
         diagnosticLogUploadConsent: false
