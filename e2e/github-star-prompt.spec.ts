@@ -1,7 +1,39 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { launchGithubStarApp, leaveAndReturnToApp } from './helpers/github-star'
+
+async function listLayout(page: Page) {
+  return await page.getByText(/^Product planning/).evaluate((title) => {
+    const item = title.closest('.cursor-pointer')!
+    const list = item.parentElement!.parentElement!
+    const header = list.parentElement!.querySelector('.border-b')!
+    return {
+      headerBottom: header.getBoundingClientRect().bottom,
+      listTop: list.getBoundingClientRect().top,
+      firstItemTop: item.getBoundingClientRect().top,
+      listPaddingTop: parseFloat(getComputedStyle(list).paddingTop),
+      scrollTop: list.scrollTop
+    }
+  })
+}
+
+async function expectListAtTop(page: Page, label: string) {
+  await expect
+    .poll(async () => {
+      const layout = await listLayout(page)
+      return layout.listTop - layout.headerBottom
+    })
+    .toBe(0)
+  const layout = await listLayout(page)
+  expect(layout.firstItemTop - layout.headerBottom).toBe(layout.listPaddingTop)
+  expect(layout.scrollTop).toBe(0)
+  await test.info().attach(`${label}-layout`, {
+    body: JSON.stringify(layout, null, 2),
+    contentType: 'application/json'
+  })
+  await page.screenshot({ path: test.info().outputPath(`${label}.png`) })
+}
 
 test('GitHub request opens the fixed repository, thanks on click, fades on return, and survives restart', async () => {
   for (const theme of ['light', 'dark'] as const) {
@@ -47,6 +79,7 @@ test('GitHub request opens the fixed repository, thanks on click, fades on retur
       await expect(
         page.getByRole('heading', { name: 'Thanks for the support!', exact: true })
       ).toHaveCount(0)
+      await expectListAtTop(page, `${theme}-after-return`)
       await page.getByText('Settings', { exact: true }).click()
       const about = page.getByText('Source code on GitHub', { exact: true })
       await about.scrollIntoViewIfNeeded()
@@ -63,6 +96,28 @@ test('GitHub request opens the fixed repository, thanks on click, fades on retur
     }
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const action of ['No thanks', 'Dismiss'] as const) {
+    test(`${theme}: ${action} removes the banner space and restores the list to the top`, async () => {
+      const fixture = await launchGithubStarApp({ theme })
+      try {
+        const { page } = fixture
+        await page.getByText('AI Notes', { exact: true }).click()
+        const card = page.getByRole('region', { name: 'Enjoying AutoDoc?', exact: true })
+        await expect(card.getByRole('button', { name: action, exact: true })).toBeEnabled()
+        const before = await listLayout(page)
+        expect(before.listTop).toBeGreaterThan(before.headerBottom)
+        await page.screenshot({ path: test.info().outputPath(`${theme}-before-dismiss.png`) })
+        await card.getByRole('button', { name: action, exact: true }).click()
+        await expect(card).toHaveCount(0)
+        await expectListAtTop(page, `${theme}-after-dismiss`)
+      } finally {
+        await fixture.cleanup()
+      }
+    })
+  }
+}
 
 test('one-time GitHub request skips old, short, empty and failed meetings', async () => {
   for (const options of [
