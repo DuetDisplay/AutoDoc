@@ -57,9 +57,9 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 |---|---|
 | ![Notes with a summary and conversation topics](docs/assets/screenshots/notes.png) | ![Ask AI across meetings](docs/assets/screenshots/ask-ai.png) |
 
-| Notes on Windows | Copy and export |
+| Automatic meeting detection | Copy and export |
 |---|---|
-| ![AutoDoc Notes on Windows](docs/assets/screenshots/windows-notes-v1.2.png) | ![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png) |
+| ![Prompt offering to start AI notes when a meeting begins](docs/assets/screenshots/detection.png) | ![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png) |
 
 ## Download
 
