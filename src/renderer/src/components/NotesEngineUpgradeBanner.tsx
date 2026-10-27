@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { DEFAULT_OLLAMA_EMBEDDING_MODEL, LOW_SPEC_MAC_OLLAMA_MODEL } from '../../../shared/constants'
+import {
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+  LOW_SPEC_MAC_OLLAMA_MODEL
+} from '../../../shared/constants'
 import { trackEvent } from '../services/analytics'
 
 type BannerVariant = 'downloading' | 'offline' | 'ready'
@@ -18,45 +21,39 @@ export function NotesEngineUpgradeBanner({
   const [percent, setPercent] = useState(0)
   const [sessionDismissed, setSessionDismissed] = useState(false)
 
-  const refresh = useCallback(async () => {
-    if (sessionDismissed) {
-      setVariant(null)
-      return
-    }
-    try {
-      const [setup, whisper, eligible, readyDismissed] = await Promise.all([
-        window.electronAPI.invoke('ollama:get-setup-status'),
-        window.electronAPI.invoke('whisper:get-setup-status'),
-        window.electronAPI.invoke('prefs:get-notes-engine-upgrade-eligible'),
-        window.electronAPI.invoke('prefs:get-notes-engine-ready-dismissed')
-      ])
-
-      if (
-        whisper?.macProcessingProfileId === 'mac-low-spec' ||
-        whisper?.windowsProcessingProfileId === 'win-low-spec' ||
-        whisper?.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
-      ) {
+  const refresh = useCallback(() => {
+    if (sessionDismissed) return
+    void Promise.all([
+      window.electronAPI.invoke('ollama:get-setup-status'),
+      window.electronAPI.invoke('whisper:get-setup-status'),
+      window.electronAPI.invoke('prefs:get-notes-engine-upgrade-eligible'),
+      window.electronAPI.invoke('prefs:get-notes-engine-ready-dismissed')
+    ])
+      .then(([setup, whisper, eligible, readyDismissed]) => {
+        if (
+          whisper?.macProcessingProfileId === 'mac-low-spec' ||
+          whisper?.windowsProcessingProfileId === 'win-low-spec' ||
+          whisper?.notesModel === LOW_SPEC_MAC_OLLAMA_MODEL
+        ) {
+          setVariant(null)
+          return
+        }
+        const pullingPreferred = setup?.phase === 'pulling' && !isEmbeddingPull(setup.pullModel)
+        if (
+          pullingPreferred ||
+          (eligible && setup?.phase !== 'ready' && setup?.phase !== 'error')
+        ) {
+          setPercent(typeof setup?.percent === 'number' ? setup.percent : 0)
+          setVariant(navigator.onLine ? 'downloading' : 'offline')
+          return
+        }
+        if (eligible && setup?.phase === 'ready' && readyDismissed !== true) {
+          setVariant('ready')
+          return
+        }
         setVariant(null)
-        return
-      }
-
-      const pullingPreferred =
-        setup?.phase === 'pulling' && !isEmbeddingPull(setup.pullModel)
-      if (pullingPreferred || (eligible && setup?.phase !== 'ready' && setup?.phase !== 'error')) {
-        setPercent(typeof setup?.percent === 'number' ? setup.percent : 0)
-        setVariant(navigator.onLine ? 'downloading' : 'offline')
-        return
-      }
-
-      if (eligible && setup?.phase === 'ready' && readyDismissed !== true) {
-        setVariant('ready')
-        return
-      }
-
-      setVariant(null)
-    } catch {
-      setVariant(null)
-    }
+      })
+      .catch(() => setVariant(null))
   }, [sessionDismissed])
 
   useEffect(() => {
