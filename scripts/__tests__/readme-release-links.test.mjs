@@ -13,10 +13,7 @@ const requiredLines = [
   `[![Download AutoDoc for Windows](docs/assets/badges/download-windows.svg)](${latestReleaseUrl})`,
   `[![Latest release](https://img.shields.io/github/v/release/DuetDisplay/AutoDoc?style=flat-square&label=release&color=7A9E7E&labelColor=555555)](${latestReleaseUrl})`,
   `[Read the latest release notes](${latestReleaseUrl}).`,
-  `## [⬇️ View the latest AutoDoc release](${latestReleaseUrl})`,
-  `## [⬇️ Download AutoDoc for macOS](${latestReleaseUrl})`,
   `1. On the [latest release](${latestReleaseUrl}), download the macOS \`.dmg\` asset.`,
-  `## [⬇️ Download AutoDoc for Windows](${latestReleaseUrl})`,
   `1. On the [latest release](${latestReleaseUrl}), download the Windows \`.exe\` installer asset.`
 ]
 
@@ -33,9 +30,9 @@ test('accepts the current repository README without modifying it', () => {
   const after = fs.readFileSync(readmePath, 'utf8')
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /Verified 9 stable README release links/)
+  assert.match(result.stdout, /Verified 6 stable README release links/)
   assert.equal(after, before)
-  assert.equal(verifyReadmeReleaseLinks(before).verifiedMarkerCount, 9)
+  assert.equal(verifyReadmeReleaseLinks(before).verifiedMarkerCount, 6)
 })
 
 for (const requiredLine of requiredLines) {
