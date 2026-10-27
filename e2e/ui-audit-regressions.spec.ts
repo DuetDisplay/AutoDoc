@@ -177,55 +177,78 @@ test('recording source picker must close with Escape', async () => {
   }
 })
 for (const theme of ['light', 'dark'] as const)
-  test(`${theme}: unfocused search input boundary must meet the requested 3:1 UI contrast target`, async () => {
+  test(`${theme}: unfocused Search and Ask AI input boundaries must meet the requested 3:1 UI contrast target`, async () => {
     const f = await launchGithubStarApp({ qualified: false, theme })
     try {
       const { page } = f
-      await page.evaluate(() => {
-        location.hash = '#/search'
-      })
-      const input = page.getByRole('textbox')
-      await input.waitFor()
-      await page.getByRole('heading', { name: 'Search', exact: true }).click()
-      await page.waitForTimeout(400)
-      const rect = await input.boundingBox()
-      if (!rect) throw Error('Missing input bounds')
-      const file = path.join(root, 'images', `fixed-${theme}-search-input-boundary.png`)
-      await page.screenshot({ path: file })
-      const pixel = async (x: number, y: number) => [
-        ...(await sharp(file)
-          .extract({ left: Math.floor(x), top: Math.floor(y), width: 1, height: 1 })
-          .removeAlpha()
-          .raw()
-          .toBuffer())
-      ]
-      const boundary = await pixel(rect.x, rect.y + rect.height / 2),
-        outside = await pixel(rect.x - 2, rect.y + rect.height / 2),
-        fill = await pixel(rect.x + 3, rect.y + rect.height / 2)
-      const lum = (c: number[]) =>
-        c
-          .map((v) => v / 255)
-          .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
-          .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0)
-      const ratio = (a: number[], b: number[]) =>
-        (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
-      const measurements = {
-        theme,
-        boundary,
-        outside,
-        fill,
-        boundaryContrast: ratio(boundary, outside),
-        fillContrast: ratio(fill, outside),
-        rect,
-        dpr: await page.evaluate(() => devicePixelRatio)
+      for (const [route, heading] of [
+        ['/search', 'Search'],
+        ['/ask-ai', 'Ask AI']
+      ]) {
+        await page.evaluate((route) => {
+          location.hash = '#' + route
+        }, route)
+        const input = page.getByRole('textbox')
+        await input.waitFor()
+        await page.getByRole('heading', { name: heading, exact: true }).click()
+        await page.waitForTimeout(400)
+        const rect = await input.boundingBox()
+        if (!rect) throw Error('Missing input bounds')
+        const layout = await input.evaluate((el) => ({
+          borderWidth: parseFloat(getComputedStyle(el).borderLeftWidth),
+          viewportWidth: innerWidth
+        }))
+        const file = path.join(
+          root,
+          'images',
+          `fixed-${theme}-${route.slice(1)}-input-boundary.png`
+        )
+        await page.screenshot({ path: file })
+        const metadata = await sharp(file).metadata()
+        const scale = metadata.width! / layout.viewportWidth
+        const pixel = async (x: number, y: number) => [
+          ...(await sharp(file)
+            .extract({
+              left: Math.floor(x * scale),
+              top: Math.floor(y * scale),
+              width: 1,
+              height: 1
+            })
+            .removeAlpha()
+            .raw()
+            .toBuffer())
+        ]
+        const boundary = await pixel(rect.x + layout.borderWidth / 2, rect.y + rect.height / 2),
+          outside = await pixel(rect.x - 2, rect.y + rect.height / 2),
+          fill = await pixel(rect.x + 3, rect.y + rect.height / 2)
+        const lum = (c: number[]) =>
+          c
+            .map((v) => v / 255)
+            .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+            .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0)
+        const ratio = (a: number[], b: number[]) =>
+          (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
+        const measurements = {
+          theme,
+          route,
+          scale,
+          layout,
+          boundary,
+          outside,
+          fill,
+          boundaryContrast: ratio(boundary, outside),
+          fillContrast: ratio(fill, outside),
+          rect,
+          dpr: await page.evaluate(() => devicePixelRatio)
+        }
+        writeFileSync(
+          path.join(root, `input-boundary-${theme}-${route.slice(1)}.json`),
+          JSON.stringify(measurements, null, 2)
+        )
+        expect(
+          Math.max(measurements.boundaryContrast, measurements.fillContrast)
+        ).toBeGreaterThanOrEqual(3)
       }
-      writeFileSync(
-        path.join(root, `input-boundary-${theme}.json`),
-        JSON.stringify(measurements, null, 2)
-      )
-      expect(
-        Math.max(measurements.boundaryContrast, measurements.fillContrast)
-      ).toBeGreaterThanOrEqual(3)
     } finally {
       await f.cleanup()
     }
@@ -287,3 +310,79 @@ test('Ask AI application error copy must update when the UI language changes', a
     await f.cleanup()
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`${theme}: source-picker keyboard focus indicator meets 3:1 contrast`, async () => {
+    const f = await launchGithubStarApp({ qualified: false, theme })
+    try {
+      const { page } = f
+      await page.getByRole('button', { name: 'Record', exact: true }).click()
+      const source = page.getByRole('dialog').getByRole('button').last()
+      await source.focus()
+      await page.keyboard.press('Tab')
+      await page.keyboard.press('Shift+Tab')
+      await expect(source).toBeFocused()
+      await page.waitForTimeout(400)
+      const indicator = await source.evaluate((element) => {
+        const rect = element.getBoundingClientRect(),
+          style = getComputedStyle(element)
+        const outline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0
+        const thickness = outline ? parseFloat(style.outlineWidth) : 2
+        const offset = outline ? parseFloat(style.outlineOffset) : 0
+        return {
+          x: rect.left - offset - thickness / 2,
+          y: rect.top + rect.height / 2,
+          backgroundX: rect.left - offset - thickness - 3,
+          width: innerWidth,
+          focusVisible: element.matches(':focus-visible'),
+          outline: style.outline,
+          shadow: style.boxShadow
+        }
+      })
+      expect(indicator.focusVisible).toBe(true)
+      const file = path.join(root, 'images', `${theme}-source-picker-keyboard-focus.png`)
+      await page.screenshot({ path: file })
+      const metadata = await sharp(file).metadata()
+      const scale = metadata.width! / indicator.width
+      const pixel = async (x: number) => [
+        ...(await sharp(file)
+          .extract({
+            left: Math.floor(x * scale),
+            top: Math.floor(indicator.y * scale),
+            width: 1,
+            height: 1
+          })
+          .removeAlpha()
+          .raw()
+          .toBuffer())
+      ]
+      const ring = await pixel(indicator.x),
+        background = await pixel(indicator.backgroundX)
+      const luminance = (c: number[]) =>
+        c
+          .map((v) => v / 255)
+          .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+          .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+      const a = luminance(ring),
+        b = luminance(background)
+      const contrast = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+      writeFileSync(
+        path.join(root, `picker-focus-${theme}.json`),
+        JSON.stringify(
+          {
+            ...indicator,
+            scale,
+            ring,
+            background,
+            contrast
+          },
+          null,
+          2
+        )
+      )
+      expect(contrast).toBeGreaterThanOrEqual(3)
+    } finally {
+      await f.cleanup()
+    }
+  })
+}

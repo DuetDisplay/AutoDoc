@@ -44,7 +44,7 @@ export function SpeechLicenses({ platform }: { platform: string }) {
       {error && <p role="status">{t('ui.runtimePackageNoticesAreUnavailableInThisBuild')}</p>}
       {packages.map((notice) => (
         <details key={`${notice.runtime}:${notice.name}`} className="mb-2">
-          <summary className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50">
+          <summary className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage">
             {notice.name} {notice.version} · {notice.license}
           </summary>
           {notice.runtime && <p className="mt-1 text-ink-faint">{notice.runtime}</p>}

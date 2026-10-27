@@ -309,7 +309,7 @@ export function RecordingControls({
                 <button
                   key={source.id}
                   onClick={() => handleSourceSelect(source)}
-                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors text-left ${
+                  className={`flex items-center gap-3 p-2 rounded-lg hover:bg-bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage transition-colors text-left ${
                     source.id === detectedId ? 'ring-2 ring-ink bg-bg-accent' : ''
                   }`}
                 >

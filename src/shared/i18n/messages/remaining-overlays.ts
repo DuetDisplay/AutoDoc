@@ -38,7 +38,7 @@ export const remainingOverlays: Partial<Record<UiLanguageCode, RemainingOverlay>
     'appearance.title': '\ubaa8\uc591',
     'appearance.description': '밝은 모드 또는 어두운 모드를 선택하세요.',
     'appearance.light': '\ubc1d\uac8c',
-    'appearance.dark': '\uc5b4\ub465\uac8c',
+    'appearance.dark': '어둡게',
     'uiLanguage.title': '\uc571 \uc5b8\uc5b4',
     'uiLanguage.description': 'AutoDoc\uc758 \uba54\ub274, \ubc84\ud2bc, \ub808\uc774\ube14\uc5d0 \uc0ac\uc6a9\ub429\ub2c8\ub2e4.',
     'uiLanguage.offerTitle': '\uc571\uc5d0\ub3c4 {language}\ub97c \uc0ac\uc6a9\ud560\uae4c\uc694?',

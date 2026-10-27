@@ -114,7 +114,7 @@ export function Search() {
             onChange={(e) => setQuery(e.target.value)}
             aria-label={t('search.placeholderMeetings')}
             placeholder={t('search.placeholderMeetings')}
-            className="w-full min-w-0 pl-10 pr-4 py-2.5 bg-bg-card border border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors"
+            className="w-full min-w-0 pl-10 pr-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors"
             autoFocus
           />
         </div>

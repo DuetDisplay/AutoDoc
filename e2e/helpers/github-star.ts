@@ -4,10 +4,10 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { closeE2EAppKeepingUserData } from './electron-app'
+import { closeE2EAppKeepingUserData, removeE2EUserDataDir } from './electron-app'
 
 export const STAR_MEETING_ID = '11111111-1111-4111-8111-111111111111'
 export async function launchGithubStarApp(
@@ -134,7 +134,7 @@ export async function launchGithubStarApp(
     await start()
   } catch (error) {
     if (electronApp!) await closeE2EAppKeepingUserData(electronApp, userDataDir)
-    rmSync(userDataDir, { recursive: true, force: true })
+    removeE2EUserDataDir(userDataDir)
     throw error
   }
   return {
@@ -153,7 +153,7 @@ export async function launchGithubStarApp(
       try {
         await closeE2EAppKeepingUserData(electronApp, userDataDir)
       } finally {
-        rmSync(userDataDir, { recursive: true, force: true })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }

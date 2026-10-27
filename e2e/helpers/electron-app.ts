@@ -111,6 +111,11 @@ function killProcessesForUserDataDir(userDataDir: string): void {
   }
 }
 
+/** Retry transient Windows file locks after the owning Electron instance has closed. */
+export function removeE2EUserDataDir(userDataDir: string): void {
+  rmSync(userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+}
+
 export async function closeE2EAppKeepingUserData(
   electronApp: Awaited<ReturnType<typeof electron.launch>>,
   userDataDir: string
@@ -134,7 +139,7 @@ export async function launchIsolatedE2EApp(scenario?: E2EScenario) {
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }
@@ -155,7 +160,7 @@ export async function launchIsolatedE2EAppWithEnv(
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }
@@ -176,7 +181,7 @@ export async function relaunchIsolatedE2EApp(
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }
@@ -194,7 +199,7 @@ export async function launchIsolatedExternalE2EApp(appRoot: string, scenario?: E
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }
@@ -218,7 +223,7 @@ export async function launchRealSetupApp(
       } finally {
         killProcessesForUserDataDir(userDataDir)
         if (cleanupUserDataDir) {
-          rmSync(userDataDir, { recursive: true, force: true })
+          removeE2EUserDataDir(userDataDir)
         }
       }
     }
@@ -260,7 +265,7 @@ export async function launchPackagedRealSetupApp(
         await electronApp.close()
       } finally {
         killProcessesForUserDataDir(userDataDir)
-        rmSync(userDataDir, { recursive: true, force: true })
+        removeE2EUserDataDir(userDataDir)
       }
     }
   }

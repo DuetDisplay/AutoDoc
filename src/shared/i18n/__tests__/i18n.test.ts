@@ -17,6 +17,11 @@ describe('UI language', () => {
     expect(dateLocaleForUiLanguage('zh-Hans')).toBe('zh-CN')
   })
 
+  it('keeps the Korean appearance labels correct after overlay resolution', () => {
+    expect(translate('ko', 'appearance.light')).toBe('밝게')
+    expect(translate('ko', 'appearance.dark')).toBe('어둡게')
+  })
+
   it('normalizes unsupported preferences to English', () => {
     expect(translate('unsupported' as never, 'nav.upcoming')).toBe(en['nav.upcoming'])
   })

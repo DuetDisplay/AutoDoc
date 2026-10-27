@@ -262,7 +262,7 @@ export function MeetingExportMenu({
         : t('ui.export')
   const controlsDisabled = disabled || busyAction !== null
   const baseButtonClass =
-    'inline-flex items-center gap-1.5 rounded-lg border [hyphens:none] px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-45'
+    'inline-flex items-center gap-1.5 rounded-lg border [hyphens:none] px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-45'
   const normalButtonClass =
     'border-border bg-bg-card text-ink-muted hover:border-border-strong hover:text-ink'
   const successButtonClass = 'border-sage/25 bg-sage-light text-sage-dark'
@@ -346,7 +346,7 @@ export function MeetingExportMenu({
                 ref={index === 0 ? firstFormatRef : undefined}
                 type="button"
                 onClick={() => void handleExport(option.format)}
-                className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
+                className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12px] font-medium text-ink">{option.label}</span>

@@ -33,12 +33,18 @@ for (const width of [800, 1000]) {
             (id) => window.electronAPI.invoke('recording:get-detail', id),
             STAR_MEETING_ID
           )
-          const suffix = new Intl.DateTimeFormat(dateLocaleForUiLanguage(language), {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-          }).format(detail!.date)
+          // Electron and the Node test runner can ship different ICU locale data.
+          // Check the format using the same runtime that produces the application title.
+          const suffix = await electronApp.evaluate(
+            (_electron, { locale, date }) =>
+              new Intl.DateTimeFormat(locale, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+              }).format(date),
+            { locale: dateLocaleForUiLanguage(language), date: detail!.date }
+          )
           const title = `Product planning — ${suffix}`
           const card = page.getByRole('link', { name: title, exact: true })
           await expect(card).toBeVisible()

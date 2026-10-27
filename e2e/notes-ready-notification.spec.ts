@@ -219,17 +219,23 @@ test('dismissing Notes Ready does not reveal the main window', async () => {
     const notificationWindow = await notificationWindowPromise
     await expect(notificationWindow.getByText('Notes Ready')).toBeVisible()
 
+    // A renderer click resolves before its asynchronous IPC necessarily arrives.
+    // Emit the synthetic activation only after the real dismiss handler ran.
+    await electronApp.evaluate(({ app, ipcMain, BrowserWindow }) => {
+      ;(globalThis as any).__dismissActivationResult = null
+      ipcMain.once('notification:dismiss', () => {
+        app.emit('activate')
+        app.emit('activate')
+        const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+        ;(globalThis as any).__dismissActivationResult = {
+          visible: mainWindow?.isVisible() ?? false
+        }
+      })
+    })
     await notificationWindow.locator('#dismiss').click()
-    await electronApp.evaluate(({ app }) => {
-      app.emit('activate')
-      app.emit('activate')
-    })
-
-    const mainWindowVisible = await electronApp.evaluate(({ BrowserWindow }) => {
-      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
-      return mainWindow?.isVisible() ?? false
-    })
-    expect(mainWindowVisible).toBe(false)
+    await expect
+      .poll(() => electronApp.evaluate(() => (globalThis as any).__dismissActivationResult))
+      .toEqual({ visible: false })
   } finally {
     await session.cleanup()
   }

@@ -20,7 +20,7 @@ export function OnboardingSupportLink() {
           onClick={openSupportEmail}
           disabled={requestPending || result !== null}
           aria-describedby={result ? STATUS_ID : undefined}
-          className="rounded-sm font-medium text-sage-dark underline decoration-sage/40 underline-offset-2 transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+          className="rounded-sm font-medium text-sage-dark underline decoration-sage/40 underline-offset-2 transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-default disabled:no-underline disabled:opacity-60"
         >
           {requestPending ? t('nav.openingEmail') : t('nav.emailUs')}
         </button>
@@ -35,7 +35,7 @@ export function OnboardingSupportLink() {
               type="button"
               onClick={copySupportEmail}
               disabled={copyStatus === 'copying' || copyStatus === 'copied'}
-              className="rounded-sm font-medium text-sage-dark underline decoration-sage/40 underline-offset-2 transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+              className="rounded-sm font-medium text-sage-dark underline decoration-sage/40 underline-offset-2 transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-default disabled:no-underline disabled:opacity-60"
             >
               {copyStatus === 'copying'
                 ? t('nav.copying')

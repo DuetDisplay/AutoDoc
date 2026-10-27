@@ -935,7 +935,7 @@ export function Settings() {
               aria-expanded={showSpeechLicenses}
               aria-controls="speech-licenses"
               onClick={() => setShowSpeechLicenses((open) => !open)}
-              className="mb-3 text-[12px] font-medium text-sage-dark underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
+              className="mb-3 text-[12px] font-medium text-sage-dark underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
             >
               {t('settings.licenses')}
             </button>
@@ -982,7 +982,7 @@ export function Settings() {
               {updateStatus.state === 'idle' && !__AUTODOC_QA_BUILD__ && (
                 <button
                   onClick={handleCheckForUpdates}
-                  className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50"
+                  className="text-[11px] font-medium text-sage hover:text-sage-dark transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage"
                 >
                   {t('settings.checkForUpdates')}
                 </button>

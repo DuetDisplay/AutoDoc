@@ -406,7 +406,7 @@ export function AskAI(): ReactElement {
             aria-label={t('askAi.placeholder')}
             placeholder={t('askAi.placeholder')}
             disabled={loading}
-            className="flex-1 min-w-0 px-4 py-2.5 bg-bg-card border border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
+            className="flex-1 min-w-0 px-4 py-2.5 bg-bg-card border-2 border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
             autoFocus
           />
           {loading ? (

@@ -67,7 +67,7 @@ function SupportStatus({
         type="button"
         disabled={pending}
         onClick={() => onCopy(supportResult.address)}
-        className="rounded-sm font-semibold text-sage-dark transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+        className="rounded-sm font-semibold text-sage-dark transition-colors hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
       >
         {t('nav.copyEmail')}
       </button>
@@ -78,7 +78,7 @@ function SupportStatus({
 }
 
 const actionClassName =
-  'rounded-lg px-3 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50'
+  'rounded-lg px-3 py-1.5 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50'
 
 export function FeedbackPromptCard({
   appearance,

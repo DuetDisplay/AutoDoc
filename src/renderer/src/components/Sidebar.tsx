@@ -312,7 +312,7 @@ export function Sidebar() {
             onClick={openSupportEmail}
             disabled={supportAvailable !== true || supportRequestPending}
             aria-describedby={supportAvailable === false ? 'support-email-unavailable' : undefined}
-            className="w-full px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] text-ink-muted hover:text-ink hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
+            className="w-full px-2.5 py-2 rounded-lg text-left text-[12.5px] font-medium leading-snug text-pretty [overflow-wrap:anywhere] text-ink-muted hover:text-ink hover:bg-bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-muted"
           >
             {supportRequestPending ? t('nav.openingEmail') : t('nav.emailUs')}
           </button>
@@ -328,7 +328,7 @@ export function Sidebar() {
                   type="button"
                   onClick={copySupportEmail}
                   disabled={supportCopyStatus === 'copying'}
-                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
+                  className="font-semibold text-sage-dark hover:text-sage focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage rounded-sm transition-colors disabled:cursor-wait disabled:opacity-60"
                 >
                   {supportCopyStatus === 'copying' ? t('nav.copying') : t('nav.copyEmail')}
                 </button>

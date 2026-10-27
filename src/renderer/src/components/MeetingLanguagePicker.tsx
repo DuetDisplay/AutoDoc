@@ -223,7 +223,7 @@ export function MeetingLanguagePicker({
           }
         }}
         onKeyDown={handleTriggerKeyDown}
-        className="flex min-w-0 max-w-full w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium leading-snug text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-wait disabled:opacity-60"
+        className="flex min-w-0 max-w-full w-48 items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-left text-[12px] font-medium leading-snug text-ink transition-colors hover:border-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-wait disabled:opacity-60"
       >
         <span className="min-w-0 text-pretty [overflow-wrap:anywhere]">
           {meetingLanguageName(selected.code)}
@@ -293,7 +293,7 @@ export function MeetingLanguagePicker({
                   onClick={() => select(definition.code)}
                   onMouseMove={() => setActiveIndex(index)}
                   onKeyDown={(event) => handleOptionKeyDown(event, index, definition.code)}
-                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 ${
+                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage ${
                     isLocked
                       ? 'cursor-not-allowed text-ink-faint'
                       : isSelected

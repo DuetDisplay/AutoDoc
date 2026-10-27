@@ -238,7 +238,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             ).map(([value, label]) => (
               <label
                 key={value}
-                className={`cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-sage/50 ${
+                className={`cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-sage ${
                   surface === value ? 'bg-ink text-on-ink' : 'text-ink-muted hover:text-ink'
                 }`}
               >
@@ -261,7 +261,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('initial', true)}
-            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.showFirstPrompt')}
           </button>
@@ -269,7 +269,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('reminder', true)}
-            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg bg-ink px-3 py-2 text-[11px] font-semibold text-on-ink transition-colors hover:bg-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.showFinalReminder')}
           </button>
@@ -277,7 +277,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={openSurface}
-            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-semibold text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-semibold text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.openSelectedSurface')}
           </button>
@@ -291,7 +291,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('contacted')}
-            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.setAlreadyContacted')}
           </button>
@@ -299,7 +299,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('never')}
-            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.setDonTAskAgain')}
           </button>
@@ -307,7 +307,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void applyScenario('reset')}
-            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="i18n-btn rounded-lg border border-border-subtle bg-bg-card px-3 py-2 text-[11px] font-medium text-ink-muted transition-colors hover:border-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.resetNaturalEligibility')}
           </button>
@@ -315,7 +315,7 @@ export function FeedbackPromptQASimulator(): ReactElement {
             type="button"
             disabled={busy}
             onClick={() => void refresh()}
-            className="rounded-lg px-2 py-2 text-[11px] font-medium text-sage transition-colors hover:text-sage-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage/50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg px-2 py-2 text-[11px] font-medium text-sage transition-colors hover:text-sage-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('ui.refreshStatus')}
           </button>

@@ -1,6 +1,7 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
 import type { E2EScenario } from '../src/shared/e2e'
 import {
+  closeE2EAppKeepingUserData,
   launchIsolatedE2EApp,
   relaunchIsolatedE2EApp,
   setOllamaStatus,
@@ -169,7 +170,7 @@ test('preserves the diagnostic log upload draft when navigating back and forward
 })
 
 test('persists analytics opt-in with diagnostic log upload disabled across relaunch', async () => {
-  const session = await launchIsolatedE2EApp()
+  let session = await launchIsolatedE2EApp()
   let { electronApp } = session
   const { userDataDir } = session
   let page = await electronApp.firstWindow()
@@ -197,9 +198,9 @@ test('persists analytics opt-in with diagnostic log upload disabled across relau
       page.getByRole('checkbox', { name: /attach technical app logs to error reports/i })
     ).not.toBeChecked()
 
-    await electronApp.close()
-    const relaunched = await relaunchIsolatedE2EApp(userDataDir)
-    electronApp = relaunched.electronApp
+    await closeE2EAppKeepingUserData(electronApp, userDataDir)
+    session = await relaunchIsolatedE2EApp(userDataDir)
+    electronApp = session.electronApp
     page = await electronApp.firstWindow()
 
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
