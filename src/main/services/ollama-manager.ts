@@ -776,6 +776,16 @@ export class OllamaManager extends EventEmitter {
   }
 
   async listInstalledModels(options: { requireAvailable?: boolean } = {}): Promise<string[]> {
+    // The simulated setup's ready step must cover per-job model checks too.
+    // Keep the AD-76 fixture independent of any real server on the test host.
+    if (
+      IS_WIN &&
+      IS_TEST_RUNTIME &&
+      process.env.AUTODOC_TEST_REAL_SETUP === '1' &&
+      this.testServerRunning
+    ) {
+      return [this.model]
+    }
     const requireAvailable = IS_WIN && options.requireAvailable
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {

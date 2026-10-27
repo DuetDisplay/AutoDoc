@@ -506,6 +506,26 @@ process.stdout.write(j.version || '');
 " "$asar" 2>/dev/null) || echo ""
 }
 
+# A warm replacement starts with one old installed process already running.
+# Counting that process is not proof that the detached replacement has finished.
+wait_for_installed_version() {
+  local expected="$1" timeout_sec="${2:-120}"
+  local deadline=$((SECONDS + timeout_sec))
+  local actual total apps
+  while (( SECONDS < deadline )); do
+    actual="$(get_installed_version)"
+    total="$(count_instance_roots)"
+    apps="$(count_apps_roots)"
+    if [[ "$actual" == "$expected" && "$total" -eq 1 && "$apps" -eq 1 ]]; then
+      vlog "wait_for_installed_version: installed $actual with one running installed copy"
+      return 0
+    fi
+    vlog "wait_for_installed_version: want $expected, have $actual, instances=$total apps=$apps"
+    sleep 1
+  done
+  return 1
+}
+
 install_from_dmg() {
   local dmg="$1"
   local mnt
@@ -793,8 +813,7 @@ install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 v_pre="$(get_installed_version)"
 launch_app_bundle "$LOOSE_NEWER" 12
 send_dialog Accept 90 || die "Upgrade dialog not found"
-wait_instance_count 1 120
-sleep 8
+wait_for_installed_version "$NEWER" 120
 v_post="$(get_installed_version)"
 stop_all_autodoc
 record "4 upgrade cold accept" "$( [[ "$v_post" == "$NEWER" ]] && echo 1 || echo 0 )" "version: $v_pre -> $v_post"
@@ -806,8 +825,7 @@ install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 v_pre5="$(get_installed_version)"
 launch_app_bundle "$LOOSE_OLDER" 12
 send_dialog Accept 90 || die "Downgrade dialog not found"
-wait_instance_count 1 120
-sleep 8
+wait_for_installed_version "$OLDER" 120
 v_post5="$(get_installed_version)"
 stop_all_autodoc
 record "5 downgrade cold accept" "$( [[ "$v_post5" == "$OLDER" ]] && echo 1 || echo 0 )" "version: $v_pre5 -> $v_post5"
@@ -819,8 +837,7 @@ install_smoke_copy "$DMG_OLDER" "$LOOSE_OLDER"
 launch_app_bundle "$INSTALLED_APP" 8
 launch_app_bundle "$LOOSE_NEWER" 10
 send_dialog Accept 90 || die "Upgrade warm dialog not found"
-wait_instance_count 1 120
-sleep 8
+wait_for_installed_version "$NEWER" 120
 v6="$(get_installed_version)"
 stop_all_autodoc
 record "6 upgrade warm accept" "$( [[ "$v6" == "$NEWER" ]] && echo 1 || echo 0 )" "version: $v6"
@@ -832,8 +849,7 @@ install_smoke_copy "$DMG_NEWER" "$LOOSE_NEWER"
 launch_app_bundle "$INSTALLED_APP" 8
 launch_app_bundle "$LOOSE_OLDER" 10
 send_dialog Accept 90 || die "Downgrade warm dialog not found"
-wait_instance_count 1 120
-sleep 8
+wait_for_installed_version "$OLDER" 120
 v7="$(get_installed_version)"
 stop_all_autodoc
 record "7 downgrade warm accept" "$( [[ "$v7" == "$OLDER" ]] && echo 1 || echo 0 )" "version: $v7"

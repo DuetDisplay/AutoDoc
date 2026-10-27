@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import type {
   MeetingNotesContent,
   MeetingNotesV2,
@@ -249,11 +249,13 @@ function OwnerEdit({
 }): ReactElement | null {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(owner ?? '')
+  const [previousOwner, setPreviousOwner] = useState(owner)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  if (owner !== previousOwner) {
+    setPreviousOwner(owner)
     setDraft(owner ?? '')
-  }, [owner])
+  }
 
   useEffect(() => {
     if (editing) inputRef.current?.focus()
@@ -376,7 +378,10 @@ function NextStepRow({
   const body = item.text.trim()
   const label = useLosslessPresentation ? body || title : title || body
   const normalizedLabel = (text: string): string =>
-    text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+    text
+      .toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
   const hasDistinctTitle = Boolean(
     useLosslessPresentation && title && body && normalizedLabel(title) !== normalizedLabel(body)
   )
@@ -439,7 +444,11 @@ function NextStepRow({
 function TopicLabel({ topic }: { topic: string | null | undefined }): ReactElement | null {
   const value = topic?.trim() ?? ''
   if (!value) return null
-  return <div className="text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted">{value}</div>
+  return (
+    <div className="text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted">
+      {value}
+    </div>
+  )
 }
 
 function Bullet({
@@ -545,10 +554,7 @@ function DecisionsSection({
   if (ready.length === 0) return null
 
   return (
-    <section
-      id="notes-decisions"
-      className={`${NOTES_COLUMN} border-t border-border pt-4`}
-    >
+    <section id="notes-decisions" className={`${NOTES_COLUMN} border-t border-border pt-4`}>
       <h3 className="mb-2 text-[17px] font-semibold text-ink">Decisions</h3>
       {ready.map((item) => (
         <Bullet
@@ -582,10 +588,7 @@ function KeyTakeawaysSection({
   if (items.length === 0) return null
 
   return (
-    <section
-      id="notes-key-takeaways"
-      className={`${NOTES_COLUMN} border-y border-border py-3`}
-    >
+    <section id="notes-key-takeaways" className={`${NOTES_COLUMN} border-y border-border py-3`}>
       <h3 className={NOTES_HEADING_CLASS}>Key Takeaways</h3>
       {items.map((item) => (
         <Bullet
@@ -626,10 +629,7 @@ function SubBullet({
     : undefined
 
   return (
-    <div
-      data-testid={`sub-${item.id}`}
-      className="group flex items-start gap-2 py-0.5 pl-[76px]"
-    >
+    <div data-testid={`sub-${item.id}`} className="group flex items-start gap-2 py-0.5 pl-[76px]">
       <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
       <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-secondary">
         {hasDistinctTitle ? (
@@ -658,7 +658,7 @@ function SubBullet({
 
 function BulletGroup({
   item,
-  children,
+  supportingDetails,
   useLosslessPresentation,
   meetingSpan,
   onSeek,
@@ -667,7 +667,7 @@ function BulletGroup({
   sectionTitle = null
 }: {
   item: NoteItem
-  children: readonly NoteItem[]
+  supportingDetails: readonly NoteItem[]
   useLosslessPresentation: boolean
   meetingSpan: readonly NoteSourceRange[]
   onSeek: (startMs: number) => void
@@ -686,9 +686,9 @@ function BulletGroup({
         onDelete={onDelete}
         sectionTitle={sectionTitle}
       />
-      {children.length > 0 ? (
+      {supportingDetails.length > 0 ? (
         <div>
-          {children.map((child) => (
+          {supportingDetails.map((child) => (
             <SubBullet
               key={child.id}
               item={child}
@@ -855,7 +855,7 @@ export function NotesV2Document({
                 <BulletGroup
                   key={item.id}
                   item={item}
-                  children={index === lastParentIndex ? extra : []}
+                  supportingDetails={index === lastParentIndex ? extra : []}
                   useLosslessPresentation={useLosslessPresentation}
                   meetingSpan={meetingSpan}
                   onSeek={onSeek}
@@ -936,12 +936,5 @@ export function NotesV2Document({
         </div>
       ) : null}
     </div>
-  )
-}
-
-export function useMeetingSpan(durationSeconds: number | null | undefined): NoteSourceRange[] {
-  return useMemo(
-    () => [{ startMs: 0, endMs: Math.max(0, Math.round((durationSeconds ?? 0) * 1000)) }],
-    [durationSeconds]
   )
 }

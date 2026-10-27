@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrowserWindow } from 'electron'
+import { ClipboardItem, type BrowserWindow } from 'electron'
 import type {
   MeetingCopyNotesResult,
   MeetingExportFormat,
@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   fromPartition: vi.fn(),
   fromWebContents: vi.fn(),
   appGetPath: vi.fn(),
-  clipboardWrite: vi.fn(),
+  clipboardWrite: vi.fn<(items: ClipboardItem[]) => Promise<void>>(),
   dialogShowSaveDialog: vi.fn(),
   loadSnapshotFromSource: vi.fn(),
   loadSnapshot: vi.fn(),
@@ -55,6 +55,15 @@ vi.mock('electron', () => {
     app: { getPath: mocks.appGetPath },
     BrowserWindow: BrowserWindowMock,
     clipboard: { write: mocks.clipboardWrite },
+    ClipboardItem: class {
+      readonly types: string[]
+      constructor(private readonly items: Record<string, string>) {
+        this.types = Object.keys(items)
+      }
+      async getType(type: string): Promise<Blob> {
+        return new Blob([this.items[type]], { type })
+      }
+    },
     dialog: { showSaveDialog: mocks.dialogShowSaveDialog },
     protocol: {
       registerSchemesAsPrivileged: vi.fn((schemes: unknown) => {
@@ -197,7 +206,7 @@ beforeEach(() => {
   })
   mocks.renderPdf.mockResolvedValue(Buffer.from('pdf output'))
   mocks.writeExportFile.mockResolvedValue(undefined)
-  mocks.clipboardWrite.mockReturnValue(undefined)
+  mocks.clipboardWrite.mockResolvedValue(undefined)
   mocks.getDocumentsPath.mockReturnValue('/documents')
   mocks.getParentWindow.mockReturnValue(parentWindow)
   mocks.createSuggestedFilename.mockImplementation(
@@ -524,9 +533,10 @@ describe('meeting copy notes IPC', () => {
     expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderHtml).not.toHaveBeenCalled()
     expect(mocks.renderMarkdown).not.toHaveBeenCalled()
-    expect(mocks.clipboardWrite).toHaveBeenCalledWith({
-      text: 'plain text output'
-    })
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith([expect.any(ClipboardItem)])
+    const [item] = mocks.clipboardWrite.mock.calls[0][0]
+    expect(item.types).toEqual(['text/plain'])
+    expect(await (await item.getType('text/plain')).text()).toBe('plain text output')
   })
 
   it('rejects untrusted and malformed requests before reading meeting data', async () => {
@@ -644,6 +654,37 @@ describe('meeting copy notes IPC', () => {
     expect(mocks.clipboardWrite).not.toHaveBeenCalled()
   })
 
+  it('bounds rejected clipboard writes as copy-failed', async () => {
+    const writeClipboard = vi.fn().mockRejectedValue(new Error('clipboard unavailable'))
+    register({ writeClipboard })
+
+    await expect(invokeCopyNotes({ meetingId: 'meeting-123' })).resolves.toEqual({
+      status: 'failed',
+      code: 'copy-failed'
+    })
+    expect(writeClipboard).toHaveBeenCalledWith({ text: 'plain text output' })
+  })
+
+  it('does not report copied until the clipboard write completes', async () => {
+    let resolveWrite: (() => void) | undefined
+    const writeClipboard = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    register({ writeClipboard })
+    let settled = false
+    const result = invokeCopyNotes({ meetingId: 'meeting-123' }).then((value) => {
+      settled = true
+      return value
+    })
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+    resolveWrite?.()
+    await expect(result).resolves.toEqual({ status: 'copied' })
+  })
+
   it('bounds clipboard failures as copy-failed', async () => {
     mocks.clipboardWrite.mockImplementationOnce(() => {
       throw new Error('clipboard unavailable')
@@ -657,9 +698,10 @@ describe('meeting copy notes IPC', () => {
 
     expect(mocks.renderPlainText).toHaveBeenCalledWith(snapshot)
     expect(mocks.renderHtml).not.toHaveBeenCalled()
-    expect(mocks.clipboardWrite).toHaveBeenCalledWith({
-      text: 'plain text output'
-    })
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith([expect.any(ClipboardItem)])
+    const [item] = mocks.clipboardWrite.mock.calls[0][0]
+    expect(item.types).toEqual(['text/plain'])
+    expect(await (await item.getType('text/plain')).text()).toBe('plain text output')
   })
 })
 

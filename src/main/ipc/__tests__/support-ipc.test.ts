@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   getVersion: vi.fn(() => '1.1.1'),
   openExternal: vi.fn<(url: string) => Promise<void>>(),
-  writeText: vi.fn<(text: string) => void>(),
+  writeText: vi.fn<(text: string) => Promise<void>>(),
   getSupportEmail: vi.fn<() => string | null>(() => 'team@getautodoc.com'),
   isOfficialAutoDocBuild: vi.fn(() => false),
   requireSupportEmail: vi.fn(() => 'team@getautodoc.com'),
@@ -71,6 +71,7 @@ beforeEach(() => {
   mocks.openExternal.mockReset()
   mocks.openExternal.mockResolvedValue(undefined)
   mocks.writeText.mockReset()
+  mocks.writeText.mockResolvedValue(undefined)
   mocks.getSupportEmail.mockReset()
   mocks.getSupportEmail.mockReturnValue('team@getautodoc.com')
   mocks.isOfficialAutoDocBuild.mockReset()
@@ -214,15 +215,31 @@ describe('support IPC', () => {
 
   it('reports bounded copy failures and does not record contact', async () => {
     const onContactInitiated = vi.fn()
-    mocks.writeText.mockImplementationOnce(() => {
-      throw new Error('clipboard unavailable')
-    })
+    mocks.writeText.mockRejectedValueOnce(new Error('clipboard unavailable'))
     registerSupportIpcForTest({ onContactInitiated })
 
     await expect(getHandler('support:copy-email')(trustedEvent(), 'sidebar')).resolves.toEqual({
       status: 'copy-failed'
     })
     expect(onContactInitiated).not.toHaveBeenCalled()
+  })
+
+  it('records contact only after the clipboard write completes', async () => {
+    const onContactInitiated = vi.fn()
+    let resolveWrite: (() => void) | undefined
+    mocks.writeText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    registerSupportIpcForTest({ onContactInitiated })
+
+    const result = getHandler('support:copy-email')(trustedEvent(), 'sidebar')
+    expect(onContactInitiated).not.toHaveBeenCalled()
+    resolveWrite?.()
+    await expect(result).resolves.toEqual({ status: 'copied' })
+    expect(onContactInitiated).toHaveBeenCalledWith('sidebar')
   })
 
   it('records contact only after the mail client opens', async () => {

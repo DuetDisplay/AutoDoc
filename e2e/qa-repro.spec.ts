@@ -92,6 +92,8 @@ async function reachCalendarStep(page: Page): Promise<void> {
 async function reachTranscriptionStep(page: Page): Promise<void> {
   await reachCalendarStep(page)
   await page.getByRole('button', { name: /skip for now/i }).click()
+  await expect(page.getByRole('heading', { name: 'Choose your meeting language' })).toBeVisible()
+  await page.getByRole('button', { name: /^continue$/i }).click()
   await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
 }
 
@@ -428,6 +430,12 @@ test.describe('QA Linear repro pass', () => {
       await advanceFeatureSteps(page)
       await expect(page.getByRole('heading', { name: 'Connect Calendar' })).toBeVisible()
       await page.getByRole('button', { name: /skip for now/i }).click()
+
+      await expect(
+        page.getByRole('heading', { name: 'Choose your meeting language' })
+      ).toBeVisible()
+
+      await page.getByRole('button', { name: /^continue$/i }).click()
 
       await expect(page.getByRole('heading', { name: 'Setting Up Transcription' })).toBeVisible()
       await setWhisperStatus(page, {

@@ -160,7 +160,7 @@ export function registerSupportIpc(options: RegisterSupportIpcOptions): void {
       }
 
       try {
-        clipboard.writeText(address)
+        await clipboard.writeText(address)
       } catch {
         logAutodocEvent({
           area: 'app',

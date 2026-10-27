@@ -10,6 +10,15 @@ function resolveMainEntry(appRoot: string): string {
   return path.join(appRoot, 'out', 'main', 'index.js')
 }
 
+async function waitForAppDocument(
+  electronApp: Awaited<ReturnType<typeof electron.launch>>
+): Promise<void> {
+  const page = await electronApp.firstWindow()
+  // Electron can expose about:blank before the main window starts loading the app.
+  await page.waitForURL((url) => /^(file|https?):$/.test(url.protocol))
+  await page.waitForLoadState('domcontentloaded')
+}
+
 async function launchApp(options: {
   appRoot?: string
   extraEnv?: Record<string, string>
@@ -22,7 +31,7 @@ async function launchApp(options: {
   expect(existsSync(mainEntry)).toBeTruthy()
   const profileMarker = options.userDataDir ? `--autodoc-e2e-profile=${options.userDataDir}` : null
 
-  return electron.launch({
+  const electronApp = await electron.launch({
     args: [mainEntry, ...(profileMarker ? [profileMarker] : [])],
     env: {
       ...process.env,
@@ -34,6 +43,8 @@ async function launchApp(options: {
       ...(options.extraEnv ?? {})
     }
   })
+  await waitForAppDocument(electronApp)
+  return electronApp
 }
 
 export async function launchE2EApp(scenario?: E2EScenario) {
@@ -239,6 +250,8 @@ export async function launchPackagedRealSetupApp(
     }
   })
 
+  await waitForAppDocument(electronApp)
+
   return {
     electronApp,
     userDataDir,
@@ -270,6 +283,8 @@ export async function launchPackagedDefaultProfileApp(appBundlePath: string) {
       AUTODOC_SKIP_INSTALL_POLICY: '1'
     }
   })
+
+  await waitForAppDocument(electronApp)
 
   return {
     electronApp,
@@ -482,6 +497,10 @@ export async function jumpToOnboardingStep(page: Page, step: number): Promise<vo
 }
 
 export async function completeOnboarding(page: Page): Promise<void> {
+  // Electron can expose the initial about:blank document before loadFile starts.
+  // Wait for the app document before invoking IPC, so navigation cannot destroy it.
+  await page.waitForURL((url) => /^(file|https?):$/.test(url.protocol))
+  await page.waitForLoadState('domcontentloaded')
   await page.evaluate(async () => {
     await window.electronAPI.invoke('prefs:set-onboarding-complete')
   })
