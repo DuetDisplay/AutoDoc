@@ -67,7 +67,7 @@ test('shows a Notes Ready notification, opens the meeting, and does not re-notif
   }
 })
 
-test('keeps long Notes Ready titles elided inside a stable notification', async ({}, testInfo) => {
+test('keeps long Notes Ready titles readable inside the resized notification', async ({}, testInfo) => {
   const session = await launchIsolatedE2EApp()
   const { electronApp } = session
   const page = await electronApp.firstWindow()
@@ -91,7 +91,13 @@ test('keeps long Notes Ready titles elided inside a stable notification', async 
 
     const notificationWindow = await notificationWindowPromise
     await expect(notificationWindow.getByText('Notes Ready')).toBeVisible()
-    await expect(notificationWindow.getByText(/notes are ready\./)).toBeVisible()
+    await expect(notificationWindow.getByText('Notes are ready.', { exact: true })).toBeVisible()
+    await notificationWindow.evaluate(() => document.fonts.ready)
+    await expect
+      .poll(() =>
+        notificationWindow.locator('.toast').evaluate((el) => el.getBoundingClientRect().top)
+      )
+      .toBeGreaterThanOrEqual(0)
 
     const metrics = await notificationWindow.evaluate(() => {
       const toast = document.querySelector('.toast')?.getBoundingClientRect()
@@ -99,6 +105,7 @@ test('keeps long Notes Ready titles elided inside a stable notification', async 
       const text = document.querySelector('.text')?.getBoundingClientRect()
       const dot = document.querySelector('.dot')?.getBoundingClientRect()
       const actions = document.querySelector('.actions')?.getBoundingClientRect()
+      const meetingTitle = document.querySelector('.meeting-title') as HTMLElement
       const centerY = (rect?: DOMRect) => (rect ? rect.top + rect.height / 2 : 0)
       return {
         innerWidth: window.innerWidth,
@@ -106,6 +113,16 @@ test('keeps long Notes Ready titles elided inside a stable notification', async 
         scrollHeight: document.documentElement.scrollHeight,
         toastHeight: toast?.height ?? 0,
         subtitleHeight: subtitle?.height ?? 0,
+        meetingTitleFits:
+          meetingTitle.scrollWidth <= meetingTitle.clientWidth &&
+          meetingTitle.getBoundingClientRect().right <= innerWidth,
+        toastFits: !!toast && toast.top >= 0 && toast.bottom <= innerHeight,
+        actionsFit:
+          !!actions &&
+          !!toast &&
+          actions.left >= toast.left &&
+          actions.right <= toast.right &&
+          actions.bottom <= toast.bottom,
         dotOffsetFromTextCenter: Math.abs(centerY(dot ?? undefined) - centerY(text ?? undefined)),
         actionsOffsetFromTextCenter: Math.abs(
           centerY(actions ?? undefined) - centerY(text ?? undefined)
@@ -115,10 +132,11 @@ test('keeps long Notes Ready titles elided inside a stable notification', async 
 
     expect(metrics.innerWidth).toBe(400)
     expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.innerHeight)
-    expect(metrics.toastHeight).toBeLessThanOrEqual(104)
-    expect(metrics.subtitleHeight).toBeGreaterThan(20)
+    expect(metrics.toastFits).toBe(true)
+    expect(metrics.meetingTitleFits).toBe(true)
+    expect(metrics.actionsFit).toBe(true)
+    expect(metrics.subtitleHeight).toBeGreaterThan(0)
     expect(metrics.dotOffsetFromTextCenter).toBeLessThanOrEqual(3)
-    expect(metrics.actionsOffsetFromTextCenter).toBeLessThanOrEqual(3)
 
     await notificationWindow.screenshot({
       path: testInfo.outputPath('notes-ready-long-title.png')
@@ -163,7 +181,8 @@ test('shows Notes Ready again when completion is from a manual reprocess', async
 
     const repeatNotification = await repeatNotificationPromise
     await expect(repeatNotification.getByText('Notes Ready')).toBeVisible()
-    await expect(repeatNotification.getByText('Reprocess Review notes are ready.')).toBeVisible()
+    await expect(repeatNotification.getByText('Reprocess Review', { exact: true })).toBeVisible()
+    await expect(repeatNotification.getByText('Notes are ready.', { exact: true })).toBeVisible()
   } finally {
     await session.cleanup()
   }

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { RecordingSource, RecordingTrackingContext } from '../../../shared/types'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecordingPickerStore } from '../stores/recording-picker'
@@ -105,15 +105,18 @@ export function RecordingControls({
   onFetchSources
 }: RecordingControlsProps): ReactElement {
   const t = useT()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const pickerTitleId = useId()
   const [loading, setLoading] = useState(false)
   const events = useCalendarStore((state) => state.events)
   const {
     isOpen: showPicker,
-    title,
-    subtitle,
+    titleKey,
+    subtitleKey,
     sources,
     detectedId,
-    suggestionLabel,
+    suggestionLabelKey,
     selectionContext: pickerSelectionContext,
     trigger,
     scoredSourceIds,
@@ -122,6 +125,36 @@ export function RecordingControls({
     openPicker,
     closePicker
   } = useRecordingPickerStore()
+  useEffect(() => {
+    if (!showPicker) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closePicker()
+        triggerRef.current?.focus()
+      } else if (event.key === 'Tab') {
+        const buttons =
+          pickerRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
+        if (!buttons?.length) return
+        const first = buttons[0],
+          last = buttons[buttons.length - 1]
+        if (
+          (event.shiftKey && document.activeElement === first) ||
+          (!event.shiftKey && document.activeElement === last)
+        ) {
+          event.preventDefault()
+          ;(event.shiftKey ? last : first).focus()
+        }
+      }
+    }
+    pickerRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      closePicker()
+    }
+  }, [showPicker, closePicker])
   const orderedSources = useMemo(() => {
     if (!detectedId) return sources
 
@@ -151,18 +184,18 @@ export function RecordingControls({
       )
 
       openPicker({
-        title: t('recording.selectWindowToRecord'),
+        titleKey: 'recording.selectWindowToRecord',
         selectionContext,
-        subtitle:
+        subtitleKey:
           selection.source && selection.confidence === 'high'
-            ? t('recording.highlightedWindow')
+            ? 'recording.highlightedWindow'
             : null,
         sources: fetchedSources,
         detectedId: selection.source?.id ?? null,
-        suggestionLabel: selection.source
+        suggestionLabelKey: selection.source
           ? selection.confidence === 'high'
-            ? t('recording.detectedMeeting')
-            : t('recording.suggestedWindow')
+            ? 'recording.detectedMeeting'
+            : 'recording.suggestedWindow'
           : null,
         scoredSourceIds: selection.candidateSourceIds,
         diagnosticTrigger: 'manual'
@@ -241,6 +274,9 @@ export function RecordingControls({
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
+        aria-haspopup="dialog"
+        aria-expanded={showPicker}
         onClick={handleRecordClick}
         disabled={loading}
         className="i18n-btn text-[11px] font-medium text-on-brand bg-sage px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
@@ -251,13 +287,21 @@ export function RecordingControls({
       {showPicker && (
         <>
           <div className="fixed inset-0 z-40" onClick={handleCancelPicker} />
-          <div className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-2rem)] bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto">
-            <p className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]">
-              {title}
+          <div
+            ref={pickerRef}
+            role="dialog"
+            aria-labelledby={pickerTitleId}
+            className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-2rem)] bg-bg-card border border-border rounded-xl shadow-lg p-3 max-h-96 overflow-y-auto"
+          >
+            <p
+              id={pickerTitleId}
+              className="text-[11px] font-medium text-ink-muted mb-1 text-pretty [overflow-wrap:anywhere]"
+            >
+              {t(titleKey)}
             </p>
-            {subtitle && (
+            {subtitleKey && (
               <p className="text-[10px] text-ink-faint mb-2 text-pretty [overflow-wrap:anywhere]">
-                {subtitle}
+                {t(subtitleKey)}
               </p>
             )}
             <div className="flex flex-col gap-1.5">
@@ -274,9 +318,9 @@ export function RecordingControls({
                     <span className="i18n-ellipsis text-[12px] text-ink" title={source.name}>
                       {source.name}
                     </span>
-                    {source.id === detectedId && suggestionLabel && (
+                    {source.id === detectedId && suggestionLabelKey && (
                       <span className="text-[10px] text-status-connected font-medium text-pretty [overflow-wrap:anywhere]">
-                        {suggestionLabel}
+                        {t(suggestionLabelKey)}
                       </span>
                     )}
                   </div>

@@ -1,6 +1,13 @@
-import { writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
-import { completeOnboarding, launchIsolatedE2EApp } from './helpers/electron-app'
+import {
+  closeE2EAppKeepingUserData,
+  completeOnboarding,
+  launchIsolatedE2EApp,
+  relaunchIsolatedE2EApp
+} from './helpers/electron-app'
 import { translate } from '../src/shared/i18n'
 import { UI_LANGUAGE_CODES, type UiLanguageCode } from '../src/shared/ui-language'
 
@@ -9,7 +16,7 @@ async function setLanguage(page: Page, language: UiLanguageCode): Promise<void> 
   await expect(page.locator('html')).toHaveAttribute('lang', language)
 }
 
-test('appearance follows system settings, persists, and the language picker works by keyboard', async () => {
+test('explicit appearance ignores system settings, persists, and the language picker works by keyboard', async () => {
   const fixture = await launchIsolatedE2EApp({ permissions: { microphone: true, screen: true } })
   try {
     const page = await fixture.electronApp.firstWindow()
@@ -20,12 +27,15 @@ test('appearance follows system settings, persists, and the language picker work
     })
     for (const system of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: system })
-      for (const mode of ['auto', 'light', 'dark'] as const) {
+      for (const mode of ['light', 'dark'] as const) {
         await page.evaluate((next) => window.electronAPI.invoke('prefs:set-appearance', next), mode)
-        await expect(page.locator('html')).toHaveAttribute(
-          'data-theme',
-          mode === 'auto' ? system : mode
-        )
+        await expect(page.locator('html')).toHaveAttribute('data-theme', mode)
+        expect(
+          await fixture.electronApp.evaluate(({ nativeTheme }) => nativeTheme.themeSource)
+        ).toBe(mode)
+        // A system preference event after choosing a theme must not change it.
+        await page.emulateMedia({ colorScheme: system === 'dark' ? 'light' : 'dark' })
+        await expect(page.locator('html')).toHaveAttribute('data-theme', mode)
         await page.screenshot({
           path: test.info().outputPath(`appearance-${mode}-system-${system}.png`)
         })
@@ -35,6 +45,17 @@ test('appearance follows system settings, persists, and the language picker work
     await page.evaluate(() => {
       window.location.hash = '#/settings'
     })
+    const appearance = page.getByRole('group', {
+      name: translate('de', 'appearance.title'),
+      exact: true
+    })
+    await expect(appearance.getByRole('button')).toHaveCount(2)
+    await expect(
+      appearance.getByRole('button', { name: translate('de', 'appearance.light'), exact: true })
+    ).toBeVisible()
+    await expect(
+      appearance.getByRole('button', { name: translate('de', 'appearance.dark'), exact: true })
+    ).toBeVisible()
     const watermark = page.getByRole('button', {
       name: translate('de', 'settings.watermarkAria'),
       exact: true
@@ -177,3 +198,48 @@ test('native notes status fits every language, and an existing notification foll
     await fixture.cleanup()
   }
 })
+
+for (const saved of ['auto', 'light', 'dark'] as const) {
+  test(`saved ${saved} appearance migrates or persists through a full relaunch`, async () => {
+    test.setTimeout(60_000)
+    const userDataDir = mkdtempSync(path.join(tmpdir(), 'autodoc-e2e-appearance-'))
+    const prefsPath = path.join(userDataDir, 'autodoc-prefs.json')
+    writeFileSync(
+      prefsPath,
+      JSON.stringify({
+        appearance: saved,
+        onboardingComplete: true,
+        onboardingLanguageConfirmed: true
+      })
+    )
+    let fixture = await relaunchIsolatedE2EApp(userDataDir, {
+      permissions: { microphone: true, screen: true }
+    })
+    const expected = saved === 'auto' ? 'light' : saved
+    try {
+      let page = await fixture.electronApp.firstWindow()
+      await expect(page.locator('html')).toHaveAttribute('data-theme', expected)
+      expect(await page.evaluate(() => window.electronAPI.invoke('prefs:get-appearance'))).toBe(
+        expected
+      )
+      expect(await fixture.electronApp.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(
+        expected
+      )
+      expect(JSON.parse(readFileSync(prefsPath, 'utf8')).appearance).toBe(expected)
+      await closeE2EAppKeepingUserData(fixture.electronApp, userDataDir)
+      fixture = await relaunchIsolatedE2EApp(userDataDir, {
+        permissions: { microphone: true, screen: true }
+      })
+      page = await fixture.electronApp.firstWindow()
+      await expect(page.locator('html')).toHaveAttribute('data-theme', expected)
+      expect(await fixture.electronApp.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(
+        expected
+      )
+      await page.screenshot({
+        path: test.info().outputPath(`saved-${saved}-relaunch-${expected}.png`)
+      })
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+}

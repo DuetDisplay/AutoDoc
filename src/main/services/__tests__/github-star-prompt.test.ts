@@ -45,6 +45,50 @@ function setup(
   }
 }
 describe('one-time local GitHub star request', () => {
+  it('does not consume an impression if busy or onboarding changes during feedback checking', async () => {
+    for (const gate of ['busy', 'onboarding'] as const) {
+      let checking = false,
+        busy = false,
+        onboarded = true
+      const x = setup(
+        {
+          isBusy: () => busy,
+          isOnboardingComplete: () => onboarded,
+          feedbackTakesPriority: async () => {
+            await Promise.resolve()
+            if (checking) {
+              if (gate === 'busy') busy = true
+              else onboarded = false
+            }
+            return false
+          }
+        },
+        { qualifiedMeetingId: 'good' }
+      )
+      const id = (await x.service.reserve())!
+      checking = true
+      expect(await x.service.confirm(id)).toBe(false)
+      expect(x.state().shownAt).toBeNull()
+    }
+  })
+  it('rechecks reservation expiry and cancellation after asynchronous confirmation checks', async () => {
+    for (const action of ['expire', 'cancel'] as const) {
+      let duringCheck = () => {}
+      const x = setup(
+        {
+          feedbackTakesPriority: async () => {
+            duringCheck()
+            return false
+          }
+        },
+        { qualifiedMeetingId: 'good' }
+      )
+      const id = (await x.service.reserve())!
+      duringCheck = () => (action === 'expire' ? x.advance(15001) : x.service.cancel(id))
+      expect(await x.service.confirm(id)).toBe(false)
+      expect(x.state().shownAt).toBeNull()
+    }
+  })
   it('ignores existing notes until a new good completion has been recorded', async () => {
     const x = setup()
     expect(await x.service.reserve()).toBeNull()

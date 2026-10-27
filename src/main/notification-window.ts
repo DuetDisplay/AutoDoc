@@ -450,7 +450,9 @@ export function showNotificationWindow(options: NotificationOptions): void {
   </div>
   <script>
     const { ipcRenderer } = require('electron');
-    const reportSize = () => ipcRenderer.send('notification:resize', Math.ceil(document.querySelector('.toast').getBoundingClientRect().height + 26));
+    // Layout height is stable during the entrance transform; a scaled bounding
+    // rect can under-size the native window and clip wrapped notification text.
+    const reportSize = () => ipcRenderer.send('notification:resize', document.querySelector('.toast').offsetHeight + 26);
     new ResizeObserver(reportSize).observe(document.querySelector('.toast'));
     ipcRenderer.on('notification:locale', (_event, copy) => {
       document.documentElement.lang = copy.lang;
@@ -487,7 +489,7 @@ export function showNotificationWindow(options: NotificationOptions): void {
   win.webContents.once('did-finish-load', async () => {
     try {
       const height = await win.webContents.executeJavaScript(
-        'Math.ceil(document.querySelector(".toast").getBoundingClientRect().height + 26)'
+        'document.querySelector(".toast").offsetHeight + 26'
       )
       if (!win.isDestroyed() && Number.isFinite(height))
         win.setContentSize(winWidth, Math.min(workArea.height - 16, Math.max(100, height)))

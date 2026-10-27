@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+vi.mock('../../services/application-menu', () => ({ refreshApplicationMenu: vi.fn() }))
 
 vi.mock('electron', () => ({
   app: { setLoginItemSettings: vi.fn() },
@@ -477,6 +478,7 @@ describe('PrefsStore', () => {
       language: string
     ) => void
 
+    expect(() => setAppearance({}, 'auto')).toThrow('This appearance setting is not supported.')
     setAppearance({}, 'dark')
     setUiLanguage({}, 'ko')
 

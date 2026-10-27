@@ -2,7 +2,6 @@ import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_APPEARANCE,
   normalizeAppearance,
-  resolveAppearance,
   type AppearanceMode
 } from '../../../shared/appearance'
 
@@ -21,11 +20,9 @@ export function applyAppearance(mode: AppearanceMode): void {
   } catch {
     // Private mode or blocked storage should not prevent the theme from applying.
   }
-  const dark =
-    resolveAppearance(next, window.matchMedia('(prefers-color-scheme: dark)').matches) === 'dark'
+  const dark = next === 'dark'
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
 }
 
 applyAppearance(readCachedAppearance())
-

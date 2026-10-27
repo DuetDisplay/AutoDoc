@@ -876,11 +876,11 @@ export default function App() {
             getSavedSourcePreference(selectionContext)
           )
           useRecordingPickerStore.getState().openPicker({
-            title: 'Select the meeting window',
-            subtitle: 'Choose the window for this meeting to start AI notes.',
+            titleKey: 'ui.selectTheMeetingWindow',
+            subtitleKey: 'recording.chooseMeetingWindowSubtitle',
             sources,
             detectedId: selection.source?.id ?? null,
-            suggestionLabel: selection.source ? 'Suggested window' : null,
+            suggestionLabelKey: selection.source ? 'recording.suggestedWindow' : null,
             selectionContext,
             trigger: 'auto_record',
             scoredSourceIds: selection.candidateSourceIds,

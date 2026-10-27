@@ -10,7 +10,6 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  nativeTheme,
   shell,
   systemPreferences,
   powerMonitor,
@@ -72,8 +71,9 @@ import {
   readInitialUiLanguage,
   readInitialDiagnosticLogUploadConsent
 } from './services/prefs-store'
-import { applyNativeAppearance, windowBackgroundForAppearance } from './services/appearance-runtime'
+import { windowBackgroundForAppearance } from './services/appearance-runtime'
 import { tMain, setMainUiLanguage } from './services/ui-locale'
+import { refreshApplicationMenu } from './services/application-menu'
 import { registerPrefsIpc } from './ipc/prefs-ipc'
 import {
   bindMeetingLanguagePreferenceStore,
@@ -176,7 +176,7 @@ import { getResetLocalDataTargets } from './services/reset-local-data'
 import { createSentryStubRuntime } from './services/sentry-stub'
 import { notifyNotesReady } from './services/notes-ready-notifier'
 import { readMetadata } from './services/calendar-matcher'
-import { getScopedTestUserDataDir } from './services/test-runtime'
+import { getScopedTestUserDataDir, isScopedTestRuntime } from './services/test-runtime'
 import {
   onNotificationActivationSuppressionChange,
   shouldSuppressNotificationActivation
@@ -586,6 +586,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   setMainUiLanguage(readInitialUiLanguage())
+  refreshApplicationMenu()
   if (!(await warnIfUnsupportedMacOS())) return
 
   if (!skipInstalledApplicationPolicy && !(await enforceInstalledApplicationPolicy())) return
@@ -2321,7 +2322,7 @@ app.whenReady().then(async () => {
   }
 
   cleanupTempFiles().catch(() => {})
-  if (!__AUTODOC_QA_BUILD__) {
+  if (!__AUTODOC_QA_BUILD__ && !isScopedTestRuntime()) {
     try {
       await migrateDataDir()
     } catch (err) {
@@ -2355,12 +2356,6 @@ app.whenReady().then(async () => {
     })
     console.error('Encryption migration failed:', err)
   }
-
-  nativeTheme.on('updated', () => {
-    if (prefsStore.getAppearance() === 'auto') {
-      applyNativeAppearance('auto')
-    }
-  })
 
   registerPrefsIpc(
     prefsStore,

@@ -3,6 +3,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerSearchIpc } from '../search-ipc'
+import { setMainUiLanguage } from '../../services/ui-locale'
+import { formatRecordingDateSuffix } from '../../services/recording-title'
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
 const tempDirs: string[] = []
@@ -23,12 +25,23 @@ vi.mock('../../services/calendar-matcher', () => ({
 }))
 
 describe('registerSearchIpc', () => {
+  it('reports filesystem failures instead of claiming that there are no matches', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'autodoc-search-failure-'))
+    tempDirs.push(baseDir)
+    const notADirectory = join(baseDir, 'not-a-recordings-directory')
+    await writeFile(notADirectory, 'synthetic fixture')
+    registerSearchIpc(notADirectory)
+    await expect(handlers.get('search:query')?.({}, 'query')).rejects.toMatchObject({
+      code: 'ENOTDIR'
+    })
+  })
   beforeEach(() => {
     handlers.clear()
     vi.clearAllMocks()
   })
 
   afterEach(async () => {
+    setMainUiLanguage('en')
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
     tempDirs.length = 0
   })
@@ -78,6 +91,13 @@ describe('registerSearchIpc', () => {
       matches: Array<{ text: string }>
     }>
     expect(stale).toEqual([])
+    setMainUiLanguage('ja')
+    const localized = (await handlers.get('search:query')?.({}, 'export pipeline')) as Array<{
+      title: string
+    }>
+    expect(localized[0].title).toBe(
+      `Billing Sync — ${formatRecordingDateSuffix(new Date(2026, 4, 27, 10, 0).getTime(), 'ja')}`
+    )
   })
 
   it('matches a V2 section heading that does not appear in the bullet text', async () => {

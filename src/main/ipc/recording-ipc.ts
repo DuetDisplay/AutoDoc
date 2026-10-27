@@ -11,6 +11,7 @@ import type { CalendarManager } from '../services/calendar-manager'
 import { decryptFileToTemp, encryptFileInPlace, encryptJSON, isEncrypted } from '../services/crypto'
 import { matchCalendarEvent, readMetadata } from '../services/calendar-matcher'
 import { buildRecordingTitle, getRecordingDisplayCalendarTitle } from '../services/recording-title'
+import { getMainUiLanguage } from '../services/ui-locale'
 import { logAutodocEvent, logAutodocFailure } from '../services/autodoc-log'
 import { logQaGateFinalizingRecovery } from '../services/qa-gate-log'
 import { getStorageDiagnostics } from '../services/storage-manager'
@@ -1581,6 +1582,7 @@ export function registerRecordingIpc(
   }
 
   ipcMain.handle('recording:list', async (): Promise<RecordingEntry[]> => {
+    const language = getMainUiLanguage()
     const baseDir = recordingService.getRecordingsBaseDir()
     let dirs: string[]
     try {
@@ -1647,7 +1649,7 @@ export function registerRecordingIpc(
       const matchedEvent = matchCalendarEvent(recentEvents, startedAt)
       logRecordingAttachment(meetingId, 'calendar_title_resolved', matchedEvent, true)
       const calendarTitle = getRecordingDisplayCalendarTitle(metadata, matchedEvent)
-      const title = buildRecordingTitle(metadata, startedAt, calendarTitle)
+      const title = buildRecordingTitle(metadata, startedAt, calendarTitle, language)
 
       if (!metadata?.customTitle && !calendarTitle) {
         if (

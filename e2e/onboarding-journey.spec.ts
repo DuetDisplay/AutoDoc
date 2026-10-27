@@ -400,7 +400,7 @@ test('shows Ollama setup failure and can recover after retry', async () => {
 
   try {
     await reachOllamaStep(page)
-    await expect(page.getByText(/setup failed: Managed Ollama failed to start/i)).toBeVisible()
+    await expect(page.getByText('AI setup failed.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: /^retry$/i }).click()
     await expect(page.getByRole('heading', { name: 'AI Model Ready' })).toBeVisible()
   } finally {
@@ -422,7 +422,7 @@ test('shows Ollama download progress and allows skipping while setup continues',
 
   try {
     await reachOllamaStep(page)
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 67%/i)).toBeVisible()
+    await expect(page.getByText('Downloading Ollama... 67%', { exact: true })).toBeVisible()
     await expect(
       page.getByRole('button', { name: /continue - this will finish in the background/i })
     ).toBeVisible({
@@ -482,12 +482,12 @@ test('completes a full macOS onboarding flow with managed dependency setup', asy
     await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
-    await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
+    await expect(page.getByText(/starting Ollama\.\.\./i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
       percent: 38
     })
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 38%/i)).toBeVisible()
+    await expect(page.getByText(/downloading Ollama\.\.\. 38%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
       percent: 82
@@ -551,12 +551,12 @@ test('completes a full Windows onboarding flow with in-app dependency downloads'
     await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(page.getByRole('heading', { name: /AI/i })).toBeVisible()
-    await expect(page.getByText(/starting Ollama runtime/i)).toBeVisible()
+    await expect(page.getByText(/starting Ollama\.\.\./i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'downloading',
       percent: 44
     })
-    await expect(page.getByText(/downloading Ollama runtime\.\.\. 44%/i)).toBeVisible()
+    await expect(page.getByText(/downloading Ollama\.\.\. 44%/i)).toBeVisible()
     await setOllamaStatus(page, {
       phase: 'pulling',
       percent: 91

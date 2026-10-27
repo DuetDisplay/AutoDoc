@@ -9,6 +9,7 @@ import {
 } from '../../shared/ui-language'
 import type { PrefsStore } from '../services/prefs-store'
 import { setMainUiLanguage } from '../services/ui-locale'
+import { refreshApplicationMenu } from '../services/application-menu'
 import {
   isMeetingLanguageAvailable,
   isMeetingLanguageCode,
@@ -191,6 +192,7 @@ export function registerPrefsIpc(
     const next = normalizeUiLanguage(language)
     prefsStore.setUiLanguage(next)
     setMainUiLanguage(next)
+    refreshApplicationMenu()
     broadcastUiLanguage(next)
     refreshNotificationLocale()
   })

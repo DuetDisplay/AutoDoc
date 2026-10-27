@@ -39,16 +39,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       applyAppearance(next)
     })
 
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const onSystemChange = (): void => {
-      const current = readCachedAppearance()
-      if (current === 'auto') applyAppearance('auto')
-    }
-    media.addEventListener('change', onSystemChange)
-    return () => {
-      unsub()
-      media.removeEventListener('change', onSystemChange)
-    }
+    return unsub
   }, [])
 
   const setAppearance = useCallback(async (nextAppearance: AppearanceMode) => {
@@ -58,14 +49,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     await window.electronAPI.invoke('prefs:set-appearance', next)
   }, [])
 
-  const value = useMemo(
-    () => ({ appearance, setAppearance }),
-    [appearance, setAppearance]
-  )
+  const value = useMemo(() => ({ appearance, setAppearance }), [appearance, setAppearance])
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }
 
+// The context hook and its provider share this module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAppearance(): ThemeContextValue {
   return useContext(ThemeContext)
 }

@@ -10,7 +10,11 @@ import {
   normalizeMeetingLanguage,
   type MeetingLanguageCode
 } from '../../shared/meeting-language'
-import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguageCode } from '../../shared/ui-language'
+import {
+  DEFAULT_UI_LANGUAGE,
+  normalizeUiLanguage,
+  type UiLanguageCode
+} from '../../shared/ui-language'
 
 const isE2E = process.env.AUTODOC_E2E === '1'
 const isRealSetupTest = process.env.AUTODOC_TEST_REAL_SETUP === '1'
@@ -36,7 +40,7 @@ interface PrefsSchema {
 }
 
 function createPrefsStore(): Store<PrefsSchema> {
-  return new Store<PrefsSchema>({
+  const store = new Store<PrefsSchema>({
     name: 'autodoc-prefs',
     defaults: {
       onboardingComplete: false,
@@ -58,6 +62,11 @@ function createPrefsStore(): Store<PrefsSchema> {
       notesEngineReadyDismissed: false
     }
   })
+  // Retire saved Auto values once, before any window reads the preference.
+  const savedAppearance = store.get('appearance')
+  const appearance = normalizeAppearance(savedAppearance)
+  if (savedAppearance !== appearance) store.set('appearance', appearance)
+  return store
 }
 
 export function readInitialAnalyticsConsent(): boolean | null {

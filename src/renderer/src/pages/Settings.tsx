@@ -85,6 +85,13 @@ function getCalendarSyncIssueMessage(
 
 export function Settings() {
   const [githubOpenFailed, setGithubOpenFailed] = useState(false)
+  const openGithub = () => {
+    setGithubOpenFailed(false)
+    void window.electronAPI
+      .invoke('github-star:open')
+      .then((opened) => setGithubOpenFailed(!opened))
+      .catch(() => setGithubOpenFailed(true))
+  }
   const { t, language: uiLanguage, setLanguage: setUiLanguage } = useI18n()
   const { appearance, setAppearance } = useAppearance()
   const [uiLanguageOffer, setUiLanguageOffer] = useState<MeetingLanguageCode | null>(null)
@@ -933,18 +940,25 @@ export function Settings() {
               {t('settings.licenses')}
             </button>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-subtle bg-bg-accent px-4 py-3">
-              <span className="text-[12px] text-ink-muted">{t('githubStar.sourceCode')}</span>
               <a
                 href={AUTODOC_GITHUB_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(event) => {
                   event.preventDefault()
-                  setGithubOpenFailed(false)
-                  void window.electronAPI
-                    .invoke('github-star:open')
-                    .then((opened) => setGithubOpenFailed(!opened))
-                    .catch(() => setGithubOpenFailed(true))
+                  openGithub()
+                }}
+                className="text-[12px] text-sage-dark underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage"
+              >
+                {t('githubStar.sourceCode')}
+              </a>
+              <a
+                href={AUTODOC_GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => {
+                  event.preventDefault()
+                  openGithub()
                 }}
                 className="text-[12px] font-medium text-sage-dark underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sage"
               >

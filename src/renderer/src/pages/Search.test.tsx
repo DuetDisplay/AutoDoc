@@ -12,6 +12,76 @@ function MeetingRouteStub() {
 }
 
 describe('Search', () => {
+  it('reaches result navigation through Tab and opens matches with Enter', async () => {
+    installMockElectronApi({ 'search:query': () => [createSearchResult()] })
+    render(
+      <MemoryRouter initialEntries={['/search']}>
+        <Routes>
+          <Route path="/search" element={<Search />} />
+          <Route path="/recordings/:id" element={<MeetingRouteStub />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'transcript' } })
+    const header = await screen.findByRole('link', { name: /Roadmap Sync/ })
+    const user = userEvent.setup()
+    await user.tab()
+    expect(header).toHaveFocus()
+    await user.tab()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByText(/Meeting route meeting-1\?tab=transcript/)).toBeInTheDocument()
+  })
+  it('clears previous matches on a failed query and supports retry', async () => {
+    let fail = false
+    installMockElectronApi({
+      'search:query': () => {
+        if (fail) throw new Error('Synthetic failure')
+        return [createSearchResult()]
+      }
+    })
+    render(
+      <MemoryRouter>
+        <Search />
+      </MemoryRouter>
+    )
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'previous' } })
+    expect(await screen.findByText('Roadmap Sync')).toBeInTheDocument()
+    fail = true
+    fireEvent.change(input, { target: { value: 'new query' } })
+    expect(screen.queryByText('Roadmap Sync')).not.toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Search failed. Try again.')
+    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
+    fail = false
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Roadmap Sync')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+  it('ignores a slow previous response after a new query or clearing the input', async () => {
+    const pending: Array<(value: ReturnType<typeof createSearchResult>[]) => void> = []
+    installMockElectronApi({
+      'search:query': () => new Promise((resolve) => pending.push(resolve))
+    })
+    render(
+      <MemoryRouter>
+        <Search />
+      </MemoryRouter>
+    )
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'old' } })
+    await waitFor(() => expect(pending).toHaveLength(1))
+    fireEvent.change(input, { target: { value: 'new' } })
+    await waitFor(() => expect(pending).toHaveLength(2))
+    await act(async () => pending[1]([createSearchResult({ title: 'New result' })]))
+    expect(await screen.findByText('New result')).toBeInTheDocument()
+    await act(async () => pending[0]([createSearchResult({ title: 'Old result' })]))
+    expect(screen.queryByText('Old result')).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: 'pending' } })
+    await waitFor(() => expect(pending).toHaveLength(3))
+    fireEvent.change(input, { target: { value: '' } })
+    await act(async () => pending[2]([createSearchResult({ title: 'Late result' })]))
+    expect(screen.queryByText('Late result')).not.toBeInTheDocument()
+  })
   beforeEach(() => {
     resetRendererStores()
   })

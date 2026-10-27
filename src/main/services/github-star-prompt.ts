@@ -130,7 +130,9 @@ export class GithubStarPromptService {
       !this.options.isBusy() &&
       (await this.options.isGoodMeeting(state.qualifiedMeetingId)) &&
       !this.options.isBusy() &&
-      !(await this.options.feedbackTakesPriority())
+      !(await this.options.feedbackTakesPriority()) &&
+      !this.options.isBusy() &&
+      this.options.isOnboardingComplete()
     )
   }
   async reserve(): Promise<string | null> {
@@ -146,10 +148,12 @@ export class GithubStarPromptService {
     return await this.serial(async () => {
       const reservation = this.reservation
       if (!reservation || reservation.id !== id || reservation.expiresAt <= this.now()) return false
+      const eligible = await this.eligible()
+      if (this.reservation?.id !== id) return false
       this.reservation = null
-      if (!(await this.eligible())) return false
+      if (!eligible || reservation.expiresAt <= this.now()) return false
       const state = this.read()
-      if (!state) return false
+      if (!state || state.shownAt !== null) return false
       this.options.store.write({ ...state, shownAt: this.now() })
       this.shownThisSession = true
       return true

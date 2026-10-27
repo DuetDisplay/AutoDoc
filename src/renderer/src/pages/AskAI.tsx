@@ -121,7 +121,12 @@ export function AskAI(): ReactElement {
     activeRequestIdRef.current = requestId
     activeAssistantMessageIdRef.current = assistantMessageId
     const history = messages
-      .filter((message) => message.content.trim().length > 0 && message.status !== 'timed_out')
+      .filter(
+        (message) =>
+          message.content.trim().length > 0 &&
+          message.status !== 'timed_out' &&
+          message.status !== 'failed'
+      )
       .slice(-8)
       .map((message) => ({ role: message.role, content: message.content }))
     addMessage({ role: 'user', content: params.displayQuestion })
@@ -345,7 +350,15 @@ export function AskAI(): ReactElement {
                     </div>
                   ) : msg.role === 'assistant' ? (
                     <div className="space-y-3">
-                      <div className="whitespace-pre-wrap">{renderNoteMarkup(msg.content)}</div>
+                      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {renderNoteMarkup(
+                          msg.status === 'failed'
+                            ? t('askAi.failed')
+                            : msg.status === 'timed_out'
+                              ? t('askAi.timeout')
+                              : msg.content
+                        )}
+                      </div>
                       {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
                         <div className="grid gap-2">
                           {msg.clarificationOptions.map((option) => (
@@ -393,7 +406,7 @@ export function AskAI(): ReactElement {
             aria-label={t('askAi.placeholder')}
             placeholder={t('askAi.placeholder')}
             disabled={loading}
-            className="flex-1 px-4 py-2.5 bg-bg-card border border-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-sage transition-colors disabled:opacity-50"
+            className="flex-1 min-w-0 px-4 py-2.5 bg-bg-card border border-control-border rounded-lg text-[13px] text-ink placeholder:text-ink-faint focus:outline-2 focus:outline-offset-2 focus:outline-sage transition-colors disabled:opacity-50"
             autoFocus
           />
           {loading ? (

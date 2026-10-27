@@ -19,6 +19,25 @@ beforeEach(() => {
 })
 
 describe('RecordingControls', () => {
+  it('keeps keyboard focus in the picker and restores the trigger on Escape', async () => {
+    render(
+      <RecordingControls
+        isRecording={false}
+        onStartRecording={async () => {}}
+        onStopRecording={() => {}}
+        onFetchSources={async () => [{ id: 'window:1', name: 'Notes', thumbnailDataUrl: '' }]}
+      />
+    )
+    const trigger = screen.getByRole('button', { name: 'Record', exact: true })
+    await userEvent.click(trigger)
+    const source = await screen.findByRole('button', { name: 'Notes', exact: true })
+    await waitFor(() => expect(source).toHaveFocus())
+    await userEvent.tab()
+    expect(source).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
   it('keeps the detector context and meeting intent when the user chooses an ambiguous window', async () => {
     const onStartRecording = vi.fn(async () => {})
     const selectionContext = {
@@ -27,7 +46,7 @@ describe('RecordingControls', () => {
       providerHint: 'slack'
     }
     useRecordingPickerStore.getState().openPicker({
-      title: 'Select the meeting window',
+      titleKey: 'ui.selectTheMeetingWindow',
       sources: [{ id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' }],
       selectionContext,
       trigger: 'auto_record'
@@ -52,7 +71,7 @@ describe('RecordingControls', () => {
   })
   it('logs which scored source the user picked and whether it was the suggestion', async () => {
     useRecordingPickerStore.getState().openPicker({
-      title: 'Select the meeting window',
+      titleKey: 'ui.selectTheMeetingWindow',
       sources: [
         { id: 'window:1', name: 'Jamal - Duet Display – Slack', thumbnailDataUrl: '' },
         { id: 'screen:0', name: 'Entire Screen', thumbnailDataUrl: '' }
@@ -99,7 +118,7 @@ describe('RecordingControls', () => {
 
   it('logs when the user cancels the picker', async () => {
     useRecordingPickerStore.getState().openPicker({
-      title: 'Select the meeting window',
+      titleKey: 'ui.selectTheMeetingWindow',
       sources: [{ id: 'window:1', name: 'Jamal - Slack', thumbnailDataUrl: '' }],
       selectionContext: { eventId: 'timed', recurringEventId: null, providerHint: 'slack' },
       trigger: 'auto_record',

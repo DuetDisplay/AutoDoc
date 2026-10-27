@@ -1,6 +1,6 @@
 import { formatUiDuration } from '../../../shared/i18n/format'
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { TranscriptionBadge } from '../components/TranscriptionBadge'
 import { SegmentationBadge } from '../components/SegmentationBadge'
@@ -84,6 +84,10 @@ export function Recordings({
   feedbackPromptSuppressed?: boolean
 }) {
   const { language, t } = useI18n()
+  const languageRef = useRef(language)
+  useLayoutEffect(() => {
+    languageRef.current = language
+  }, [language])
   const dateLocale = dateLocaleForUiLanguage(language)
   const [recordings, setRecordings] = useState<RecordingEntry[]>([])
   const [transcriptionMemoryFailures, setTranscriptionMemoryFailures] = useState<
@@ -113,12 +117,13 @@ export function Recordings({
     >
   >({})
   const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
   const knownMeetingIdsRef = useRef<Set<string>>(new Set())
 
   const refreshRecordings = useCallback(async () => {
+    const requestedLanguage = languageRef.current
     const refreshStartedAt = performance.now()
     const entries = await window.electronAPI.invoke('recording:list')
+    if (requestedLanguage !== languageRef.current) return
     console.info('[recordings-page] refreshRecordings resolved', {
       at: new Date().toISOString(),
       elapsedMs: Math.round(performance.now() - refreshStartedAt),
@@ -221,7 +226,7 @@ export function Recordings({
       .finally(() => {
         setLoading(false)
       })
-  }, [refreshRecordings])
+  }, [refreshRecordings, language])
 
   useEffect(() => {
     const refreshIfUnknownMeeting = (meetingId: string) => {
@@ -447,11 +452,14 @@ export function Recordings({
             {recordings.map((rec) => (
               <div
                 key={rec.meetingId}
-                className="px-4 py-3.5 bg-bg-card border border-border rounded-xl cursor-pointer hover:border-ink-muted transition-colors"
-                onClick={() => navigate(`/recordings/${rec.meetingId}`)}
+                className="relative px-4 py-3.5 bg-bg-card border border-border rounded-xl cursor-pointer hover:border-ink-muted transition-colors"
               >
                 <div className="flex flex-wrap justify-between items-start gap-3 min-w-0">
-                  <div className="min-w-0 flex-1">
+                  <Link
+                    to={`/recordings/${rec.meetingId}`}
+                    aria-label={rec.title}
+                    className="min-w-0 flex-1 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-sage"
+                  >
                     <div className="text-[13.5px] font-semibold text-ink tracking-[-0.01em] text-pretty [overflow-wrap:anywhere]">
                       {rec.title}
                     </div>
@@ -480,8 +488,8 @@ export function Recordings({
                         {rec.hasVideo && <span>{t('recordings.video')}</span>}
                       </span>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
+                  </Link>
+                  <div className="relative z-10 flex flex-wrap items-center gap-2 min-w-0 max-w-full">
                     {rec.isFinalizing ? (
                       <span className="text-[11px] text-ink-faint">
                         {t('recordings.wrappingUp')}

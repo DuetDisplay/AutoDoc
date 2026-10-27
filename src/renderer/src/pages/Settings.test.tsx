@@ -1060,6 +1060,8 @@ describe('Settings Windows meeting languages', () => {
       </ThemeProvider>
     )
 
+    expect(await screen.findByRole('button', { name: 'Light', pressed: true })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Auto', exact: true })).not.toBeInTheDocument()
     const dark = await screen.findByRole('button', { name: 'Dark' })
     await user.click(dark)
     await waitFor(() => {

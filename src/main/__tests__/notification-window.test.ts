@@ -473,6 +473,9 @@ describe('notification window activation suppression', () => {
     expect(win.showInactive).not.toHaveBeenCalled()
     win.webContents.executeJavaScript.mockResolvedValueOnce(219 as never)
     await win.loaded?.()
+    expect(win.webContents.executeJavaScript).toHaveBeenCalledWith(
+      'document.querySelector(".toast").offsetHeight + 26'
+    )
     expect(win.setContentSize).toHaveBeenCalledWith(400, 219)
     expect(win.setContentSize.mock.invocationCallOrder[0]).toBeLessThan(
       win.showInactive.mock.invocationCallOrder[0]

@@ -1,14 +1,12 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import {
-  nativeThemeSourceForAppearance,
-  resolveAppearance,
   windowBackgroundForTheme,
   type AppearanceMode,
   type ResolvedTheme
 } from '../../shared/appearance'
 
 export function applyNativeAppearance(mode: AppearanceMode): void {
-  nativeTheme.themeSource = nativeThemeSourceForAppearance(mode)
+  nativeTheme.themeSource = mode
   const background = windowBackgroundForTheme(resolveNativeTheme(mode))
   for (const win of BrowserWindow.getAllWindows()) {
     // Floating notification windows draw their own translucent surface.
@@ -18,8 +16,8 @@ export function applyNativeAppearance(mode: AppearanceMode): void {
 }
 
 export function resolveNativeTheme(mode: AppearanceMode): ResolvedTheme {
-  nativeTheme.themeSource = nativeThemeSourceForAppearance(mode)
-  return resolveAppearance(mode, nativeTheme.shouldUseDarkColors)
+  nativeTheme.themeSource = mode
+  return mode
 }
 
 export function windowBackgroundForAppearance(mode: AppearanceMode): string {

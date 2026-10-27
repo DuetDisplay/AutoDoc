@@ -12,6 +12,7 @@ import type {
 import { decryptJSON, isEncrypted } from './crypto'
 import { meetingSegmentsFromDisk } from './writer-catalog'
 import { matchCalendarEvent, readMetadata } from './calendar-matcher'
+import { getMainUiLanguage } from './ui-locale'
 import {
   collectNotesV2SearchEntries,
   formatNotesV2SearchBody,
@@ -1001,7 +1002,7 @@ export class ChatRecordingIndex {
     forceRefresh = false
   ): Promise<MeetingInventoryEntry[]> {
     const rawEntries = await this.getRawInventory(forceRefresh)
-    const cacheKey = buildCalendarSignature(recentEvents)
+    const cacheKey = `${getMainUiLanguage()}:${buildCalendarSignature(recentEvents)}`
     const cached = this.materializedInventoryCache.get(cacheKey)
     if (cached?.generation === this.inventoryGeneration) return cached.entries
 
@@ -1760,7 +1761,14 @@ function summaryFromV2Entries(
     topic: entry.topic,
     assignee: entry.owner,
     deadline: entry.deadline,
-    searchText: [entry.topic, entry.title, entry.content, entry.owner, entry.deadline, entry.category]
+    searchText: [
+      entry.topic,
+      entry.title,
+      entry.content,
+      entry.owner,
+      entry.deadline,
+      entry.category
+    ]
       .filter(Boolean)
       .join(' ')
   }))
@@ -1777,7 +1785,9 @@ function summaryFromV2Entries(
   }))
   const searchText = notes.map((note) => note.searchText).join(' ')
   const snippets = notes.map((note) => `${note.title}: ${note.content}`)
-  const fullBody = transcriptExcerpt ? `${body}\n\n### transcriptExcerpt\n${transcriptExcerpt}` : body
+  const fullBody = transcriptExcerpt
+    ? `${body}\n\n### transcriptExcerpt\n${transcriptExcerpt}`
+    : body
   const fullSearchText = transcriptExcerpt ? `${searchText} ${transcriptText}` : searchText
   const fullSnippets = transcriptExcerpt
     ? [...snippets, `Transcript excerpt: ${transcriptExcerpt}`]

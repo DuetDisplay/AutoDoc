@@ -20,10 +20,9 @@ export const en = {
   'nav.recording': 'Recording · {time}',
 
   'appearance.title': 'Appearance',
-  'appearance.description': 'Choose a light or dark look, or match your computer.',
+  'appearance.description': 'Choose a light or dark look.',
   'appearance.light': 'Light',
   'appearance.dark': 'Dark',
-  'appearance.auto': 'Auto',
 
   'uiLanguage.title': 'App language',
   'uiLanguage.description': 'Menus, buttons, and labels in AutoDoc.',

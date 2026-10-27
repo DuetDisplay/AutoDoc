@@ -2,6 +2,8 @@ import { mkdtemp, rm, mkdir, writeFile, utimes } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setMainUiLanguage } from '../ui-locale'
+import { formatRecordingDateSuffix } from '../recording-title'
 import type {
   CalendarEvent,
   MeetingMetadata,
@@ -26,12 +28,31 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  setMainUiLanguage('en')
   vi.useRealTimers()
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
 })
 
 describe('ChatRecordingIndex', () => {
+  it('refreshes localized titles even while the disk inventory remains cached', async () => {
+    const baseDir = await createTempRecordingsDir()
+    const startedAt = new Date(2026, 4, 27, 10, 0).getTime()
+    await createRecording(baseDir, 'locale-title', {
+      startedAt,
+      sourceName: 'Customer meeting',
+      notes: 'Synthetic notes'
+    })
+    const index = new ChatRecordingIndex(baseDir)
+    setMainUiLanguage('en')
+    expect((await index.listInventory([], false))[0].title).toBe(
+      `Customer meeting — ${formatRecordingDateSuffix(startedAt, 'en')}`
+    )
+    setMainUiLanguage('ja')
+    expect((await index.listInventory([], false))[0].title).toBe(
+      `Customer meeting — ${formatRecordingDateSuffix(startedAt, 'ja')}`
+    )
+  })
   it('finds the AD-83 visible screen title deterministically', async () => {
     const baseDir = await createTempRecordingsDir()
     const targetStartedAt = new Date(2026, 4, 27, 9, 49).getTime()

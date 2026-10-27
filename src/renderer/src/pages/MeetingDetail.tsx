@@ -275,6 +275,22 @@ function EditableText({
 export function MeetingDetail() {
   const { t, language } = useI18n()
   const { id } = useParams<{ id: string }>()
+  const titleLanguageRef = useRef(language)
+  useEffect(() => {
+    if (titleLanguageRef.current === language) return
+    titleLanguageRef.current = language
+    let cancelled = false
+    if (id)
+      void window.electronAPI
+        .invoke('recording:get-detail', id)
+        .then((next) => {
+          if (!cancelled) setDetail(next)
+        })
+        .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id, language])
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const initialTab = (searchParams.get('tab') as Tab) || 'notes'
@@ -812,8 +828,10 @@ export function MeetingDetail() {
     setTranscriptionMemoryFailure(undefined)
     setSegmentationMemoryFailure(undefined)
 
-    const refreshDetail = () =>
-      window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
+    const refreshDetail = () => {
+      const requestedLanguage = titleLanguageRef.current
+      return window.electronAPI.invoke('recording:get-detail', id).then((nextDetail) => {
+        if (cancelled || requestedLanguage !== titleLanguageRef.current) return
         console.info('[meeting-detail] refreshDetail resolved', {
           at: new Date().toISOString(),
           meetingId: id,
@@ -825,6 +843,7 @@ export function MeetingDetail() {
           setVideoRetryPending(false)
         }
       })
+    }
     const refreshMedia = () => window.electronAPI.invoke('recording:get-media', id).then(setMedia)
 
     refreshDetail()
