@@ -77,6 +77,28 @@ afterEach(() => {
 })
 
 describe('Ollama onboarding dependency installation', () => {
+  it('keeps simulated Windows setup ready for per-job model checks without a real server', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-simulated-ready-'))
+    vi.stubEnv('AUTODOC_TEST_REAL_SETUP', '1')
+    vi.stubEnv('AUTODOC_TEST_OLLAMA_SETUP_SEQUENCE', 'ready')
+    const fetchMock = vi.fn().mockRejectedValue(new Error('No real Ollama server in this test'))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const { OllamaManager, spawnMock } = await loadOllamaManager('win32', rootDir)
+      const manager = new OllamaManager()
+      await manager.startAndPull()
+      const model = manager.getModel()
+      expect(await manager.isServerRunning()).toBe(true)
+      expect(await manager.ensureNotesModelReady(model)).toMatchObject({ activeModel: model })
+      expect(await manager.hasUsableNotesModel(model)).toBe(true)
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(spawnMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('installs a packaged macOS runtime binary and waits for startup plus model pull before resolving', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'autodoc-ollama-mac-'))
 
