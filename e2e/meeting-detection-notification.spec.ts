@@ -13,10 +13,31 @@ interface MainWindowState {
   focused: boolean
 }
 
-async function completeAndSettleOnboarding(page: Page): Promise<void> {
+async function completeAndSettleOnboarding(
+  electronApp: ElectronApplication,
+  page: Page
+): Promise<void> {
+  // Finish the initial native ready-to-show cycle before arranging background
+  // window state. Renderer navigation can finish before this startup show().
+  await expect.poll(async () => (await getMainWindowState(electronApp)).visible).toBe(true)
+  if (process.platform === 'win32') {
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      if (!mainWindow) throw new Error('Main window is missing')
+      ;(globalThis as { __e2eOnboardingReloadReady?: Promise<void> }).__e2eOnboardingReloadReady =
+        new Promise<void>((resolve) => mainWindow.once('ready-to-show', () => resolve()))
+    })
+  }
   await completeOnboarding(page)
   await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
-  await page.waitForTimeout(150)
+  if (process.platform === 'win32') {
+    // Windows emits another native ready-to-show for this onboarding reload.
+    // Its startup show() must settle before the test hides/blurs the window.
+    await electronApp.evaluate(
+      () =>
+        (globalThis as { __e2eOnboardingReloadReady?: Promise<void> }).__e2eOnboardingReloadReady
+    )
+  }
 }
 
 async function launchMeetingDetectionApp(): Promise<
@@ -44,6 +65,14 @@ async function getMainWindowState(electronApp: ElectronApplication): Promise<Mai
   })
 }
 
+// Electron's activate event models a macOS Dock/app activation. Windows
+// dismissal checks should observe native window state without inventing it.
+async function emitMacActivation(electronApp: ElectronApplication): Promise<void> {
+  if (process.platform === 'darwin') {
+    await electronApp.evaluate(({ app }) => app.emit('activate'))
+  }
+}
+
 async function triggerMeetingPrompt(electronApp: ElectronApplication, page: Page): Promise<Page> {
   const notificationWindowPromise = electronApp.waitForEvent('window')
   await setDetectionState(page, { providerActiveIds: ['us.zoom.xos'] })
@@ -60,7 +89,7 @@ test('dismisses a meeting prompt without showing a hidden main window', async ()
 
   try {
     const page = await session.electronApp.firstWindow()
-    await completeAndSettleOnboarding(page)
+    await completeAndSettleOnboarding(session.electronApp, page)
     await session.electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()
         .find((window) => window.isFocusable())
@@ -77,7 +106,7 @@ test('dismisses a meeting prompt without showing a hidden main window', async ()
     })
 
     // Reproduce the macOS ordering: app activation can arrive before dismiss IPC.
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       visible: false,
       focused: false
@@ -88,7 +117,7 @@ test('dismisses a meeting prompt without showing a hidden main window', async ()
     await notificationClosed
 
     // The trailing suppression also protects the close animation/event tail.
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       visible: false,
       focused: false
@@ -103,11 +132,12 @@ test('dismisses a meeting prompt without restoring a minimized main window', asy
 
   try {
     const page = await session.electronApp.firstWindow()
-    await completeAndSettleOnboarding(page)
+    await completeAndSettleOnboarding(session.electronApp, page)
     await session.electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()
-        .find((window) => window.isFocusable())
-        ?.minimize()
+      const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
+      mainWindow?.hide()
+      mainWindow?.showInactive()
+      mainWindow?.minimize()
     })
     await expect
       .poll(async () => (await getMainWindowState(session.electronApp)).minimized)
@@ -118,7 +148,7 @@ test('dismisses a meeting prompt without restoring a minimized main window', asy
       minimized: true,
       focused: false
     })
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       minimized: true,
@@ -128,7 +158,7 @@ test('dismisses a meeting prompt without restoring a minimized main window', asy
     const notificationClosed = notificationWindow.waitForEvent('close')
     await notificationWindow.locator('#dismiss').click()
     await notificationClosed
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       minimized: true,
@@ -144,11 +174,11 @@ test('dismisses a meeting prompt without raising an unfocused visible main windo
 
   try {
     const page = await session.electronApp.firstWindow()
-    await completeAndSettleOnboarding(page)
+    await completeAndSettleOnboarding(session.electronApp, page)
     await session.electronApp.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows().find((window) => window.isFocusable())
-      mainWindow?.show()
-      mainWindow?.blur()
+      mainWindow?.hide()
+      mainWindow?.showInactive()
     })
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       visible: true,
@@ -156,7 +186,7 @@ test('dismisses a meeting prompt without raising an unfocused visible main windo
     })
 
     const notificationWindow = await triggerMeetingPrompt(session.electronApp, page)
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       visible: process.platform !== 'darwin',
@@ -166,7 +196,7 @@ test('dismisses a meeting prompt without raising an unfocused visible main windo
     const notificationClosed = notificationWindow.waitForEvent('close')
     await notificationWindow.locator('#dismiss').click()
     await notificationClosed
-    await session.electronApp.evaluate(({ app }) => app.emit('activate'))
+    await emitMacActivation(session.electronApp)
 
     expect(await getMainWindowState(session.electronApp)).toMatchObject({
       visible: process.platform !== 'darwin',
@@ -182,7 +212,7 @@ test('Start AI Notes still opens the main window and broadcasts auto-record', as
 
   try {
     const page = await session.electronApp.firstWindow()
-    await completeAndSettleOnboarding(page)
+    await completeAndSettleOnboarding(session.electronApp, page)
     await page.evaluate(() => {
       const qaWindow = window as typeof window & {
         __qaAutoRecordEvents?: unknown[]

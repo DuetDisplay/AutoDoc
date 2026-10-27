@@ -1,8 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { launchIsolatedE2EApp, relaunchIsolatedE2EApp } from './helpers/electron-app'
+import {
+  closeE2EAppKeepingUserData,
+  launchIsolatedE2EApp,
+  relaunchIsolatedE2EApp
+} from './helpers/electron-app'
 
 test('shows a Notes Ready notification, opens the meeting, and does not re-notify after relaunch', async () => {
-  const session = await launchIsolatedE2EApp()
+  let session = await launchIsolatedE2EApp()
   let { electronApp } = session
   const { userDataDir } = session
   let page = await electronApp.firstWindow()
@@ -32,9 +36,9 @@ test('shows a Notes Ready notification, opens the meeting, and does not re-notif
       .poll(async () => page.url(), { timeout: 5_000 })
       .toContain(`#/recordings/${meetingId}`)
 
-    await electronApp.close()
-    const relaunched = await relaunchIsolatedE2EApp(userDataDir)
-    electronApp = relaunched.electronApp
+    await closeE2EAppKeepingUserData(electronApp, userDataDir)
+    session = await relaunchIsolatedE2EApp(userDataDir)
+    electronApp = session.electronApp
     page = await electronApp.firstWindow()
 
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible()
