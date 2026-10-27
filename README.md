@@ -49,17 +49,32 @@ See [`PRODUCT.md`](PRODUCT.md) for a deep technical breakdown of every subsystem
 
 ## Features in action
 
-| Calendar auto-recording | Video and timestamped transcript |
-|---|---|
-| ![Calendar auto-recording](docs/assets/screenshots/calendar.png) | ![Transcript with Me and Them audio source labels](docs/assets/screenshots/transcript.png) |
-
-| Notes with a summary, topics, and details | Ask AI across meetings |
-|---|---|
-| ![Notes with a summary and conversation topics](docs/assets/screenshots/notes.png) | ![Ask AI across meetings](docs/assets/screenshots/ask-ai.png) |
-
-| Automatic meeting detection | Copy and export |
-|---|---|
-| ![Prompt offering to start AI notes when a meeting begins](docs/assets/screenshots/detection.png) | ![Export menu with PDF, Word, and Markdown](docs/assets/screenshots/export-menu-v1.2.png) |
+<table>
+  <tr>
+    <th width="50%">Calendar auto-recording</th>
+    <th width="50%">Video and timestamped transcript</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/calendar.png" alt="Calendar auto-recording" width="100%"></td>
+    <td width="50%"><img src="docs/assets/screenshots/transcript.png" alt="Transcript with Me and Them audio source labels" width="100%"></td>
+  </tr>
+  <tr>
+    <th width="50%">Notes with a summary, topics, and details</th>
+    <th width="50%">Ask AI across meetings</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/notes.png" alt="Notes with a summary and conversation topics" width="100%"></td>
+    <td width="50%"><img src="docs/assets/screenshots/ask-ai.png" alt="Ask AI across meetings" width="100%"></td>
+  </tr>
+  <tr>
+    <th width="50%">Automatic meeting detection</th>
+    <th width="50%">Copy and export</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/detection.png" alt="Prompt offering to start AI notes when a meeting begins" width="100%"></td>
+    <td width="50%"><img src="docs/assets/screenshots/export-menu-v1.2.png" alt="Export menu with PDF, Word, and Markdown" width="100%"></td>
+  </tr>
+</table>
 
 ## Download
 
